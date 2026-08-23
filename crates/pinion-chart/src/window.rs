@@ -52,11 +52,38 @@ use crate::style::Margin;
 ///
 /// [`crate::LineChart`]'s own painter is defined in terms of this function, so
 /// an overlay placed here covers exactly the drawn axis.
+///
+/// ★★★★★ R1797 — the result is **contained in `rect`**, which it was not.
+///
+/// The old body clamped the plot's SIZE (`.max(1)`) and left its ORIGIN alone,
+/// so a rect narrower than `left + right` — the default margin is 52 + 16 —
+/// produced a plot area starting 52px in from a rect that might be 24px wide
+/// and running off the end of it. Every mark aligned to the axis then landed
+/// outside the rectangle the chart was given, silently, and since this function
+/// is the SSOT the whole crate's painters are defined in terms of, so did they.
+///
+/// Measured at R1797 by a card that reached a small size: a `BarChart` handed a
+/// 24x100 rect painted its axis at x = 51 and its bars past x = 52, twenty
+/// pixels beyond a rect that ended at 31. The card's own containment gate is
+/// what found it; nothing in this crate had asked.
+///
+/// The repair clamps the origin into the rect before spending the far margin,
+/// so the answer is always inside. For any rect large enough to hold its
+/// margins — every real chart — the result is **unchanged**, which is asserted
+/// below rather than claimed.
 #[must_use]
 pub fn plot_area(rect: Rect, margin: Margin) -> Rect {
-    let w = rect.w.saturating_sub(margin.left + margin.right).max(1);
-    let h = rect.h.saturating_sub(margin.top + margin.bottom).max(1);
-    Rect::new(rect.x + margin.left, rect.y + margin.top, w, h)
+    // The near margins can never push the origin past the rect's far edge: at
+    // worst the plot starts on the last pixel.
+    let left = margin.left.min(rect.w.saturating_sub(1));
+    let top = margin.top.min(rect.h.saturating_sub(1));
+    let w = (rect.w - left).saturating_sub(margin.right).max(1);
+    let h = (rect.h - top).saturating_sub(margin.bottom).max(1);
+    // And the far margins cannot make the plot wider than what is left, which
+    // `.max(1)` above can when the remainder is zero.
+    let w = w.min(rect.w - left);
+    let h = h.min(rect.h - top);
+    Rect::new(rect.x + left, rect.y + top, w, h)
 }
 
 /// Map a normalised `(low, high)` window onto a data `extent`, the SSOT for
@@ -468,5 +495,61 @@ mod tests {
         let mut w = PlotWindow::full();
         w.zoom_about(0.5, 2.0);
         assert_eq!(w.domain(EXTENT), brush.domain(w.low(), w.high()));
+    }
+
+    /// ★★★★★ R1797 — the plot area is inside the rect it was derived from.
+    ///
+    /// It was not, for any rect smaller than its own margins, and this crate's
+    /// painters are all defined in terms of this function — so the marks went
+    /// wherever it pointed. Swept rather than sampled: the failure is at the
+    /// small end and one chosen size would have missed most of it.
+    #[test]
+    fn r1797_the_plot_area_is_always_inside_the_rect_it_came_from() {
+        let margin = Margin::default();
+        let mut escaping = Vec::new();
+        for w in 0..140_u32 {
+            for h in 0..140_u32 {
+                let rect = Rect::new(9, 13, w, h);
+                let plot = plot_area(rect, margin);
+                if plot.x < rect.x
+                    || plot.y < rect.y
+                    || plot.x + plot.w > rect.x + rect.w
+                    || plot.y + plot.h > rect.y + rect.h
+                {
+                    escaping.push((w, h, plot));
+                }
+            }
+        }
+        assert!(
+            escaping.is_empty(),
+            "{} of 19,600 rect(s) produced a plot area outside themselves: {:?}",
+            escaping.len(),
+            &escaping[..escaping.len().min(5)]
+        );
+    }
+
+    /// ★ R1797 — and the repair changed **nothing** for a rect that fits.
+    ///
+    /// The clamp is only allowed to touch the degenerate case. This is the
+    /// arithmetic the old body did, written out independently, over every rect
+    /// large enough to hold the default margins.
+    #[test]
+    fn r1797_a_rect_that_holds_its_margins_is_unaffected_by_the_clamp() {
+        let margin = Margin::default();
+        for w in (margin.left + margin.right + 1)..260_u32 {
+            for h in (margin.top + margin.bottom + 1)..260_u32 {
+                let rect = Rect::new(4, 6, w, h);
+                assert_eq!(
+                    plot_area(rect, margin),
+                    Rect::new(
+                        rect.x + margin.left,
+                        rect.y + margin.top,
+                        rect.w - (margin.left + margin.right),
+                        rect.h - (margin.top + margin.bottom),
+                    ),
+                    "{w}x{h}"
+                );
+            }
+        }
     }
 }

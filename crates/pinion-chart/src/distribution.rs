@@ -115,106 +115,23 @@ impl QuantileMethod {
     /// one of them by a different route: the sort, the finiteness filter and
     /// the emptiness check all happen once, in
     /// [`Distribution::from_samples_fenced`].
+    ///
+    /// ★ R1797 — the arithmetic moved to [`crate::Quantiles`], which answers
+    /// an ARBITRARY proportion under the same three definitions. This is now
+    /// the special case (three fixed proportions) of the general question, and
+    /// there is one implementation of it in the crate rather than three.
     fn quartiles(self, sorted: &[f64]) -> (f64, f64, f64) {
-        match self {
-            Self::Tukey => tukey_hinges(sorted),
-            Self::Linear => (
-                interpolate_at(sorted, hf7_depth(sorted.len(), 0.25)),
-                interpolate_at(sorted, hf7_depth(sorted.len(), 0.50)),
-                interpolate_at(sorted, hf7_depth(sorted.len(), 0.75)),
-            ),
-            Self::Exclusive => (
-                interpolate_at(sorted, hf6_depth(sorted.len(), 0.25)),
-                interpolate_at(sorted, hf6_depth(sorted.len(), 0.50)),
-                interpolate_at(sorted, hf6_depth(sorted.len(), 0.75)),
-            ),
-        }
+        crate::quantile::Quantiles::from_sorted(sorted, self).quartiles()
     }
 }
 
-/// The 0-indexed fractional position of quantile `p` under Hyndman & Fan
-/// type 7: `h = (n - 1) * p`.
-#[allow(
-    clippy::cast_precision_loss,
-    reason = "a sample count is a display-scale cardinality; f64 is exact to 2^53"
-)]
-fn hf7_depth(n: usize, p: f64) -> f64 {
-    (n as f64 - 1.0) * p
-}
-
-/// The 0-indexed fractional position of quantile `p` under Hyndman & Fan
-/// type 6: `h = (n + 1) * p`, one-indexed, hence `- 1.0` here.
-#[allow(
-    clippy::cast_precision_loss,
-    reason = "a sample count is a display-scale cardinality; f64 is exact to 2^53"
-)]
-fn hf6_depth(n: usize, p: f64) -> f64 {
-    (n as f64 + 1.0) * p - 1.0
-}
-
-/// `sorted` sampled at the 0-indexed fractional position `depth`, linearly
-/// interpolating between the two neighbouring order statistics and clamping
-/// to the ends (type 6 runs off both edges at small `n`).
-#[allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "`depth` is clamped into `0.0 ..= n - 1` immediately above the cast"
-)]
-fn interpolate_at(sorted: &[f64], depth: f64) -> f64 {
-    let last = sorted.len() - 1;
-    #[allow(
-        clippy::cast_precision_loss,
-        reason = "a sample count is a display-scale cardinality; f64 is exact to 2^53"
-    )]
-    let depth = depth.clamp(0.0, last as f64);
-    let floor = depth.floor();
-    let lo = floor as usize;
-    if lo >= last {
-        return sorted[last];
-    }
-    sorted[lo] + (depth - floor) * (sorted[lo + 1] - sorted[lo])
-}
-
-/// Tukey's five-number summary of a non-empty ascending slice, reduced to the
-/// three landmarks a box needs — R's `fivenum`.
-///
-/// The hinge *depth* is `floor((n + 3) / 2) / 2` counted inward from each
-/// end; a fractional depth averages the two order statistics it falls
-/// between. The median's depth is `(n + 1) / 2`, which is the ordinary
-/// median, so all three methods agree there.
-#[allow(
-    clippy::cast_precision_loss,
-    reason = "a sample count is a display-scale cardinality; f64 is exact to 2^53"
-)]
-fn tukey_hinges(sorted: &[f64]) -> (f64, f64, f64) {
-    let n = sorted.len();
-    let depth = usize::midpoint(n, 3) as f64 / 2.0;
-    let n = n as f64;
-    (
-        hinge_at(sorted, depth),
-        hinge_at(sorted, f64::midpoint(n, 1.0)),
-        hinge_at(sorted, n + 1.0 - depth),
-    )
-}
-
-/// `sorted` at the **1-indexed** depth `d`, averaging the two order
-/// statistics a half-integer depth falls between (R's
-/// `0.5 * (x[floor(d)] + x[ceiling(d)])`).
-#[allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "both bounds are clamped into `1 ..= n` before the cast"
-)]
-fn hinge_at(sorted: &[f64], d: f64) -> f64 {
-    #[allow(
-        clippy::cast_precision_loss,
-        reason = "a sample count is a display-scale cardinality; f64 is exact to 2^53"
-    )]
-    let n = sorted.len() as f64;
-    let lo = d.floor().clamp(1.0, n) as usize;
-    let hi = d.ceil().clamp(1.0, n) as usize;
-    f64::midpoint(sorted[lo - 1], sorted[hi - 1])
-}
+// ★ R1797 — the quantile arithmetic that stood here (`hf7_depth`, `hf6_depth`,
+// `interpolate_at`, `tukey_hinges`, `hinge_at`) moved to [`crate::quantile`],
+// which answers an ARBITRARY proportion under these same three definitions.
+// It moved rather than being copied a fourth time: two other modules in this
+// crate had grown their own private versions of the same interpolation, and
+// three mechanical copies is this project's lift threshold. What the copies
+// were hiding is recorded there.
 
 /// Where the five numbers of a summary sit, in ascending order — the names
 /// of the toolkit's `ValuePositions`, so an error can say *which* landmark

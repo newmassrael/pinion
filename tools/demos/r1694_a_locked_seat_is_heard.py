@@ -141,10 +141,27 @@ def body() -> None:
             "A: the rail seats declared unavailable are the ones the "
             "specification says are shut, and no others",
         )
+        # ★★★★★ R1797 — and THIS count is derived too, which the paragraph above
+        # argued for and then did not do: it wrote `11` one line below "a number
+        # in a demo goes stale exactly like a number in prose", and the round
+        # that promoted a palette widget out of the second release broke it —
+        # exactly as predicted, by exactly the mechanism named.
+        #
+        # The rest splits in two and each half has a published count to answer
+        # to: the palette's reserved widgets, and the settings page's booked key
+        # affordances. Asserting the halves separately also says WHICH one moved
+        # when one does, which the single total could not.
         others = [r for r in locked if not r["tag"].startswith("shell.rail.")]
+        palette_locked = [r for r in others if r["tag"].startswith("shell.palette.")]
         assert_eq(
-            len(others),
-            11,
+            len(palette_locked),
+            spec["reserved_count"],
+            "A: the palette seats declared unavailable are the ones a later "
+            "release brings, and the footer counts the same set",
+        )
+        assert_eq(
+            len(others) - len(palette_locked),
+            len(spec["key_rows"]),
             "A: and the rest are the settings page's booked affordances, which "
             "no rail change touches",
         )
@@ -165,8 +182,17 @@ def body() -> None:
             13,
             "A: thirteen catalogue entries",
         )
-        assert_eq(spec["placeable_count"], 4, "A: four the first release places")
-        assert_eq(spec["reserved_count"], 9, "A: nine it reserves")
+        # ★ R1797 — five and eight since the latency card was promoted. The
+        # TOTAL is what a number here can honestly pin: thirteen entries, split
+        # by a release decision that moves. Asserting the split as two literals
+        # made this demo fail for a change that is the release plan working.
+        assert_eq(
+            spec["placeable_count"] + spec["reserved_count"],
+            len(spec["catalogue"]),
+            "A: every catalogue entry is either placed this release or reserved",
+        )
+        assert_eq(spec["placeable_count"], 5, "A: five the first release places")
+        assert_eq(spec["reserved_count"], 8, "A: eight it reserves")
         print(
             f"[demo] {len(voices)} region(s) owe a voice, {len(silences)} owe a "
             f"silence, {len(locked)} seat(s) are locked"
@@ -300,10 +326,15 @@ def body() -> None:
             list(range(1, 14)),
             "E: ★ every entry keeps its place in the set, locked or not",
         )
+        # ★ R1797 — eight since the latency card was promoted, and derived from
+        # the specification the screen publishes rather than written again. The
+        # count above it (`position_in_set` over the whole thirteen) is the one
+        # that does not move: a locked seat is still a seat, which is this
+        # demo's subject.
         assert_eq(
             sum(1 for seat in seats if is_disabled(seat)),
-            9,
-            "E: nine of the thirteen are locked",
+            spec["reserved_count"],
+            "E: the locked seats are the ones a later release brings",
         )
         # ★ …and the four that are NOT locked carry no reason. A reason
         # everywhere would pass every check above and mean nothing.

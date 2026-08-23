@@ -171,16 +171,23 @@ def the_older_screens_moved_to_the_derived_tags() -> None:
 def the_dashboards_chart_seats_are_still_booked() -> None:
     """(I) ★★★★★ The analysis tool's own dashboard, unchanged.
 
-    Its three chart seats — a time series, a part-of-whole and a distribution —
-    are booked for a later release. This round built the legend gesture those
-    seats will want, and the seats must therefore be exactly where they were: a
-    capability landing is not a release decision, and the wire must still say
-    each one is waiting on its own requirement rather than on the framework.
+    Its chart seats — a time series and a part-of-whole — are booked for a
+    later release. This round built the legend gesture those seats will want,
+    and the seats must therefore be exactly where they were: a capability
+    landing is not a release decision, and the wire must still say each one is
+    waiting on its own requirement rather than on the framework.
+
+    ★★★★★ R1797 — and `latency`, the third seat, MOVED. That is not this rule
+    breaking; it is the rule holding and the other thing happening. R1722's
+    claim is that building a capability does not promote a seat, and R1797 did
+    not promote one by building anything: the reader was asked and chose to
+    place the card. A release decision moves a seat, and nothing else does —
+    which is why the seat is checked against the placeable list below rather
+    than quietly dropped from this table.
     """
     booked = {
         "throughput": "requirement 16",
         "share": "requirement 17",
-        "latency": "requirement 19",
     }
     with RpcSubprocess("hello-analyzer-shell", boot_grace=1.5) as tf:
         inert = {row["tag"]: row for row in tf.request("scene/disabled", {}).result["disabled"]}
@@ -198,6 +205,13 @@ def the_dashboards_chart_seats_are_still_booked() -> None:
             assert f"shell.palette.{kind}" not in inert, (
                 f"(I) {kind} is placeable and this round did not touch it"
             )
+        # ★ R1797 — and the seat that moved is checked on the OTHER side rather
+        # than dropped from the table. A seat that vanished from both lists
+        # would leave this demo passing while saying nothing about it.
+        assert "shell.palette.latency" not in inert, (
+            "(I) ★ latency is placeable since R1797 — a release decision the "
+            "reader made, not a capability landing"
+        )
 
 
 def body() -> None:

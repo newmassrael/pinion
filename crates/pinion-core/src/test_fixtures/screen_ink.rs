@@ -50,7 +50,15 @@ pub fn stand_in_ink(text: &TextNode) -> (u32, u32) {
     )]
     let chars = text.content.chars().count() as u32;
     let px = text.style.font_size_px.max(1);
-    let painted = if text.style.overflow.shortens() {
+    // ★★★★★ R1797 — `bounds_ink`, not `shortens`. The two are different
+    // questions and this asked the wrong one: `shortens` is about the CONTENT
+    // (what introspection reports), and `Clip` is deliberately not one of its
+    // arms because a clipped run still contains every character. What decides
+    // how far the INK reaches is whether the arm confines the paint, and `Clip`
+    // does — that is the whole of what it does. So a clipped label's hidden
+    // glyphs were being counted as ink outside its box: marks nobody could see,
+    // reported as marks painted outside.
+    let painted = if text.style.overflow.bounds_ink() {
         text.rect.w.min(chars * px)
     } else {
         chars * px
@@ -115,6 +123,52 @@ mod tests {
             rect,
             TextStyle::default().with_size_px(px),
         ))
+    }
+
+    /// ★★★★★ R1797 — a CLIPPED run's hidden glyphs are not ink that escaped.
+    ///
+    /// The stand-in asked `shortens()`, which is about the CONTENT — and `Clip`
+    /// is deliberately not one of its arms, because a clipped run still holds
+    /// every character. What decides how far the ink reaches is whether the arm
+    /// confines the paint. So a run far too long for its box, clipped, was
+    /// reported as painting outside it, and every one of those glyphs is
+    /// scissored away before anything reaches a screen.
+    ///
+    /// Both directions, because the repair must not have made the stand-in
+    /// answer "it fits" to everything — that is the failure the negative
+    /// control below exists for.
+    #[test]
+    fn r1797_a_clipped_run_paints_no_ink_past_its_own_box() {
+        use crate::style::TextOverflow;
+        let long = "a string far longer than the box it was given";
+        let boxed = |overflow: TextOverflow| {
+            stand_in_ink(&TextNode::styled(
+                long.to_owned(),
+                Rect::new(0, 0, 40, 14),
+                TextStyle::default()
+                    .with_size_px(12)
+                    .with_overflow(overflow),
+            ))
+            .0
+        };
+        assert_eq!(
+            boxed(TextOverflow::Clip),
+            40,
+            "clipped ink stops at the box"
+        );
+        assert_eq!(boxed(TextOverflow::Ellipsis), 40, "and so does an ellipsis");
+        assert!(
+            boxed(TextOverflow::Visible) > 40,
+            "while a run that paints past its edge still measures past it: {}",
+            boxed(TextOverflow::Visible)
+        );
+        for arm in TextOverflow::ALL {
+            assert_eq!(
+                arm.bounds_ink(),
+                arm != TextOverflow::Visible,
+                "{arm:?} — every arm but Visible confines the paint"
+            );
+        }
     }
 
     /// ★ R1672 — the gate MEASURES: a scene built to break it is reported.

@@ -230,7 +230,19 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
 
         # ── (G) the second defect the gate found ───────────────────────────
         banner("G — ★ the maximise control toggles, so the mouse has a way back")
-        card = q(app, "cards").split(",")[0]
+        # ★ R1797 — the card is the first one whose control is PAINTED, not the
+        # first on the wire. Section F re-docks a panel, and a re-dock places at
+        # the row below every existing one; the board has held five cards since
+        # the latency card was promoted, so that row is past the viewport and
+        # the board scrolls (R1662). The card was on the wire and off the
+        # screen, and clicking a rectangle that is not there is a `KeyError`
+        # rather than a finding. Which card this section uses was always
+        # incidental — its subject is the toggle — but it has to be one a mouse
+        # could actually reach.
+        painted = rects(app)
+        card = next(
+            c for c in q(app, "cards").split(",") if f"card.{c}.maximize" in painted
+        )
         assert_eq(q(app, "maximized"), "", "G: nothing is maximised to begin with")
         mark = rects(app)[f"card.{card}.maximize"]
         app.request("scene/click", {"button": "left", "at": {"x": centre(mark)[0], "y": centre(mark)[1]}})

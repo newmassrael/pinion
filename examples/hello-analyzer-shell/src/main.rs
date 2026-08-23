@@ -83,7 +83,9 @@ use pinion_a11y::{
     GridRow, HasPopup, NavLink, WidgetA11y, grid_table_nodes, navigation_link_nodes,
     page_region_node,
 };
-use pinion_chart::{ChartStyle, Sparkline};
+use pinion_chart::{
+    Bar, BarChart, BinEnds, Binned, ChartStyle, QuantileMethod, Quantiles, Sparkline,
+};
 use pinion_core::availability::Unavailable;
 use pinion_core::drop_target::{
     BOARD_WIDGET_DRAG_KIND, DropAccept, DropAction, DropActions, DropClause, DropContract,
@@ -1692,14 +1694,15 @@ fn help_strip_rect() -> Rect {
 fn palette_rows() -> Vec<PaletteRow> {
     let mut out = Vec::new();
     let mut y = 76_u32;
-    for (key, title, tier) in spec::SECTIONS {
+    for (key, title) in spec::SECTIONS {
         out.push(PaletteRow {
             def: None,
             section: key,
             // ★ R1761 — the heading says which release fills the group, which
-            // is what the reference writes there. Derived from the tier beside
-            // it, so the two cannot come apart.
-            title: spec::section_heading(title, *tier),
+            // is what the reference writes there. ★ R1797 — derived from the
+            // group's own ENTRIES rather than from a tier column beside it, so
+            // promoting one widget cannot leave the heading behind.
+            title: spec::section_heading(key, title),
             rect: Rect::new(16, y, PALETTE_W - 32, 20),
         });
         y += 26;
@@ -6463,6 +6466,12 @@ fn ready_body(state: &ShellState, card: &Card, rect: Rect, palette: Palette) -> 
         // a chip panicked in `use_transport_clock`. The demo found it; no unit test
         // could have, because every one of them runs inside an Owner.
         "filter" => filter_body(state, id, rect, palette),
+        // ★ R1797 — the fifth. Everything it draws is DERIVED from one capture
+        // record: the bar heights, the three tiles above them and which bars
+        // are emphasised all come out of the same samples, so the card cannot
+        // state a percentile its own bars contradict. The reference's can, and
+        // measurably does.
+        "latency" => latency_body(id, rect, palette),
         // A kind with no body painter of its own still reads as content rather
         // than as a gap. Reachable only if the catalogue grows a placeable kind
         // before its body does, which is the moment a placeholder is honest.
@@ -6890,6 +6899,319 @@ fn map_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
 
 /// The search and filter card: the query, the saved chips, and the three counts
 /// whose relation is the point of the card.
+/// The height the latency card keeps for its caption.
+const LATENCY_CAPTION_H: u32 = 24;
+
+/// The shortest plot the latency card will draw a distribution into.
+///
+/// Under this the bars are shorter than the caption beside them and the shape
+/// is not a distribution any more, so the card shows its three tiles and says
+/// nothing it cannot say honestly.
+const MIN_PLOT_H: u32 = 24;
+
+/// ★★★★★ Where the latency card draws its distribution, or `None` when the card
+/// is too small to draw one honestly.
+///
+/// The floor is DERIVED from the chart's own style, not guessed. The first
+/// draft wrote `bars_h >= 40`, and the containment gate found what a number
+/// picked by eye misses: a chart spends its margins before it draws anything,
+/// and a rect narrower than those gutters puts the axis — and every mark
+/// aligned to it — outside the box. `plot_area`'s margins say how much is
+/// spent; a plot narrower than one pixel per bucket is not a distribution a
+/// reader can see.
+///
+/// ★ One predicate, shared with the gate that sweeps it. A test carrying its
+/// own copy of "is there room" would be checking a rule the painter does not
+/// use, which is the failure that keeps a guard green while the screen is
+/// wrong.
+fn distribution_box(rect: Rect, top: u32, bars: usize, style: &ChartStyle) -> Option<Rect> {
+    let h = (rect.y + rect.h).saturating_sub(top + LATENCY_CAPTION_H);
+    let spent_w = style.margin.left + style.margin.right;
+    let spent_h = style.margin.top + style.margin.bottom;
+    let count = u32::try_from(bars).unwrap_or(u32::MAX);
+    (rect.w > spent_w.saturating_add(count) && h > spent_h + MIN_PLOT_H)
+        .then(|| Rect::new(rect.x, top, rect.w, h))
+}
+
+/// ★★★★★ R1797 — the latency card's binned distribution, derived once.
+///
+/// Everything the card draws comes out of this: the bar heights, the three stat
+/// tiles, and which bars are the tail. That is the whole point of the card — see
+/// [`spec::LATENCY_LADDER`] for what the reference publishes instead, and why
+/// its two halves cannot both be true.
+///
+/// Returns `None` only if the specification's own record stops being binnable,
+/// which the gate next door asserts it is not. A card that unwrapped here would
+/// take the screen down over a constant.
+fn latency_binned() -> Option<(Binned, Quantiles)> {
+    let binned = Binned::over(
+        spec::LATENCY_SAMPLES,
+        spec::LATENCY_LADDER,
+        // ★ Open, not closed. The record's slowest reply is 72 ms and the
+        // ladder stops at 64, so a closed ladder would DROP it — and the
+        // maximum tile would then report a sample no bar accounts for. An
+        // unbounded top bin is what a latency distribution actually has.
+        BinEnds::Open,
+    )
+    .ok()?;
+    // `Linear` — Hyndman & Fan type 7, R's and NumPy's default — because the
+    // card needs p95 and Tukey's hinges do not define one. Naming it is the
+    // point: `Quantiles::at` would REFUSE p95 under the default method rather
+    // than quietly interpolating a number Tukey never defined.
+    let quantiles = Quantiles::of(spec::LATENCY_SAMPLES, QuantileMethod::Linear).ok()?;
+    Some((binned, quantiles))
+}
+
+/// ★ R1797 — the palette's groups, each naming the releases its entries occupy.
+///
+/// Both, when a group holds both. The tier column this replaced could not say
+/// that: a section carried one tier of its own and every entry had to match it,
+/// which is one fact stored twice — and promoting a single widget out of a
+/// group made one of the two copies false.
+///
+/// `palette_groups_json` and not `sections_json`, which this file already uses
+/// for the RAIL's sections. Two unrelated things are called a section on this
+/// screen — a rail destination and a palette group — and the compiler is what
+/// said so.
+fn palette_groups_json() -> Vec<serde_json::Value> {
+    spec::SECTIONS
+        .iter()
+        .map(|(key, title)| {
+            let (placeable, reserved) = spec::section_tiers(key);
+            // Built before the macro rather than inside it: `json!` matches an
+            // array literal as a JSON array and stops there, so a method chain
+            // after the `]` is not a token it expects.
+            let tiers: Vec<&str> = [
+                placeable.then(|| tier_word(spec::Tier::Placeable)),
+                reserved.then(|| tier_word(spec::Tier::Reserved)),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            serde_json::json!({
+                "key": key,
+                "title": title,
+                "tiers": tiers,
+                "heading": spec::section_heading(key, title),
+            })
+        })
+        .collect()
+}
+
+/// ★★★★★ R1797 — what the latency card derived, for a reader who never sees it.
+///
+/// The debt that opened this round asked for exactly this and named the reason:
+/// *the wire should answer the rule and the basis, because that is where this
+/// module goes past the floor* — it is what separates a surprising shape that
+/// is in the data from one the binning made. The floor publishes neither; its
+/// bar surface has no name for a rule or a basis at all, measured this round.
+///
+/// It is also what makes the card's consistency checkable from OUTSIDE: the
+/// tiles and the bucket counts come from one derivation and are published
+/// together, so an agent can do the arithmetic the reference's own card fails —
+/// walk the counts to the 95th percentile and ask whether the bucket it lands
+/// in contains the published cut. `tools/demos/r1649_…` does exactly that.
+///
+/// Every field is DERIVED. Nothing here is the reference's published figure:
+/// those live under `#[cfg(test)]` because they are the gate's oracle, and
+/// shipping them beside these would put two accounts of one number on the wire.
+fn latency_wire() -> serde_json::Value {
+    let Some((binned, quantiles)) = latency_binned() else {
+        // The specification's own record stopped being binnable, which the gate
+        // says cannot happen. Reported rather than unwrapped: a wire read is
+        // not a place to take the process down.
+        return serde_json::json!({ "binned": false });
+    };
+    let cut = quantiles.at(0.95).ok();
+    let basis = binned.basis();
+    serde_json::json!({
+        "binned": true,
+        "rule": binned.rule().name(),
+        "ends": if binned.ends() == BinEnds::Open { "open" } else { "closed" },
+        "unit": spec::LATENCY_UNIT,
+        "boundaries": spec::LATENCY_LADDER,
+        "buckets": (0..binned.bins()).map(|k| serde_json::json!({
+            "label": binned.label(k),
+            "count": binned.counts()[k],
+            "lo": binned.extent(k).and_then(|(lo, _)| lo),
+            "hi": binned.extent(k).and_then(|(_, hi)| hi),
+            "tail": binned.tail_from(cut.unwrap_or(f64::INFINITY)).contains(&k),
+        })).collect::<Vec<_>>(),
+        "outside": { "below": binned.outside().0, "above": binned.outside().1 },
+        "basis": {
+            "n": basis.n,
+            "min": basis.min,
+            "max": basis.max,
+            "sigma": basis.sigma,
+            "iqr": basis.iqr,
+            "quantile_method": basis.quantile_method.name(),
+        },
+        "tiles": latency_stats(&quantiles).into_iter().map(|(key, value)| {
+            serde_json::json!({ "key": key, "value": value })
+        }).collect::<Vec<_>>(),
+        "tail_cut": cut,
+        "caption": spec::LATENCY_CAPTION,
+    })
+}
+
+/// The card's three stat tiles, as `(key, rendered value)`.
+///
+/// Derived rather than stated, so a change to the record moves the tiles. The
+/// gate asserts these land on the reference's three published figures.
+fn latency_stats(quantiles: &Quantiles) -> Vec<(&'static str, String)> {
+    let fmt = |ms: f64| format!("{ms:.1} {}", spec::LATENCY_UNIT);
+    let read = |p: f64| quantiles.at(p).map_or_else(|_| "\u{2014}".to_owned(), fmt);
+    // ★ The KEYS come from the specification and the VALUES are derived here.
+    // Writing the three words again beside the three derivations would be the
+    // second copy that drifts: the specification is what the paint gate reads
+    // to know how many tiles to expect and what each is called.
+    let values = [read(0.50), read(0.95), fmt(quantiles.max())];
+    spec::LATENCY_STAT_KEYS
+        .iter()
+        .copied()
+        .zip(values)
+        .collect()
+}
+
+/// The latency card's content: three derived tiles, the binned distribution
+/// with its tail emphasised, and the caption that says what the emphasis means.
+fn latency_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
+    let Some((binned, quantiles)) = latency_binned() else {
+        return placeholder_body("latency", id, rect, palette);
+    };
+    let mut out = Vec::new();
+
+    // --- the three tiles ---------------------------------------------------
+    let stats = latency_stats(&quantiles);
+    let stat_w = rect.w.saturating_sub(2 * 8) / u(stats.len());
+    let bars_top = if stat_w < STAT_FLOOR {
+        rect.y
+    } else {
+        for (n, (key, value)) in stats.iter().enumerate() {
+            out.push(Scene::Container(
+                ContainerNode::new(vec![
+                    label(
+                        key,
+                        Rect::new(10, 6, stat_w.saturating_sub(20), 12),
+                        FONT_TINY,
+                        palette.muted,
+                    ),
+                    label(
+                        value,
+                        Rect::new(10, 22, stat_w.saturating_sub(20), 17),
+                        FONT_TITLE,
+                        palette.ink,
+                    ),
+                ])
+                .with_tag(format!("card.{id}.stat.{n}"))
+                .with_style(
+                    BoxStyle::filled(palette.raised)
+                        .with_corner_radius(8)
+                        .with_border(Border::new(palette.outline, 1)),
+                )
+                .with_layout(absolute(Rect::new(
+                    rect.x + u(n) * (stat_w + 8),
+                    rect.y,
+                    stat_w,
+                    STAT_H,
+                ))),
+            ));
+        }
+        rect.y + STAT_H + 10
+    };
+
+    // --- the bars ----------------------------------------------------------
+    //
+    // ★ The tail comes from the SAMPLES, through `tail_from`, and not from an
+    // index. The reference paints its last two bars amber by writing `i >= 6`;
+    // this asks which bins lie entirely at or above the 95th percentile, so it
+    // moves when the capture does and a reader can check the claim against the
+    // tile beside it.
+    let cut = quantiles.at(0.95).unwrap_or(f64::INFINITY);
+    let tail = binned.tail_from(cut);
+    let bars: Vec<Bar> = binned
+        .bars()
+        .into_iter()
+        .enumerate()
+        .map(|(k, mut bar)| {
+            // The interval form, which is what a bucket column with no numeric
+            // axis is read in. `bars()` labels a bounded bin with its lower
+            // edge, for a reader matching an axis tick; this card has no tick
+            // to match, and its unbounded bins have no edge to print.
+            bar.label = binned.label(k);
+            if tail.contains(&k) {
+                bar.color = Some(palette.warn);
+            }
+            bar
+        })
+        .collect();
+
+    let style = ChartStyle::default();
+    if let Some(box_) = distribution_box(rect, bars_top, bars.len(), &style) {
+        out.push(Scene::Container(
+            ContainerNode::new(vec![
+                // ★★★★★ The chart's prefix must be neither EQUAL TO nor a
+                // PREFIX OF the container's tag, and this round hit both walls
+                // in turn:
+                //
+                // * `card.{id}.bin` against a container `card.{id}.bins` —
+                //   one letter, and it reads fine. Every chart node then
+                //   declared itself part of a tag that is not its ancestor.
+                // * `card.{id}.bins` for both — the chart emits a root node
+                //   carrying the bare prefix, so TWO regions answered to one
+                //   address and the voice census counted 257 tags for 258
+                //   regions.
+                //
+                // `.dist` collides with neither. The sibling sparkline has had
+                // this arrangement since R1648 (`match.spark` inside
+                // `card.{id}.sparkline`) and nothing had written down why.
+                //
+                // ⚠ And neither wall was what broke twenty-seven demos. A
+                // `Silence::part_of(X)` is a promise that X SPEAKS for these
+                // marks; tagging X does not make that promise. What was missing
+                // is `latency_nodes`, and until it existed the chart was silent
+                // while claiming to be covered.
+                BarChart::new(bars)
+                    .with_tag_prefix(format!("card.{id}.dist"))
+                    .build(Rect::new(0, 0, box_.w, box_.h), &style)
+                    .silenced(Silence::part_of(format!("card.{id}.bins"))),
+            ])
+            .with_tag(format!("card.{id}.bins"))
+            .with_layout(absolute(box_)),
+        ));
+    }
+
+    // --- the caption -------------------------------------------------------
+    let caption_y = (rect.y + rect.h).saturating_sub(LATENCY_CAPTION_H);
+    if caption_y > bars_top {
+        out.push(Scene::Container(
+            // ★ The run is INSET. Written flush at `x: 0` first, and the ink
+            // gate caught it: a glyph's ink can start a pixel left of its
+            // run's origin (a `q`'s tail, an italic's overhang), so a run at
+            // its container's own edge paints outside the box that owns it.
+            // Every other body in this file pads for the same reason.
+            ContainerNode::new(vec![clipped(
+                spec::LATENCY_CAPTION,
+                Rect::new(10, 6, rect.w.saturating_sub(20), 13),
+                FONT_TINY,
+                palette.muted,
+                TextOverflow::Ellipsis,
+            )])
+            .with_tag(format!("card.{id}.caption"))
+            .with_style(
+                BoxStyle::filled(palette.panel).with_border(Border::new(palette.outline, 1)),
+            )
+            .with_layout(absolute(Rect::new(
+                rect.x,
+                caption_y,
+                rect.w,
+                LATENCY_CAPTION_H,
+            ))),
+        ));
+    }
+    out
+}
+
 fn filter_body(state: &ShellState, id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
     let mut out = vec![Scene::Container(
         ContainerNode::new(vec![label(
@@ -7738,9 +8060,11 @@ fn spec_json() -> serde_json::Value {
         // ★★ R1697 — what this screen can be ASKED to do, published so an
         // agent reads the operations rather than discovering them by trying.
         "operations": operations_json(),
-        "sections": spec::SECTIONS.iter().map(|(key, title, tier)| serde_json::json!({
-            "key": key, "title": title, "tier": tier_word(*tier),
-        })).collect::<Vec<_>>(),
+        // ★ R1797 — a section publishes the releases its ENTRIES occupy rather
+        // than a single tier of its own. Both, when it holds both: the column
+        // that used to be here could not say that, and this round is when a
+        // section first does.
+        "sections": palette_groups_json(),
         "catalogue": catalogue_json(),
         // ★ R1733 — what the palette panel SAYS, published beside what it
         // holds. Its line is now the reference's own — that a row is dragged
@@ -7773,6 +8097,8 @@ fn spec_json() -> serde_json::Value {
         })).collect::<Vec<_>>(),
         "decode_selected": spec::DECODE_SELECTED,
         "decode_span": [spec::DECODE_SELECTED_SPAN.0, spec::DECODE_SELECTED_SPAN.1],
+        // ★★★★★ R1797 — the latency card's DERIVATION; see `latency_wire`.
+        "latency": latency_wire(),
         "map_rows": spec::MAP_ROWS.iter().map(|(id, path, seen)| serde_json::json!({
             "id": id, "resource": path, "first_seen": seen,
         })).collect::<Vec<_>>(),
@@ -9353,6 +9679,7 @@ fn card_nodes(state: &Rc<ShellState>, card: &Card) -> Vec<AccessNode> {
         Some("decode") => decode_nodes(id),
         Some("keymap") => map_nodes(id),
         Some("filter") => filter_nodes(state, id),
+        Some("latency") => latency_nodes(id),
         _ => Vec::new(),
     };
     for node in &body {
@@ -9380,6 +9707,9 @@ const BODY_ROOTS: &[&str] = &[
     "chips",
     "counts",
     "sparkline",
+    // ★ R1797 — the latency card's two: the tile strip and the distribution.
+    "tiles",
+    "bins",
 ];
 
 /// The message stream, as a **grid**: a header row of column headers, then one
@@ -9618,6 +9948,74 @@ fn filter_nodes(state: &ShellState, id: &str) -> Vec<AccessNode> {
     nodes
 }
 
+/// ★★★★★ R1797 — what the latency card says to somebody who cannot see it.
+///
+/// A chart is the case where "announce the picture" is not enough: the shape IS
+/// the content, so the reading has to carry the distribution. This one says the
+/// three landmarks, then every bucket with its count, then which buckets are
+/// the tail and WHY — the same derivation the wire publishes and the paint
+/// draws, from the same call, so the three cannot disagree.
+///
+/// ★ Written because twenty-seven demos failed without it, all with one
+/// message: every mark the chart painted was `dangling`, its silence naming a
+/// container that no accessibility node answered for. A `Silence::part_of(X)`
+/// is a promise that X speaks for these marks. Tagging X is not that promise —
+/// the sparkline next door has had both since R1648 and this card had only the
+/// tag, so the chart was silent AND claiming to be covered.
+fn latency_nodes(id: &str) -> Vec<AccessNode> {
+    let Some((binned, quantiles)) = latency_binned() else {
+        return Vec::new();
+    };
+    let mut nodes = Vec::new();
+    let tiles = latency_stats(&quantiles);
+    let strip = format!("card.{id}.tiles");
+    let mut group = AccessNode::new(strip.clone(), AriaRole::Group).with_name("Round trip");
+    for (n, (key, value)) in tiles.iter().enumerate() {
+        let tag = format!("card.{id}.stat.{n}");
+        group = group.with_child(tag.clone());
+        nodes.push(
+            AccessNode::new(tag, AriaRole::Status)
+                .with_name(*key)
+                .with_value(AccessValue::Text(value.clone())),
+        );
+    }
+    nodes.insert(0, group);
+    let cut = quantiles.at(0.95).unwrap_or(f64::INFINITY);
+    let tail = binned.tail_from(cut);
+    let buckets = (0..binned.bins())
+        .map(|k| format!("{} {}", binned.label(k), binned.counts()[k]))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let emphasised = if tail.is_empty() {
+        "no bucket is entirely above it".to_owned()
+    } else {
+        format!(
+            "{} above it",
+            tail.clone()
+                .map(|k| binned.label(k))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    nodes.push(
+        AccessNode::new(format!("card.{id}.bins"), AriaRole::Group)
+            .with_name("Round trip distribution")
+            .with_value(AccessValue::Text(format!(
+                "{} samples in {} buckets, {} — {}: {buckets}; {emphasised}",
+                binned.basis().n,
+                binned.bins(),
+                spec::LATENCY_UNIT,
+                binned.rule().name(),
+            ))),
+    );
+    nodes.push(
+        AccessNode::new(format!("card.{id}.caption"), AriaRole::Status)
+            .with_name("About this chart")
+            .with_value(AccessValue::Text(spec::LATENCY_CAPTION.to_owned())),
+    );
+    nodes
+}
+
 /// What a sparkline says to somebody who cannot see it: how many samples, the
 /// range they cover, and where it ended.
 fn series_reading(series: &[f64]) -> String {
@@ -9651,7 +10049,7 @@ fn palette_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
         .with_value(AccessValue::Text(spec::PALETTE_HINT.to_owned()))
         .with_size_of_set(u32::try_from(spec::CATALOGUE.len()).unwrap_or(u32::MAX));
     let mut nodes = Vec::new();
-    for (key, title, _tier) in spec::SECTIONS {
+    for (key, title) in spec::SECTIONS {
         let section_tag = format!("shell.palette.section.{key}");
         list = list.with_child(section_tag.clone());
         let mut section = AccessNode::new(section_tag, AriaRole::Group).with_name(*title);

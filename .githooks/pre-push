@@ -307,6 +307,19 @@ if ! python3 "$repo_root/tools/blast_radius.py" --selftest >&2; then
     exit 1
 fi
 
+# R1797 — the DEMO half of the same computation. `blast_radius.py` answers which
+# packages a change can break; this answers which demos, which is where a wire
+# claim is actually asserted and where R1795's published red came from — six of
+# 645 demos were not on a list somebody wrote by hand. Its selftest checks that
+# the parse still resolves launch targets and that every name it resolves is a
+# real example, so a rename that quietly emptied the mapping fails here instead
+# of turning the tool into a shorter hand-written list.
+echo "pre-push: demo radius selftest ..." >&2
+if ! python3 "$repo_root/tools/demo_radius.py" --selftest >&2; then
+    echo "pre-push: the demo-radius computation failed its own tests" >&2
+    exit 1
+fi
+
 # R1641 — the SCE dual pin: `Cargo.toml`'s rev, this repo's `Cargo.lock`, and
 # the `vendor/sce` submodule gitlink are three statements of one fact, and until
 # now the only thing holding them together was a comment in `Cargo.toml`

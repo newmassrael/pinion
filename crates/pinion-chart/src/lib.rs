@@ -320,6 +320,7 @@ mod palette;
 mod plot;
 mod polar;
 mod polar_chart;
+pub mod quantile;
 mod scale;
 mod scatter;
 #[cfg(test)]
@@ -347,7 +348,7 @@ pub use distribution::{
 };
 pub use donut::{DonutChart, Slice};
 pub use fit::{Along, FitRule, Fitted, Room};
-pub use histogram::{Basis, BinError, BinRule, Binned, MAX_BINS};
+pub use histogram::{Basis, BinEnds, BinError, BinRule, Binned, MAX_BINS};
 pub use interpolate::{CurveSegment, Interpolation, Overshoot, curve, is_graph, overshoot};
 pub use legend::{
     ChartLegend, Legend, LegendEntry, LegendInteraction, LegendPostures, LegendSeat, LegendSeating,
@@ -359,6 +360,7 @@ pub use palette::CategoricalPalette;
 pub use plot::OffScale;
 pub use polar::{AngularScale, Winding};
 pub use polar_chart::PolarChart;
+pub use quantile::{QuantileError, Quantiles, TUKEY_HINGES};
 pub use scale::{
     AxisKind, Categories, CategoryLookup, CategoryScale, CategoryWindow, DEFAULT_LOG_BASE,
     LinearScale, LogScale, ValueScale,

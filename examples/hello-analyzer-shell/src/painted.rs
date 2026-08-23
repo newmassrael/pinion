@@ -71,7 +71,47 @@ const STATES: &[SweptState] = &[
     }),
     ("with a second card of a placed kind", |state| {
         state.preset_open.set(false);
-        ShellOracle::add(state, spec::BOARD[0].kind).expect("a placeable kind is placed");
+        // ★ R1797 — a card is CLOSED to make room before one is added. The
+        // board holds five since the latency card was promoted, and this shell
+        // does not scroll its canvas
+        // (`debt-the-analyzer-canvas-does-not-scroll`), so an unconditional add
+        // put the new card below the viewport: the model said it was shown and
+        // the frame had never drawn it, which every containment gate here then
+        // reported as the screen failing to paint a card. Swapping rather than
+        // appending keeps what this state is FOR — two cards of one kind, so an
+        // ordinal is exercised — without also asserting a scroll this screen
+        // does not have.
+        // ★★★★★ The second card is PLACED AT A NAMED CELL, and nothing is
+        // closed to make room. Three attempts, and the two that failed are
+        // worth the lines because both failure modes are structural:
+        //
+        // * An unconditional `add` places at `(0, board.rows())` — below every
+        //   existing row. The board has held five cards since the latency card
+        //   was promoted, so the sixth landed past the viewport and this shell
+        //   does not scroll its canvas
+        //   (`debt-the-analyzer-canvas-does-not-scroll`): the model said the
+        //   card was shown and no frame had ever drawn it.
+        // * Closing a card to make room removes THAT card's clamps for the
+        //   rest of the sweep, because these states are cumulative. Whichever
+        //   card is chosen, the clamp census reports its guards as unexercised
+        //   — correctly. There is no card that can be spared.
+        //
+        // The board's last placement is four columns wide in a twelve-column
+        // grid, so the cell beside it holds the widest kind the palette has.
+        // Derived from the specification rather than written down, so a board
+        // that changes shape fails the `expect` instead of quietly placing a
+        // card somewhere nobody looks.
+        let tail = spec::BOARD.last().expect("the board is not empty");
+        ShellOracle::add(
+            state,
+            &format!(
+                "{},{},{}",
+                spec::BOARD[0].kind,
+                tail.col + tail.cols,
+                tail.row
+            ),
+        )
+        .expect("a placeable kind fits beside the board's last placement");
     }),
     ("with a card maximised", |state| {
         let id = state.placed()[0].id().as_str().to_owned();
@@ -383,8 +423,15 @@ fn r1668_each_placed_card_paints_the_body_its_kind_is_specified_to_have() {
                 .unwrap_or_else(|| panic!("{case}: {kind} is placed and unknown here"));
             let stem = format!("card.{id}.{family}.");
             let painted = shot.family(&stem).len();
+            // ★ R1797 — a family whose rows are all-or-nothing may legitimately
+            // paint none of them: the latency card's three tiles go together
+            // when the card is too narrow for one of them to say anything, the
+            // way the filter card's do. For a family whose cells drop one at a
+            // time, painting nothing IS the defect this line was written for —
+            // a placeholder passing as a body — so the two are distinguished by
+            // the same table the rest of this reads, not by a name here.
             assert!(
-                painted > 0,
+                painted > 0 || body_cells(kind) == Cells::Whole,
                 "{case}: card {id} paints none of its {rows} specified rows",
             );
             assert!(
@@ -440,8 +487,27 @@ fn r1668_each_placed_card_paints_the_body_its_kind_is_specified_to_have() {
     });
 }
 
-/// The tag family a kind's body rows are painted under, and how many rows the
-/// specification gives it.
+/// Whether a body's rows give up their columns one at a time.
+///
+/// ★ R1797 — stated rather than assumed. The clamp census below asks every
+/// multi-column row whether it has ever been seen dropping a cell, and reports
+/// a clamp nothing exercises as a guard that could be deleted with no gate
+/// noticing. That question is only meaningful for a row that CAN drop a cell:
+/// the latency card's tiles are laid out at a fixed width and drawn whole or
+/// not at all, so asking it produces a clamp that can never be reached and a
+/// permanently red gate. Naming the exception in the census would put the
+/// knowledge where the census is rather than where the painter is; this puts it
+/// in the one table both read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Cells {
+    /// A column too narrow to say anything is dropped from the right.
+    Droppable,
+    /// The row is drawn whole or not at all; its clamp is the family's own.
+    Whole,
+}
+
+/// The tag family a kind's body rows are painted under, how many rows the
+/// specification gives it, and whether its cells drop one at a time.
 ///
 /// One table, read by the body check and by the clamp check next to it: two
 /// copies of "which family is a stream row in" is two things that can disagree
@@ -452,8 +518,25 @@ fn body_family(kind: &str) -> Option<(&'static str, usize)> {
         "decode" => ("tree", spec::DECODE_ROWS.len()),
         "keymap" => ("map", spec::MAP_ROWS.len()),
         "filter" => ("chip", spec::FILTER_CHIPS.len()),
+        // ★ R1797 — the latency card's rows are its three STAT TILES, not its
+        // bars. The bars carry no words of their own: a bar chart puts the
+        // category label on its axis, so `run_words` against a bar tag is
+        // empty by construction and a positional word check there would assert
+        // nothing. The tiles are where this card's reproduction claim actually
+        // lives — they are the three figures the reference publishes, and the
+        // card DERIVES them from its samples, so comparing painted words with
+        // the specification's numbers is a check that can fail.
+        "latency" => ("stat", spec::LATENCY_STAT_KEYS.len()),
         _ => return None,
     })
+}
+
+/// Whether `kind`'s body rows drop columns one at a time.
+fn body_cells(kind: &str) -> Cells {
+    match kind {
+        "latency" => Cells::Whole,
+        _ => Cells::Droppable,
+    }
 }
 
 /// The text runs the painted scene put inside one tag.
@@ -488,6 +571,17 @@ fn specified_row(kind: &str, n: usize) -> Vec<String> {
             vec![id.into(), resource.into(), seen.into()]
         }
         "filter" => vec![spec::FILTER_CHIPS[n].0.into()],
+        // ★ R1797 — the reference's own published figures, rendered from the
+        // specification's constants rather than from the painter's derivation.
+        // Two accounts of one number ON PURPOSE, which is unusual here and is
+        // the point: the card computes these from a hundred samples and this
+        // states what the reference says they are, so the assertion between
+        // them can fail. Reading the painter's own helper instead would be the
+        // comparison that cannot.
+        "latency" => {
+            let (key, value) = spec::latency_tile(n);
+            vec![key.into(), value]
+        }
         other => panic!("{other} has no specified body"),
     }
 }
@@ -614,13 +708,15 @@ fn r1669_the_sweep_reaches_both_sides_of_every_clamp() {
             // going, which is the observable above. Derived rather than
             // excluded by name: this gate found the filter card's chips that
             // way and made the reason be stated instead of assumed.
-            for n in 0..painted {
-                let wanted = specified_row(kind, n).len();
-                if wanted < 2 {
-                    continue;
+            if body_cells(kind) == Cells::Droppable {
+                for n in 0..painted {
+                    let wanted = specified_row(kind, n).len();
+                    if wanted < 2 {
+                        continue;
+                    }
+                    let cells = run_words(shot, &format!("card.{id}.{family}.{n}")).len();
+                    note(format!("{kind}: cells"), cells < wanted);
                 }
-                let cells = run_words(shot, &format!("card.{id}.{family}.{n}")).len();
-                note(format!("{kind}: cells"), cells < wanted);
             }
             // The two all-or-nothing clamps, asked about by name because their
             // outcome is a presence rather than a count.
@@ -634,6 +730,22 @@ fn r1669_the_sweep_reaches_both_sides_of_every_clamp() {
                 note(
                     "filter: stat tiles".to_owned(),
                     shot.family(&format!("card.{id}.stat.")).is_empty(),
+                );
+            }
+            // ★ R1797 — the latency card's own two, both all-or-nothing: the
+            // tiles go when a tile would be narrower than it can say anything
+            // in, and the distribution goes when the plot would be narrower
+            // than one pixel per bucket. The second is the clamp this round
+            // added and it is registered here so a sweep that never reaches a
+            // small card reports the guard as unexercised rather than passing.
+            if kind == "latency" {
+                note(
+                    "latency: stat tiles".to_owned(),
+                    shot.family(&format!("card.{id}.stat.")).is_empty(),
+                );
+                note(
+                    "latency: distribution".to_owned(),
+                    shot.rect(&format!("card.{id}.bins")).is_none(),
                 );
             }
         }
@@ -714,7 +826,7 @@ fn r1668_the_screen_invents_no_seat_and_states_the_counts_it_specifies() {
             .chain(
                 spec::SECTIONS
                     .iter()
-                    .map(|(key, _, _)| format!("shell.palette.section.{key}")),
+                    .map(|(key, _)| format!("shell.palette.section.{key}")),
             )
             .chain([
                 "shell.palette.placed".to_owned(),
@@ -1069,17 +1181,96 @@ fn r1672_every_painted_mark_is_inside_the_box_that_owns_it() {
     );
 }
 
+/// ★★★★★ R1797 — a card is painted **once** per frame.
+///
+/// Written as a hypothesis, which is why it is worth keeping whichever way it
+/// answers. R1671's frame gate reported the latency card's bars 54 pixels below
+/// where the card's own rectangle put them, and every arithmetic route from the
+/// card rect to the bars said that was impossible. The remaining explanation is
+/// that two nodes carry the tag, so a mark from one is being judged against the
+/// other's rectangle — which would make the frame gate's comparison wrong for
+/// any card whose body reaches the bottom, and text rows never do.
+///
+/// If a card really is drawn twice under one address then that is the defect
+/// and the frame gate is an innocent reporter of it; every tag-addressed read
+/// in this screen — the wire, the hit test, the accessibility tree — resolves
+/// one of the two arbitrarily.
+#[test]
+fn r1797_a_card_is_painted_once_per_frame() {
+    let mut doubled: Vec<(String, String, Vec<Rect>)> = Vec::new();
+    sweep(|state, shot, scene, case| {
+        for card in state.placed() {
+            let tag = format!("card.{}", card.id().as_str());
+            let mut seen = Vec::new();
+            scene.for_each_node(&mut |visit| {
+                if visit.node.tag() == Some(tag.as_str())
+                    && let Some(at) = visit.absolute_rect()
+                {
+                    seen.push(at);
+                }
+            });
+            if seen.len() > 1 {
+                doubled.push((case.name.to_owned(), tag, seen));
+            }
+        }
+        // The shot is read so this walks the same frame the gates beside it do,
+        // rather than a scene nobody rendered.
+        let _ = shot.runs.len();
+    });
+    assert!(
+        doubled.is_empty(),
+        "{} card(s) were painted more than once under one tag: {:?}",
+        doubled.len(),
+        &doubled[..doubled.len().min(4)]
+    );
+}
+
 #[test]
 fn r1671_nothing_a_card_paints_crosses_its_own_frame() {
-    sweep(|state, shot, scene, case| {
-        let cards: BTreeMap<String, Rect> = shown_cards(state)
-            .into_iter()
-            .filter_map(|id| shot.rect(&format!("card.{id}")).map(|r| (id, r)))
-            .collect();
+    sweep(|state, _, scene, case| {
+        // ★★★★★ R1797 — the card rectangles come from the SAME walk, in the
+        // SAME frame, as the marks compared against them. They used to come
+        // from the painted regions, which are CLIPPED, while the marks were
+        // walked with `absolute_rect`, which is also clipped — and clipping
+        // does not preserve the relation this gate is about. A card dragged
+        // part of the way off the canvas has its rectangle cut at the clip
+        // edge; a mark inside it that reaches the bottom is cut at the same
+        // edge; and the content box is the CUT card inset by the frame, which
+        // now sits `CARD_FRAME` pixels ABOVE where both were cut. So every
+        // mark reaching the boundary was reported as crossing the frame, by
+        // exactly two pixels, always.
+        //
+        // Nothing had ever reached it: the bodies here are text rows that stop
+        // short of the bottom, and the first body whose content is a chart
+        // filling its box found it immediately. Unclipped on both sides —
+        // `offset` plus the node's own rect, which is what the walk documents
+        // as *where it would be* — asks the question the gate is named for.
+        let unclipped = |visit: &pinion_core::scene::NodeVisit<'_, '_>| -> Option<Rect> {
+            let r = visit.node.rect();
+            Some(Rect::new(
+                u32::try_from(visit.offset.0 + i64::from(r.x)).ok()?,
+                u32::try_from(visit.offset.1 + i64::from(r.y)).ok()?,
+                r.w,
+                r.h,
+            ))
+        };
+        let shown: BTreeSet<String> = shown_cards(state).into_iter().collect();
+        let mut cards: BTreeMap<String, Rect> = BTreeMap::new();
+        scene.for_each_node(&mut |visit| {
+            let Some(tag) = visit.node.tag() else { return };
+            let Some(id) = tag.strip_prefix("card.") else {
+                return;
+            };
+            if shown.contains(id)
+                && let Some(at) = unclipped(&visit)
+            {
+                cards.insert(id.to_owned(), at);
+            }
+        });
         if cards.is_empty() {
             return;
         }
-        let mut crossing: Vec<(String, String, Rect)> = Vec::new();
+        let mut crossing: Vec<(String, String, Rect, Rect)> = Vec::new();
         // ★ How many opaque marks the walk actually WEIGHED. Without it a gate
         // that stopped looking -- a predicate that never matches, a population
         // that derives to nothing -- passes and reads as coverage. Two rounds
@@ -1087,7 +1278,7 @@ fn r1671_nothing_a_card_paints_crosses_its_own_frame() {
         // wrote, so this one carries its own floor.
         let mut weighed = 0_usize;
         scene.for_each_node(&mut |visit| {
-            let Some(rect) = visit.absolute_rect() else {
+            let Some(rect) = unclipped(&visit) else {
                 return;
             };
             if rect.w == 0 || rect.h == 0 {
@@ -1130,10 +1321,18 @@ fn r1671_nothing_a_card_paints_crosses_its_own_frame() {
                     || rect.x + rect.w > content.x + content.w
                     || rect.y + rect.h > content.y + content.h
                 {
+                    // ★ R1797 — the CONTENT box travels with the finding. The
+                    // message used to name the card and the mark and leave the
+                    // box it was judged against to be re-derived by whoever
+                    // read it, which cost this round three rounds of arithmetic
+                    // against the wrong assumption about where the card was. A
+                    // gate that says what it compared can be diagnosed from its
+                    // own output.
                     crossing.push((
                         tag,
                         visit.node.tag().unwrap_or("<untagged>").to_owned(),
                         rect,
+                        content,
                     ));
                 }
             }

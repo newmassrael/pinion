@@ -872,11 +872,42 @@ pub struct WidgetSpec {
 ///
 /// The reference's own grouping: the sections are homogeneous in tier, because
 /// the tier is part of the heading a reader scans.
-pub const SECTIONS: &[(&str, &str, Tier)] = &[
-    ("capture", "CAPTURE & DECODE", Tier::Placeable),
-    ("visual", "VISUALIZATION", Tier::Reserved),
-    ("operate", "DIAGNOSE & OPERATE", Tier::Reserved),
+/// ★★★★★ R1797 — the tier column is **gone**, and that is the round's find.
+///
+/// It used to read `(key, title, Tier)`, and the gate next door asserted that
+/// every entry in a section carried the same tier as the section did. That is
+/// the same fact written twice, held in agreement by a test — which is exactly
+/// what [`section_heading`]'s own comment argues against one paragraph below:
+/// *"a marker written beside the tier is a second copy of it"*. The marker was
+/// derived and the tier itself was not.
+///
+/// It surfaced because R1797 promoted one entry. The promotion was legal, the
+/// screen was right, and a gate failed anyway — because a section could not
+/// hold a promoted widget beside its unpromoted siblings without one of the two
+/// copies becoming false. A section's release is now **read off its entries**
+/// ([`section_tiers`]), so promoting one entry cannot make anything disagree
+/// and a mixed section says so instead of being unrepresentable.
+pub const SECTIONS: &[(&str, &str)] = &[
+    ("capture", "CAPTURE & DECODE"),
+    ("visual", "VISUALIZATION"),
+    ("operate", "DIAGNOSE & OPERATE"),
 ];
+
+/// Which tiers a section's entries actually occupy, as `(has_placeable,
+/// has_reserved)`.
+///
+/// A section with no entries at all answers `(false, false)`, which
+/// [`section_heading`] renders as no release clause rather than as a wrong one.
+#[must_use]
+pub fn section_tiers(section: &str) -> (bool, bool) {
+    CATALOGUE.iter().filter(|w| w.section == section).fold(
+        (false, false),
+        |(placeable, reserved), w| match w.tier {
+            Tier::Placeable => (true, reserved),
+            Tier::Reserved => (placeable, true),
+        },
+    )
+}
 
 /// ★★★★★ R1761 — **which release a section's entries belong to, in the words
 /// the heading paints.**
@@ -889,16 +920,29 @@ pub const SECTIONS: &[(&str, &str, Tier)] = &[
 /// reference answers *when does this arrive*, and the entries beneath it repeat
 /// only the requirement, one row at a time.
 ///
-/// **Derived from the tier rather than typed into [`SECTIONS`]**, because a
+/// **Derived from the entries rather than typed into [`SECTIONS`]**, because a
 /// marker written beside the tier is a second copy of it: a section retiered
 /// with its heading left alone would say one thing and offer another, and
 /// nothing would notice. This way the heading cannot disagree with what the
 /// rows do.
+///
+/// ★ R1797 — it now derives from the ENTRIES rather than from a tier column on
+/// the section, which was itself the second copy this comment warns about. A
+/// section holding both releases says so: promoting one widget out of a group
+/// is a thing the release plan does, and a heading that could only name one
+/// release made it unrepresentable.
 #[must_use]
-pub fn section_heading(title: &str, tier: Tier) -> String {
-    let release = match tier {
-        Tier::Placeable => "RELEASE 1",
-        Tier::Reserved => "RELEASE 2",
+pub fn section_heading(section: &str, title: &str) -> String {
+    let release = match section_tiers(section) {
+        (true, true) => "RELEASE 1 + 2",
+        (true, false) => "RELEASE 1",
+        (false, true) => "RELEASE 2",
+        // A section with no entries has no release to name. It cannot arise
+        // from `CATALOGUE` as it stands and the gate next door says so; the
+        // heading is answered rather than unwrapped because a panel that
+        // panicked over an empty group would be a worse failure than a plain
+        // title.
+        (false, false) => return title.to_owned(),
     };
     format!("{title} \u{b7} {release}")
 }
@@ -982,14 +1026,20 @@ pub const CATALOGUE: &[WidgetSpec] = &[
         tier: Tier::Reserved,
         reserved_for: "requirement 17",
     },
+    // ★ R1797 — promoted from `Tier::Reserved`. The reference books this seat
+    // under its second release, and it stayed booked here for as long as the
+    // framework could not draw what sits in it: a latency distribution needs
+    // geometric buckets with an unbounded tail, and until this round the
+    // histogram had neither. Promoting a seat is a change to the RELEASE
+    // structure the reference defines, so it was asked rather than assumed.
     WidgetSpec {
         kind: "latency",
         code: "LAT",
         label: "Latency",
         gist: "request to reply round trip",
         section: "visual",
-        tier: Tier::Reserved,
-        reserved_for: "requirement 19",
+        tier: Tier::Placeable,
+        reserved_for: "",
     },
     WidgetSpec {
         kind: "health",
@@ -1105,18 +1155,43 @@ pub const BOARD: &[PlacedSpec] = &[
         cols: 5,
         rows: 2,
     },
+    // ★★★★★ R1797 — the second row's three, and the width change is MEASURED
+    // rather than preferred.
+    //
+    // The reference's opening board puts latency at column 0 of the FIFTH row,
+    // four columns wide and two rows tall, and that is where this round put it
+    // first. Then the paint census refused it, correctly: `cell_rect` places
+    // row 4 at `GAP + 4 * ROW_H` = 712, the canvas is `WIN_H - APP_BAR_H -
+    // SUB_BAR_H` = 802 tall, and the card is 332 deep — so its header and its
+    // three tiles were on screen and its DISTRIBUTION, the whole point of the
+    // card, began exactly at the fold.
+    //
+    // The reference's first release fills its viewport exactly: four cards,
+    // four rows, 16 + 4 × 174 = 712 in 802. A fifth card does not fit by
+    // placement, only by reflow. So the two cards of the second row give up two
+    // columns each and the promoted card takes the third slot beside them —
+    // the reference's ROW assignment for all three is preserved, and every card
+    // stays whole and visible. Recorded as a remainder in
+    // `analyzer-dashboard-spec.json` rather than passed off as the reference's.
     PlacedSpec {
         kind: "keymap",
         col: 0,
         row: 2,
-        cols: 6,
+        cols: 4,
         rows: 2,
     },
     PlacedSpec {
         kind: "filter",
-        col: 6,
+        col: 4,
         row: 2,
-        cols: 6,
+        cols: 4,
+        rows: 2,
+    },
+    PlacedSpec {
+        kind: "latency",
+        col: 8,
+        row: 2,
+        cols: 4,
         rows: 2,
     },
 ];
@@ -1381,6 +1456,126 @@ pub const FILTER_STATS: &[(&str, &str)] = &[
     ("37", "shown"),
 ];
 
+// --- The latency card (R1797) ------------------------------------------------
+
+/// ★★★★★ R1797 — the reference's latency card, and the reason its numbers are
+/// **derived here rather than copied**.
+///
+/// The reference draws round-trip time as eight buckets under three stat tiles,
+/// and it publishes both: the bar counts `120, 340, 520, 410, 180, 70, 24, 8`
+/// and the tiles `p50 3.2 ms`, `p95 11.4 ms`, `max 72 ms`. Measured before this
+/// card was drawn, **those two halves describe different distributions**. Its
+/// own counts total 1,672 samples, of which 1,570 — 93.9% — are at or below 16
+/// milliseconds, so the 95th percentile of the bars it draws falls in the
+/// `16-32` bucket. Its tile says 11.4, which is in `8-16`.
+///
+/// That is not a defect worth reproducing, and it is the exact failure the
+/// framework work behind this card removes: a mockup states four numbers
+/// independently and nothing can notice they disagree, while a card that
+/// *derives* all four from one record cannot state a percentile its own bars
+/// contradict. So the reference's **structure** is reproduced — the ladder, the
+/// three tiles, the caption, the emphasised tail — and its **figures** become
+/// the oracle the derivation is checked against.
+///
+/// [`LATENCY_SAMPLES`] is a capture record chosen so that the derivation lands
+/// on the reference's three published landmarks exactly.
+pub const LATENCY_LADDER: &[f64] = &[1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0];
+
+/// The round-trip times the card bins, in milliseconds.
+///
+/// One hundred of them, so that an index is a percent and the profile can be
+/// read off the list. Chosen by stating the quantile function at the landmarks
+/// the reference names and reading a hundred samples off it — which is why
+/// `LATENCY_P50`, `LATENCY_P95` and the maximum come out exactly, and why
+/// the modal bucket is the reference's `2-4`.
+///
+/// ★ The card computes its bins from THESE. It does not start from counts —
+/// that is what `hello-histogram-brush` does, and a card that followed it would
+/// not exercise the binning at all.
+pub const LATENCY_SAMPLES: &[f64] = &[
+    0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.1, //
+    1.2, 1.2, 1.2, 1.3, 1.3, 1.4, 1.4, 1.5, 1.5, 1.6, //
+    1.6, 1.7, 1.7, 1.8, 1.8, 1.9, 1.9, 2.0, 2.0, 2.1, //
+    2.1, 2.2, 2.3, 2.3, 2.4, 2.4, 2.5, 2.5, 2.6, 2.6, //
+    2.7, 2.7, 2.8, 2.8, 2.9, 3.0, 3.0, 3.1, 3.1, 3.2, //
+    3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9, 4.0, 4.2, //
+    4.3, 4.5, 4.7, 4.8, 5.0, 5.2, 5.3, 5.5, 5.6, 5.8, //
+    6.0, 6.1, 6.3, 6.5, 6.6, 6.8, 7.0, 7.1, 7.3, 7.5, //
+    7.6, 7.8, 8.0, 8.2, 8.5, 8.8, 9.1, 9.4, 9.7, 9.9, //
+    10.2, 10.5, 10.8, 11.1, 11.4, 11.4, 19.8, 27.8, 47.7, 72.0,
+];
+
+/// The reference's median tile, in milliseconds — the oracle the derived p50 is
+/// checked against.
+///
+/// ★★ The oracle is the GATE's, not the application's, and `#[cfg(test)]` says
+/// so rather than a comment. These four items and `latency_tile` are the
+/// reference's published figures; the card never reads them, and shipping them
+/// in the binary would put the reference's numbers where the application's own
+/// derivation belongs — the exact conflation this card exists to remove. The
+/// compiler found it: outside the gates they are dead, and `dead_code` said so.
+#[cfg(test)]
+pub const LATENCY_P50: f64 = 3.2;
+
+/// The reference's 95th-percentile tile, in milliseconds.
+///
+/// ★ It is also the **tail cut** the gate checks against: the bars at or above
+/// it are the ones the card emphasises. The reference hard-codes which bars are
+/// amber by index; the card derives its cut from the samples, so it moves when
+/// the capture does, which is a claim a reader can check.
+#[cfg(test)]
+pub const LATENCY_P95: f64 = 11.4;
+
+/// The reference's maximum tile, in milliseconds.
+#[cfg(test)]
+pub const LATENCY_MAX: f64 = 72.0;
+
+/// The three stat tiles' keys, in the order the reference lays them out.
+pub const LATENCY_STAT_KEYS: &[&str] = &["p50", "p95", "max"];
+
+/// The caption under the bars.
+///
+/// The reference's three clauses — what is measured, what the buckets are, and
+/// what the emphasis means — with the third saying *why* a bar is emphasised
+/// rather than only that it is. That clause is the one thing here the reference
+/// could not have written: its tail is an index.
+pub const LATENCY_CAPTION: &str =
+    "request-reply round trip \u{00B7} ms buckets \u{00B7} tail above p95";
+
+/// The unit the tiles are read in.
+pub const LATENCY_UNIT: &str = "ms";
+
+/// How many value-axis ticks the distribution draws.
+///
+/// `ChartStyle::default().y_ticks`, which is what the painter actually asks
+/// for. Stated here because the silence census needs a population and a number
+/// written twice is a number that drifts — the gate below asserts these two are
+/// the same.
+pub const LATENCY_Y_TICKS: usize = 5;
+
+/// Tile `n` as the **reference** publishes it: its key and its rendered value.
+///
+/// The oracle, not the output. The card derives these three numbers from
+/// [`LATENCY_SAMPLES`] and never reads this function; the paint gate compares
+/// what the card drew against what this says, which is an assertion that can
+/// fail. A gate that read the card's own helper would be comparing a value
+/// with itself.
+///
+/// Out of range answers an empty pair rather than panicking: this is read by a
+/// sweep that walks whatever the card painted, and a card that grew a fourth
+/// tile should fail the comparison rather than take the process down.
+#[cfg(test)]
+#[must_use]
+pub fn latency_tile(n: usize) -> (&'static str, String) {
+    let ms = match n {
+        0 => LATENCY_P50,
+        1 => LATENCY_P95,
+        2 => LATENCY_MAX,
+        _ => return ("", String::new()),
+    };
+    (LATENCY_STAT_KEYS[n], format!("{ms:.1} {LATENCY_UNIT}"))
+}
+
 /// The header controls a placed card carries, in the order they are painted.
 ///
 /// Every placed card carries the same four in the reference: the board is
@@ -1521,6 +1716,25 @@ pub enum Population {
     Chips,
     /// One per [`FILTER_STATS`] count, keyed by index.
     Stats,
+    /// ★ R1797 — one per [`LATENCY_STAT_KEYS`] landmark, keyed by index.
+    ///
+    /// A second stat population rather than a reuse of [`Self::Stats`]: the two cards
+    /// have three tiles each TODAY, and a population that answered "three" for
+    /// both would keep agreeing after one of them changed. The census is meant
+    /// to break when a surface does.
+    LatencyTiles,
+    /// ★ R1797 — one per latency bucket: the stated ladder's interior bins plus
+    /// the two unbounded ends.
+    ///
+    /// Derived from [`LATENCY_LADDER`] rather than written as eight, so a
+    /// boundary added there moves the census with it.
+    LatencyBins,
+    /// ★ R1797 — one per value-axis tick the distribution draws.
+    ///
+    /// The chart's own default, which is the honest source: this is how many
+    /// grid lines and y labels the painter emits, and a number here that
+    /// disagreed would demand regions nothing paints.
+    LatencyTicks,
     /// ★ One per catalogue entry the first release **reserves** — a predicate
     /// over [`CATALOGUE`] rather than the whole of it, so the gate demands
     /// exactly the nine locked seats and not thirteen.
@@ -1566,10 +1780,7 @@ impl Population {
             Population::One => vec![String::new()],
             Population::Rail => RAIL.iter().map(|seat| seat.key.to_owned()).collect(),
             Population::Catalogue => CATALOGUE.iter().map(|w| w.kind.to_owned()).collect(),
-            Population::Sections => SECTIONS
-                .iter()
-                .map(|(key, _, _)| (*key).to_owned())
-                .collect(),
+            Population::Sections => SECTIONS.iter().map(|(key, _)| (*key).to_owned()).collect(),
             Population::Cards => card_ids(),
             Population::CardChrome => card_ids()
                 .into_iter()
@@ -1593,6 +1804,11 @@ impl Population {
             Population::MapCells => cell_members("keymap", MAP_ROWS.len(), MAP_COLUMNS.len()),
             Population::Chips => indexes(FILTER_CHIPS.len()),
             Population::Stats => indexes(FILTER_STATS.len()),
+            Population::LatencyTiles => indexes(LATENCY_STAT_KEYS.len()),
+            // The interior bins the ladder's boundaries describe, plus the two
+            // unbounded ends `BinEnds::Open` adds.
+            Population::LatencyBins => indexes(LATENCY_LADDER.len() + 1),
+            Population::LatencyTicks => indexes(LATENCY_Y_TICKS),
             Population::Reserved => CATALOGUE
                 .iter()
                 .filter(|w| w.tier == Tier::Reserved)
@@ -1906,6 +2122,41 @@ pub const VOICES: &[VoiceSpec] = &[
         population: Population::One,
         at: Where::At("dashboard"),
     },
+    // --- the latency card (R1797) ---------------------------------------
+    //
+    // ★ Three, and the distribution is the one that matters: a chart is where
+    // "announce the picture" is not enough, because the SHAPE is the content.
+    // Its reading carries the sample count, the rule that binned them, every
+    // bucket with its count and which buckets are the tail — the same
+    // derivation the wire publishes and the paint draws.
+    // ⚠ No entry for `card.latency#4.tiles`. It is an accessibility GROUPING
+    // node — it gathers the three tiles under one name — and it paints nothing
+    // of its own, so a voice declaration for it names a region the census
+    // cannot find. The sibling `card.filter#3.counts` is the same shape and has
+    // the same absence; this comment is here because that absence read as an
+    // oversight until the census refused the entry.
+    VoiceSpec {
+        tag: "card.latency#4.stat.{}",
+        role: "status",
+        population: Population::LatencyTiles,
+        at: Where::At("dashboard"),
+    },
+    VoiceSpec {
+        tag: "card.latency#4.bins",
+        role: "group",
+        population: Population::One,
+        at: Where::At("dashboard"),
+    },
+    // ★ The caption is VOICED, not silenced. It says what is measured, what the
+    // buckets are, and why some bars are emphasised — the third clause being
+    // the one the reference could not write, since its tail is an index. A
+    // reader who cannot see the chart needs that sentence more than one who can.
+    VoiceSpec {
+        tag: "card.latency#4.caption",
+        role: "status",
+        population: Population::One,
+        at: Where::At("dashboard"),
+    },
     // --- the palette ----------------------------------------------------
     VoiceSpec {
         tag: "shell.palette",
@@ -2059,6 +2310,59 @@ pub const SILENCES: &[(&str, Population, &str, Where)] = &[
         "match.spark.line",
         Population::One,
         "decorative",
+        Where::At("dashboard"),
+    ),
+    // ★★★★★ R1797 — the latency distribution's marks. The REGION is what a
+    // reader is told about and its announcement carries the whole shape —
+    // sample count, the rule that binned them, every bucket with its count and
+    // which are the tail — so each mark here is how that is drawn.
+    //
+    // Declared per FAMILY rather than as one wildcard, because the four
+    // families owe different kinds of quiet and saying so is the point of this
+    // table: a bar is part of the distribution, an axis line and a grid line
+    // are decoration, and a tick label's words are already in the region's
+    // reading. A single blanket entry would satisfy the census while making no
+    // claim at all.
+    (
+        "card.latency#4.dist",
+        Population::One,
+        "part_of",
+        Where::At("dashboard"),
+    ),
+    (
+        "card.latency#4.dist.bar.{}",
+        Population::LatencyBins,
+        "part_of",
+        Where::At("dashboard"),
+    ),
+    (
+        "card.latency#4.dist.xlabel.{}",
+        Population::LatencyBins,
+        "part_of",
+        Where::At("dashboard"),
+    ),
+    (
+        "card.latency#4.dist.axis.x",
+        Population::One,
+        "decorative",
+        Where::At("dashboard"),
+    ),
+    (
+        "card.latency#4.dist.axis.y",
+        Population::One,
+        "decorative",
+        Where::At("dashboard"),
+    ),
+    (
+        "card.latency#4.dist.grid.y.{}",
+        Population::LatencyTicks,
+        "decorative",
+        Where::At("dashboard"),
+    ),
+    (
+        "card.latency#4.dist.label.y.{}",
+        Population::LatencyTicks,
+        "part_of",
         Where::At("dashboard"),
     ),
     // ★★ R1733 — a palette row's four parts. The ROW is the control: pressing

@@ -2610,6 +2610,28 @@ impl TextOverflow {
             Self::Ellipsis | Self::EllipsisStart | Self::EllipsisMiddle
         )
     }
+
+    /// ★★★★★ R1797 — whether this arm confines the **painted ink** to `rect`.
+    ///
+    /// Every arm but [`Visible`](Self::Visible): an ellipsis shortens the
+    /// string and `Clip` scissors the glyphs, and either way nothing lands
+    /// outside the box.
+    ///
+    /// It is a second predicate rather than a second use of
+    /// [`shortens`](Self::shortens) because the two answer different questions,
+    /// and using the first for the second is a real defect this project shipped.
+    /// `shortens` is about **content** — what introspection has to report,
+    /// which is why `Clip` is not one of its arms, and that is correct: a
+    /// clipped run still *contains* every character. `bounds_ink` is about
+    /// **pixels**. `crate::test_fixtures::screen_ink` asked the content
+    /// question to decide a pixel one, so it counted a clipped run's hidden
+    /// glyphs as ink that had escaped its box — marks nobody could see,
+    /// reported as marks painted outside. Found at R1797 by a chart whose
+    /// last category label is clipped by design.
+    #[must_use]
+    pub const fn bounds_ink(self) -> bool {
+        !matches!(self, Self::Visible)
+    }
 }
 
 /// R1551 §5.36 — CSS `text-indent`: how far the *first* line of a paragraph

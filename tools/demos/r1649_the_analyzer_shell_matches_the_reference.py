@@ -89,21 +89,33 @@ CATALOGUE = [
     "admin",
 ]
 
-#: The four the first release places, and the board it opens with.
-OPENING = ["packet#0", "decode#1", "keymap#2", "filter#3"]
+#: The five the first release places, and the board it opens with.
+#:
+#: ★ R1797 — `latency#4` joined them. Its seat was booked under the reference's
+#: second release for as long as the framework could not draw what sits in it:
+#: a latency distribution needs geometric buckets with an unbounded tail, and
+#: the histogram had neither until that round.
+OPENING = ["packet#0", "decode#1", "keymap#2", "filter#3", "latency#4"]
 
-#: The nine it reserves, and the requirement each is booked under.
+#: The eight it reserves, and the requirement each is booked under.
 RESERVED = {
     "topology": "requirement 12",
     "overlay": "requirement 13",
     "throughput": "requirement 16",
     "share": "requirement 17",
-    "latency": "requirement 19",
     "health": "requirement 18",
     "loss": "requirement 20",
     "alarms": "requirement 21",
     "admin": "requirement 14",
 }
+
+#: ★ R1797 — the latency card's own numbers, as the reference publishes them.
+#: The application derives all three from one capture record; these are the
+#: oracle that derivation is checked against over the wire.
+LATENCY_TILES = {"p50": "3.2 ms", "p95": "11.4 ms", "max": "72.0 ms"}
+
+#: The reference's bucket ladder, and the two open ends that make it eight.
+LATENCY_BUCKETS = ["<1", "1-2", "2-4", "4-8", "8-16", "16-32", "32-64", ">64"]
 
 
 def q(tf: RpcSubprocess, path: str):
@@ -178,8 +190,8 @@ def body() -> None:
 
         # ── (A) the shell is assembled: a catalogue, a board, and a count ─
         assert_eq(q(tf, "catalogue"), ",".join(CATALOGUE), "A: thirteen kinds offered")
-        assert_eq(q(tf, "cards"), ",".join(OPENING), "A: four placed, in board order")
-        assert_eq(q(tf, "placed_count"), 4, "A: and the count agrees")
+        assert_eq(q(tf, "cards"), ",".join(OPENING), "A: five placed, in board order")
+        assert_eq(q(tf, "placed_count"), 5, "A: and the count agrees")
         assert_eq(q(tf, "preset"), "Overview", "A: the layout it opens on")
         assert_eq(
             q(tf, "rail"),
@@ -201,46 +213,61 @@ def body() -> None:
         # ── (B) ★ a card is ADDED from the palette, not seeded ───────────
         # The reason the palette exists: what is on the board is a decision
         # somebody made, so two places on screen have to agree about how many.
-        assert_eq(inv(tf, "add", "packet"), "packet#4", "B: a new card takes the next ordinal")
-        assert_eq(q(tf, "placed_count"), 5, "B: and the board grew")
+        assert_eq(inv(tf, "add", "packet"), "packet#5", "B: a new card takes the next ordinal")
+        assert_eq(q(tf, "placed_count"), 6, "B: and the board grew")
         assert "is not a widget kind" in refused(tf, "add", "nonesuch"), (
             "B: the catalogue is closed, and the refusal lists it"
         )
         # A kind can be placed twice — which is why an id carries an ordinal.
-        assert_eq(inv(tf, "add", "packet"), "packet#5", "B: twice is allowed")
-        assert_eq(q(tf, "placed_count"), 6, "B: six on the board")
+        assert_eq(inv(tf, "add", "packet"), "packet#6", "B: twice is allowed")
+        assert_eq(q(tf, "placed_count"), 7, "B: seven on the board")
         # Closed over the wire rather than by hand: the fifth card lands below
         # the viewport, and this shell does not scroll its canvas
         # (debt-the-analyzer-canvas-does-not-scroll). Stated here rather than
         # worked around silently, because a demo that quietly avoided the edge
         # of the window would be hiding the difference from the reference.
-        inv(tf, "act", "packet#5,close")
-        assert_eq(q(tf, "placed_count"), 5, "B: and one closed")
+        inv(tf, "act", "packet#6,close")
+        assert_eq(q(tf, "placed_count"), 6, "B: and one closed")
         # And placing one from the PALETTE, which is the gesture that matters.
         click(tf, at(tf, "shell.palette.keymap"))
-        assert_eq(q(tf, "placed_count"), 6, "B: ★ the palette places a card")
-        assert q(tf, "cards").endswith("keymap#6"), f"B: by kind: {q(tf, 'cards')}"
-        inv(tf, "act", "keymap#6,close")
-        assert_eq(q(tf, "placed_count"), 5, "B: the added card stays for what follows")
+        assert_eq(q(tf, "placed_count"), 7, "B: ★ the palette places a card")
+        assert q(tf, "cards").endswith("keymap#7"), f"B: by kind: {q(tf, 'cards')}"
+        inv(tf, "act", "keymap#7,close")
+        assert_eq(q(tf, "placed_count"), 6, "B: the added card stays for what follows")
 
-        # ── (B2) ★ R1668 — the nine seats a later release opens ───────────
+        # ── (B2) ★ R1668 — the eight seats a later release opens ──────────
         # The reference shows them rather than hiding them, so the shape of the
         # finished tool is legible now. Each one says what it is waiting for,
         # and no path here places it.
         spec = q(tf, "spec")
-        assert_eq(spec["placeable_count"], 4, "B2: four this release places")
-        assert_eq(spec["reserved_count"], 9, "B2: and nine it reserves")
+        assert_eq(spec["placeable_count"], 5, "B2: five this release places")
+        assert_eq(spec["reserved_count"], 8, "B2: and eight it reserves")
         assert_eq(
             [w["kind"] for w in spec["catalogue"] if w["tier"] == "reserved"],
             list(RESERVED),
-            "B2: the reserved nine, in palette order",
+            "B2: the reserved eight, in palette order",
         )
+        # ★★ R1797 — a section publishes the releases its ENTRIES occupy, and
+        # `visual` now holds both. Before this round a section carried a single
+        # tier of its own, which is the same fact stored twice — and promoting
+        # one widget out of a group made one of the two copies false.
+        visual = next(s for s in spec["sections"] if s["key"] == "visual")
+        assert_eq(
+            visual["tiers"],
+            ["placeable", "reserved"],
+            "B2: ★ a mixed section says so on the wire",
+        )
+        assert "RELEASE 1 + 2" in visual["heading"], (
+            f"B2: and the heading a reader scans says so: {visual['heading']!r}"
+        )
+        capture = next(s for s in spec["sections"] if s["key"] == "capture")
+        assert_eq(capture["tiers"], ["placeable"], "B2: while a pure section names one")
         for kind, booking in RESERVED.items():
             entry = next(w for w in spec["catalogue"] if w["kind"] == kind)
             assert_eq(entry["reserved_for"], booking, f"B2: {kind} states its booking")
             why = refused(tf, "add", kind)
             assert booking in why, f"B2: ★ {kind} refuses AND names the booking: {why}"
-        assert_eq(q(tf, "placed_count"), 5, "B2: and not one of them reached the board")
+        assert_eq(q(tf, "placed_count"), 6, "B2: and not one of them reached the board")
 
         # ★ The same fact on the READ channel, from the framework's own cascade
         # rather than from anything this shell wrote down: `scene/disabled` says
@@ -399,8 +426,8 @@ def body() -> None:
                 "settings,tear_off,maximize,close",
                 f"C: {card} carries the same four as every other card",
             )
-        assert "is not an affordance" in refused(tf, "act", "packet#4,float"), "C: closed set"
-        assert "is not <card>,<affordance>" in refused(tf, "act", "packet#4"), "C: malformed"
+        assert "is not an affordance" in refused(tf, "act", "packet#5,float"), "C: closed set"
+        assert "is not <card>,<affordance>" in refused(tf, "act", "packet#5"), "C: malformed"
 
         # ── (D) ★ the body state, and its DERIVED remedy ─────────────────
         assert_eq(
@@ -413,7 +440,7 @@ def body() -> None:
         for word, card, detail, remedy, actionable in [
             ("loading", "decode#1", None, "wait", "no"),
             ("empty", "keymap#2", None, "widen", "yes"),
-            ("failed", "packet#4", "collector unreachable", "retry", "yes"),
+            ("failed", "packet#5", "collector unreachable", "retry", "yes"),
         ]:
             arg = f"{card},{word}" if detail is None else f"{card},{word},{detail}"
             inv(tf, "set_state", arg)
@@ -583,7 +610,7 @@ def body() -> None:
             f"card decided: {texts_of(opaque)}"
         )
         assert find_by_tag(snap, "card.packet#0.tear_off") is not None, "J: offered, so painted"
-        assert find_by_tag(snap, "card.packet#4.tear_off") is None, (
+        assert find_by_tag(snap, "card.packet#5.tear_off") is None, (
             "J: not offered, so absent from the scene — the wire refusal in (C) "
             "and this are the same set, read two ways"
         )
@@ -800,6 +827,105 @@ def body() -> None:
             "TransportClock rather than being a fourth state to keep in step",
         )
         assert "0..=1000" in refused(tf, "seek", "1400"), "M: outside the window"
+
+        # ── (M2) ★★★★★ R1797 — the latency card, and the ONE record ───────
+        #
+        # The reference draws this card as eight buckets under three tiles and
+        # publishes both sets of numbers independently — and they disagree: its
+        # own bar counts put the 95th percentile in `16-32` while its tile says
+        # 11.4 ms, which is in `8-16`. A mockup cannot notice that. This card
+        # derives the bars, the tiles and the emphasis from ONE capture record,
+        # so it cannot say two things about one distribution, and the checks
+        # below are what makes that a claim rather than a hope.
+        snap = paint(tf)
+        for n, key in enumerate(("p50", "p95", "max")):
+            tile = find_by_tag(snap, f"card.latency#4.stat.{n}")
+            assert tile is not None, f"M2: the {key} tile is painted"
+            words = texts_of(tile)
+            assert key in words, f"M2: the {key} tile names its landmark: {words}"
+            assert LATENCY_TILES[key] in words, (
+                f"M2: ★ and DERIVES the reference's published figure "
+                f"{LATENCY_TILES[key]!r} rather than printing it: {words}"
+            )
+        assert find_by_tag(snap, "card.latency#4.bins") is not None, "M2: the bars are drawn"
+        caption = find_by_tag(snap, "card.latency#4.caption")
+        assert caption is not None, "M2: and the caption under them"
+        assert "p95" in " ".join(texts_of(caption)), (
+            f"M2: ★★ which says WHY a bar is emphasised. The reference's says "
+            f"'tail in amber' and its tail is a hard-coded index, so its caption "
+            f"cannot be checked against anything: {texts_of(caption)}"
+        )
+        # ★★★ The bucket ladder itself, read off the painted bars. Two of the
+        # eight are UNBOUNDED — `<1` and `>64` — which the floor's numeric axis
+        # measurably cannot express: handed +inf it refuses and keeps its old
+        # maximum. Here the open end is what stops the 72 ms reply being dropped
+        # while the `max` tile still reported it.
+        # `walk_nodes` yields `(path, node)` — the path is for failure messages.
+        drawn = [
+            t
+            for _, node in walk_nodes(snap)
+            if (node.get("tag") or "").startswith("card.latency#4.dist.")
+            for t in texts_of(node)
+        ]
+        for bucket in LATENCY_BUCKETS:
+            assert bucket in drawn, f"M2: the {bucket!r} bucket is on the chart: {drawn}"
+
+        # ★★★★★ And the DERIVATION on the wire, which is where this card goes
+        # past the floor: the floor's bar surface has no name for a rule or a
+        # basis at all, measured this round by enumerating it at runtime. A
+        # reader looking at a surprising distribution has two hypotheses — the
+        # data is like that, and the binning did that — and these fields are
+        # what tell them apart without a pixel.
+        lat = q(tf, "spec")["latency"]
+        assert_eq(lat["binned"], True, "M2: the record binned")
+        assert_eq(lat["rule"], "stated", "M2: ★ the wire says WHICH rule chose the bins")
+        assert_eq(lat["ends"], "open", "M2: and that the outer bins are unbounded")
+        assert_eq(
+            [b["label"] for b in lat["buckets"]],
+            LATENCY_BUCKETS,
+            "M2: the published ladder is the reference's",
+        )
+        assert_eq(
+            sum(b["count"] for b in lat["buckets"]),
+            lat["basis"]["n"],
+            "M2: ★★ every sample the basis counted is in a bucket — an open end "
+            "is a BIN, not a discard",
+        )
+        assert_eq(lat["outside"], {"below": 0, "above": 0}, "M2: so nothing fell out")
+        assert_eq(
+            lat["basis"]["quantile_method"],
+            "linear",
+            "M2: ★ and the basis says WHICH quantile definition made its IQR — "
+            "three private copies in one crate disagreed about that until R1797",
+        )
+        assert_eq(
+            [t["value"] for t in lat["tiles"]],
+            [LATENCY_TILES[k] for k in ("p50", "p95", "max")],
+            "M2: the published tiles are the painted ones",
+        )
+        # ★★ The consistency the reference's own card fails, done from OUTSIDE:
+        # walk the published counts to the 95th percentile and check the bucket
+        # it lands in contains the published cut.
+        cut = lat["tail_cut"]
+        seen, landed = 0, lat["buckets"][-1]
+        for bucket in lat["buckets"]:
+            seen += bucket["count"]
+            if seen >= 0.95 * lat["basis"]["n"]:
+                landed = bucket
+                break
+        assert (landed["lo"] is None or cut >= landed["lo"]) and (
+            landed["hi"] is None or cut <= landed["hi"]
+        ), (
+            f"M2: ★★★★★ the p95 tile says {cut} and the published bars put the "
+            f"95th percentile in {landed['label']!r} — the reference publishes "
+            f"exactly this contradiction and cannot notice it"
+        )
+        assert_eq(
+            [b["label"] for b in lat["buckets"] if b["tail"]],
+            ["16-32", "32-64", ">64"],
+            "M2: ★ and the emphasised bars are the ones at or above that cut, "
+            "derived rather than an index",
+        )
 
         # ── (N) ★★★★★ and a REAL press, through the §5.35 router ─────────
         #

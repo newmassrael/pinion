@@ -2649,20 +2649,17 @@ mod tests {
         let mut scene = view_config_form("f", &form, &geometry, &theme);
         let mut cache = pinion_text::LayoutCache::new();
         compute_layout(&mut scene, &mut cache, 400, 400);
-        let escapes = pinion_core::containment::escapes(&scene, &mut |t| {
-            #[allow(
-                clippy::cast_possible_truncation,
-                reason = "a configuration path is a handful of characters"
-            )]
-            let chars = t.content.chars().count() as u32;
-            let px = t.style.font_size_px.max(1);
-            let w = if t.style.overflow.shortens() {
-                t.rect.w.min(chars * px)
-            } else {
-                chars * px
-            };
-            (w, t.rect.h)
-        });
+        // ★ R1797 — the framework's own stand-in, not a third copy of it. This
+        // held a byte-identical duplicate of `screen_ink::stand_in_ink`, and it
+        // duplicated the defect too: both asked `TextOverflow::shortens()` —
+        // which is about the CONTENT — to decide how far the INK reaches, so a
+        // clipped run's hidden glyphs counted as ink outside its box. Fixing it
+        // in one place and leaving a copy behind is how this tree grew three
+        // private quantiles, which the same round had to lift.
+        let escapes = pinion_core::containment::escapes(
+            &scene,
+            &mut pinion_core::test_fixtures::screen_ink::stand_in_ink,
+        );
         assert!(
             escapes.is_empty(),
             "{} mark(s) left the box that owns them with a long key: {:?}",

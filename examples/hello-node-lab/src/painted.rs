@@ -1952,7 +1952,13 @@ fn r1654_every_painted_run_declares_what_happens_when_it_does_not_fit() {
                 return;
             };
             checked += 1;
-            if !text.style.overflow.shortens() {
+            // ★ R1797 — `bounds_ink`, not `shortens`. The question here is
+            // whether a run has a policy for outgrowing its box, and `Clip` IS
+            // one — it scissors the glyphs, which is exactly a policy. It is
+            // absent from `shortens` on purpose, because that predicate is
+            // about whether the CONTENT changes, and asking it here reported a
+            // clipped run as having no policy at all.
+            if !text.style.overflow.bounds_ink() {
                 unguarded.push((text.content.clone(), text.style.overflow));
             }
         });

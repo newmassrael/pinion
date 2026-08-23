@@ -430,7 +430,13 @@ fn resolve_bandwidth(sorted: &[f64], rule: Bandwidth) -> Result<f64, DensityErro
     let spread = if scott {
         sigma
     } else {
-        let iqr = quantile(sorted, 0.75) - quantile(sorted, 0.25);
+        // ★ R1797 — through the crate's one quantile type. The number is
+        // unchanged (Hyndman & Fan type 7, which is what the private copy this
+        // replaced computed); what is new is that it can now SAY so, and that
+        // the histogram's bin rule one module over reads the same definition
+        // from the same place instead of a second copy of the arithmetic.
+        let iqr =
+            crate::quantile::Quantiles::from_sorted(sorted, crate::QuantileMethod::Linear).iqr();
         let robust = iqr / 1.349;
         if robust > 0.0 {
             sigma.min(robust)
@@ -444,30 +450,6 @@ fn resolve_bandwidth(sorted: &[f64], rule: Bandwidth) -> Result<f64, DensityErro
         Ok(h)
     } else {
         Err(DensityError::NoSpread)
-    }
-}
-
-/// Linear-interpolating quantile over a sorted slice — the same reading
-/// [`crate::QuantileMethod::Linear`] uses, kept local because the bandwidth
-/// rule needs an IQR whatever quantile definition the box plot was built with.
-fn quantile(sorted: &[f64], p: f64) -> f64 {
-    let n = sorted.len();
-    if n == 1 {
-        return sorted[0];
-    }
-    let pos = p * count_as_f64(n - 1);
-    let lo = pos.floor();
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "pos is in [0, n-1] by construction"
-    )]
-    let i = lo as usize;
-    let frac = pos - lo;
-    if i + 1 >= n {
-        sorted[n - 1]
-    } else {
-        sorted[i] + frac * (sorted[i + 1] - sorted[i])
     }
 }
 

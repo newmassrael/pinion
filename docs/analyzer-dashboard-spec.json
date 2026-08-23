@@ -53,7 +53,32 @@
     "frame. Where a part is a value or a control whose label the screen changes",
     "as it works, the title is this screen's own name for it and what the pin",
     "fixes is the roster and its order. `crate::judge` says which is which per",
-    "surface and why."
+    "surface and why.",
+    "",
+    "R1797 — WHAT THE `board` SURFACE DOES NOT PIN, AND ONE DIVERGENCE THAT",
+    "LIVES HERE BECAUSE OF IT. This surface pins the cards the board holds and",
+    "their titles, in order. It does not pin WHERE each one sits, so the",
+    "placement below is not a remainder it can carry — a divergence declared",
+    "against a surface that cannot measure it is refused, correctly, as already",
+    "paid.",
+    "",
+    "The reference's opening board puts its latency widget at column 0 of the",
+    "fifth row, four columns wide and two rows tall, and R1797 put it there",
+    "first. The paint census refused it: a row is 174 pixels and the board",
+    "starts 16 in, so row 4 begins at 712, while the canvas is 802 tall and the",
+    "card is 332 deep. Its header and its three stat tiles were on screen and",
+    "its DISTRIBUTION began exactly at the fold — the one thing a distribution",
+    "card exists to show was the one thing cut off.",
+    "",
+    "The reference's first release fills this viewport exactly: four cards over",
+    "four rows, 712 pixels in 802. A fifth does not fit by placement, only by",
+    "reflow. So the three cards of the third row are four columns each instead",
+    "of six and six, which keeps every card whole and visible and keeps the",
+    "reference's ROW assignment for all three. The alternative is what the",
+    "reference's own eight-widget second-release board does — let the reader",
+    "scroll — and it is available here; it was not taken because a card that",
+    "shows nothing at rest reproduces a distribution card worse than a narrower",
+    "one that shows it."
   ],
   "layout_bar": {
     "canon": [
@@ -90,6 +115,12 @@
         "sentence": "`operate` is specified as \"DIAGNOSTICS · RELEASE 2\" and reads \"DIAGNOSE & OPERATE · RELEASE 2\"",
         "since": "R1761",
         "why": "The reference's third group holds three diagnostic widgets. This build's third group holds those and two that ACT on the system under study rather than report on it, so a heading saying only diagnostics would misname half of what is under it. The group's membership is the reference's requirement table's; the heading follows the membership."
+      },
+      {
+        "key": "visual",
+        "sentence": "`visual` is specified as \"VISUALIZATION · RELEASE 2\" and reads \"VISUALIZATION · RELEASE 1 + 2\"",
+        "since": "R1797",
+        "why": "The reference books its latency widget under the second release and this build now places it, at the reader's decision, so that group holds one first-release widget beside four second-release ones and a heading naming a single release would be false about half of what is under it. The promotion moves this build TOWARDS the behaviour reference rather than away from it: that prototype's own opening board places latency at column 0 of the fifth row, four columns wide and two rows tall, which is where `board` now puts it. What the promotion waited on was the framework — a latency distribution needs a geometric bucket ladder with an unbounded tail and percentile landmarks, and the charting crate had none of the three until R1797 built them."
       }
     ]
   },
@@ -118,7 +149,8 @@
       { "key": "packet#0", "title": "Message Stream" },
       { "key": "decode#1", "title": "Decode Inspector" },
       { "key": "keymap#2", "title": "Identifier Map" },
-      { "key": "filter#3", "title": "Search & Filter" }
+      { "key": "filter#3", "title": "Search & Filter" },
+      { "key": "latency#4", "title": "Latency" }
     ],
     "owed": []
   }

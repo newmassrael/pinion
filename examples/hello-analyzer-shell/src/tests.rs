@@ -49,31 +49,46 @@ fn probe_palette() -> super::Palette {
 }
 
 /// R1668 — the catalogue is thirteen entries in two tiers, each in a listed
-/// section, and each section is homogeneous in tier.
+/// section. R1797 — **five** placeable and eight reserved, and a section's
+/// heading is read off its entries rather than checked against a second copy.
 ///
 /// The palette's footer states **both** counts, so an entry that moved tier
-/// without moving section would put two numbers on the screen that disagree
+/// without the footer moving would put two numbers on the screen that disagree
 /// with the list under them.
+///
+/// ★★★★★ R1797 — what this test used to assert, and why it stopped. It read
+/// `section.2 == def.tier`: every entry of a section had to carry the section's
+/// own tier column. That is one fact stored twice and kept in step by this
+/// assertion — the exact shape `section_heading`'s doc comment argues against
+/// two paragraphs from where the column stood. It surfaced the moment a single
+/// widget was promoted out of a group: the promotion was legal and the screen
+/// was right, and a gate failed because the model had no way to hold a mixed
+/// section. The tier column is gone; the heading derives.
 #[test]
-fn r1668_the_catalogue_is_four_placeable_and_nine_reserved() {
+fn r1668_the_catalogue_is_five_placeable_and_eight_reserved() {
     assert_eq!(spec::CATALOGUE.len(), 13);
-    assert_eq!(spec::placeable_count(), 4, "the palette's footer says this");
-    assert_eq!(spec::reserved_count(), 9, "and this");
+    assert_eq!(spec::placeable_count(), 5, "the palette's footer says this");
+    assert_eq!(spec::reserved_count(), 8, "and this");
 
     let mut seen = std::collections::BTreeSet::new();
     let mut codes = std::collections::BTreeSet::new();
     for def in spec::CATALOGUE {
         assert!(seen.insert(def.kind), "{} appears twice", def.kind);
         assert!(codes.insert(def.code), "{} shares its code", def.kind);
-        let section = spec::SECTIONS
-            .iter()
-            .find(|(key, ..)| *key == def.section)
-            .unwrap_or_else(|| panic!("{} is in an unlisted section", def.kind));
-        assert_eq!(
-            section.2, def.tier,
-            "{} sits in a {:?} section at tier {:?}; the heading a reader scans \
-             carries the tier, so a mixed section is a heading that lies",
-            def.kind, section.2, def.tier
+        assert!(
+            spec::SECTIONS.iter().any(|(key, _)| *key == def.section),
+            "{} is in an unlisted section",
+            def.kind
+        );
+        let (placeable, reserved) = spec::section_tiers(def.section);
+        assert!(
+            match def.tier {
+                spec::Tier::Placeable => placeable,
+                spec::Tier::Reserved => reserved,
+            },
+            "{}'s own tier {:?} is not among the releases its section reports",
+            def.kind,
+            def.tier
         );
         assert!(!def.label.is_empty() && !def.gist.is_empty());
         assert_eq!(
@@ -155,7 +170,7 @@ fn r1668_every_reserved_seat_names_what_it_waits_for() {
         .iter()
         .filter(|w| w.tier == spec::Tier::Reserved)
         .collect();
-    assert_eq!(reserved.len(), 9);
+    assert_eq!(reserved.len(), 8, "R1797 promoted the ninth");
     for def in reserved {
         assert!(
             def.reserved_for.starts_with("requirement "),
@@ -2647,5 +2662,344 @@ fn r1761_the_two_specifications_of_this_screen_name_disjoint_surfaces() {
         !named.is_empty() && dashboard.surfaces().count() > 0,
         "both documents have surfaces, so the disjointness above is a claim \
          rather than one empty set meeting another"
+    );
+}
+
+// --- The latency card (R1797) ------------------------------------------------
+
+/// ★★★★★ R1797 — **the reference's two halves disagree, and this says so.**
+///
+/// The reference's latency card publishes eight bucket counts AND three stat
+/// tiles, independently. Its counts total 1,672 samples of which 93.9% are at
+/// or below 16 ms, so the 95th percentile of the bars it draws falls in the
+/// `16-32` bucket — while the tile beside them says 11.4 ms, which is in
+/// `8-16`. Nothing in a mockup can notice that.
+///
+/// This is the test that would have failed on the reference, and it passes here
+/// because every number on this card comes out of one record.
+#[test]
+fn r1797_the_cards_percentile_is_consistent_with_its_own_bars() {
+    let binned = pinion_chart::Binned::over(
+        spec::LATENCY_SAMPLES,
+        spec::LATENCY_LADDER,
+        pinion_chart::BinEnds::Open,
+    )
+    .expect("the specification's record is binnable");
+    let quantiles =
+        pinion_chart::Quantiles::of(spec::LATENCY_SAMPLES, pinion_chart::QuantileMethod::Linear)
+            .expect("the record is finite");
+
+    let p95 = quantiles.at(0.95).expect("linear defines p95");
+    // Which bucket does the 95th percentile of the DRAWN BARS fall in? Walk the
+    // cumulative counts, the way the check on the reference was done.
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "a hundred samples; f64 is exact well past that"
+    )]
+    let cut = 0.95 * quantiles.n() as f64;
+    let mut cumulative = 0_u32;
+    let mut bucket = binned.bins() - 1;
+    for (k, count) in binned.counts().iter().enumerate() {
+        cumulative += count;
+        if f64::from(cumulative) >= cut {
+            bucket = k;
+            break;
+        }
+    }
+    let (lo, hi) = binned.extent(bucket).expect("a bin the walk reached");
+    assert!(
+        lo.is_none_or(|lo| p95 >= lo) && hi.is_none_or(|hi| p95 <= hi),
+        "★ the p95 tile says {p95} but the bars put the 95th percentile in \
+         bucket {} ({lo:?}..{hi:?}) — which is exactly the inconsistency the \
+         reference publishes",
+        binned.label(bucket)
+    );
+}
+
+/// R1797 — the derivation lands on the reference's three published landmarks.
+///
+/// The figures are the oracle, not the output: the record was chosen so that
+/// deriving p50, p95 and the maximum from it reproduces what the reference
+/// states, which is what makes "the structure is reproduced" checkable rather
+/// than asserted.
+#[test]
+fn r1797_the_derived_tiles_are_the_references_published_figures() {
+    let quantiles =
+        pinion_chart::Quantiles::of(spec::LATENCY_SAMPLES, pinion_chart::QuantileMethod::Linear)
+            .expect("the record is finite");
+    let p50 = quantiles.at(0.50).expect("p50");
+    let p95 = quantiles.at(0.95).expect("p95");
+    assert!(
+        (p50 - spec::LATENCY_P50).abs() < 1e-9,
+        "p50 {p50} vs the reference's {}",
+        spec::LATENCY_P50
+    );
+    assert!(
+        (p95 - spec::LATENCY_P95).abs() < 1e-9,
+        "p95 {p95} vs the reference's {}",
+        spec::LATENCY_P95
+    );
+    assert!((quantiles.max() - spec::LATENCY_MAX).abs() < 1e-9);
+    assert_eq!(quantiles.n(), spec::LATENCY_SAMPLES.len());
+    assert_eq!(
+        spec::LATENCY_STAT_KEYS.len(),
+        3,
+        "and the card lays out one tile per landmark"
+    );
+}
+
+/// ★★★★★ R1797 — the default quantile method **cannot answer this card**, and
+/// the card is what makes that concrete.
+///
+/// `QuantileMethod::Tukey` is the crate's default because it is what Tukey
+/// defined the box plot on, and a hinge exists only at the quartiles. The card
+/// needs p95. Before this round the crate had no way to ask for one at all;
+/// now it has one that refuses under the wrong method rather than interpolating
+/// a number that definition never defined.
+#[test]
+fn r1797_the_default_method_refuses_the_percentile_this_card_needs() {
+    let tukey = pinion_chart::Quantiles::of(
+        spec::LATENCY_SAMPLES,
+        pinion_chart::QuantileMethod::default(),
+    )
+    .expect("the record is finite");
+    assert_eq!(tukey.method(), pinion_chart::QuantileMethod::Tukey);
+    assert_eq!(
+        tukey.at(0.95),
+        Err(pinion_chart::QuantileError::HingesOnly(0.95)),
+        "and it refuses by name instead of inventing a hinge"
+    );
+    assert!(
+        tukey.at(0.5).is_ok(),
+        "while the median, which IS a hinge, is answerable under either"
+    );
+}
+
+/// R1797 — the emphasised bars are the ones at or above the p95 tile.
+///
+/// Both halves come from the same samples, so the caption's claim — *tail above
+/// p95* — is checkable against the tile printed two rows up. The reference
+/// writes `i >= 6` and its caption cannot be checked against anything.
+#[test]
+fn r1797_the_emphasised_bars_are_the_ones_the_tile_names() {
+    let binned = pinion_chart::Binned::over(
+        spec::LATENCY_SAMPLES,
+        spec::LATENCY_LADDER,
+        pinion_chart::BinEnds::Open,
+    )
+    .expect("binnable");
+    let tail = binned.tail_from(spec::LATENCY_P95);
+    assert!(!tail.is_empty(), "this record's tail is not empty");
+    assert_eq!(tail.end, binned.bins(), "and it runs to the last bin");
+    for k in tail.clone() {
+        let (lo, _) = binned.extent(k).expect("a bin in range");
+        assert!(
+            lo.is_some_and(|lo| lo >= spec::LATENCY_P95),
+            "bin {} is emphasised but starts below the tile's {}",
+            binned.label(k),
+            spec::LATENCY_P95
+        );
+    }
+    let below = tail.start - 1;
+    let (lo, _) = binned.extent(below).expect("the bin under the tail");
+    assert!(
+        lo.is_some_and(|lo| lo < spec::LATENCY_P95),
+        "and the bin below it is not emphasised"
+    );
+    assert!(
+        spec::LATENCY_CAPTION.contains("p95"),
+        "so the caption can say WHY a bar is amber: {:?}",
+        spec::LATENCY_CAPTION
+    );
+}
+
+/// ★ R1797 — the record's slowest sample is **drawn**, not dropped.
+///
+/// The ladder stops at 64 ms and the slowest reply is 72. Under a closed ladder
+/// that sample falls out, and the `max` tile would then report a measurement no
+/// bar accounts for — a card contradicting itself in the other direction. The
+/// open end is what makes the tile and the bars the same distribution.
+#[test]
+fn r1797_the_slowest_reply_is_in_a_bin_rather_than_dropped() {
+    let open = pinion_chart::Binned::over(
+        spec::LATENCY_SAMPLES,
+        spec::LATENCY_LADDER,
+        pinion_chart::BinEnds::Open,
+    )
+    .expect("binnable");
+    assert_eq!(
+        open.counts().iter().sum::<u32>() as usize,
+        spec::LATENCY_SAMPLES.len(),
+        "every measurement is on the chart"
+    );
+    assert_eq!(open.outside(), (0, 0));
+
+    let closed = pinion_chart::Binned::over(
+        spec::LATENCY_SAMPLES,
+        spec::LATENCY_LADDER,
+        pinion_chart::BinEnds::Closed,
+    )
+    .expect("binnable");
+    let (below, above) = closed.outside();
+    assert!(
+        above > 0 && below > 0,
+        "★ and a closed ladder really would drop some: {below} below, {above} above"
+    );
+    assert!(
+        spec::LATENCY_MAX > spec::LATENCY_LADDER[spec::LATENCY_LADDER.len() - 1],
+        "the maximum tile is past the last boundary, which is why this matters"
+    );
+}
+
+/// R1797 — the card paints its tiles, its bins and its caption.
+///
+/// The body is driven through the real painter at the size the board gives it,
+/// so a card that computed everything correctly and drew none of it fails here.
+#[test]
+fn r1797_the_latency_body_paints_its_three_parts() {
+    let palette = probe_palette();
+    let rect = Rect::new(0, 0, 330, 210);
+    let scenes = super::latency_body("latency#4", rect, palette);
+    // `Scene::tags` is the framework's own depth-first walk (R1650), so this
+    // cannot disagree with the walk the census and the wire use.
+    let tags: Vec<String> = scenes
+        .iter()
+        .flat_map(pinion_core::scene::Scene::tags)
+        .collect();
+    for expected in [
+        "card.latency#4.stat.0",
+        "card.latency#4.stat.1",
+        "card.latency#4.stat.2",
+        "card.latency#4.bins",
+        "card.latency#4.caption",
+    ] {
+        assert!(
+            tags.iter().any(|tag| tag == expected),
+            "{expected} is not painted; the body drew {tags:?}"
+        );
+    }
+}
+
+/// ★★★★★ R1797 — the distribution the card draws stays inside the box the card
+/// gives it, **at every size the board can produce**.
+///
+/// This isolates the FRAMEWORK question the screen sweep could only report as a
+/// symptom: does a bar chart keep its marks inside the rect it was handed. It
+/// found that the answer was no — `plot_area` clamped a plot's size and not its
+/// origin, so a rect narrower than the label gutters produced an axis outside
+/// its own rectangle and every mark aligned to it followed. The repair is in
+/// `pinion_chart::window`; this is the consumer-side check that the card never
+/// asks for a size the chart cannot honour.
+///
+/// ★ It walks the chart directly rather than the body's scenes. A body scene is
+/// a container laid out absolutely with children in ITS frame, so walking one
+/// in isolation answers in container-local coordinates — the first draft
+/// compared those against the body's absolute rect and reported 156 findings
+/// that were an arithmetic mistake in the test. Where the body's own marks sit
+/// on a real screen is `crate::painted`'s question, and it has the regions to
+/// answer it.
+#[test]
+fn r1797_the_cards_distribution_stays_inside_the_box_it_is_given() {
+    let (binned, _) = super::latency_binned().expect("the specification's record bins");
+    let bars = binned.bars();
+    let style = pinion_chart::ChartStyle::default();
+    let mut escaping = Vec::new();
+    let mut drawn = 0_u32;
+    let mut refused = 0_u32;
+    // The board's own range and past both ends of it: a card is one to twelve
+    // columns wide and one to six rows tall, and the chart gets what the tiles
+    // and the caption leave. The sizes the card REFUSES are swept too, so the
+    // count below shows the guard is doing work rather than the sweep having
+    // missed the small end.
+    for w in [1_u32, 8, 24, 40, 69, 80, 120, 200, 330, 640, 1080] {
+        for h in [1_u32, 8, 24, 40, 57, 60, 100, 140, 210, 400, 760] {
+            // ★ The card's OWN predicate, not a second copy of it. What this
+            // asserts is exactly "the card never asks for a size the chart
+            // cannot honour", and a test that decided for itself which sizes
+            // were reasonable would be asserting a different sentence.
+            let Some(box_) = super::distribution_box(Rect::new(0, 0, w, h), 0, bars.len(), &style)
+            else {
+                refused += 1;
+                continue;
+            };
+            drawn += 1;
+            let scene = pinion_chart::BarChart::new(bars.clone())
+                .with_tag_prefix("probe")
+                .build(Rect::new(0, 0, box_.w, box_.h), &style);
+            scene.for_each_node(&mut |visit| {
+                let Some(at) = visit.absolute_rect() else {
+                    return;
+                };
+                if at.x + at.w > box_.w || at.y + at.h > box_.h {
+                    escaping.push((
+                        box_.w,
+                        box_.h,
+                        visit.node.tag().unwrap_or("<untagged>").to_owned(),
+                        at,
+                    ));
+                }
+            });
+        }
+    }
+    assert!(
+        escaping.is_empty(),
+        "{} mark(s) painted outside the box the chart was given: {:?}",
+        escaping.len(),
+        &escaping[..escaping.len().min(8)]
+    );
+    // ★★ Both counts, because an empty finding list is also what a sweep that
+    // drew nothing reports. The guard has to have admitted sizes AND refused
+    // some, or this test passes for a reason that has nothing to do with
+    // containment.
+    assert!(
+        drawn > 0 && refused > 0,
+        "the sweep drew {drawn} and refused {refused}; it has to do both for the \
+         empty finding list above to mean anything"
+    );
+}
+
+/// ★ R1797 — the silence census's populations are the chart's own numbers.
+///
+/// Two counts have to agree with the painter or the census demands regions
+/// nothing paints: how many buckets the ladder produces, and how many value
+/// ticks the chart draws. Both are written in `spec` because a population needs
+/// a number; this is what stops them being a second, drifting copy.
+#[test]
+fn r1797_the_silence_populations_match_what_the_chart_paints() {
+    let (binned, _) = super::latency_binned().expect("the specification's record bins");
+    assert_eq!(
+        binned.bins(),
+        spec::LATENCY_LADDER.len() + 1,
+        "the ladder's boundaries plus two open ends is what `LatencyBins` counts"
+    );
+    assert_eq!(
+        pinion_chart::ChartStyle::default().y_ticks,
+        spec::LATENCY_Y_TICKS,
+        "★ the tick count the census declares is the one the painter asks for"
+    );
+}
+
+/// ★ R1797 — the card is on the board, and the board still places every
+/// placeable kind.
+#[test]
+fn r1797_the_promoted_card_is_placed_and_the_palette_has_nothing_left() {
+    let def = def_of("latency").expect("the catalogue still has it");
+    assert_eq!(def.tier, spec::Tier::Placeable);
+    assert!(
+        def.reserved_for.is_empty(),
+        "a promoted entry states no booking"
+    );
+    assert!(
+        spec::BOARD.iter().any(|tile| tile.kind == "latency"),
+        "and the opening board places it"
+    );
+    assert_eq!(spec::BOARD.len(), spec::placeable_count());
+    // ★ Its section now holds both releases, which is the thing the tier column
+    // this round removed could not represent.
+    assert_eq!(spec::section_tiers("visual"), (true, true));
+    assert!(
+        spec::section_heading("visual", "VISUALIZATION").contains("1 + 2"),
+        "and the heading a reader scans says so: {:?}",
+        spec::section_heading("visual", "VISUALIZATION")
     );
 }
