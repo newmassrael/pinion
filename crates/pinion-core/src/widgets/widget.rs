@@ -20,11 +20,13 @@ use crate::resume::{Configuration, configuration_of};
 
 /// ★★★★★ R1739 — what driving an event through a statechart did.
 ///
-/// Two arms because there are two outcomes and the difference is not visible in
-/// the configuration: an event some active state answered, and an event the
-/// machine discarded because no transition in any active state matched it. A
-/// self transition, a targetless internal transition and a discard all leave
-/// the state alone, so this is not a fact a caller can recover by looking.
+/// ★ R1785 — THREE arms now, and the third is the one the engine could not
+/// supply until this round's pin: an event some active state answered, an event
+/// the machine discarded because no transition matched, and an event it never
+/// dequeued because it had already stopped. None of the three is visible in the
+/// configuration — a self transition, a targetless internal transition, a
+/// discard and a stopped machine all leave the state alone — so this is not a
+/// fact a caller can recover by looking.
 ///
 /// **Deliberately not `#[must_use]`.** 507 call sites in this workspace drive a
 /// statechart and almost all of them are the widget acting on its own gesture,
@@ -39,16 +41,45 @@ pub enum Sent {
     /// No transition in any active state matched it, so the machine discarded
     /// it — which is what the clause requires and is why nothing was raised.
     WentNowhere,
+    /// ★★★★★ R1785 — the machine had already stopped, so it never looked at
+    /// the event at all.
+    ///
+    /// The third answer to *I sent something and nothing moved*, and until the
+    /// engine bump this round consumes there was no way to give it. W3C SCXML
+    /// 3.13 ends the main event loop at a top-level final state, so refusing
+    /// the event is correct — being unable to SAY so was the part that was
+    /// not in the clause.
+    ///
+    /// It matters because the three have different repairs, and two of them
+    /// look identical from outside:
+    ///
+    /// | what happened | what to fix |
+    /// | --- | --- |
+    /// | dequeued, no transition matched ([`WentNowhere`](Self::WentNowhere)) | the document, or the caller's expectation |
+    /// | dequeued, a transition matched and its guard was false ([`Answered`](Self::Answered) with no state change) | the guard, or the data it reads |
+    /// | never dequeued, the machine had stopped (this) | nothing in the document — restart it, or stop sending |
+    ///
+    /// Upstream measured the cost of not having it: a consumer reported a
+    /// guarded transition that "never fires" and rewrote the guard four times
+    /// before the machine turned out to have been finished the whole while.
+    NeverSeen,
 }
 
 impl Sent {
-    /// Read the outcome out of the engine's discard counter, before and after.
+    /// Read the outcome out of the engine's two counters, before and after.
     ///
     /// A counter difference rather than a flag on the event, because that is
     /// the shape the engine publishes and re-deriving it here would be a second
     /// account of one fact — the failure this workspace keeps finding.
-    fn from_discard_counts(before: u32, after: u32) -> Self {
-        if after > before {
+    ///
+    /// ★ R1785 — the unseen count is asked FIRST, because a machine that has
+    /// stopped never reaches the point where an event could be discarded: the
+    /// two counters cannot both move for one event, and reading the discard
+    /// one first would answer `Answered` for an event nobody looked at.
+    fn from_counts(before: (u32, u32), after: (u32, u32)) -> Self {
+        if after.1 > before.1 {
+            Sent::NeverSeen
+        } else if after.0 > before.0 {
             Sent::WentNowhere
         } else {
             Sent::Answered
@@ -59,6 +90,15 @@ impl Sent {
     #[must_use]
     pub const fn answered(self) -> bool {
         matches!(self, Sent::Answered)
+    }
+
+    /// ★ R1785 — whether the machine was still running when this was sent.
+    ///
+    /// The question a caller asks before rewriting a guard: an event the
+    /// machine never dequeued says nothing about the document.
+    #[must_use]
+    pub const fn was_seen(self) -> bool {
+        !matches!(self, Sent::NeverSeen)
     }
 }
 
@@ -120,9 +160,17 @@ impl<P: StatePolicy> Widget<P> {
     /// assert_eq!(button.state(), ButtonState::Idle);
     /// ```
     pub fn send(&mut self, event: P::Event) -> Sent {
-        let before = self.engine.discarded_external_events();
+        let before = self.counts();
         self.engine.process_event(event);
-        Sent::from_discard_counts(before, self.engine.discarded_external_events())
+        Sent::from_counts(before, self.counts())
+    }
+
+    /// The two counters [`Sent`] is derived from: discarded, then unseen.
+    fn counts(&self) -> (u32, u32) {
+        (
+            self.engine.discarded_external_events(),
+            self.engine.unseen_external_events(),
+        )
     }
 
     /// Current SCXML state (the policy's `State` associated type).
@@ -142,6 +190,16 @@ impl<P: StatePolicy> Widget<P> {
     /// see*.
     pub fn discarded(&self) -> u32 {
         self.engine.discarded_external_events()
+    }
+
+    /// ★ R1785 — how many external events this machine never looked at,
+    /// because it had already stopped.
+    ///
+    /// Monotone like [`discarded`](Self::discarded) and readable either side
+    /// of a drive, for the same reason: a caller that cannot reach
+    /// [`send`](Self::send)'s return value still needs the third answer.
+    pub fn unseen(&self) -> u32 {
+        self.engine.unseen_external_events()
     }
 
     /// ★ R1768 — the configuration this widget's machine is in, as a value a
@@ -593,5 +651,91 @@ mod tests {
         assert_eq!(button.send(ButtonEvent::Enable), Sent::WentNowhere);
         assert_eq!(button.send(ButtonEvent::PointerLeave), Sent::Answered);
         assert_eq!(button.state(), ButtonState::Idle);
+    }
+
+    /// ★★★★★ R1785 — the third answer, and the ORDER the two counters are
+    /// read in, which is the part that can be wrong without looking wrong.
+    ///
+    /// A machine that has stopped never reaches the point where an event could
+    /// be discarded, so the counters cannot both move for one event. Reading
+    /// the discard counter first would therefore answer `Answered` — "the
+    /// machine did something with it" — for an event nobody looked at, which
+    /// is the exact confusion this arm exists to end.
+    #[test]
+    fn r1785_the_third_answer_is_read_before_the_second() {
+        assert_eq!(Sent::from_counts((0, 0), (0, 0)), Sent::Answered);
+        assert_eq!(Sent::from_counts((0, 0), (1, 0)), Sent::WentNowhere);
+        assert_eq!(Sent::from_counts((0, 0), (0, 1)), Sent::NeverSeen);
+        // ★ The clause that fixes the order: if both had moved, the machine
+        // being stopped is the fact that explains the other, so it wins.
+        assert_eq!(Sent::from_counts((0, 0), (1, 1)), Sent::NeverSeen);
+        // And each answers the question a caller actually asks.
+        assert!(Sent::Answered.answered() && Sent::Answered.was_seen());
+        assert!(!Sent::WentNowhere.answered() && Sent::WentNowhere.was_seen());
+        assert!(!Sent::NeverSeen.answered() && !Sent::NeverSeen.was_seen());
+    }
+
+    /// ★★★★★ R1785 — **no widget in this framework can reach the arm above**,
+    /// and that is the finding rather than a gap in the test.
+    ///
+    /// The engine bump this round consumes lets a machine say it had already
+    /// stopped. W3C SCXML 3.13 ends the main event loop at a top-level final
+    /// state — and not one of this crate's fifteen statecharts declares a
+    /// `<final>` at all, because a widget is a thing that keeps running: a
+    /// button that reached a final state would be a button that can never be
+    /// pressed again.
+    ///
+    /// So the arm is built for a document this framework does not yet have,
+    /// and this test is what makes that a claim rather than an omission. The
+    /// day a chart gains a final state it fails, and what it asks for is a
+    /// real proof — drive that chart to its end and send it something.
+    #[test]
+    fn r1785_no_chart_here_can_stop_so_nothing_can_be_unseen_yet() {
+        let charts: Vec<std::path::PathBuf> = {
+            let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+            let mut found = Vec::new();
+            let mut stack = vec![root.to_path_buf()];
+            while let Some(dir) = stack.pop() {
+                let Ok(entries) = std::fs::read_dir(&dir) else {
+                    continue;
+                };
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        stack.push(path);
+                    } else if path.extension().is_some_and(|e| e == "scxml") {
+                        found.push(path);
+                    }
+                }
+            }
+            found
+        };
+        assert!(
+            charts.len() >= 15,
+            "the premise: this crate's charts were found ({} of them), or the \
+             walk below proves nothing about them",
+            charts.len(),
+        );
+
+        let can_stop: Vec<String> = charts
+            .iter()
+            .filter(|path| {
+                std::fs::read_to_string(path)
+                    .is_ok_and(|text| text.contains("<final") || text.contains("<final>"))
+            })
+            .map(|path| {
+                path.file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into()
+            })
+            .collect();
+        assert!(
+            can_stop.is_empty(),
+            "★ {can_stop:?} can reach a top-level final state, so \
+             `Sent::NeverSeen` is REACHABLE now and owes a driven proof: take \
+             that chart to its end and send it an event. This assertion is the \
+             demand, not the coverage.",
+        );
     }
 }
