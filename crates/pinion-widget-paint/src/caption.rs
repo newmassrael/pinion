@@ -53,6 +53,7 @@
 //! they lay out before they can stop drawing outside their own boxes.
 
 use pinion_core::Scene;
+use pinion_core::measured_text_extent;
 use pinion_core::scene::{ContainerNode, Rect};
 use pinion_core::style::{BoxStyle, LayoutStyle, Size, TextAlign, TextStyle};
 use pinion_core::voice::Silence;
@@ -148,13 +149,24 @@ impl Fit {
 #[derive(Debug, Clone)]
 pub struct Caption {
     text: String,
-    /// The size the caller measured the text at, `(w, h)`.
+    /// A size the caller states instead of one being measured — `None` for the
+    /// normal case, which is that the SHAPER is asked.
     ///
-    /// Passed in rather than measured here for the reason [`text_run`] takes a
-    /// rectangle: this crate composes scenes and does not shape text, and a
-    /// helper that guessed a width would be a second, disagreeing answer to a
-    /// question `pinion-text` already answers.
-    measured: (u32, u32),
+    /// ★★★★★ R1794 — this used to be required, and the reason written here for
+    /// requiring it was FALSE: *"this crate composes scenes and does not shape
+    /// text"*. `pinion_core::measured_text_extent` shapes, is callable from
+    /// anywhere, and exists precisely so a view fn can size the text it is about
+    /// to paint. Asking the caller instead is what produced the defect a reader
+    /// reported.
+    ///
+    /// Measured on the shipped screen: the node lab passed `(32, 12)` for `tcp`
+    /// because 32 was the number the hand-written code before it used — and 32
+    /// was a BOX, not a measurement. The glyphs advance **15**. So the run
+    /// rectangle was centred in the chip and the glyphs sat `Start`-aligned at
+    /// the left of that rectangle, 8.5px left of the chip's centre. The gate
+    /// was green because it measured rectangles; the reader was looking at
+    /// glyphs.
+    stated: Option<(u32, u32)>,
     style: TextStyle,
     align_x: Align,
     align_y: Align,
@@ -164,16 +176,21 @@ pub struct Caption {
 }
 
 impl Caption {
-    /// A caption of `text`, measured `(w, h)`, in `style`.
+    /// A caption of `text` in `style`, **sized by the shaper**.
     ///
     /// Starts at the writing-mode start on both axes, which is the framework
     /// default and therefore the one that changes nothing for a caller who does
     /// not say.
+    ///
+    /// The size is not a parameter. [`place`] asks
+    /// [`pinion_core::measured_text_extent`] for it, which is the same shaper
+    /// the frame paints with, so the rectangle this module centres and the
+    /// glyphs a reader sees are one thing rather than two that agree by luck.
     #[must_use]
-    pub fn new(text: impl Into<String>, measured: (u32, u32), style: TextStyle) -> Self {
+    pub fn new(text: impl Into<String>, style: TextStyle) -> Self {
         Self {
             text: text.into(),
-            measured,
+            stated: None,
             style,
             align_x: Align::Start,
             align_y: Align::Start,
@@ -181,6 +198,19 @@ impl Caption {
             pad_y: 0,
             silence: None,
         }
+    }
+
+    /// State the size instead of measuring it.
+    ///
+    /// ⚠ For a caller that genuinely knows better than the shaper — a test with
+    /// no font provider, or a caption whose glyphs are drawn by something other
+    /// than this text stack. **Not for a caller who has a number to hand**: the
+    /// number the node lab had to hand was a box, and using it is the defect
+    /// this module was rewritten to make unrepresentable.
+    #[must_use]
+    pub const fn stating(mut self, size: (u32, u32)) -> Self {
+        self.stated = Some(size);
+        self
     }
 
     /// Declare the caption's own region silent, and why.
@@ -234,6 +264,47 @@ impl Caption {
     pub fn text(&self) -> &str {
         &self.text
     }
+
+    /// The size the glyphs want, and where that number came from.
+    ///
+    /// ★★★★★ The whole repair, in one place. Asking the shaper is the normal
+    /// path; a caller's stated size is an escape; and when neither is available
+    /// — headless, before any provider has measured anything — the answer says
+    /// **`Sized::Guessed`** rather than quietly returning a number that looks
+    /// like a measurement. A silent estimate is how the defect got in.
+    fn wants(&self) -> (u32, u32, Sized) {
+        if let Some((w, h)) = self.stated {
+            return (w, h, Sized::Stated);
+        }
+        if let Some(extent) = measured_text_extent(&self.text, &self.style, None) {
+            return (extent.width(), extent.height(), Sized::Measured);
+        }
+        // The deterministic fallback the framework's own doc prescribes for a
+        // headless caller, and it is REPORTED as a guess so a gate can refuse
+        // to draw a conclusion from it.
+        let px = self.style.font_size_px.max(1);
+        let width = u32::try_from(self.text.chars().count()).unwrap_or(u32::MAX);
+        (width.saturating_mul(px) / 2, px, Sized::Guessed)
+    }
+}
+
+/// Where a caption's size came from.
+///
+/// ★★★★★ Published because the difference is the defect. A measured size makes
+/// the run rectangle the ink, so centring it centres the glyphs; a guessed one
+/// does not, and every alignment claim built on it is about a rectangle nobody
+/// drew. A gate that cannot tell them apart is the gate that was green while a
+/// reader was looking at left-aligned text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sized {
+    /// The shaper answered — the frame's own text stack, so the rectangle and
+    /// the glyphs are one fact.
+    Measured,
+    /// The caller stated it, through [`Caption::stating`].
+    Stated,
+    /// Nothing could measure it: no provider has shaped anything yet. The
+    /// number is a deterministic estimate and is not a measurement.
+    Guessed,
 }
 
 /// Where a caption landed, and whether it had room.
@@ -247,10 +318,16 @@ impl Caption {
 pub struct Placed {
     run: Rect,
     fit: Fit,
+    sized: Sized,
 }
 
 impl Placed {
     /// The rectangle the caption is drawn in.
+    ///
+    /// When [`Self::sized`] is [`Sized::Measured`] this IS the ink: the shaper
+    /// said the glyphs are this wide, so a rectangle centred in a box centres
+    /// the glyphs. That equality is the module's whole point and it is the one
+    /// thing the first draft got wrong.
     #[must_use]
     pub const fn run(self) -> Rect {
         self.run
@@ -260,6 +337,13 @@ impl Placed {
     #[must_use]
     pub const fn fit(self) -> Fit {
         self.fit
+    }
+
+    /// Where the size came from — and therefore whether an alignment claim
+    /// built on this placement is about glyphs or about a guess.
+    #[must_use]
+    pub const fn sized(self) -> Sized {
+        self.sized
     }
 }
 
@@ -275,7 +359,7 @@ impl Placed {
 pub fn place(box_rect: Rect, caption: &Caption) -> Placed {
     let room_x = box_rect.w.saturating_sub(caption.pad_x * 2);
     let room_y = box_rect.h.saturating_sub(caption.pad_y * 2);
-    let (want_x, want_y) = caption.measured;
+    let (want_x, want_y, sized) = caption.wants();
     // ★ Clamped to the inner region, which is what makes an escape
     // unrepresentable rather than merely discouraged. The overflow is reported
     // instead of drawn, because a caption 3px outside its box is what a reader
@@ -297,7 +381,7 @@ pub fn place(box_rect: Rect, caption: &Caption) -> Placed {
     } else {
         Fit::Overflows { over_x, over_y }
     };
-    Placed { run, fit }
+    Placed { run, fit, sized }
 }
 
 /// Whether the box itself is something a pointer resolves to.
@@ -476,7 +560,7 @@ mod tests {
         // the run 32, placed at +7, so 3px hang off the right edge. Every one
         // of the five protocol chips does it, by exactly 3.
         let chip = protocol_chip();
-        let caption = Caption::new("tcp", (32, 12), style()).centred();
+        let caption = Caption::new("tcp", style()).stating((32, 12)).centred();
         let placed = place(chip, &caption);
         assert!(
             placed.run.x >= chip.x && placed.run.x + placed.run.w <= chip.x + chip.w,
@@ -501,7 +585,7 @@ mod tests {
         // whose text advances 171px in a 36px box has sizeHint 173 and no error
         // on any member.
         let chip = protocol_chip();
-        let caption = Caption::new("a caption far wider than its box", (171, 12), style());
+        let caption = Caption::new("a caption far wider than its box", style()).stating((171, 12));
         let placed = place(chip, &caption);
         assert_eq!(
             placed.fit,
@@ -522,7 +606,8 @@ mod tests {
     #[test]
     fn r1792_padding_is_kept_on_both_sides_before_alignment() {
         let chip = protocol_chip();
-        let caption = Caption::new("tcp", (32, 12), style())
+        let caption = Caption::new("tcp", style())
+            .stating((32, 12))
             .centred()
             .padding(4, 1);
         let placed = place(chip, &caption);
@@ -543,9 +628,12 @@ mod tests {
     fn r1792_the_three_alignments_are_three_places() {
         let chip = Rect::new(0, 0, 100, 20);
         let at = |align| {
-            place(chip, &Caption::new("x", (20, 10), style()).align(align))
-                .run()
-                .x
+            place(
+                chip,
+                &Caption::new("x", style()).stating((20, 10)).align(align),
+            )
+            .run()
+            .x
         };
         assert_eq!(
             (at(Align::Start), at(Align::Center), at(Align::End)),
@@ -579,7 +667,7 @@ mod tests {
             "lab.palette.protocol.tcp",
             chip,
             BoxStyle::filled(Color::rgb(9, 9, 9)),
-            &Caption::new("tcp", (32, 12), style()).centred(),
+            &Caption::new("tcp", style()).stating((32, 12)).centred(),
             Pointer::Transparent,
         );
         let Scene::Container(node) = scene else {
@@ -612,7 +700,8 @@ mod tests {
             "probe",
             protocol_chip(),
             BoxStyle::filled(Color::rgb(9, 9, 9)),
-            &Caption::new("tcp", (32, 12), style())
+            &Caption::new("tcp", style())
+                .stating((32, 12))
                 .centred()
                 .silent(Silence::name_of("probe")),
             Pointer::Target,
@@ -632,6 +721,53 @@ mod tests {
         );
     }
 
+    /// ★★★★★ R1794 — **the test that would have caught what a reader had to
+    /// catch.**
+    ///
+    /// R1792 centred the RUN RECTANGLE and called it centred text. The node lab
+    /// passed `(32, 12)` for `tcp` because 32 was the number the hand-written
+    /// code before it used, and 32 was a BOX. Asked of the wire afterwards, the
+    /// glyphs advance **15**: so a 32-wide rectangle sat centred in the 36-wide
+    /// chip, the glyphs sat `Start`-aligned at the left of that rectangle, and
+    /// the ink was 8.5px left of the chip's centre — exactly what the reader
+    /// saw and exactly what the gate could not see, because the gate measured
+    /// rectangles.
+    ///
+    /// The property that makes the class impossible: **a stated size is not a
+    /// measurement, and a placement says which it had.** A caller who states a
+    /// box gets `Sized::Stated`, and any claim about where the glyphs are can be
+    /// refused on that alone.
+    #[test]
+    fn r1794_a_placement_says_whether_its_size_was_measured_or_asserted() {
+        let chip = protocol_chip();
+        let stated = place(
+            chip,
+            &Caption::new("tcp", style()).stating((32, 12)).centred(),
+        );
+        assert_eq!(
+            stated.sized(),
+            Sized::Stated,
+            "★★★★★ the shape of the defect: a number the caller had to hand is \
+             not a measurement, and a placement built on one cannot support a \
+             claim about where the glyphs are"
+        );
+
+        // With no font provider installed — which is this test's situation and
+        // every headless caller's — the answer is a GUESS and says so, rather
+        // than a number that reads like a measurement.
+        let measured = place(chip, &Caption::new("tcp", style()).centred());
+        assert_eq!(
+            measured.sized(),
+            Sized::Guessed,
+            "and where nothing can shape, the estimate is labelled rather than \
+             passed off: this is the arm that used to be silent"
+        );
+        assert!(
+            measured.run().w > 0,
+            "the fallback is still deterministic and drawable"
+        );
+    }
+
     #[test]
     fn r1792_the_box_says_whether_a_pointer_resolves_to_it() {
         // ★★★★★ Written because the first draft of this module did not have the
@@ -645,7 +781,7 @@ mod tests {
                 "probe",
                 protocol_chip(),
                 BoxStyle::filled(Color::rgb(9, 9, 9)),
-                &Caption::new("tcp", (32, 12), style()),
+                &Caption::new("tcp", style()).stating((32, 12)),
                 pointer,
             );
             scene
@@ -669,7 +805,7 @@ mod tests {
             "lab.palette.protocol.tcp",
             protocol_chip(),
             BoxStyle::filled(Color::rgb(9, 9, 9)),
-            &Caption::new("tcp", (32, 12), style()),
+            &Caption::new("tcp", style()).stating((32, 12)),
             Pointer::Transparent,
         );
         let Scene::Container(node) = scene else {
@@ -698,7 +834,7 @@ mod tests {
 
         let placed = place(
             protocol_chip(),
-            &Caption::new("tcp", (32, 12), style()).centred(),
+            &Caption::new("tcp", style()).stating((32, 12)).centred(),
         );
         let after = escapes(&boxes, &[("tcp".to_owned(), placed.run())]);
         assert_eq!(after, vec![], "★★★★★ and the derived placement clears it");
@@ -747,7 +883,7 @@ mod tests {
     #[test]
     fn r1792_the_childs_rectangle_is_relative_to_the_box_it_is_in() {
         let chip = protocol_chip();
-        let caption = Caption::new("tcp", (32, 12), style()).centred();
+        let caption = Caption::new("tcp", style()).stating((32, 12)).centred();
         let placed = place(chip, &caption);
         let (scene, _) = captioned(
             "probe",

@@ -131,10 +131,18 @@ def body() -> None:
                 f"the right edge: run {run} in box {box}",
                 left >= 0 and right >= 0,
             )
-            assert_eq(
-                left,
-                right,
-                f"A: and centred, which is what the reader asked for ({word})",
+            # ★★★★★ R1794 — within a pixel, not exactly equal, and the reason is
+            # not tolerance-for-its-own-sake: the slack is `box - ink` and the
+            # ink is now what the SHAPER measured, so it is whatever it is. A
+            # 36px chip holding 15px of `tcp` has 21 to split, and 21 does not
+            # halve. This assertion read `left == right` and passed only while
+            # the "ink" was a round number the caller had made up — which is the
+            # defect R1794 repaired. An exact-equality centring check is a check
+            # that can only survive on invented measurements.
+            ok(
+                f"A: and centred within a pixel, which is what an odd slack "
+                f"allows ({word}: {left} left, {right} right)",
+                abs(left - right) <= 1,
             )
 
         banner("B — the switch caption, which used to touch its own border")

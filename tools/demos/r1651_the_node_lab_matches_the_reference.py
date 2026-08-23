@@ -512,8 +512,18 @@ def body() -> None:
         held_back = behind_an_overflow(tf)
         drifted = []
         for family, pinned in FAMILIES.items():
+            # ★★★★★ R1794 — a CAPTION is part of its box, not a member of its
+            # family. `captioned` gives a caption its box's tag plus
+            # `CAPTION_SUFFIX`, so a seat that learned to hold its own word adds
+            # a tag here and the roster reads as drifted: measured on the first
+            # run after the three inspector seats adopted it,
+            # `lab.inspector` went 18 -> 21. The same subtraction the
+            # undeclared-elements check above makes, for the same reason.
             held = sorted(
-                t for t in painted if t == family or t.startswith(family + ".")
+                t
+                for t in painted
+                if (t == family or t.startswith(family + "."))
+                and not t.endswith(CAPTION_SUFFIX)
             )
             moved_here = sum(1 for t in held_back if t.startswith(family))
             if len(held) + moved_here != pinned:

@@ -4964,9 +4964,49 @@ fn rename_row() -> (Rect, Rect, Rect) {
 }
 
 /// How wide a seat holding this word is, at the inspector's small face.
+///
+/// ★★★★★ R1794 — **the SHAPER answers, with the per-character estimate kept only
+/// for where nothing can shape.**
+///
+/// It read `word.len() * FONT_SMALL * 7 / 10 + 16`, which is the per-character
+/// fallback `measured_text_extent`'s own doc names as the defect class: *"a
+/// caller falls back to its own per-character estimate, so any layout derived
+/// from measured text came out one way in the paint and another way in a
+/// pointer handler ... Both boxes were 'right' and only their derivation
+/// disagreed"*. Fifteen call sites here sized seats that way, and the caption
+/// inside each was then drawn `Start`-aligned in a box that was not the word's
+/// width — which is why a reader reported `delete`, `collapse` and `switch off`
+/// as not centred while every gate in this tree was green.
+///
+/// Measured: the estimate makes `delete` 58px wide; the shaper makes the glyphs
+/// **27**. The seat is padded around what the word actually measures now, so
+/// `SEAT_PAD` is the only number left and it is a design choice rather than an
+/// approximation of one.
 fn seat_w(word: &str) -> u32 {
-    u32::try_from(word.len()).unwrap_or(6) * FONT_SMALL * 7 / 10 + 16
+    let ink = pinion_core::measured_text_extent(word, &run_style(FONT_SMALL, MEASURING_INK), None)
+        .map_or_else(
+            // Headless, before any provider has shaped anything: the old
+            // estimate, kept so a unit test that paints outside a shell still
+            // lays out deterministically.
+            || u32::try_from(word.len()).unwrap_or(6) * FONT_SMALL * 7 / 10,
+            pinion_core::TextExtent::width,
+        );
+    ink + SEAT_PAD * 2
 }
+
+/// A colour to build a style for MEASURING with, and only that.
+///
+/// The shaper needs a `TextStyle` and the colour is the one field that cannot
+/// affect an advance, so it is named rather than left as a bare literal a reader
+/// would take for the seat's ink.
+const MEASURING_INK: Color = Color::rgb(0, 0, 0);
+
+/// The clear space a seat keeps on each side of its word.
+///
+/// 8 rather than 16-split-two-ways: the old `+ 16` was padding *and* whatever
+/// slack the per-character estimate happened to leave, and separating them is
+/// what lets this be a decision.
+const SEAT_PAD: u32 = 8;
 
 /// How far down the inspector's body the text field's row sits.
 ///
@@ -5589,7 +5629,13 @@ fn palette_legend(rect: Rect, ink: Ink) -> Vec<Scene> {
             &tag,
             chip,
             style,
-            &caption::Caption::new(word, (32, 12), run_style(10, transport_ink(transport)))
+            // ★★★★★ R1794 — no size. R1792 passed `(32, 12)` here because 32 was
+            // the number the hand-written code before it used, and 32 was the
+            // BOX rather than the text: the glyphs advance 15, so a 32-wide run
+            // rectangle centred in a 36-wide chip left the ink 8.5px off centre.
+            // A reader saw it; the gate could not, because the gate measured
+            // rectangles. The shaper answers now.
+            &caption::Caption::new(word, run_style(10, transport_ink(transport)))
                 .centred()
                 // ★★ R1691's decision, unchanged and now carried by the node
                 // that makes it: what a reader who never sees the colours loses
@@ -5616,6 +5662,24 @@ const fn discovery_caption(on: bool) -> &'static str {
     } else {
         "discovery off · fully specified"
     }
+}
+
+/// The switch's position without the clause that explains it.
+///
+/// ★★★★★ R1794 — because [`discovery_caption`] does not fit the seat it is
+/// painted in, and a reader saw it as `discovery off · fully specif…`.
+///
+/// The ellipsis was silent: `TextOverflow::Ellipsis` shortens whatever it is
+/// given and nothing in this tree reported that it had. (R1792 made it worse by
+/// narrowing the caption to win back a right margin — a repair that traded one
+/// defect for another because nothing said the text had stopped fitting.)
+///
+/// The split rather than a shorter sentence: the clause is what the position
+/// MEANS, and it is still announced — [`discovery_caption`] is the
+/// `AccessNode`'s name, so a reader who lands on the switch hears the whole
+/// thing. What is dropped is the painted half, and only when it does not fit.
+const fn discovery_word(on: bool) -> &'static str {
+    if on { "discovery on" } else { "discovery off" }
 }
 
 /// How far in from the determinism switch's left edge its caption starts —
@@ -5654,9 +5718,32 @@ fn palette_determinism(state: &LabState, rect: Rect, ink: Ink) -> Vec<Scene> {
     // ★ The caption IS the switch's description — the switch points at it with
     // `described_by`, so it is announced when a reader lands on the control
     // rather than as a separate stop beside it.
+    // ★★★★★ R1794 — WHICH caption is a question about room, and it is ASKED
+    // rather than assumed. The full sentence is drawn when it fits and the
+    // position alone when it does not; either way `discovery_caption` is what
+    // the switch ANNOUNCES, so the clause is never lost, only unpainted. Before
+    // this the full sentence was drawn and silently ellipsised to
+    // `discovery off · fully specif…` — a reader reported it and nothing in the
+    // tree had said so.
+    let caption_room = Rect::new(
+        toggle.x + DISCOVERY_CAPTION_INSET,
+        toggle.y + 10,
+        toggle.w.saturating_sub(DISCOVERY_CAPTION_INSET + PAD),
+        13,
+    );
+    let style = run_style(FONT_SMALL, ink.text_2);
+    let full = discovery_caption(on);
+    let says = if caption::place(caption_room, &caption::Caption::new(full, style.clone()))
+        .fit()
+        .fits()
+    {
+        full
+    } else {
+        discovery_word(on)
+    };
     children.push(tagged_label(
         "lab.palette.discovery.state",
-        discovery_caption(on),
+        says,
         // ★★★★★ R1792 — the room is what the BOX has left after the track, not
         // what the PANE has left. This read `PALETTE_W - toggle.x - 48 - PAD`,
         // derived against the pane, and the toggle's own right edge is already
@@ -5669,12 +5756,7 @@ fn palette_determinism(state: &LabState, rect: Rect, ink: Ink) -> Vec<Scene> {
         // The same class as the protocol chips' `+7`: arithmetic against a
         // rectangle the caption is not inside. Derived from `toggle` it cannot
         // be flush, whatever the pane's width becomes.
-        Rect::new(
-            toggle.x + DISCOVERY_CAPTION_INSET,
-            toggle.y + 10,
-            toggle.w.saturating_sub(DISCOVERY_CAPTION_INSET + PAD),
-            13,
-        ),
+        caption_room,
         FONT_SMALL,
         ink.text,
     ));
@@ -6289,14 +6371,27 @@ fn link_affordances(chrome: &LinkChrome, ink: Ink) -> Vec<Scene> {
     // ★ R1656 — every run's box is the LINE BOX the shaper produces at this
     // type size, not a number the author guessed. One helper, so the three
     // seats cannot be sized three ways.
-    let inner = |seat: Rect| -> Rect {
+    //
+    // ★★★★★ R1794 — and it is the WORD's box now, centred, rather than the
+    // seat's whole inner width. It gave the caption `seat.w - pad*2` and the
+    // shaper then laid the glyphs `Start`-aligned at the left of that, so the
+    // seat was centred vertically and left-biased horizontally: measured on the
+    // wire, `delete` sat 4px from its left edge and 14px from its right. A
+    // reader reported it; no gate here could, because every gate compared
+    // rectangles and this is about where the glyphs landed inside one.
+    //
+    // Through `caption::place` rather than a fourth local derivation — the
+    // framework measures the word with the same shaper the frame paints with,
+    // so the rectangle and the ink are one fact.
+    let inner = |seat: Rect, word: &str| -> Rect {
         let pad = (chrome.font / 2).max(3);
-        Rect::new(
-            pad,
-            (seat.h.saturating_sub(line_box(chrome.font))) / 2,
-            seat.w.saturating_sub(pad * 2),
-            line_box(chrome.font),
-        )
+        let placed = caption::place(
+            Rect::new(0, 0, seat.w, seat.h),
+            &caption::Caption::new(word, run_style(chrome.font, MEASURING_INK))
+                .centred()
+                .padding(pad, 0),
+        );
+        placed.run()
     };
     let mut out = vec![panel(
         "lab.link.label",
@@ -6307,7 +6402,7 @@ fn link_affordances(chrome: &LinkChrome, ink: Ink) -> Vec<Scene> {
             tagged_label(
                 "lab.link.label.text",
                 chrome.caption.clone(),
-                inner(chrome.label),
+                inner(chrome.label, &chrome.caption),
                 chrome.font,
                 ink.accent,
             ),
@@ -6325,7 +6420,7 @@ fn link_affordances(chrome: &LinkChrome, ink: Ink) -> Vec<Scene> {
                 tagged_label(
                     &format!("lab.link.endpoint.{n}.text"),
                     endpoint.clone(),
-                    inner(*seat),
+                    inner(*seat, endpoint),
                     chrome.font,
                     if picked { ink.accent } else { ink.text_2 },
                 ),
@@ -6347,7 +6442,7 @@ fn link_affordances(chrome: &LinkChrome, ink: Ink) -> Vec<Scene> {
             tagged_label(
                 "lab.link.act.text",
                 word.to_owned(),
-                inner(chrome.act),
+                inner(chrome.act, word),
                 chrome.font,
                 edge,
             ),
@@ -7251,13 +7346,28 @@ fn inspector_identity(state: &LabState, node: NodeId, ink: Ink) -> Vec<Scene> {
             }
             _ => (ink.raised, ink.outline, ink.text_2),
         };
-        parts.push(box_at(act.tag(), seat, fill, Some(edge), 6));
-        parts.push(label(
-            act.word(collapsed, disabled),
-            Rect::new(seat.x + 8, seat.y + 6, seat.w.saturating_sub(12), 13),
-            FONT_SMALL,
-            text,
-        ));
+        // ★★★★★ R1794 — through `captioned`, which measures the word and centres
+        // it. This drew the box and then a SIBLING label spanning
+        // `seat.w - 12`, so the shaper laid `collapse`, `switch off` and
+        // `delete` `Start`-aligned at the left of a rectangle far wider than
+        // them. A reader named all three; no gate here could, because a gate
+        // that compares rectangles cannot see where glyphs sit inside one.
+        let mut style = BoxStyle::filled(fill).with_corner_radius(6);
+        style = style.with_border(Border::new(edge, 1));
+        let (scene, _) = captioned(
+            act.tag(),
+            seat,
+            style,
+            &caption::Caption::new(act.word(collapsed, disabled), run_style(FONT_SMALL, text))
+                .centred()
+                .padding(6, 0)
+                // The seat's own name says the word; a second stop reading it
+                // back would be two stops for one fact.
+                .silent(Silence::name_of(act.tag())),
+            // The hit test resolves these by rectangle, as `box_at` did.
+            caption::Pointer::Transparent,
+        );
+        parts.push(scene);
     }
     parts
 }

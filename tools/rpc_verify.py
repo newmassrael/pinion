@@ -5360,6 +5360,90 @@ def declared_but_unreachable(
     return sorted(set(declared) - painted - reachable)
 
 
+def ink_in_boxes(
+    app: "RpcSubprocess",
+    *,
+    scale: int = 4,
+    slack: int = 3,
+) -> "list[dict]":
+    """★★★★★ R1794 — **where the GLYPHS sit inside the box a reader sees**, asked
+    of the wire.
+
+    ## Why this exists
+
+    A reader opened the assembled tool and reported that five chips, three row
+    seats and a switch caption were not centred. R1792 had just centred them and
+    its gate was green. Both were true: **the gate measured RECTANGLES and the
+    reader was looking at GLYPHS.** A run given a 32-wide box for a word whose
+    glyphs advance 15 draws them `Start`-aligned at the left of it, so the
+    rectangle can be perfectly centred while the ink is 8.5px off.
+
+    Nothing here asked the difference — and the surface that could had existed
+    since R1654. `scene/text_painted` publishes `ink_w` / `ink_h` (what the
+    shaper produced), `painted` (what was drawn when it differs from what the
+    scene holds) and `over_w` / `over_h`. The defect was not that the framework
+    could not answer; it was that every gate reached for `scene/snapshot`, which
+    carries boxes.
+
+    ## What a row means
+
+    For each run, the smallest TAGGED box of a caption's own scale whose centre
+    holds the run's centre — the same "which box is this word in" judgment
+    `pinion_widget_paint::caption::escapes` makes, because a word overlapping a
+    whole pane is on a pane rather than in a box. `left` / `right` / `top` /
+    `bottom` are the INK's gaps inside that box, so `abs(left - right) <= 1` is
+    "centred" and nothing else is.
+
+    `scale` bounds how much bigger than the ink a box may be and still count as
+    *its* box; `slack` is how many pixels of asymmetry read as centred.
+    """
+    resp = app.request("scene/text_painted")
+    assert resp is not None and isinstance(resp.result, dict), "scene/text_painted answers"
+    runs = resp.result["runs"]
+    boxes = abs_rects_of(app.snapshot(source="paint"))
+    out: list[dict] = []
+    for run in runs:
+        ink_w, ink_h = run.get("ink_w", 0), run.get("ink_h", 0)
+        if ink_w <= 0:
+            continue
+        # The ink starts where the run's box starts: the shaper lays it out
+        # inside that rectangle, and every alignment in this tree is `Start`.
+        ix, iy = run["x"], run["y"]
+        cx, cy = ix + ink_w // 2, iy + ink_h // 2
+        holders = [
+            (tag, b)
+            for tag, b in boxes.items()
+            if b[0] <= cx < b[0] + b[2]
+            and b[1] <= cy < b[1] + b[3]
+            and b[2] <= ink_w * scale
+            # ★★★★★ A caption's OWN box is the ink, so measuring the ink against
+            # it answers 0/0 for everything — a vacuous pass, which is the exact
+            # shape of the gate this replaces. The question is where the caption
+            # sits in the box somebody ELSE drew.
+            and not tag.endswith(".caption")
+        ]
+        if not holders:
+            continue
+        tag, box = min(holders, key=lambda kv: kv[1][2] * kv[1][3])
+        left, top = ix - box[0], iy - box[1]
+        out.append(
+            {
+                "box": tag,
+                "content": run.get("content", ""),
+                "painted": run.get("painted"),
+                "ink": (ink_w, ink_h),
+                "box_rect": box,
+                "left": left,
+                "right": box[2] - ink_w - left,
+                "top": top,
+                "bottom": box[3] - ink_h - top,
+                "centred_x": abs((box[2] - ink_w - left) - left) <= slack,
+                "centred_y": abs((box[3] - ink_h - top) - top) <= slack,
+            }
+        )
+    return out
+
+
 def behind_an_overflow(
     app: "RpcSubprocess", external: str = "/external"
 ) -> set[str]:
