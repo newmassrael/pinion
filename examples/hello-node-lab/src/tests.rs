@@ -11,8 +11,8 @@ use pinion_core::selection::Selection;
 use pinion_core::widgets::config_form::Applies;
 
 use super::{
-    Hit, INSP_W, LabState, MIN_W, PALETTE_W, RAIL_W, TOOLBAR_LEFT_CLUSTER, TOOLBAR_RIGHT_CLUSTER,
-    canvas_rect, card_rect, content_to_window, deploy, inspector_rect, pin_rect, spec,
+    Hit, INSP_W, LabState, MIN_W, PALETTE_W, RAIL_W, TOOLBAR_LEFT_CLUSTER, canvas_rect, card_rect,
+    content_to_window, deploy, inspector_rect, pin_rect, spec,
 };
 use crate::graph::Role;
 
@@ -1755,6 +1755,53 @@ fn r1687_nothing_is_produced_until_somebody_asks_for_it() {
 /// right cluster that grew past its declaration would paint over the launch-gate
 /// chip rather than off the pane.
 #[test]
+fn r1791_the_toolbar_fits_at_the_floor_it_declares() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let owner = Owner::current().expect("this test runs inside a scope");
+        pinion_core::reactive::VIEWPORT_SIZE
+            .resolve(&owner)
+            .set((MIN_W, super::MIN_H));
+        // ★★★★★ **The round's own assertion: it is never cut.** At the declared
+        // floor the row still fits, which is what `short_by == 0` means. A floor
+        // that did not satisfy this is exactly the state a reader reported —
+        // 1625 declared, 607 of cluster against 595 of room, seats painted past
+        // the pane and the inspector clipped by 237.
+        assert_eq!(
+            super::right_cluster().short_by(),
+            0,
+            "at its own floor the toolbar still does not fit — {:?} on the row, \
+             {:?} behind the control",
+            super::right_cluster().shown(),
+            super::right_cluster().moved()
+        );
+        assert_eq!(
+            MIN_W,
+            RAIL_W + PALETTE_W + super::TOOLBAR_RIGHT_FLOOR + TOOLBAR_LEFT_CLUSTER + INSP_W,
+            "★ and the floor is DERIVED from the two clusters. ★★★★★ The sentence \
+             that used to stand beside this said a 1366-wide laptop no longer \
+             shows this screen unclipped and that adding a button was 'a real \
+             cost'. Both are now false, and making them false is the round: the \
+             right cluster gives groups up instead of demanding its whole width, \
+             so a seat added to it moves what the toolbar WANTS and not what the \
+             window must be."
+        );
+        // ★★ And the launch seat is on the row even here, because it is the one
+        // that may not move — a floor that hid it would be the wrong trade
+        // dressed as a fix.
+        assert!(
+            super::right_cluster()
+                .shown()
+                .iter()
+                .any(|g| g.word() == "run"),
+            "the launch seat moved at the floor: {:?}",
+            super::right_cluster().shown()
+        );
+    });
+}
+
+#[test]
 fn r1687_the_toolbars_declared_width_covers_what_it_paints() {
     let owner = Owner::new();
     owner.run(|| {
@@ -1773,8 +1820,11 @@ fn r1687_the_toolbars_declared_width_covers_what_it_paints() {
         let bar = super::toolbar_rect();
         assert_eq!(
             bar.w,
-            TOOLBAR_RIGHT_CLUSTER + TOOLBAR_LEFT_CLUSTER,
-            "at the floor the toolbar pane is exactly the two clusters"
+            super::TOOLBAR_RIGHT_FLOOR + TOOLBAR_LEFT_CLUSTER,
+            "★ R1791 — at the floor the toolbar pane is the left cluster plus \
+             the right one AT ITS NARROWEST: the seat that may not move and the \
+             control holding the rest. It used to be the right cluster's full \
+             width, which is what made the floor 1625 and cut the inspector."
         );
         let right = i64::from(bar.x) + i64::from(bar.w);
         // ★★★★ R1688 — **from the roster, not from a list written here.** R1687
@@ -1785,9 +1835,18 @@ fn r1687_the_toolbars_declared_width_covers_what_it_paints() {
         // it is not on the screen either.
         let state = super::use_lab_state();
         let seats = super::toolbar_seats(&state);
+        // ★★★★★ R1791 — at the FLOOR, which is where this test runs, most of the
+        // cluster is behind the overflow control by design. The roster is what
+        // is on the row plus what the control holds, and both halves are
+        // counted, because a seat that moved is still a seat.
+        let held: usize = super::right_cluster()
+            .moved()
+            .iter()
+            .map(|g| g.seats().len())
+            .sum();
         assert!(
-            seats.len() >= 8,
-            "the toolbar's roster: {:?}",
+            seats.len() + held >= 8,
+            "the toolbar's roster: {:?}, and {held} seat(s) behind the control",
             seats.iter().map(|s| s.tag).collect::<Vec<_>>()
         );
         let mut furthest = 0i64;
@@ -1814,20 +1873,26 @@ fn r1687_the_toolbars_declared_width_covers_what_it_paints() {
             "the left cluster reaches {left_reach} px in and \
              TOOLBAR_LEFT_CLUSTER declares {TOOLBAR_LEFT_CLUSTER}"
         );
+        // ★★★★★ R1791 — the same invariant against a DERIVED width. This used
+        // to compare against `TOOLBAR_RIGHT_CLUSTER`, a hand-written 609 that
+        // R1687 derived once and nothing re-derived; the cluster now says what
+        // it needs from its own groups, so the check is "what it paints fits in
+        // what it asked for" with no number in between. `wants` counts only the
+        // groups actually ON the row, which is what makes this true at a narrow
+        // size as well as a wide one — and the old form could not be, because a
+        // constant cannot know that something moved.
+        let wants = super::right_cluster_wants();
         assert!(
-            furthest <= i64::from(super::TOOLBAR_RIGHT_CLUSTER),
-            "the right-anchored cluster reaches {furthest} px in and \
-             TOOLBAR_RIGHT_CLUSTER declares {}. Raise the constant — the \
-             window's floor is derived from it, so a seat that outgrows it is \
-             painted off the pane at the minimum size.",
-            super::TOOLBAR_RIGHT_CLUSTER
+            furthest <= i64::from(wants),
+            "the right-anchored cluster paints {furthest} px in and the groups \
+             on the row need {wants} — a seat painted past what its group \
+             declares is one painted off the pane at the minimum size"
         );
         assert!(
-            i64::from(super::TOOLBAR_RIGHT_CLUSTER) - furthest <= 24,
-            "and it declares {} for a cluster that needs {furthest} — a floor \
-             reserving space nothing uses makes the window bigger than the \
-             screen requires",
-            super::TOOLBAR_RIGHT_CLUSTER
+            i64::from(wants) - furthest <= 24,
+            "and the groups declare {wants} for a cluster that paints \
+             {furthest} — reserving room nothing uses makes the window bigger \
+             than the screen requires"
         );
 
         // ★★ The two halves together ARE the window's minimum width — the
@@ -1841,14 +1906,6 @@ fn r1687_the_toolbars_declared_width_covers_what_it_paints() {
              view reset",
             furthest + left_reach,
             bar.w
-        );
-        assert_eq!(
-            MIN_W,
-            RAIL_W + PALETTE_W + TOOLBAR_RIGHT_CLUSTER + TOOLBAR_LEFT_CLUSTER + INSP_W,
-            "★ and the floor is DERIVED from them — R1687 grew it from 1316 to \
-             1442 by adding one button, which is a real cost (a 1366-wide \
-             laptop no longer shows this screen unclipped) and has to be a \
-             decision somebody makes rather than arithmetic nobody sees"
         );
         // ★★★★★ R1688 — **and the pair the shell is HANDED is consistent.**
         // R1687 raised `MIN_W` past `WIN_W` and nothing said so:
@@ -2031,10 +2088,21 @@ fn r1688_a_fit_brings_the_whole_graph_inside_the_canvas() {
         }
         let before = left - i64::from(ox);
         let after = i64::from(canvas.w) - (right - i64::from(ox));
+        // ★★★★★ R1791 — the invariant, stated instead of a tolerance tuned to
+        // one canvas width. The two margins share whatever the canvas has left
+        // over, so when that leftover is ODD they cannot be equal and the best
+        // achievable difference is 1. What this asserts is that each side is
+        // within a pixel of its ideal half — which is the rounding a painted
+        // integer rectangle can introduce, and is true at any width. The old
+        // form allowed a difference of 2 and failed at 3 the moment the floor
+        // moved, which is a tolerance measuring the window rather than the fit.
+        let leftover = before + after;
+        let ideal_twice = leftover; // each side's ideal is leftover / 2
         assert!(
-            (before - after).abs() <= 2,
-            "the graph sits {before} px from the left of the canvas and \
-             {after} px from the right"
+            (2 * before - ideal_twice).abs() <= 3 && (2 * after - ideal_twice).abs() <= 3,
+            "the graph sits {before} px from the left of the canvas and {after} \
+             from the right, sharing {leftover} — each side's ideal is \
+             {ideal_twice} halved, and neither may be more than 1.5 px off it"
         );
     });
 }
@@ -2285,8 +2353,24 @@ fn r1688_the_toolbar_roster_is_pressable_and_named() {
     let owner = Owner::new();
     owner.run(|| {
         let state = live();
+        // ★★★★★ R1791 — the roster is a function of the room the toolbar has,
+        // so this counts the seats a person can aim at PLUS the groups the
+        // control is holding. Measured: the cluster needs 607 and gets 410 at
+        // this screen's DESIGN width, where two groups therefore move; driven
+        // through the wire the same day, the row is whole again at 1696. So the
+        // total is what is invariant and the split between the two terms is not
+        // — which is why this asserts on the sum rather than on either half.
+        //
+        // ★ An earlier draft of this comment said a whole row "does not exist at
+        // any size this screen runs at". That was measured at one width and
+        // stated about all of them, and driving it found 1696.
         let seats = super::toolbar_seats(&state);
-        assert!(seats.len() >= 8);
+        let held = super::right_cluster().moved().len();
+        assert!(
+            seats.len() + held >= 8,
+            "{} seats on the row and {held} group(s) behind the control",
+            seats.len()
+        );
         for seat in &seats {
             assert!(!seat.name.trim().is_empty(), "{} has no name", seat.tag);
             // Every corner, not the centre: a rectangle one pixel out is

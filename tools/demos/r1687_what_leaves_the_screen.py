@@ -60,11 +60,21 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    press_painted_tag,
     run_demo,
+    widen_until_row_whole,
 )
 
 EXAMPLE = "hello-node-lab"
 EXT = "/external"
+
+# ★★★★★ R1791 — **derived at boot, not declared here.** This demo's subject is
+# the two export seats' place ON THE ROW: side by side, in order, before the run
+# button. Since R1791 the toolbar gives a group up when it is tight, so at 1440
+# — the width this constant used to name — those two seats are in a column under
+# the overflow control and every sentence below would be about a different
+# arrangement. `widen_until_row_whole` asks the screen for a width where nothing
+# moved, which is the only honest place to read a claim about the row.
 VIEWPORT = (1440, 900)
 
 # The two seats, and the operations they answer.
@@ -94,8 +104,10 @@ def produced(tf):
 
 
 def press(tf, tag):
-    box = rects(tf)[tag]
-    tf.click(at=(box[0] + box[2] // 2, box[1] + box[3] // 2))
+    # R1791 — through the shared press, which opens the overflow control first
+    # when the toolbar has moved this seat. Written by hand here until a group
+    # moved and the aim stopped landing on anything.
+    press_painted_tag(tf, tag, VIEWPORT)
 
 
 def resolves(tf, at) -> str:
@@ -137,7 +149,10 @@ def overlaps(a, b) -> bool:
 
 
 def body() -> None:
+    global VIEWPORT
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
+        VIEWPORT = widen_until_row_whole(tf, 900, EXT)
+        print(f"[demo] the toolbar's row is whole at {VIEWPORT[0]}px wide")
         # ── (A) the declaration, and the two seats ──────────────────
         spec = json.loads(q(tf, "spec"))
         rows = {row["name"]: row for row in spec["operations"]}

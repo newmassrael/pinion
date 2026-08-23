@@ -105,6 +105,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_declared_panes_on_screen,
     assert_eq,
+    behind_an_overflow,
     declared_and_painted,
     settled_baseline,
     design_size,
@@ -399,7 +400,13 @@ def drive(name: str, example: str) -> None:
                 # the node lab's inspector note is `clipped` at its conceded
                 # floor and was `scrollable` before, so this read failed on a
                 # region the reader can still scroll to.
-                gone = sorted(declared - declared_and_painted(app, size))
+                # R1791 — a control the toolbar MOVED is not a region the reader
+                # cannot bring into view: it is one press away and the control
+                # holding it names it. Asked of the screen, because what is
+                # behind the control at one width is on the row at another.
+                gone = sorted(
+                    declared - declared_and_painted(app, size) - behind_an_overflow(app)
+                )
                 reach = app.request("scene/scroll_reach")
                 assert reach is not None and reach.result is not None
                 rows = reach.result["out_of_sight"]

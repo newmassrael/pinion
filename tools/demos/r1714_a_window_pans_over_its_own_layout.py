@@ -81,7 +81,14 @@ SCREENS = [
 #: its floor. Written here so this file asserts the DECISION rather than echoing
 #: whatever the binding currently says.
 PANNING = "hello-node-lab"
-PREVIOUS_FLOOR = 1601
+#: ★★★★★ R1791 — 1188, where this read 1601. The node lab's floor came down when
+#: its toolbar learned to give a group up instead of demanding its whole width,
+#: so at 1600 the screen now FITS and does not pan at all — this probe was
+#: measuring a screen that had stopped being the subject. The width is still
+#: written here rather than read off the binding, for the reason it always was:
+#: this file asserts the DECISION, and a probe that followed the constant would
+#: go on passing through the very change it exists to notice.
+PREVIOUS_FLOOR = 1188
 
 #: R1689's requirement, in pixels: a display this wide must hold the screen.
 #: The number a real loss was written against, and the one the band exists for.
@@ -246,11 +253,38 @@ def c_the_recipe_names_the_pan_and_works(app: RpcSubprocess, name: str) -> None:
     # The height here only has to be a size the window will take; it is written
     # as the current floor so a future move of the floor fails here rather than
     # silently testing a size the window resolves upward.
-    at = (PREVIOUS_FLOOR - 1, 410)
+    # ★★★★★ R1791 — the historical width and the PROBE width came apart here,
+    # and the round that made them come apart is the one that fixed the screen.
+    #
+    # This used to be one width doing two jobs: *one pixel under the floor the
+    # previous round shipped*, which was both a size the screen used to lose
+    # marks at AND a size it still panned at. R1791 dropped this screen's floor
+    # from 1601 to 1188 — the toolbar gives a group up instead of demanding its
+    # whole width — so at 1600 and at 1187 alike the layout now simply FITS.
+    # Measured: no `window.pan` at 1187, four out-of-sight glyphs and **none**
+    # needing two viewports. The section's whole subject is a mark that needs the
+    # window moved AND a pane scrolled; at a width where the window does not move
+    # there is no such mark, and a probe there measures nothing.
+    #
+    # So the historical claim keeps the historical width, and the chain is driven
+    # one pixel under the floor the screen declares NOW — asked of the screen,
+    # because that is the number this round changed.
+    historic = (PREVIOUS_FLOOR - 1, 410)
+    reach = reach_at(app, historic)
+    ok(
+        f"C/{name}: at {historic[0]} — one pixel under the floor the round before "
+        f"this one shipped — nothing is lost ({reach['lost']})",
+        reach["lost"] == 0,
+    )
+    concession = floor_report(app)["concession"]
+    comfortable, declared = concession["comfortable"], concession["floor"]
+    at = (declared["width"], 410)
     reach = reach_at(app, at)
     ok(
-        f"C/{name}: at {at[0]} — one pixel under the floor the round before this "
-        f"one shipped — nothing is lost ({reach['lost']})",
+        f"C/{name}: and at {at[0]} — the floor it DECLARES, {comfortable['width'] - declared['width']}px "
+        f"below the width it stops shrinking at ({comfortable['width']}) — nothing "
+        f"is lost either ({reach['lost']}). That band is what the pan is for, and "
+        f"it is the screen's own number rather than one written here",
         reach["lost"] == 0,
     )
     # The marks that round lost are the seat glyphs inside the inspector's row

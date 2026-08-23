@@ -294,48 +294,70 @@ def section_c(app: RpcSubprocess) -> dict:
 
 
 def section_d(app: RpcSubprocess) -> dict:
-    banner("D — at the opening window it does not, and says exactly why")
+    banner("D — ★★★★★ there is no window this tool can be cut in")
+    # ★★★★★ R1791 — this section used to run at SMALL and assert that the tool
+    # DOES NOT claim to conform at the window it opens in, because the node lab
+    # declared 1625 against a page of 1388 and its three surfaces declined. A
+    # reader opened that window, saw the inspector cut, and asked whether it
+    # should not be impossible to cut it in any situation. It is now: the
+    # toolbar gives a group up instead of demanding its whole width, the lab
+    # declares 1188, and it fits.
+    #
+    # So the subject moved, and it moved because the defect was repaired. Two
+    # repairs were tried here before this one and BOTH measured something better
+    # than the clause they were replacing:
+    #
+    #  * a narrower window — 1100 — to keep producing an away. `scene/resize` to
+    #    1100 is granted **1440**, the shell's declared floor. From outside there
+    #    is no width at which the assembled tool can be driven below what its
+    #    mounted screens declare.
+    #  * the opening window, on the assumption the capture viewer still declines
+    #    there. It does not: walked at 1440x900 the report is **27 surfaces
+    #    stood, none away, conforms=true**. (The capture viewer is short by 37px
+    #    against its own declaration — the shell's own ratchet says so — but that
+    #    shortfall does not reach the away condition.)
+    #
+    # ★★★★★ So the fact this section states is the strongest one R1791 produced:
+    # **the away condition is unreachable from outside.** A reader cannot make
+    # this tool cut a screen by resizing it, because the shell will not take a
+    # window that would.
+    #
+    # The SHAPE claims that used to live here — that an away names both numbers,
+    # in the relation that makes declining honest — did not die with the state
+    # that produced them. They moved to `hello-node-lab`'s own crate tests
+    # (`judge::tests::r1791_*`), where the judge can be handed a narrow surface
+    # directly. That is R1786's rule: an assertion that cannot stand moves rather
+    # than dies. It also repays something this round created — until it was
+    # written, the away condition had **no test at all**, and R1791 had just made
+    # it unreachable by every demo that used to exercise it.
+    asked = (1100, 900)
+    resp = app.request("scene/resize", {"width": asked[0], "height": asked[1]})
+    granted = (resp.result["width"], resp.result["height"])
+    ok(
+        f"D: ★★★★★ the window REFUSES to go below its floor — asked for "
+        f"{asked[0]} and granted {granted[0]}, because {resp.result['width_bound']}",
+        granted[0] > asked[0] and resp.result["width_bound"]["kind"] == "floor",
+    )
     resize_and_settle(app, SMALL)
     said = walk(app)
-    ok(
-        "D: the tool does not claim to conform at the window it opens in",
-        said["conforms"] is False,
-    )
-    lab_surfaces = {
-        name: visit
+    away = sorted(
+        f"{key}/{name}"
         for (key, name), visit in visits(said).items()
-        if key == "lab"
-    }
-    ok("D: the lab's surfaces are all in the report", len(lab_surfaces) == 3)
-    for name, visit in sorted(lab_surfaces.items()):
-        why = visit.get("why") or ""
-        ok(
-            f"D: `lab`/`{name}` declines to be judged here rather than failing",
-            visit["stood"] is False and why != "",
-        )
-        laid_out = re.search(r"laid out (\d+) wide", why)
-        given = re.search(r"given is (\d+)x(\d+)", why)
-        ok(
-            f"D: ★★ and the reason for `{name}` names BOTH numbers -- the width "
-            "this screen declares it lays out at, and the width it was actually "
-            "given -- so a reader is not left to find either of them",
-            laid_out is not None and given is not None,
-        )
-        ok(
-            f"D: ★★★★★ and the two are in the relation that makes the away "
-            f"honest for `{name}`: it was given LESS than it declares. This is "
-            "a state of the host's grant rather than a case in which the judge "
-            "would fail, which is the test R1742 set for an away condition",
-            int(laid_out.group(1)) > int(given.group(1)),
-        )
-        eq(
-            f"{given.group(1)}x{given.group(2)}",
-            visit["at"],
-            f"D: and the width in the sentence is the extent the verdict for "
-            f"`{name}` was read at, rather than a second account of it",
-        )
-    first = next(iter(sorted(lab_surfaces.items())))[1]
-    print(f"  [small] {sorted(lab_surfaces)} away: {first['why']}")
+        if visit["stood"] is False
+    )
+    ok(
+        f"D: ★★★★★ and at the window it opens in — the narrowest it has — every "
+        f"one of its {said['stood']} surfaces STANDS to be judged. Three of the "
+        f"node lab's declined here before this round (away now: {away or 'none'})",
+        away == [],
+    )
+    ok(
+        "D: ★★ so the tool claims to conform at the window a reader first sees, "
+        "which is the claim that was false when a reader opened it and found the "
+        "inspector cut",
+        said["conforms"] is True,
+    )
+    print(f"  [small] {said['reproduced']}/{said['specified']} stood {said['stood']}, away none")
     return said
 
 
@@ -343,17 +365,35 @@ def section_d(app: RpcSubprocess) -> dict:
 
 
 def section_e(small: dict, large: dict) -> None:
-    banner("E — away credits nothing, so the smaller window reads WORSE")
+    banner("E — the smaller window still reads worse, and now for an honest reason")
+    # ★★★★★ R1791 — this section's INEQUALITY survived and its stated REASON did
+    # not, which is the more dangerous of the two outcomes: an assertion that
+    # goes on passing while the sentence explaining it has become false.
+    #
+    # It read: *an away surface reproduces nothing, so a section that declines to
+    # be judged costs its whole specification*. That was the mechanism when three
+    # of the node lab's surfaces declined at the opening window. Measured now:
+    # **nothing is away at either size** and the two walks stand the same 27
+    # surfaces. The gap is 128 against 129 — ONE part, a real difference in what
+    # a smaller window reproduces, not a whole specification withdrawn.
+    #
+    # The claim about away crediting nothing is not gone; it is R1742's and lives
+    # where R1742 put it. What this section can still say is that the smaller
+    # window is not flattered.
     ok(
-        "E: ★★★★★ the headline at the opening window went DOWN, not up. An away "
-        "surface reproduces nothing (R1742's rule), so a section that declines "
-        "to be judged costs its whole specification -- which is what stops "
-        "'this frame is not what my specification is about' being a way to pass",
+        f"E: ★★★★★ the headline at the opening window is still LOWER "
+        f"({small['reproduced']} against {large['reproduced']} of "
+        f"{large['specified']}) — a screen given less room reproduces less of "
+        "its specification, and no vocabulary here lets it read as more",
         small["reproduced"] < large["reproduced"],
     )
-    ok(
-        "E: and the walk says so as a count of surfaces it never stood in",
-        small["stood"] < large["stood"],
+    eq(
+        small["stood"],
+        large["stood"],
+        "E: ★★★★★ and it stands the SAME number of surfaces, which is what R1791 "
+        "changed. The gap above is a part this window does not reproduce, not a "
+        "section that withdrew from being judged -- those are different failures "
+        "and the walk no longer confuses them",
     )
     eq(
         small["specified"],

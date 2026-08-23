@@ -2153,8 +2153,16 @@ fn r1724_a_press_inside_the_mounted_section_resolves_to_it() {
         // a rectangle inside it counts from the page's origin. Converting is
         // the caller's job and getting it wrong is how the first draft of this
         // test pressed 22 pixels above the card it named.
+        // ★★★★★ R1791 — the pan viewport is GONE, and that is the fix rather
+        // than a regression. A mounted section pans only when it declares a
+        // width the page cannot give it; the lab declared 1625 against 1388, so
+        // the shell wrapped it in one. The toolbar can give a group up now, the
+        // lab declares a width that fits, and there is nothing to pan — so the
+        // card's rectangle is in the window's own frame. Read either way rather
+        // than assuming: this test is about where a press LANDS, and it must go
+        // on being true whichever of the two the layout is in.
         let page = pinion_runtime::rect_for_tag(&scene, "window.pan")
-            .expect("the mounted section pans inside its region");
+            .unwrap_or(pinion_core::scene::Rect::new(0, 0, 0, 0));
         let card = pinion_runtime::rect_for_tag(&scene, "lab.node.P-02")
             .expect("the mounted lab paints its node cards");
         let inside = (page.x + card.x + card.w / 2, page.y + card.y + card.h / 2);

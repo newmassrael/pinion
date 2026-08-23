@@ -37,6 +37,7 @@ from rpc_verify import (  # noqa: E402
     assert_declared_channels_are_true,
     assert_eq,
     assert_router_press_moves,
+    behind_an_overflow,
     call,
     find_by_tag,
     run_demo,
@@ -410,7 +411,14 @@ def body() -> None:
             # `lab.toolbar.{save,open,clear}`. Three at once and none lost, so
             # the pin moving by exactly three is what says the group landed
             # whole rather than a seat arriving and another quietly going.
-            "lab.toolbar": 15,
+            # ★★ R1791 — 17, not 15: the overflow control and its glyph
+            # (`lab.toolbar.more{,.label}`). It gained two and lost none — the
+            # five seats it holds are still members, counted through
+            # `behind_an_overflow` below, because a seat that moved is still a
+            # seat. That is the whole of what this round changed here: the pin
+            # is the roster, and the paint is the roster less what is behind the
+            # control.
+            "lab.toolbar": 17,
             "lab.gate": 7,
             "lab.hint": 2,
             # ★ R1681 — the picked link now carries its own affordances: the
@@ -480,13 +488,21 @@ def body() -> None:
             f"the screen paints {len(undeclared)} element(s) the specification does "
             f"not declare: {undeclared}"
         )
+        # ★★★★★ R1791 — the pin is the family's WHOLE roster, and what is painted
+        # is that minus what the toolbar's overflow control is holding. A count
+        # of painted tags alone stopped being a property of the screen the
+        # moment a row could give a group up: it became a property of the
+        # window. Asked of the screen rather than listed here, so a group added
+        # to the cluster does not need this file edited.
+        held_back = behind_an_overflow(tf)
         drifted = []
         for family, pinned in FAMILIES.items():
             held = sorted(
                 t for t in painted if t == family or t.startswith(family + ".")
             )
-            if len(held) != pinned:
-                drifted.append((family, pinned, len(held), held))
+            moved_here = sum(1 for t in held_back if t.startswith(family))
+            if len(held) + moved_here != pinned:
+                drifted.append((family, pinned, len(held) + moved_here, held))
         assert not drifted, (
             "a family gained or lost members without the specification saying so "
             f"(pin, actual, members): {drifted}"

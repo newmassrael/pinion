@@ -401,18 +401,27 @@ def section_c(app: RpcSubprocess) -> str:
     # inference taken out of it, and it is strictly better: a build that had
     # genuinely stopped drawing those parts would have been indistinguishable
     # from a clipped one under the old reading, and is not under this one.
+    # ★★★★★ R1791 — **the clause that stood here has been made false, and making
+    # it false is what the reader asked for.** It read: *at the opening window
+    # the inspector is 310px wide and the row DECLINES rather than reporting a
+    # shortfall the window caused*, with 1388 and 1625 in the sentence. That was
+    # the honest report of a screen that did not fit; the reader who saw the
+    # window asked whether it should not be impossible to cut it in any
+    # situation. The lab's toolbar now gives a group up instead of demanding its
+    # whole width, so it declares 1188, the page's 1388 satisfies it, and the
+    # inspector is drawn at its full 312.
+    #
+    # What is asserted instead is the fact that replaced it: at the window the
+    # tool OPENS at, the row is judged rather than declining.
     resize_and_settle(app, OPENING_WINDOW)
     app.tick(16)
     cramped = lab_surfaces(app)["enum_row"]
     body = abs_rects_of(app.snapshot(source="paint")).get("lab.inspector.body")
     ok(
-        f"C: 🟥★★★★★ at the opening window the inspector is {body[2]}px wide and "
-        f"the row DECLINES rather than reporting a shortfall the window caused: "
-        f"{cramped.get('why')}",
-        cramped["standing"] is False
-        and cramped["reproduced"] == 0
-        and "1388" in (cramped.get("why") or "")
-        and "1625" in (cramped.get("why") or ""),
+        f"C: ★★★★★ at the opening window the inspector is {body[2]}px wide and "
+        f"the row is JUDGED rather than declining — the shortfall a reader "
+        f"reported is gone: {cramped.get('why') or 'no reason to give'}",
+        cramped["standing"] is True and not cramped.get("why"),
     )
 
     # ★ And at a window where the page is big enough to draw the section, the

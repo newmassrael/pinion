@@ -174,6 +174,31 @@ Spec phase summary:
 
 **Never edit files under `docs/.atomic/` directly.** Use the Mnemosyne typed primitives — `set_section_*` etc. via MCP, and append the changelog with the CLI `mnemosyne-cli append-changelog-entry` (the MCP `append_changelog_entry_v2` wrapper is removed: it shells out to a dropped `append-changelog-entry-v2` subcommand and now errors `unknown command`).
 
+### ★ Append through `tools/impact_refs.py`, never the bare CLI (R1791)
+
+```bash
+python3 tools/impact_refs.py append --entry-id R<NNN> --impact "§5.11,§5.2" \
+    --decision-file d.txt --changes-file c.txt \
+    --verification-file v.txt --carry-file y.txt
+```
+
+`--impact` on the bare CLI accepts **any** token and exits 0. The store's impact
+list takes section ids, so a token that reads correctly to a person and resolves
+to nothing is written anyway — and the defect surfaces one command later, at
+`validate-workspace`, as a *number* (`atomic orphan new (entries=1)`) that does
+not say which ref. By then the entry's **audit half is frozen** and the repair is
+three commands plus two `mnemosyne.toml` rows.
+
+`mnemosyne.toml` records **four** instances — R51.186 (`45` for `§5.45`), R682.A
+(`§5.46`, absent), R1758 (`§2 #7`) and R1791 (`§2 #1`) — all the same shape.
+R1758 wrote the prescription for this wrapper and left it unbuilt, and the class
+recurred 33 rounds later in the round that had that sentence in front of it. ⇒
+**a prescription nobody executes is not a repair.**
+
+The wrapper asks `query --list-sections`, refuses by name, and says what the
+token would be with its prose suffix dropped. Its selftest runs in
+`tools/test_hooks.sh`.
+
 ## Repository structure
 
 ```

@@ -57,7 +57,10 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     assert_eq,
     isolated_storage_dir,
+    press_painted_tag,
+    resize_and_settle,
     run_demo,
+    widen_until_row_whole,
 )
 
 EXAMPLE = "hello-node-lab"
@@ -71,6 +74,8 @@ SEATS = ["lab.toolbar.save", "lab.toolbar.open", "lab.toolbar.clear"]
 # ★ Read from the screen rather than written here: the toolbar sets this
 # screen's minimum width and this round moved it again.
 _DESIGN: tuple[int, int] | None = None
+# Which of this demo's app processes have already been sized to it.
+_SIZED: set[int] = set()
 
 
 def q(tf, path):
@@ -78,10 +83,28 @@ def q(tf, path):
 
 
 def viewport(tf) -> tuple[int, int]:
+    """The width this demo's claims about the file pill are true at.
+
+    ★★★★★ R1791 — the design size is no longer it. Section B says the three file
+    seats are *one pill, one row, in order, after the launch-script button and
+    before the run button* — a claim about the ROW. At the design width the
+    toolbar now gives the file group up, so those three seats are in a column
+    under the overflow control and the claim is about a different arrangement
+    entirely. The width where nothing moved is asked of the screen, because the
+    crossover moves whenever a caption does.
+    """
     global _DESIGN
     if _DESIGN is None:
-        design = json.loads(q(tf, "spec"))["design"]
-        _DESIGN = (design[0], design[1])
+        _DESIGN = widen_until_row_whole(tf, 900, EXT)
+        print(f"[demo] the toolbar's row is whole at {_DESIGN[0]}px wide")
+    # ★ Per PROCESS, not once: this demo closes the app and opens it again to
+    # prove the graph came back, and the second process boots at its own design
+    # size. Caching the width without re-applying it would read the reopened
+    # window through a viewport it is not.
+    if id(tf) not in _SIZED:
+        resize_and_settle(tf, _DESIGN)
+        tf.tick_ms(16)
+        _SIZED.add(id(tf))
     return _DESIGN
 
 
@@ -90,8 +113,9 @@ def rects(tf):
 
 
 def press(tf, tag):
-    box = rects(tf)[tag]
-    tf.click(at=(box[0] + box[2] // 2, box[1] + box[3] // 2))
+    # R1791 — through the shared press, which opens the overflow control first
+    # when the toolbar has moved this seat.
+    press_painted_tag(tf, tag, viewport(tf))
 
 
 def resolves(tf, at) -> str:

@@ -1409,5 +1409,26 @@ ok "and both run the SAME clippy, flag for flag" "$hook_clippy" "$ci_clippy"
 # rustdoc. One home is enough; zero is how that happened.
 ok "rustdoc still runs in CI, its only home" "${ci_doc:+present}" "present"
 
+# ── R1791: the impact-ref guard is itself guarded ───────────────────────────
+#
+# ★ `tools/impact_refs.py` exists because a prescription nobody executes is not
+# a repair — R1758 wrote the fix down and the class recurred 33 rounds later.
+# A guard that silently stops working is the same failure one level up, so its
+# selftest runs here, where the hook libraries' own tests already run.
+impact_self="$(python3 "$repo_root/tools/impact_refs.py" --selftest 2>&1 || true)"
+ok "the impact-ref guard passes its own selftest" \
+   "$(grep -c 'selftest: 11 of 11 passed' <<<"$impact_self")" \
+   "1"
+# And it still refuses the token that created it, which is the one case a
+# regression here would be silent about.
+impact_prose="$(python3 - "$repo_root" <<'PY' 2>&1 || true
+import sys
+sys.path.insert(0, sys.argv[1] + "/tools")
+from impact_refs import offenders
+print("refused" if offenders(["2 #1"], {"2"}) else "accepted")
+PY
+)"
+ok "and it refuses the prose form of an invariant" "$impact_prose" "refused"
+
 printf '[hooks] %d passed, %d failed\n' "$pass" "$fail"
 [[ "$fail" -eq 0 ]]

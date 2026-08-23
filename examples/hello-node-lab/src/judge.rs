@@ -437,3 +437,85 @@ fn row_families(regions: &PaintedRegions, address: &str) -> BTreeSet<String> {
     }
     found
 }
+
+#[cfg(test)]
+mod tests {
+    use pinion_core::painted::{Extent, PaintedRegions};
+    use pinion_core::scene::Rect;
+
+    use super::{Built, built};
+
+    /// A surface with nothing on it but the extent the host granted, which is
+    /// all the away condition reads.
+    fn given(width: u32) -> PaintedRegions {
+        PaintedRegions::from_marks(vec![("lab.appbar".to_owned(), Rect::new(0, 0, width, 54))])
+            .with_extent(Extent::new(width, 900))
+    }
+
+    /// ★★★★★ R1791 — the away condition's SHAPE, tested where it can still be
+    /// produced.
+    ///
+    /// # Why this is here and not in a demo
+    ///
+    /// It was in one — `r1770`'s section D drove the assembled tool to a window
+    /// where this screen declined and read the sentence off the wire. R1791 made
+    /// that state unreachable: this screen's declared width came down to what
+    /// the shell's narrowest window can give it, and the shell will not take a
+    /// window narrower than its own floor. So the demo's subject went away
+    /// because the defect it was about was fixed — and the assertions moved
+    /// rather than died.
+    ///
+    /// Which repays something the same round created. Until this test was
+    /// written the away condition had **no test at all**: every check of it went
+    /// through a window size, and R1791 had just made every such window
+    /// impossible to ask for.
+    #[test]
+    fn r1791_an_away_names_both_numbers_and_the_relation_between_them() {
+        let (comfortable, _) = crate::comfortable_size();
+        let narrow = comfortable - 200;
+        let away = built(&given(narrow), "enum_row");
+        assert!(away.parts().is_none(), "a surface below the width is away");
+        let Built::Away(why) = away else {
+            unreachable!("checked above")
+        };
+
+        // The two numbers, each found on its own so a failure says which is
+        // missing rather than that the sentence changed.
+        assert!(
+            why.contains(&format!("laid out {comfortable} wide")),
+            "★★ the reason names the width this screen DECLARES it lays out at, \
+             so a reader is not left to find it: {why}"
+        );
+        assert!(
+            why.contains(&format!("{narrow}x900")),
+            "★★ and the extent it was actually GIVEN, in the same sentence: {why}"
+        );
+        assert!(
+            narrow < comfortable,
+            "★★★★★ and the two stand in the relation that makes declining honest: \
+             it was given LESS than it declares. This is a state of the host's \
+             grant rather than a case in which the judge would fail, which is the \
+             test R1742 set for an away condition"
+        );
+    }
+
+    /// ★ And the condition is a threshold, not a slope: at exactly the declared
+    /// width the width is not what puts the surface away.
+    ///
+    /// Written because `<` and `<=` are one character apart and the difference
+    /// is whether a screen judges itself at the very width it declares — which
+    /// is the width its own window floor resolves an ask up to, and therefore
+    /// the most common width it will ever be judged at.
+    #[test]
+    fn r1791_at_exactly_the_declared_width_the_width_is_not_the_reason() {
+        let (comfortable, _) = crate::comfortable_size();
+        let Built::Away(why) = built(&given(comfortable), "enum_row") else {
+            return; // standing: the width did not put it away, which is the claim
+        };
+        assert!(
+            !why.contains("clips below that"),
+            "★ at exactly {comfortable} the screen is laid out, not clipped -- \
+             whatever else may be away here, it must not be the width: {why}"
+        );
+    }
+}

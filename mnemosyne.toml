@@ -1031,3 +1031,33 @@ from = "R1758"
 to = "2 #7"
 reason = "R1758 audit_impact_refs frozen with the prose form of the invariant; intent was §2 (the seven binding invariants), and specifically invariant #7 scene-as-data, which the entry names in its own text."
 since = "R1758"
+
+# R1791 — the FOURTH instance, 33 rounds after the third, in the same shape and
+# for the same reason: `--impact "§5.11,§5.2,§2 #1"` was accepted with exit 0 and
+# `2 #1` is the prose form of §2 invariant #1 (structured scene mandatory), which
+# is not a section id.
+#
+# ⚠ R1758 wrote down the prescription — *a thin wrapper that verifies the impact
+# tokens against `query --list-sections` BEFORE the ledger is written, attached to
+# the command a round actually runs, because after the write it is too late* — and
+# nothing built it. So the class re-occurred at the first opportunity, in the
+# round that had the prescription in front of it.
+#
+# ⇒ `tools/impact_refs.py` is that wrapper, and it is now the only supported way
+# to append an entry here. Registered rather than hidden, as the three above are.
+[[publishable_override_ledger]]
+kind = "typo_fix"
+target_id = "R1791"
+fields = ["publishable_impact_refs"]
+reason = "R1791 audit impact_refs frozen with ['5.11','5.2','2 #1']; the last is the prose form of §2 invariant #1 and is not a section id. set-changelog-publishable-impact-refs corrected the publishable half to ['5.11','5.2','2']. Audit half immutable; orphan_ledger registers the dangling audit ref below."
+applied_in = "R1791"
+content_hash_before = "5628bfd22ec2c1fdc846880571b0de76564d7a85d6cb3d8302e10810fcb90d17"
+content_hash_after = "183f1353c0d5902c4f67cc42eb057e716930c986b3f2048565cc0b937ad03f55"
+
+[[orphan_ledger]]
+kind = "atomic_entry_ref"
+doc = "docs/GENERATED.md"
+from = "R1791"
+to = "2 #1"
+reason = "R1791 audit_impact_refs frozen with the prose form of the invariant; intent was §2 (the seven binding invariants), and specifically invariant #1 structured scene mandatory, which the entry names in its own text."
+since = "R1791"

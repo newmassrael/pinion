@@ -649,6 +649,16 @@ fn must_answer(tag: &str) -> Option<String> {
         // ★★ R1717 — and the third act on that one rectangle: give the written
         // half back. Named apart from `remove` because the row does not leave.
         ("lab.form.disown.", "disown"),
+        // ★★★★★ R1791 — the reset seats, which this map has never held. Found
+        // by a narrower canvas: the gate panel FLOATS over the canvas (R1678
+        // taught the hit test exactly that), so a card under it legitimately
+        // answers the row — and this gate's grant is *sound only when the paint
+        // puts that answer at this point*, which it could not check because
+        // nothing mapped `lab.reset.nodes` to `reset:nodes`. The hole was there
+        // before this round; it took a canvas small enough to put a card under
+        // the panel to show it. Adding the prefix also PROBES those seats, so
+        // this makes the gate stricter rather than granting an exception.
+        ("lab.reset.", "reset"),
     ] {
         if let Some(rest) = tag.strip_prefix(prefix) {
             return Some(format!("{verb}:{rest}"));
@@ -814,6 +824,13 @@ fn assert_forward(when: &str, state: &LabState, shot: &Painted, size: (u32, u32)
             // paint the node.
             graph_fits || !is_graph_content(tag)
         })
+        // ★★★★★ R1791 — a control the toolbar MOVED is not a control the screen
+        // lost, and this is the same grant one row up: the reader reaches it,
+        // and the thing that holds it says so by name. Excused only when the
+        // overflow actually holds its group — an element that is neither
+        // painted nor behind the control is still a failure, which is the half
+        // this must not swallow.
+        .filter(|tag| !super::in_toolbar_overflow(tag))
         .collect();
     assert!(
         absent.is_empty(),
@@ -2373,7 +2390,36 @@ fn press_wire(state: &std::rc::Rc<LabState>, shot: &Painted, from: &str, to: &st
 }
 
 /// Press and release at the centre of a painted tag.
+///
+/// ★★★★★ R1791 — **a control the toolbar moved is reached by opening the thing
+/// that holds it**, which is what a person does and what the floor's extension
+/// button is for. Before this, a gate that aimed at `lab.toolbar.config`
+/// panicked the moment the toolbar was too narrow to keep it on the row — which
+/// caught the round's real incompleteness: the first draft published WHAT had
+/// moved and gave no way to reach it, trading a visual defect for a functional
+/// one. Re-shooting after the press is not optional: the seat's rectangle is
+/// the menu's, not the row's.
 fn press_tag(state: &std::rc::Rc<LabState>, shot: &Painted, tag: &str) {
+    if super::in_toolbar_overflow(tag) {
+        let control = *shot
+            .tags
+            .get("lab.toolbar.more")
+            .expect("a moved control means the overflow is painted");
+        let at = centre(control);
+        super::move_cursor(state, at.0, at.1);
+        super::press(state);
+        super::release(state);
+        let opened = painted(state);
+        let rect = *opened
+            .tags
+            .get(tag)
+            .unwrap_or_else(|| panic!("{tag} moved, so the overflow menu holds it"));
+        let at = centre(rect);
+        super::move_cursor(state, at.0, at.1);
+        super::press(state);
+        super::release(state);
+        return;
+    }
     let rect = *shot
         .tags
         .get(tag)

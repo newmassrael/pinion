@@ -90,6 +90,7 @@ use pinion_core::voice::Silence;
 use pinion_core::widgets::config_form::{
     Applies, ConfigDefect, ConfigField, ConfigForm, FieldType, FormError, Source, Verdict,
 };
+use pinion_core::widgets::overflow;
 use pinion_core::widgets::picker::{Picked, Picker};
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::scroll::{AutoScroll, ScrollState};
@@ -284,19 +285,49 @@ fn window_size() -> (u32, u32) {
 /// for the same reason (a floor too small paints the left cluster into the
 /// right one), which is what a derived limit buys over a stated one.
 ///
-/// What would take it back is an **overflow affordance** on the toolbar, which
-/// this tree does not have and which is a round of its own
-/// ([[debt-a-toolbar-has-no-overflow-affordance]]); until then a screen whose
-/// chrome outgrows its window clips, which is the choice [`MIN_W`] already
-/// documents.
-const TOOLBAR_RIGHT_CLUSTER: u32 = 609;
+/// ★★★★★ R1791 — **the constant this paragraph described is gone**, and that is
+/// the round. It read `const TOOLBAR_RIGHT_CLUSTER: u32 = 609` and ended:
+/// *"what would take it back is an overflow affordance on the toolbar, which
+/// this tree does not have and which is a round of its own; until then a screen
+/// whose chrome outgrows its window clips"*. A reader then opened the shipped
+/// window and reported exactly that clip.
+///
+/// Two things replaced it, and neither is a hand-written number.
+/// [`ToolGroup::width`] derives what each group needs from its own seats, so
+/// the cluster's comfortable width is a function of what it contains rather
+/// than a total somebody re-added; and [`TOOLBAR_RIGHT_FLOOR`] is what it needs
+/// at its NARROWEST, which is the number [`MIN_W`] actually has to make room
+/// for. R1687 derived 609 rather than stating it, which was the right move
+/// available then; deriving it per group is the same move one level down, and
+/// it is the level at which a row can give something up.
+///
+/// # What replaced it: the cluster at its NARROWEST
+///
+/// The launch seat, which is [`overflow::WhenTight::Keep`], and the control
+/// that holds everything else. This is the number that decides whether the
+/// inspector is cut.
+///
+/// ★★★★★ **What the measurement found, and it is worse than the report.** The
+/// cluster's groups need 607 with their gaps. Available: 410 at this screen's
+/// own design width, 358 in the page the shell gives it — and **595 at the 1625
+/// it used to declare as its minimum**. It did not fit at its own floor either.
+/// The old `TOOLBAR_RIGHT_CLUSTER = 609` was a **reach** — how far the rightmost
+/// seat came in, measured off the rectangles — and a reach is not a sum: it
+/// holds only if the two clusters are flush, with no gap between them. So the
+/// seats were painted hard against the left cluster at the floor and 197px past
+/// the pane at the shipped size, which is the clip a reader reported.
+///
+/// Every term here is a real one: the clear space at the right edge, the seat
+/// that may not move, the gap before it, the control, and the gap that keeps
+/// the control off the left cluster.
+const TOOLBAR_RIGHT_FLOOR: u32 = RUN_INSET + RUN_W + CLUSTER_GAP + OVERFLOW_W + CLUSTER_GAP;
 
 /// ★ R1656 — the canvas pane's floor is DERIVED from what the chrome above it
 /// needs, not asserted at 240. The size axis found the difference on its first
 /// run: at the old floor the zoom readout was not painted at all, because
 /// `right - 300` had gone past the pane's own left edge. A declared minimum the
 /// screen cannot actually paint is a claim nobody was checking.
-const MIN_W: u32 = RAIL_W + PALETTE_W + (TOOLBAR_RIGHT_CLUSTER + TOOLBAR_LEFT_CLUSTER) + INSP_W;
+const MIN_W: u32 = RAIL_W + PALETTE_W + (TOOLBAR_RIGHT_FLOOR + TOOLBAR_LEFT_CLUSTER) + INSP_W;
 
 /// ★ R1656 — the toolbar's LEFT half: the graph title, the node/link counts and
 /// the launch-gate chip, which is placed after them. Named for the same reason
@@ -799,6 +830,13 @@ struct LabState {
     /// is edited in place by four verbs and read whole, so a signal would fire
     /// the whole screen for a change to one entry.
     scenario: RefCell<scenario::Plan>,
+    /// ★★★★★ R1791 — whether the toolbar's overflow control is open.
+    ///
+    /// A moved group has to stay REACHABLE, or the round trades a visual defect
+    /// for a functional one — which is worse, and is what the gates caught on
+    /// the first run: `lab.toolbar.config` stopped being pressable at all. The
+    /// floor's extension button opens a menu for exactly this reason.
+    toolbar_open: Signal<bool>,
     /// Where the scenario's playhead stands, in seconds.
     ///
     /// ★ Advanced explicitly (`advance`), never by a wall clock — R1600's
@@ -1093,6 +1131,7 @@ impl LabState {
             pan: Signal::new((0, 0)),
             running: Signal::new(false),
             scenario: RefCell::new(scenario::Plan::new()),
+            toolbar_open: Signal::new(false),
             playhead: Signal::new(0.0),
             discovery: Signal::new(false),
             cursor: Signal::new((0, 0)),
@@ -2855,6 +2894,13 @@ enum Hit {
     OpenGraph,
     /// Discard everything, including what is on disk.
     ClearGraph,
+    /// ★★★★★ R1791 — the control that holds the groups a narrow toolbar moved.
+    ///
+    /// A `Hit` of its own rather than a flag on the moved seats, because it is
+    /// a different act: pressing `save` saves, and pressing this asks *where
+    /// did save go*. The floor conflates them — its hidden action still
+    /// reports itself visible, so the two questions have one answer there.
+    More,
     Run,
     Node(NodeId),
     Pin {
@@ -3066,6 +3112,9 @@ impl Hit {
         if contains(toolbar_rect(), px, py) {
             return Self::on_toolbar(state, px, py);
         }
+        if let Some(hit) = Self::in_overflow_menu(state, px, py) {
+            return hit;
+        }
         // ★ R1678 — the gate panel's reset row, BEFORE the canvas: the panel
         // floats over the canvas, so a press inside it that fell through to
         // the world would pan the graph out from under the button.
@@ -3078,6 +3127,30 @@ impl Hit {
             return Self::on_canvas(state, px, py);
         }
         Self::Nothing
+    }
+
+    /// ★★★★★ R1791 — what a press inside the OPEN overflow menu reaches, asked
+    /// **before the canvas** and for R1678's reason one control over.
+    ///
+    /// The menu hangs BELOW the toolbar pane, so the `contains(toolbar_rect())`
+    /// test above is false for it and a press would fall through and pan the
+    /// graph out from under the button somebody just opened. Measured: without
+    /// this the menu painted, the seat was in the roster, and pressing `config`
+    /// exported nothing.
+    fn in_overflow_menu(state: &LabState, px: u32, py: u32) -> Option<Self> {
+        if !state.toolbar_open.get() {
+            return None;
+        }
+        let tag = overflow_menu_seats()
+            .into_iter()
+            .find(|(_, rect)| contains(*rect, px, py))
+            .map(|(tag, _)| tag)?;
+        Some(
+            toolbar_seats(state)
+                .into_iter()
+                .find(|seat| seat.tag == tag)
+                .map_or(Self::Nothing, |seat| seat.hit),
+        )
     }
 
     /// What a press inside the canvas toolbar reaches — **from the roster**, so
@@ -3280,6 +3353,18 @@ impl Hit {
             Self::SaveGraph => "save".into(),
             Self::OpenGraph => "open".into(),
             Self::ClearGraph => "clear".into(),
+            // ★★★★★ R1791 — the word CARRIES what moved, so the wire answers
+            // *where did save go* rather than only *you pressed the control*.
+            // The floor has no member that names what its extension holds.
+            Self::More => format!(
+                "more:{}",
+                right_cluster()
+                    .moved()
+                    .iter()
+                    .map(|g| g.word())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
             Self::Run => "run".into(),
             Self::Node(id) => format!("node:{}", state.name_of(*id)),
             Self::Pin { node, dial } => format!(
@@ -3578,15 +3663,18 @@ const ACTION_W: u32 = 66;
 /// three constants encoded the *gaps* between five seats, so inserting a sixth
 /// meant re-deriving all of them by hand and re-checking the arithmetic against
 /// a screenshot. R1687 already paid for this once on
-/// [`TOOLBAR_RIGHT_CLUSTER`] — a width stated in prose and re-derived by
+/// `TOOLBAR_RIGHT_CLUSTER` — a width stated in prose and re-derived by
 /// whoever came next — and this is the same fact one level down.
 fn file_pill_w() -> u32 {
     FILE_SEATS.iter().map(|(word, _)| seat_w(word)).sum::<u32>() + PILL_GAP * 2
 }
 
 /// Where the file pill's right edge sits, in from the toolbar's right edge.
+///
+/// R1791 — asked of the laid-out cluster rather than added up here, so it
+/// answers where the pill is when a narrow toolbar has moved something.
 fn file_pill_right() -> u32 {
-    RUN_INSET + RUN_W + CLUSTER_GAP
+    group_right(ToolGroup::File).unwrap_or(0)
 }
 
 /// The seat of file button `n`, left to right inside the pill.
@@ -3606,14 +3694,237 @@ fn file_rect(n: usize) -> Rect {
     )
 }
 
+/// ★★★★★ R1791 — **the right cluster's groups**, right to left, and what each
+/// one does when the toolbar runs out of room.
+///
+/// # Why groups and not seats
+///
+/// Two of the pairings here are DECISIONS somebody already made and wrote down,
+/// and an overflow that took a seat at a time would quietly undo them. R1687:
+/// *"its sibling renders the plan as a document and this one renders it as a
+/// script, so they belong beside each other and not one behind a menu"* — so
+/// `config` and `script` are one group. The three file seats are already drawn
+/// as one pill. Grouping is how a stated decision survives a narrow window.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ToolGroup {
+    /// The zoom steppers, the read-out and the fit seat — the canvas controls.
+    Zoom,
+    /// The pair that takes the plan off the screen.
+    Export,
+    /// Save, open and clear.
+    File,
+    /// The launch seat.
+    ///
+    /// ★ [`overflow::WhenTight::Keep`]. A person opens this screen to run the
+    /// graph, and
+    /// a toolbar that hid the run button to make room for the zoom read-out
+    /// would have got the trade exactly backwards.
+    Run,
+}
+
+impl ToolGroup {
+    /// Left to right, which is the order a reader meets them in and therefore
+    /// the order [`overflow::lay`] gives them up from the end of.
+    const IN_ROW: [Self; 4] = [Self::Zoom, Self::Export, Self::File, Self::Run];
+
+    /// What this group needs, its own seats and their inner gaps.
+    fn width(self) -> u32 {
+        match self {
+            Self::Zoom => {
+                ZOOM_BTN + PILL_GAP + view_read_w() + PILL_GAP + ZOOM_BTN + PILL_GAP + fit_w()
+            }
+            Self::Export => ACTION_W + CLUSTER_GAP + ACTION_W,
+            Self::File => file_pill_w(),
+            Self::Run => RUN_W,
+        }
+    }
+
+    /// The seats this group holds, left to right — which is the order they
+    /// appear in the overflow menu when the group has moved.
+    const fn seats(self) -> &'static [&'static str] {
+        match self {
+            Self::Zoom => &[
+                "lab.toolbar.zoom.out",
+                "lab.reset.view",
+                "lab.toolbar.zoom.in",
+                "lab.toolbar.fit",
+            ],
+            Self::Export => &["lab.toolbar.config", "lab.toolbar.script"],
+            Self::File => &["lab.toolbar.save", "lab.toolbar.open", "lab.toolbar.clear"],
+            Self::Run => &["lab.toolbar.run"],
+        }
+    }
+
+    /// Tags this group PAINTS that are not seats — a caption drawn inside one
+    /// of its seats rather than a control of its own.
+    ///
+    /// ★★★★★ R1791.1 — they go with the group and they are not menu rows, which
+    /// is exactly the distinction that was missing. `seats()` alone answers
+    /// "where do the rows go"; this pair answers "what stopped being painted",
+    /// and a reader who needs the second and is given the first calls a moved
+    /// caption LOST. Measured: `r1709` read `lab.toolbar.zoom` — the zoom
+    /// read-out's label, painted inside the view-reset seat — as a declared
+    /// region the reader could not bring into view, while the in-process gate
+    /// [`in_toolbar_overflow`] knew better from a hand-written case of its own.
+    /// Two spellings of one fact, and the wire had the incomplete one.
+    const fn labels(self) -> &'static [&'static str] {
+        match self {
+            Self::Zoom => &["lab.toolbar.zoom"],
+            Self::Export | Self::File | Self::Run => &[],
+        }
+    }
+
+    /// Every tag this group is responsible for painting: its seats and its
+    /// captions. What "this group moved" means, in the vocabulary a gate reads.
+    fn tags(self) -> impl Iterator<Item = &'static str> {
+        self.seats()
+            .iter()
+            .copied()
+            .chain(self.labels().iter().copied())
+    }
+
+    /// The tag the overflow control lists this group under.
+    const fn word(self) -> &'static str {
+        match self {
+            Self::Zoom => "zoom",
+            Self::Export => "export",
+            Self::File => "file",
+            Self::Run => "run",
+        }
+    }
+}
+
+/// The overflow control's own width, and the clear space it keeps.
+///
+/// ★ Charged only when something moves — see [`overflow::lay`]. A row that
+/// fits does not carry a control that opens onto nothing.
+const OVERFLOW_W: u32 = 28;
+
+/// ★★★★★ R1791 — the right cluster, **decided for the width it actually has**.
+///
+/// # What this is the repair of
+///
+/// A reader opened the assembled tool and reported the inspector cut off.
+/// Measured: the shipped window is 1440, this screen's page gets 1388, and this
+/// screen declared it needed 1625 — and 1029 of that was this cluster plus its
+/// sibling, in a rigid row. The comment on `TOOLBAR_RIGHT_CLUSTER` had
+/// already written the answer and could not take it: *"what would take it back
+/// is an overflow affordance on the toolbar, which this tree does not have"*.
+fn right_cluster() -> overflow::Row<ToolGroup> {
+    let room = toolbar_rect()
+        .w
+        .saturating_sub(TOOLBAR_LEFT_CLUSTER + RUN_INSET);
+    let items: Vec<overflow::Item<ToolGroup>> = ToolGroup::IN_ROW
+        .iter()
+        .map(|group| {
+            let item = overflow::Item::new(group.width() + CLUSTER_GAP, *group);
+            if *group == ToolGroup::Run {
+                item.kept()
+            } else {
+                item
+            }
+        })
+        .collect();
+    overflow::lay(room, OVERFLOW_W + CLUSTER_GAP, items).unwrap_or_else(|_| {
+        // The control is wider than the whole cluster: there is no arrangement,
+        // and a screen this narrow has already been refused by its own
+        // `ShrinkPolicy`. Laying the run seat alone keeps the paint total.
+        overflow::lay(u32::MAX, 0, vec![overflow::Item::new(0, ToolGroup::Run)])
+            .expect("an unbounded row always fits")
+    })
+}
+
+/// How far in from the toolbar's right edge `group` sits, or `None` when it
+/// moved into the overflow.
+///
+/// Derived by walking the SHOWN groups right to left, which is the same chain
+/// the hand-written `*_right` functions were — with the one difference that it
+/// walks what is on screen rather than what the code assumed always would be.
+fn group_right(group: ToolGroup) -> Option<u32> {
+    let laid = right_cluster();
+    let mut inset = RUN_INSET;
+    for shown in laid.shown().iter().rev() {
+        if *shown == group {
+            return Some(inset);
+        }
+        inset += shown.width() + CLUSTER_GAP;
+    }
+    None
+}
+
+/// What the groups ON the row need, right edge inward — the derived answer to
+/// the question `TOOLBAR_RIGHT_CLUSTER`'s hand-written 609 used to give.
+///
+/// Counts only what is shown, plus the overflow control when there is one, so
+/// it is true at a narrow size as well as a wide one. A constant could not be:
+/// it cannot know that something moved.
+fn right_cluster_wants() -> u32 {
+    let laid = right_cluster();
+    let mut wants = RUN_INSET;
+    for shown in laid.shown() {
+        wants += shown.width() + CLUSTER_GAP;
+    }
+    if laid.needs_affordance() {
+        wants += OVERFLOW_W + CLUSTER_GAP;
+    }
+    wants
+}
+
+/// ★★★★★ R1791 — where a moved group's seats sit **when the control is open**:
+/// a column under it, in row order, each seat keeping its own tag.
+///
+/// Keeping the tags is the decision. A moved control that changed its name
+/// would be a second control doing the same thing, and every gate that presses
+/// `lab.toolbar.config` would be pressing something else; keeping them means a
+/// seat MOVES rather than being replaced, which is also what a person
+/// experiences.
+fn overflow_menu_seats() -> Vec<(&'static str, Rect)> {
+    let Some(control) = overflow_rect() else {
+        return Vec::new();
+    };
+    let mut out: Vec<(&'static str, Rect)> = Vec::new();
+    let mut y = control.y + control.h + MENU_GAP;
+    for group in right_cluster().moved() {
+        for tag in group.seats() {
+            out.push((tag, Rect::new(control.x, y, MENU_W, MENU_ROW_H)));
+            y += MENU_ROW_H;
+        }
+    }
+    out
+}
+
+/// The overflow menu's own geometry: wide enough for the longest caption it
+/// holds, and clear of the control it hangs from.
+const MENU_W: u32 = 96;
+const MENU_ROW_H: u32 = 26;
+const MENU_GAP: u32 = 4;
+
+/// Where the overflow control sits, when there is one.
+fn overflow_rect() -> Option<Rect> {
+    if !right_cluster().needs_affordance() {
+        return None;
+    }
+    let bar = toolbar_rect();
+    // The control's own width and gap are the last thing `right_cluster_wants`
+    // adds, so taking them back off lands on its right edge — one walk, read
+    // two ways, rather than two walks that can disagree.
+    let inset = right_cluster_wants() - OVERFLOW_W - CLUSTER_GAP;
+    Some(Rect::new(
+        bar.x + bar.w - inset - OVERFLOW_W,
+        bar.y + 11,
+        OVERFLOW_W,
+        ZOOM_BTN,
+    ))
+}
+
 /// Where the launch-script seat's right edge sits, in from the toolbar's right.
 fn script_right() -> u32 {
-    file_pill_right() + file_pill_w() + CLUSTER_GAP
+    group_right(ToolGroup::Export).unwrap_or(0)
 }
 
 /// Where the zoom pill's right edge sits, in from the toolbar's right edge.
 fn pill_right() -> u32 {
-    script_right() + ACTION_W + CLUSTER_GAP + ACTION_W + CLUSTER_GAP
+    group_right(ToolGroup::Zoom).unwrap_or(0)
 }
 
 fn zoom_rect(plus: bool) -> Rect {
@@ -3804,6 +4115,127 @@ fn toolbar_seats(state: &LabState) -> Vec<ToolbarSeat> {
             },
         ),
     ]
+    .into_iter()
+    // ★★★★★ R1791 — a seat whose GROUP moved is not on the row: it is in the
+    // menu, at the rect the menu gives it, keeping its own tag. This is the
+    // floor's third answer inverted — measured at 6.11, a hidden action's own
+    // `isVisible()` still answers true, so a reader asking what a toolbar can
+    // do is told about controls a person cannot see. Here the roster and the
+    // paint are one list, and a moved seat MOVES rather than vanishing.
+    .filter_map(|s| relocate_if_moved(state, s))
+    // ★★ And the control that holds them NAMES them, which the floor has no
+    // member for at all.
+    .chain(overflow_control_seat(state))
+    .collect()
+}
+
+/// ★★★★★ R1791 — the overflow control as a seat, **named for what it holds**.
+///
+/// The floor's extension button has no member that says what is behind it, so a
+/// reader is left to work it out from what is missing. This one's accessible
+/// name is the list, and it says whether pressing it opens or closes — the two
+/// are different offers and a person told only "more" has not been told which.
+/// ★★★★★ R1791 — open or close the overflow, and say which.
+///
+/// A toggle and not a one-way open, because the control is the only way back:
+/// the seats it holds are painted over the canvas, and a person who opened it
+/// to look has to be able to stop looking.
+fn toggle_overflow(state: &LabState) {
+    let open = !state.toolbar_open.get();
+    state.toolbar_open.set(open);
+    let held: Vec<&str> = right_cluster().moved().iter().map(|g| g.word()).collect();
+    state.say(Utterance::done(if open {
+        format!("showing {}", held.join(", "))
+    } else {
+        "closed".to_owned()
+    }));
+}
+
+fn overflow_control_seat(state: &LabState) -> Option<ToolbarSeat> {
+    let rect = overflow_rect()?;
+    let held: Vec<&str> = right_cluster().moved().iter().map(|g| g.word()).collect();
+    Some(ToolbarSeat {
+        tag: "lab.toolbar.more",
+        rect,
+        hit: Hit::More,
+        name: format!(
+            "{} {}",
+            if state.toolbar_open.get() {
+                "close"
+            } else {
+                "more:"
+            },
+            held.join(", ")
+        ),
+    })
+}
+
+/// ★★★★★ R1791 — whether `tag` is a toolbar element the row has **moved behind
+/// the overflow control**.
+///
+/// The one question a gate needs in order to tell *this control was lost* from
+/// *this control is one press away, and the thing holding it says so*. The
+/// floor cannot answer it: measured at 6.11, a hidden action's own `isVisible`
+/// still reports true, so there is nothing to ask.
+///
+/// Answers `false` for a tag that is not a cluster seat at all, so the grant it
+/// gives is exactly the seats whose group moved and nothing else.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the wire asks it through `toolbar_overflow`; \
+    this spelling is the per-TAG one the paint gates need"
+    )
+)]
+pub(crate) fn in_toolbar_overflow(tag: &str) -> bool {
+    // ★ R1791.1 — through `tags()`, which is seats AND the captions painted
+    // inside them. This used to carry its own hand-written case for
+    // `lab.toolbar.zoom` while the wire's `moved_seats` carried none, so the two
+    // answers to "what moved" disagreed by exactly that caption.
+    right_cluster()
+        .moved()
+        .iter()
+        .flat_map(|group| group.tags())
+        .any(|moved| moved == tag)
+}
+
+/// ★★★★★ R1791 — a seat whose group the row gave up: where it is now, or
+/// nothing while the control that holds it is closed.
+///
+/// It keeps its own tag and its own name — a seat MOVES rather than being
+/// replaced, which is what a person experiences and what lets every gate that
+/// presses `lab.toolbar.config` go on pressing the configuration export. The
+/// floor's answer to the same question is that a hidden action reports itself
+/// visible, so nothing can tell where it went.
+fn relocate_if_moved(state: &LabState, seat: ToolbarSeat) -> Option<ToolbarSeat> {
+    match seat_group(seat.tag) {
+        Some(group) if right_cluster().moved().contains(&group) => {
+            if !state.toolbar_open.get() {
+                return None;
+            }
+            let rect = overflow_menu_seats()
+                .into_iter()
+                .find(|(tag, _)| *tag == seat.tag)
+                .map(|(_, rect)| rect)?;
+            Some(ToolbarSeat { rect, ..seat })
+        }
+        _ => Some(seat),
+    }
+}
+
+/// Which right-cluster group a toolbar seat belongs to, or `None` for one that
+/// is not in the cluster at all (the launch chip, which sits with the title).
+fn seat_group(tag: &str) -> Option<ToolGroup> {
+    match tag {
+        "lab.toolbar.zoom.out" | "lab.toolbar.zoom.in" | "lab.reset.view" | "lab.toolbar.fit" => {
+            Some(ToolGroup::Zoom)
+        }
+        "lab.toolbar.config" | "lab.toolbar.script" => Some(ToolGroup::Export),
+        "lab.toolbar.save" | "lab.toolbar.open" | "lab.toolbar.clear" => Some(ToolGroup::File),
+        "lab.toolbar.run" => Some(ToolGroup::Run),
+        _ => None,
+    }
 }
 
 /// The launch gate panel, bottom right of the canvas.
@@ -5326,7 +5758,17 @@ fn toolbar_controls(state: &LabState, ink: Ink) -> Vec<Scene> {
     let bar = toolbar_rect();
     let local = |r: Rect| Rect::new(r.x - bar.x, r.y - bar.y, r.w, r.h);
     let mut children: Vec<Scene> = Vec::new();
+    // ★★★★★ R1791 — paint the groups that are ON the row. A moved group's seats
+    // have no place, and painting them anyway would put them at the row's right
+    // edge on top of the run seat, which is the clip this round exists to end
+    // wearing a different coat.
+    let laid = right_cluster();
+    let showing = |group: ToolGroup| laid.shown().contains(&group);
+    children.extend(toolbar_overflow(state, bar, ink));
     for plus in [false, true] {
+        if !showing(ToolGroup::Zoom) {
+            break;
+        }
         let seat = local(zoom_rect(plus));
         children.push(box_at(
             if plus {
@@ -5359,45 +5801,51 @@ fn toolbar_controls(state: &LabState, ink: Ink) -> Vec<Scene> {
     // step — R1687 had to move that constant by 4 px to stop the number being
     // painted inside the `+` button beside it.
     let view_reset = local(view_reset_rect());
-    children.push(box_at(
-        "lab.reset.view",
-        view_reset,
-        ink.raised,
-        Some(ink.outline),
-        6,
-    ));
-    // ★ The percentage is painted INSIDE the reset seat, and that seat's name
-    // already carries it ("zoom 84%, reset the view") — one stop, both facts.
-    children.push(quiet(
-        tagged_label(
-            "lab.toolbar.zoom",
-            format!("{}%", state.zoom.get()),
-            seat_caption(view_reset),
-            FONT_SMALL,
-            ink.text,
-        ),
-        Silence::name_of("lab.reset.view"),
-    ));
-    // ★★ R1688 — the pill's trailing seat: frame the whole graph.
-    let fit = local(fit_rect());
-    children.push(box_at(
-        "lab.toolbar.fit",
-        fit,
-        ink.raised,
-        Some(ink.outline),
-        6,
-    ));
-    children.push(label("fit", seat_caption(fit), FONT_SMALL, ink.text_2));
+    if showing(ToolGroup::Zoom) {
+        children.push(box_at(
+            "lab.reset.view",
+            view_reset,
+            ink.raised,
+            Some(ink.outline),
+            6,
+        ));
+        // ★ The percentage is painted INSIDE the reset seat, and that seat's name
+        // already carries it ("zoom 84%, reset the view") — one stop, both facts.
+        children.push(quiet(
+            tagged_label(
+                "lab.toolbar.zoom",
+                format!("{}%", state.zoom.get()),
+                seat_caption(view_reset),
+                FONT_SMALL,
+                ink.text,
+            ),
+            Silence::name_of("lab.reset.view"),
+        ));
+        // ★★ R1688 — the pill's trailing seat: frame the whole graph.
+        let fit = local(fit_rect());
+        children.push(box_at(
+            "lab.toolbar.fit",
+            fit,
+            ink.raised,
+            Some(ink.outline),
+            6,
+        ));
+        children.push(label("fit", seat_caption(fit), FONT_SMALL, ink.text_2));
+    }
 
     // ★★ R1687 — the pair the reference puts side by side, because they are one
     // derivation rendered two ways. Painted from one loop so a change to either
-    // seat's look cannot land on only one of them.
-    for (tag, text, seat) in [
-        ("lab.toolbar.config", "config", local(config_rect())),
-        ("lab.toolbar.script", "script", local(script_rect())),
-    ] {
-        children.push(box_at(tag, seat, ink.raised, Some(ink.outline), 7));
-        children.push(label(text, seat_caption(seat), FONT_SMALL, ink.text_2));
+    // seat's look cannot land on only one of them — and R1791 moves them as ONE
+    // group for the same reason: an overflow that took `script` and left
+    // `config` would undo a decision somebody wrote down.
+    if showing(ToolGroup::Export) {
+        for (tag, text, seat) in [
+            ("lab.toolbar.config", "config", local(config_rect())),
+            ("lab.toolbar.script", "script", local(script_rect())),
+        ] {
+            children.push(box_at(tag, seat, ink.raised, Some(ink.outline), 7));
+            children.push(label(text, seat_caption(seat), FONT_SMALL, ink.text_2));
+        }
     }
 
     // ★★ R1689 — the file pill: three seats sharing one background, which is
@@ -5405,6 +5853,9 @@ fn toolbar_controls(state: &LabState, ink: Ink) -> Vec<Scene> {
     // because it is the destructive one and the reference gives it the same
     // treatment — the emphasis a control carries is part of what it says.
     for (n, (word, _)) in FILE_SEATS.iter().enumerate() {
+        if !showing(ToolGroup::File) {
+            break;
+        }
         let seat = local(file_rect(n));
         children.push(box_at(
             &format!("lab.toolbar.{word}"),
@@ -5427,6 +5878,63 @@ fn toolbar_controls(state: &LabState, ink: Ink) -> Vec<Scene> {
 
     children.extend(toolbar_run_seat(state, local(run_rect()), ink));
     children
+}
+
+/// ★★★★★ R1791 — the overflow control, **which says what it is holding**.
+///
+/// The floor, measured at 6.11: a tool bar squeezed to a fifth of its width
+/// shows 1 of 10 actions and puts 9 behind an extension button — and there is
+/// no member that names them, while each hidden action's own `isVisible()`
+/// still answers true. So a reader asking *what can this toolbar do right now*
+/// is told about controls a person cannot see, and cannot be told about the
+/// ones behind the button.
+///
+/// Here the name IS the list. A person reading it hears which groups moved, and
+/// the same fact is on the wire at `toolbar_overflow`, so neither channel has to
+/// infer it from what is missing.
+/// ★★★★★ R1791 — the overflow control, and the menu it opens onto.
+///
+/// The menu's seats keep their own tags, so a press aimed at
+/// `lab.toolbar.config` still lands on the configuration export: it is
+/// somewhere else, not something else.
+fn toolbar_overflow(state: &LabState, bar: Rect, ink: Ink) -> Vec<Scene> {
+    let local = |r: Rect| Rect::new(r.x - bar.x, r.y - bar.y, r.w, r.h);
+    let Some(control) = overflow_rect() else {
+        return Vec::new();
+    };
+    let mut children = toolbar_overflow_seat(local(control), ink);
+    if state.toolbar_open.get() {
+        for (tag, rect) in overflow_menu_seats() {
+            let seat = local(rect);
+            children.push(box_at(tag, seat, ink.raised, Some(ink.outline), 6));
+            children.push(label(
+                tag.rsplit('.').next().unwrap_or(tag),
+                seat_caption(seat),
+                FONT_SMALL,
+                ink.text_2,
+            ));
+        }
+    }
+    children
+}
+
+fn toolbar_overflow_seat(seat: Rect, ink: Ink) -> Vec<Scene> {
+    vec![
+        box_at("lab.toolbar.more", seat, ink.raised, Some(ink.outline), 6),
+        // ★ The glyph is the caption and the SEAT carries the list — see
+        // `toolbar_seats`, where this control's name is built from what the
+        // row actually moved. Announcing it here as well would say it twice.
+        quiet(
+            tagged_label(
+                "lab.toolbar.more.label",
+                "\u{2026}".to_owned(),
+                seat_caption(seat),
+                FONT_SMALL,
+                ink.text_2,
+            ),
+            Silence::name_of("lab.toolbar.more"),
+        ),
+    ]
 }
 
 /// The launch control: the chip, and the word that says what pressing it will
@@ -7251,6 +7759,15 @@ const FIELDS: &[SchemaField] = &{
         SchemaField::new("said", "object"),
         // ★★★★★ R1790 — how long what is being said has left.
         SchemaField::new("saying", "json"),
+        // ★★★★★ R1791 — **what the toolbar moved, and what is still on the row.**
+        // The floor has an overflow control and no member that names what is
+        // behind it, and each hidden action's own `isVisible` still answers
+        // true — so a client asking what this toolbar can do right now is told
+        // about controls a person cannot see and is not told about the ones a
+        // press away. Both halves are here, and `short_by` is the third: how
+        // much room the row still does not have, which is zero at every size
+        // this screen declares it can be shown in.
+        SchemaField::new("toolbar_overflow", "json"),
         // ★★ R1687 — what this screen has PRODUCED, which is not what it could
         // produce. `document` next to it answers the selected card's own
         // configuration; this answers the whole graph's, once somebody has
@@ -7942,6 +8459,29 @@ impl ExternalIntrospect for LabOracle {
             // ★★★★★ R1790 — the sentence AND how long it has, so a gate advances
             // time by asking rather than by guessing a number this screen owns.
             "saying" => Ok(IntrospectValue::Json(state.toast.to_wire())),
+            // ★★★★★ R1791 — what the toolbar moved, what is still on it, and
+            // whether it fits at all.
+            "toolbar_overflow" => {
+                let laid = right_cluster();
+                Ok(IntrospectValue::Json(serde_json::json!({
+                    "on_the_row": laid.shown().iter().map(|g| g.word()).collect::<Vec<_>>(),
+                    "moved": laid.moved().iter().map(|g| g.word()).collect::<Vec<_>>(),
+                    // ★★★★★ R1791 — the moved groups' SEATS, by the tag a reader
+                    // aims at. `moved` names the groups, which is what a person
+                    // reads; this is the same fact in the vocabulary a gate and
+                    // an agent work in, so neither has to know the grouping to
+                    // tell "behind the control" from "gone". The floor
+                    // publishes neither.
+                    "moved_seats": laid
+                        .moved()
+                        .iter()
+                        .flat_map(|g| g.tags())
+                        .collect::<Vec<_>>(),
+                    "open": state.toolbar_open.get(),
+                    "control": laid.needs_affordance(),
+                    "short_by": laid.short_by(),
+                })))
+            }
             _ => Err(ReadRefusal::UnknownPath),
         }
     }
@@ -10022,6 +10562,11 @@ fn release(state: &Rc<LabState>) {
         Hit::ClearGraph => {
             persist::clear(state);
         }
+        // ★★★★★ R1791 — open or close the overflow. A toggle and not a
+        // one-way open, because the control is the only way back: the seats it
+        // holds are painted over the canvas, and a person who opened it to look
+        // has to be able to stop looking.
+        Hit::More => toggle_overflow(state),
         Hit::Link(id) => state.selected_link.set(Some(LinkPick::Authored(id))),
         Hit::Observed(from, to) => state.selected_link.set(Some(LinkPick::Observed(from, to))),
         // ★★ R1681 — one seat, two meanings, chosen by which layer the picked

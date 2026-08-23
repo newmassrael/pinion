@@ -5360,6 +5360,123 @@ def declared_but_unreachable(
     return sorted(set(declared) - painted - reachable)
 
 
+def behind_an_overflow(
+    app: "RpcSubprocess", external: str = "/external"
+) -> set[str]:
+    """★★★★★ R1791 — the tags a screen's toolbar has **moved behind an overflow
+    control**, asked of the screen rather than guessed.
+
+    A control the row gave up is not a control the screen lost: it is one press
+    away, and the thing holding it says so by name. Every rule of the form *what
+    the specification declares is painted* has to know the difference, and the
+    honest way to know it is to ask — a hard-coded list here would go stale the
+    day a group is added, and a width-dependent list cannot be hard-coded at all.
+
+    ## Why the screen is the one that knows
+
+    Whether anything moved is a function of the room the toolbar has, which is a
+    function of the window. Measured on the node lab: the right cluster needs 607
+    and is given 410 at the screen's own design width, so what is behind the
+    control at one size is on the row at another. No caller can compute that; the
+    screen already has.
+
+    Empty for a screen with no such control, so a caller subtracts it
+    unconditionally.
+    """
+    try:
+        state = app.query(f"{external}/toolbar_overflow")
+    except Exception:  # noqa: BLE001 - a screen without the slot moved nothing
+        return set()
+    if not isinstance(state, dict):
+        return set()
+    return set(state.get("moved_seats") or [])
+
+
+def press_painted_tag(
+    app: "RpcSubprocess",
+    tag: str,
+    viewport: "tuple[int, int]",
+    external: str = "/external",
+) -> None:
+    """★★★★★ R1791 — press a painted tag, **opening the control that holds it
+    first** when the toolbar has moved it.
+
+    The same rule the in-process paint gates learned, on the other channel: a
+    control the row gave up is one press away rather than gone, so a caller
+    aiming at `lab.toolbar.config` goes on meaning the configuration export
+    whether or not the window is wide enough to keep it on the row. Two demos
+    wrote this press by hand and both broke the moment a group moved; the rule
+    belongs here so a third does not have to learn it.
+
+    Re-reading the paint after opening is not optional: the seat's rectangle is
+    the menu's, not the row's.
+    """
+    if tag in behind_an_overflow(app, external):
+        control = abs_rects_of(app.snapshot(source="paint", viewport=viewport))[
+            "lab.toolbar.more"
+        ]
+        app.click(at=(control[0] + control[2] // 2, control[1] + control[3] // 2))
+        app.tick_ms(16)
+    box = abs_rects_of(app.snapshot(source="paint", viewport=viewport))[tag]
+    app.click(at=(box[0] + box[2] // 2, box[1] + box[3] // 2))
+
+
+def widen_until_row_whole(
+    app: "RpcSubprocess",
+    height: int,
+    external: str = "/external",
+    *,
+    start: int = 1440,
+    stop: int = 2560,
+    step: int = 64,
+) -> "tuple[int, int]":
+    """★★★★★ R1791 — resize until the screen's toolbar keeps **every** group on
+    the row, and answer the size that happened at.
+
+    ## Why a demo needs this, and why the number is not written down
+
+    A claim of the form *these two seats sit side by side, in this order, before
+    the run button* is a claim about the ROW. Since R1791 the row gives a group
+    up when it is tight, so at a narrow window those seats are in a column under
+    the overflow control and the claim is simply about something else. Widening
+    first is what makes the sentence a fact again — and stating the width it was
+    read at is R1770's rule, arrived at here from the other direction.
+
+    The width is **derived, not declared**: the crossover moves whenever a seat's
+    caption changes, and a constant here would be a fourth copy of a number the
+    screen already computes. Measured on the node lab, 2026-08-23: two groups
+    moved at 1388 and at 1440, and the search answers **1696** — which is the
+    first width its 64px step reaches, not the crossover itself, so a caller may
+    read the answer as *a width where the row is whole* and never as *the
+    narrowest one*.
+
+    Answers the granted size unchanged for a screen with no overflow slot — such
+    a row is whole by construction — and raises when no width up to `stop`
+    empties it, because silently reading a moved row is the failure this exists
+    to prevent.
+    """
+    def granted_of(shot: Any) -> "tuple[int, int]":
+        rect = shot.get("rect", {}) if isinstance(shot, dict) else {}
+        return (rect.get("w", 0), rect.get("h", 0))
+
+    try:
+        app.query(f"{external}/toolbar_overflow")
+    except Exception:  # noqa: BLE001 - no such control: the row is always whole
+        return granted_of(app.snapshot(source="paint"))
+    width = start
+    while width <= stop:
+        shot = resize_and_settle(app, (width, height))
+        app.tick_ms(16)
+        state = app.query(f"{external}/toolbar_overflow")
+        if isinstance(state, dict) and not state.get("moved"):
+            return granted_of(shot)
+        width += step
+    raise AssertionError(
+        f"the toolbar still holds groups back at {stop}px wide -- widening is "
+        "not what makes this row whole, so the demo's premise is wrong"
+    )
+
+
 def settled_baseline(
     app: "RpcSubprocess",
     size: tuple[int, int],

@@ -4171,18 +4171,26 @@ fn r1781_the_shipping_window_cannot_give_every_screen_what_it_declares() {
             super::page_rect("dashboard").w,
         );
 
-        // ★★★★★ TWO, and the second one is why this ratchet was worth writing.
+        // ★★★★★ ONE — and it used to be two, which is the round.
         //
-        // A reader reported the node lab's inspector cut off, and that is the
-        // 237px one. The capture viewer is short by 37 and NOBODY HAS EVER SAID
-        // SO — not a demo, not a debt, not the reader, because 37px of a
-        // three-pane screen does not announce itself the way a missing
-        // inspector does. It was found on this check's first run, by comparing
-        // two declarations rather than by looking at a window.
+        // R1781 wrote this ratchet with `["packets", "lab"]` and said what a
+        // change in either direction would mean: *"growing the set means a
+        // screen was mounted that does not fit; shrinking it means somebody
+        // chose one of the three repairs and this ratchet is what they
+        // update"*. R1791 chose one of the three — the toolbar overflow
+        // affordance R1781 named as not existing — so the node lab now declares
+        // a width the shipping window can give it, and its inspector is whole.
+        //
+        // The capture viewer is still short by 37, and NOBODY HAS EVER SAID SO
+        // outside this check — not a demo, not a debt, not the reader, because
+        // 37px of a three-pane screen does not announce itself the way a
+        // missing inspector does. It was found on this check's first run by
+        // comparing two declarations rather than by looking at a window, and it
+        // is what is left.
         let names: Vec<&str> = short.iter().map(|(k, ..)| k.as_str()).collect();
         assert_eq!(
             names,
-            ["packets", "lab"],
+            ["packets"],
             "★ the set of screens the shipping window cannot satisfy has \
              changed. Measured: {short:?} — each is (screen, the width it \
              declares it lays out at, the width {WIN_W} less the rail leaves \
