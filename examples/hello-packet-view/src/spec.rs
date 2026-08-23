@@ -91,6 +91,30 @@ pub const QUERY_COLUMNS: &[&str] = &[
     "time", "hop", "channel", "sn", "type", "name", "len", "note", "fragment",
 ];
 
+/// ★★★ R1787 — **what an export of this capture covers**, as the closed
+/// vocabulary the `export` action's argument domain is drawn from.
+///
+/// Deliberately **not** `pinion_core::widgets::table_export::Scope`, whose
+/// `selection` means a rectangle of cells. This screen has no cell rectangle;
+/// what a person here is looking at is the set of rows the filter **kept**, and
+/// calling that "selection" would put two different facts under one word — the
+/// class of defect this screen's own history is full of. The derivation is
+/// shared (`table_export::write` writes both); the vocabulary is not, because
+/// the vocabularies genuinely differ.
+///
+/// The floor, measured by building and running the reference toolkit at 6.11:
+/// asked for a rectangle of cells as data, its item-model layer answers two
+/// **binary** payloads carrying no text and no header labels, and its tabular
+/// widget with every cell selected and a real copy chord delivered leaves the
+/// clipboard holding no format at all. There is nothing to be superior to on
+/// coverage, so the bar here is set by the capture's own content: measured
+/// through the wire, **one** cell of the exported message list holds a comma,
+/// so a naive comma-separated export of this very screen splits a column
+/// silently. (Seven is what a grep of this file answers, and six of those
+/// literals belong to the decode tree rather than to a row — the population is
+/// what a row EXPORTS, not what the fixture contains.)
+pub const EXPORT_SCOPES: &[&str] = &["shown", "all"];
+
 /// ★★★ R1707 — **what this screen tells a person the mouse does**, which until
 /// now it never said at all.
 ///

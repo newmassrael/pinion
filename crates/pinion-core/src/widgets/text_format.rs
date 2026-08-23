@@ -376,10 +376,9 @@ impl TextFormat {
                 format!("{} {}", len.wanted(), allow.wanted())
             }
             Self::Number { min, max } => format!("a whole number {min} to {max}"),
-            Self::Word { of } => {
-                let words: Vec<&str> = of.iter().map(Cow::as_ref).collect();
-                format!("one of {}", words.join(", "))
-            }
+            // R1787 — the shared `one of a, b, c` rendering (see
+            // `external::one_of_phrase`), lifted at its third consumer.
+            Self::Word { of } => crate::external::one_of_phrase(of.iter().map(Cow::as_ref)),
             Self::Then { head, sep, tail } => {
                 format!("{}{sep}{}", head.wanted(), tail.wanted())
             }

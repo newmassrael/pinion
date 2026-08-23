@@ -54,6 +54,7 @@ pub mod slider;
 pub mod snackbar;
 pub mod spin_button;
 pub mod table;
+pub mod table_export;
 pub mod text_edit;
 pub mod text_field;
 pub mod text_format;

@@ -53,9 +53,9 @@ use pinion_a11y::{
     WidgetA11y, grid_table_nodes,
 };
 use pinion_core::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, PointerTarget, ReadRefusal, RepaintOwner,
-    SchemaArg, SchemaField, ThreadOwnership,
+    ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, PointerTarget, ReadRefusal,
+    RepaintOwner, SchemaArg, SchemaField, ThreadOwnership, one_of_phrase,
 };
 use pinion_core::focus_state;
 use pinion_core::input::PointerReading;
@@ -78,6 +78,7 @@ use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::roving::{Activation, Axis, Ends, Landing, Member, Roving, RovingSpec};
 use pinion_core::widgets::row_query::RowQuery;
 use pinion_core::widgets::scroll::ScrollState;
+use pinion_core::widgets::table_export;
 use pinion_core::widgets::text_edit::{TextEditState, use_text_edit_state};
 use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::{CellKind, Frame, Scene, WidgetCore, edit_field_keymap};
@@ -2491,6 +2492,67 @@ impl ViewOracle {
             .map(str::to_owned)
             .ok_or_else(|| InvokeError::rejected("expected a string argument"))
     }
+
+    /// ★★★★★ R1787 — **export the range**, through the framework's own
+    /// derivation rather than a `join` written here.
+    ///
+    /// The rows are what each one ANNOUNCES ([`row_cells`]), not what its
+    /// columns paint: the note and the fragment marker live inside the name
+    /// column rather than in columns of their own, and an export that dropped
+    /// them would omit exactly the facts this screen exists to surface. That
+    /// choice is also what makes the losses non-hypothetical — the note
+    /// `"unknown · 12 B · shown, not decoded"` holds a comma.
+    ///
+    /// The header line is always written: a capture export lands in a file
+    /// somebody opens later, and seven unlabelled columns is the state the
+    /// reference floor's binary payload leaves a reader in.
+    fn export(
+        state: &Rc<ViewState>,
+        args: &IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        let IntrospectValue::Json(obj) = args else {
+            return Err(InvokeError::rejected(format!(
+                "export takes an object naming a dialect and a scope, and was given {}",
+                args.kind()
+            )));
+        };
+        let dialect_name = obj.get("dialect").and_then(serde_json::Value::as_str);
+        let Some(dialect) = dialect_name.and_then(table_export::Dialect::by_name) else {
+            return Err(InvokeError::rejected(format!(
+                "no dialect named {:?}; this capture writes {}",
+                dialect_name.unwrap_or(""),
+                one_of_phrase(table_export::Dialect::NAMED.iter().map(|d| d.name))
+            )));
+        };
+        let scope = obj.get("scope").and_then(serde_json::Value::as_str);
+        let rows: Vec<usize> = match scope {
+            Some("shown") => state.kept(),
+            Some("all") => (0..spec::ROWS.len()).collect(),
+            other => {
+                return Err(InvokeError::rejected(format!(
+                    "no scope named {:?}; this capture exports {}",
+                    other.unwrap_or(""),
+                    one_of_phrase(spec::EXPORT_SCOPES.iter().copied())
+                )));
+            }
+        };
+        let headers: Vec<String> = spec::COLUMNS.iter().map(|c| c.title.to_owned()).collect();
+        let cells: Vec<Vec<String>> = rows.iter().map(|&n| row_cells(&spec::ROWS[n])).collect();
+        let export = table_export::write(dialect, Some(&headers), &cells);
+        let mut wire = export.to_wire();
+        if let Some(obj) = wire.as_object_mut() {
+            obj.insert(
+                "dialect".to_owned(),
+                serde_json::Value::from(dialect_name.unwrap_or("")),
+            );
+            obj.insert(
+                "scope".to_owned(),
+                serde_json::Value::from(scope.unwrap_or("")),
+            );
+            obj.insert("rows".to_owned(), serde_json::json!(rows));
+        }
+        Ok(IntrospectValue::Json(wire))
+    }
 }
 
 impl External for ViewOracle {
@@ -2611,6 +2673,25 @@ impl ExternalIntrospect for ViewOracle {
                         "string",
                         const { &[SchemaArg::open("x", "int"), SchemaArg::open("y", "int")] },
                     ),
+                    // ★★★★★ R1787 — **exporting a range**, the capability the
+                    // analysis-tool census carries as `capture.t1.12`. The
+                    // dialects are readable BEFORE exporting, each saying
+                    // whether it can carry any cell unchanged, and the answer
+                    // names every cell its dialect could not — which on this
+                    // screen is not hypothetical: seven cells of the capture
+                    // hold a comma.
+                    SchemaField::new("export_dialects", "json"),
+                    SchemaField::action_with(
+                        "export",
+                        "json",
+                        ArgForm::Object,
+                        const {
+                            &[
+                                SchemaArg::key("dialect", "string", "export_dialects"),
+                                SchemaArg::one_of("scope", "string", spec::EXPORT_SCOPES),
+                            ]
+                        },
+                    ),
                     SchemaField::action("select_message", "int"),
                     SchemaField::action("select_field", "string"),
                     SchemaField::action("select_byte", "int"),
@@ -2700,6 +2781,10 @@ impl ExternalIntrospect for ViewOracle {
                 .query_fault()
                 .map_or(IntrospectValue::Null, IntrospectValue::Text)),
             "kept_rows" => Ok(IntrospectValue::Json(serde_json::json!(state.kept()))),
+            // ★ R1787 — the dialects `export` writes, each saying whether it
+            // can carry any cell unchanged. Derived from the framework's one
+            // roster, so this screen cannot offer a dialect the writer lacks.
+            "export_dialects" => Ok(IntrospectValue::Json(table_export::dialects_to_wire())),
             // ★★★★★ R1707 — **why a message is not in the list.**
             //
             // The question a capture viewer's reader actually has, and the one
@@ -2780,6 +2865,8 @@ impl ExternalIntrospect for ViewOracle {
     ) -> Result<IntrospectValue, InvokeError> {
         let state = self.state()?.clone();
         match path {
+            // ★★★★★ R1787 — export the range a person is looking at.
+            "export" => Self::export(&state, &args),
             "select_message" => {
                 let n = args
                     .as_usize()

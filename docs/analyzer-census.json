@@ -98,8 +98,9 @@
     "plane": "capture",
     "tier": "t1",
     "capability": "marking, bookmarks and comments, plus exporting a range",
-    "verdict": "gap",
-    "covered_by": "the marking half is app work over selection; EXPORTING IS NOT HERE — measured, no tabular/CSV export derivation exists in any crate. A file dialog and a PDF export do"
+    "verdict": "have",
+    "covered_by": "R1787 §5.38 `pinion_core::widgets::table_export`. ⚠ THE GAP REASON THIS ROW CARRIED WAS WRONG IN BOTH DIRECTIONS, re-measured before the round wrote a line: a tabular derivation DID exist (`table::rows_to_tsv`, R1372) and what it lacked was not existence. It is structure-preserving over content-faithful BY DESIGN — a cell holding the delimiter is rewritten with a space so the block's shape survives — and it made that trade silently, its own doc deferring the rest. So the real gap was faithfulness and a REPORT, and that is what landed: a `Dialect` says whether it can protect a cell at all, `write` answers the text plus one `Loss` per cell it could not carry (addressed by line and column, naming what was in it), and `read` recovers the rows exactly for any quoting dialect — so `is_faithful` is a law, not a claim. `rows_to_tsv` and `Table::selected_tsv` now delegate, so there is ONE codec. The marking half was already app work over `selection` and is unchanged. The floor, built and run at 6.11 rather than read: the reference's item-model layer answers 'these cells as data' with two BINARY payloads (hasText false, text length 0, header labels absent), and its tabular widget with every cell selected and a real copy chord delivered leaves the clipboard holding no format at all",
+    "proven_by": "pinion-core::widgets::table_export::tests (the round trip, the loss report being one entry per CELL, the lossy dialect refusing to be read rather than guessing, and the closed vocabularies matching their published domains); pinion-core::widgets::table::tests::r1787_the_export_action_declares_its_arguments_and_names_every_refusal + r1787_an_export_over_the_wire_reports_the_cells_its_dialect_flattened; end to end on the capture viewer itself tools/demos/r1787_an_export_says_what_it_could_not_carry.py"
   },
   {
     "id": "capture.t1.13",
@@ -249,7 +250,7 @@
     "tier": "t1",
     "capability": "saving a scenario and exporting a deployable configuration",
     "verdict": "gap",
-    "covered_by": "R1651 closed HALF and the half is named: `ConfigForm::document` derives a deployable configuration for ONE node from its own rows, with `adopt` reading one back and a round-trip law over the pair. What is still missing is the SCENARIO level — a whole graph, its frames and its run plan as one saved artifact — which is the same missing derivation as capture.t1.12"
+    "covered_by": "R1651 closed HALF and the half is named: `ConfigForm::document` derives a deployable configuration for ONE node from its own rows, with `adopt` reading one back and a round-trip law over the pair. What is still missing is the SCENARIO level — a whole graph, its frames and its run plan as one saved artifact — which R1787 falsified as 'the same missing derivation as capture.t1.12': that row was about a TABLE, and closing it does nothing for this one. A scenario is a graph, its frames and a run plan — a shape `table_export` cannot express and should not be asked to"
   },
   {
     "id": "lab.t2.13",

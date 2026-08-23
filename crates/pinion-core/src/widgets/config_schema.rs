@@ -358,10 +358,9 @@ fn shape_word(ty: &FieldType) -> String {
         FieldType::Formatted { of } => of.wanted(),
         FieldType::Integer { min, max } => format!("a whole number {min} to {max}"),
         FieldType::Boolean => "true or false".to_string(),
-        FieldType::Choice { of } => {
-            let words: Vec<&str> = of.iter().map(Cow::as_ref).collect();
-            format!("one of {}", words.join(", "))
-        }
+        // R1787 — the shared `one of a, b, c` rendering, lifted at its third
+        // consumer beside the declaration it is the person-facing half of.
+        FieldType::Choice { of } => crate::external::one_of_phrase(of.iter().map(Cow::as_ref)),
         FieldType::Flags { of } => {
             let words: Vec<&str> = of.iter().map(Cow::as_ref).collect();
             format!("any of {}", words.join(", "))

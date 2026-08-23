@@ -47,14 +47,15 @@
 
 use crate::WidgetStateName;
 use crate::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaArg,
-    SchemaField, ThreadOwnership, int_of,
+    ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
+    SchemaArg, SchemaField, ThreadOwnership, int_of, one_of_phrase,
 };
 use crate::input::PointerWireEvent;
 use crate::intent::Intent;
 use crate::widgets::radio::{Radio, RadioEvent, RadioState};
 use crate::widgets::selection;
+use crate::widgets::table_export;
 use crate::widgets::{IntentEmitter, WidgetTransition};
 
 /// R954 §5.38 §5.40 — re-exported where the eager [`Table`] names it.
@@ -138,16 +139,14 @@ pub struct Table {
     selection_behavior: SelectionBehavior,
 }
 
-/// R1223 §5.38 — replace embedded tab / newline in a cell with a space so a
-/// [`Table::selected_tsv`] block's row / column shape always matches the
-/// selection rectangle. TSV has no in-band delimiter escaping, so a raw tab
-/// would split a column and a raw newline a row (silently disagreeing with the
-/// selected bounds). Structure-preserving over content-faithful; the grid's
-/// typical numeric / single-line cells never contain a delimiter, so this is a
-/// no-op there.
-fn tsv_sanitize(cell: &str) -> String {
-    cell.replace(['\t', '\n'], " ")
-}
+// R1223 §5.38 — the per-cell flatten (embedded tab / newline replaced with a
+// space, so a [`Table::selected_tsv`] block's row / column shape always matches
+// the selection rectangle) used to live here as `tsv_sanitize`.
+//
+// R1787 — the sanitize/join pair moved to `table_export`, where the cells it
+// rewrites are also REPORTED. `tsv_sanitize` is gone rather than kept as a
+// second spelling of `Dialect::clipboard`'s render: two copies of a lossy
+// transform is how a grid comes to flatten a cell the other one keeps.
 
 /// R1372 §5.38 — serialize an already-extracted rectangle of cell display
 /// strings to TSV (tab-separated columns, newline-separated rows), each cell
@@ -161,17 +160,15 @@ fn tsv_sanitize(cell: &str) -> String {
 /// consumer). `rows` is the caller's already-read rectangle, so each consumer
 /// keeps its own data-order vs visible-order reading and this stays a pure
 /// string function.
+///
+/// R1787 — now one line over [`table_export::write`] in
+/// [`Dialect::clipboard`](table_export::Dialect::clipboard), which writes
+/// exactly this and additionally names every cell it flattened. Callers wanting
+/// that report call `write` directly; this signature is kept because "give me
+/// the clipboard payload" is a real and separate request.
 #[must_use]
 pub fn rows_to_tsv(rows: &[Vec<String>]) -> String {
-    rows.iter()
-        .map(|row| {
-            row.iter()
-                .map(|cell| tsv_sanitize(cell))
-                .collect::<Vec<_>>()
-                .join("\t")
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+    table_export::write(table_export::Dialect::clipboard(), None, rows).into_text()
 }
 
 impl Table {
@@ -473,15 +470,71 @@ impl Table {
     /// (structure-preserving over content-faithful; full spreadsheet-style
     /// quoting is a later enhancement if a delimiter-bearing grid needs
     /// faithful content).
+    ///
+    /// R1787 — one line over [`Self::export_selection`] in the clipboard
+    /// dialect. That method is the one to call when the losses matter; this one
+    /// is the payload a `Ctrl+C` writes.
     #[must_use]
     pub fn selected_tsv(&self) -> Option<String> {
+        Some(
+            self.export_selection(table_export::Dialect::clipboard())?
+                .into_text(),
+        )
+    }
+
+    /// R1787 §5.38 — the selected cell rectangle serialised in `dialect`,
+    /// **with every cell the dialect could not carry named**. `None` when no
+    /// cell range is selected.
+    ///
+    /// The census gap `capture.t1.12` asks for "exporting a range", and this is
+    /// it. The rectangle is read in DATA order, matching
+    /// [`cell_selection_bounds`](Self::cell_selection_bounds) and therefore
+    /// [`selected_tsv`](Self::selected_tsv), so the two cannot disagree about
+    /// which cells were exported.
+    ///
+    /// A range has no header line: the columns a rectangle spans are a
+    /// sub-sequence of the table's, and a header row over a partial column span
+    /// invites a reader to line up names with the wrong cells. Whole-table
+    /// export is [`export`](Self::export), which does carry them.
+    #[must_use]
+    pub fn export_selection(&self, dialect: table_export::Dialect) -> Option<table_export::Export> {
         let (r0, c0, r1, c1) = self.cell_selection_bounds()?;
-        // R1372 — the rectangle is read here in DATA order (each caller owns its
-        // reading), then the shared [`rows_to_tsv`] codec sanitizes + joins it.
         let rows: Vec<Vec<String>> = (r0..=r1)
             .map(|r| (c0..=c1).map(|c| self.cell(r, c).to_string()).collect())
             .collect();
-        Some(rows_to_tsv(&rows))
+        Some(table_export::write(dialect, None, &rows))
+    }
+
+    /// R1787 §5.38 — the **whole** table serialised in `dialect`, with the
+    /// column names written or omitted per `headers`.
+    ///
+    /// DATA order, like every other export here — a sort is a way of looking at
+    /// the table, and an exported file that silently depends on the current
+    /// look is the sort of thing that is only noticed once two exports of one
+    /// table disagree. A consumer wanting visible order maps through
+    /// [`order`](Self::order) and calls [`table_export::write`] itself, which is
+    /// what `hello-data-grid` already does for its clipboard copy.
+    #[must_use]
+    pub fn export(
+        &self,
+        dialect: table_export::Dialect,
+        headers: table_export::Headers,
+    ) -> table_export::Export {
+        let head: Vec<String> = (0..self.col_count())
+            .map(|c| self.header(c).to_string())
+            .collect();
+        let rows: Vec<Vec<String>> = (0..self.row_count())
+            .map(|r| {
+                (0..self.col_count())
+                    .map(|c| self.cell(r, c).to_string())
+                    .collect()
+            })
+            .collect();
+        let head = match headers {
+            table_export::Headers::Include => Some(head.as_slice()),
+            table_export::Headers::Omit => None,
+        };
+        table_export::write(dialect, head, &rows)
     }
 
     /// R952 §5.38 §5.40 — drop the cell range selection (clear the anchor).
@@ -1087,6 +1140,86 @@ impl TableExternal {
         Ok(IntrospectValue::Bool(true))
     }
 
+    /// R1787 §5.38 — the `export` invoke: a dialect, a scope, and (whole-table
+    /// only) whether to write the column names. Answers the block **plus every
+    /// cell the dialect could not carry**.
+    ///
+    /// Each refusal names what was wrong in a sentence rather than a tag: this
+    /// call has five ways to be wrong and `TypeMismatch` tells a caller none of
+    /// them apart. `headers` on a `selection` scope is refused rather than
+    /// ignored, because a header line over a partial column span would line
+    /// names up against the wrong cells and silently accepting the argument is
+    /// how a caller comes to believe it got one.
+    fn invoke_export(&self, args: &IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+        let IntrospectValue::Json(obj) = args else {
+            return Err(InvokeError::rejected(format!(
+                "table.export takes an object naming a dialect and a scope, and was given {}",
+                args.kind()
+            )));
+        };
+        let dialect_name = obj.get("dialect").and_then(serde_json::Value::as_str);
+        let Some(dialect) = dialect_name.and_then(table_export::Dialect::by_name) else {
+            return Err(InvokeError::rejected(format!(
+                "table.export: no dialect named {:?}; this surface writes {}",
+                dialect_name.unwrap_or(""),
+                one_of_phrase(table_export::Dialect::NAMED.iter().map(|d| d.name))
+            )));
+        };
+        let scope_name = obj.get("scope").and_then(serde_json::Value::as_str);
+        let Some(scope) = scope_name.and_then(table_export::Scope::from_wire_name) else {
+            return Err(InvokeError::rejected(format!(
+                "table.export: no scope named {:?}; it exports {}",
+                scope_name.unwrap_or(""),
+                one_of_phrase(table_export::Scope::WIRE_NAMES.iter().copied())
+            )));
+        };
+        let headers_name = obj.get("headers").and_then(serde_json::Value::as_str);
+        let headers = match headers_name {
+            None => table_export::Headers::Omit,
+            Some(name) => match table_export::Headers::from_wire_name(name) {
+                Some(h) => h,
+                None => {
+                    return Err(InvokeError::rejected(format!(
+                        "table.export: no headers choice named {name:?}; it takes {}",
+                        one_of_phrase(table_export::Headers::WIRE_NAMES.iter().copied())
+                    )));
+                }
+            },
+        };
+        if scope == table_export::Scope::Selection && headers_name.is_some() {
+            return Err(InvokeError::rejected(
+                "table.export: a selection is a rectangle of columns, so it carries no header \
+                 line; ask for scope \"all\" to get one"
+                    .to_string(),
+            ));
+        }
+        let export = match scope {
+            table_export::Scope::All => self.em.inner.export(dialect, headers),
+            table_export::Scope::Selection => {
+                let Some(export) = self.em.inner.export_selection(dialect) else {
+                    return Err(InvokeError::rejected(
+                        "table.export: no cell range is selected, so there is no selection to \
+                         export; select one first or ask for scope \"all\""
+                            .to_string(),
+                    ));
+                };
+                export
+            }
+        };
+        let mut wire = export.to_wire();
+        if let Some(obj) = wire.as_object_mut() {
+            obj.insert(
+                "dialect".to_owned(),
+                serde_json::Value::from(dialect_name.unwrap_or("")),
+            );
+            obj.insert(
+                "scope".to_owned(),
+                serde_json::Value::from(scope.as_wire_name()),
+            );
+        }
+        Ok(IntrospectValue::Json(wire))
+    }
+
     /// R1562 §5.27 §5.40 — a **row-header** press: the toolkit header view's
     /// `sectionPressed` on a `Vertical` header, which selects the line the
     /// section names.
@@ -1435,6 +1568,41 @@ impl ExternalIntrospect for TableExternal {
                     SchemaField::action("select-cell", "boolean"),
                     SchemaField::action("extend-cell", "boolean"),
                     SchemaField::action("clear-cell-selection", "boolean"),
+                    // R1787 §5.38 — tabular export. `export_dialects` is the
+                    // roster this surface writes, each entry saying whether
+                    // that dialect can carry ANY cell unchanged, so a client
+                    // chooses before exporting rather than discovering after.
+                    // `export` writes one: the result carries the text, a
+                    // `faithful` bit, and one entry per cell the dialect could
+                    // not carry, addressed by line and column. The floor this
+                    // clears was measured by building and running the reference
+                    // toolkit at 6.11: its tabular widget, every cell selected
+                    // and a real copy chord delivered, leaves the clipboard
+                    // holding no format at all, and its model layer's
+                    // "these cells as data" is two binary payloads with no text
+                    // and no header labels in them.
+                    SchemaField::new("export_dialects", "json"),
+                    SchemaField::action_with(
+                        "export",
+                        "json",
+                        ArgForm::Object,
+                        const {
+                            &[
+                                SchemaArg::key("dialect", "string", "export_dialects"),
+                                SchemaArg::one_of(
+                                    "scope",
+                                    "string",
+                                    table_export::Scope::WIRE_NAMES,
+                                ),
+                                SchemaArg::one_of(
+                                    "headers",
+                                    "string",
+                                    table_export::Headers::WIRE_NAMES,
+                                )
+                                .optional(),
+                            ]
+                        },
+                    ),
                 ]
             },
         )
@@ -1494,6 +1662,10 @@ impl ExternalIntrospect for TableExternal {
                 Some(tsv) => IntrospectValue::Text(tsv),
                 None => IntrospectValue::Null,
             }),
+            // R1787 §5.38 — the dialects `export` accepts, each saying whether
+            // it can carry any cell unchanged. Derived from the one roster, so
+            // a dialect added to it is discoverable here without an edit.
+            "export_dialects" => Ok(IntrospectValue::Json(table_export::dialects_to_wire())),
             // R730 §5.40 — sort key column (`-1` when unsorted) + the
             // WAI-ARIA `aria-sort` token the active header carries.
             "sort_col" => Ok(IntrospectValue::Int(
@@ -1600,6 +1772,9 @@ impl ExternalIntrospect for TableExternal {
                 IntrospectValue::Text(ref s) => self.dispatch_send(s),
                 _ => Err(InvokeError::TypeMismatch),
             },
+            // R1787 §5.38 — tabular export; see `invoke_export` for why each
+            // way of getting the call wrong answers a sentence of its own.
+            "export" => self.invoke_export(&args),
             // R730 §5.40 — direct sort cycle for AI clients: `invoke
             // "sort" Int(col)` cycles that column's sort the same way a
             // header click does, without synthesising a pointer event.
@@ -2279,6 +2454,136 @@ mod tests {
             fields.contains(&"cell_selection_tsv"),
             "cell_selection_tsv is schema-declared",
         );
+    }
+
+    /// R1787 — the export surface a person drives over the wire, and the five
+    /// ways of getting the call wrong, each of which answers a sentence.
+    #[test]
+    fn r1787_the_export_action_declares_its_arguments_and_names_every_refusal() {
+        let mut ext = awkward_table();
+        // The dialect roster is discoverable BEFORE exporting, so a caller can
+        // choose a faithful one rather than find out afterwards.
+        let IntrospectValue::Json(roster) = ext.query("export_dialects").expect("declared") else {
+            panic!("export_dialects answers json");
+        };
+        let names: Vec<&str> = roster
+            .as_array()
+            .expect("an array")
+            .iter()
+            .map(|e| e["name"].as_str().expect("a name"))
+            .collect();
+        assert_eq!(names, vec!["comma", "tab", "clipboard"]);
+        assert_eq!(roster[2]["faithful"], serde_json::Value::Bool(false));
+
+        // The declaration says what the call takes, and where each value comes
+        // from — the half a meta-object cannot express.
+        let export = ext
+            .schema()
+            .fields
+            .iter()
+            .find(|f| f.path == "export")
+            .copied()
+            .expect("export is declared");
+        assert_eq!(export.form, ArgForm::Object);
+        assert_eq!(export.args.len(), 3);
+        assert_eq!(
+            export.args[0].domain,
+            crate::external::ArgDomain::ValuesOf("export_dialects")
+        );
+        assert_eq!(
+            export.args[1].domain,
+            crate::external::ArgDomain::OneOf(table_export::Scope::WIRE_NAMES)
+        );
+        assert!(export.args[2].optional, "headers may be omitted");
+
+        // Every refusal is a sentence naming what was wrong, not a tag.
+        for (args, fragment) in [
+            (serde_json::json!({"scope": "all"}), "no dialect named"),
+            (
+                serde_json::json!({"dialect": "comma", "scope": "some"}),
+                "no scope named",
+            ),
+            (
+                serde_json::json!({"dialect": "comma", "scope": "all", "headers": "yes"}),
+                "no headers choice named",
+            ),
+            (
+                serde_json::json!({"dialect": "comma", "scope": "selection", "headers": "include"}),
+                "carries no header line",
+            ),
+            (
+                serde_json::json!({"dialect": "comma", "scope": "selection"}),
+                "no cell range is selected",
+            ),
+        ] {
+            // The tree's own fixture, which additionally asserts the refusal
+            // STATED a reason rather than only that it refused.
+            assert_refused_saying(&ext.invoke("export", IntrospectValue::Json(args)), fragment);
+        }
+    }
+
+    /// R1787 — the same table exported two ways: the faithful dialect carries
+    /// the awkward cells and says so, the clipboard dialect flattens them and
+    /// **names which ones**. The floor measured at 6.11 by building and running
+    /// the reference toolkit is that its tabular widget copies nothing at all.
+    #[test]
+    fn r1787_an_export_over_the_wire_reports_the_cells_its_dialect_flattened() {
+        let mut ext = awkward_table();
+        let faithful = invoke_export_json(
+            &mut ext,
+            &serde_json::json!({"dialect": "comma", "scope": "all", "headers": "include"}),
+        );
+        assert_eq!(faithful["faithful"], serde_json::Value::Bool(true));
+        assert_eq!(faithful["losses"], serde_json::json!([]));
+        assert_eq!(faithful["dialect"], serde_json::Value::from("comma"));
+        assert_eq!(faithful["scope"], serde_json::Value::from("all"));
+        // The header line is there, and the round trip recovers the cells.
+        let text = faithful["text"].as_str().expect("text");
+        let back = table_export::read(table_export::Dialect::comma(), text).expect("readable");
+        assert_eq!(back[0], vec!["A".to_string(), "B".to_string()]);
+        assert_eq!(back[1][1], "has\tinside");
+
+        let lossy = invoke_export_json(
+            &mut ext,
+            &serde_json::json!({"dialect": "clipboard", "scope": "all"}),
+        );
+        assert_eq!(lossy["faithful"], serde_json::Value::Bool(false));
+        let losses = lossy["losses"].as_array().expect("an array");
+        assert_eq!(losses.len(), 1, "one cell holds the delimiter");
+        assert_eq!(losses[0]["line"], serde_json::Value::from("0"));
+        assert_eq!(losses[0]["col"], serde_json::Value::from(1));
+        assert_eq!(losses[0]["carried"], serde_json::json!(["delimiter"]));
+
+        // A selection exports the rectangle and nothing else.
+        ext.invoke("select-cell", IntrospectValue::Text("0,0".to_string()))
+            .unwrap();
+        ext.invoke("extend-cell", IntrospectValue::Text("0,0".to_string()))
+            .unwrap();
+        let one = invoke_export_json(
+            &mut ext,
+            &serde_json::json!({"dialect": "comma", "scope": "selection"}),
+        );
+        assert_eq!(one["text"], serde_json::Value::from("plain"));
+        assert_eq!(one["scope"], serde_json::Value::from("selection"));
+    }
+
+    /// A 1x2 cell-range table whose second column holds the clipboard dialect's
+    /// own delimiter — the case a lossy export has to be able to report.
+    fn awkward_table() -> TableExternal {
+        TableExternal::with_select_items(
+            vec!["A".to_string(), "B".to_string()],
+            vec![vec!["plain".to_string(), "has\tinside".to_string()]],
+        )
+    }
+
+    fn invoke_export_json(ext: &mut TableExternal, args: &serde_json::Value) -> serde_json::Value {
+        let answer = ext
+            .invoke("export", IntrospectValue::Json(args.clone()))
+            .expect("accepted");
+        let IntrospectValue::Json(v) = answer else {
+            panic!("export answers json");
+        };
+        v
     }
 
     #[test]

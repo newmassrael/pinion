@@ -4018,6 +4018,29 @@ pub trait External: core::fmt::Debug {
 /// moves with its focus-trap, a snackbar's countdown is advanced by the
 /// animation driver — so a raw rewind would desync it. Mutations go
 /// through the holder's own methods (a reducer / action), never the wire.
+/// R1787 §5.15 — a closed vocabulary rendered **for a person**: `one of a, b, c`.
+///
+/// The sentence a dispatcher says when a value is not in the set an
+/// [`ArgDomain::OneOf`] declares — the person-facing rendering of the very fact
+/// the schema publishes as a token list, which is R1720's "one fact, two
+/// renderings" pairing and the reason this sits beside the declaration rather
+/// than beside any one caller.
+///
+/// Lifted at its **third** consumer, mechanically:
+/// `widgets::config_schema::shape_word` and `widgets::text_format::Format::wanted`
+/// held byte-identical copies of the `format!`, and `widgets::table`'s export
+/// refusals were about to write a fourth. Takes an iterator of `&str` because
+/// the existing two hold `Cow<str>` and the new one a `&'static [&'static str]`
+/// — a slice parameter would have forced one of them to allocate a vector just
+/// to be refused.
+#[must_use]
+pub fn one_of_phrase<'a>(words: impl IntoIterator<Item = &'a str>) -> String {
+    format!(
+        "one of {}",
+        words.into_iter().collect::<Vec<_>>().join(", ")
+    )
+}
+
 /// R834 §5.12 — widen a `usize` count to the `i64` an
 /// [`IntrospectValue::Int`] slot carries, saturating at [`i64::MAX`]
 /// rather than wrapping or panicking. The single SSOT for the
