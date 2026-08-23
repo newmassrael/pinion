@@ -38,6 +38,22 @@ const REGEN_ENV: &str = "PINION_REGEN_STATECHARTS";
 /// wall clock cannot be byte-compared, which is this file's whole job.
 const GENERATED_AT: u64 = 0;
 
+/// ★★★★★ R1796 §5.4 §3 — the Event I/O Processor types THIS BUILD serves.
+///
+/// W3C SCXML 6.2.5 leaves the processor set open, and SCE decides at COMPILE time
+/// which way a `<send type="…">` goes: a declared type emits a dispatch to the
+/// host, an undeclared one emits an `error.execution` raise. So this list is
+/// not configuration — it is the difference between a door and a wall, and it
+/// has to be here rather than at a call site because every chart in the crate
+/// is emitted by this one function.
+///
+/// ⚠ **It is the FRAMEWORK's own list and must stay that way.** §3 fixes
+/// `Effect(opaque)` and `External(opaque)` as the only two escape hatches; a
+/// host-served send whose handler an APPLICATION registers would be a third,
+/// and adding one is a spec round rather than an edit here. See
+/// `pinion_core::host_served` for the argument in full.
+const HOST_PROCESSOR_TYPES: &[&str] = &["pinion.fixture.host"];
+
 /// Injected onto every generated `{machine}State` enum. The rationale for each
 /// lives on the SCE-002 / SCE-004 ledger entries; what matters here is that
 /// this list is an input to the emit, so changing it without regenerating is a
@@ -157,7 +173,10 @@ fn emit_one(rel_path: &str, template_dir: &Path, hashes: &DriftHashes) -> String
             .iter()
             .map(|s| (*s).to_string())
             .collect(),
-        host_processor_types: Vec::new(),
+        host_processor_types: HOST_PROCESSOR_TYPES
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect(),
         host_invoker_types: Vec::new(),
     };
     let output = sce_build::compile_scxml_lang_typed_with_section(

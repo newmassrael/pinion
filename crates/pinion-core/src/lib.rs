@@ -108,6 +108,7 @@ mod multi_window;
 // R1751 — the runaway-chain fixture, `#[cfg(test)]` for the same reason as its
 // sibling above: it exists to stress an engine guarantee, not to be a surface.
 #[cfg(test)]
+mod host_served;
 mod self_answering_raise;
 
 pub use animation::{

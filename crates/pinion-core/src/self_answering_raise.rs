@@ -57,6 +57,13 @@ mod sm {
 // action that raises is the only thing in this tree that makes *entering* a
 // state observable from outside. Re-exported rather than duplicated: a second
 // runaway fixture would be a second account of one fact.
+//
+// ★ R1796 — gated on `cfg(test)`, which is what it has always been: the ONE
+// consumer is `crate::resume`'s test module, so a lib build without
+// `cfg(test)` has nothing using it and `-D warnings` says so. Stated rather
+// than suppressed with an `allow`, because "only the tests drive this chart" is
+// exactly the fact the gate was reporting.
+#[cfg(test)]
 pub(crate) use sm::{SelfAnsweringRaiseEvent, SelfAnsweringRaisePolicy, SelfAnsweringRaiseState};
 
 #[cfg(test)]

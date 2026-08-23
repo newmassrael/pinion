@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pinion R1796 §5.4 §3 — an act the HOST performs, and the order of what it
+     answers with.
+
+     WHAT THIS IS FOR. W3C SCXML 6.2.5 makes a `<send>` `type` an extensible
+     identifier: the set of Event I/O Processors is open, and a platform may
+     serve its own. SCE emits a DISPATCH for a type the build declared and a
+     refusal (`error.execution`) for one it did not, so whether this door is
+     open at all is decided at compile time.
+
+     Nothing in pinion had ever declared one. The door existed at the previous
+     pin and was unused; what this pin brought is that a handler now answers
+     with a LIST of events IN ORDER rather than an optional single one — and an
+     ordering guarantee that nothing exercises is an ordering guarantee nobody
+     has checked.
+
+     ⚠ A FIXTURE, NOT A WIDGET, and deliberately outside `widgets/` for the
+     reason `self_answering_raise.scxml` is: every chart in that directory is a
+     product surface with a binding. This one exists to make an engine
+     guarantee observable from here.
+
+     ⚠ WHAT IT IS *NOT* DOING. It does not open a third escape hatch. §3 says
+     `Effect(opaque)` and `External(opaque)` are the only two, and a host-served
+     `<send>` whose handler an APPLICATION registers would be a third. The type
+     named here is the framework's own and is served by framework code; letting
+     an application register one is a §3 question and needs a spec round, which
+     `pinion_core::host_served`'s module doc records rather than quietly
+     answers.
+
+     THE SHAPE. `asking` sends to the host and waits. The host's handler
+     answers with TWO events, and the chart can only reach `settled` by seeing
+     them in the order the host wrote: `first` moves it to `heard_first`, and
+     only from there does `second` reach `settled`. A machine that saw them in
+     the other order — or saw only one — stops somewhere else and says so by
+     the state it is in. That is the whole point: the order is not asserted
+     about a queue, it is asserted about where the document ended up.
+-->
+<scxml xmlns="http://www.w3.org/2005/07/scxml"
+       version="1.0"
+       datamodel="null"
+       initial="idle">
+
+  <state id="idle">
+    <transition event="go" target="asking"/>
+  </state>
+
+  <state id="asking">
+    <!-- The act. `type` names a processor the BUILD declared, so codegen emits
+         a dispatch here; without the declaration this same element compiles to
+         an `error.execution` raise and the chart would never leave `asking`. -->
+    <onentry>
+      <send type="pinion.fixture.host" event="ask"/>
+    </onentry>
+    <!-- Only `first` is accepted here. A host that answered `second` first
+         would leave the machine sitting in `asking`, which is what makes the
+         order observable rather than assumed. -->
+    <transition event="first" target="heard_first"/>
+  </state>
+
+  <state id="heard_first">
+    <transition event="second" target="settled"/>
+  </state>
+
+  <state id="settled"/>
+
+</scxml>
