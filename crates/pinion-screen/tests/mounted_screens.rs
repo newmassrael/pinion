@@ -1366,3 +1366,141 @@ fn r1742_a_row_says_whether_its_section_was_the_one_showing() {
     assert_eq!(elsewhere.to_json()["rows"][1]["showing"], false);
     assert_eq!(here.to_json()["rows"][1]["showing"], true);
 }
+
+/// The size a host declares for a page it paints itself, and the constant it
+/// is declared with. Deliberately narrower than the lab fixture's, so a test
+/// reading it back cannot be satisfied by the wrong entry.
+const BOARD_SHRINK: ShrinkPolicy = ShrinkPolicy::rigid((820, 480));
+
+/// ★★★★★ R1784 — **a page the host paints itself can say what it lays out
+/// in**, and the roster answers for it beside the screens.
+///
+/// R1781 let a host ask what its guests need. This is the half that was
+/// missing: the analysis tool opens six sections, four are mounted screens,
+/// and the two the host paints itself could not answer at all — so the check
+/// that walked the mounted keys was not failing on them, it never reached
+/// them.
+#[test]
+fn r1784_a_page_the_host_paints_can_say_what_it_lays_out_in() {
+    let sized = roster()
+        .laying_out("dashboard", BOARD_SHRINK)
+        .expect("`dashboard` is open and has no screen");
+
+    assert_eq!(
+        sized.shrink_policy_of("dashboard"),
+        Some(BOARD_SHRINK),
+        "the declaration is what the host reads back, through the same \
+         accessor a mounted screen answers on -- one question, one spelling",
+    );
+    assert_eq!(
+        sized.shrink_policy_of("catalog"),
+        Some(LAB_SHRINK),
+        "★ and it did not displace a screen's own: the two sources answer \
+         different keys and the lookup has no precedence to get wrong",
+    );
+    assert_eq!(
+        sized.shrink_policy_of("stream"),
+        None,
+        "a mounted screen that declares nothing still declares nothing -- a \
+         host cannot answer for a screen from outside it",
+    );
+}
+
+/// ★★★★★ R1784 — every refusal a judge gets, a size gets; and the one that is
+/// only a size's.
+#[test]
+fn r1784_a_roster_refuses_a_size_it_cannot_honour() {
+    use pinion_screen::RosterDefect;
+
+    let empty = || {
+        ScreenRoster::new(destinations(), Vec::new())
+            .expect("nothing is mounted, so nothing can be mounted wrongly")
+    };
+
+    assert_eq!(
+        empty().laying_out("sessions", BOARD_SHRINK).err(),
+        Some(RosterDefect::NoSuchDestination {
+            key: "sessions".to_owned()
+        }),
+        "a width for a section the application does not have is a width \
+         nothing lays out in",
+    );
+    assert_eq!(
+        empty().laying_out("topology", BOARD_SHRINK).err(),
+        Some(RosterDefect::DestinationIsClosed {
+            key: "topology".to_owned()
+        }),
+        "a closed destination is not laid out, so a size there would be \
+         counted by a gate asking about sections a reader can open",
+    );
+    assert_eq!(
+        empty()
+            .laying_out("dashboard", BOARD_SHRINK)
+            .expect("`dashboard` is open")
+            .laying_out("dashboard", BOARD_SHRINK)
+            .err(),
+        Some(RosterDefect::DuplicateSize {
+            key: "dashboard".to_owned()
+        })
+    );
+    assert_eq!(
+        roster().laying_out("catalog", BOARD_SHRINK).err(),
+        Some(RosterDefect::SectionAlreadySized {
+            key: "catalog".to_owned()
+        }),
+        "★★★★★ a mounted screen states its own policy; a second one from the \
+         host would make what the section lays out in depend on the order the \
+         two registrations were written in -- the same rule a judge gets, one \
+         property over",
+    );
+}
+
+/// ★★★★★ R1784 — **the set names the sections the question never reached**,
+/// which is the number a gate should assert on.
+///
+/// "Four screens declared a size" is true of an application with four sections
+/// and of one with forty. R1781's ratchet asserted exactly that and read as
+/// though it covered the tool; measured at R1784 it covered four of six.
+///
+/// ★★ AND THE TWO WAYS A DESTINATION GOES UNANSWERED ARE DIFFERENT, which this
+/// fixture holds both of: `dashboard` has no screen, so the host can answer for
+/// it; `stream` has one that declares nothing, and the host CANNOT — the
+/// registration refuses it. So an empty set is a claim about the screens too,
+/// not only about the host's diligence.
+#[test]
+fn r1784_the_unanswered_set_names_the_sections_the_question_never_reached() {
+    use pinion_screen::RosterDefect;
+
+    let plain = roster();
+    let before: Vec<&str> = plain.unsized_keys().collect();
+    assert_eq!(
+        before,
+        ["dashboard", "stream"],
+        "the fixture opens three sections and one declares a size; `topology` \
+         is closed, so it is out of the population by construction rather than \
+         by being answered",
+    );
+
+    let sized = roster()
+        .laying_out("dashboard", BOARD_SHRINK)
+        .expect("`dashboard` is open and has no screen");
+    let after: Vec<&str> = sized.unsized_keys().collect();
+    assert_eq!(
+        after,
+        ["stream"],
+        "declaring one closes exactly one row, and the remaining name is the \
+         one a reader of this set has to act on",
+    );
+
+    // ★ The remaining row cannot be closed from here, and saying so is the
+    // point: the repair is in the screen.
+    assert_eq!(
+        sized.laying_out("stream", BOARD_SHRINK).err(),
+        Some(RosterDefect::SectionAlreadySized {
+            key: "stream".to_owned()
+        }),
+        "★★ a host cannot silence this set by declaring over a screen -- an \
+         empty set therefore means every screen answered, which is the claim \
+         worth gating",
+    );
+}

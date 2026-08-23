@@ -4065,24 +4065,110 @@ fn r1781_the_shipping_window_cannot_give_every_screen_what_it_declares() {
         // either constant moves this.
         let granted = WIN_W.saturating_sub(spec::RAIL_W);
 
+        // ★★★★★ R1784 — THE POPULATION IS EVERY SECTION A READER CAN OPEN, not
+        // the mounted ones. This walked `mounted_keys` and asserted it had asked
+        // at least four; the tool opens SIX, and the two the host paints itself
+        // were not failing the check, they were never in it. R1738's finding one
+        // property over — there a section that published no verdict was absent
+        // rather than short, here a section that declared no size was.
+        //
+        // `unsized_keys` is the assertion that closes it, because it names what
+        // the question did not reach instead of counting what answered.
+        let unanswered: Vec<&str> = roster.unsized_keys().collect();
+        assert!(
+            unanswered.is_empty(),
+            "★ {unanswered:?} cannot say what they lay out in, so this window \
+             was never checked against them. A page this host paints itself \
+             declares through `ScreenRoster::laying_out`; a mounted screen \
+             declares through `Screen::shrink_policy` and no host can answer \
+             for it.",
+        );
+
+        // The open destinations, which is what "a section a reader can arrive
+        // at" means and what `unsized_keys` above filtered on. A closed seat
+        // lays nothing out, so a size there would be a number about a page
+        // nobody reaches.
+        let open: Vec<String> = roster
+            .destinations()
+            .keys()
+            .filter(|key| {
+                roster
+                    .destinations()
+                    .get(key)
+                    .is_some_and(|d| d.standing.is_open())
+            })
+            .map(str::to_owned)
+            .collect();
+
+        // Every row, not only the short ones. ★★★★★ R1784's counterfactual is
+        // why: breaking the per-destination grant — reading one
+        // window-less-rail figure for all six — left this gate GREEN, because
+        // both host-painted pages fit under either reading. A mechanism nothing
+        // can be wrong about is a mechanism nobody is holding, so the rows are
+        // kept and the dashboard's is asserted against `page_rect` below.
+        let mut rows: Vec<(String, u32, u32)> = Vec::new();
         let mut short: Vec<(String, u32, u32)> = Vec::new();
         let mut asked = 0usize;
-        for key in roster.mounted_keys().map(str::to_owned).collect::<Vec<_>>() {
-            let Some(policy) = roster.shrink_policy_of(&key) else {
+        for key in &open {
+            let Some(policy) = roster.shrink_policy_of(key) else {
                 continue;
             };
             asked += 1;
+            // ★★★★★ AND WHAT A SECTION IS GRANTED IS PER-DESTINATION. The old
+            // reading — the window less the rail — is right for a mounted
+            // screen and wrong for a page the host paints itself, whose
+            // section includes chrome the host draws BESIDE the page region
+            // (the dashboard's palette is 292 of it). `page_rect` is the one
+            // place that difference is already expressed, so it is read rather
+            // than restated, and `granted` above stays as the floor this
+            // derivation must not fall below.
+            let region = super::page_rect(key).w;
             let wants = policy.comfortable().0;
-            if wants > granted {
-                short.push((key, wants, granted));
+            rows.push((key.clone(), wants, region));
+            if wants > region {
+                short.push((key.clone(), wants, region));
             }
         }
 
+        // ★★★★★ THE ROW THAT PINS THE PER-DESTINATION GRANT. The dashboard's
+        // region is the one that differs from every mounted screen's, so it is
+        // the row a wrong reading changes — and it is checked against
+        // `page_rect` rather than against a number written here, because the
+        // claim is that the gate reads the host's own function.
+        let board = rows
+            .iter()
+            .find(|(key, ..)| key == "dashboard")
+            .expect("the dashboard is an open destination and declares a size");
+        assert_eq!(
+            board.2,
+            super::page_rect("dashboard").w,
+            "the dashboard was compared against {} where its page region is \
+             {} — a section the host paints itself is handed less than a \
+             mounted screen, because the host's chrome is inside the section",
+            board.2,
+            super::page_rect("dashboard").w,
+        );
+
+        assert_eq!(
+            asked,
+            open.len(),
+            "every open destination answered, or the loop skipped one the \
+             emptiness check just said could not exist",
+        );
         assert!(
-            asked >= 4,
-            "only {asked} mounted screen(s) declared a size policy — a \
-             population this small cannot be this tool's, and an empty one \
-             would make every clause below vacuous",
+            asked >= 6,
+            "only {asked} section(s) — a population this small cannot be this \
+             tool's, and the clauses below would be vacuous over it",
+        );
+        // The mounted screens are handed the window less the rail; a page the
+        // host paints itself is handed less again, because the host's own
+        // chrome sits inside the section. Kept as an assertion rather than a
+        // comment so the two readings cannot silently converge.
+        assert!(
+            super::page_rect("dashboard").w < granted,
+            "the dashboard's page region ({}) must be narrower than a mounted \
+             screen's ({granted}) — its palette is inside the section",
+            super::page_rect("dashboard").w,
         );
 
         // ★★★★★ TWO, and the second one is why this ratchet was worth writing.
@@ -4106,6 +4192,52 @@ fn r1781_the_shipping_window_cannot_give_every_screen_what_it_declares() {
              `debt-the-shipped-window-is-below-a-mounted-screens-minimum`",
         );
     });
+}
+
+/// ★★★★★ R1784 — **the dashboard's floor is derived from the layout it opens
+/// with**, and this is what makes the derivation's direction checkable.
+///
+/// Without it the `const fn` could read the WIDEST span instead of the
+/// narrowest and no gate would move: the floor would come out smaller and the
+/// shipping window would still satisfy it. A derivation nothing can be wrong
+/// about is a number written down with extra steps.
+#[test]
+fn r1784_the_boards_floor_is_derived_from_the_layout_it_opens_with() {
+    // The span the floor rests on, computed the other way round — over the
+    // specification's rows at runtime rather than in a `const fn` — so the two
+    // derivations have to agree.
+    let narrowest = spec::BOARD
+        .iter()
+        .map(|placed| placed.cols)
+        .min()
+        .expect("the opening layout places something");
+    assert_eq!(
+        narrowest,
+        super::narrowest_span(),
+        "the floor is derived from the NARROWEST card the board opens with, \
+         because that is the one a shrinking canvas takes below legibility \
+         first",
+    );
+    assert!(
+        narrowest < spec::GRID_COLS,
+        "the premise: some card spans less than the whole board, or \
+         'the narrowest' is not a discriminating fact about this layout",
+    );
+
+    // ★★ And the floor does what it was derived to do: at that width the
+    // narrowest card is no smaller than the same card torn off, which is the
+    // one number this derivation borrows from outside the board.
+    let canvas = super::board_canvas_floor();
+    let pitch = (canvas - super::GAP) / spec::GRID_COLS;
+    let card = narrowest * pitch - super::GAP;
+    assert!(
+        card >= super::FLOAT_MIN_W,
+        "at the derived canvas floor {canvas} a {narrowest}-column card is \
+         {card} wide, under the {} a torn-off panel clamps to — so a card \
+         would be legible detached and not in place, which is this shell \
+         disagreeing with itself about one thing",
+        super::FLOAT_MIN_W,
+    );
 }
 
 /// ★★★★★ R1776 — **what the host paints over a guest LEAVES.**

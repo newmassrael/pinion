@@ -98,6 +98,23 @@ pub enum RosterDefect {
         /// The key with both a screen and a judge.
         key: String,
     },
+    /// ★★★★★ R1784 — a size was declared for a destination that already has a
+    /// screen, so two things claim to say what one section lays out in.
+    ///
+    /// The same rule as [`SectionAlreadyAnswers`](Self::SectionAlreadyAnswers)
+    /// and for the same reason: a screen states its own policy through
+    /// [`Screen::shrink_policy`], and a host adding a second one would make the
+    /// answer depend on which lookup happened first. A host with something to
+    /// say about a mounted screen's size has a screen to say it in.
+    SectionAlreadySized {
+        /// The key with both a screen and a host-side size.
+        key: String,
+    },
+    /// ★ R1784 — two sizes declared for one destination.
+    DuplicateSize {
+        /// The key both claim.
+        key: String,
+    },
 }
 
 impl core::fmt::Display for RosterDefect {
@@ -123,6 +140,15 @@ impl core::fmt::Display for RosterDefect {
                  second verdict from the host would make the section's own \
                  answer depend on which registration a lookup reached first"
             ),
+            RosterDefect::SectionAlreadySized { key } => write!(
+                f,
+                "destination `{key}` has a screen, which states its own size \
+                 policy; a second one from the host would make what the \
+                 section lays out in depend on which registration was read"
+            ),
+            RosterDefect::DuplicateSize { key } => {
+                write!(f, "two sizes declared for destination `{key}`")
+            }
         }
     }
 }
@@ -151,6 +177,13 @@ pub struct ScreenRoster {
     /// place both are read — [`conformance`](Self::conformance) — refuses a key
     /// that is in both.
     judges: BTreeMap<String, Box<dyn SectionJudge>>,
+    /// ★★★★★ R1784 — what a page the host paints itself lays out in.
+    ///
+    /// A third map for the reason `judges` is a second one: a size is not a
+    /// screen with most of it missing either, and the alternative — a screen
+    /// that exists only to carry a number — is the route R1761 measured and
+    /// refused, since such a screen would judge a section it does not paint.
+    sizes: BTreeMap<String, ShrinkPolicy>,
     /// ★★★★★ R1725 — what this host already provides, which every screen it
     /// shows is told before it builds anything.
     ///
@@ -201,6 +234,7 @@ impl ScreenRoster {
             destinations,
             screens,
             judges: BTreeMap::new(),
+            sizes: BTreeMap::new(),
             chrome: HostChrome::NONE,
             placed_extent: Cell::new((0, 0)),
             walk: RefCell::new(Walk::default()),
@@ -274,6 +308,74 @@ impl ScreenRoster {
             });
         }
         Ok(self)
+    }
+
+    /// ★★★★★ R1784 — **declare what a page this host paints itself lays out
+    /// in**, so the size question reaches every section a reader can arrive at.
+    ///
+    /// # What forced it, measured
+    ///
+    /// R1781 gave a host [`shrink_policy_of`](Self::shrink_policy_of) so it
+    /// could ask what its guests need without navigating to each one, and the
+    /// analysis tool's gate walked [`mounted_keys`](Self::mounted_keys) and
+    /// asserted it had asked at least four. Measured at R1784: that
+    /// application opens **six** sections and four are mounted screens, so the
+    /// two the host paints itself — its dashboard and its settings page — were
+    /// not failing the check, they **were not in it**. The assertion read as
+    /// though it covered the application.
+    ///
+    /// That is R1738's finding one property over. There it was conformance: an
+    /// application counted what it was judged on, and sections that published
+    /// nothing were absent rather than short. Here it is layout, and the
+    /// remedy is the same shape — the population comes from the roster, and a
+    /// destination that cannot answer is nameable rather than silent (see
+    /// [`unsized_keys`](Self::unsized_keys)).
+    ///
+    /// # Why not a screen
+    ///
+    /// The same measurement that produced [`judging`](Self::judging): a host
+    /// paints a page's chrome *beside* the page region rather than in it, so a
+    /// screen mounted there would state a size for a rectangle that is not the
+    /// section. This grants nothing else — no paint, no hit test, no verdict —
+    /// which is what keeps it from being a way out of mounting.
+    ///
+    /// # Errors
+    ///
+    /// [`RosterDefect`] — a size at a key the roster does not hold, at a key it
+    /// declares closed, at a key that already has a screen (which states its
+    /// own), or two sizes at one key.
+    pub fn laying_out(mut self, key: &str, policy: ShrinkPolicy) -> Result<Self, RosterDefect> {
+        Self::placeable(&self.destinations, key)?;
+        if self.screens.contains_key(key) {
+            return Err(RosterDefect::SectionAlreadySized {
+                key: key.to_owned(),
+            });
+        }
+        if self.sizes.insert(key.to_owned(), policy).is_some() {
+            return Err(RosterDefect::DuplicateSize {
+                key: key.to_owned(),
+            });
+        }
+        Ok(self)
+    }
+
+    /// ★★★★★ R1784 — the open destinations that cannot say what they lay out
+    /// in, in roster order.
+    ///
+    /// The count a gate should assert on, rather than on how many answered:
+    /// "four screens declared a size" is true of an application with four
+    /// sections and of one with forty, and only this says which sections the
+    /// question never reached. Empty is the state that lets a host claim the
+    /// window it ships in was checked against everything a reader can open.
+    pub fn unsized_keys(&self) -> impl Iterator<Item = &str> {
+        self.destinations
+            .keys()
+            .filter(|key| {
+                self.destinations
+                    .get(key)
+                    .is_some_and(|d| d.standing.is_open())
+            })
+            .filter(|key| self.shrink_policy_of(key).is_none())
     }
 
     /// ★★★★★ R1725 — declare what this host draws for every screen it shows,
@@ -536,12 +638,20 @@ impl ScreenRoster {
     /// only by driving the running binary, when it is two declarations sitting
     /// side by side.
     ///
-    /// `None` for a destination with no screen, and for a screen that declares
-    /// no policy: a screen that concedes nothing is not a screen that asked for
-    /// something and was refused.
+    /// `None` for a screen that declares no policy — a screen that concedes
+    /// nothing is not a screen that asked for something and was refused — and
+    /// for a destination that has neither a screen nor a declaration.
+    ///
+    /// ★ R1784 — a page the host paints itself answers here too, through
+    /// [`laying_out`](Self::laying_out). The two sources cannot both hold one
+    /// key: that registration refuses a destination with a screen, so this
+    /// lookup has no precedence to get wrong.
     #[must_use]
     pub fn shrink_policy_of(&self, key: &str) -> Option<ShrinkPolicy> {
-        self.screens.get(key).and_then(|s| s.shrink_policy())
+        self.screens
+            .get(key)
+            .and_then(|s| s.shrink_policy())
+            .or_else(|| self.sizes.get(key).copied())
     }
 
     /// The current screen's paint-root tag, when the journey is at a mounted

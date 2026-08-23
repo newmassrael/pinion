@@ -300,6 +300,65 @@ fn col_pitch() -> u32 {
     (canvas_rect().w.saturating_sub(GAP)) / GRID_COLS
 }
 
+/// The narrowest span any card this board opens with occupies, in columns.
+///
+/// Read from [`spec::BOARD`] rather than written down: a placement moving from
+/// five columns to four moves the floor below with it.
+const fn narrowest_span() -> u32 {
+    let mut narrowest = GRID_COLS;
+    let mut i = 0;
+    while i < spec::BOARD.len() {
+        if spec::BOARD[i].cols < narrowest {
+            narrowest = spec::BOARD[i].cols;
+        }
+        i += 1;
+    }
+    narrowest
+}
+
+/// ★★★★★ R1784 — **what the dashboard lays out in**, derived rather than
+/// chosen.
+///
+/// The board's own geometry gives every term. A card spanning `n` columns is
+/// `n * pitch - GAP` wide ([`cell_rect`]) and the pitch is
+/// `(canvas - GAP) / GRID_COLS` ([`col_pitch`]), so the canvas the narrowest
+/// card needs follows from one number: how narrow a card may be at all.
+///
+/// That number is not invented here either. [`FLOAT_MIN_W`] is what a card
+/// clamps to once it is torn off, extracted from the reference's own source at
+/// R1697 — and a card and its float hold the same content, so a card that is
+/// legible detached and illegible in place would be this shell disagreeing with
+/// itself about one thing.
+const fn board_canvas_floor() -> u32 {
+    // `n * pitch - GAP >= FLOAT_MIN_W`, rounded up so the floor is a width the
+    // inequality actually holds at rather than one it is just short of.
+    let pitch = (FLOAT_MIN_W + GAP).div_ceil(narrowest_span());
+    pitch * GRID_COLS + GAP
+}
+
+/// The dashboard's floor, as a width of its PAGE REGION.
+///
+/// ★★★★★ R1784 — the first draft of this added [`RAIL_W`] and [`PALETTE_W`],
+/// on R1761's measurement that a host paints a page's chrome beside the region
+/// so the SECTION is wider than the region. That measurement is true and it is
+/// not what this constant is: a [`ShrinkPolicy`] is what `page_scene` applies
+/// to the region, so a number about the section would be compared with the
+/// region's width and read as a shortfall of exactly the chrome. The gate's
+/// first run said so — `("dashboard", 1176, 1096)`, and 1176 - 1096 is
+/// `RAIL_W + PALETTE_W` less the rounding.
+///
+/// So the section's extra width is stated where it belongs, in the gate that
+/// asserts the dashboard's region is narrower than a mounted screen's, and
+/// this stays the region's own floor.
+const DASHBOARD_MIN_W: u32 = board_canvas_floor();
+
+/// The dashboard's height floor: the bars this host keeps, plus one board row.
+///
+/// One row rather than the four the opening layout places — the board scrolls,
+/// and a floor that demanded the whole opening layout would be pinning the
+/// layout rather than the page.
+const DASHBOARD_MIN_H: u32 = APP_BAR_H + SUB_BAR_H + ROW_H + GAP;
+
 // --- The widget catalogue ----------------------------------------------------
 //
 // The table itself is in `spec.rs` — the reference's own catalogue written down
@@ -766,6 +825,35 @@ fn screen_roster() -> ScreenRoster {
     // opened the count for.
     .judging("settings", Box::new(judge::SettingsJudge))
     .expect("`settings` is an open destination with no screen mounted at it")
+    // ★★★★★ R1784 — **and what those two pages lay out in.** A judge answers
+    // whether a section is on the frame; this answers what the frame has to be
+    // for it to fit, which R1781's check asked of the four mounted screens and
+    // could not ask of these two at all. Not the judge's job and not a screen's:
+    // see `ScreenRoster::laying_out`.
+    //
+    // `panning` rather than `rigid` for both, and the second number is what
+    // says why: below the comfortable width these pages keep laying out and the
+    // region pans, which is what they already do — the board scrolls and the
+    // settings column narrows to its cap.
+    .laying_out(
+        "dashboard",
+        pinion_core::shrink::ShrinkPolicy::panning(
+            (DASHBOARD_MIN_W, DASHBOARD_MIN_H),
+            // One column and its gutter: below the comfortable width the board
+            // pans, and it stops being a board when a single column no longer
+            // fits.
+            (board_canvas_floor() / GRID_COLS + GAP, DASHBOARD_MIN_H),
+        ),
+    )
+    .expect("`dashboard` is an open destination this host paints itself")
+    .laying_out(
+        "settings",
+        pinion_core::shrink::ShrinkPolicy::panning(
+            (SETTINGS_MAX_W, SETTINGS_MIN_H),
+            (SETTINGS_MIN_W, SETTINGS_MIN_H),
+        ),
+    )
+    .expect("`settings` is an open destination this host paints itself")
     // ★★★★★ R1725 — **this application has a navigation, so its pages must not
     // each bring one.** Declared here, beside the roster it is a fact about:
     // the rail this shell paints IS `spec::RAIL`, and a screen shown inside it
@@ -4820,6 +4908,24 @@ const SEG_CHIP_H: u32 = 30;
 const fn seg_chip_w() -> u32 {
     (SEG_W - SEG_PAD * 2) / 2
 }
+
+/// ★★★★★ R1784 — **what the settings page lays out in**, both numbers derived
+/// from the metrics above it.
+///
+/// The comfortable width is the one this page already refuses to exceed:
+/// [`settings_col`] caps its content at [`SET_MAX_W`], so anything beyond that
+/// plus the inset is width the page declines to use.
+///
+/// The floor is where a row stops being a row. Every row is a title and a
+/// control on one line, and the widest seat a control takes is
+/// [`SET_VALUE_W`] — sized at R1762 to hold a device and its address rather
+/// than a word. Below the inset, the row's own padding and that seat, the two
+/// halves overlap.
+const SETTINGS_MAX_W: u32 = SET_MAX_W + SET_PAD * 2;
+const SETTINGS_MIN_W: u32 = SET_PAD * 2 + SET_ROW_PAD * 2 + SET_VALUE_W;
+/// The settings page's height floor: the bar this host keeps, the page's own
+/// heading block, and one group heading with one row under it.
+const SETTINGS_MIN_H: u32 = APP_BAR_H + SET_PAD * 2 + SET_PAGE_HEAD_H + SET_HEAD_H + SET_ROW_H;
 
 /// The content column: the page inset, bounded so the rows do not stretch to a
 /// maximised window's width and leave their controls a screen away from their
