@@ -16,6 +16,17 @@ use super::{
 };
 use crate::graph::Role;
 
+/// R1788 — the plan's document as a value.
+///
+/// The framework renders it as the artifact it is, which is text; a test that
+/// wants to index into it parses it back. Going through the text is deliberate
+/// rather than a convenience wrapper around an internal: it means every
+/// assertion below is made against **what actually leaves the screen**.
+fn plan_document(plan: &deploy::Plan) -> serde_json::Value {
+    let text = plan.to_document().expect("the plan's configurations write");
+    serde_json::from_str(&text).expect("what we just wrote is JSON")
+}
+
 fn state() -> LabState {
     LabState::opening()
 }
@@ -175,7 +186,7 @@ fn r1716_a_card_told_where_it_runs_runs_there_in_the_plan() {
         );
         let plan = state.plan();
         let placed: Vec<(&str, &str)> = plan
-            .nodes
+            .nodes()
             .iter()
             .map(|entry| (entry.name.as_str(), entry.host.as_str()))
             .collect();
@@ -1533,12 +1544,12 @@ fn r1687_the_document_and_the_script_are_the_same_plan() {
     owner.run(|| {
         let state = state();
         let plan = state.plan();
-        assert!(!plan.nodes.is_empty(), "the opening graph has cards");
+        assert!(!plan.nodes().is_empty(), "the opening graph has cards");
 
-        let document = deploy::as_document(&plan);
-        let script = deploy::as_script(&plan);
+        let document = plan_document(&plan);
+        let script = plan.to_script().expect("this screen labels every card");
 
-        let ordered: Vec<&str> = plan.nodes.iter().map(|e| e.name.as_str()).collect();
+        let ordered: Vec<&str> = plan.nodes().iter().map(|e| e.name.as_str()).collect();
         let in_document: Vec<String> = document["order"]
             .as_array()
             .expect("an order")
@@ -1567,7 +1578,7 @@ fn r1687_the_document_and_the_script_are_the_same_plan() {
                 "the script has no branch for {host}:\n{script}"
             );
         }
-        for entry in &plan.nodes {
+        for entry in plan.nodes() {
             let start = format!("\"$BIN/{}\" -c \"$OUT/{}.json\"", entry.program, entry.name);
             assert_eq!(
                 script.matches(start.as_str()).count(),
@@ -1593,22 +1604,22 @@ fn r1687_a_disabled_card_is_in_neither_artifact() {
         let node = state.node_of("P-03").expect("the card is there");
         let before = state.plan();
         assert!(
-            before.nodes.iter().any(|e| e.name == "P-03"),
+            before.nodes().iter().any(|e| e.name == "P-03"),
             "it starts in the plan"
         );
 
         super::disable_card(&state, node).expect("the card is there");
         let after = state.plan();
         assert!(
-            !after.nodes.iter().any(|e| e.name == "P-03"),
+            !after.nodes().iter().any(|e| e.name == "P-03"),
             "a card that produces nothing is not started"
         );
         assert_eq!(
-            after.nodes.len() + 1,
-            before.nodes.len(),
+            after.nodes().len() + 1,
+            before.nodes().len(),
             "and nothing else moved"
         );
-        let script = deploy::as_script(&after);
+        let script = after.to_script().expect("this screen labels every card");
         assert!(
             !script.contains("P-03"),
             "the script does not write a configuration for it either:\n{script}"
@@ -1640,39 +1651,46 @@ fn r1687_a_value_that_cannot_be_expressed_is_carried_as_news() {
         }
 
         let plan = state.plan();
-        let unexpressed = plan.unexpressed();
-        assert_eq!(unexpressed.len(), 1, "one row, named");
-        assert_eq!(unexpressed[0].0, spec::SELECTED_NODE);
-        assert_eq!(unexpressed[0].1.key, "transport.link.tx.batch_size");
+        let uncarried = plan.uncarried();
+        assert_eq!(uncarried.len(), 1, "one row, named");
+        assert_eq!(uncarried[0].0, spec::SELECTED_NODE);
+        assert_eq!(uncarried[0].1.key, "transport.link.tx.batch_size");
 
         // ★ The rest of that node's configuration still ships. A refusal that
         // took the other rows with it would make one bad value cost the file.
         let entry = plan
-            .nodes
+            .nodes()
             .iter()
             .find(|e| e.name == spec::SELECTED_NODE)
             .expect("still in the plan");
         assert!(
-            entry.config.as_object().is_some_and(|o| !o.is_empty()),
+            entry
+                .config
+                .document
+                .as_object()
+                .is_some_and(|o| !o.is_empty()),
             "the node still has a configuration: {}",
-            entry.config
+            entry.config.document
         );
         assert!(
             entry
                 .config
+                .document
                 .pointer("/transport/link/tx/batch_size")
                 .is_none(),
             "and the refused row is not silently in it"
         );
 
-        let document = deploy::as_document(&plan);
+        let document = plan_document(&plan);
         assert_eq!(
-            document["unexpressed"].as_array().map(Vec::len),
+            document["uncarried"].as_array().map(Vec::len),
             Some(1),
             "the artifact carries it"
         );
         assert!(
-            deploy::as_script(&plan).contains("not in any file above"),
+            plan.to_script()
+                .expect("this screen labels every card")
+                .contains("not in any file above"),
             "and so does the script, as a comment somebody keeps"
         );
 

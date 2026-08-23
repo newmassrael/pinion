@@ -12680,6 +12680,338 @@ fn r1687_a_tree_that_is_not_there_has_no_order() {
     assert!(fixture.document.launch_order(TreeId(97)).is_empty());
 }
 
+/// The fixture graph with every node labelled apart.
+///
+/// ★★★★★ R1788 — the plain [`fixture`] CANNOT be rendered, and finding that out
+/// is most of this round: its two `Num` nodes carry no label, so both fall back
+/// to the kind's name and the artifact would keep one of them. That is asserted
+/// by `r1788_two_nodes_of_one_name_are_refused_rather_than_collapsed`; every
+/// other test here needs a graph that renders, so it labels them.
+fn labelled() -> Fixture {
+    let mut fixture = fixture();
+    fixture
+        .document
+        .relabel(ROOT, fixture.two, Some("two"))
+        .unwrap();
+    fixture
+        .document
+        .relabel(ROOT, fixture.three, Some("three"))
+        .unwrap();
+    fixture
+}
+
+/// The plan a graph deploys to, every node started, each carrying a one-key
+/// configuration named after it.
+fn deployment(document: &Document<Op>) -> crate::Plan<serde_json::Value> {
+    document.deployment(
+        ROOT,
+        |_| "h1".to_string(),
+        |_| Some("node".to_string()),
+        |node| crate::Configured {
+            document: serde_json::json!({ "id": node.0 }),
+            uncarried: Vec::new(),
+        },
+    )
+}
+
+/// ★★★★★ R1788 — **the artifact and the order are one derivation.**
+///
+/// This is what moving the plan out of an example bought. While a screen read
+/// `launch_order` and handed the sequence to a builder that lived in its own
+/// `src/`, nothing held the two together: any caller could pass any order and
+/// get a plan that disagreed with the graph. Deriving it inside is the fix, and
+/// this is the assertion that keeps it.
+#[test]
+fn r1788_a_plan_is_in_the_order_the_graph_says_and_nothing_hands_it_one() {
+    let fixture = labelled();
+    let plan = deployment(&fixture.document);
+    let ordered: Vec<&str> = plan.nodes().iter().map(|e| e.name.as_str()).collect();
+    let launched: Vec<String> = fixture
+        .document
+        .launch_order(ROOT)
+        .into_iter()
+        .map(|p| p.name)
+        .collect();
+    assert_eq!(ordered, launched, "the plan IS the launch order");
+    assert_eq!(
+        plan.nodes().iter().map(|e| e.standing).collect::<Vec<_>>(),
+        fixture
+            .document
+            .launch_order(ROOT)
+            .iter()
+            .map(|p| p.standing)
+            .collect::<Vec<_>>(),
+        "and carries the same reason for each place"
+    );
+}
+
+/// ★★ R1788 — a node the caller does not give a program to is **left out**, not
+/// exported with an empty one.
+///
+/// A script line with no executable is a failure at run time instead of at
+/// export time, and an export is the moment somebody can still do something
+/// about it. A palette entry, a note or a frame is such a node.
+#[test]
+fn r1788_a_node_with_no_program_is_left_out_of_the_plan() {
+    let fixture = labelled();
+    let plan = fixture.document.deployment(
+        ROOT,
+        |_| "h1".to_string(),
+        |node| (node != fixture.add).then(|| "node".to_string()),
+        |_| crate::Configured {
+            document: serde_json::json!({}),
+            uncarried: Vec::new(),
+        },
+    );
+    assert_eq!(
+        plan.nodes().len(),
+        fixture.document.launch_order(ROOT).len() - 1
+    );
+    assert!(
+        !plan.to_script().expect("renders").contains("Add"),
+        "and the script writes no configuration for it either"
+    );
+}
+
+/// ★★★★★ R1788 — **two nodes of one name are refused, not collapsed.**
+///
+/// The defect the crate's own first test run found, true since R1687 and
+/// invisible while the derivation lived in an example: a plan names each node's
+/// configuration file after the node, and the document keyed its `nodes` map by
+/// that name. This fixture's two `Num` nodes collide, the map kept three of
+/// four, and the script would have written two heredocs to one path.
+///
+/// ★★★★★ **The invariant that looks like it covers this does not.** `relabel`
+/// maintains *authored names are unique within a tree* (`EditError::LabelTaken`,
+/// whose own doc measures the reference floor for the same rule). That is about
+/// the STORED LABEL. An unlabelled node still has a name — `display_name` falls
+/// back to its kind's — and a fallback is not a stored value, so nothing can
+/// refuse a second one. The collision happens **while the invariant holds**,
+/// which is why the plan has to be the guard. The example never saw it because
+/// that screen labels every card.
+///
+/// Refused rather than papered over: renaming silently would change what a
+/// person sees on the canvas, dropping one is the floor's behaviour, and export
+/// is exactly the moment somebody can still fix it.
+#[test]
+fn r1788_two_nodes_of_one_name_are_refused_rather_than_collapsed() {
+    let fixture = fixture();
+    let plan = deployment(&fixture.document);
+    assert_eq!(
+        plan.nodes().len(),
+        4,
+        "all four are in the plan — the loss was in the RENDERING"
+    );
+    assert_eq!(plan.shared_names(), vec![("Num", 2)]);
+    for refusal in [plan.to_document(), plan.to_script()] {
+        let why = refusal.expect_err("both renderings refuse");
+        assert_eq!(
+            why,
+            crate::Unplannable::Shared {
+                name: "Num".to_string(),
+                count: 2
+            },
+            "and refuse for the SAME reason — one derivation rendered twice"
+        );
+        assert!(why.to_string().contains("label them apart"), "{why}");
+    }
+    // Labelling them apart is the fix, and it is enough.
+    let fixed = labelled();
+    let plan = deployment(&fixed.document);
+    assert!(plan.shared_names().is_empty());
+    assert!(plan.to_document().is_ok() && plan.to_script().is_ok());
+}
+
+/// ★★★★★ R1788 — **a configuration that cannot be written names the node it
+/// belongs to.**
+///
+/// The floor this clears was measured by building and running the reference
+/// toolkit at 6.11 **across two processes**, which is the population a
+/// persistence claim has to be judged over: handed a value its store cannot
+/// encode, it reports no error on write, no error on sync and no error on read;
+/// the file keeps the type name and no payload; and reading it back inside the
+/// writing process APPEARS TO SUCCEED, because a process-wide cache answers
+/// instead of the file. Only a second process sees the value is gone — and the
+/// status is still no-error there. The whole signal is a line on stderr.
+///
+/// So the in-process test a developer would write passes while the artifact is
+/// broken. Here the failure is a value, it is returned rather than logged, and
+/// it carries **which node**.
+#[test]
+fn r1788_an_unwritable_configuration_names_the_node_rather_than_going_quiet() {
+    let fixture = labelled();
+    // A map with non-string keys: JSON has no such object, so this is a
+    // document that serialises everywhere except into the artifact.
+    let plan = fixture.document.deployment(
+        ROOT,
+        |_| "h1".to_string(),
+        |_| Some("node".to_string()),
+        |node| crate::Configured {
+            document: if node == fixture.add {
+                std::collections::BTreeMap::from([((1, 2), 3)])
+            } else {
+                std::collections::BTreeMap::new()
+            },
+            uncarried: Vec::new(),
+        },
+    );
+    let refused = plan.to_document().expect_err("it cannot be written");
+    let crate::Unplannable::Unwritable { node, why } = &refused else {
+        panic!("the serializer's refusal, not {refused:?}");
+    };
+    assert_eq!(
+        node,
+        &fixture
+            .document
+            .tree(ROOT)
+            .unwrap()
+            .node(fixture.add)
+            .unwrap()
+            .display_name(),
+        "the refusal names WHICH node, which is the field the floor has not got"
+    );
+    assert!(!why.is_empty(), "and carries what the serializer said");
+    assert!(
+        refused.to_string().contains(node),
+        "and says it in a sentence: {refused}"
+    );
+    // ★ The script still gets written, with the failure inside it where a
+    // reader meets it. A plan that vanished would be the floor's behaviour
+    // with an error type bolted on.
+    let script = plan.to_script().expect("the names are apart");
+    assert!(script.contains("error"), "the hole is visible:\n{script}");
+}
+
+/// ★★ R1788 — the rows a configuration could not carry reach **both**
+/// renderings, because they are one derivation rendered twice.
+#[test]
+fn r1788_an_uncarried_row_is_in_the_document_and_in_the_script() {
+    let fixture = labelled();
+    let plan = fixture.document.deployment(
+        ROOT,
+        |_| "h1".to_string(),
+        |_| Some("node".to_string()),
+        |node| crate::Configured {
+            document: serde_json::json!({ "id": node.0 }),
+            uncarried: if node == fixture.sink {
+                vec![crate::Uncarried {
+                    key: "tx.batch".to_string(),
+                    shown: "12".to_string(),
+                    why: "the field takes no number".to_string(),
+                }]
+            } else {
+                Vec::new()
+            },
+        },
+    );
+    assert!(!plan.is_complete(), "one row did not make it");
+    assert_eq!(plan.uncarried().len(), 1);
+    let text = plan.to_document().expect("writable");
+    let document: serde_json::Value = serde_json::from_str(&text).expect("json");
+    assert_eq!(document["uncarried"].as_array().map(Vec::len), Some(1));
+    assert_eq!(document["uncarried"][0]["key"], "tx.batch");
+    let script = plan.to_script().expect("renders");
+    assert!(script.contains("not in any file above"), "{script}");
+    assert!(script.contains("tx.batch"), "{script}");
+    // ★ And a plan that lost nothing says nothing, rather than printing an
+    // empty heading a reader has to interpret.
+    let clean = deployment(&fixture.document);
+    assert!(clean.is_complete());
+    assert!(
+        !clean
+            .to_script()
+            .expect("renders")
+            .contains("not in any file above")
+    );
+}
+
+/// ★★ R1788 — a plan spread across hosts is written as one script that runs the
+/// part belonging to whichever host invokes it, and **says how many there are**.
+///
+/// The alternative — emitting only the first host's processes — produces a
+/// script that appears to work.
+#[test]
+fn r1788_a_plan_across_two_hosts_branches_and_says_so() {
+    let fixture = labelled();
+    let plan = fixture.document.deployment(
+        ROOT,
+        |node| {
+            if node == fixture.sink {
+                "beta".to_string()
+            } else {
+                "alpha".to_string()
+            }
+        },
+        |_| Some("node".to_string()),
+        |_| crate::Configured {
+            document: serde_json::json!({}),
+            uncarried: Vec::new(),
+        },
+    );
+    assert_eq!(plan.hosts(), vec!["beta", "alpha"], "first-needed order");
+    let script = plan.to_script().expect("renders");
+    for host in plan.hosts() {
+        assert!(
+            script.contains(&format!("if [ \"$HOST\" = \"{host}\" ]; then")),
+            "no branch for {host}:\n{script}"
+        );
+    }
+    assert!(script.contains("2 hosts"), "{script}");
+    // One host: no count, because there is nothing to warn about.
+    assert!(
+        !deployment(&fixture.document)
+            .to_script()
+            .expect("renders")
+            .contains("hosts —")
+    );
+}
+
+/// ★ R1788 — the document's four sections, and every started node in each.
+#[test]
+fn r1788_the_document_carries_the_order_the_nodes_and_the_hosts() {
+    let fixture = labelled();
+    let plan = deployment(&fixture.document);
+    let text = plan.to_document().expect("writable");
+    let document: serde_json::Value = serde_json::from_str(&text).expect("json");
+    let started = plan.nodes().len();
+    assert_eq!(document["order"].as_array().map(Vec::len), Some(started));
+    assert_eq!(
+        document["nodes"].as_object().map(serde_json::Map::len),
+        Some(started)
+    );
+    assert_eq!(
+        document["hosts"]["h1"].as_array().map(Vec::len),
+        Some(started)
+    );
+    assert_eq!(document["uncarried"], serde_json::json!([]));
+    assert_eq!(document["order"][0]["standing"], "first");
+}
+
+/// ★ R1788 — a tree that is not there deploys to an empty plan whose renderings
+/// are still well formed, rather than to a panic or to a script with no `wait`.
+#[test]
+fn r1788_a_tree_that_is_not_there_deploys_to_an_empty_plan() {
+    let fixture = fixture();
+    let plan: crate::Plan<serde_json::Value> = fixture.document.deployment(
+        TreeId(97),
+        |_| "h1".to_string(),
+        |_| Some("node".to_string()),
+        |_| crate::Configured {
+            document: serde_json::json!({}),
+            uncarried: Vec::new(),
+        },
+    );
+    assert!(plan.nodes().is_empty());
+    assert!(plan.hosts().is_empty());
+    assert!(
+        plan.is_complete(),
+        "nothing was lost because nothing was in"
+    );
+    let script = plan.to_script().expect("an empty plan still renders");
+    assert!(script.contains("HOST=${HOST:-localhost}"), "{script}");
+    assert!(script.ends_with("wait"), "{script}");
+}
+
 /// ★ R1687 — every arm of the standing vocabulary is reachable and spells one
 /// word, so a wire census counts against the type.
 #[test]

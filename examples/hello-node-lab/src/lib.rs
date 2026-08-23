@@ -1101,17 +1101,18 @@ impl LabState {
     /// order is the model's ([`Document::launch_order`]), so a disabled card
     /// drops out of both at once and neither rendering has an opinion about it.
     fn plan(&self) -> deploy::Plan {
-        let order: Vec<(NodeId, String, pinion_node_graph::Bringup)> = self
-            .doc
-            .borrow()
-            .launch_order(ROOT)
-            .into_iter()
-            .map(|placed| (placed.node, placed.name, placed.standing))
-            .collect();
-        deploy::plan(
-            &order,
+        // R1788 — the derivation is the framework's (`Document::deployment`)
+        // and the ORDER is derived inside it. Until this round the screen read
+        // `launch_order` itself and handed the sequence to a plan builder
+        // living in this binary, so nothing stopped the two from disagreeing
+        // and no second consumer could reach either.
+        self.doc.borrow().deployment(
+            ROOT,
             |node| self.host_of(node),
-            |node| self.role_of(node),
+            |node| {
+                self.role_of(node)
+                    .map(|role| deploy::program_of(role).to_owned())
+            },
             // 🟥★★★★★ R1716 — the form the screen SHOWS, and this line is the
             // round's own defect caught in its own terms. It read the STORED
             // form, which is the authored half: the plan a person exports would
@@ -1121,7 +1122,7 @@ impl LabState {
             // configuration", one of them shipped — which is the exact shape
             // this round exists to end, made one round later by the round
             // itself. Found by driving the plan rather than by reading it.
-            |node| shown_form(self, node),
+            |node| deploy::configured(shown_form(self, node)),
         )
     }
 
@@ -10003,7 +10004,18 @@ fn act_on_form(state: &Rc<LabState>, hit: Hit) {
 /// with a set of files that will not start has been told the wrong thing.
 fn export_configuration(state: &LabState) -> String {
     let plan = state.plan();
-    let document = deploy::as_document(&plan);
+    // R1788 — the framework renders the plan as the ARTIFACT it is, which is
+    // text; this screen publishes it as structure because its wire is JSON.
+    // The parse cannot fail on what we just wrote, and the fallback carries the
+    // reason rather than an empty object, so a reader is never handed a plan
+    // that quietly became nothing — which is the floor's own failure.
+    let document = plan.to_document().map_or_else(
+        |why| serde_json::json!({ "error": why.to_string() }),
+        |text| {
+            serde_json::from_str(&text)
+                .unwrap_or_else(|e| serde_json::json!({ "error": e.to_string() }))
+        },
+    );
     let verdict = state.verdict();
     let said = Utterance::done(deploy::export_sentence(
         &plan,
@@ -10019,7 +10031,11 @@ fn export_configuration(state: &LabState) -> String {
 /// The same plan, rendered as the script that starts it.
 fn produce_script(state: &LabState) -> String {
     let plan = state.plan();
-    let script = deploy::as_script(&plan);
+    // R1788 — a script refuses when two cards answer to one name, because it
+    // would write two heredocs to one path. The refusal is the artifact here:
+    // a person reading it is told what to fix, where a produced script with a
+    // silently missing process would not be.
+    let script = plan.to_script().unwrap_or_else(|why| format!("# {why}"));
     let said = Utterance::done(deploy::script_sentence(&plan));
     state.produced.borrow_mut().script = Some(script);
     state.say(said.clone());

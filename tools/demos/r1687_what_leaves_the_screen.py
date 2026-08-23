@@ -301,16 +301,21 @@ def body() -> None:
         tf.invoke(f"{EXT}/set_field", f"{key}={over}")
         said = tf.invoke(f"{EXT}/export", "")
         plan = produced(tf)["config"]
-        unexpressed = plan["unexpressed"]
-        assert_eq(len(unexpressed), 1, f"one row, named: {unexpressed}")
-        assert_eq(unexpressed[0]["key"], key)
+        # R1788 — `uncarried`, not `unexpressed`. The derivation moved into
+        # `pinion-node-graph`, where `Unexpressed`'s reason vocabulary belongs
+        # to the config FORM and a pure-data crate cannot hold it; the plan
+        # carries the rendered sentence instead, under its own word. One word
+        # per fact, which is why the wire key moved with it.
+        uncarried = plan["uncarried"]
+        assert_eq(len(uncarried), 1, f"one row, named: {uncarried}")
+        assert_eq(uncarried[0]["key"], key)
         assert_eq(
-            unexpressed[0]["shown"],
+            uncarried[0]["shown"],
             over,
             "★ the value AS THE ROW SHOWS IT — there is no parsed one, which "
             "is generally the reason it is here",
         )
-        assert unexpressed[0]["why"], f"and why: {unexpressed[0]}"
+        assert uncarried[0]["why"], f"and why: {uncarried[0]}"
 
         # ★★★ The rest of that node's configuration still ships. This is the
         # whole reason `compose` exists: before it, one bad value cost the file.

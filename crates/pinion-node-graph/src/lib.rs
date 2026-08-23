@@ -246,7 +246,7 @@ pub use debug::{
     BreakError, Breakpoints, Command, Direction, Halt, Landing, NodeSite, Occurrence, Paused,
     PortSite, Reading, Session, Stride, Timeline, WatchError, Watches,
 };
-pub use deploy::{Bringup, Placed};
+pub use deploy::{Bringup, Configured, Deployed, Placed, Plan, Uncarried, Unplannable};
 pub use eval::{Descent, Evaluator};
 pub use fragment::{
     Crossings, Definitions, DuplicateError, ExtractError, Fragment, InsertError, Inserted, Severed,
