@@ -202,6 +202,31 @@ impl<P: StatePolicy> Widget<P> {
         self.engine.unseen_external_events()
     }
 
+    /// ★ R1786 — how many events arrived carrying a payload that announced
+    /// itself as structure and that the datamodel could not read as one.
+    ///
+    /// W3C SCXML B.2.8.1 requires the fallback — content the processor cannot
+    /// interpret becomes a space-normalized string — and requires nothing
+    /// about telling anyone. So a document reads `_event.data.field`, gets
+    /// nothing, assigns nothing, and the run continues. Upstream measured that
+    /// on three independent Lua implementations: a payload in Lua's own table
+    /// syntax silently emptied every variable the receiving transition
+    /// assigned.
+    ///
+    /// Counts only the reading a host can act on; prose delivered as text is
+    /// the ladder working (W3C test 562) and is not counted, because a
+    /// diagnostic that fires when nothing is wrong is one nobody reads.
+    ///
+    /// ⚠ **No chart in this crate can move it**, and that is a fact about this
+    /// framework rather than about the engine — see
+    /// `r1786_no_chart_here_carries_a_payload_so_none_can_be_undecodable`.
+    /// The accessor exists because a consumer's own document may carry
+    /// payloads, and a framework that hides a diagnostic its engine publishes
+    /// has decided for them.
+    pub fn undecodable_payloads(&self) -> u32 {
+        self.engine.undecodable_payloads()
+    }
+
     /// ★ R1768 — the configuration this widget's machine is in, as a value a
     /// host can keep.
     ///
@@ -689,6 +714,68 @@ mod tests {
     /// and this test is what makes that a claim rather than an omission. The
     /// day a chart gains a final state it fails, and what it asks for is a
     /// real proof — drive that chart to its end and send it something.
+    /// Whether a chart's source declares a state the main event loop can end
+    /// at. Named so the walk below and its positive control read the SAME
+    /// predicate — a detector tested only against the absence of the thing it
+    /// detects reports "all clear" for ever once it stops working.
+    /// ★★★★★ The element boundary is load-bearing, and the control below is
+    /// what found that out on its first run: `<final` is a prefix of
+    /// `<finalize`, which is an `<invoke>` child and not a state anything ends
+    /// at. The predicate this replaced would have fired on a chart that
+    /// cannot stop — a census reading a substring and crediting somebody
+    /// else's element, which is the class this project has a standing rule
+    /// against.
+    fn declares_a_final(text: &str) -> bool {
+        text.contains("<final>") || text.contains("<final ") || text.contains("<final/")
+    }
+
+    /// Whether an emitted chart carries event data the datamodel could fail to
+    /// read. Same shape, same reason.
+    fn declares_a_payload_sum(text: &str) -> bool {
+        text.contains("type Payload") && !text.contains("type Payload = ()")
+    }
+
+    /// ★★★★★ R1786 — **the two walks below can find what they are looking
+    /// for**, asserted before either is allowed to report finding nothing.
+    ///
+    /// Both counterfactuals of R1786 found the same hole and it is worth more
+    /// than the round's feature: a demand-assertion is its OWN only guard, so
+    /// breaking its predicate leaves a test that passes for ever while
+    /// watching nothing. Disarming the payload walk went unnoticed; so did
+    /// changing the final-state walk to look for a spelling no chart uses.
+    ///
+    /// A positive control is what closes that, and this project already had
+    /// the rule — a fixture asserts it can DISTINGUISH before its verdict of
+    /// "no difference" means anything.
+    #[test]
+    fn r1786_both_walks_can_see_the_thing_they_look_for() {
+        assert!(
+            declares_a_final("<state id=\"a\"/><final id=\"done\"/>"),
+            "the final-state walk must recognise a final, or its report of \
+             none is a report about its own spelling",
+        );
+        assert!(!declares_a_final("<state id=\"a\"><onentry/></state>"));
+        // ★ The near-miss that a loose predicate would swallow: `<finalize>` is
+        // a different element and is not a state anything ends at.
+        assert!(
+            !declares_a_final("<invoke><finalize/></invoke>"),
+            "a `<finalize>` is not a final state, and counting it would make \
+             this walk fire on charts that cannot stop",
+        );
+
+        assert!(
+            declares_a_payload_sum("type Payload = ButtonPayload;"),
+            "the payload walk must recognise a payload sum, or its report of \
+             none is a report about its own spelling",
+        );
+        assert!(!declares_a_payload_sum("type Payload = ();"));
+        assert!(
+            !declares_a_payload_sum("type State = Foo;"),
+            "a chart with no payload declaration at all is not one that \
+             carries data",
+        );
+    }
+
     #[test]
     fn r1785_no_chart_here_can_stop_so_nothing_can_be_unseen_yet() {
         let charts: Vec<std::path::PathBuf> = {
@@ -719,10 +806,7 @@ mod tests {
 
         let can_stop: Vec<String> = charts
             .iter()
-            .filter(|path| {
-                std::fs::read_to_string(path)
-                    .is_ok_and(|text| text.contains("<final") || text.contains("<final>"))
-            })
+            .filter(|path| std::fs::read_to_string(path).is_ok_and(|text| declares_a_final(&text)))
             .map(|path| {
                 path.file_name()
                     .unwrap_or_default()
@@ -736,6 +820,66 @@ mod tests {
              `Sent::NeverSeen` is REACHABLE now and owes a driven proof: take \
              that chart to its end and send it an event. This assertion is the \
              demand, not the coverage.",
+        );
+    }
+
+    /// ★★★★★ R1786 — **the second engine diagnostic in a row that nothing
+    /// here can cause, and the two share a reason.**
+    ///
+    /// The engine counts payloads the datamodel could not read as structure
+    /// (W3C SCXML B.2.8.1). Every chart this crate emits declares
+    /// `type Payload = ()` — the charts carry no `_event.data` at all — so the
+    /// count is nailed at zero by construction.
+    ///
+    /// Read off the COMMITTED EMIT rather than off the `.scxml` sources, which
+    /// is what R1766 made possible: the payload type is the generator's
+    /// decision, taken when a transition guard reads a typed field, so the
+    /// source says what was written and the emit says what was concluded. The
+    /// emit is the one that determines whether the counter can move.
+    ///
+    /// ⚠ Together with the sibling above this is a PATTERN rather than two
+    /// coincidences: pinion's widget charts use neither final states nor event
+    /// data, so an engine diagnostic about either is a surface this framework
+    /// owes its consumers and cannot exercise itself.
+    #[test]
+    fn r1786_no_chart_here_carries_a_payload_so_none_can_be_undecodable() {
+        let emit = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("generated");
+        let mut total = 0usize;
+        let mut carries: Vec<String> = Vec::new();
+        for entry in std::fs::read_dir(&emit)
+            .expect("the committed emit is tracked, so the directory is there")
+            .flatten()
+        {
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "rs") {
+                let Ok(text) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                if !text.contains("type Payload") {
+                    continue;
+                }
+                total += 1;
+                if declares_a_payload_sum(&text) {
+                    carries.push(
+                        path.file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .into(),
+                    );
+                }
+            }
+        }
+        assert!(
+            total >= 15,
+            "the premise: the emitted charts were found ({total} of them), or \
+             this proves nothing about them",
+        );
+        assert!(
+            carries.is_empty(),
+            "★ {carries:?} now emit a payload sum, so \
+             `Widget::undecodable_payloads` is REACHABLE and owes a driven \
+             proof: deliver that chart a payload the datamodel cannot read. \
+             This assertion is the demand, not the coverage.",
         );
     }
 }
