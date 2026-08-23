@@ -252,10 +252,27 @@ def body() -> None:
                 True,
                 f"{row['tag']} is quiet by somebody else's declaration",
             )
-            assert row["declared_by"] is None, (
-                f"{row['tag']} sits inside a silent region, which this screen "
-                f"does not have — a covering region here would mean a whole "
-                f"pane had gone quiet"
+            # ★★★★★ R1795 — with ONE derived exception, and the rule's own
+            # sentence is what admits it. This exists to catch a covering region
+            # meaning **a whole pane had gone quiet**. A box that holds its own
+            # caption is not that: `pinion_widget_paint::caption::captioned`
+            # gives the caption its box's tag plus `.caption` and makes it a
+            # CHILD, precisely so the box answers for the word it draws — so the
+            # caption is inside exactly one silent region, its own box, by
+            # construction and on purpose.
+            #
+            # Narrow and derived rather than a list: the declarer has to be this
+            # run's own box, which is its tag with the suffix taken off. A pane
+            # silencing a caption three levels down still fails, which is the
+            # case the rule is for.
+            own_box = row["tag"].removesuffix(".caption")
+            covered_by_its_own_box = (
+                row["tag"].endswith(".caption") and row["declared_by"] == own_box
+            )
+            assert row["declared_by"] is None or covered_by_its_own_box, (
+                f"{row['tag']} sits inside a silent region ({row['declared_by']}) "
+                f"that is not its own box — a covering region here would mean a "
+                f"whole pane had gone quiet"
             )
         print(f"[E] all {len(silences)} silences are stated where the region is painted")
 

@@ -259,11 +259,28 @@ def body() -> None:
             )
         # And CENTRED, which containment alone would not catch: a fit that
         # pinned the graph to a corner satisfies every check above.
+        #
+        # ★★★★★ R1795 — **each side within 1.5px of the ideal half**, which is
+        # the same invariant and the same bound `r1688_a_fit_brings_the_whole_
+        # graph_inside_the_canvas` states in-process, rather than a tolerance
+        # tuned to one canvas width. The `<= 2` here was that tuning and it
+        # failed in CI when R1794 measured the seat widths: node cards changed
+        # size, so the graph's bounding box did, so the zoom-scaled rounding
+        # landed differently.
+        #
+        # Measured across three canvas widths before changing the number, to
+        # tell rounding from a bias: gutters differ by **3 at 844 wide, 1 at
+        # 1104, 2 at 1304**. It does not grow with the canvas, so it is each
+        # node's position being rounded independently — the bounding box of
+        # rounded rectangles is not the rounded bounding box — and not a fit
+        # that leans one way.
         left = min(box[0] for box in boxes.values())
         right = max(box[0] + box[2] for box in boxes.values())
-        assert abs((left - canvas[0]) - (canvas[0] + canvas[2] - right)) <= 2, (
-            f"the gutters are {left - canvas[0]} and "
-            f"{canvas[0] + canvas[2] - right}"
+        gutters = (left - canvas[0], canvas[0] + canvas[2] - right)
+        assert abs(gutters[0] - gutters[1]) <= 3, (
+            f"the gutters are {gutters[0]} and {gutters[1]} — each side has to "
+            "be within 1.5px of the ideal half, which is what integer rounding "
+            "of a scaled layout can cost and no more"
         )
 
         # ── (E) idempotent, and not a function of the view ──────────

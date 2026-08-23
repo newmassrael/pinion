@@ -438,12 +438,19 @@ def section_g(app: RpcSubprocess) -> list[tuple[str, str]]:
         said["unreconciled"],
         "G: the count and the rows agree about what is unreconciled",
     )
-    # ★★★★★ R1770 — this walk is taken at the window the tool OPENS in, and at
-    # that window the node lab is handed 1388 of the 1625 it declares it lays
-    # out at, so its three surfaces decline to be judged rather than reporting
-    # parts the window took away. The application still does not conform here,
-    # and the reason moved one step further towards a reader: from *a named
-    # surface diverges* to *a named section was not given room to be asked*.
+    # ★★★★★ R1795 — the clause that stood here has been made FALSE, and making it
+    # false is the outcome of R1791.
+    #
+    # It read: *this walk is taken at the window the tool OPENS in, and at that
+    # window the node lab is handed 1388 of the 1625 it declares, so its three
+    # surfaces decline to be judged ... the application still does not conform
+    # here*. R1791 gave the toolbar the ability to give a group up instead of
+    # demanding its whole width, the lab declares 1188, and 1388 satisfies it.
+    #
+    # So what is asserted is the fact that replaced it, and the SHAPE of the
+    # remaining report — that a surface which does decline says why, per surface,
+    # rather than the walk reporting "one frame shows one section" — is still
+    # asserted below, over however many decline.
     declined = [
         (r["key"], name)
         for r in said["rows"]
@@ -451,10 +458,17 @@ def section_g(app: RpcSubprocess) -> list[tuple[str, str]]:
         if not visit["stood"] and visit.get("why")
     ]
     ok(
-        "G: ★★★★★ so the application still does not conform -- and the "
-        "difference this round makes is that what is left is NAMED, per "
-        "surface, instead of being 'one frame shows one section'",
-        said["conforms"] is False and len(unreconciled) + len(declined) >= 1,
+        f"G: ★★★★★ the walk's verdict is per SURFACE and says so — "
+        f"{len(unreconciled)} unreconciled, {len(declined)} declined, "
+        f"conforms={said['conforms']}. Before R1791 three of the node lab's "
+        "surfaces declined at this window because it was given 1388 of the 1625 "
+        "it then declared; it declares 1188 now and they stand",
+        isinstance(said["conforms"], bool),
+    )
+    ok(
+        "G: ★★ and the node lab is not among the ones that decline, which is "
+        f"what that round bought: {sorted(declined)}",
+        not any(key == "lab" for key, _ in declined),
     )
     for key, surface in declined:
         why = row(said, key)["surfaces"][surface].get("why") or ""
@@ -503,11 +517,19 @@ def section_h(app: RpcSubprocess, small: list[tuple[str, str]]) -> None:
         for name, visit in r.get("surfaces", {}).items()
         if not visit["stood"] and visit.get("why")
     )
+    # ★★★★★ R1795 — and the correction goes one step further than R1770's did.
+    # That round corrected the OUTCOME (there is a size at which it conforms);
+    # this one corrects the SUBJECT: what was outstanding at the opening window
+    # was the node lab's, and R1791 removed it. So the set is asserted to be
+    # whatever it is, minus the lab — the section's question ("one variable
+    # moves what is left") is unchanged and its answer has moved again.
+    outstanding = {key for key, _ in small} | {key for key, _ in declined_small}
     ok(
-        "H: at the window this walk was taken in, what is outstanding is the "
-        "node lab's -- whether it is a divergence or a section declining to be "
-        "asked",
-        {key for key, _ in small} | {key for key, _ in declined_small} == {"lab"},
+        f"H: at the window this walk was taken in, what is outstanding is "
+        f"{sorted(outstanding) or 'nothing'} — and the node lab is NOT among "
+        "them any more, which is what R1791 bought by letting its toolbar give "
+        "a group up instead of demanding a width the shipped window cannot give",
+        "lab" not in outstanding,
     )
     # One variable: the window. The node lab's OWN gate paints the inspector at
     # 2494x1531; the assembled tool gives that section a page region less than

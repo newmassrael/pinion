@@ -208,9 +208,19 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
     with RpcSubprocess("hello-node-lab", visible_window=True, boot_grace=1.5) as app:
         spec = json.loads(app.query("/external/spec"))
         ok("D: the screen publishes its own specification", "design" in spec)
+        # ★★★★★ R1795 — 1440, where this read 1625. R1791 gave the toolbar the
+        # ability to give a group up instead of demanding its whole width, so
+        # the screen's declared design surface came DOWN — which is the round's
+        # outcome, not a regression: at 1625 the shipped 1440 window could not
+        # satisfy it and a reader found the inspector cut.
+        #
+        # It is still asserted as a VALUE rather than read off the screen: this
+        # section's point is that the gesture is checked against the published
+        # specification, and a check that took whatever the screen said would
+        # agree with it by construction.
         assert_eq(
             spec["design"],
-            [1625, 900],
+            [1440, 900],
             "D: and the specification states the design surface the reference "
             "screen is laid out on",
         )

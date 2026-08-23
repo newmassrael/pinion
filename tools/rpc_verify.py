@@ -6140,10 +6140,28 @@ class RealPointer:
         time.sleep(self.settle)
         if confirm:
             got = self._cursor()
-            assert got is not None and (round(got[0]), round(got[1])) == (
-                round(at[0]),
-                round(at[1]),
-            ), f"aimed the real pointer at {at}, the surface received {got}"
+            # ★★★★★ R1795 — against the pixel the driver ACTUALLY asked for, and
+            # within one, because **a fractional aim cannot be hit by an integral
+            # pointer**. This compared `round(got)` with `round(at)` — two
+            # separate roundings of the same fractional value, through Python's
+            # banker's rounding, so an aim at `x.5` rounds DOWN here and the X
+            # server had already put the pointer one pixel up.
+            #
+            # It surfaced when R1794 measured seat widths: a node card's width
+            # became odd, its centre landed on `.5`, and a demo that had aimed at
+            # whole pixels for two hundred rounds started aiming between them.
+            # The aim is legitimately fractional — it is the centre of a
+            # rectangle — so the check is what has to admit that a pointer is
+            # not.
+            want = (sx - self.offset[0], sy - self.offset[1])
+            assert (
+                got is not None
+                and abs(got[0] - want[0]) <= 1
+                and abs(got[1] - want[1]) <= 1
+            ), (
+                f"aimed the real pointer at {at} (pixel {want}), the surface "
+                f"received {got}"
+            )
 
     def press(self, button: str = "left") -> None:
         self._xdo("mousedown", _REAL_POINTER_BUTTONS[button])

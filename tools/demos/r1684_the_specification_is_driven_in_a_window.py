@@ -47,6 +47,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    press_painted_tag,
     run_demo,
 )
 
@@ -110,7 +111,14 @@ def witness(tf, slot: str) -> str:
 
 
 def press(tf, tag: str) -> None:
-    tf.click(at=centre(rect_of(tf, tag)))
+    # ★★★★★ R1795 — through the shared press, which opens the toolbar's overflow
+    # control first when it is holding this seat. R1791 gave the row the ability
+    # to give a group up, so `lab.toolbar.config` is on the row at one width and
+    # one press away at another; a demo that aimed at its rectangle stopped
+    # finding one. This is the third demo to learn it and the second to learn it
+    # from CI rather than from the round that caused it — see
+    # `debt-nothing-enumerates-which-demo-asserts-which-wire-fact`.
+    press_painted_tag(tf, tag, VIEWPORT)
 
 
 def press_wire(tf, frm: str, to: str) -> None:

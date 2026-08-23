@@ -70,6 +70,7 @@ from rpc_verify import (  # noqa: E402
     assert_declared_panes_on_screen,
     assert_eq,
     assert_targets_survive_resize,
+    behind_an_overflow,
     resize_and_settle,
     run_demo,
 )
@@ -248,6 +249,15 @@ def what_the_spec_names_stays_on_screen(app: RpcSubprocess, name: str, sizes: li
                 if row["reach"] == "scrollable" and row["tag"]
             }
             gone = [tag for tag in gone if tag not in reachable]
+        # ★★★★★ R1795 — and a control the TOOLBAR gave up is reachable too, by a
+        # press rather than a scroll. R1791 let a row move a group behind an
+        # overflow control when it is tight, so at 1200 wide the node lab's zoom
+        # group is one press away and not gone. Asked of the screen, because
+        # what is behind the control at one width is on the row at another and
+        # no caller can compute it. This is the second demo to need the
+        # subtraction and the first to learn it from CI — `r1709` took it in the
+        # round that caused it, and nothing pointed at this one.
+        gone = [tag for tag in gone if tag not in behind_an_overflow(app)]
         assert_eq(
             gone,
             [],
@@ -270,7 +280,20 @@ def paint_and_gesture_agree(app: RpcSubprocess, name: str, sizes: list) -> dict:
     # collapse when the window grows. Without this the check above is satisfied
     # by a screen that stops answering — which is precisely the failure this
     # round repaired, and it would otherwise read as "no disagreements".
-    base = sum(s["deliverable"] + s["handle"] for s in answering(reports[sizes[0]]))
+    # ★★★★★ R1795 — plus what the toolbar's overflow control is HOLDING. Since
+    # R1791 a row can give a group up when it is tight, so this count stopped
+    # being a property of the screen and became a property of the window — the
+    # same thing `r1651`'s family roster learned in that round, with the same
+    # repair.
+    #
+    # Measured before changing anything, because the floor's own rule is that a
+    # drop is the round's to explain: the node lab answers for **59** at its
+    # design width with `export` and `file` moved, and **63** at 1700 and 2000
+    # where nothing moves. It did not stop vouching for part of itself — it
+    # vouches for MORE than the committed 61 whenever the row is whole, and five
+    # of its seats are one press away rather than on the row at the narrow size.
+    held = len(behind_an_overflow(app))
+    base = sum(s["deliverable"] + s["handle"] for s in answering(reports[sizes[0]])) + held
     assert_eq(
         base >= COVERAGE_FLOOR[name],
         True,
