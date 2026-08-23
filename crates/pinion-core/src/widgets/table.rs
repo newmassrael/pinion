@@ -48,8 +48,8 @@
 use crate::WidgetStateName;
 use crate::external::{
     ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
-    SchemaArg, SchemaField, ThreadOwnership, int_of, one_of_phrase,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ObjectArgs, ReadRefusal,
+    RepaintOwner, SchemaArg, SchemaField, ThreadOwnership, int_of, one_of_phrase,
 };
 use crate::input::PointerWireEvent;
 use crate::intent::Intent;
@@ -1151,13 +1151,11 @@ impl TableExternal {
     /// names up against the wrong cells and silently accepting the argument is
     /// how a caller comes to believe it got one.
     fn invoke_export(&self, args: &IntrospectValue) -> Result<IntrospectValue, InvokeError> {
-        let IntrospectValue::Json(obj) = args else {
-            return Err(InvokeError::rejected(format!(
-                "table.export takes an object naming a dialect and a scope, and was given {}",
-                args.kind()
-            )));
-        };
-        let dialect_name = obj.get("dialect").and_then(serde_json::Value::as_str);
+        // R1789 — the shared reader, lifted beside `ArgForm::Object` at its
+        // third consumer. The refusals BELOW stay here: naming the domain a
+        // value should have come from is this surface's own knowledge.
+        let obj = ObjectArgs::of(args, "table.export")?;
+        let dialect_name = obj.word("dialect");
         let Some(dialect) = dialect_name.and_then(table_export::Dialect::by_name) else {
             return Err(InvokeError::rejected(format!(
                 "table.export: no dialect named {:?}; this surface writes {}",
@@ -1165,7 +1163,7 @@ impl TableExternal {
                 one_of_phrase(table_export::Dialect::NAMED.iter().map(|d| d.name))
             )));
         };
-        let scope_name = obj.get("scope").and_then(serde_json::Value::as_str);
+        let scope_name = obj.word("scope");
         let Some(scope) = scope_name.and_then(table_export::Scope::from_wire_name) else {
             return Err(InvokeError::rejected(format!(
                 "table.export: no scope named {:?}; it exports {}",
@@ -1173,7 +1171,7 @@ impl TableExternal {
                 one_of_phrase(table_export::Scope::WIRE_NAMES.iter().copied())
             )));
         };
-        let headers_name = obj.get("headers").and_then(serde_json::Value::as_str);
+        let headers_name = obj.word("headers");
         let headers = match headers_name {
             None => table_export::Headers::Omit,
             Some(name) => match table_export::Headers::from_wire_name(name) {

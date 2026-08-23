@@ -233,8 +233,9 @@
     "plane": "lab",
     "tier": "t1",
     "capability": "a scenario timeline: warmup, sequential and concurrent tasks, and killing a node at a given time",
-    "verdict": "gap",
-    "covered_by": "MEASURED R1646: no keyframe or scrub-editing timeline exists in any crate — `pinion_chart::timeline` is a reading lane. A scenario that kills a node at time T has no authoring surface"
+    "verdict": "app",
+    "covered_by": "R1789 §5.28 `pinion_core::widgets::track`. ★ R1646's REASON HELD — the first census reason in four rounds to survive re-measurement (R1747, R1787 and R1788 each found one false), and the re-measurement is specific: `animation` interpolates between TWO points, `pinion_chart::timeline` reads spans somebody already has, `TransportClock` is a playhead that knows nothing about what is on it, and this screen's `run` was a BOOLEAN. Nowhere to put the eight seconds. What landed is the shape and not the taxonomy: a `Track` of timed entries whose `place` refuses a second entry at one moment instead of swallowing it (the floor swallows), a `Schedule` of named lanes for concurrency, and `due(after, upto)` answering the half-open window a tick advanced through — the query the reference's keyframe API has no equivalent of, measured at 6.11: a scrub answers A VALUE, never the entries a step passed, so a discrete event at a time is inexpressible there whatever the value is. Its other three answers, also measured: two keys at one step SILENTLY REPLACE, a step outside the range is DROPPED with the only signal on stderr, and two keys it cannot interpolate produce an INVALID empty variant with no reason. WHAT IS THE APPLICATION'S is what an entry MEANS — `hello-node-lab::scenario::Act` is four words (warmup / start / stop / kill) because those are the four things this tool's reference does to a running graph, and a framework that named them would be inventing a taxonomy it deliberately does not own (the same call lab.t1.8 records). The screen also reports a moment where two lanes tell one card OPPOSITE things, because which one lasts is then decided by lane order rather than by the author — found by driving it",
+    "assembled_by": "examples/hello-node-lab/src/scenario.rs, driven on the wire by tools/demos/r1789_a_scenario_says_what_a_step_crossed.py"
   },
   {
     "id": "lab.t1.11",

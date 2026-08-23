@@ -4018,6 +4018,103 @@ pub trait External: core::fmt::Debug {
 /// moves with its focus-trap, a snackbar's countdown is advanced by the
 /// animation driver — so a raw rewind would desync it. Mutations go
 /// through the holder's own methods (a reducer / action), never the wire.
+/// R1789 §5.15 — **the object an [`ArgForm::Object`] action was called with**,
+/// with the field readers every such dispatcher was writing by hand.
+///
+/// # Why this is here rather than at any one caller
+///
+/// [`ArgForm::Object`] declares that a verb takes its arguments as an object;
+/// nothing turned that declaration into a way of *reading* one, so each
+/// dispatcher re-derived it. Measured at R1789: **12** sites in this workspace
+/// spell `obj.get("…").and_then(serde_json::Value::as_str)`, and three of them
+/// — a table's export, a capture viewer's export and a node lab's scenario —
+/// are the same four lines with a different key. The rule-of-three fired two
+/// rounds ago and nobody had looked.
+///
+/// The **bespoke** half deliberately stays at the call site: a refusal that
+/// names the domain a value should have come from is the surface's own
+/// knowledge, and a generic reader that invented one would be publishing a
+/// worse sentence than the site could write. What is lifted is the mechanical
+/// half — is this an object at all, is this field a usable string, is this
+/// field a number — each of which has exactly one right answer and had twelve.
+///
+/// ```
+/// # use pinion_core::external::{IntrospectValue, ObjectArgs};
+/// let args = IntrospectValue::Json(serde_json::json!({"at": 8.0, "act": "kill"}));
+/// let obj = ObjectArgs::of(&args, "schedule").expect("an object");
+/// assert_eq!(obj.word("act"), Some("kill"));
+/// assert_eq!(obj.number("at"), Ok(8.0));
+/// assert_eq!(obj.word("lane"), None, "absent, and an empty one reads the same");
+/// ```
+#[derive(Clone, Copy, Debug)]
+pub struct ObjectArgs<'a> {
+    fields: &'a serde_json::Map<String, serde_json::Value>,
+    verb: &'a str,
+}
+
+impl<'a> ObjectArgs<'a> {
+    /// Read `args` as the object `verb` declares it takes.
+    ///
+    /// # Errors
+    /// A refusal naming **which verb** and what kind of thing it was given
+    /// instead. The verb is in the sentence because a surface with four
+    /// object-taking actions otherwise hands back four identical refusals and a
+    /// caller cannot tell which one it got wrong.
+    pub fn of(args: &'a IntrospectValue, verb: &'a str) -> Result<Self, InvokeError> {
+        match args {
+            IntrospectValue::Json(serde_json::Value::Object(fields)) => Ok(Self { fields, verb }),
+            other => Err(InvokeError::rejected(format!(
+                "{verb} takes an object naming its arguments, and was given {}",
+                other.kind()
+            ))),
+        }
+    }
+
+    /// The verb these arguments were given to.
+    #[must_use]
+    pub const fn verb(&self) -> &'a str {
+        self.verb
+    }
+
+    /// The raw fields, for a caller reading a shape this does not model.
+    #[must_use]
+    pub const fn fields(&self) -> &'a serde_json::Map<String, serde_json::Value> {
+        self.fields
+    }
+
+    /// A string field, trimmed — `None` when absent **or blank**.
+    ///
+    /// The two read the same on purpose: an argument spelled `""` is a caller
+    /// declining to give one, and a surface that told those apart would be
+    /// asking every client to know which of two ways of saying nothing it
+    /// prefers.
+    #[must_use]
+    pub fn word(&self, key: &str) -> Option<&'a str> {
+        self.fields
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    }
+
+    /// A required number field.
+    ///
+    /// # Errors
+    /// A refusal naming the field, so a caller that omitted one of three
+    /// numbers is told which.
+    pub fn number(&self, key: &str) -> Result<f64, InvokeError> {
+        self.fields
+            .get(key)
+            .and_then(serde_json::Value::as_f64)
+            .ok_or_else(|| {
+                InvokeError::rejected(format!(
+                    "{}'s {key:?} is a number, and was not given as one",
+                    self.verb
+                ))
+            })
+    }
+}
+
 /// R1787 §5.15 — a closed vocabulary rendered **for a person**: `one of a, b, c`.
 ///
 /// The sentence a dispatcher says when a value is not in the set an

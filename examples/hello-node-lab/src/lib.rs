@@ -54,6 +54,7 @@ mod deploy;
 mod graph;
 mod judge;
 mod persist;
+mod scenario;
 mod settings;
 mod spec;
 
@@ -69,8 +70,8 @@ use pinion_core::availability::Unavailable;
 use pinion_core::containment::line_box;
 use pinion_core::external::{
     ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, PointerTarget, ReadRefusal,
-    RepaintOwner, SchemaArg, SchemaField, ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ObjectArgs, PointerTarget,
+    ReadRefusal, RepaintOwner, SchemaArg, SchemaField, ThreadOwnership,
 };
 use pinion_core::input::PointerReading;
 use pinion_core::reactive::{Signal, Tracked};
@@ -791,6 +792,19 @@ struct LabState {
     zoom: Signal<u32>,
     pan: Signal<(i32, i32)>,
     running: Signal<bool>,
+    /// R1789 — **what happens to this graph, and when**: named lanes of timed
+    /// acts, which the census recorded as having no authoring surface at all.
+    ///
+    /// A `RefCell` and not a `Signal`, like the document beside it: a schedule
+    /// is edited in place by four verbs and read whole, so a signal would fire
+    /// the whole screen for a change to one entry.
+    scenario: RefCell<scenario::Plan>,
+    /// Where the scenario's playhead stands, in seconds.
+    ///
+    /// ★ Advanced explicitly (`advance`), never by a wall clock — R1600's
+    /// division, and the only one under which an assertion about this screen
+    /// does not depend on how fast the machine is.
+    playhead: Signal<f32>,
     /// The master auto-discovery switch: off by default, because a graph whose
     /// links are all authored is the one whose behaviour is a function of what
     /// is on the canvas.
@@ -1078,6 +1092,8 @@ impl LabState {
             zoom: Signal::new(spec::OPENING_ZOOM),
             pan: Signal::new((0, 0)),
             running: Signal::new(false),
+            scenario: RefCell::new(scenario::Plan::new()),
+            playhead: Signal::new(0.0),
             discovery: Signal::new(false),
             cursor: Signal::new((0, 0)),
             drag: Signal::new(None),
@@ -7335,6 +7351,40 @@ const FIELDS: &[SchemaField] = &{
         SchemaField::action("fit", "string"),
         SchemaField::action("go_to_problem", "string"),
         SchemaField::action("run", "bool"),
+        // ★★★★★ R1789 — **the scenario**: what happens to this graph and when,
+        // which the census recorded as having no authoring surface. `scenario`
+        // reads the lanes, their entries, how long it is, where the playhead
+        // stands and which acts exist; `schedule` places one; `unschedule`
+        // takes one off; `advance` moves the playhead and answers WHAT IT
+        // CROSSED — the query the reference's keyframe API has no equivalent
+        // of (measured at 6.11: a scrub answers a value, never the entries a
+        // step passed, so "stop that node at eight seconds" is inexpressible).
+        SchemaField::new("scenario", "json"),
+        SchemaField::action_with(
+            "schedule",
+            "string",
+            ArgForm::Object,
+            const {
+                &[
+                    SchemaArg::open("at", "number"),
+                    SchemaArg::one_of("act", "string", scenario::Act::WIRE_NAMES),
+                    SchemaArg::key("target", "string", "cards").optional(),
+                    SchemaArg::open("lane", "string").optional(),
+                ]
+            },
+        ),
+        SchemaField::action_with(
+            "unschedule",
+            "string",
+            ArgForm::Object,
+            const {
+                &[
+                    SchemaArg::open("at", "number"),
+                    SchemaArg::open("lane", "string").optional(),
+                ]
+            },
+        ),
+        SchemaField::action("advance", "json"),
         // ★★ R1687 — what leaves the screen. Neither takes an argument: the
         // plan is a function of the graph, and a verb that let a caller name a
         // subset would be inventing a scope the screen has no affordance for.
@@ -7647,6 +7697,11 @@ impl ExternalIntrospect for LabOracle {
             // ★★ R1687 — the artifacts, or nulls where they are not. See
             // `Produced::wire` for why a null and not a missing key.
             "produced" => text(state.produced.borrow().wire().to_string()),
+            // ★★★★★ R1789 — the scenario, whole: its lanes, its entries, how
+            // long it is, where the playhead stands and what acts exist. One
+            // read rather than five, because a lane and its entries are not
+            // separately meaningful.
+            "scenario" => Ok(IntrospectValue::Json(scenario::wire(state))),
             // ★★ R1689 — what a save would write, and what one did.
             "archive" => text(persist::graph_text(state)),
             "stored" => text(persist::stored(state)),
@@ -8210,6 +8265,44 @@ impl ExternalIntrospect for LabOracle {
                     .map_err(InvokeError::rejected)
             }
             "clear_graph" => Ok(IntrospectValue::Text(persist::clear(&state))),
+            // ★★★★★ R1789 — the scenario's three verbs.
+            "schedule" => {
+                let obj = ObjectArgs::of(&args, "schedule")?;
+                let at = seconds(obj.number("at")?);
+                Ok(IntrospectValue::Text(scenario::schedule(
+                    &state,
+                    obj.word("lane").unwrap_or(scenario::DEFAULT_LANE),
+                    at,
+                    obj.word("act").unwrap_or(""),
+                    obj.word("target").unwrap_or(""),
+                )?))
+            }
+            "unschedule" => {
+                let obj = ObjectArgs::of(&args, "unschedule")?;
+                let at = seconds(obj.number("at")?);
+                Ok(IntrospectValue::Text(scenario::unschedule(
+                    &state,
+                    obj.word("lane").unwrap_or(scenario::DEFAULT_LANE),
+                    at,
+                )?))
+            }
+            "advance" => {
+                let by = match args {
+                    IntrospectValue::Float(v) => v,
+                    #[allow(clippy::cast_precision_loss, reason = "a scrub is seconds, not ticks")]
+                    IntrospectValue::Int(v) => v as f64,
+                    _ => {
+                        return Err(InvokeError::rejected(format!(
+                            "advance takes a number of seconds and was given {}",
+                            args.kind()
+                        )));
+                    }
+                };
+                Ok(IntrospectValue::Json(scenario::advance(
+                    &state,
+                    seconds(by),
+                )?))
+            }
             "run" => {
                 let verdict = state.verdict();
                 let want = match args {
@@ -9440,6 +9533,19 @@ fn collapse_card(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeErr
 /// nodes are processes, and switching one off means it does not run and nothing
 /// downstream hears from it. Bypassing would mean the opposite — traffic routed
 /// straight through — which is a request this tool never makes.
+/// R1789 — a wire number as the seconds a scenario keeps.
+///
+/// One place rather than three `as f32` casts with three `allow`s: the wire
+/// carries `f64` and this screen's clock is `f32`, and where that narrowing
+/// happens is a decision worth having exactly one of.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "a scenario time is seconds at f32"
+)]
+fn seconds(wire: f64) -> f32 {
+    wire as f32
+}
+
 fn disable_card(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError> {
     let was = state
         .doc

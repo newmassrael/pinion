@@ -54,8 +54,8 @@ use pinion_a11y::{
 };
 use pinion_core::external::{
     ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, PointerTarget, ReadRefusal,
-    RepaintOwner, SchemaArg, SchemaField, ThreadOwnership, one_of_phrase,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ObjectArgs, PointerTarget,
+    ReadRefusal, RepaintOwner, SchemaArg, SchemaField, ThreadOwnership, one_of_phrase,
 };
 use pinion_core::focus_state;
 use pinion_core::input::PointerReading;
@@ -2510,13 +2510,9 @@ impl ViewOracle {
         state: &Rc<ViewState>,
         args: &IntrospectValue,
     ) -> Result<IntrospectValue, InvokeError> {
-        let IntrospectValue::Json(obj) = args else {
-            return Err(InvokeError::rejected(format!(
-                "export takes an object naming a dialect and a scope, and was given {}",
-                args.kind()
-            )));
-        };
-        let dialect_name = obj.get("dialect").and_then(serde_json::Value::as_str);
+        // R1789 — the shared reader, lifted beside `ArgForm::Object`.
+        let obj = ObjectArgs::of(args, "export")?;
+        let dialect_name = obj.word("dialect");
         let Some(dialect) = dialect_name.and_then(table_export::Dialect::by_name) else {
             return Err(InvokeError::rejected(format!(
                 "no dialect named {:?}; this capture writes {}",
@@ -2524,7 +2520,7 @@ impl ViewOracle {
                 one_of_phrase(table_export::Dialect::NAMED.iter().map(|d| d.name))
             )));
         };
-        let scope = obj.get("scope").and_then(serde_json::Value::as_str);
+        let scope = obj.word("scope");
         let rows: Vec<usize> = match scope {
             Some("shown") => state.kept(),
             Some("all") => (0..spec::ROWS.len()).collect(),
