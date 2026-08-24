@@ -101,14 +101,6 @@
       ]
     },
     {
-      "name": "debt-an-identifier-shape-is-checked-and-its-uniqueness-is-not",
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "why": [
-        "links analyzer-behaviour-canon-is-the-standalone-prototype"
-      ]
-    },
-    {
       "name": "debt-analyzer-census-verdicts-are-unproven",
       "blocked_by": "buildable",
       "blocked_because": "",

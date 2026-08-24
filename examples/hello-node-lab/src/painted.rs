@@ -1282,6 +1282,23 @@ fn r1653_the_painted_screen_is_the_specification_in_every_state() {
         let mut short_worst = 0usize;
         for (when, mutate) in STATES {
             mutate(&state);
+            // ★★★★★ R1818 — no state this sweep reaches may hand one identifier
+            // to two cards. Asserted HERE because the sweep ACCUMULATES: a clash
+            // needs a graph somebody built up, which is the shape no
+            // single-state test constructs. And it is asserted BY NAME because
+            // the ink budget below is a number — when this defect first
+            // surfaced it said "161 of 250 runs, budget 152" and never once
+            // said "two cards answer to the same id".
+            let clashes: Vec<String> = state
+                .gate_lines()
+                .into_iter()
+                .map(|(_, line)| line)
+                .filter(|line| line.contains("must be unique"))
+                .collect();
+            assert!(
+                clashes.is_empty(),
+                "{when}: two cards answer to one identifier — {clashes:?}"
+            );
             for (how_big, size) in SIZES {
                 let label = format!("{when}, {how_big}");
                 let (shot, scene) = painted_and_scene(&state, *size);

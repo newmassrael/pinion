@@ -372,6 +372,82 @@ fn r1717_an_address_outside_the_graph_warns_and_does_not_block() {
 ///
 /// The arm count is the type's own, so a fifth finding fails here rather than
 /// shipping unworded — which is exactly how the fourth one shipped.
+///
+/// ★★★★★ R1818 was the fifth, and this gate caught it within one run of the arm
+/// being added: `Finding has 5 arm(s) and 4 was/were driven`. The prediction in
+/// the sentence above is the measurement in this one — see the driver list in
+/// the test itself, further down.
+///
+/// **The graph this screen opens with hands no identifier to two cards.**
+///
+/// ★ R1818 — worth asserting rather than assuming, because the check that makes
+/// it assertable is new: until this round the identifier's SHAPE was enforced
+/// and its uniqueness by nothing, so "the opening graph is clean" was not a
+/// claim anybody could have made.
+#[test]
+fn r1818_the_opening_graph_holds_no_two_cards_to_one_identifier() {
+    use pinion_core::reactive::Owner;
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = super::use_lab_state();
+        let clashes: Vec<String> = state
+            .gate_lines()
+            .into_iter()
+            .map(|(_, line)| line)
+            .filter(|line| line.contains("must be unique"))
+            .collect();
+        assert!(
+            clashes.is_empty(),
+            "the graph this screen opens with hands one identifier to two \
+             cards: {clashes:?}"
+        );
+    });
+}
+
+/// ★★★★★ And a graph that DOES is refused, by name, on both cards.
+///
+/// The counterfactual to the test above: without it, "no collisions" is
+/// satisfied by a check that never fires.
+#[test]
+fn r1818_two_cards_holding_one_identifier_are_both_named() {
+    use pinion_core::reactive::Owner;
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = super::use_lab_state();
+        let victim = state.node_of("P-02").expect("the opening graph has it");
+        let router = state.node_of("R-01").expect("the opening graph has it");
+        state.selection.set(super::Selection::one(victim));
+        // `a1` is what the router opens with, so writing it here makes two.
+        super::set_and_sync(&state, "id", "a1");
+
+        let said: Vec<String> = state
+            .gate_lines()
+            .into_iter()
+            .map(|(_, line)| line)
+            .filter(|line| line.contains("must be unique"))
+            .collect();
+        assert_eq!(
+            said.len(),
+            2,
+            "both holders are named, so whichever card a reader is looking at \
+             says so: {said:?}"
+        );
+        assert!(
+            said.iter().any(|s| s.starts_with("P-02"))
+                && said.iter().any(|s| s.starts_with("R-01")),
+            "and each names the OTHER holder: {said:?}"
+        );
+        assert!(
+            state
+                .gate_lines()
+                .iter()
+                .any(|(blocks, line)| *blocks && line.contains("must be unique")),
+            "an identifier two nodes answer to blocks the launch"
+        );
+        let _ = router;
+    });
+}
+
 #[test]
 fn r1718_every_gate_finding_is_said_distinctly_and_never_names_its_card() {
     use pinion_core::test_fixtures::speech::assert_speaks_of;
@@ -398,6 +474,18 @@ fn r1718_every_gate_finding_is_said_distinctly_and_never_names_its_card() {
         (
             "DialsOutside",
             super::Finding::DialsOutside("tcp/10.0.0.21:7449".to_owned()).sentence(),
+        ),
+        // ★★★★★ R1818 — the fifth situation, and the gate that demands this
+        // list caught its absence within one run of the arm being added. An arm
+        // nobody drives is an arm that can say anything.
+        (
+            "Collision",
+            super::Finding::Collision {
+                path: "id".to_owned(),
+                value: "beef".to_owned(),
+                others: vec!["P-02".to_owned()],
+            }
+            .sentence(),
         ),
     ];
     assert_speaks_of("Finding", CARD, super::Finding::ARMS, &said, &[]);

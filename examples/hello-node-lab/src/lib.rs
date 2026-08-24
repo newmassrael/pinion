@@ -1473,12 +1473,19 @@ impl LabState {
     /// on has made the drawing stop being the whole picture.
     fn defects(&self) -> Vec<(String, Finding)> {
         let mut found = Vec::new();
+        // ★★★★★ R1818 — the forms this walk already resolved, kept for the
+        // set-level check below. Asking `shown_form` a second time would be a
+        // SECOND WALK, and this function's own R1717 note is that the count and
+        // the list must come from one — the same reason `problems` renders
+        // `defects` rather than re-deriving it.
+        let mut seen: Vec<(String, ConfigForm)> = Vec::new();
         for node in self.cards() {
             let name = self.name_of(node);
             // ★★ R1716 — the form the screen SHOWS. A gate over the stored half
             // would not look at the rows this screen works out, and those rows
             // reach the document like any other.
             if let Some(form) = shown_form(self, node) {
+                seen.push((name.clone(), form.clone()));
                 let form = &form;
                 for defect in form.defects() {
                     found.push((name.clone(), Finding::Value(defect)));
@@ -1513,6 +1520,42 @@ impl LabState {
                 {
                     found.push((name.clone(), Finding::DiscoveryOn));
                 }
+            }
+        }
+        // ★★★★★ R1818 — the check the loop above CANNOT make, and the reason it
+        // is written after it rather than inside it.
+        //
+        // Every finding above is decided by looking at one card. Uniqueness is
+        // a property of the SET, so a per-card pass is structurally unable to
+        // reach it — which is exactly why the identifier's declared shape has
+        // been enforced since R1690 while two cards holding the same one went
+        // unremarked by everything. `ConfigSchema::collisions` is the framework
+        // vocabulary that was missing; the schema declares which paths must be
+        // unique and this asks that question of every card at once.
+        //
+        // The forms are collected rather than re-derived per collision:
+        // `shown_form` is the form the screen SHOWS (R1716), and asking for it
+        // twice would let the gate judge a document nobody is looking at.
+        let named = seen;
+        for collision in settings::schema().collisions(named.iter().map(|(n, f)| (n.clone(), f))) {
+            for holder in &collision.holders {
+                // Reported against EVERY holder, so whichever card a reader is
+                // looking at says so — a collision named only on one of them
+                // would make the other look clean.
+                let others: Vec<String> = collision
+                    .holders
+                    .iter()
+                    .filter(|h| *h != holder)
+                    .cloned()
+                    .collect();
+                found.push((
+                    holder.clone(),
+                    Finding::Collision {
+                        path: collision.path.clone(),
+                        value: collision.value.clone(),
+                        others,
+                    },
+                ));
             }
         }
         found
@@ -1645,6 +1688,28 @@ enum Finding {
     /// An address somebody wrote that nothing on this canvas listens on, so the
     /// drawing is no longer the whole picture.
     DialsOutside(String),
+    /// ★★★★★ R1818 — **a value the schema says is unique, held by more than one
+    /// card.**
+    ///
+    /// The first finding here that is not a property of ONE card. Every other
+    /// arm is decided by looking at a single form; this one cannot be, which is
+    /// why the identifier's SHAPE was enforced from R1690 and its UNIQUENESS by
+    /// nothing at all: a form is one document and is structurally unable to see
+    /// its siblings.
+    ///
+    /// It BLOCKS. An identifier two nodes answer to is not a partial picture
+    /// the way a dialled-outside address is — it is a graph in which "the node
+    /// called `beef`" does not name one node, so anything launched from it acts
+    /// on whichever the tool happened to reach first.
+    Collision {
+        /// The schema path that must be unique.
+        path: String,
+        /// The value more than one card holds.
+        value: String,
+        /// The other cards holding it, named — because "this is a duplicate" is
+        /// not actionable without saying *of what*.
+        others: Vec<String>,
+    },
 }
 
 impl Finding {
@@ -1657,6 +1722,11 @@ impl Finding {
         match self {
             Self::Value(defect) => defect.blocks(),
             Self::NothingListening | Self::DiscoveryOn | Self::DialsOutside(_) => false,
+            // See the arm's own note: a name two nodes answer to does not name
+            // one node, so a launch from that graph acts on whichever the tool
+            // reached first. That is not a partial picture, it is an ambiguous
+            // one.
+            Self::Collision { .. } => true,
         }
     }
 
@@ -1672,6 +1742,14 @@ impl Finding {
             Self::DialsOutside(address) => format!(
                 "{DIALLED_KEY} reaches {address}, which nothing here listens on — \
                  the drawing is not the whole picture"
+            ),
+            Self::Collision {
+                path,
+                value,
+                others,
+            } => format!(
+                "{path} is {value}, which {} already holds — it must be unique",
+                others.join(" and ")
             ),
         }
     }
@@ -2304,6 +2382,18 @@ fn opening_id(id: &str) -> String {
         "T-01" => "d1".to_owned(),
         "T-02" => "d2".to_owned(),
         "Q-01" => "e1".to_owned(),
+        // ⚠ R1818 considered replacing this with hex of the whole name, on the
+        // theory that `f{trailing number:x}` is not injective — `R-02` and
+        // `S-02` would both be `f2` — and REVERTED IT, because the theory was
+        // never measured and the measurement does not support it: an added
+        // card is named from the document's own node counter
+        // (`{badge}-{id.0:02}`), so two adds cannot share an ordinal and the
+        // collision this guarded against is unreachable. The round's new
+        // uniqueness check reported the same count with and without the
+        // change, which is what said so.
+        //
+        // ⇒ left as it was. A fix for a defect nobody measured is a change
+        // whose only certain effect is that the code is different.
         added => {
             let n: u32 = added
                 .rsplit('-')

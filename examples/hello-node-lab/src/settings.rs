@@ -128,7 +128,17 @@ pub fn schema() -> &'static ConfigSchema {
     SCHEMA.get_or_init(|| {
         ConfigSchema::new(vec![
             // The node's own identity.
-            SchemaLeaf::new("id", formatted(ident())),
+            //
+            // ★★★★★ R1818 — `.unique()`, and the word IDENTITY above is why. A
+            // value two nodes both answer to is not an identity, and until this
+            // round nothing said so: R1690 declared the SHAPE and the form
+            // enforced it at the document boundary, so an unparseable id was
+            // refused by name while a person typing the same id into two cards
+            // had both accepted in silence. Shape is a property of a value and
+            // uniqueness is a property of a set; the form is one document and
+            // cannot see its siblings, so the declaration belongs here and the
+            // question is asked of every card at once in `LabState::defects`.
+            SchemaLeaf::new("id", formatted(ident())).unique(),
             SchemaLeaf::new("label", FieldType::Text),
             SchemaLeaf::new("metadata.name", FieldType::Text),
             SchemaLeaf::new("metadata.note", FieldType::Text),

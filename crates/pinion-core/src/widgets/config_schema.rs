@@ -50,16 +50,42 @@ pub struct SchemaLeaf {
     pub path: Cow<'static, str>,
     /// What the leaf holds.
     pub ty: FieldType,
+    /// Whether **no two documents sharing this schema** may hold the same value
+    /// here — see [`SchemaLeaf::unique`] and [`ConfigSchema::collisions`].
+    pub unique: bool,
 }
 
 impl SchemaLeaf {
-    /// A leaf at `path` holding `ty`.
+    /// A leaf at `path` holding `ty`, with no uniqueness constraint.
     #[must_use]
     pub fn new(path: impl Into<Cow<'static, str>>, ty: FieldType) -> Self {
         Self {
             path: path.into(),
             ty,
+            unique: false,
         }
+    }
+
+    /// The same leaf, declared **unique across the documents it appears in**.
+    ///
+    /// ★★★★★ R1818 — the vocabulary a form could not have. A [`FieldType`]
+    /// states what ONE value may be, and it is checked at the document boundary
+    /// where it belongs. Uniqueness is a property of a SET, so a form — which
+    /// is one document and cannot see its siblings — is structurally incapable
+    /// of enforcing it: a person typing the same node identifier into two cards
+    /// had both accepted and nothing anywhere said so.
+    ///
+    /// ⇒ this is a declaration on the SCHEMA and a question asked of MANY
+    /// documents at once ([`ConfigSchema::collisions`]). Putting a *must be
+    /// unique* arm on `FieldType` was the wrong repair and is worth naming as
+    /// such: it would have put "the world outside this form" inside the type
+    /// that describes one value, and every consumer of `FieldType` — the
+    /// painter, the parser, the keyboard — would then carry a case it cannot
+    /// answer.
+    #[must_use]
+    pub fn unique(mut self) -> Self {
+        self.unique = true;
+        self
     }
 
     /// The first segment of the path — the section this leaf belongs to.
@@ -67,6 +93,22 @@ impl SchemaLeaf {
     pub fn root(&self) -> &str {
         self.path.split('.').next().unwrap_or(&self.path)
     }
+}
+
+/// One value that a [`SchemaLeaf::unique`] path holds in more than one
+/// document.
+///
+/// ★ It names EVERY holder, not the duplicates-after-the-first: which document
+/// is "the original" is not a fact the schema knows, and picking one would make
+/// the blame an artefact of iteration order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Collision<K> {
+    /// The schema path that must be unique.
+    pub path: String,
+    /// The value more than one document holds there.
+    pub value: String,
+    /// Every document holding it, sorted.
+    pub holders: Vec<K>,
 }
 
 /// Why a schema could not be built.
@@ -182,6 +224,96 @@ impl ConfigSchema {
             .iter()
             .find(|leaf| leaf.path == path)
             .map(|leaf| &leaf.ty)
+    }
+
+    /// The paths this schema declares [`SchemaLeaf::unique`], in declaration
+    /// order.
+    #[must_use]
+    pub fn unique_paths(&self) -> Vec<&str> {
+        self.leaves
+            .iter()
+            .filter(|leaf| leaf.unique)
+            .map(|leaf| leaf.path.as_ref())
+            .collect()
+    }
+
+    /// **Every value a unique path holds in more than one document.**
+    ///
+    /// ★★★★★ R1818 — the question a form is structurally unable to ask. A
+    /// [`ConfigForm`] is ONE document; uniqueness is a property of a set, so
+    /// the check has to live where the set does. This takes the set.
+    ///
+    /// `documents` is anything that can name its members — node ids, card ids,
+    /// file names. The key is the caller's, because what a holder IS differs
+    /// per consumer and inventing a type for it here would make every caller
+    /// translate into it.
+    ///
+    /// A path a document does not carry at all is not a collision: an absent
+    /// value and a shared one are different facts, and reporting the first as
+    /// the second would make adding a field to a schema retroactively break
+    /// every document that predates it. Only values actually present collide.
+    ///
+    /// Collisions come back in schema order, then by value, and each names
+    /// **every** holder rather than the second one onwards — a report that said
+    /// only "this one is a duplicate" would make which document gets blamed an
+    /// artefact of iteration order, and the caller usually wants to show all of
+    /// them.
+    #[must_use]
+    pub fn collisions<'a, K, I>(&self, documents: I) -> Vec<Collision<K>>
+    where
+        K: Ord + Clone,
+        I: IntoIterator<Item = (K, &'a ConfigForm)>,
+    {
+        let unique = self.unique_paths();
+        if unique.is_empty() {
+            return Vec::new();
+        }
+        let mut held: Vec<(usize, String, K)> = Vec::new();
+        for (key, form) in documents {
+            for (n, path) in unique.iter().enumerate() {
+                // ★★★★★ A value that does not SATISFY its declared shape is not
+                // an identity, so it cannot be a duplicate identity.
+                //
+                // Measured, not reasoned: the first draft skipped this test and
+                // a shipped screen's own sweep caught it within the round. That
+                // screen has a deliberate state in which every card is given an
+                // unparseable id to overflow the launch panel — and the check
+                // then told each of NINE cards that its id clashed with the
+                // other eight. Every one of those lines was noise on top of the
+                // shape defect the form already reported, and they buried it.
+                //
+                // ⇒ a set-level check is layered ON a value-level one and must
+                // not fire where that one already has. Reporting the same fact
+                // twice in two vocabularies is worse than reporting it once,
+                // because the second wording invites a repair that cannot work.
+                if let Some(field) = form.field(path)
+                    && field.defects().is_empty()
+                {
+                    held.push((n, field.value().to_string(), key.clone()));
+                }
+            }
+        }
+        held.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
+
+        let mut out: Vec<Collision<K>> = Vec::new();
+        let mut at = 0;
+        while at < held.len() {
+            let mut end = at + 1;
+            while end < held.len() && held[end].0 == held[at].0 && held[end].1 == held[at].1 {
+                end += 1;
+            }
+            if end - at > 1 {
+                let mut holders: Vec<K> = held[at..end].iter().map(|(_, _, k)| k.clone()).collect();
+                holders.sort();
+                out.push(Collision {
+                    path: unique[held[at].0].to_owned(),
+                    value: held[at].1.clone(),
+                    holders,
+                });
+            }
+            at = end;
+        }
+        out
     }
 
     /// **How much of the surface `form`'s catalogue can author.**
@@ -561,6 +693,137 @@ mod tests {
                 len: Span::between(1, 32),
             },
         }
+    }
+
+    /// A one-field document holding `value` at `path`.
+    fn doc(path: &str, value: &str) -> ConfigForm {
+        ConfigForm::new(
+            vec![
+                ConfigField::new(path.to_owned(), "id", Applies::Restart, value)
+                    .with_shape(ident()),
+            ],
+            Vec::new(),
+        )
+    }
+
+    /// ★★★★★ **Two documents holding one identifier is a collision, and the
+    /// report names both of them.**
+    ///
+    /// The defect this closes: a schema declared the node identifier's SHAPE
+    /// and a form enforced it at the document boundary, so an unparseable value
+    /// was refused by name — while a person typing the SAME value into two
+    /// cards had both accepted and nothing anywhere said so. Shape is a
+    /// property of a value; uniqueness is a property of a set; a form is one
+    /// document and cannot see its siblings.
+    #[test]
+    fn r1818_a_value_two_documents_share_is_reported_with_every_holder() {
+        let schema = ConfigSchema::new(vec![
+            SchemaLeaf::new("id", ident()).unique(),
+            SchemaLeaf::new("label", FieldType::Text),
+        ])
+        .expect("a well-formed schema");
+        assert_eq!(schema.unique_paths(), vec!["id"]);
+
+        let (a, b, c) = (doc("id", "beef"), doc("id", "beef"), doc("id", "cafe"));
+        let found = schema.collisions([("n1", &a), ("n2", &b), ("n3", &c)]);
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].path, "id");
+        assert_eq!(found[0].value, "beef");
+        assert_eq!(
+            found[0].holders,
+            vec!["n1", "n2"],
+            "every holder is named, because which one is 'the original' is not \
+             a fact the schema knows"
+        );
+    }
+
+    /// A path nothing declares unique collides with nothing, however many
+    /// documents repeat it.
+    ///
+    /// ★ The check is opt-in by construction: `label` is `Text` and three
+    /// documents share one, which is ordinary rather than wrong.
+    #[test]
+    fn r1818_only_a_declared_path_can_collide() {
+        let schema = ConfigSchema::new(vec![SchemaLeaf::new("label", FieldType::Text)])
+            .expect("a well-formed schema");
+        assert!(schema.unique_paths().is_empty());
+        let (a, b) = (doc("label", "same"), doc("label", "same"));
+        assert!(schema.collisions([("n1", &a), ("n2", &b)]).is_empty());
+    }
+
+    /// ★★★★★ An ABSENT value is not a shared one.
+    ///
+    /// Two documents that simply do not carry the path are not holding the same
+    /// thing, and reporting them as a collision would make adding a unique
+    /// field to a schema retroactively break every document that predates it —
+    /// which is the shape that turns a new check into a migration.
+    #[test]
+    fn r1818_documents_that_do_not_carry_the_path_do_not_collide() {
+        let schema = ConfigSchema::new(vec![
+            SchemaLeaf::new("id", ident()).unique(),
+            SchemaLeaf::new("label", FieldType::Text),
+        ])
+        .expect("a well-formed schema");
+        let (a, b) = (doc("label", "x"), doc("label", "y"));
+        assert!(
+            schema.collisions([("n1", &a), ("n2", &b)]).is_empty(),
+            "neither document holds `id` at all"
+        );
+
+        // And one that does carry it does not collide with one that does not.
+        let held = doc("id", "beef");
+        assert!(schema.collisions([("n1", &held), ("n2", &a)]).is_empty());
+    }
+
+    /// ★★★★★ **A value that does not satisfy its declared shape cannot be a
+    /// duplicate**, however many documents hold it.
+    ///
+    /// This is the round's own finding rather than a rule anybody stated first.
+    /// The check shipped without it for about an hour, and a shipped screen's
+    /// painted sweep caught it: that screen has a deliberate state in which
+    /// EVERY card is given an unparseable identifier — to overflow its launch
+    /// panel — and the collision check then told each of nine cards that its id
+    /// clashed with the other eight. Nine lines of noise stacked on top of the
+    /// shape defect the form had already reported, burying it.
+    ///
+    /// ⇒ a set-level check is layered ON a value-level one and must not fire
+    /// where that one already has. Saying one fact twice in two vocabularies is
+    /// worse than saying it once, because the second wording invites a repair
+    /// that cannot work: renaming one of nine `!!`s fixes nothing.
+    #[test]
+    fn r1818_an_unparseable_value_is_not_a_duplicate_identity() {
+        let schema = ConfigSchema::new(vec![SchemaLeaf::new("id", ident()).unique()])
+            .expect("a well-formed schema");
+        // `!!` is not lower hex, so both documents already have a SHAPE defect.
+        let (a, b) = (doc("id", "!!"), doc("id", "!!"));
+        assert!(
+            !a.defects().is_empty(),
+            "the premise: the value is already reported by the form"
+        );
+        assert!(
+            schema.collisions([("n1", &a), ("n2", &b)]).is_empty(),
+            "and it must not ALSO be reported as a clash"
+        );
+
+        // The counterfactual: two well-formed documents holding one value do
+        // collide, so the rule above is a filter on validity and not a mute.
+        let (c, d) = (doc("id", "beef"), doc("id", "beef"));
+        assert_eq!(schema.collisions([("n1", &c), ("n2", &d)]).len(), 1);
+    }
+
+    /// One document cannot collide with itself, and the empty set is quiet.
+    #[test]
+    fn r1818_a_set_of_one_has_no_collisions() {
+        let schema = ConfigSchema::new(vec![SchemaLeaf::new("id", ident()).unique()])
+            .expect("a well-formed schema");
+        let only = doc("id", "beef");
+        assert!(schema.collisions([("n1", &only)]).is_empty());
+        assert!(
+            schema
+                .collisions(Vec::<(&str, &ConfigForm)>::new())
+                .is_empty()
+        );
     }
 
     /// A small surface with the shape a real one has: several sections, some
