@@ -3,7 +3,7 @@
 //!
 //! # What was here already, and what was not
 //!
-//! [`JourneyConformance`](crate::journey::JourneyConformance) answers *did this
+//! [`crate::journey::JourneyConformance`] answers *did this
 //! application reproduce its specification over the walk a reader took*, and it
 //! is complete: it folds the live section in, counts a section nobody visited as
 //! unreproduced, and refuses the application while any section is unanswered.

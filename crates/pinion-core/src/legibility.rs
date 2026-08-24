@@ -7,10 +7,9 @@
 //! this crate knows that, and until this module nothing in the tree could act
 //! on it: the pairing was carried by the word `On` in an identifier and by
 //! prose in a doc comment, so no gate could ask *is this palette legible?* and
-//! none did. [`contrast_ratio`](crate::contrast::contrast_ratio) has existed
-//! since R1546 — built for a chart's ink on a colour ramp — and had no table of
-//! palette pairs to run over, so the instrument was here and the question was
-//! never put to it.
+//! none did. [`crate::contrast::contrast_ratio`] has existed since R1546 —
+//! built for a chart's ink on a colour ramp — and had no table of palette pairs
+//! to run over, so the instrument was here and the question was never put to it.
 //!
 //! That is this repository's recurring class — a fact stated in a name or a
 //! comment, which reads like a rule and cannot be enforced like one. Here it
