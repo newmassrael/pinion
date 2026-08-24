@@ -70,6 +70,50 @@ Two consequences, both handled here rather than left to bite:
   has no memory folder at all. `--check` refuses when the snapshot and the live
   folder disagree, which is what keeps the committed copy from rotting into a
   claim about a population that has moved.
+
+## ★★★★★ R1820 — the condition was read off a population that grows
+
+Everything above builds the *family*. R1820 measured what happens when a closing
+condition is read off it, and the answer is that it cannot close.
+
+**The family grows as it is repaid.** This repository's closing discipline is
+that a debt closing moves whatever it did not repay into a NEW open file, so the
+honest rounds are the ones that keep the number up. R1809's own docstring says
+this — up in "The question this exists to make answerable", where it explains
+why counting *closed* debts cannot answer it either — and then the report ends
+`N of M are NOT blocked — the north star's third condition is that this is
+zero`. **The tool knew, and pointed the condition at the growing number anyway.**
+
+The loop's standing rules caught it from the other side, recorded it as a
+structural defect, and prescribed the repair: pin a fixed cohort at a date and
+write the date as a *command*. **Nothing executed the prescription**, which is
+this repository's own R1791 lesson recurring — *a prescription nobody executes
+is not a repair* — so the cohort stayed a number people carried in prose.
+
+**Measured at R1820**, the prose number had drifted the way prose numbers do:
+carried forward as *20 members, 17 the loop's to close*, and reconstructed from
+the pinned commit it is **33 members, of which 21 are the loop's**. Both terms
+wrong, in the direction that flatters — a smaller denominator and a smaller
+remainder than the truth.
+
+So the cohort is data now, and the data is checkable against this repository's
+own history: `COHORT_PIN` is a commit, `--check` re-reads it out of git, and a
+committed cohort that has drifted from the pin is refused. Three standings come
+out of it that a bare count could not express — `left` (still open, but no
+longer names the family: leaving is not closing), `person` (the loop repays it
+and a person closes it), and `gone` (a member no file answers to, which is
+refused rather than counted).
+
+## ⚠ Two things this deliberately does NOT do
+
+* **It does not shrink the goal.** A debt opened after the pin is derived,
+  declared, checked and reported exactly as before; it is simply not in the
+  denominator of a condition that was fixed before it existed. The evidence that
+  nothing was quietly dropped is that the family count and the cohort count are
+  both printed, side by side, and they disagree.
+* **It does not decide that a person-closed debt is finished.** `closed_by`
+  removes a debt from what the *loop* can close and from nothing else — not from
+  the family, not from the cohort, not from the not-blocked count.
 """
 
 from __future__ import annotations
@@ -78,6 +122,7 @@ import json
 import os
 import pathlib
 import re
+import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -129,6 +174,61 @@ STANDINGS: dict[str, tuple[bool, str]] = {
 }
 
 BLOCKED = {word for word, (blocks, _) in STANDINGS.items() if blocks}
+
+
+#: Who can CLOSE a debt, when that is not whoever repays it — a second closed
+#: vocabulary, and a different question from `blocked_by`.
+#:
+#: ★★★★★ R1820 — a debt can be entirely buildable, be worked on, be repaid, and
+#: still not be closable by the thing that repaid it. The loop's own standing
+#: rules say so of three debts in this family: a person reported each of them
+#: while looking at a running window, and `never-record-unverified-outcomes`
+#: (R1736) is why a sweep cannot retire that reading — **a sweep is complete
+#: only about the window size it measured**. So the loop repays them and writes
+#: down what is left; the person closes them.
+#:
+#: ⚠ This field removes a debt from what the loop can FINISH, so it is abusable
+#: in the way `blocked_by`'s blocking words are, and it carries the same
+#: defence: a `closed_because` citation, checked by the same code. It does NOT
+#: remove the debt from the family, from the cohort, or from the not-blocked
+#: count — all three still name it. Only the loop-closable tally drops it.
+#:
+#: ⚠⚠ Before this field the set was reproduced by **grepping the debts' prose**
+#: for a sentence one of them happened to write. That is the practice this
+#: repository bans by name (`status:` is a field query, never a prose grep) and
+#: it fails in both directions: a debt that means it and phrases it differently
+#: is missed, and a debt quoting the sentence to discuss it is caught.
+CLOSERS: dict[str, str] = {
+    "person": "a person reported it from a running window, and a person closes it",
+}
+
+
+#: The commit whose snapshot of this family IS the cohort — the fixed population
+#: the north star's third condition is judged against.
+#:
+#: ★★★★★ R1820 — why a cohort at all, and why it is a commit rather than a list
+#: somebody keeps. The condition was written "the analysis-tool open debts are
+#: closed", over the family as it stands. That population **grows as it is
+#: repaid**: this repository's closing discipline is that a debt closing moves
+#: whatever it did not repay into a NEW open file, so an honest round raises the
+#: count (R1806 closed one and opened one; R1807 closed one branch and opened
+#: two). A condition whose denominator grows with the work is not a predicate,
+#: and the loop's rules recorded exactly that and prescribed a set pinned at a
+#: date. **Nothing built it**, so the cohort stayed a number written in prose —
+#: and it drifted, which is this round's measurement.
+#:
+#: ⚠ The pin is R1809, not the R1805 the prose names, and the difference is
+#: stated rather than smoothed over: the debts live OUTSIDE this repository in
+#: an untracked folder, so no record of the family at R1805 exists anywhere.
+#: R1809 is the first commit that wrote one down. Pinning where the evidence is
+#: may over-count by whatever closed in those four rounds unrecorded; pinning
+#: where the evidence is NOT would be a population nobody can reproduce.
+#:
+#: ★ Being a commit is what makes it a command: `--check` re-reads the pin out
+#: of git and refuses a committed cohort that has drifted from it. A hand-kept
+#: list would have the defect this round is repairing.
+COHORT_PIN = "7469fcac"
+COHORT_ROUND = "R1809"
 
 
 def memory_dir() -> pathlib.Path | None:
@@ -215,9 +315,41 @@ def survey(folder: pathlib.Path) -> list[dict]:
                 "why": why,
                 "blocked_by": meta.get("blocked_by", ""),
                 "blocked_because": meta.get("blocked_because", ""),
+                # R1820 — a second axis: who can close it, when that is not
+                # whoever repays it. Absent for almost every debt, which is the
+                # correct default: repaying is closing unless something says
+                # otherwise.
+                "closed_by": meta.get("closed_by", ""),
+                "closed_because": meta.get("closed_because", ""),
                 "priority": meta.get("priority", ""),
             }
         )
+    return out
+
+
+def all_debts(folder: pathlib.Path) -> dict[str, dict]:
+    """Every debt file on this machine, keyed by the name the SNAPSHOT uses.
+
+    Open or closed, family or not — because the cohort holds names that have
+    since left the family, and a cohort member that left is not a cohort member
+    that closed. Keying by the published label is what lets a cohort row and a
+    debt file be compared at all; see `public_name` in `survey`.
+
+    ⚠ Same `debt-*.md` glob as `survey`, and therefore the same registered blind
+    spot: a debt file named the other way round (`*-debt.md`) is invisible to
+    both. Shared deliberately — a cohort member and its family row must be found
+    by the same rule, or one of them would go missing without the other.
+    """
+    out: dict[str, dict] = {}
+    for path in sorted(folder.glob("debt-*.md")):
+        meta = front_matter(path.read_text(encoding="utf-8", errors="replace"))
+        label = meta.get("public_name", "") or path.stem
+        out[label] = {
+            "stem": path.stem,
+            "status": meta.get("status", ""),
+            "blocked_by": meta.get("blocked_by", ""),
+            "closed_by": meta.get("closed_by", ""),
+        }
     return out
 
 
@@ -236,7 +368,42 @@ def check_standings(rows: list[dict]) -> list[str]:
                 f"{row['name']}: `blocked_by: {word}` is not one of "
                 + ", ".join(sorted(STANDINGS))
             )
+        closer = row.get("closed_by", "")
+        if closer and closer not in CLOSERS:
+            out.append(
+                f"{row['name']}: `closed_by: {closer}` is not one of "
+                + ", ".join(sorted(CLOSERS))
+            )
     return out
+
+
+def check_public_names(folder: pathlib.Path) -> list[str]:
+    """Two debts published under one label — a collision nothing else would see.
+
+    The snapshot is keyed by the published label, so two files claiming the same
+    one would silently become a single row, and a cohort comparison would answer
+    about whichever was read last. `all_debts` cannot report this itself (it
+    returns a dict, which is exactly where the collision disappears), so the
+    folder is walked again here.
+    """
+    pairs = []
+    for path in sorted(folder.glob("debt-*.md")):
+        meta = front_matter(path.read_text(encoding="utf-8", errors="replace"))
+        pairs.append((path.stem, meta.get("public_name", "") or path.stem))
+    return collisions(pairs)
+
+
+def collisions(pairs: list[tuple[str, str]]) -> list[str]:
+    """Every published label claimed by more than one debt. Pure in `pairs`."""
+    seen: dict[str, list[str]] = {}
+    for stem, label in pairs:
+        seen.setdefault(label, []).append(stem)
+    return [
+        f"`{label}` is published by {len(stems)} debts ({', '.join(stems)}); "
+        "a snapshot row cannot mean two files"
+        for label, stems in sorted(seen.items())
+        if len(stems) > 1
+    ]
 
 
 #: The three forms a `blocked_because` citation may take, each answerable by
@@ -265,39 +432,50 @@ def check_citations(rows: list[dict], census: dict, gated: set[str], rules) -> l
     """
     out: list[str] = []
     for row in rows:
-        if row["blocked_by"] not in BLOCKED:
-            continue
-        cited = row.get("blocked_because", "")
-        if not cited:
-            out.append(
-                f"{row['name']}: `blocked_by: {row['blocked_by']}` takes it out of "
-                "the count and cites nothing (`blocked_because`)"
-            )
-            continue
-        found = CITATION.match(cited)
-        if not found:
-            out.append(
-                f"{row['name']}: `blocked_because: {cited}` is not "
-                "`census:<row>`, `axis:<key>` or `rule:<memory-file>`"
-            )
-            continue
-        kind, what = found.group(1), found.group(2)
-        if kind == "census":
-            if what not in census:
-                out.append(f"{row['name']}: cites census row `{what}`, which is not in the pin")
-            elif census[what] != "gap":
+        # ★ R1820 — two fields, one rule. `blocked_by` takes a debt out of the
+        # not-blocked count; `closed_by` takes it out of what the loop can
+        # finish. Both are self-declared, both shrink something a condition is
+        # read off, so both owe the same citation to something else.
+        for field, word, triggers in (
+            ("blocked_because", row["blocked_by"], BLOCKED),
+            ("closed_because", row.get("closed_by", ""), set(CLOSERS)),
+        ):
+            if word not in triggers:
+                continue
+            declared = field.replace("_because", "_by")
+            cited = row.get(field, "")
+            if not cited:
                 out.append(
-                    f"{row['name']}: cites census row `{what}`, whose verdict is "
-                    f"`{census[what]}` — a row that is not a gap blocks nothing"
+                    f"{row['name']}: `{declared}: {word}` takes it out of the "
+                    f"count and cites nothing (`{field}`)"
                 )
-        elif kind == "axis":
-            if what not in gated:
+                continue
+            found = CITATION.match(cited)
+            if not found:
                 out.append(
-                    f"{row['name']}: cites axis `{what}`, which the Phase B tally "
-                    "does not mark gated"
+                    f"{row['name']}: `{field}: {cited}` is not "
+                    "`census:<row>`, `axis:<key>` or `rule:<memory-file>`"
                 )
-        elif not rules(what):
-            out.append(f"{row['name']}: cites rule `{what}`, which is not a memory file")
+                continue
+            kind, what = found.group(1), found.group(2)
+            if kind == "census":
+                if what not in census:
+                    out.append(
+                        f"{row['name']}: cites census row `{what}`, which is not in the pin"
+                    )
+                elif census[what] != "gap":
+                    out.append(
+                        f"{row['name']}: cites census row `{what}`, whose verdict is "
+                        f"`{census[what]}` — a row that is not a gap blocks nothing"
+                    )
+            elif kind == "axis":
+                if what not in gated:
+                    out.append(
+                        f"{row['name']}: cites axis `{what}`, which the Phase B tally "
+                        "does not mark gated"
+                    )
+            elif not rules(what):
+                out.append(f"{row['name']}: cites rule `{what}`, which is not a memory file")
     return out
 
 
@@ -357,8 +535,148 @@ def unblocked(rows: list[dict]) -> list[dict]:
     return [row for row in rows if row["blocked_by"] not in BLOCKED]
 
 
-def snapshot_of(rows: list[dict]) -> dict:
-    """The committed form: the population and its standings, ordered."""
+def cohort_from_git() -> list[str] | None:
+    """The pinned cohort, read out of this repository's own history.
+
+    `None` when git cannot answer — a shallow clone, a missing object, no git at
+    all. That is a **fail-open** case and every caller says so out loud: the
+    absence of the history is not evidence that the committed cohort is right.
+    """
+    try:
+        done = subprocess.run(
+            ["git", "-C", str(ROOT), "show", f"{COHORT_PIN}:docs/analyzer-debts.json"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if done.returncode != 0:
+        return None
+    try:
+        held = json.loads(done.stdout)
+    except json.JSONDecodeError:
+        return None
+    return sorted({str(d["name"]) for d in held.get("debts", []) if "name" in d})
+
+
+def cohort_members() -> tuple[list[str], str]:
+    """The cohort and where this reading of it came from.
+
+    Git first, because that is the pin; the committed block second, so a reader
+    with no history still gets an answer and is told it is second-hand.
+    """
+    found = cohort_from_git()
+    if found is not None:
+        return found, f"git {COHORT_PIN}"
+    if SNAPSHOT.is_file():
+        held = json.loads(SNAPSHOT.read_text(encoding="utf-8")).get("cohort", {})
+        return sorted(str(n) for n in held.get("members", [])), "the committed snapshot"
+    return [], "nothing on this machine"
+
+
+#: What a cohort member's standing is now, in the order a reader needs them.
+#: `left` is deliberately its own answer rather than being folded into `closed`:
+#: a debt that stopped naming a root or a census row leaves the FAMILY without
+#: closing, and calling that "closed" is how a condition reads true by attrition.
+COHORT_STANDINGS = ("gone", "closed", "left", "blocked", "person", "loop")
+
+
+def cohort_standing(label: str, index: dict[str, dict], family: set[str]) -> str:
+    """Where one cohort member stands now — one of `COHORT_STANDINGS`."""
+    held = index.get(label)
+    if held is None:
+        return "gone"
+    if held["status"] != "open":
+        return "closed"
+    if label not in family:
+        return "left"
+    if held["blocked_by"] in BLOCKED:
+        return "blocked"
+    if held["closed_by"] in CLOSERS:
+        return "person"
+    return "loop"
+
+
+def check_cohort(members: list[str], source: str, index: dict[str, dict]) -> list[str]:
+    """Whether the cohort can be trusted as a denominator at all.
+
+    Two ways it silently cannot, both measured rather than imagined:
+
+    * **A member no file answers to.** That is what a published label with no
+      recorded link back looks like from this side, and a reader hit it on
+      2026-08-25 and read a live debt as closed. It is refused here rather than
+      reported as a standing, because a denominator with a phantom in it is
+      wrong by one for as long as nobody notices.
+    * **An empty cohort.** Git could not answer AND the snapshot has no block —
+      so every cohort number would be a vacuous zero, which is the shape a
+      condition reads as *met*.
+
+    Not an error: git being unavailable while the committed block stands. That
+    fails open, like the missing memory folder, and the caller prints where its
+    reading came from either way.
+    """
+    if not members:
+        return [
+            f"the cohort is empty (read from {source}); the third condition "
+            "would be vacuously true. Run --write where git can read "
+            f"{COHORT_PIN}."
+        ]
+    return [
+        f"cohort member `{name}` matches no debt file. If it is a published "
+        "label, the debt it stands for must declare `public_name: " + name + "`"
+        for name in members
+        if name not in index
+    ]
+
+
+def cohort_report(
+    members: list[str], source: str, index: dict[str, dict], rows: list[dict]
+) -> list[str]:
+    """The cohort's standing, as lines. Pure in its arguments."""
+    family = {r["public_name"] for r in rows}
+    by_standing: dict[str, list[str]] = {word: [] for word in COHORT_STANDINGS}
+    for label in members:
+        by_standing[cohort_standing(label, index, family)].append(label)
+
+    out = [
+        "",
+        f"cohort — {len(members)} debt(s), pinned at {COHORT_ROUND} "
+        f"(read from {source})",
+        "",
+    ]
+    legend = {
+        "closed": "closed since the pin",
+        "left":   "still open, but no longer names the family",
+        "blocked": "blocked — spec-round / phase-c / gated-axis",
+        "person": "a person closes it — the loop repays, and leaves it open",
+        "loop":   "the loop can close it",
+        "gone":   "NO FILE ANSWERS THIS NAME",
+    }
+    for word in ("closed", "left", "blocked", "person", "loop", "gone"):
+        here = by_standing[word]
+        if not here:
+            continue
+        out.append(f"  {word:<8} {len(here):>3}  — {legend[word]}")
+        if word in ("loop", "person", "gone", "left"):
+            out.extend(f"      {name}" for name in here)
+    out.append("")
+    out.append(
+        f"  {len(by_standing['loop'])} of {len(members)} cohort debt(s) are the "
+        "loop's to close — the north star's third condition is that this is zero"
+    )
+    return out
+
+
+def snapshot_of(rows: list[dict], members: list[str]) -> dict:
+    """The committed form: the population and its standings, ordered.
+
+    `members` is REQUIRED and deliberately has no default. A default would let a
+    caller write a snapshot whose cohort is silently empty, and an empty cohort
+    is the shape a closing condition reads as *met* — the one error here that
+    flatters. `check_cohort` refuses an empty cohort for the same reason.
+    """
     return {
         "note": (
             "R1809 — a snapshot of the analysis-tool debt family, which lives "
@@ -366,11 +684,46 @@ def snapshot_of(rows: list[dict]) -> dict:
             "--write; verified by --check wherever the memory folder exists. "
             "A reader with no memory folder has only this."
         ),
+        "cohort": {
+            "note": (
+                "R1820 — the FIXED population the north star's third condition "
+                "is judged against, and not the same thing as `debts` below. "
+                "`debts` is the family as it stands and GROWS as it is repaid, "
+                "because closing a debt here means opening a new file for "
+                "whatever it did not repay; a condition read off it can never "
+                "be met by honest work. This set is the family as the pinned "
+                "commit recorded it, so it can only shrink. A debt opened after "
+                "the pin is registered and reported like any other, and is "
+                "simply not in this denominator."
+            ),
+            "pin": COHORT_PIN,
+            "round": COHORT_ROUND,
+            "members": members if members is not None else [],
+        },
         "debts": [
             {
                 "name": r["public_name"],
+                # ★★★★★ R1820 — whether `name` above is the debt file's own name
+                # or a label published in its place.
+                #
+                # This file is TRACKED and this repository's confidentiality
+                # ratchet refuses another project's name in a tracked file, so a
+                # debt whose file name carries one declares a neutral label and
+                # the snapshot writes that. Correct — and until now the fact was
+                # written NOWHERE, so a reader comparing this list against the
+                # debt folder found one name that answered to no file and had no
+                # way to tell "closed" from "published under another name".
+                #
+                # Measured 2026-08-25: a reader did exactly that and read a live
+                # debt as closed. The cohort comparison was silently one short.
+                # Recording the substitution costs one boolean and discloses
+                # nothing — the private name stays in the untracked folder,
+                # where the `public_name:` field points back at this one.
+                "substituted": r["public_name"] != r["name"],
                 "blocked_by": r["blocked_by"],
                 "blocked_because": r.get("blocked_because", ""),
+                "closed_by": r.get("closed_by", ""),
+                "closed_because": r.get("closed_because", ""),
                 "why": r["why"],
             }
             for r in sorted(rows, key=lambda r: r["public_name"])
@@ -392,9 +745,15 @@ def report(rows: list[dict]) -> list[str]:
     loose = unblocked(rows)
     out.append("")
     out.append(
-        f"  {len(loose)} of {len(rows)} are NOT blocked — the north star's third "
-        "condition is that this is zero"
+        f"  {len(loose)} of {len(rows)} are NOT blocked — the backlog, which "
+        "grows as it is repaid"
     )
+    # ★★★★★ R1820 — this line used to end "the north star's third condition is
+    # that this is zero", and that sentence was wrong in a way nothing could
+    # notice: the family grows every time a debt is honestly closed, so the
+    # number it names cannot reach zero by working. The condition is read off
+    # the COHORT now (`cohort_report`), and this number keeps its real job —
+    # saying how much is open, which is a different question and a useful one.
     return out
 
 
@@ -453,7 +812,7 @@ def selftest() -> int:
     # would sort by a name it does not show.
     named = {"name": "debt-zzz", "public_name": "debt-aaa", "why": ["x"], "blocked_by": "buildable"}
     plain = {"name": "debt-mmm", "public_name": "debt-mmm", "why": ["x"], "blocked_by": "buildable"}
-    shot = snapshot_of([plain, named])
+    shot = snapshot_of([plain, named], ["debt-aaa", "debt-mmm"])
     check(
         "the snapshot publishes the declared label",
         [d["name"] for d in shot["debts"]] == ["debt-aaa", "debt-mmm"],
@@ -522,6 +881,162 @@ def selftest() -> int:
     }
     check("an ungated axis does not borrow the next one's flag", seen == {"bbb"})
 
+    # ── R1820: the closer axis ───────────────────────────────────────────────
+    def closer(**over) -> list[dict]:
+        row = {"name": "d", "why": ["links x"], "blocked_by": "buildable", "priority": ""}
+        row.update(over)
+        return [row]
+
+    check(
+        "a closer outside the vocabulary is refused",
+        check_standings(closer(closed_by="somebody")) != [],
+    )
+    check(
+        "`closed_by: person` is accepted as a word",
+        check_standings(closer(closed_by="person")) == [],
+    )
+    check(
+        "a person-closed debt is still NOT blocked",
+        unblocked(closer(closed_by="person")) != [],
+    )
+    check(
+        "a closer that cites nothing is refused",
+        check_citations(closer(closed_by="person"), {}, set(), lambda _: True) != [],
+    )
+    check(
+        "a closer citing a rule that exists passes",
+        check_citations(
+            closer(closed_by="person", closed_because="rule:a-rule"),
+            {},
+            set(),
+            lambda name: name == "a-rule",
+        )
+        == [],
+    )
+    check(
+        "a closer citing a rule that does not exist is refused",
+        check_citations(
+            closer(closed_by="person", closed_because="rule:a-rule"),
+            {},
+            set(),
+            lambda _: False,
+        )
+        != [],
+    )
+    # ★ The counterfactual that makes the pair above load-bearing: without a
+    # closer declared, the citation rule must stay silent. A check that fired on
+    # every row would pass both assertions for the wrong reason.
+    check(
+        "no closer declared means no citation is demanded",
+        check_citations(closer(), {}, set(), lambda _: False) == [],
+    )
+
+    # ── R1820: the cohort ────────────────────────────────────────────────────
+    index = {
+        "shut": {"stem": "shut", "status": "closed", "blocked_by": "", "closed_by": ""},
+        "left": {"stem": "left", "status": "open", "blocked_by": "buildable", "closed_by": ""},
+        "held": {"stem": "held", "status": "open", "blocked_by": "phase-c", "closed_by": ""},
+        "mine": {"stem": "mine", "status": "open", "blocked_by": "buildable", "closed_by": ""},
+        "hers": {"stem": "hers", "status": "open", "blocked_by": "buildable", "closed_by": "person"},
+    }
+    family = {"held", "mine", "hers"}
+    for label, want in (
+        ("shut", "closed"),
+        ("left", "left"),
+        ("held", "blocked"),
+        ("mine", "loop"),
+        ("hers", "person"),
+        ("ghost", "gone"),
+    ):
+        check(f"cohort standing of `{label}` is `{want}`", cohort_standing(label, index, family) == want)
+
+    check(
+        "a member no file answers to is refused, not counted",
+        check_cohort(["ghost"], "test", index) != [],
+    )
+    check(
+        "an empty cohort is refused rather than read as met",
+        check_cohort([], "test", index) != [],
+    )
+    check(
+        "a cohort whose members all resolve passes",
+        check_cohort(sorted(index), "test", index) == [],
+    )
+
+    # ★★★★★ The measurement this round exists for, pinned as a test: the FAMILY
+    # count and the COHORT count answer different questions, and only the second
+    # can reach zero. A debt opened after the pin enters the family and not the
+    # cohort — so repaying every cohort member drives the cohort to zero while
+    # the family is still non-empty, which is what an honest round looks like.
+    rows = [
+        {"public_name": "mine", "blocked_by": "buildable", "closed_by": "", "why": ["links x"]},
+        {"public_name": "newer", "blocked_by": "buildable", "closed_by": "", "why": ["links x"]},
+    ]
+    after = dict(index)
+    after["mine"] = {"stem": "mine", "status": "closed", "blocked_by": "", "closed_by": ""}
+    after["newer"] = {"stem": "newer", "status": "open", "blocked_by": "buildable", "closed_by": ""}
+    still = [
+        name
+        for name in ("mine",)
+        if cohort_standing(name, after, {r["public_name"] for r in rows}) == "loop"
+    ]
+    check("a repaid cohort reaches zero", still == [])
+    check("while the family it left behind does not", unblocked(rows) != [])
+
+    check(
+        "the snapshot records that a name is a published label",
+        snapshot_of(
+            [
+                {
+                    "name": "private",
+                    "public_name": "public",
+                    "blocked_by": "buildable",
+                    "why": ["links x"],
+                }
+            ],
+            [],
+        )["debts"][0]["substituted"]
+        is True,
+    )
+    check(
+        "and that an unsubstituted one is not",
+        snapshot_of(
+            [
+                {
+                    "name": "plain",
+                    "public_name": "plain",
+                    "blocked_by": "buildable",
+                    "why": ["links x"],
+                }
+            ],
+            [],
+        )["debts"][0]["substituted"]
+        is False,
+    )
+    check(
+        "two debts publishing one label are refused",
+        collisions([("one", "same"), ("two", "same")]) != [],
+    )
+    check(
+        "and distinct labels are not",
+        collisions([("one", "a"), ("two", "b")]) == [],
+    )
+    check(
+        "a debt publishing under its own name collides with nothing",
+        collisions([("one", "one"), ("two", "two")]) == [],
+    )
+
+    # ★ The pin has to actually resolve HERE, or the cohort silently falls back
+    # to the committed block and the "read from git" claim is decoration. This
+    # asserts the shape of what it returns rather than its size — a count
+    # written here would be a number that rots the next time a debt closes.
+    read = cohort_from_git()
+    check("the pin resolves in this repository", read is not None and read != [])
+    check(
+        "and every name it yields is a debt",
+        all(name.startswith("debt-") for name in read or ["debt-"]),
+    )
+
     print(f"selftest: {'PASS' if not failures else 'FAIL'} ({failures} failure(s))")
     return 1 if failures else 0
 
@@ -550,19 +1065,29 @@ def main() -> int:
         return 1
 
     rows = survey(folder)
-    broken = check_standings(rows) + check_citations(
-        rows,
-        census_verdicts(),
-        gated_axes(),
-        lambda name: (folder / f"{name}.md").is_file(),
+    index = all_debts(folder)
+    members, source = cohort_members()
+    broken = (
+        check_standings(rows)
+        + check_citations(
+            rows,
+            census_verdicts(),
+            gated_axes(),
+            lambda name: (folder / f"{name}.md").is_file(),
+        )
+        + check_public_names(folder)
+        + check_cohort(members, source, index)
     )
 
     if "--write" in sys.argv:
         SNAPSHOT.write_text(
-            json.dumps(snapshot_of(rows), indent=2, ensure_ascii=False) + "\n",
+            json.dumps(snapshot_of(rows, members), indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
         )
-        print(f"analysis-tool debts: wrote {SNAPSHOT.relative_to(ROOT)} ({len(rows)} debt(s))")
+        print(
+            f"analysis-tool debts: wrote {SNAPSHOT.relative_to(ROOT)} "
+            f"({len(rows)} debt(s), cohort {len(members)} from {source})"
+        )
         return 0
 
     if "--check" in sys.argv:
@@ -578,23 +1103,32 @@ def main() -> int:
             )
             return 1
         held = json.loads(SNAPSHOT.read_text(encoding="utf-8"))
-        if held.get("debts") != snapshot_of(rows)["debts"]:
-            print(
-                "analysis-tool debts: the committed snapshot and the memory "
-                f"folder disagree; run --write. ({SNAPSHOT.relative_to(ROOT)})",
-                file=sys.stderr,
-            )
-            return 1
+        fresh = snapshot_of(rows, members)
+        for part in ("debts", "cohort"):
+            if held.get(part) != fresh[part]:
+                print(
+                    f"analysis-tool debts: the committed snapshot's `{part}` and "
+                    f"the memory folder disagree; run --write. "
+                    f"({SNAPSHOT.relative_to(ROOT)})",
+                    file=sys.stderr,
+                )
+                return 1
         loose = unblocked(rows)
+        mine = [
+            name
+            for name in members
+            if cohort_standing(name, index, {r["public_name"] for r in rows}) == "loop"
+        ]
         print(
             f"analysis-tool debts: {len(rows)} in the family, all declared, "
-            f"{len(loose)} not blocked"
+            f"{len(loose)} not blocked; cohort {len(members)} pinned at "
+            f"{COHORT_ROUND}, {len(mine)} the loop's to close"
         )
         return 0
 
     for line in broken:
         print(f"analysis-tool debts: {line}", file=sys.stderr)
-    print("\n".join(report(rows)))
+    print("\n".join(report(rows) + cohort_report(members, source, index, rows)))
     return 1 if broken else 0
 
 

@@ -1,26 +1,75 @@
 {
   "note": "R1809 — a snapshot of the analysis-tool debt family, which lives OUTSIDE this repository. Written by tools/analyzer_debts.py --write; verified by --check wherever the memory folder exists. A reader with no memory folder has only this.",
+  "cohort": {
+    "note": "R1820 — the FIXED population the north star's third condition is judged against, and not the same thing as `debts` below. `debts` is the family as it stands and GROWS as it is repaid, because closing a debt here means opening a new file for whatever it did not repay; a condition read off it can never be met by honest work. This set is the family as the pinned commit recorded it, so it can only shrink. A debt opened after the pin is registered and reported like any other, and is simply not in this denominator.",
+    "pin": "7469fcac",
+    "round": "R1809",
+    "members": [
+      "debt-a-boolean-row-reads-as-a-text-box",
+      "debt-a-card-collapses-detail-at-an-unmeasured-zoom",
+      "debt-a-card-header-has-no-painter",
+      "debt-a-debts-standing-is-one-persons-unreviewed-reading",
+      "debt-a-layer-row-opens-over-the-wire-and-not-by-a-press",
+      "debt-a-mounted-screen-draws-the-rail-its-host-already-has",
+      "debt-a-mounted-section-needs-width-for-chrome-its-host-draws",
+      "debt-a-node-graphs-only-state-is-a-delay",
+      "debt-a-screen-is-not-looked-at-before-it-is-declared-done",
+      "debt-a-sections-grant-lives-in-the-host-not-the-roster",
+      "debt-a-three-dimensional-surface-waits-on-phase-c",
+      "debt-a-torn-off-card-has-no-window",
+      "debt-an-identifier-shape-is-checked-and-its-uniqueness-is-not",
+      "debt-analyzer-census-verdicts-are-unproven",
+      "debt-canon-gui-surface-census",
+      "debt-eleven-app-verdicts-name-no-assembly",
+      "debt-eleven-chart-kinds-cannot-mute-their-own-marks",
+      "debt-nine-reserved-widgets-cite-requirements-nobody-checked",
+      "debt-node-system-coverage-campaign",
+      "debt-one-outline-role-does-two-jobs-and-clears-neither",
+      "debt-only-one-screen-prints-a-gesture-list-at-all",
+      "debt-pins-spread-after-maximise-and-detach",
+      "debt-text-is-not-centred-in-the-box-that-holds-it",
+      "debt-the-arrangeable-unit-is-a-panel-and-should-be-an-area",
+      "debt-the-byte-pane-shows-bytes-that-do-not-encode-the-values",
+      "debt-the-canon-is-one-app-and-we-are-many-binaries",
+      "debt-the-host-paints-a-toast-onto-the-guests-content",
+      "debt-the-option-surface-is-declared-here-rather-than-sourced",
+      "debt-the-pro-tool-perf-remainder-is-invisible-to-the-debt-census",
+      "debt-the-property-grid-is-an-example-not-a-crate",
+      "debt-the-shipped-window-is-below-a-mounted-screens-minimum",
+      "debt-two-deliberate-divergences-from-the-behaviour-canon",
+      "debt-windows-platform-surface-absent"
+    ]
+  },
   "debts": [
     {
       "name": "debt-a-boolean-row-reads-as-a-text-box",
+      "substituted": false,
       "blocked_by": "buildable",
       "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
       "why": [
         "links analyzer-behaviour-canon-is-the-standalone-prototype"
       ]
     },
     {
       "name": "debt-a-card-collapses-detail-at-an-unmeasured-zoom",
+      "substituted": false,
       "blocked_by": "unmeasured",
       "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
       "why": [
         "links analyzer-behaviour-canon-is-the-standalone-prototype"
       ]
     },
     {
       "name": "debt-a-debts-standing-is-one-persons-unreviewed-reading",
+      "substituted": false,
       "blocked_by": "buildable",
       "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
       "why": [
         "links analyzer-debt-repayment-loop",
         "names dashboard.t2.12, lab.t2.16"
@@ -28,40 +77,55 @@
     },
     {
       "name": "debt-a-gate-computes-its-expectation-from-the-code-it-checks",
+      "substituted": false,
       "blocked_by": "buildable",
       "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
       "why": [
         "links debt-canon-gui-surface-census"
       ]
     },
     {
       "name": "debt-a-link-address-is-printed-wider-than-its-extent",
+      "substituted": false,
       "blocked_by": "buildable",
       "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
       "why": [
         "links analyzer-behaviour-canon-is-the-standalone-prototype"
       ]
     },
     {
       "name": "debt-a-mounted-screen-draws-the-rail-its-host-already-has",
+      "substituted": false,
       "blocked_by": "buildable",
       "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
       "why": [
         "links debt-canon-gui-surface-census, debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
     },
     {
       "name": "debt-a-mounted-section-needs-width-for-chrome-its-host-draws",
+      "substituted": false,
       "blocked_by": "buildable",
       "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
       "why": [
         "links debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
     },
     {
       "name": "debt-a-node-graphs-only-state-is-a-delay",
+      "substituted": false,
       "blocked_by": "spec-round",
       "blocked_because": "census:lab.t2.16",
+      "closed_by": "",
+      "closed_because": "",
       "why": [
         "links analyzer-tool-capability-spec",
         "names lab.t2.15, lab.t2.16, lab.t2.17"
@@ -69,24 +133,33 @@
     },
     {
       "name": "debt-a-screen-is-not-looked-at-before-it-is-declared-done",
+      "substituted": false,
       "blocked_by": "buildable",
       "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
       "why": [
         "links screen-a-vs-canon-operation-census"
       ]
     },
     {
       "name": "debt-a-sections-grant-lives-in-the-host-not-the-roster",
+      "substituted": false,
       "blocked_by": "buildable",
       "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
       "why": [
         "links debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
     },
     {
       "name": "debt-a-three-dimensional-surface-waits-on-phase-c",
+      "substituted": false,
       "blocked_by": "phase-c",
       "blocked_because": "census:dashboard.t2.12",
+      "closed_by": "",
+      "closed_because": "",
       "why": [
         "links analyzer-debt-repayment-loop, analyzer-tool-capability-spec",
         "names dashboard.t2.12"
@@ -94,32 +167,44 @@
     },
     {
       "name": "debt-a-torn-off-card-has-no-window",
+      "substituted": false,
       "blocked_by": "buildable",
       "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
       "why": [
         "names dashboard.t0.4, dashboard.t0.6"
       ]
     },
     {
       "name": "debt-analyzer-census-verdicts-are-unproven",
+      "substituted": false,
       "blocked_by": "buildable",
       "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
       "why": [
         "names dashboard.t0.1, dashboard.t0.4, dashboard.t2.6, dashboard.t2.9, lab.t0.4"
       ]
     },
     {
       "name": "debt-canon-gui-surface-census",
+      "substituted": false,
       "blocked_by": "campaign",
       "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
       "why": [
         "links analyzer-behaviour-canon-is-the-standalone-prototype, analyzer-tool-capability-spec, screen-a-vs-canon-operation-census"
       ]
     },
     {
       "name": "debt-eleven-app-verdicts-name-no-assembly",
+      "substituted": false,
       "blocked_by": "campaign",
       "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
       "why": [
         "links analyzer-tool-capability-spec",
         "names capture.t1.11, capture.t1.9, capture.t2.14, capture.t2.18, dashboard.t1.8, dashboard.t1.9, lab.t1.11, lab.t1.8, lab.t1.9, lab.t2.17, lab.t2.19"
@@ -127,8 +212,11 @@
     },
     {
       "name": "debt-eleven-chart-kinds-cannot-mute-their-own-marks",
+      "substituted": false,
       "blocked_by": "campaign",
       "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
       "why": [
         "links analyzer-tool-capability-spec",
         "names dashboard.t2.4"
@@ -136,88 +224,121 @@
     },
     {
       "name": "debt-nine-reserved-widgets-cite-requirements-nobody-checked",
+      "substituted": false,
       "blocked_by": "buildable",
       "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
       "why": [
         "links debt-canon-gui-surface-census"
       ]
     },
     {
       "name": "debt-node-system-coverage-campaign",
+      "substituted": true,
       "blocked_by": "campaign",
       "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
       "why": [
         "links protocol-analyzer-class-tool-capability-audit"
       ]
     },
     {
       "name": "debt-one-outline-role-does-two-jobs-and-clears-neither",
+      "substituted": false,
       "blocked_by": "buildable",
       "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
       "why": [
         "names dashboard.t2.9"
       ]
     },
     {
       "name": "debt-pins-spread-after-maximise-and-detach",
+      "substituted": false,
       "blocked_by": "unmeasured",
       "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
       "why": [
         "links debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
     },
     {
       "name": "debt-text-is-not-centred-in-the-box-that-holds-it",
+      "substituted": false,
       "blocked_by": "buildable",
       "blocked_because": "",
+      "closed_by": "person",
+      "closed_because": "rule:analyzer-debt-repayment-loop",
       "why": [
         "links debt-canon-gui-surface-census"
       ]
     },
     {
       "name": "debt-the-arrangeable-unit-is-a-panel-and-should-be-an-area",
+      "substituted": false,
       "blocked_by": "campaign",
       "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
       "why": [
         "links debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
     },
     {
       "name": "debt-the-canon-is-one-app-and-we-are-many-binaries",
+      "substituted": false,
       "blocked_by": "campaign",
       "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
       "why": [
         "links analyzer-behaviour-canon-is-the-standalone-prototype, debt-canon-gui-surface-census, screen-a-vs-canon-operation-census"
       ]
     },
     {
       "name": "debt-the-host-paints-a-toast-onto-the-guests-content",
+      "substituted": false,
       "blocked_by": "buildable",
       "blocked_because": "",
+      "closed_by": "person",
+      "closed_because": "rule:analyzer-debt-repayment-loop",
       "why": [
         "links debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
     },
     {
       "name": "debt-the-option-surface-is-declared-here-rather-than-sourced",
+      "substituted": false,
       "blocked_by": "buildable",
       "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
       "why": [
         "links screen-a-vs-canon-operation-census"
       ]
     },
     {
       "name": "debt-the-pro-tool-perf-remainder-is-invisible-to-the-debt-census",
+      "substituted": false,
       "blocked_by": "buildable",
       "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
       "why": [
         "links analyzer-tool-capability-spec"
       ]
     },
     {
       "name": "debt-the-property-grid-is-an-example-not-a-crate",
+      "substituted": false,
       "blocked_by": "buildable",
       "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
       "why": [
         "links analyzer-tool-capability-spec, protocol-analyzer-class-tool-capability-audit",
         "names lab.t0.2"
@@ -225,24 +346,33 @@
     },
     {
       "name": "debt-the-shipped-window-is-below-a-mounted-screens-minimum",
+      "substituted": false,
       "blocked_by": "buildable",
       "blocked_because": "",
+      "closed_by": "person",
+      "closed_because": "rule:analyzer-debt-repayment-loop",
       "why": [
         "links debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
     },
     {
       "name": "debt-two-deliberate-divergences-from-the-behaviour-canon",
+      "substituted": false,
       "blocked_by": "spec-round",
       "blocked_because": "rule:zero-flake-policy",
+      "closed_by": "",
+      "closed_because": "",
       "why": [
         "links analyzer-behaviour-canon-is-the-standalone-prototype"
       ]
     },
     {
       "name": "debt-windows-platform-surface-absent",
+      "substituted": false,
       "blocked_by": "gated-axis",
       "blocked_because": "axis:osnative",
+      "closed_by": "",
+      "closed_because": "",
       "why": [
         "links protocol-analyzer-class-tool-capability-audit"
       ]

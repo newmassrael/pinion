@@ -1583,5 +1583,36 @@ ok "the debt survey passes where the memory folder is absent" \
    "$(PINION_MEMORY_DIR=/nonexistent-for-this-test \
         python3 "$repo_root/tools/analyzer_debts.py" --check >/dev/null 2>&1; echo $?)" "0"
 
+# ★★★★★ R1820 — the third condition is judged against a FIXED cohort, pinned at
+# a commit, and the committed snapshot must still hold it. Asserted here rather
+# than only in the tool's selftest because what can rot is the SNAPSHOT, which
+# lives in this repository and which the selftest never reads: a hand edit, a
+# bad merge, or a `--write` from a machine whose git could not reach the pin
+# would each leave a cohort that is quietly short, and short in the direction
+# that makes the condition read closer to met.
+cohort_state="$(cd "$repo_root" && python3 - "$repo_root/docs/analyzer-debts.json" <<'PY'
+import json, subprocess, sys
+held = json.load(open(sys.argv[1], encoding="utf-8")).get("cohort", {})
+pin = held.get("pin", "")
+done = subprocess.run(
+    ["git", "show", f"{pin}:docs/analyzer-debts.json"],
+    capture_output=True, text=True, check=False,
+)
+if done.returncode != 0:
+    print("unreachable")
+else:
+    want = sorted({d["name"] for d in json.loads(done.stdout)["debts"]})
+    print("same" if sorted(held.get("members", [])) == want else "drifted")
+PY
+)"
+# ⚠ Fails OPEN on a shallow clone, where the pin's blob is simply not present —
+# and says so, because a check that silently stopped happening is the failure
+# mode this whole file exists for.
+if [[ "$cohort_state" == "unreachable" ]]; then
+    printf '[hooks] NOTE: the cohort pin is not in this clone, so its drift check did not run\n' >&2
+    cohort_state="same"
+fi
+ok "the committed snapshot carries the pinned cohort" "$cohort_state" "same"
+
 printf '[hooks] %d passed, %d failed\n' "$pass" "$fail"
 [[ "$fail" -eq 0 ]]
