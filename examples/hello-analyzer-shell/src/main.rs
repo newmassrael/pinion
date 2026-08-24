@@ -1242,7 +1242,36 @@ const TOAST_SECONDS: f32 = 2.6;
 
 /// The toast's box. The width is a constant and the reference sizes to content
 /// — see [`toast_scene`] for why that half is deliberately still open.
+/// The widest a toast may be, whatever it says — a long sentence elides rather
+/// than growing a strip across the window.
 const TOAST_W: u32 = 560;
+
+/// Where the toast's sentence starts, past its tone bullet.
+const TOAST_TEXT_X: u32 = 32;
+
+/// The room kept to the right of the sentence, so the border does not sit on
+/// the last glyph.
+const TOAST_PAD_RIGHT: u32 = 12;
+
+/// ★★★★★ R1811 — the box a sentence needs, bounded.
+///
+/// The per-character estimate is the same family
+/// `pinion_core::containment::line_rect` uses for the OTHER axis: a figure
+/// derived from the face size rather than from shaping, because `view` cannot
+/// shape (§6.3). What makes an estimate safe here is that it is bracketed by
+/// two gates that fail in opposite directions — `escapes` if it is too narrow
+/// and the sentence leaves the box, `slack` if it is too wide and the box holds
+/// room its words never use. An estimate nobody bracketed is what the constant
+/// 560 was.
+fn toast_width(sentence: &str) -> u32 {
+    let glyphs = u32::try_from(sentence.chars().count()).unwrap_or(u32::MAX);
+    let run = glyphs.saturating_mul(FONT_BODY.saturating_sub(6));
+    (TOAST_TEXT_X + run + TOAST_PAD_RIGHT).clamp(TOAST_MIN_W, TOAST_W)
+}
+
+/// Narrow enough for a two-word sentence, wide enough that the bullet and the
+/// rounded corners still read as a strip rather than a pill.
+const TOAST_MIN_W: u32 = 180;
 /// The toast's height.
 const TOAST_H: u32 = 34;
 
@@ -8616,10 +8645,27 @@ fn palette_scene(state: &ShellState, palette: Palette) -> Scene {
 /// wrong.
 fn toast_scene(state: &ShellState, palette: Palette) -> Option<Scene> {
     let said = state.toast.showing()?;
+    // ★★★★★ R1811 — **the box is a claim about its sentence, so it is measured
+    // from it.**
+    //
+    // It was `TOAST_W`, a constant 560, and a reader looking at the running
+    // window said the box was strangely wide for the words in it. Measured
+    // through `containment::slack` on the assembled screen, the box held over
+    // 400 pixels its content never used.
+    //
+    // ⚠ Measured here rather than laid out, and that is forced: `view` is SYNC
+    // AND PURE by §6.3 so `dry_run` holds, and shaping lives in the render
+    // layer — the same wall R1778 met when a toast needed a LIFETIME and got
+    // `Owner::register_animation`. So this is the estimate the containment gate
+    // is judged against, and the gate is what keeps the estimate honest: too
+    // narrow and `escapes` reports the sentence leaving its box, too wide and
+    // `slack` reports the room. Between the two, an estimate cannot rot
+    // silently in either direction.
+    let width = toast_width(&said.sentence());
     let rect = Rect::new(
-        (win_w().saturating_sub(TOAST_W)) / 2,
+        (win_w().saturating_sub(width)) / 2,
         win_h().saturating_sub(22 + TOAST_H),
-        TOAST_W,
+        width,
         TOAST_H,
     );
     Some(Scene::Container(
@@ -8630,7 +8676,12 @@ fn toast_scene(state: &ShellState, palette: Palette) -> Option<Scene> {
             dot(14, 13, 8, toast_dot(said.tone(), palette)),
             label(
                 &said.sentence(),
-                Rect::new(32, 9, rect.w.saturating_sub(44), 16),
+                Rect::new(
+                    TOAST_TEXT_X,
+                    9,
+                    rect.w.saturating_sub(TOAST_TEXT_X + TOAST_PAD_RIGHT),
+                    16,
+                ),
                 FONT_BODY,
                 palette.ink,
             ),

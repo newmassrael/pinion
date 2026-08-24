@@ -54,6 +54,9 @@ serde_json = { workspace = true }
 pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
 # R1653 — the painted-geometry check runs the real view -> layout pipeline.
 pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1" }
+# R1811 — the slack gate measures with the SAME cache the layout shaped with;
+# a stand-in measure would answer about a font nobody painted.
+pinion-text = { path = "../../crates/pinion-text", version = "0.0.1" }
 
 [build-dependencies]
 pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }

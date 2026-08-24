@@ -833,6 +833,131 @@ pub fn escapes(scene: &Scene, ink_of: InkOf<'_>) -> Vec<Escape> {
     found
 }
 
+/// ★★★★★ R1811 — **a box far larger than the one thing it holds**, which is
+/// the question this module's other two do not ask.
+///
+/// [`escapes`] asks whether the ink left its box and [`short_boxes`] whether
+/// the box is too small for the face. Both are "is the box big enough?" from
+/// opposite sides. **Nothing asked whether it is too big**, and a reader looking
+/// at the running application did: a status message reading *"Node Lab section"*
+/// sat in a box 560 pixels wide because the width was a constant, and the
+/// complaint was that the box was strangely wide — not that anything was lost.
+///
+/// # What this does NOT do, and the three measurements that settled it
+///
+/// It does not decide **which** boxes should be snug. A box larger than its
+/// content is usually correct — a panel, a card, a canvas are all bigger than
+/// what is in them — so the interesting population is "boxes whose size is a
+/// claim about their content", and R1811 tried three times to derive that from
+/// the scene and failed each time:
+///
+/// 1. *a box whose whole content is one text run.* Measured on the assembled
+///    analysis tool: it reported a tree row 203px wider than its label and hex
+///    cells 10px wider than their bytes — all correct, because a cell in a
+///    column is sized by the column.
+/// 2. *…and absolutely positioned, so the width was authored.* Measured: it
+///    narrowed nothing. This tree's screens paint almost everything at absolute
+///    rectangles by convention, so that flag does not separate an authored
+///    width from a laid-out one **here**.
+/// 3. *the box a reader actually complained about* — a status toast — is not a
+///    one-run box at all. It holds a tone bullet and a label, so rule 1 never
+///    reached the case it was invented for.
+///
+/// ⇒ **intent is not recoverable from geometry**, which is this repository's
+/// recurring finding in its own shape: what a box's size MEANS is a thing an
+/// author knows and the scene does not record. So this answers the measurable
+/// half — *how much of this box does its content not use* — for every box, and
+/// leaves choosing to the caller, who has the intent. A caller asks about the
+/// boxes it means, and the reason it means them lives at that call site.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Slack {
+    /// The box's tag, when it has one.
+    pub tag: Option<String>,
+    /// Window-absolute box.
+    pub box_rect: Rect,
+    /// What the box holds, as text, when any of it is a run — the words a
+    /// reader is looking at when they say the box is the wrong size.
+    pub content: String,
+    /// Window-absolute union of everything the box holds: the shaped ink for a
+    /// text run, the painted rectangle for anything else.
+    pub ink: Rect,
+    /// Width the box holds beyond its content rectangle's ink.
+    pub spare_w: u32,
+    /// Height the box holds beyond its content rectangle's ink.
+    pub spare_h: u32,
+}
+
+/// Every box that holds something, with how much of it that something leaves
+/// unused.
+///
+/// # Precondition
+///
+/// [`escapes`]'s: the scene has been through `compute_layout`, so a rectangle
+/// is where the renderer will put it. Handed an un-laid-out tree this reports
+/// what somebody wrote down rather than what a reader will see.
+///
+/// The spare is measured against the **content** rectangle
+/// ([`content_rect`]), not the box, so a border and a declared chrome band are
+/// not counted as room the run failed to fill — they were never its to use.
+///
+/// A run wider than its box reports `0` spare rather than an underflow; that
+/// direction is [`escapes`]'s question and is already answered there.
+#[must_use]
+pub fn slack(scene: &Scene, ink_of: InkOf<'_>) -> Vec<Slack> {
+    let mut found = Vec::new();
+    scene.for_each_node(&mut |visit| {
+        let Scene::Container(container) = visit.node else {
+            return;
+        };
+        if container.children.is_empty() {
+            return; // a spacer holds nothing, so it leaves nothing unused
+        }
+        // The same fold [`escapes`] uses — `NodeVisit::offset` carries only what
+        // enclosing scroll nodes contribute, because a post-layout rectangle is
+        // already in its scroll frame.
+        let box_rect = translate(visit.node.rect(), visit.offset);
+        let content = content_rect(visit.node, box_rect);
+        let mut held: Option<Rect> = None;
+        let mut said = String::new();
+        for child in &container.children {
+            // A child's rectangle is already in this box's frame; its INK is
+            // the shaped extent for a run and the rectangle itself otherwise —
+            // the same distinction `escapes` draws, for the same reason.
+            let (w, h) = match child {
+                Scene::Text(text) => {
+                    if !said.is_empty() {
+                        said.push(' ');
+                    }
+                    said.push_str(&text.content);
+                    ink_of(text)
+                }
+                other => (other.rect().w, other.rect().h),
+            };
+            if w == 0 || h == 0 {
+                continue;
+            }
+            let at = child.rect();
+            let here = Rect::new(box_rect.x + at.x, box_rect.y + at.y, w, h);
+            held = Some(match held {
+                Some(so_far) => so_far.union(here),
+                None => here,
+            });
+        }
+        let Some(ink) = held else {
+            return; // nothing was drawn, so the box holds no claim to check
+        };
+        found.push(Slack {
+            tag: container.tag.as_ref().map(ToString::to_string),
+            box_rect,
+            content: said,
+            ink,
+            spare_w: content.w.saturating_sub(ink.w),
+            spare_h: content.h.saturating_sub(ink.h),
+        });
+    });
+    found
+}
+
 /// What an escape names as its owner when the box that broke its promise
 /// carries no tag. Spelled once so a caller filtering on it and this module
 /// producing it cannot drift.

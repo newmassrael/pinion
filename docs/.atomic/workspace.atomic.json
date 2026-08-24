@@ -64914,6 +64914,84 @@
         "⚠ The fourth citation is the weak one and says so: `rule:zero-flake-policy` names a CONFLICT rather than a statement, and the tool can only check that the rule file exists — never that the conflict is real or that it is unresolved. That one still needs a person, and it is the only one of the four that does."
       ]
     },
+    "R1811": {
+      "decision_summary": "R1811 stops measuring and repays. R1808, R1809 and R1810 each built an instrument while the third condition's number never moved, so this round starts from the defects a reader reported looking at the running window — the axis memory twice records as the one that gets crowded out by census-driven picking.\n\nTHE OPENING RE-MEASUREMENT FALSIFIED THREE OF THE FOUR TARGETS, which is why it is done. The toast debt's own diagnosis is stale: it records the box at `canvas.x + 24`, and the toast is centred now. Its lifetime half is closed — R1778 gave it a `Saying` at 2.6 seconds, matching the canon's `setTimeout(2600)`, and R1776 gated it; that gate was re-run green here. Two of the other three carry stated open remainders rather than being one round's work.\n\nWHAT SURVIVED is the half nobody had measured: the box is 560 pixels wide whatever it says.\n\nWHAT THE TREE COULD NOT ASK. `escapes` asks whether ink left its box; `short_boxes` whether a box is tall enough for its face. Both are \"is the box big enough?\" from opposite sides. Nothing asked whether it is too big — which is precisely what the reader said, not that anything was lost but that the box was strangely wide for its words. The question had no home, so a person had to be the gate.",
+      "changes_bullets": [
+        "`pinion_core::containment::slack` (new) — the mirror of `escapes`: for every box that holds something, how much of its content rectangle that something leaves unused. Reports the box, its tag, what it says, the union of what it holds, and the spare on each axis.",
+        "* It measures against the CONTENT rectangle, so a border and a declared chrome band are not counted as room the content failed to fill — they were never its to use.",
+        "* A run wider than its box reports zero spare; that direction is `escapes`'s question and is already answered there.",
+        "* **It does not choose which boxes should be snug**, and its documentation carries the three derivations that were tried and measured wrong, so a later reader does not try them again.",
+        "`hello-analyzer-shell`:",
+        "* `toast_width` computes the box from the sentence, clamped between `TOAST_MIN_W` and `TOAST_W`. The estimate is bracketed by two gates that fail in opposite directions, which is what makes an estimate safe where `view` cannot shape.",
+        "* `r1811_a_one_run_box_is_not_far_larger_than_its_run` — the slack ratchet on the toast, with the caller stating why it chose that box.",
+        "* `r1811_a_longer_toast_gets_a_wider_box` — the RELATION, which is the assertion a constant width cannot satisfy.",
+        "* `pinion-text` as a dev-dependency: the gate measures with the same cache the layout shaped with.",
+        "`debt-the-host-paints-a-toast-onto-the-guests-content` records items 1 and 2 as repaid and measured against the canon, and states why the file stays open."
+      ],
+      "verification_bullets": [
+        "THE THREE DERIVATIONS WERE EACH RUN AND EACH WRONG, in this round, against the assembled screen:",
+        "1. *a box whose whole content is one text run* — reported a decode tree row 203px wider than \"L1 · Transport\" and hex cells 10px wider than their bytes. All correct: a cell in a column is sized by the column.",
+        "2. *…and absolutely positioned, so the width was authored* — narrowed nothing. The same 52 boxes came back, because this tree's screens paint almost everything at absolute rectangles by convention.",
+        "3. *the box the reader complained about* — not a one-run box at all. It holds a tone bullet and a label, so rule 1 never reached the case it was invented for.",
+        "⇒ intent is not recoverable from geometry, and the tool now says so where the next reader will look.",
+        "THE REPAIR, MEASURED: a short sentence's toast goes from a 560px box to 180px, and its spare from the order of four hundred pixels to 61. The 61 is the deliberate minimum width's, not a constant nobody had checked — stated as such rather than ratcheted silently.",
+        "* `r1811_a_one_run_box_is_not_far_larger_than_its_run` — green. Non-vacuous by two guards: it fails if no box on the screen holds anything, and it names the toast rather than scanning for a convenient one.",
+        "* `r1811_a_longer_toast_gets_a_wider_box` — green, and it is the assertion that matters: a constant width passes any loosely-set bound and fails this.",
+        "* `r1776_the_hosts_toast_leaves_the_screen_it_is_showing` — re-run green, which is what lets item 1 of the debt be recorded as repaid rather than assumed.",
+        "LOCAL GATES: 4,101 passed, 0 failed across `pinion-core` and `hello-analyzer-shell`. `cargo clippy --workspace --all-targets --features pinion-runtime/vello`: exit 0. `cargo doc --workspace --no-deps --document-private-items`: exit 0 — run BEFORE the push, which is R1808.1's lesson applied rather than restated. `analyzer_debts.py --check`: 33 in the family, all declared, 29 not blocked.",
+        "🟥 THE CLOSING AUDIT CAUGHT A FIGURE I HAD WRITTEN AS MEASURED. The pre-R1811 slack of \"400+\" was never measured — the old box was not the shape the first derivation looked for, so the gate could not have seen it. The comment now says the number is arithmetic and shows it.",
+        "⚠ NOT VERIFIED: what the window looks like. That is the point of the carry."
+      ],
+      "impact_refs": [
+        "5.21",
+        "5.2"
+      ],
+      "carry_forward_bullets": [
+        "🟥 THE DEBT IS NOT CLOSED, DELIBERATELY. \"A defect a person reported is closed by a person\" is a ratified rule in this tree, and closing my own repair would be the exact thing it exists to prevent. The file now states what a person should check in the running window: that a short sentence gets a narrow strip, that it leaves after 2.6 seconds, and that it sits at the foot centre.",
+        "So condition (3) stays at 29 of 33. What moved this round is a debt's CONTENT, not the count — and saying that plainly is worth more than a number that moved for the wrong reason.",
+        "⚠ `slack` has exactly one caller, by construction rather than by neglect: it cannot choose its own population, so every consumer must argue the intent at its own call site. The round that gives it a second caller should expect to make that argument again, and should be suspicious if it comes easily.",
+        "⚠ Items 1 and 2 of the toast debt are recorded as matching the canon on four counts. Three of those are arithmetic over constants in one file; only the lifetime is asserted by a gate. A round that changes the layout could move the other three without anything failing.",
+        "The three other user-reported debts are untouched and their remainders are still stated: alignment is undeclared at most of its sites, the shipped window is still short for one mounted screen for two recorded reasons, and the boolean row's ink and pointer halves are open."
+      ],
+      "publishable_decision_summary": "R1811 stops measuring and repays. R1808, R1809 and R1810 each built an instrument while the third condition's number never moved, so this round starts from the defects a reader reported looking at the running window — the axis memory twice records as the one that gets crowded out by census-driven picking.\n\nTHE OPENING RE-MEASUREMENT FALSIFIED THREE OF THE FOUR TARGETS, which is why it is done. The toast debt's own diagnosis is stale: it records the box at `canvas.x + 24`, and the toast is centred now. Its lifetime half is closed — R1778 gave it a `Saying` at 2.6 seconds, matching the canon's `setTimeout(2600)`, and R1776 gated it; that gate was re-run green here. Two of the other three carry stated open remainders rather than being one round's work.\n\nWHAT SURVIVED is the half nobody had measured: the box is 560 pixels wide whatever it says.\n\nWHAT THE TREE COULD NOT ASK. `escapes` asks whether ink left its box; `short_boxes` whether a box is tall enough for its face. Both are \"is the box big enough?\" from opposite sides. Nothing asked whether it is too big — which is precisely what the reader said, not that anything was lost but that the box was strangely wide for its words. The question had no home, so a person had to be the gate.",
+      "publishable_changes_bullets": [
+        "`pinion_core::containment::slack` (new) — the mirror of `escapes`: for every box that holds something, how much of its content rectangle that something leaves unused. Reports the box, its tag, what it says, the union of what it holds, and the spare on each axis.",
+        "* It measures against the CONTENT rectangle, so a border and a declared chrome band are not counted as room the content failed to fill — they were never its to use.",
+        "* A run wider than its box reports zero spare; that direction is `escapes`'s question and is already answered there.",
+        "* **It does not choose which boxes should be snug**, and its documentation carries the three derivations that were tried and measured wrong, so a later reader does not try them again.",
+        "`hello-analyzer-shell`:",
+        "* `toast_width` computes the box from the sentence, clamped between `TOAST_MIN_W` and `TOAST_W`. The estimate is bracketed by two gates that fail in opposite directions, which is what makes an estimate safe where `view` cannot shape.",
+        "* `r1811_a_one_run_box_is_not_far_larger_than_its_run` — the slack ratchet on the toast, with the caller stating why it chose that box.",
+        "* `r1811_a_longer_toast_gets_a_wider_box` — the RELATION, which is the assertion a constant width cannot satisfy.",
+        "* `pinion-text` as a dev-dependency: the gate measures with the same cache the layout shaped with.",
+        "`debt-the-host-paints-a-toast-onto-the-guests-content` records items 1 and 2 as repaid and measured against the canon, and states why the file stays open."
+      ],
+      "publishable_verification_bullets": [
+        "THE THREE DERIVATIONS WERE EACH RUN AND EACH WRONG, in this round, against the assembled screen:",
+        "1. *a box whose whole content is one text run* — reported a decode tree row 203px wider than \"L1 · Transport\" and hex cells 10px wider than their bytes. All correct: a cell in a column is sized by the column.",
+        "2. *…and absolutely positioned, so the width was authored* — narrowed nothing. The same 52 boxes came back, because this tree's screens paint almost everything at absolute rectangles by convention.",
+        "3. *the box the reader complained about* — not a one-run box at all. It holds a tone bullet and a label, so rule 1 never reached the case it was invented for.",
+        "⇒ intent is not recoverable from geometry, and the tool now says so where the next reader will look.",
+        "THE REPAIR, MEASURED: a short sentence's toast goes from a 560px box to 180px, and its spare from the order of four hundred pixels to 61. The 61 is the deliberate minimum width's, not a constant nobody had checked — stated as such rather than ratcheted silently.",
+        "* `r1811_a_one_run_box_is_not_far_larger_than_its_run` — green. Non-vacuous by two guards: it fails if no box on the screen holds anything, and it names the toast rather than scanning for a convenient one.",
+        "* `r1811_a_longer_toast_gets_a_wider_box` — green, and it is the assertion that matters: a constant width passes any loosely-set bound and fails this.",
+        "* `r1776_the_hosts_toast_leaves_the_screen_it_is_showing` — re-run green, which is what lets item 1 of the debt be recorded as repaid rather than assumed.",
+        "LOCAL GATES: 4,101 passed, 0 failed across `pinion-core` and `hello-analyzer-shell`. `cargo clippy --workspace --all-targets --features pinion-runtime/vello`: exit 0. `cargo doc --workspace --no-deps --document-private-items`: exit 0 — run BEFORE the push, which is R1808.1's lesson applied rather than restated. `analyzer_debts.py --check`: 33 in the family, all declared, 29 not blocked.",
+        "🟥 THE CLOSING AUDIT CAUGHT A FIGURE I HAD WRITTEN AS MEASURED. The pre-R1811 slack of \"400+\" was never measured — the old box was not the shape the first derivation looked for, so the gate could not have seen it. The comment now says the number is arithmetic and shows it.",
+        "⚠ NOT VERIFIED: what the window looks like. That is the point of the carry."
+      ],
+      "publishable_impact_refs": [
+        "5.21",
+        "5.2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "🟥 THE DEBT IS NOT CLOSED, DELIBERATELY. \"A defect a person reported is closed by a person\" is a ratified rule in this tree, and closing my own repair would be the exact thing it exists to prevent. The file now states what a person should check in the running window: that a short sentence gets a narrow strip, that it leaves after 2.6 seconds, and that it sits at the foot centre.",
+        "So condition (3) stays at 29 of 33. What moved this round is a debt's CONTENT, not the count — and saying that plainly is worth more than a number that moved for the wrong reason.",
+        "⚠ `slack` has exactly one caller, by construction rather than by neglect: it cannot choose its own population, so every consumer must argue the intent at its own call site. The round that gives it a second caller should expect to make that argument again, and should be suspicious if it comes easily.",
+        "⚠ Items 1 and 2 of the toast debt are recorded as matching the canon on four counts. Three of those are arithmetic over constants in one file; only the lifetime is asserted by a gate. A round that changes the layout could move the other three without anything failing.",
+        "The three other user-reported debts are untouched and their remainders are still stated: alignment is undeclared at most of its sites, the shipped window is still short for one mounted screen for two recorded reasons, and the boolean row's ink and pointer halves are open."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

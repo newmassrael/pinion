@@ -4539,3 +4539,104 @@ fn r1776_the_hosts_toast_leaves_the_screen_it_is_showing() {
         );
     });
 }
+
+/// ★★★★★ R1811 — **how much of each one-run box its run does not use.**
+///
+/// The complaint that opened `debt-the-host-paints-a-toast-onto-the-guests-content`
+/// was not that anything was lost — it was that a status box reading a short
+/// sentence was *strangely wide*. This tree's paint gates ask whether ink stays
+/// inside its box and whether a box is tall enough for its face; neither asks
+/// whether a box is far LARGER than the one thing it holds, which is why a
+/// person had to.
+#[test]
+fn r1811_a_one_run_box_is_not_far_larger_than_its_run() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        state.say(super::Utterance::done("a thing happened"));
+        let mut scene = super::view(ScreenState::default(), pinion_core::Frame::default());
+        let mut cache = pinion_text::LayoutCache::new();
+        pinion_runtime::layout::compute_layout(&mut scene, &mut cache, WIN_W, WIN_H);
+
+        // The SAME cache the layout just shaped with — a stand-in measure would
+        // be answering about a font nobody painted.
+        let found = pinion_core::containment::slack(&scene, &mut |text| {
+            let max_width = (text.rect.w > 0).then_some(text.rect.w);
+            cache.ink_size(&text.content, &text.style, &text.runs, max_width)
+        });
+        assert!(
+            !found.is_empty(),
+            "no box on this screen holds anything, so this gate would pass by \
+             not looking"
+        );
+        // ★ THE CALLER CHOOSES, because intent is not in the geometry — see
+        // `slack`'s own documentation for the three derivations that were tried
+        // and measured wrong. The toast is chosen because its width is a
+        // constant that says nothing about its sentence, and a reader looking at
+        // the running window said so.
+        let toast = found
+            .iter()
+            .find(|s| s.tag.as_deref() == Some("shell.toast"))
+            .expect("the toast was said, so it is on this frame");
+        assert!(
+            toast.spare_w <= TOAST_SLACK,
+            "the toast box is {}px wider than what it holds ({:?} in a box {}px \
+             wide) — a status box's width is a claim about its sentence",
+            toast.spare_w,
+            toast.content,
+            toast.box_rect.w,
+        );
+    });
+}
+
+/// ★★★★★ R1811 — **the toast's width tracks its sentence**, which is what
+/// "the box is a claim about its content" means and what a bound alone cannot
+/// show.
+///
+/// A constant width satisfies any slack ratchet you set loosely enough. This
+/// asserts the RELATION: a longer sentence gets a wider box, and a short one
+/// does not get the long one's width. It is immune to the defect it replaced
+/// by construction — 560 for everything fails here and passes any single-frame
+/// bound.
+#[test]
+fn r1811_a_longer_toast_gets_a_wider_box() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let width_of = |sentence: &str| {
+            state.say(super::Utterance::done(sentence));
+            let scene = painted_at((WIN_W, WIN_H)).1;
+            pinion_runtime::rect_for_tag(&scene, "shell.toast")
+                .expect("a toast was just said")
+                .w
+        };
+        let short = width_of("saved");
+        let long =
+            width_of("the capture was reassembled and every declared field resolved cleanly");
+        assert!(
+            long > short,
+            "a longer sentence must get a wider box — short {short}px, long {long}px",
+        );
+        assert!(
+            long <= super::TOAST_W,
+            "and a very long one is bounded rather than crossing the window: \
+             {long}px against a {}px maximum",
+            super::TOAST_W,
+        );
+    });
+}
+
+/// ★ R1811 — the width the toast may hold beyond its content, as a RATCHET.
+///
+/// Not zero, and the residue is a DECIDED one rather than an unmeasured one:
+/// a short sentence hits the toast's deliberate minimum width, so the room left
+/// over is the floor's, not a constant nobody had checked. Measured on the
+/// assembled screen it is 61 for the shortest sentence a gate says.
+///
+/// ⚠ The pre-R1811 figure is ARITHMETIC, not a measurement, and is written that
+/// way deliberately: the old box was 560 wide whatever it said, and the same
+/// sentence's ink spans roughly 137 of it from the bullet to the last glyph, so
+/// it held on the order of four hundred pixels it never used. The gate could
+/// not have measured that box — it was not the shape the first derivation
+/// looked for, which is the finding `slack`'s own documentation records.
+const TOAST_SLACK: u32 = 64;
