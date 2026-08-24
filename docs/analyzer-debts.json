@@ -18,14 +18,6 @@
       ]
     },
     {
-      "name": "debt-a-card-header-has-no-painter",
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "why": [
-        "names dashboard.t0.4"
-      ]
-    },
-    {
       "name": "debt-a-debts-standing-is-one-persons-unreviewed-reading",
       "blocked_by": "buildable",
       "blocked_because": "",

@@ -60,7 +60,11 @@
 //! survived a narrowing, only look. Answering **which parts gave way** is the
 //! capability this type has and that one does not.
 
-use pinion_core::scene::Rect;
+use pinion_core::scene::{ContainerNode, PathCommand, PathNode, PathPoint, Rect, Scene, TextNode};
+use pinion_core::style::{
+    BoxStyle, Color, LayoutStyle, PathStyle, Size, Stroke, TextOverflow, TextStyle,
+};
+use pinion_core::widgets::card::CardAffordance;
 
 /// The measurements a card header lays out against.
 ///
@@ -318,10 +322,280 @@ pub fn lay_out(header: Rect, offered: usize, ready: bool, metrics: CardMetrics) 
     }
 }
 
+// ── The skin ────────────────────────────────────────────────────────────────
+
+/// The four colours a card header draws with.
+///
+/// ★★★★★ R1817 — R1816 lifted this module's arithmetic and deliberately left
+/// the skin behind, on the reasoning that glyphs and colours had been chosen
+/// exactly once and a one-witness opinion frozen into a crate is a fork with
+/// extra steps. That reasoning is **overridden by the standing instruction this
+/// work runs under**, which is that the framework builds a capability the
+/// reference class supports whether or not a second consumer exists yet, and
+/// that the deliverable is a crate rather than an example. Deferring left the
+/// census row saying `app` while the framework owned everything that was hard
+/// about it, which is the worse of the two errors: a reader looking for a card
+/// header still found none.
+///
+/// Colours are taken as values rather than a `Theme` so a caller with a palette
+/// of its own — which the one shipped consumer has — does not have to invent a
+/// theme to ask for a header.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HeaderInk {
+    /// The title's colour.
+    pub title: Color,
+    /// The grip dots and the affordance marks.
+    pub muted: Color,
+    /// The ready badge's dot and word.
+    pub accent: Color,
+    /// The card-kind dot beside the grip.
+    pub kind: Color,
+}
+
+/// What a card header says and which of its affordances are live.
+///
+/// Bundled rather than passed as eight arguments, which is also what keeps
+/// [`header_scene`] inside this crate's argument-count lint.
+#[derive(Debug, Clone)]
+pub struct HeaderSpec<'a> {
+    /// The affordances the card's chrome offers, in declaration order.
+    pub offered: &'a [CardAffordance],
+    /// Whether the card's state earns the ready badge.
+    pub ready: bool,
+    /// Whether [`CardAffordance::Maximize`] should draw its RESTORE form —
+    /// the card is already maximised and the control brings it back.
+    pub restore: bool,
+    /// The title, elided inside whatever room it gets.
+    pub title: &'a str,
+    /// The badge's word.
+    pub badge: &'a str,
+    /// The title's font size.
+    pub title_px: u32,
+    /// The badge's font size.
+    pub badge_px: u32,
+    /// The colours.
+    pub ink: HeaderInk,
+}
+
+fn dot(x: u32, y: u32, size: u32, fill: Color) -> Scene {
+    Scene::Container(
+        ContainerNode::new(Vec::new())
+            .with_style(BoxStyle::filled(fill).with_corner_radius(size / 2))
+            .with_layout(absolute(Rect::new(x, y, size, size))),
+    )
+}
+
+fn absolute(rect: Rect) -> LayoutStyle {
+    LayoutStyle::new()
+        .with_absolute_position(rect.x, rect.y)
+        .with_size(Size::px(rect.w, rect.h))
+        .with_pointer_transparent(true)
+}
+
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "header coordinates are < 2^13, exactly representable in f32"
+)]
+fn point(x: u32, y: u32) -> PathPoint {
+    PathPoint::new(x as f32, y as f32)
+}
+
+/// A stroked polyline set in `rect`-local coordinates.
+fn strokes(rect: Rect, runs: &[Vec<(u32, u32)>], ink: Color, width: u32) -> Scene {
+    let mut commands = Vec::new();
+    for run in runs {
+        for (n, (x, y)) in run.iter().enumerate() {
+            let at = point(*x, *y);
+            commands.push(if n == 0 {
+                PathCommand::MoveTo(at)
+            } else {
+                PathCommand::LineTo(at)
+            });
+        }
+    }
+    Scene::Path(
+        PathNode::new(rect, commands, PathStyle::stroked(Stroke::new(ink, width)))
+            .with_layout(absolute(rect)),
+    )
+}
+
+/// The mark one header control draws, in its slot's local coordinates.
+///
+/// ★ R1697's lesson, carried here with the code it is about: `restore` is the
+/// maximise control's OTHER FACE. The control toggles, and a control that
+/// toggles without changing its mark tells a person the same thing in both
+/// states — a capability that exists and is not drawn is one nobody can use.
+#[must_use]
+pub fn affordance_mark(
+    affordance: CardAffordance,
+    rect: Rect,
+    ink: Color,
+    restore: bool,
+) -> Vec<Scene> {
+    let (cx, cy) = (rect.w / 2, rect.h / 2);
+    match affordance {
+        CardAffordance::Settings => (0..3)
+            .map(|n| dot(cx - 1, cy - 5 + n * 5, 2, ink))
+            .collect(),
+        // A square lifting out of another.
+        CardAffordance::TearOff => vec![strokes(
+            rect,
+            &[
+                vec![
+                    (cx - 5, cy - 1),
+                    (cx - 5, cy + 5),
+                    (cx + 1, cy + 5),
+                    (cx + 1, cy - 1),
+                    (cx - 5, cy - 1),
+                ],
+                vec![(cx - 1, cy - 5), (cx + 5, cy - 5), (cx + 5, cy + 1)],
+            ],
+            ink,
+            1,
+        )],
+        // Two overlapping squares — one box come back out of another, which is
+        // the form a restore control takes everywhere.
+        CardAffordance::Maximize if restore => vec![strokes(
+            rect,
+            &[
+                vec![
+                    (cx - 6, cy - 2),
+                    (cx + 2, cy - 2),
+                    (cx + 2, cy + 6),
+                    (cx - 6, cy + 6),
+                    (cx - 6, cy - 2),
+                ],
+                vec![(cx - 2, cy - 6), (cx + 6, cy - 6), (cx + 6, cy + 2)],
+            ],
+            ink,
+            1,
+        )],
+        CardAffordance::Maximize => vec![strokes(
+            rect,
+            &[vec![
+                (cx - 5, cy - 5),
+                (cx + 5, cy - 5),
+                (cx + 5, cy + 5),
+                (cx - 5, cy + 5),
+                (cx - 5, cy - 5),
+            ]],
+            ink,
+            1,
+        )],
+        CardAffordance::Close => strokes_close(rect, ink),
+    }
+}
+
+fn strokes_close(rect: Rect, ink: Color) -> Vec<Scene> {
+    let (w, h) = (rect.w, rect.h);
+    let (x0, y0, x1, y1) = (w / 2 - 4, h / 2 - 4, w / 2 + 4, h / 2 + 4);
+    vec![strokes(
+        rect,
+        &[vec![(x0, y0), (x1, y1)], vec![(x1, y0), (x0, y1)]],
+        ink,
+        1,
+    )]
+}
+
+/// The six-dot drag grip.
+#[must_use]
+pub fn grip_scene(tag: impl Into<String>, header: Rect, metrics: CardMetrics, ink: Color) -> Scene {
+    let rect = grip_rect(header, metrics);
+    Scene::Container(
+        ContainerNode::new(
+            (0..3)
+                .flat_map(|r| (0..2).map(move |c| dot(4 + c * 5, 8 + r * 5, 2, ink)))
+                .collect(),
+        )
+        .with_tag(tag.into())
+        .with_layout(absolute(rect)),
+    )
+}
+
+/// **A card header, painted.**
+///
+/// The scenes come back in paint order and every tagged one is addressed
+/// `{tag_prefix}.{suffix}` — `.grip` for the drag handle and the affordance's
+/// own wire word for each control, which is the vocabulary
+/// [`CardAffordance::from_wire`] round-trips. A caller's hit test asks
+/// [`slot_rect`] about the same rectangles, so what is drawn is what is pressed
+/// without either side owning a second copy of the arithmetic.
+///
+/// Parts that do not fit are **absent**, per [`lay_out`].
+#[must_use]
+pub fn header_scene(
+    tag_prefix: &str,
+    header: Rect,
+    spec: &HeaderSpec<'_>,
+    metrics: CardMetrics,
+) -> Vec<Scene> {
+    let laid = lay_out(header, spec.offered.len(), spec.ready, metrics);
+    let mut out = Vec::new();
+
+    if let Some(grip) = laid.grip() {
+        out.push(grip_scene(
+            format!("{tag_prefix}.grip"),
+            header,
+            metrics,
+            spec.ink.muted,
+        ));
+        out.push(dot(
+            grip.x + grip.w + 4,
+            header.y + metrics.band_h / 2 - 4,
+            9,
+            spec.ink.kind,
+        ));
+    }
+    if let Some(title) = laid.title() {
+        out.push(run(spec.title, title, spec.title_px, spec.ink.title));
+    }
+    if let Some(badge) = laid.badge() {
+        out.push(dot(badge.x, badge.y, 6, spec.ink.accent));
+        out.push(run(
+            spec.badge,
+            Rect::new(badge.x + 10, header.y + 10, 40, 14),
+            spec.badge_px,
+            spec.ink.accent,
+        ));
+    }
+    for (n, slot) in laid.slots().iter().copied() {
+        let affordance = spec.offered[n];
+        out.push(Scene::Container(
+            ContainerNode::new(affordance_mark(
+                affordance,
+                Rect::new(0, 0, slot.w, slot.h),
+                spec.ink.muted,
+                spec.restore,
+            ))
+            .with_tag(format!("{tag_prefix}.{}", affordance.wire()))
+            .with_layout(absolute(slot)),
+        ));
+    }
+    out
+}
+
+fn run(text: &str, rect: Rect, px: u32, fg: Color) -> Scene {
+    Scene::Text(
+        TextNode::styled(
+            text,
+            rect,
+            TextStyle::new()
+                .with_size_px(px)
+                .with_fg(fg)
+                .with_overflow(TextOverflow::Ellipsis),
+        )
+        .with_layout(absolute(rect)),
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{CardMetrics, HeaderLayout, grip_rect, lay_out, slot_rect};
+    use super::{
+        CardMetrics, HeaderInk, HeaderLayout, HeaderSpec, grip_rect, header_scene, lay_out,
+        slot_rect,
+    };
     use pinion_core::scene::Rect;
+    use pinion_core::style::Color;
 
     fn band(w: u32) -> Rect {
         Rect::new(10, 20, w, 33)
@@ -547,6 +821,101 @@ mod tests {
             none.placed().is_empty(),
             "and nothing at all is placed rather than something outside"
         );
+    }
+
+    /// ★★★★★ **A whole card header, painted through the public API alone** —
+    /// the proof the census row `dashboard.t0.4` cites for its `have`.
+    ///
+    /// R1602's standing rule is that a `have` costs a test exercising the
+    /// capability through the PUBLIC surface, because a wrong `have` inflates a
+    /// number silently while a wrong `app` self-corrects. So this builds a
+    /// header the way any caller would — no internals — and asserts the things
+    /// a caller depends on: that every control is addressable by the
+    /// affordance's own wire word, that the grip is addressable, and that a
+    /// narrowing removes controls from the scene rather than moving them
+    /// somewhere a press cannot follow.
+    #[test]
+    fn r1817_a_whole_header_is_painted_through_the_public_api() {
+        use pinion_core::widgets::card::CardAffordance::{Close, Maximize, Settings, TearOff};
+
+        let ink = HeaderInk {
+            title: Color::rgb(0xff, 0xff, 0xff),
+            muted: Color::rgb(0x88, 0x88, 0x88),
+            accent: Color::rgb(0x00, 0xc0, 0x80),
+            kind: Color::rgb(0xc0, 0x40, 0x40),
+        };
+        let offered = [Settings, TearOff, Maximize, Close];
+        let spec = HeaderSpec {
+            offered: &offered,
+            ready: true,
+            restore: false,
+            title: "ingest",
+            badge: "LIVE",
+            title_px: 12,
+            badge_px: 10,
+            ink,
+        };
+        let metrics = CardMetrics::default();
+
+        let wide = header_scene("card.a", band(400), &spec, metrics);
+        let tags = tags_of(&wide);
+        for want in [
+            "card.a.grip",
+            "card.a.settings",
+            "card.a.tear_off",
+            "card.a.maximize",
+            "card.a.close",
+        ] {
+            assert!(
+                tags.iter().any(|t| t == want),
+                "a caller addresses `{want}` and the header painted {tags:?}"
+            );
+        }
+
+        // Narrowed until the strip has to give way: the controls that went are
+        // ABSENT from the scene, not drawn somewhere a press cannot reach.
+        let narrow = header_scene("card.a", band(150), &spec, metrics);
+        let narrow_tags = tags_of(&narrow);
+        assert!(
+            narrow_tags.len() < tags.len(),
+            "a 150px header cannot carry what a 400px one does: {narrow_tags:?}"
+        );
+        assert!(
+            narrow_tags.iter().any(|t| t == "card.a.close"),
+            "and what survives is the last-declared control, nearest the edge a \
+             hand reaches for: {narrow_tags:?}"
+        );
+        assert!(
+            !narrow_tags.iter().any(|t| t == "card.a.settings"),
+            "while the first-declared has gone rather than been squeezed"
+        );
+    }
+
+    /// Every tag in a scene tree, so a test can ask what a caller can address.
+    fn tags_of(scenes: &[pinion_core::scene::Scene]) -> Vec<String> {
+        fn walk(scene: &pinion_core::scene::Scene, out: &mut Vec<String>) {
+            match scene {
+                pinion_core::scene::Scene::Container(node) => {
+                    if let Some(tag) = node.tag.as_deref() {
+                        out.push(tag.to_owned());
+                    }
+                    for child in &node.children {
+                        walk(child, out);
+                    }
+                }
+                pinion_core::scene::Scene::Text(node) => {
+                    if let Some(tag) = node.tag.as_deref() {
+                        out.push(tag.to_owned());
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        for scene in scenes {
+            walk(scene, &mut out);
+        }
+        out
     }
 
     /// A layout is `PartialEq`, so a caller can assert one whole rather than

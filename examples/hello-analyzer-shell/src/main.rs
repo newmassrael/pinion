@@ -1563,10 +1563,10 @@ fn affordance_rect(header: Rect, count: u32, n: u32) -> Rect {
     card_header::slot_rect(header, count, n, CARD_METRICS)
 }
 
-/// The drag handle at the left of a header — the reference's six-dot grip.
-fn grip_rect(header: Rect) -> Rect {
-    card_header::grip_rect(header, CARD_METRICS)
-}
+// ★ R1817 — `grip_rect` used to be declared here. `card_header::grip_scene`
+// draws the grip now and nothing on this side asks where it is, so the
+// delegating wrapper R1816 left became dead code. That is the compiler saying
+// the lift finished rather than a comment claiming it did.
 
 /// Where a not-ready card's remedy control sits.
 const fn remedy_rect(body: Rect) -> Rect {
@@ -5109,25 +5109,8 @@ fn close_mark(rect: Rect, ink: Color) -> Scene {
     )
 }
 
-/// The detach mark: a square lifting out of another.
-fn detach_mark(rect: Rect, ink: Color) -> Scene {
-    let (cx, cy) = (rect.w / 2, rect.h / 2);
-    strokes(
-        rect,
-        &[
-            vec![
-                (cx - 5, cy - 1),
-                (cx - 5, cy + 5),
-                (cx + 1, cy + 5),
-                (cx + 1, cy - 1),
-                (cx - 5, cy - 1),
-            ],
-            vec![(cx - 1, cy - 5), (cx + 5, cy - 5), (cx + 5, cy + 1)],
-        ],
-        ink,
-        1,
-    )
-}
+// ★ R1817 — the detach mark moved to `card_header::affordance_mark` with the
+// rest of the header's glyphs.
 
 /// R1697 — the resize mark: two diagonals climbing out of the bottom-right
 /// corner, the form every window manager and every reference toolkit uses for
@@ -5165,56 +5148,10 @@ fn redock_mark(rect: Rect, ink: Color) -> Scene {
     )
 }
 
-/// One header control's mark.
-///
-/// ★ R1697 — `restore` is the maximise control's OTHER face. The control
-/// toggles, and a control that toggles without changing its mark tells a person
-/// the same thing in both states — which is the shape R1690 named: a capability
-/// that exists and is not drawn is one nobody can use.
-fn affordance_mark(
-    affordance: CardAffordance,
-    rect: Rect,
-    ink: Color,
-    restore: bool,
-) -> Vec<Scene> {
-    let (cx, cy) = (rect.w / 2, rect.h / 2);
-    match affordance {
-        CardAffordance::Settings => (0..3)
-            .map(|n| dot(cx - 1, cy - 5 + n * 5, 2, ink))
-            .collect(),
-        CardAffordance::TearOff => vec![detach_mark(rect, ink)],
-        // Two overlapping squares, the form a restore control has everywhere:
-        // one box come back out of another.
-        CardAffordance::Maximize if restore => vec![strokes(
-            rect,
-            &[
-                vec![
-                    (cx - 6, cy - 2),
-                    (cx + 2, cy - 2),
-                    (cx + 2, cy + 6),
-                    (cx - 6, cy + 6),
-                    (cx - 6, cy - 2),
-                ],
-                vec![(cx - 2, cy - 6), (cx + 6, cy - 6), (cx + 6, cy + 2)],
-            ],
-            ink,
-            1,
-        )],
-        CardAffordance::Maximize => vec![strokes(
-            rect,
-            &[vec![
-                (cx - 5, cy - 5),
-                (cx + 5, cy - 5),
-                (cx + 5, cy + 5),
-                (cx - 5, cy + 5),
-                (cx - 5, cy - 5),
-            ]],
-            ink,
-            1,
-        )],
-        CardAffordance::Close => vec![close_mark(rect, ink)],
-    }
-}
+// ★ R1817 — `affordance_mark` moved to `card_header`, and R1697's lesson went
+// with it: `restore` is the maximise control's OTHER face, because a control
+// that toggles without changing its mark tells a person the same thing in both
+// states. A lesson left behind when its code moves is a lesson nobody re-reads.
 
 /// A framed pane, split once across and once down: a list of messages beside
 /// what one of them contains.
@@ -6357,74 +6294,41 @@ fn header_scene(card: &Card, rect: Rect, palette: Palette, maximized: bool) -> V
     // this tree's proof that a lift LEFT NO COPY rather than adding a second
     // one beside the first.
     let id = card.id().as_str();
-    let colour = kind_color(kind_of(id));
-    let grip = grip_rect(rect);
-    let mut out = vec![Scene::Container(
-        ContainerNode::new(
-            (0..3)
-                .flat_map(|r| (0..2).map(move |c| dot(4 + c * 5, 8 + r * 5, 2, palette.muted)))
-                .collect(),
-        )
-        .with_tag(format!("card.{id}.grip"))
-        .with_layout(absolute(grip)),
-    )];
-    out.push(dot(
-        grip.x + grip.w + 4,
-        rect.y + CARD_HDR / 2 - 4,
-        9,
-        colour,
-    ));
-    // ★★ R1672 — the header GIVES WAY in a stated order, and a part that does
-    // not fit is **not painted** rather than clamped.
+    // ★★★★★ R1817 — the whole header is the framework's now, skin included.
     //
-    // It used to be one expression — a title width with `.max(40)` on the end —
-    // and everything after it was measured from that clamped number, so a card
-    // shrunk to one board cell (75px) painted its title 11px past its own
-    // frame, its ready dot 21px past, the word `LIVE` **65px** past, and two
-    // affordance slots off its left edge. Twenty-five marks in a state the
-    // sweep already ran, and nothing could see them: the same shape R1668 named
-    // — one fact, two clamps, and the second one arrives too late to be told.
+    // R1816 lifted the arithmetic and left the glyphs here, on the reasoning
+    // that they had been chosen once. That deferral was wrong under this work's
+    // standing instruction — the framework builds the capability whether or not
+    // a second consumer exists, and the deliverable is a crate — and it left
+    // the census row saying `app` while the framework already owned everything
+    // hard about the thing.
     //
-    // The order below is the judgement, and it is the one a toolbar makes:
-    //
-    // 1. the grip and the kind dot are the card's identity and never give way;
-    // 2. the affordance strip keeps as many slots as fit, dropping from the
-    //    LEFT so the last-declared stays nearest the edge a hand reaches for;
-    // 3. the ready badge goes before the title does;
-    // 4. the title takes what is left, and elides inside it.
+    // What this function keeps is what is genuinely THIS SCREEN'S: which card
+    // it is, what its kind colour means, and the words. The give-way order, the
+    // rectangles and the marks are `card_header`'s, and `Hit::at` asks the same
+    // module where a slot is — so what is drawn is what is pressed without
+    // either side holding a second copy.
     let offered = card.chrome().offered();
-    // ★★★★★ R1816 — the give-way arbitration is the framework's now. The rules
-    // are unchanged and so are the numbers; what changed is that a second
-    // consumer gets them without copying, and that the property "no part is
-    // placed outside the band" is asserted over EVERY width by the crate
-    // instead of being true here by inspection.
-    let laid = card_header::lay_out(rect, offered.len(), card.state().is_ready(), CARD_METRICS);
-    if let Some(title) = laid.title() {
-        out.push(label(card.title(), title, FONT_BODY, palette.ink));
-    }
-    if let Some(badge) = laid.badge() {
-        out.push(dot(badge.x, badge.y, 6, palette.accent_fg));
-        out.push(label(
-            "LIVE",
-            Rect::new(badge.x + 10, rect.y + 10, 40, 14),
-            FONT_TINY,
-            palette.accent_fg,
-        ));
-    }
-    for (n, slot) in laid.slots().iter().copied() {
-        let affordance = offered[n];
-        out.push(Scene::Container(
-            ContainerNode::new(affordance_mark(
-                affordance,
-                local(slot),
-                palette.muted,
-                maximized,
-            ))
-            .with_tag(format!("card.{id}.{}", affordance.wire()))
-            .with_layout(absolute(slot)),
-        ));
-    }
-    out
+    card_header::header_scene(
+        &format!("card.{id}"),
+        rect,
+        &card_header::HeaderSpec {
+            offered: &offered,
+            ready: card.state().is_ready(),
+            restore: maximized,
+            title: card.title(),
+            badge: "LIVE",
+            title_px: FONT_BODY,
+            badge_px: FONT_TINY,
+            ink: card_header::HeaderInk {
+                title: palette.ink,
+                muted: palette.muted,
+                accent: palette.accent_fg,
+                kind: kind_color(kind_of(id)),
+            },
+        },
+        CARD_METRICS,
+    )
 }
 
 /// What a card's body paints: its content, or — for **every** not-ready
