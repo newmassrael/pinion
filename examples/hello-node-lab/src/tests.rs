@@ -149,6 +149,260 @@ fn r1725_the_rail_is_drawn_only_where_this_screen_is_the_one_providing_it() {
     });
 }
 
+/// ★★★★★ R1822 — **the application bar is drawn only where this screen is the
+/// one providing it**, and every rectangle above it follows from that one fact.
+///
+/// The rail's twin, 97 rounds later. Written the same way and for the same
+/// reason: the direction that must NOT change is the standalone one, because
+/// every rectangle assertion in `painted.rs` is written against a screen that
+/// draws its own bar, and a guard with the sense backwards would take the bar
+/// away from the binding that still runs as its own window.
+#[test]
+fn r1822_the_app_bar_is_drawn_only_where_this_screen_is_the_one_providing_it() {
+    use pinion_core::chrome::{HostChrome, Part, with_host_chrome};
+
+    let owner = Owner::new();
+    owner.run(|| {
+        assert!(super::draws_own_app_bar(), "nothing provides one");
+        assert_eq!(super::app_bar_h(), super::APP_BAR_H);
+        assert_eq!(
+            super::toolbar_rect().y,
+            super::APP_BAR_H,
+            "the toolbar starts under the bar it drew"
+        );
+
+        with_host_chrome(HostChrome::NONE.with(Part::ApplicationBar), || {
+            assert!(!super::draws_own_app_bar());
+            assert_eq!(super::app_bar_h(), 0, "no height is reserved for it");
+            assert_eq!(
+                super::toolbar_rect().y,
+                0,
+                "and the room is USED -- the toolbar moves to the page's own top \
+                 edge rather than leaving a blank strip where a bar was"
+            );
+            assert_eq!(
+                super::rail_rect().y,
+                0,
+                "the rail starts at the top too, so the two panes cannot \
+                 disagree about where this page begins"
+            );
+        });
+
+        // …and the declaration does not leak back out.
+        assert!(super::draws_own_app_bar());
+        assert_eq!(super::toolbar_rect().y, super::APP_BAR_H);
+    });
+}
+
+/// ★★★★★ R1822 — **the app bar's pane is not IN the scene where the host draws
+/// one**, which is the round's headline mechanism and had no gate until a
+/// counterfactual said so.
+///
+/// 🟥🟥🟥 This test exists because CF-1 **PASSED**: the app-bar pane was built
+/// unconditionally again and the whole suite stayed green. Three tests asserted
+/// the things that FOLLOW from the bar being absent — its reserved height, its
+/// accessibility landmark, the silence that defers to it — and not one asserted
+/// the bar itself. Each derived assertion is satisfiable while the pane is
+/// still painted, so the mechanism the debt is about was the one thing nothing
+/// checked.
+///
+/// ⇒ ★★★★★ assert the MECHANISM, not only what it implies. The implications
+/// were the easy assertions to write, which is exactly why they were the ones
+/// that got written.
+///
+/// R1725's paragraph is the standard this holds the pane to: *not painted-and-
+/// hidden and not zero-height — the node must not exist*, because that is the
+/// only form of the claim a reader cannot trip over.
+#[test]
+fn r1822_the_app_bars_pane_is_absent_from_the_scene_the_host_draws_one_in() {
+    use pinion_core::chrome::{HostChrome, Part, with_host_chrome};
+    use pinion_core::voice::voice_census;
+
+    fn tags() -> Vec<String> {
+        use pinion_core::widgets::text_field::TextFieldState;
+        let scene = super::view((TextFieldState::Idle, 0), pinion_core::Frame::default());
+        voice_census(
+            &scene,
+            &std::collections::BTreeMap::new(),
+            &std::collections::BTreeSet::new(),
+        )
+        .nodes
+        .into_iter()
+        .map(|n| n.tag)
+        .collect()
+    }
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let standalone = tags();
+        assert!(
+            standalone.iter().any(|t| t == "lab.appbar"),
+            "★ the screen that owns its window still paints its own bar"
+        );
+
+        with_host_chrome(HostChrome::NONE.with(Part::ApplicationBar), || {
+            let mounted = tags();
+            assert!(
+                !mounted.iter().any(|t| t.starts_with("lab.appbar")),
+                "★★★★★ and where the host draws one, NO node of it is in the \
+                 scene -- not the bar, not the graph label inside it, not the \
+                 run-state label. Absent, not hidden and not zero-height: {:?}",
+                mounted
+                    .iter()
+                    .filter(|t| t.starts_with("lab.appbar"))
+                    .collect::<Vec<_>>()
+            );
+            assert!(
+                mounted.iter().any(|t| t == "lab.toolbar.title"),
+                "★ and the page it leaves behind is still the node lab"
+            );
+        });
+    });
+}
+
+/// ★★★★★ R1822 — **the height floor drops BOTH strips the host provides, not
+/// just the one this round is named after.**
+///
+/// The floor is a `max` of two terms — what the content needs, and what the
+/// rail's seats need — and standalone the **rail's wins**. So a page mounted
+/// where the host draws the navigation AND the application bar needs neither
+/// term's chrome, and the answer is the content term with no bar in it.
+///
+/// 🟥 This round's draft subtracted `APP_BAR_H` flat, the way the width axis
+/// subtracts `RAIL_W`, and was wrong by exactly the amount the rail term exceeds
+/// the content term — charging a mounted page for rail seats that are not on it.
+/// The width has no `max` in it, which is why copying the width's form did not
+/// survive being measured.
+///
+/// ⚠ **The figures that used to be in this paragraph were wrong**, and the
+/// closing audit caught them by running the code rather than re-reading it: it
+/// said *368 over 360* and *8 pixels*, which is the rail floor of a SEVEN-seat
+/// rail — the count R1773 found drifted and restored to eight. The assertions
+/// below therefore state the relation and print the amount, so no reader has to
+/// trust a number in prose again.
+#[test]
+fn r1822_the_height_floor_drops_every_strip_the_host_provides() {
+    use pinion_core::chrome::{HostChrome, Part, with_host_chrome};
+
+    let owner = Owner::new();
+    owner.run(|| {
+        assert_eq!(
+            super::layout_min_h(),
+            super::MIN_H,
+            "★ standalone the derivation and the window policy are one number"
+        );
+        assert_eq!(
+            super::comfortable_size().1,
+            super::MIN_H,
+            "★ so nothing is subtracted from the screen that owns its window"
+        );
+        // ★★★★★ The premise the rest of this test rests on, asserted rather
+        // than written into a comment: standalone it is the RAIL term that wins
+        // the `max`. A round that read this off prose got the arithmetic of a
+        // seven-seat rail and published it three times.
+        let content = super::APP_BAR_H + super::TOOLBAR_H + super::CANVAS_FLOOR;
+        assert!(
+            super::MIN_H > content,
+            "★ the rail term wins standalone: MIN_H {} against a content floor \
+             of {content}",
+            super::MIN_H
+        );
+
+        let host = HostChrome::NONE
+            .with(Part::Navigation)
+            .with(Part::ApplicationBar);
+        with_host_chrome(host, || {
+            assert_eq!(
+                super::layout_min_h(),
+                super::TOOLBAR_H + super::CANVAS_FLOOR,
+                "★★★★★ mounted, neither strip is this page's, so the floor is \
+                 what the CONTENT needs and nothing else -- not the rail term \
+                 with a bar's height taken off it"
+            );
+            let flat = super::MIN_H - super::APP_BAR_H;
+            assert!(
+                super::comfortable_size().1 < flat,
+                "★★★★★ and it is strictly LOWER than a flat subtraction of the \
+                 bar would give -- {flat} against {}, the {} pixels the draft \
+                 got wrong, which is exactly what the rail term exceeds the \
+                 content term by",
+                super::comfortable_size().1,
+                flat - super::comfortable_size().1
+            );
+        });
+    });
+}
+
+/// ★★★★★ R1822 — **the graph's name is announced by exactly one stop, in both
+/// configurations**, which is the half of this round a rectangle cannot show.
+///
+/// `lab.toolbar.title` is silenced `name_of("lab.appbar")`: a silence is a
+/// REFERENCE to the node that does say the word. Where the host draws the
+/// application bar this screen draws none — so left alone, that reference
+/// points at a node that is not in the tree and the graph's name is announced
+/// by NOBODY, while still being painted.
+///
+/// ⚠ This is the failure mode the round had to go looking for. It is invisible
+/// to every pixel assertion, invisible to the layout, and the naive repair —
+/// delete the pane — produces it silently.
+#[test]
+fn r1822_the_graphs_name_is_announced_by_one_stop_in_both_configurations() {
+    use pinion_core::chrome::{HostChrome, Part, with_host_chrome};
+
+    use pinion_core::voice::voice_census;
+
+    /// Whether `lab.toolbar.title` declares a silence, read off the scene the
+    /// screen actually builds rather than off the call that makes it.
+    fn title_is_quiet(state: &super::LabState) -> bool {
+        let theme = super::use_theme(super::THEME_TAG).theme_animated();
+        let scene = super::toolbar(state, super::ink(&theme));
+        voice_census(
+            &scene,
+            &std::collections::BTreeMap::new(),
+            &std::collections::BTreeSet::new(),
+        )
+        .nodes
+        .iter()
+        .find(|n| n.tag == "lab.toolbar.title")
+        .expect("the toolbar paints the graph's name")
+        .silence
+        .is_some()
+    }
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = state();
+
+        // Standalone the bar is the stop that says it, so the toolbar's copy
+        // defers to it and the tree holds the bar.
+        assert!(super::draws_own_app_bar());
+        assert!(
+            !super::appbar_access(&state).is_empty(),
+            "★ the bar it draws is a landmark a reader can reach"
+        );
+        assert!(
+            title_is_quiet(&state),
+            "★ and the toolbar's copy of the name defers to it"
+        );
+
+        with_host_chrome(HostChrome::NONE.with(Part::ApplicationBar), || {
+            assert!(
+                super::appbar_access(&state).is_empty(),
+                "★★★★★ where it draws no bar it offers no landmark for one -- \
+                 not an empty group, not a zero-height strip: absent, which is \
+                 the only form of that claim a reader cannot trip over"
+            );
+            assert!(
+                !title_is_quiet(&state),
+                "★★★★★ and the toolbar's copy STOPS deferring, because the node \
+                 it was deferring to is not in the tree. Left quiet, the graph's \
+                 name would be painted and announced by nobody -- which no \
+                 rectangle assertion and no layout check can see"
+            );
+        });
+    });
+}
+
 /// ★★★★★ R1716 — **a card told where it runs runs there, in the plan.**
 ///
 /// The screen shows the placement row, the row can be taken over, and the

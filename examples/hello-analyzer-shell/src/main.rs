@@ -875,11 +875,29 @@ fn screen_roster() -> ScreenRoster {
     // the rail this shell paints IS `spec::RAIL`, and a screen shown inside it
     // is in a place that already answers "where can I go".
     //
-    // Not `ApplicationBar`: this shell's bar carries the capture source, the
-    // capture state and the global search, and a mounted screen's own bar
-    // carries that screen's subject. Those are different sentences, and only
-    // the first is chrome a page should leave to its host.
-    .providing(HostChrome::NONE.with(ChromePart::Navigation))
+    // 🟥🟥🟥 ★★★★★ R1822 — **`ApplicationBar` too, and the sentence that used
+    // to stand here was wrong for 97 rounds while reading as settled.**
+    //
+    // It said: *not `ApplicationBar`: this shell's bar carries the capture
+    // source, the capture state and the global search, and a mounted screen's
+    // own bar carries that screen's subject. Those are different sentences.*
+    //
+    // The same round that wrote it had already measured the behaviour canon and
+    // recorded the opposite, in the debt file it opened: the canon has ONE bar,
+    // this one, identical on all three screens, and a graph's name and run
+    // state are **not in it** — they are on the canvas toolbar. Which is where
+    // the node lab already draws them. So the guest's bar was not carrying a
+    // different sentence; it was carrying the same one twice, in a strip 54
+    // pixels tall that the canon does not have.
+    //
+    // ⇒ ★★★★★ a design note that answers a NEARBY question closes the real one
+    // as surely as a wrong implementation, and reads like a reason while it
+    // does it. The measurement was in the tree the whole time.
+    .providing(
+        HostChrome::NONE
+            .with(ChromePart::Navigation)
+            .with(ChromePart::ApplicationBar),
+    )
 }
 
 impl ShellState {

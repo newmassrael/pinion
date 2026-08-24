@@ -1047,6 +1047,33 @@ impl Placement {
 ///    own runs*), because a box is never its own descendant's sibling.
 /// 3. A [`Bond::Declared`] pair is matched by TAG and skips both rules: the
 ///    scene already says the two belong together.
+/// 4. ★★★★★ **R1822 — a box painted AFTER the run is drawn OVER it, not around
+///    it.** A reader sees the later box; the run behind it is not visible at
+///    all, so calling that box "the box a reader sees around" the run is a
+///    statement about a reader who cannot see either of them.
+///
+/// # Rule 4, and why a rule about rectangles cannot have it
+///
+/// Measured at R1822 on the assembled application: a screen mounted where its
+/// host draws the application bar has 54 more pixels of room in its inspector,
+/// and an open roster's placement is derived from that room. On the resulting
+/// tree the roster covers the form row beneath it — and that row's own label,
+/// painted earlier and now invisible, had its centre inside the opaque popup and
+/// reached 2px past its bottom edge. Reported as an escape; a reader could not
+/// have seen it, because the popup is
+/// [`BoxStyle::filled`](pinion_core::style::BoxStyle).
+///
+/// Nothing in the geometry says which of two overlapping boxes is on top. The
+/// **tree** does, in the only way a painter's output ever says it: order. So
+/// this is a rule [`Survey`] can hold and [`escapes`] cannot, which is one more
+/// entry on the list of why a caller with a scene must arm this type.
+///
+/// ★ R1812 had already met this dropdown from the other side — two of its seven
+/// false positives were an open enum dropdown's own option label being read as a
+/// *box* — and rule 1 answered that one. The container the options sit in is the
+/// same overlay seen from outside, and rule 1 cannot reach it: it is a container
+/// and it paints no text of its own, so it is a box by every rule this module
+/// had. ⇒ **one overlay, two distinct pairing defects, ten rounds apart.**
 ///
 /// # What the floor does
 ///
@@ -1068,6 +1095,8 @@ struct Held {
     /// The nearest tagged ancestor — the named region this box lives in, which
     /// is what rule 2 compares.
     home: Option<String>,
+    /// Where it fell in the paint order — what rule 4 compares.
+    order: usize,
 }
 
 /// A text run, as [`Survey::of`] reads it.
@@ -1079,6 +1108,8 @@ struct Painted {
     declares: TextAlign,
     /// Its own tag, when it carries one — the half rule 3 reads.
     tag: Option<String>,
+    /// Where it fell in the paint order — what rule 4 compares.
+    order: usize,
 }
 
 impl Survey {
@@ -1088,7 +1119,12 @@ impl Survey {
     pub fn of(scene: &Scene) -> Self {
         let mut boxes: Vec<Held> = Vec::new();
         let mut runs: Vec<Painted> = Vec::new();
+        // ★ Rule 4's clock. Counted over every node the walk reaches rather than
+        // over the two output lists, so the two are indices into ONE order and
+        // can be compared at all.
+        let mut order = 0usize;
         scene.for_each_node(&mut |visit| {
+            order += 1;
             let Some(rect) = visit.absolute_rect() else {
                 // Clipped entirely away: painted nowhere, so not painted.
                 return;
@@ -1106,6 +1142,7 @@ impl Survey {
                     home,
                     declares: text.style.text_align,
                     tag: visit.node.tag().map(str::to_owned),
+                    order,
                 }),
                 // Rule 1: only a node that paints no text of its own is a box.
                 node => {
@@ -1114,6 +1151,7 @@ impl Survey {
                             tag: tag.to_owned(),
                             rect,
                             home,
+                            order,
                         });
                     }
                 }
@@ -1164,6 +1202,9 @@ impl Survey {
                     boxes
                         .iter()
                         .filter(|held| held.home == run.home)
+                        // Rule 4: and painted BEFORE this run, or it is over it
+                        // rather than around it.
+                        .filter(|held| held.order < run.order)
                         .map(|held| (&held.tag, held.rect)),
                     run.rect,
                 )
@@ -2256,6 +2297,79 @@ mod tests {
             "and it is honestly a guess: nothing in this scene declares the \
              relation, which is exactly what `inside` exists to fix"
         );
+    }
+
+    /// ★★★★★ R1822 — **a box painted over a run is not the box around it**, and
+    /// the same two rectangles in the other paint order still are.
+    ///
+    /// The measured case, reduced: an open roster is opaque and covers the form
+    /// row under it, so that row's label — painted earlier, invisible to a
+    /// reader — had its centre inside the popup and reached past its bottom
+    /// edge. Every rule this module had before rule 4 said *pair*, because
+    /// rectangles do not carry which one is on top.
+    ///
+    /// ★ The second half is the anti-vacuity one and is why this test builds the
+    /// scene twice: with the box FIRST the pair is found and the escape is
+    /// reported, so what rule 4 removed is exactly the ordering and not the
+    /// geometry, the scale, the region or anything else that could have made the
+    /// first half pass for a reason nobody checked.
+    #[test]
+    fn r1822_a_box_painted_over_a_run_is_not_the_box_around_it() {
+        let label = || {
+            Scene::Text(
+                TextNode::styled("connect.endpoints".to_owned(), Rect::default(), style())
+                    .with_tag("form.key".to_owned())
+                    .with_layout(
+                        LayoutStyle::new()
+                            .with_absolute_position(10, 104)
+                            .with_size(Size::px(97, 16)),
+                    ),
+            )
+        };
+        // Bottom edge 118, so the label's 104..120 reaches 2px past it — the
+        // measured overhang, kept rather than rounded.
+        let popup = || empty_box("form.roster", Rect::new(10, 40, 200, 78));
+        let scene = |children| {
+            laid_out(
+                region("form", Rect::new(0, 0, 300, 900), children),
+                (300, 900),
+            )
+        };
+
+        let over = Survey::of(&scene(vec![label(), popup()]));
+        assert!(
+            over.escaped().is_empty(),
+            "a reader sees the popup, not the label behind it: {:?}",
+            over.escaped()
+                .iter()
+                .map(|p| (p.text().to_owned(), p.box_tag().to_owned(), p.past()))
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            !over
+                .placements()
+                .iter()
+                .any(|p| p.box_tag() == "form.roster"),
+            "and it is not paired with it at all -- an overlay that adopted \
+             every run beneath it would go on to judge them"
+        );
+
+        // ★ The SAME rectangles, painted the other way round: now the box really
+        // is around the run, and the escape is real and reported.
+        let under = Survey::of(&scene(vec![popup(), label()]));
+        let escaped = under.escaped();
+        assert_eq!(
+            escaped.len(),
+            1,
+            "the geometry alone still escapes; only the order changed: {:?}",
+            under
+                .placements()
+                .iter()
+                .map(|p| (p.text().to_owned(), p.box_tag().to_owned(), p.past()))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(escaped[0].box_tag(), "form.roster");
+        assert_eq!(escaped[0].past(), (0, 0, 0, 2));
     }
 
     /// Two surveys fold into one population, so a walk over an application adds

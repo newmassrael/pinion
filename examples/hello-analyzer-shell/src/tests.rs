@@ -3626,7 +3626,17 @@ fn r1812_no_caption_in_the_application_escapes_or_breaks_its_claim() {
             escaped.len(),
             escaped
                 .iter()
-                .map(|p| format!("{:?} past {} by {:?}", p.text(), p.box_tag(), p.past()))
+                .map(|p| {
+                    format!(
+                        "{:?} past {} by {:?} -- run {:?} in holder {:?}, bond {:?}",
+                        p.text(),
+                        p.box_tag(),
+                        p.past(),
+                        p.run(),
+                        p.holder(),
+                        p.bond()
+                    )
+                })
                 .collect::<Vec<_>>()
         );
 

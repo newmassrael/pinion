@@ -199,6 +199,43 @@ fn draws_own_rail() -> bool {
     !pinion_core::chrome::host_chrome().provides(pinion_core::chrome::Part::Navigation)
 }
 
+/// ★★★★★ R1822 — **the app bar's twin of [`draws_own_rail`]**, and the reason
+/// it was 97 rounds late.
+///
+/// R1725 built the rail's half of this and wrote the general paragraph for it —
+/// *a page inside an application that already has one must not contribute a
+/// second one to the tree either, and the only way that is a property rather
+/// than a rule is for the node not to exist*. It then declined to declare
+/// [`Part::ApplicationBar`](pinion_core::chrome::Part::ApplicationBar) on the
+/// host, on the argument that a host's bar carries the application's subject
+/// and a page's bar carries the page's, so the two are different sentences.
+///
+/// 🟥 **That argument is plausible, reads as settled, and the same round's own
+/// measurement of the behaviour canon contradicts it.** The canon has ONE bar,
+/// the host's, on all three screens; a graph's name and run state are not in it
+/// and are drawn on the canvas toolbar instead. Which is where this screen
+/// already draws them: `lab.toolbar.title` is the same `GRAPH_NAME`, and
+/// `lab.toolbar.run.label` reads *running n/n*. So mounted, all three things
+/// this screen's bar carries are already on this screen somewhere else — the
+/// third being the words *node lab*, which restate an identity the host's bar
+/// and the rail's active seat both already give.
+///
+/// ⇒ the bar is not a different sentence mounted. It is the same sentence,
+/// twice, in a strip 54 pixels tall that the canon does not have.
+fn draws_own_app_bar() -> bool {
+    !pinion_core::chrome::host_chrome().provides(pinion_core::chrome::Part::ApplicationBar)
+}
+
+/// The app bar's height where it is being drawn — zero where the host draws it.
+///
+/// [`APP_BAR_H`] stays a constant for the same reason [`RAIL_W`] does: it is
+/// also a *window policy* number, and [`MIN_H`] and [`floor_height`] are what
+/// this screen asks an operating system for when it owns a window. Only the
+/// layout reads this.
+fn app_bar_h() -> u32 {
+    if draws_own_app_bar() { APP_BAR_H } else { 0 }
+}
+
 const PALETTE_W: u32 = spec::PANES[1].width;
 const INSP_W: u32 = spec::PANES[3].width;
 const APP_BAR_H: u32 = spec::APP_BAR_H;
@@ -338,7 +375,7 @@ const TOOLBAR_RIGHT_FLOOR: u32 = RUN_INSET + RUN_W + CLUSTER_GAP + OVERFLOW_W + 
 /// run: at the old floor the zoom readout was not painted at all, because
 /// `right - 300` had gone past the pane's own left edge. A declared minimum the
 /// screen cannot actually paint is a claim nobody was checking.
-const MIN_W: u32 = RAIL_W + PALETTE_W + (TOOLBAR_RIGHT_FLOOR + TOOLBAR_LEFT_CLUSTER) + INSP_W;
+const MIN_W: u32 = floor_width(RAIL_W);
 
 /// ★ R1656 — the toolbar's LEFT half: the graph title, the node/link counts and
 /// the launch-gate chip, which is placed after them. Named for the same reason
@@ -361,34 +398,74 @@ const CANVAS_FLOOR: u32 = 260;
 /// same derivation the width already used. A floor set by content nobody could
 /// scroll to is a window a person cannot make small, and it was 420 pixels of
 /// it ([[debt-the-node-lab-panes-do-not-scroll]]).
-const MIN_H: u32 = if RAIL_FLOOR > APP_BAR_H + TOOLBAR_H + CANVAS_FLOOR {
-    RAIL_FLOOR
-} else {
-    APP_BAR_H + TOOLBAR_H + CANVAS_FLOOR
-};
+const MIN_H: u32 = floor_height(APP_BAR_H, true);
 
-/// ★★★★★ R1773 — the height the RAIL needs, derived from the roster rather
-/// than asserted.
+/// ★★★★★ R1822 — **the height floor as ONE expression, evaluated twice.**
 ///
-/// R1656 already made the floor's WIDTH a derivation of what the toolbar's
-/// clusters need, on the ground that "a declared minimum the screen cannot
-/// actually paint is a claim nobody was checking". The height had no such term,
-/// and the reason it never showed is that this screen's rail had DRIFTED to
-/// seven seats while the reference states eight — measured R1773. `spec::PANES`
-/// justified giving the rail no scrollable body with *the rail's content is the
-/// specification's own list and cannot outgrow the pane*, and that sentence was
-/// true only of the shorter list.
+/// [`MIN_H`] is the standalone answer and a `const`, because [`SHRINK`] is a
+/// const and the window policy must stay one. [`layout_min_h`] is the same
+/// expression for the configuration this page is actually in. They are not two
+/// spellings that have to be kept in step — they are one function, and the
+/// arguments are the two facts a host can change.
 ///
-/// So the eighth seat overflowed the moment it was restored: at the old floor
-/// the `settings` seat hung 37 pixels below the pane that owns it. Derived here
-/// rather than bumped, so a ninth seat moves the floor by itself — the same
-/// posture `MIN_W`, `INSP_HEAD_H` and `CANVAS_FLOOR` already take.
+/// 🟥 **The draft of this round subtracted [`APP_BAR_H`] flat and was wrong**,
+/// which is what made this necessary rather than tidy. Measured: the rail term
+/// exceeds the content term, so [`MIN_H`] is the RAIL branch — and mounted, this
+/// screen draws no rail EITHER, so the rail branch does not apply at all. A flat
+/// subtraction charges a page for seats that are not on it, by exactly the
+/// amount the rail term wins by. ⇒ ★★★★★ a derivation that reads one of two
+/// facts is the same defect as a number with two readers, wearing the other hat.
 ///
-/// ⚠ It is a floor for CHROME, which is why it belongs here and not behind the
-/// scrolling R1662 gave the other panes: the rail is how a reader reaches every
-/// other section, and a destination you must scroll a chrome strip to find is
-/// a destination the screen has hidden.
-const RAIL_FLOOR: u32 = APP_BAR_H + RAIL_SEAT_TOP + RAIL_SEAT_PITCH * SEATS + RAIL_SEAT_TOP;
+/// ⚠ **This paragraph carried the wrong figures until the closing audit ran the
+/// code.** It said the rail floor is 368 against 360 and the error is 8 pixels;
+/// 368 is a SEVEN-seat rail, the count R1773 measured as drifted and restored to
+/// eight. The relation was right and every figure derived from it was wrong, in
+/// four files at once. The numbers are gone rather than restated — the test
+/// `r1822_the_height_floor_drops_every_strip_the_host_provides` asserts the
+/// relation and prints the amount.
+const fn floor_height(app_bar: u32, own_rail: bool) -> u32 {
+    let content = app_bar + TOOLBAR_H + CANVAS_FLOOR;
+    // ★★★★★ R1773's rail floor, which was a `RAIL_FLOOR` constant beside this
+    // until R1822 folded it in — the expression is unchanged and everything
+    // that round argued still holds. It is derived from the roster rather than
+    // asserted, so a ninth seat moves the floor by itself: R1773 measured the
+    // rail having DRIFTED to seven seats while the reference states eight, and
+    // the eighth overflowed by 37 pixels the moment it was restored, because
+    // `spec::PANES` had justified giving the rail no scrollable body with *the
+    // rail's content is the specification's own list and cannot outgrow the
+    // pane* — true only of the shorter list.
+    //
+    // ⚠ It is a floor for CHROME, which is why the rail gets one at all where
+    // R1662's other panes just scroll: the rail is how a reader reaches every
+    // other section, and a destination you must scroll a chrome strip to find
+    // is a destination the screen has hidden.
+    //
+    // ★ R1822 makes it CONDITIONAL. Where a host draws the navigation there are
+    // no seats on this page to fit, so charging for them declines pages for
+    // nothing — and this is the arm the flat subtraction kept anyway.
+    //
+    // ⚠ No figure here on purpose: this line carried one until R1822.1's
+    // self-grep, which found it still naming the draft's wrong amount three
+    // paragraphs under the docstring that says the numbers are gone. The
+    // amount is whatever this arm exceeds `content` by, and
+    // `r1822_the_height_floor_drops_every_strip_the_host_provides` prints it.
+    let rail = if own_rail {
+        app_bar + RAIL_SEAT_TOP + RAIL_SEAT_PITCH * SEATS + RAIL_SEAT_TOP
+    } else {
+        0
+    };
+    if rail > content { rail } else { content }
+}
+
+/// The height floor for the configuration this page is in — the height half of
+/// [`comfortable_size`], which is its caller.
+///
+/// ★ Named rather than inlined so a test can state the property against
+/// [`MIN_H`] on its own axis: the pair returns a tuple, and an assertion that
+/// has to index one out of it says less about which half it is about.
+fn layout_min_h() -> u32 {
+    floor_height(app_bar_h(), draws_own_rail())
+}
 
 /// How many seats the rail draws — the specification's own count.
 #[allow(
@@ -490,9 +567,21 @@ const WIDEST_CARD: u32 = {
 /// why declaring one here would not compile.
 ///
 /// The HEIGHT axis still concedes nothing, and that stays a decision rather
-/// than an oversight: [`MIN_H`] is 360, which is below every display this
-/// screen opens on, so a height band would buy a reader nothing measurable.
-/// The width was the axis R1689 wrote a real loss against.
+/// than an oversight: [`MIN_H`] is far below every display this screen opens
+/// on, so a height band would buy a reader nothing measurable. The width was
+/// the axis R1689 wrote a real loss against.
+///
+/// ⚠ **That sentence used to say "`MIN_H` is 360".** It is not: the floor is a
+/// `max` and the RAIL's term wins, which is the very fact this round needed and
+/// which the number here would have denied. No figure replaces it — the argument
+/// is *far below any display*, and the figure never carried it. Read
+/// [`floor_height`], and `r1822_the_height_floor_drops_every_strip_the_host_provides`
+/// for the assertion that keeps the relation honest.
+///
+/// 🟥 R1822 first replaced 360 with **368**, which is also wrong: that is a
+/// seven-seat rail's floor, and the rail has had eight seats since R1773. ⇒
+/// ★★★★★ correcting a rotted number by writing another number is the same act
+/// that rotted the first one.
 const SHRINK: ShrinkPolicy = ShrinkPolicy::panning((MIN_W, MIN_H), (FLOOR_W, MIN_H));
 
 /// ★ R1770 — the size this screen declares it lays out at, for a reader inside
@@ -503,13 +592,30 @@ const SHRINK: ShrinkPolicy = ShrinkPolicy::panning((MIN_W, MIN_H), (FLOOR_W, MIN
 /// frame narrower than this is a verdict about a slice, and the module that
 /// says so must read the declared number rather than restate it. See
 /// `judge::built` for the measurement that made this necessary.
+///
+/// ★★★★★ R1822 — **it is the floor EVALUATED for this configuration, not the
+/// policy with a subtraction applied.** R1821 introduced the subtraction, and
+/// one round later the second axis proved the idiom wrong: the height floor is
+/// a `max` of two terms, so "policy minus the strip the host draws" quietly
+/// over-charged by whatever the winning term exceeds the other by. See
+/// [`floor_height`] for the measurement and the test that prints the amount.
+///
+/// A subtraction has to know what the whole was made of; a derivation just
+/// answers for the arguments it is given. So both axes are now one expression
+/// each — [`floor_width`] and [`floor_height`] — called once with what this
+/// screen draws and once, as [`MIN_W`] and [`MIN_H`], with what it draws when
+/// it owns the window. Standalone the two calls are the same call, which is why
+/// nothing standalone moves.
 pub(crate) fn comfortable_size() -> (u32, u32) {
-    let (width, height) = SHRINK.comfortable();
-    (width - host_provided_width(), height)
+    (floor_width(rail_w()), layout_min_h())
 }
 
-/// ★★★★★ R1821 — **the width of the chrome the host draws in this screen's
-/// place**, and the reason [`comfortable_size`] stopped being a constant.
+/// ★★★★★ **The width floor for a page whose rail is `rail` wide** — the width
+/// half of [`comfortable_size`], and [`MIN_W`] when it is given the rail this
+/// screen draws when it owns the window.
+///
+/// R1821's finding is what it exists for, and is why [`comfortable_size`]
+/// stopped being a constant.
 ///
 /// [`SHRINK`]'s comfortable width is a *window policy* number: what this screen
 /// asks an operating system for when it owns a window, which R1725 argued must
@@ -525,17 +631,27 @@ pub(crate) fn comfortable_size() -> (u32, u32) {
 /// which is this tree's most-recorded defect class, and the half that was wrong
 /// is the half that reads a grant rather than asks for a window.
 ///
-/// ★ Derived from [`rail_w`], not from [`draws_own_rail`] directly. R1725 named
+/// ★ The argument is [`rail_w`]'s answer, not [`draws_own_rail`]. R1725 named
 /// the rail's five readers and put the question in one place; a sixth reader of
-/// that predicate would be the very thing it exists to prevent, so this reads
-/// the *width* the layout actually uses and subtracts what is left over.
+/// that predicate would be the very thing it exists to prevent, so the caller
+/// passes the *width* the layout actually uses.
 ///
-/// ★ Standalone this is **zero** — `host_chrome()` is `NONE`, `rail_w()`
-/// answers [`RAIL_W`], and `comfortable_size()` is `MIN_W` exactly as before.
-/// The screen that owns its window is unaffected by construction rather than by
-/// a branch, which is why no standalone assertion needed editing.
-fn host_provided_width() -> u32 {
-    RAIL_W - rail_w()
+/// ★ Standalone the two calls are **the same call** — `host_chrome()` is `NONE`,
+/// `rail_w()` answers [`RAIL_W`], so `comfortable_size()` is `floor_width(RAIL_W)`
+/// which is [`MIN_W`], exactly as before. The screen that owns its window is
+/// unaffected by construction rather than by a branch, which is why no
+/// standalone assertion needed editing.
+///
+/// ⚠ **R1821 wrote this as a SUBTRACTION** — `host_provided_width()` returning
+/// `RAIL_W - rail_w()`, which the paragraphs above were written about — and
+/// R1822 replaced it with this derivation. Those paragraphs are still why a
+/// mounted screen stopped being charged for the rail. What changed is the FORM:
+/// on the height axis the same subtraction charged a mounted page for rail seats
+/// that are not on it, because that floor is a `max` and the term that wins
+/// standalone is the one that does not apply mounted. A subtraction has to know
+/// what the whole was made of; a derivation only answers for its arguments.
+const fn floor_width(rail: u32) -> u32 {
+    rail + PALETTE_W + (TOOLBAR_RIGHT_FLOOR + TOOLBAR_LEFT_CLUSTER) + INSP_W
 }
 
 /// Where the palette opens: the arrangement the hand-written layout drew.
@@ -600,7 +716,7 @@ fn side_panel_rect(at: EdgePlacement, before: u32) -> Rect {
         ChromeEdge::Left => rail_w() + before,
         _ => w.saturating_sub(before + t),
     };
-    Rect::new(x, APP_BAR_H, t, h - APP_BAR_H)
+    Rect::new(x, app_bar_h(), t, h - app_bar_h())
 }
 
 fn canvas_rect() -> Rect {
@@ -608,9 +724,9 @@ fn canvas_rect() -> Rect {
     let (left, right) = side_bands();
     Rect::new(
         rail_w() + left,
-        APP_BAR_H + TOOLBAR_H,
+        app_bar_h() + TOOLBAR_H,
         w - rail_w() - left - right,
-        h - APP_BAR_H - TOOLBAR_H,
+        h - app_bar_h() - TOOLBAR_H,
     )
 }
 
@@ -629,14 +745,14 @@ fn inspector_rect() -> Rect {
 }
 
 fn rail_rect() -> Rect {
-    Rect::new(0, APP_BAR_H, rail_w(), window_size().1 - APP_BAR_H)
+    Rect::new(0, app_bar_h(), rail_w(), window_size().1 - app_bar_h())
 }
 
 fn toolbar_rect() -> Rect {
     let (w, _) = window_size();
     Rect::new(
         rail_w() + PALETTE_W,
-        APP_BAR_H,
+        app_bar_h(),
         w - rail_w() - PALETTE_W - INSP_W,
         TOOLBAR_H,
     )
@@ -3727,7 +3843,7 @@ fn link_into_pin(state: &LabState, node: NodeId, at: (i64, i64)) -> Option<LinkI
 
 /// Where the first seat sits below the app bar, and the gap between seats.
 ///
-/// ★ R1773 — named because [`RAIL_FLOOR`] derives the screen's minimum height
+/// ★ R1773 — named because [`floor_height`] derives the screen's minimum height
 /// from them. They were literals inside `rail_seat`, which is why no floor
 /// could account for the rail: the numbers existed in one expression and
 /// nothing else could read them.
@@ -3737,7 +3853,7 @@ const RAIL_SEAT_PITCH: u32 = 42;
 fn rail_seat(n: usize) -> Rect {
     Rect::new(
         8,
-        APP_BAR_H + RAIL_SEAT_TOP + u32::try_from(n).unwrap_or(0) * RAIL_SEAT_PITCH,
+        app_bar_h() + RAIL_SEAT_TOP + u32::try_from(n).unwrap_or(0) * RAIL_SEAT_PITCH,
         38,
         38,
     )
@@ -3750,7 +3866,7 @@ fn palette_row(n: usize) -> Rect {
     let within = n % 4;
     Rect::new(
         rail_w() + PAD,
-        APP_BAR_H
+        app_bar_h()
             + 56
             + group * (PAL_HEAD_H + 4 * PAL_ROW_H + 12)
             + PAL_HEAD_H
@@ -3762,7 +3878,7 @@ fn palette_row(n: usize) -> Rect {
 
 /// Where the pin legend starts — under both palette groups.
 fn legend_top() -> u32 {
-    APP_BAR_H + 56 + 2 * (PAL_HEAD_H + 4 * PAL_ROW_H + 12)
+    app_bar_h() + 56 + 2 * (PAL_HEAD_H + 4 * PAL_ROW_H + 12)
 }
 
 fn legend_row(n: usize) -> Rect {
@@ -5516,6 +5632,24 @@ fn quiet(scene: Scene, silence: Silence) -> Scene {
     scene.silenced(silence)
 }
 
+/// ★★★★★ R1822 — **quiet only while the node that says the word is there.**
+///
+/// A [`Silence::name_of`] is a REFERENCE: it says *the thing that announces
+/// this is over there*. Where "over there" is a pane this screen only draws
+/// when the host draws none, the reference is conditional too — and a silence
+/// whose referent left the tree is worse than no silence, because the label is
+/// still painted and now nothing announces it at all.
+///
+/// Reads the same [`draws_own_app_bar`] the paint and the layout do, so the
+/// three cannot disagree about whether the bar exists.
+fn quiet_while_the_app_bar_says_it(scene: Scene, silence: Silence) -> Scene {
+    if draws_own_app_bar() {
+        scene.silenced(silence)
+    } else {
+        scene
+    }
+}
+
 fn box_at(tag: &str, rect: Rect, fill: Color, border: Option<Color>, radius: u32) -> Scene {
     box_holding(tag, rect, fill, border, radius, Vec::new())
 }
@@ -6099,7 +6233,7 @@ fn toolbar(state: &LabState, ink: Ink) -> Scene {
     // and a count. ★ R1688 — from the same three functions the hit test and the
     // width gate read, rather than written out here.
     let mut children = vec![
-        quiet(
+        quiet_while_the_app_bar_says_it(
             tagged_label(
                 "lab.toolbar.title",
                 spec::GRAPH_NAME,
@@ -6110,6 +6244,17 @@ fn toolbar(state: &LabState, ink: Ink) -> Scene {
             // The graph's name, painted twice on this screen. The application
             // bar is where a reader is told it; a second stop saying the same
             // word is a second stop saying nothing.
+            //
+            // ★★★★★ R1822 — **which stops being true the moment the bar is not
+            // there.** A silence is a reference to the node that DOES say the
+            // word, so where the host draws the application bar and this screen
+            // draws none, this silence points at a node that is not in the tree
+            // and the graph's name is announced by nobody. Mounted, this label
+            // IS the stop that says it, so it is not quiet at all.
+            //
+            // ⇒ the same predicate the paint and the layout read. A screen that
+            // decided this separately would be the two-readers defect R1821
+            // measured, in the one layer where nobody looks at the pixels.
             Silence::name_of("lab.appbar"),
         ),
         tagged_label(
@@ -7945,7 +8090,17 @@ fn view(field: (TextFieldState, u32), _frame: Frame) -> Scene {
     // application that already has a navigation must not contribute a second
     // one to the tree either, and the only way that is a property rather than a
     // rule is for the node not to exist.
-    let mut panes = vec![app_bar(&state, ink)];
+    // ★★★★★ R1822 — and the same for the application bar, which is the pane
+    // that paragraph was written next to and did not cover. Mounted, every one
+    // of the three things this bar carries is already on this screen: the
+    // graph's name is `lab.toolbar.title`, the run state is the run seat's own
+    // caption, and the words *node lab* restate what the host's bar and the
+    // rail's active seat both say. Not a different sentence — the same one,
+    // twice, in a strip the canon does not have.
+    let mut panes = vec![];
+    if draws_own_app_bar() {
+        panes.push(app_bar(&state, ink));
+    }
     if draws_own_rail() {
         panes.push(rail(ink));
     }
@@ -12323,6 +12478,12 @@ impl WidgetA11y for NodeLabView {
 /// name: it changes without anybody moving focus, which is the one case where a
 /// reader has to be told rather than asked to go and look.
 fn appbar_access(state: &LabState) -> Vec<AccessNode> {
+    // ★★★★★ R1822 — empty where this screen draws no bar. The paint, the
+    // layout, the silence above and this tree all read one predicate, so a
+    // reader cannot be offered a landmark for a strip that is not on screen.
+    if !draws_own_app_bar() {
+        return vec![];
+    }
     let running = state.running.get();
     vec![
         AccessNode::new("lab.appbar", AriaRole::Group)
@@ -12829,13 +12990,19 @@ impl WidgetView for NodeLabView {
     /// so this binding has nowhere to write a second minimum.
     ///
     /// ⚠ **R1821 — "the same value" needs one more word now.** `window_size`
-    /// clamps against [`comfortable_size`], which is `SHRINK`'s comfortable
-    /// width *less whatever chrome the host draws in this screen's place*. The
-    /// two are equal wherever this binding applies, because a screen with a
-    /// window of its own has no host and subtracts nothing — so the sentence
-    /// above is still true HERE, and would stop being true if it were read as a
-    /// claim about the mounted screen. Which is the point: this binding is the
-    /// window's, and a mounted page has no window to floor.
+    /// clamps against `comfortable_size`, which is the floor evaluated for the
+    /// chrome this screen is actually drawing rather than for the chrome the
+    /// window policy assumes. The two are equal wherever this binding applies,
+    /// because a screen with a window of its own draws all of its own chrome and
+    /// the two calls are the same call — so the sentence above is still true
+    /// HERE, and would stop being true if it were read as a claim about the
+    /// mounted screen. Which is the point: this binding is the window's, and a
+    /// mounted page has no window to floor.
+    ///
+    /// ⚠ R1821 wrote that as *`SHRINK`'s comfortable width less whatever chrome
+    /// the host draws*, and R1822 removed the subtraction it described — one
+    /// round later, because the same form on the height axis over-charged a
+    /// mounted page for rail seats it does not have.
     ///
     /// ★★★★★ R1714 — and what the window does below that floor is no longer to
     /// clip. `SHRINK` declares a PAN, so the framework wraps this screen in a
