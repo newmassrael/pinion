@@ -214,6 +214,7 @@ def survey(folder: pathlib.Path) -> list[dict]:
                 "public_name": meta.get("public_name", "") or path.stem,
                 "why": why,
                 "blocked_by": meta.get("blocked_by", ""),
+                "blocked_because": meta.get("blocked_because", ""),
                 "priority": meta.get("priority", ""),
             }
         )
@@ -235,6 +236,109 @@ def check_standings(rows: list[dict]) -> list[str]:
                 f"{row['name']}: `blocked_by: {word}` is not one of "
                 + ", ".join(sorted(STANDINGS))
             )
+    return out
+
+
+#: The three forms a `blocked_because` citation may take, each answerable by
+#: something other than the debt that wrote it.
+#:
+#: ★★★★★ R1810 — a standing without a citation is the census's `have` without a
+#: `proven_by`, one field over: R1809 built the vocabulary and checked that a
+#: word was IN it, and never that the word was the right one. This is the half
+#: that makes a standing answerable.
+#:
+#: ⚠ Demanded of the BLOCKED standings only, and that scoping is the argument
+#: rather than a convenience. `buildable`, `campaign` and `unmeasured` all stay
+#: in the denominator, so mislabelling one costs nothing the condition can
+#: notice; `spec-round`, `phase-c` and `gated-axis` are the only words that
+#: REMOVE a debt from the count, so one wrong is the condition reading true
+#: while being false. Cite what leaves.
+CITATION = re.compile(r"^(census|axis|rule):([A-Za-z0-9_.\-]+)$")
+
+
+def check_citations(rows: list[dict], census: dict, gated: set[str], rules) -> list[str]:
+    """Every BLOCKED family debt whose citation is missing, malformed or wrong.
+
+    `census` maps a row id to its verdict, `gated` holds the axis keys the Phase
+    B tally marks ungainable, and `rules` answers whether a memory file exists.
+    All three are injected, so the rule is testable without either tool.
+    """
+    out: list[str] = []
+    for row in rows:
+        if row["blocked_by"] not in BLOCKED:
+            continue
+        cited = row.get("blocked_because", "")
+        if not cited:
+            out.append(
+                f"{row['name']}: `blocked_by: {row['blocked_by']}` takes it out of "
+                "the count and cites nothing (`blocked_because`)"
+            )
+            continue
+        found = CITATION.match(cited)
+        if not found:
+            out.append(
+                f"{row['name']}: `blocked_because: {cited}` is not "
+                "`census:<row>`, `axis:<key>` or `rule:<memory-file>`"
+            )
+            continue
+        kind, what = found.group(1), found.group(2)
+        if kind == "census":
+            if what not in census:
+                out.append(f"{row['name']}: cites census row `{what}`, which is not in the pin")
+            elif census[what] != "gap":
+                out.append(
+                    f"{row['name']}: cites census row `{what}`, whose verdict is "
+                    f"`{census[what]}` — a row that is not a gap blocks nothing"
+                )
+        elif kind == "axis":
+            if what not in gated:
+                out.append(
+                    f"{row['name']}: cites axis `{what}`, which the Phase B tally "
+                    "does not mark gated"
+                )
+        elif not rules(what):
+            out.append(f"{row['name']}: cites rule `{what}`, which is not a memory file")
+    return out
+
+
+def census_verdicts() -> dict[str, str]:
+    """Each analysis-tool census row's verdict, from the pin beside this tool."""
+    pin = ROOT / "docs" / "analyzer-census.json"
+    if not pin.is_file():
+        return {}
+    return {r["id"]: r["verdict"] for r in json.loads(pin.read_text(encoding="utf-8"))}
+
+
+def gated_axes() -> set[str]:
+    """The Phase B axis keys the tally marks gated — read from the tally itself.
+
+    A gated axis is one this machine cannot advance, and the tally is where that
+    is decided. Reading it here rather than restating it means the two cannot
+    disagree about which axes those are.
+    """
+    tally = ROOT / "tools" / "phase_b_tally.py"
+    if not tally.is_file():
+        return set()
+    source = tally.read_text(encoding="utf-8")
+    # ★ Split at each axis's `"key"` first, then read that axis's own flag.
+    #
+    # Written as one `"key": "X" .*? "gated": True` pattern to begin with, which
+    # is WRONG in a way that reads correct: `.*?` with `DOTALL` walks past an
+    # axis whose flag is `False` to the next axis's `True`, and the match then
+    # consumes the axis that flag belonged to.
+    #
+    # Measured against this tally by re-running the bad pattern: it answered
+    # `{api, dcc}` where the truth is `{api, osnative}` — one false positive and
+    # one false negative, with the third right by luck. (The first draft of this
+    # comment called that "an exact inversion", which overstates it; the round's
+    # closing audit re-ran the pattern rather than trusting the sentence.) A
+    # regex spanning records cannot be trusted to stay inside one.
+    keys = list(re.finditer(r"\"key\":\s*\"([a-z0-9]+)\"", source))
+    out: set[str] = set()
+    for nth, found in enumerate(keys):
+        end = keys[nth + 1].start() if nth + 1 < len(keys) else len(source)
+        if re.search(r"\"gated\":\s*True", source[found.end() : end]):
+            out.add(found.group(1))
     return out
 
 
@@ -263,7 +367,12 @@ def snapshot_of(rows: list[dict]) -> dict:
             "A reader with no memory folder has only this."
         ),
         "debts": [
-            {"name": r["public_name"], "blocked_by": r["blocked_by"], "why": r["why"]}
+            {
+                "name": r["public_name"],
+                "blocked_by": r["blocked_by"],
+                "blocked_because": r.get("blocked_because", ""),
+                "why": r["why"],
+            }
             for r in sorted(rows, key=lambda r: r["public_name"])
         ],
     }
@@ -354,6 +463,65 @@ def selftest() -> int:
         "debt-zzz" not in json.dumps(shot),
     )
 
+    # ── R1810: a standing that leaves the count must cite ────────────────
+    census = {"lab.t2.16": "gap", "dashboard.t1.3": "have"}
+    gated = {"osnative"}
+    rules = {"zero-flake-policy"}.__contains__
+
+    def cite(word: str, because: str) -> list[dict]:
+        return [{"name": "d", "why": ["x"], "blocked_by": word, "blocked_because": because}]
+
+    check(
+        "a blocked standing with no citation is refused",
+        check_citations(cite("phase-c", ""), census, gated, rules) != [],
+    )
+    check(
+        "an UNBLOCKED standing needs none — it never leaves the count",
+        check_citations(cite("buildable", ""), census, gated, rules) == [],
+    )
+    check(
+        "a census citation resolves when the row is a gap",
+        check_citations(cite("spec-round", "census:lab.t2.16"), census, gated, rules) == [],
+    )
+    check(
+        "a census citation to a row that is NOT a gap is refused",
+        check_citations(cite("spec-round", "census:dashboard.t1.3"), census, gated, rules) != [],
+    )
+    check(
+        "a census citation to a row nobody has is refused",
+        check_citations(cite("spec-round", "census:lab.t9.9"), census, gated, rules) != [],
+    )
+    check(
+        "an axis citation resolves only when the tally gates that axis",
+        check_citations(cite("gated-axis", "axis:osnative"), census, gated, rules) == []
+        and check_citations(cite("gated-axis", "axis:dcc"), census, gated, rules) != [],
+    )
+    check(
+        "a rule citation resolves only to a memory file",
+        check_citations(cite("spec-round", "rule:zero-flake-policy"), census, gated, rules) == []
+        and check_citations(cite("spec-round", "rule:no-such-rule"), census, gated, rules) != [],
+    )
+    check(
+        "a citation in no known form is refused",
+        check_citations(cite("phase-c", "because I said so"), census, gated, rules) != [],
+    )
+
+    # ★ The axis derivation reads one record at a time. Written as a single
+    # `"key" .*? "gated": True` pattern first, it walked past an ungated axis to
+    # the next axis's flag and consumed the axis that flag belonged to —
+    # measured as an exact inversion of the truth. This pins the shape.
+    fixture = '{"key": "aaa", "gated": False}, {"key": "bbb", "gated": True}'
+    keys = list(re.finditer(r"\"key\":\s*\"([a-z0-9]+)\"", fixture))
+    seen = {
+        found.group(1)
+        for nth, found in enumerate(keys)
+        if re.search(
+            r"\"gated\":\s*True",
+            fixture[found.end() : (keys[nth + 1].start() if nth + 1 < len(keys) else len(fixture))],
+        )
+    }
+    check("an ungated axis does not borrow the next one's flag", seen == {"bbb"})
+
     print(f"selftest: {'PASS' if not failures else 'FAIL'} ({failures} failure(s))")
     return 1 if failures else 0
 
@@ -382,7 +550,12 @@ def main() -> int:
         return 1
 
     rows = survey(folder)
-    broken = check_standings(rows)
+    broken = check_standings(rows) + check_citations(
+        rows,
+        census_verdicts(),
+        gated_axes(),
+        lambda name: (folder / f"{name}.md").is_file(),
+    )
 
     if "--write" in sys.argv:
         SNAPSHOT.write_text(
