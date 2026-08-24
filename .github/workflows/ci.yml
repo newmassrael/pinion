@@ -86,6 +86,24 @@ jobs:
         run: cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items
       - name: workspace tests
         run: cargo test --workspace
+      - name: analysis-tool census proofs
+        # ★★★★★ R1804 — placed HERE, immediately after `cargo test --workspace`,
+        # and the position is the whole point. This gate runs
+        # `cargo test -- --list` to check that every `proven_by` the census
+        # cites is a test that actually runs; the step above has just built
+        # every one of those binaries, so here it costs a listing.
+        #
+        # On a developer's push it cost a second full compile of the workspace:
+        # measured over five pushes at 8s on the one round that touched no Rust
+        # and 154s, 174s, 154s, 248s on the rounds that did. The hook's own
+        # comment had called it "3.5s on a warm tree", which was true and
+        # useless — most rounds are not warm.
+        #
+        # ⚠ ADDED HERE BEFORE BEING REMOVED FROM `pre-push`, deliberately and in
+        # that order: this check exists nowhere else, so dropping it locally
+        # first would leave the claim unguarded for however long it took to
+        # notice. The local step goes once this has been green.
+        run: python3 tools/analyzer_census.py --check-proofs
 
   demo-sweep:
     name: full RPC demo sweep (Xvfb + lavapipe, hidden windows)

@@ -58,6 +58,17 @@ source "$hook_dir/lib/mnemosyne-tool.sh"
 source "$hook_dir/lib/consumer-tests.sh"
 # shellcheck source=SCRIPTDIR/lib/worktree-guard.sh
 source "$hook_dir/lib/worktree-guard.sh"
+# ★★★★★ R1804 — the same instrument `pre-push` got at R1799, because the reader
+# asked how long a commit takes and NOBODY COULD SAY. Four announcements here
+# and not one of them carried a cost, so "the commit is slow" had no number
+# behind it and neither did any answer.
+#
+# The label is set before the library is sourced so every line says which hook
+# is speaking; a log holding both hooks' steps under one prefix would be the
+# second-list defect this timer was built to avoid.
+PINION_STEP_LABEL="pre-commit"
+# shellcheck source=SCRIPTDIR/lib/step-timer.sh
+source "$hook_dir/lib/step-timer.sh"
 
 # A round is closed from the main tree; exploration worktrees may not commit.
 # See lib/worktree-guard.sh for the split and why printing it was not enough.
@@ -72,13 +83,13 @@ require_main_worktree_for commit || exit 1
 
 mnemosyne_resolve
 
-echo "pre-commit: mnemosyne-cli validate-workspace ($MN_CLI_SOURCE) ..." >&2
+step "mnemosyne-cli validate-workspace ($MN_CLI_SOURCE)"
 mnemosyne_cli validate-workspace
 
 if git diff --cached --name-only --diff-filter=ACMR | grep -qE '\.rs$'; then
     # R1026 §6.3 — rustfmt gate (rustfmt.toml, max_width=100). Runs before
     # clippy (cheaper, fail-fast) and only when staged files include `*.rs`.
-    echo "pre-commit: cargo fmt --all --check ..." >&2
+    step "cargo fmt --all --check"
     cargo fmt --all --check
     # ─────────────────────────────────────────────────────────────────────────
     # WHAT USED TO RUN HERE, and what its history is worth keeping for.
@@ -165,7 +176,7 @@ fi
 #    Output is captured and surfaced only on failure (the info-level binding
 #    axis is verbose); success is silent.
 if git diff --cached --name-only --diff-filter=ACMR | grep -qE '\.(rs|scxml)$'; then
-    echo "pre-commit: mnemosyne-cli validate-code-refs ..." >&2
+    step "mnemosyne-cli validate-code-refs"
     if ! cr_out="$(mnemosyne_cli validate-code-refs 2>&1)"; then
         printf '%s\n' "$cr_out" | grep -E '\[(missing|section_missing)\]|violations: total' >&2 || true
         echo "pre-commit: validate-code-refs found hallucination-class citations" >&2
@@ -193,7 +204,7 @@ fi
 # directive whose state nobody can see is a directive that grows. This makes the
 # number monotone -- every push holds it or lowers it -- and refuses one that
 # adds a name to a file, or a name to a file that had none.
-echo "pre-commit: reference names ..." >&2
+step "reference names"
 if ! python3 "$repo_root/tools/reference_names.py" --selftest >&2; then
     echo "pre-commit: the reference-name ratchet failed its own tests" >&2
     exit 1

@@ -1531,5 +1531,41 @@ ok "it registers its cleanup through the timer instead" \
 ok "this suite keeps exactly one exit trap, as its own comment requires" \
    "$(grep -cE '^[[:space:]]*trap .* EXIT' "$repo_root/tools/test_hooks.sh")" "1"
 
+# --- R1804: the commit hook is instrumented too, and says which hook it is ---
+#
+# The reader asked how long a commit takes and there was no number, because
+# `pre-commit` announced four steps and timed none of them. It now uses the same
+# instrument — which makes the LABEL load-bearing: two hooks printing under one
+# prefix would put both hooks' steps in one list, the exact defect this timer
+# was built to avoid.
+ok "the commit hook installs no EXIT trap of its own" \
+   "$(grep -cE '^[[:space:]]*trap .* EXIT' "$repo_root/.githooks/pre-commit")" "0"
+ok "the commit hook times its steps instead of only announcing them" \
+   "$(grep -cE '^[[:space:]]*echo "pre-commit: [a-z].*\.\.\." >&2' "$repo_root/.githooks/pre-commit")" "0"
+ok "and it sets its own label BEFORE sourcing the timer" \
+   "$(awk '/PINION_STEP_LABEL="pre-commit"/{l=NR} /source .*step-timer\.sh/{s=NR} END{print (l>0 && s>l) ? 1 : 0}' \
+      "$repo_root/.githooks/pre-commit")" "1"
+label_out="$(
+    PINION_STEP_LABEL=pre-commit bash -c '
+        source "'"$repo_root"'/.githooks/lib/step-timer.sh"
+        step "a thing"' 2>&1 >/dev/null
+)"
+ok "a labelled run says that label and not the default" \
+   "$(printf '%s\n' "$label_out" | grep -c '^pre-commit: a thing \.\.\.$')" "1"
+ok "and no line of it claims to be the other hook" \
+   "$(printf '%s\n' "$label_out" | grep -c 'pre-push')" "0"
+# The default has to stay, or the hook that had this first changes what it says.
+default_out="$(
+    bash -c 'source "'"$repo_root"'/.githooks/lib/step-timer.sh"; step "a thing"' 2>&1 >/dev/null
+)"
+ok "an unlabelled run still says pre-push" \
+   "$(printf '%s\n' "$default_out" | grep -c '^pre-push: a thing \.\.\.$')" "1"
+
+# ★ R1804 — one `step` per command in the census, because an unsplit number is
+# what made R1779's decision wrong. Asserted structurally so the three cannot
+# quietly become one again.
+ok "each analysis-tool census command is timed separately" \
+   "$(grep -cE '^step "analysis-tool census ' "$repo_root/.githooks/pre-push")" "3"
+
 printf '[hooks] %d passed, %d failed\n' "$pass" "$fail"
 [[ "$fail" -eq 0 ]]

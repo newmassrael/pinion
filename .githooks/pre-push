@@ -176,22 +176,43 @@ fi
 # holds the judgement to a shape — every declared capability carries a verdict
 # from a closed set, a `have` names what covers it, and `unmeasured` is a
 # verdict rather than a silence.
-step "analysis-tool census"
+# ★★★★★ R1804 — THREE commands, THREE steps, because one step over three
+# commands is how R1779 came to justify moving clippy AND rustdoc out on a
+# single number that was never split between them; measured apart at R1782 they
+# were 86x different and the move was wrong for one of them.
+#
+# This step was that shape. Across five pushes it measured 8s, 154s, 174s, 154s
+# and 248s, and nobody could say which of its three commands the time was in —
+# so a decision to move any of them would have been R1779's decision again.
+step "analysis-tool census selftest"
 if ! python3 "$repo_root/tools/analyzer_census.py" --selftest >&2; then
     echo "pre-push: the analysis-tool census failed its own tests" >&2
     exit 1
 fi
+step "analysis-tool census pin"
 if ! python3 "$repo_root/tools/analyzer_census.py" --check-pin >&2; then
     echo "pre-push: docs/analyzer-census.json is malformed" >&2
     exit 1
 fi
+step "analysis-tool census proofs"
 # ★★★★★ R1771 — and the PROOFS, against the test runner rather than a search.
 # The pin's `assembled_by` has had every path it names checked since R1648;
 # `proven_by` — which carries the census's strongest claim, that a capability
 # was exercised through the public API — was checked for nothing at all, so a
 # citation to a renamed or deleted test passed silently on the rows a reader
-# trusts most. Measured R1771: 3.5s on a warm tree, and the first time after a
-# clean build it pays for the cited crates' test binaries once.
+# trusts most.
+#
+# ⚠ COST, corrected R1804. This comment said "3.5s on a warm tree, and the first
+# time after a clean build it pays for the cited crates' test binaries once".
+# The number was real and the word WARM was doing all the work: it runs
+# `cargo test -- --list`, so it compiles whenever the round touched Rust, which
+# most rounds do. Measured across five pushes, the step holding this command
+# came to 8s (a round that touched no Rust) and 154s, 174s, 154s, 248s (rounds
+# that did). "Pays once after a clean build" describes a tree nobody works in.
+#
+# That is the same defect R1799 found in this hook's own description of
+# `test_hooks.sh` — "milliseconds", measured 65.83s — and it is why the step is
+# now split three ways: an unsplit number cannot say which command to act on.
 if ! python3 "$repo_root/tools/analyzer_census.py" --check-proofs >&2; then
     echo "pre-push: a proof the analysis-tool census cites is not a test that runs" >&2
     exit 1

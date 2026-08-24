@@ -46,6 +46,13 @@ _PINION_STEP_COUNT=0
 _PINION_SUMMARY_DONE=0
 _PINION_AT_EXIT=()
 
+# Which hook is speaking. R1804 — `pre-commit` needs the same instrument and
+# must not claim to be `pre-push`: a reader grepping a log for one hook's steps
+# would otherwise get both, and the two run at different moments for different
+# reasons. Defaults to `pre-push` so the hook that had this first says exactly
+# what it said before.
+: "${PINION_STEP_LABEL:=pre-push}"
+
 # Close the step that is open, if any, and print what it cost.
 _pinion_close_step() {
     [ -z "$_PINION_STEP_NAME" ] && return 0
@@ -54,7 +61,7 @@ _pinion_close_step() {
     cost=$(( now - _PINION_STEP_AT ))
     _PINION_STEP_TOTAL=$(( _PINION_STEP_TOTAL + cost ))
     _PINION_STEP_COUNT=$(( _PINION_STEP_COUNT + 1 ))
-    printf 'pre-push:   [%4d.%03ds] %s\n' \
+    printf '%s:   [%4d.%03ds] %s\n' "$PINION_STEP_LABEL" \
         "$(( cost / 1000 ))" "$(( cost % 1000 ))" "$_PINION_STEP_NAME" >&2
     _PINION_STEP_NAME=""
 }
@@ -69,7 +76,7 @@ step() {
     _pinion_close_step
     _PINION_STEP_NAME="$1"
     _PINION_STEP_AT=$(_pinion_now_ms)
-    echo "pre-push: $1 ..." >&2
+    echo "$PINION_STEP_LABEL: $1 ..." >&2
 }
 
 # Called once, from the EXIT trap below. Prints the total, how much of it the
@@ -92,7 +99,8 @@ step_summary() {
     local total unattributed
     total=$(( $(_pinion_now_ms) - _PINION_RUN_AT ))
     unattributed=$(( total - _PINION_STEP_TOTAL ))
-    printf 'pre-push: %d step(s), %d.%03ds total, %d.%03ds named, %d.%03ds unattributed\n' \
+    printf '%s: %d step(s), %d.%03ds total, %d.%03ds named, %d.%03ds unattributed\n' \
+        "$PINION_STEP_LABEL" \
         "$_PINION_STEP_COUNT" \
         "$(( total / 1000 ))" "$(( total % 1000 ))" \
         "$(( _PINION_STEP_TOTAL / 1000 ))" "$(( _PINION_STEP_TOTAL % 1000 ))" \
