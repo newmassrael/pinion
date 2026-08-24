@@ -1634,7 +1634,13 @@ fn hash_box_shadow<H: core::hash::Hasher>(shadow: &BoxShadow, state: &mut H) {
 /// the locale would make [`content_of`](crate::containment::content_of) depend
 /// on text direction — a dependency the arithmetic does not have and should not
 /// acquire silently. A right-to-left painter picks the edge it wants.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+// R1802 — serde, because an edge is now part of a panel's PLACEMENT and this
+// framework's `Signal<T>` requires its contents to be serializable. That is not
+// an incidental bound: it is what makes an arrangement a value a client can
+// read, which is precisely where the floor toolkit stores an opaque blob.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub enum ChromeEdge {
     /// The top edge.
     Top,

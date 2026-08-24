@@ -68,6 +68,7 @@ use pinion_a11y::{
 };
 use pinion_core::availability::Unavailable;
 use pinion_core::containment::line_box;
+use pinion_core::edge_panel::EdgePlacement;
 use pinion_core::external::{
     ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ObjectArgs, PointerTarget,
@@ -488,23 +489,94 @@ pub(crate) const fn comfortable_size() -> (u32, u32) {
     SHRINK.comfortable()
 }
 
+/// Where the palette opens: the arrangement the hand-written layout drew.
+const PALETTE_OPENS_AT: EdgePlacement = EdgePlacement::open(ChromeEdge::Left, PALETTE_W);
+/// Where the inspector opens.
+const INSPECTOR_OPENS_AT: EdgePlacement = EdgePlacement::open(ChromeEdge::Right, INSP_W);
+/// What a folded side panel leaves behind — the strip a person grabs to open it
+/// again. Not zero, which is what makes a fold different from a hide.
+const PANEL_STRIP_W: u32 = 18;
+
+/// The two side panels' placements.
+///
+/// ★★★★★ R1802 — read straight off the thread-local state rather than threaded
+/// through the layout, which is what makes this round small. R1801's carry said
+/// this was 46 call sites of three functions; **that estimate was wrong**, and
+/// wrong in the way this project keeps recording: it counted the callers of a
+/// function without asking whether the function could reach the state itself.
+/// `use_lab_state` has been thread-local since long before this axis, so the
+/// answer was zero call sites.
+///
+/// Read WITHOUT `use_lab_state`, deliberately: that function constructs the
+/// state if it is absent and registers an animation with the current owner, and
+/// a geometry helper must do neither. Before the state exists — which is what a
+/// test asking for a rectangle first sees — the answer is where the panels open.
+fn placements() -> (EdgePlacement, EdgePlacement) {
+    STATE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .map_or((PALETTE_OPENS_AT, INSPECTOR_OPENS_AT), |s| {
+                (s.palette_at.get(), s.inspector_at.get())
+            })
+    })
+}
+
+/// How much room the side panels take on each edge, as `(left, right)`.
+///
+/// A folded panel contributes its strip rather than nothing, so the canvas does
+/// not swallow the handle that would open it again.
+fn side_bands() -> (u32, u32) {
+    let (palette, inspector) = placements();
+    let mut left = 0;
+    let mut right = 0;
+    for at in [palette, inspector] {
+        let t = at.thickness(PANEL_STRIP_W);
+        match at.edge {
+            ChromeEdge::Left => left += t,
+            _ => right += t,
+        }
+    }
+    (left, right)
+}
+
+/// Where one side panel lands, given what is stacked before it on its edge.
+///
+/// The palette is declared first, so on a shared edge it sits outermost — the
+/// same order the specification lists them in, which is the only ordering a
+/// reader of that table would predict.
+fn side_panel_rect(at: EdgePlacement, before: u32) -> Rect {
+    let (w, h) = window_size();
+    let t = at.thickness(PANEL_STRIP_W);
+    let x = match at.edge {
+        ChromeEdge::Left => rail_w() + before,
+        _ => w.saturating_sub(before + t),
+    };
+    Rect::new(x, APP_BAR_H, t, h - APP_BAR_H)
+}
+
 fn canvas_rect() -> Rect {
     let (w, h) = window_size();
+    let (left, right) = side_bands();
     Rect::new(
-        rail_w() + PALETTE_W,
+        rail_w() + left,
         APP_BAR_H + TOOLBAR_H,
-        w - rail_w() - PALETTE_W - INSP_W,
+        w - rail_w() - left - right,
         h - APP_BAR_H - TOOLBAR_H,
     )
 }
 
 fn palette_rect() -> Rect {
-    Rect::new(rail_w(), APP_BAR_H, PALETTE_W, window_size().1 - APP_BAR_H)
+    side_panel_rect(placements().0, 0)
 }
 
 fn inspector_rect() -> Rect {
-    let (w, h) = window_size();
-    Rect::new(w - INSP_W, APP_BAR_H, INSP_W, h - APP_BAR_H)
+    let (palette, inspector) = placements();
+    let before = if palette.edge == inspector.edge {
+        palette.thickness(PANEL_STRIP_W)
+    } else {
+        0
+    };
+    side_panel_rect(inspector, before)
 }
 
 fn rail_rect() -> Rect {
@@ -838,6 +910,19 @@ struct LabState {
     /// the first run: `lab.toolbar.config` stopped being pressable at all. The
     /// floor's extension button opens a menu for exactly this reason.
     toolbar_open: Signal<bool>,
+    /// ★★★★★ R1802 — where the palette sits, as a VALUE.
+    ///
+    /// R1801 gave this screen's specification a placement POLICY — the palette
+    /// may live on the left or the right — and left the layout drawing it from
+    /// a `const` on the left, always. A published rule the code does not keep,
+    /// which is the shape this project keeps paying for, and the closing audit
+    /// of that round said so. This is the other half.
+    ///
+    /// Seeded to exactly where the hand-written layout put it, so adopting the
+    /// value moved no pixel; what changed is that it can now be somewhere else.
+    palette_at: Signal<EdgePlacement>,
+    /// Where the inspector sits. See [`LabState::palette_at`].
+    inspector_at: Signal<EdgePlacement>,
     /// Where the scenario's playhead stands, in seconds.
     ///
     /// ★ Advanced explicitly (`advance`), never by a wall clock — R1600's
@@ -1133,6 +1218,8 @@ impl LabState {
             running: Signal::new(false),
             scenario: RefCell::new(scenario::Plan::new()),
             toolbar_open: Signal::new(false),
+            palette_at: Signal::new(PALETTE_OPENS_AT),
+            inspector_at: Signal::new(INSPECTOR_OPENS_AT),
             playhead: Signal::new(0.0),
             discovery: Signal::new(false),
             cursor: Signal::new((0, 0)),

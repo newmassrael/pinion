@@ -68,7 +68,7 @@ use crate::style::ChromeEdge;
 /// A value: cloneable, comparable, and readable field by field. It is the whole
 /// arrangement of one panel, so a screen's arrangement is a list of these and a
 /// reader can diff two of them without decoding anything.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct EdgePlacement {
     /// Which edge of its host it is attached to.
     pub edge: ChromeEdge,

@@ -11,8 +11,9 @@ use pinion_core::selection::Selection;
 use pinion_core::widgets::config_form::Applies;
 
 use super::{
-    Hit, INSP_W, LabState, MIN_W, PALETTE_W, RAIL_W, TOOLBAR_LEFT_CLUSTER, canvas_rect, card_rect,
-    content_to_window, deploy, inspector_rect, pin_rect, spec,
+    Hit, INSP_W, LabState, MIN_W, PALETTE_W, PANEL_STRIP_W, RAIL_W, TOOLBAR_LEFT_CLUSTER,
+    canvas_rect, card_rect, content_to_window, deploy, inspector_rect, palette_rect, pin_rect,
+    spec, use_lab_state,
 };
 use crate::graph::Role;
 
@@ -2407,5 +2408,152 @@ fn r1688_the_toolbar_roster_is_pressable_and_named() {
                 );
             }
         }
+    });
+}
+
+/// ★★★★★ R1802 — **the specification says where a panel may live; the layout
+/// has to be able to put it there.**
+///
+/// R1801 published the policy and left the layout drawing from a `const`, so
+/// the screen advertised "the palette may live on the left or the right" while
+/// always painting it on the left — and nothing compared the two. Its own
+/// closing audit recorded that as a defect it had created. This is the gate.
+///
+/// Not "does the palette move": that a value changes is trivial. The claim is
+/// that **every edge the specification admits is an edge the layout actually
+/// honours**, so a policy widened to an edge the layout cannot place lands here
+/// instead of on a reader's screen.
+#[test]
+fn r1802_every_edge_the_specification_admits_is_one_the_layout_honours() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = use_lab_state();
+        let (w, _) = super::window_size();
+
+        let mut checked = 0;
+        for pane in spec::PANES {
+            let Some(seat) = ["lab.palette", "lab.inspector"]
+                .iter()
+                .position(|t| *t == pane.tag)
+            else {
+                // Not a movable seat. Its policy must say so, which is the
+                // other half of the same agreement.
+                assert!(
+                    pane.policy.allowed.is_empty(),
+                    "{} admits {:?} and the layout has nowhere to put it",
+                    pane.tag,
+                    pane.policy.allowed
+                );
+                continue;
+            };
+            for &edge in pane.policy.allowed {
+                let at = pinion_core::edge_panel::EdgePlacement::open(edge, pane.width);
+                if seat == 0 {
+                    state.palette_at.set(at);
+                } else {
+                    state.inspector_at.set(at);
+                }
+                // The write has to be VISIBLE to the layout before the
+                // rectangle means anything — the layout reads the thread-local
+                // state, not this handle, and a test that asserted a rectangle
+                // without checking that would be measuring the default.
+                let seen = super::placements();
+                let seen_edge = if seat == 0 { seen.0.edge } else { seen.1.edge };
+                assert_eq!(
+                    seen_edge, edge,
+                    "{} was placed at {edge:?} and the layout still reads {seen_edge:?}",
+                    pane.tag
+                );
+                let rect = if seat == 0 {
+                    palette_rect()
+                } else {
+                    inspector_rect()
+                };
+                // ★ "The layout honours the edge" is BAND CONTAINMENT, not a
+                // fixed coordinate. The first draft asserted `x == RAIL_W` for
+                // the left and failed at 284 — which was the layout being
+                // RIGHT: with both panels declared left, the inspector stacks
+                // after the palette. An assertion that only holds when nothing
+                // else shares the edge is an assertion about one arrangement,
+                // not about the rule.
+                let (left, right) = super::side_bands();
+                let (lo, hi) = match edge {
+                    pinion_core::style::ChromeEdge::Left => (RAIL_W, RAIL_W + left),
+                    pinion_core::style::ChromeEdge::Right => (w - right, w),
+                    other => panic!(
+                        "{} admits {other:?}, which this screen's layout does not place",
+                        pane.tag
+                    ),
+                };
+                assert!(
+                    rect.x >= lo && rect.x + rect.w <= hi,
+                    "{} declares it may sit at {edge:?}; the layout put it at {}..{} \
+                     and that edge's band is {lo}..{hi}",
+                    pane.tag,
+                    rect.x,
+                    rect.x + rect.w
+                );
+                assert_eq!(rect.w, pane.width, "{} lost its width moving", pane.tag);
+                checked += 1;
+            }
+            // Put the panels back through the SAME handle. ★ This used to call
+            // `reset_lab_state()`, which clears the thread-local the layout
+            // reads while leaving `state` pointing at the orphaned one — so the
+            // writes went somewhere nothing looked at and the layout answered
+            // its defaults. It failed, but it failed BLAMING THE LAYOUT, and
+            // the probe above is the only reason that was not "fixed" in the
+            // layout instead. A reset that empties a thread-local invalidates
+            // every handle taken before it.
+            state.palette_at.set(super::PALETTE_OPENS_AT);
+            state.inspector_at.set(super::INSPECTOR_OPENS_AT);
+        }
+        // A floor on the SWEEP, because a policy emptied by accident would make
+        // every assertion above vacuous and the test would still pass.
+        assert_eq!(
+            checked, 4,
+            "two movable panes times two admitted edges is four placements; checked {checked}"
+        );
+    });
+}
+
+/// ★ A fold leaves the strip, and the canvas does not swallow it.
+///
+/// The floor toolkit has no fold at all — hiding takes a panel out of the
+/// layout, so there is nothing left to grab. The whole point of the strip is
+/// that the person who folded it can unfold it, which is only true if the
+/// canvas stops short of it.
+#[test]
+fn r1802_a_folded_panel_leaves_a_strip_the_canvas_does_not_take() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = use_lab_state();
+
+        let open_canvas = canvas_rect();
+        let open_palette = palette_rect();
+        assert_eq!(open_palette.w, PALETTE_W);
+
+        let mut folded = state.palette_at.get();
+        folded.folded = true;
+        state.palette_at.set(folded);
+
+        let strip = palette_rect();
+        assert_eq!(strip.w, PANEL_STRIP_W, "a fold leaves the strip");
+        assert_eq!(strip.x, open_palette.x, "on the same edge it was on");
+
+        let canvas = canvas_rect();
+        assert_eq!(
+            canvas.w,
+            open_canvas.w + PALETTE_W - PANEL_STRIP_W,
+            "the canvas takes exactly what the fold gave up, and no more"
+        );
+        assert!(
+            canvas.x >= strip.x + strip.w,
+            "the canvas starts after the strip: canvas {canvas:?}, strip {strip:?}"
+        );
+        // Through the handle, not through a thread-local reset — see the note
+        // in the gate above for why that difference cost a diagnosis.
+        state.palette_at.set(super::PALETTE_OPENS_AT);
     });
 }
