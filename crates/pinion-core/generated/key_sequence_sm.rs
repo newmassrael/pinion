@@ -1,6 +1,6 @@
 // SCE-GENERATED — DO NOT EDIT
 // source-hash: 992eb6f38ead133f942c12a66a8d5b6a7c5d5cb9e49ab6f02c289750cedb05ec
-// template-hash: e6e2d3cef81da4abdc4eae183846a822330aacb5f580b3549690b15358717ca3
+// template-hash: 2e9278cd4c52e6037cf37424a4a45a358bda560c63d523e083cb52bada352b2f
 // generated-at: 0
 
 
@@ -305,6 +305,18 @@ impl StatePolicy for KeySequencePolicy {
             KeySequenceState::Disabled => "disabled",
             KeySequenceState::Idle => "idle",
             KeySequenceState::Recording => "recording",
+        }
+    }
+
+    // The inverse of the table above, emitted from the same loop over the
+    // document's states so the two age together. It is what lets a host turn a
+    // recorded configuration back into the `StateChain` `enter_at` takes.
+    fn get_state_from_name(name: &str) -> Option<Self::State> {
+        match name {
+            "disabled" => Some(KeySequenceState::Disabled),
+            "idle" => Some(KeySequenceState::Idle),
+            "recording" => Some(KeySequenceState::Recording),
+            _ => None,
         }
     }
 

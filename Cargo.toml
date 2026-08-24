@@ -297,8 +297,8 @@ authors = ["pinion contributors"]
 # the index, and that submodule's checked-out HEAD. The check that used to live
 # here was a shell one-liner in prose, run by whoever thought of it — the shape
 # R1470 and R1495 cost a round each to learn is not a gate.
-sce-rust-runtime = { git = "https://github.com/newmassrael/scxml-core-engine.git", rev = "084dfdbf4702169e7874bd18ad372e8b798ef3d7", default-features = false }
-sce-build = { git = "https://github.com/newmassrael/scxml-core-engine.git", rev = "084dfdbf4702169e7874bd18ad372e8b798ef3d7" }
+sce-rust-runtime = { git = "https://github.com/newmassrael/scxml-core-engine.git", rev = "035c2dae1e37c00540b31fe00653ca5423c96339", default-features = false }
+sce-build = { git = "https://github.com/newmassrael/scxml-core-engine.git", rev = "035c2dae1e37c00540b31fe00653ca5423c96339" }
 
 # §5.7 JSON-RPC 2.0 transport realized at the pinion-rpc envelope.
 serde = { version = "1", features = ["derive"] }

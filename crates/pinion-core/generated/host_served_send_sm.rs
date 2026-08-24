@@ -1,6 +1,6 @@
 // SCE-GENERATED — DO NOT EDIT
 // source-hash: 992eb6f38ead133f942c12a66a8d5b6a7c5d5cb9e49ab6f02c289750cedb05ec
-// template-hash: e6e2d3cef81da4abdc4eae183846a822330aacb5f580b3549690b15358717ca3
+// template-hash: 2e9278cd4c52e6037cf37424a4a45a358bda560c63d523e083cb52bada352b2f
 // generated-at: 0
 
 
@@ -297,6 +297,19 @@ impl StatePolicy for HostServedSendPolicy {
         }
     }
 
+    // The inverse of the table above, emitted from the same loop over the
+    // document's states so the two age together. It is what lets a host turn a
+    // recorded configuration back into the `StateChain` `enter_at` takes.
+    fn get_state_from_name(name: &str) -> Option<Self::State> {
+        match name {
+            "asking" => Some(HostServedSendState::Asking),
+            "heard_first" => Some(HostServedSendState::HeardFirst),
+            "idle" => Some(HostServedSendState::Idle),
+            "settled" => Some(HostServedSendState::Settled),
+            _ => None,
+        }
+    }
+
     fn null_event() -> Self::Event {
         HostServedSendEvent::Null
     }
@@ -385,14 +398,15 @@ impl StatePolicy for HostServedSendPolicy {
     // which declared it to this build. Dispatch rather than refuse.
     {
         let host_params = std::collections::HashMap::<String, Vec<String>>::new();
-        let __sce_served = engine.perform_host_send(sce_rust_runtime::HostSendRequest {
+        let __sce_request = sce_rust_runtime::HostSendRequest {
             processor_type: "pinion.fixture.host".to_string(),
             event_name: "ask".to_string(),
             target: "".to_string(),
             content: "".to_string(),
             params: host_params,
             send_id: send_id.to_string(),
-        });
+        };
+        let __sce_served = engine.perform_host_send(__sce_request);
         // W3C SCXML 6.2: a declared type with no handler registered is,
         // from the document's side, a processor the platform does not
         // support — the act it asked for was performed by nobody. Same
