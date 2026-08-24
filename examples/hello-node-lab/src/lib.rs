@@ -237,7 +237,16 @@ fn window_size() -> (u32, u32) {
     // repeated here. The window may now be smaller than this (see [`SHRINK`]),
     // which is exactly what the two branches below have always meant: below its
     // floor the layout stops shrinking and the window clips.
-    pinion_core::external::layout_size(VIEW_TAG, SHRINK.comfortable(), (WIN_W, WIN_H))
+    // ★★★★★ R1821 — read through [`comfortable_size`], which is that policy's
+    // comfortable width less whatever chrome the host draws in this screen's
+    // place. This line said `SHRINK.comfortable()` directly, and reading it
+    // directly is what would make it a SECOND number the moment the subtraction
+    // existed: `judge` compares a host's grant against `comfortable_size`, so
+    // the width the layout stops at and the width a frame is judged against
+    // would have stopped being one width. Standalone the two spellings are
+    // equal by construction — `host_provided_width` is zero there — so this
+    // changes nothing for the screen that owns its window.
+    pinion_core::external::layout_size(VIEW_TAG, comfortable_size(), (WIN_W, WIN_H))
 }
 
 /// The smallest window this screen lays out in.
@@ -391,11 +400,20 @@ const SEATS: u32 = spec::RAIL.len() as u32;
 /// ★★★★★ R1712 — the width the WINDOW stops at, which is no longer the width
 /// the LAYOUT stops at.
 ///
-/// [`MIN_W`] is 1625 and R1689 wrote down what that costs: *"a 1600-wide
-/// display no longer holds this screen. That is a real loss."* It was a real
-/// loss and nothing could be done about it, because one constant was doing two
-/// jobs — the size the layout stops reflowing at, and the size the window
-/// refuses to shrink past — and lowering it would have moved both.
+/// At the time, [`MIN_W`] was 1625 and R1689 wrote down what that cost: *"a
+/// 1600-wide display no longer holds this screen. That is a real loss."* It was
+/// a real loss and nothing could be done about it, because one constant was
+/// doing two jobs — the size the layout stops reflowing at, and the size the
+/// window refuses to shrink past — and lowering it would have moved both.
+///
+/// ⚠ **The number in that first sentence was written in the PRESENT tense until
+/// R1821**, and had been false since R1791 replaced `TOOLBAR_RIGHT_CLUSTER`
+/// with [`TOOLBAR_RIGHT_FLOOR`] — 437 pixels off [`MIN_W`] in one round, and
+/// this paragraph went on saying 1625. Read the constant, never this sentence.
+/// ★ Worth the note because of what the paragraph is ABOUT: one constant doing
+/// two jobs. R1821 found the same shape one level over — the same comfortable
+/// width answering both *what do I ask a window for* and *is this grant enough
+/// room* — so the defect this paragraph describes outlived the fix it describes.
 ///
 /// [`ShrinkPolicy`] separates them, so this is the second number: below it the
 /// app bar's right end and the inspector are **clipped**, and above it nothing
@@ -485,8 +503,39 @@ const SHRINK: ShrinkPolicy = ShrinkPolicy::panning((MIN_W, MIN_H), (FLOOR_W, MIN
 /// frame narrower than this is a verdict about a slice, and the module that
 /// says so must read the declared number rather than restate it. See
 /// `judge::built` for the measurement that made this necessary.
-pub(crate) const fn comfortable_size() -> (u32, u32) {
-    SHRINK.comfortable()
+pub(crate) fn comfortable_size() -> (u32, u32) {
+    let (width, height) = SHRINK.comfortable();
+    (width - host_provided_width(), height)
+}
+
+/// ★★★★★ R1821 — **the width of the chrome the host draws in this screen's
+/// place**, and the reason [`comfortable_size`] stopped being a constant.
+///
+/// [`SHRINK`]'s comfortable width is a *window policy* number: what this screen
+/// asks an operating system for when it owns a window, which R1725 argued must
+/// not change with where a page happens to be. That argument is right, and
+/// nothing here disturbs it — `SHRINK.comfortable()` is untouched and is still
+/// what the layout clamps against.
+///
+/// But the same number had a second reader. `judge` compares it against the
+/// extent a HOST granted, to decide whether a frame is this screen laid out or
+/// a slice of one. For that question a rail the host draws is not room this
+/// screen needs, and charging for it makes the screen decline a page that
+/// would in fact have fitted. ⇒ **one number was answering two questions**,
+/// which is this tree's most-recorded defect class, and the half that was wrong
+/// is the half that reads a grant rather than asks for a window.
+///
+/// ★ Derived from [`rail_w`], not from [`draws_own_rail`] directly. R1725 named
+/// the rail's five readers and put the question in one place; a sixth reader of
+/// that predicate would be the very thing it exists to prevent, so this reads
+/// the *width* the layout actually uses and subtracts what is left over.
+///
+/// ★ Standalone this is **zero** — `host_chrome()` is `NONE`, `rail_w()`
+/// answers [`RAIL_W`], and `comfortable_size()` is `MIN_W` exactly as before.
+/// The screen that owns its window is unaffected by construction rather than by
+/// a branch, which is why no standalone assertion needed editing.
+fn host_provided_width() -> u32 {
+    RAIL_W - rail_w()
 }
 
 /// Where the palette opens: the arrangement the hand-written layout drew.
@@ -12778,6 +12827,15 @@ impl WidgetView for NodeLabView {
     /// ★★★★★ R1712 — and the floor is no longer `MIN_W` x `MIN_H`. It is
     /// derived from `SHRINK`, the same value `window_size` clamps against,
     /// so this binding has nowhere to write a second minimum.
+    ///
+    /// ⚠ **R1821 — "the same value" needs one more word now.** `window_size`
+    /// clamps against [`comfortable_size`], which is `SHRINK`'s comfortable
+    /// width *less whatever chrome the host draws in this screen's place*. The
+    /// two are equal wherever this binding applies, because a screen with a
+    /// window of its own has no host and subtracts nothing — so the sentence
+    /// above is still true HERE, and would stop being true if it were read as a
+    /// claim about the mounted screen. Which is the point: this binding is the
+    /// window's, and a mounted page has no window to floor.
     ///
     /// ★★★★★ R1714 — and what the window does below that floor is no longer to
     /// clip. `SHRINK` declares a PAN, so the framework wraps this screen in a

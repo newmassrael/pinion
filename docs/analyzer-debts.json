@@ -87,6 +87,17 @@
       ]
     },
     {
+      "name": "debt-a-guest-derives-width-from-one-of-two-declarable-chrome-parts",
+      "substituted": false,
+      "blocked_by": "unmeasured",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links analyzer-debt-repayment-loop, debt-the-canon-is-one-app-and-we-are-many-binaries"
+      ]
+    },
+    {
       "name": "debt-a-link-address-is-printed-wider-than-its-extent",
       "substituted": false,
       "blocked_by": "buildable",
@@ -106,17 +117,6 @@
       "closed_because": "",
       "why": [
         "links debt-canon-gui-surface-census, debt-the-canon-is-one-app-and-we-are-many-binaries"
-      ]
-    },
-    {
-      "name": "debt-a-mounted-section-needs-width-for-chrome-its-host-draws",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
     },
     {

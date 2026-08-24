@@ -218,9 +218,18 @@ pub fn built(regions: &PaintedRegions, surface: &str) -> Built {
 /// * it is read from the **host's** grant, so this screen cannot enter the
 ///   state by drawing badly, only by being given less room than it asked for;
 /// * it makes the numbers **worse**, not better. Away counts as nothing
-///   reproduced (R1742's own rule), so at 1440x900 this section goes from
-///   2 of 12 reproduced to 0 of 12, and from a section that fails to one that
-///   is honestly not being asked. Nothing can be flattered by it.
+///   reproduced (R1742's own rule), so wherever this fires a section goes from
+///   whatever it did reproduce to none of it, and from a section that fails to
+///   one that is honestly not being asked. Nothing can be flattered by it.
+///
+/// ⚠ **That bullet used to name the shipped window and two counts** — *at
+/// 1440x900 this section goes from 2 of 12 reproduced to 0 of 12*. True when
+/// written, false by R1791, which brought the declared width down to what the
+/// shell's page can give: the condition does not fire at the shipped size at
+/// all now. The counts are DELETED rather than restated, because a count
+/// written into prose beside the thing that answers it is what R1813 and R1814
+/// each caught one round apart. The property is the argument; the instance
+/// never was.
 ///
 /// The alternative was a ledger entry per clipped part, at each measured width.
 /// Refused: twelve entries would declare *this build does not reproduce its
@@ -497,6 +506,108 @@ mod tests {
              grant rather than a case in which the judge would fail, which is the \
              test R1742 set for an away condition"
         );
+    }
+
+    /// ★★★★★ R1821 — **a mounted screen does not decline a page over chrome its
+    /// host is drawing**, which is the whole of this round in one assertion.
+    ///
+    /// The width in the middle is the point: `MIN_W - RAIL_W` is a page too
+    /// narrow for the screen that draws its own rail and wide enough for the
+    /// same screen mounted where the host draws one. Before this round both
+    /// answers were the first, so the assembled tool's section declined pages
+    /// that would have fitted — and it declined them by 54 pixels, the width of
+    /// a rail it was not painting.
+    ///
+    /// ★ Both halves are asserted, and the standalone half is not a formality:
+    /// it is what says the derivation SUBTRACTS rather than simply returns a
+    /// smaller number. A `comfortable_size` that ignored the host entirely would
+    /// pass the first assertion; one that always subtracted would pass the
+    /// second; only a screen that answers the two differently passes both.
+    ///
+    /// # ⚠⚠ It reads the width condition, and the first draft read `built`
+    ///
+    /// That draft asserted `Away` standalone and *not* `Away` mounted, and both
+    /// assertions were unsound in opposite directions. [`given`] is a surface
+    /// carrying an extent and nothing else, so once the width lets a frame
+    /// through, `built` declines it anyway — the row this surface is specified
+    /// for is not on that frame either. So the standalone half **passed for a
+    /// reason that had nothing to do with the width**, and the mounted half
+    /// **could not pass at any width**.
+    ///
+    /// Two assertions over one fixture, one vacuous and one impossible, both
+    /// reading a predicate that answers a different question than the one being
+    /// asked. That is R1813's class, caught here two rounds after the round
+    /// that named it — which is the argument for asserting on the *smallest*
+    /// thing that changed rather than on the verdict that contains it.
+    #[test]
+    fn r1821_a_mounted_screen_is_not_charged_for_the_rail_its_host_draws() {
+        use pinion_core::chrome::{HostChrome, Part, with_host_chrome};
+
+        let (standalone, _) = crate::comfortable_size();
+        let page = standalone - crate::RAIL_W;
+
+        assert!(
+            super::below_the_width_this_screen_lays_out_at(&given(page)).is_some(),
+            "★ standalone this screen draws its own rail, so a page {page} wide \
+             really is narrower than the {standalone} it lays out at"
+        );
+
+        with_host_chrome(HostChrome::NONE.with(Part::Navigation), || {
+            let (mounted, _) = crate::comfortable_size();
+            assert_eq!(
+                mounted, page,
+                "★★★★★ mounted where the host draws the navigation, this screen \
+                 needs exactly the rail's width less -- derived from the same \
+                 `draws_own_rail` the paint, the access tree, the keyboard ring \
+                 and the hit test read, so the five cannot disagree"
+            );
+            assert!(
+                super::below_the_width_this_screen_lays_out_at(&given(page)).is_none(),
+                "★★★★★ and so the SAME page it declined standalone is judged \
+                 here rather than declined -- a section that is given room it \
+                 can use must not report itself as not being asked"
+            );
+        });
+    }
+
+    /// ★★★★★ R1821 — **the width the layout stops at and the width a frame is
+    /// judged against are ONE width**, mounted as well as standalone.
+    ///
+    /// R1770 introduced [`crate::comfortable_size`] so that `judge` would *read*
+    /// the declared number rather than restate it, and R1712 had already written
+    /// the same property from the other end: the window's floor is "derived from
+    /// `SHRINK`, the same value `window_size` clamps against". Subtracting the
+    /// host's chrome in one of those readers and not the other is what would
+    /// break it — and would break it silently, because the two are equal
+    /// standalone and every rectangle assertion in `painted.rs` is standalone.
+    ///
+    /// What the disagreement would cost is specific: at a grant between the two
+    /// numbers the layout would still ask for the larger one, so the framework
+    /// would pan a page the judge had just called whole. A verdict that says
+    /// *this frame is the screen laid out* while the layout is 54 pixels wider
+    /// than the frame is the one thing this module may not do.
+    #[test]
+    fn r1821_the_layout_floor_and_the_judged_width_are_one_width() {
+        use pinion_core::chrome::{HostChrome, Part, with_host_chrome};
+        use pinion_core::external::with_surface_extent;
+
+        for chrome in [HostChrome::NONE, HostChrome::NONE.with(Part::Navigation)] {
+            with_host_chrome(chrome, || {
+                let (comfortable, _) = crate::comfortable_size();
+                // Granted exactly what this screen says it needs. The layout may
+                // not then ask for more: `layout_size` floors the grant, so any
+                // floor above `comfortable` shows up here as a wider answer.
+                with_surface_extent(crate::VIEW_TAG, (comfortable, 900), || {
+                    assert_eq!(
+                        crate::window_size().0,
+                        comfortable,
+                        "★★★★★ the layout stops at the same width `judge` reads, \
+                         so a page this screen calls sufficient is a page it \
+                         lays out inside rather than one the framework pans"
+                    );
+                });
+            });
+        }
     }
 
     /// ★ And the condition is a threshold, not a slope: at exactly the declared
