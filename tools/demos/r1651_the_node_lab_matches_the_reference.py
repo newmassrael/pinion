@@ -495,7 +495,25 @@ def body() -> None:
             # read-out rather than an affordance — so again the press census
             # passes over it and this pin is what would miss it.
             "lab.inspector": 18,
-            "lab.palette.discovery": 3,
+            # ★★★★★ R1817.1 — 2, not 3, and the member did not disappear: it
+            # became a CAPTION. R1813 made the determinism switch's read-out its
+            # box's caption child and renamed it `lab.palette.discovery.state`
+            # -> `.caption`, and the census above subtracts anything ending in
+            # `CAPTION_SUFFIX` by R1794's rule that a caption belongs to its box
+            # rather than to its family. So the tag is still painted, still
+            # pressable and still announced; it simply stopped being counted
+            # here, exactly as designed.
+            #
+            # 🟥 THE PIN IS WHAT CAUGHT IT, and it caught it in CI rather than
+            # locally: R1813 computed a 66-demo radius, ran the five its tag
+            # renames named, and left the rest to the sweep. This demo was in
+            # the radius and not in the five — it does not read
+            # `lab.palette.discovery.state` by name anywhere, so no rule keyed
+            # on the renamed TAGS could have selected it. It reads the family's
+            # SHAPE. ⇒ R1815's lesson from the other side: a population derived
+            # from names cannot see a change to shape, and here the change was
+            # a rename that altered a shape a different demo was counting.
+            "lab.palette.discovery": 2,
             # ★★★★ R1720 — the toast, and it arrived here for a reason worth
             # writing down rather than a number worth widening.
             #
