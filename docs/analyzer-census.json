@@ -510,8 +510,9 @@
     "plane": "dashboard",
     "tier": "t2",
     "capability": "click to cross-filter every linked view",
-    "verdict": "gap",
-    "covered_by": "bar and line participate; POLAR HAS NO BRUSH LEG AT ALL (measured: zero references), so the interaction is not uniform across the chart types this dashboard needs"
+    "verdict": "have",
+    "covered_by": "`pinion_chart::LinkGroup` (R1806): the linked set is a DECLARED value, not a per-view call. Publishing a `Selection` returns a `Reach` that accounts for every declared view -- each is reached or carries a `Refusal` saying why -- and `LinkGroup::audit` compares the declaration against the views actually painted, so a view added to a board and forgotten is named instead of silently rendering unfiltered. The consumer is the analysis tool's own dashboard: `spec::dashboard_links` declares its five placed cards and a saved-filter chip cross-filters the stream card, which is a DIFFERENT card from the one the chip lives on. The R1794 gap text this replaces was measured wrong twice over -- the chart-kind count was 3 of 14 and not 4 (histogram has no selection method of its own; its nine `select_x_range` mentions are references to `BarChart`'s), and per-kind coverage was never what this row asked about: the row says *every linked view*, and nothing in the tree declared a set at all",
+    "proven_by": "hello-analyzer-shell::tests::r1806_a_saved_filter_reaches_the_declared_set_of_linked_views hello-analyzer-shell::tests::r1806_the_link_declaration_covers_the_placed_board hello-analyzer-shell::tests::r1806_choosing_a_saved_filter_fades_the_rows_it_does_not_select pinion-chart::link::tests::every_declared_view_is_accounted_for_in_every_domain pinion-chart::link::tests::the_audit_names_a_painted_view_that_nobody_linked"
   },
   {
     "id": "dashboard.t2.5",

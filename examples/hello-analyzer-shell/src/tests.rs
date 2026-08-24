@@ -45,6 +45,7 @@ fn probe_palette() -> super::Palette {
         grid: next(),
         warn: next(),
         refused: next(),
+        faded: next(),
     }
 }
 
@@ -3002,4 +3003,268 @@ fn r1797_the_promoted_card_is_placed_and_the_palette_has_nothing_left() {
         "and the heading a reader scans says so: {:?}",
         spec::section_heading("visual", "VISUALIZATION")
     );
+}
+
+// ── R1806 — click to cross-filter every linked view ──────────────────────────
+//
+// The census row `dashboard.t2.4`. The word that had no referent in this tree
+// was **every**: a cross-filter was an imperative `.select_x_range(..)` written
+// once per chart, so the set it reached was whatever somebody had remembered to
+// write, and a card added and forgotten rendered unfiltered in silence.
+//
+// These assert the reach as a **set**, not as a count. A count of two is
+// equally true of the right two cards and the wrong two.
+
+/// The kinds the opening board actually places, which is the population the
+/// link declaration must cover.
+fn placed_kinds() -> std::collections::BTreeSet<String> {
+    spec::BOARD
+        .iter()
+        .map(|tile| tile.kind.to_string())
+        .collect()
+}
+
+#[test]
+fn r1806_a_saved_filter_reaches_the_declared_set_of_linked_views() {
+    let group = spec::dashboard_links();
+    let reach = group.publish(&pinion_chart::Selection::Category("units only".into()));
+
+    assert_eq!(
+        reach
+            .reached()
+            .iter()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>(),
+        std::collections::BTreeSet::from(["filter", "packet"]),
+        "★ a saved filter reaches the SET of category-speaking views — and the \
+         stream is a DIFFERENT card from the one the chip lives on, which is the \
+         whole of the census sentence"
+    );
+    assert_eq!(
+        reach
+            .refused()
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>(),
+        std::collections::BTreeSet::from(["decode", "keymap", "latency"]),
+        "and the ones it does not reach are named too, rather than merely absent"
+    );
+
+    // ★★★★★ The accounting identity. Before this round a card could fall out of
+    // a cross-filter without appearing anywhere; here every declared view is in
+    // exactly one of the two halves, so "every linked view" is checkable.
+    assert_eq!(
+        reach.accounted(),
+        group.declared(),
+        "every declared view is accounted for"
+    );
+    for name in reach.reached() {
+        assert!(
+            !reach.refused().contains_key(name),
+            "{name} is both reached and refused"
+        );
+    }
+}
+
+#[test]
+fn r1806_the_same_board_reaches_a_different_set_in_a_different_domain() {
+    // The latency card is not un-filterable — it is not filterable BY CATEGORY.
+    // A millisecond window reaches it and leaves the filter card behind, which
+    // is what makes the refusal above a statement about domains rather than a
+    // ranking of cards.
+    let reach =
+        spec::dashboard_links().publish(&pinion_chart::Selection::XRange { lo: 8.0, hi: 16.0 });
+    assert_eq!(
+        reach
+            .reached()
+            .iter()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>(),
+        std::collections::BTreeSet::from(["latency", "packet"]),
+    );
+}
+
+#[test]
+fn r1806_a_refusal_says_why_and_the_two_kinds_are_distinguishable() {
+    let reach =
+        spec::dashboard_links().publish(&pinion_chart::Selection::Category("units only".into()));
+
+    let latency = reach
+        .reason("latency")
+        .expect("a refused view has a reason");
+    assert!(
+        latency.contains("x-range") && latency.contains("category"),
+        "★ the refusal names BOTH sides — what the card selects by, and what was \
+         published: {latency:?}"
+    );
+    assert!(
+        matches!(
+            reach.refused().get("latency"),
+            Some(pinion_chart::Refusal::Domain { .. })
+        ),
+        "the latency card is a real view over the capture that speaks another domain"
+    );
+
+    let keymap = reach
+        .reason("keymap")
+        .expect("an inert view has a reason too");
+    assert_eq!(keymap, "a key legend, not capture data");
+    assert!(
+        matches!(
+            reach.refused().get("keymap"),
+            Some(pinion_chart::Refusal::Inert { .. })
+        ),
+        "★ and 'cannot answer THIS question' is kept distinct from 'is not part \
+         of this population' — before this round both were the same silence"
+    );
+}
+
+/// ★★★★★ The gate the per-view call could never have: the declaration compared
+/// against the board that was actually **placed**.
+///
+/// A sixth card added to `spec::BOARD` and forgotten in
+/// `spec::dashboard_links` would render unfiltered forever, and nothing in this
+/// tree would have said so. This is the sentence instead of the silence.
+#[test]
+fn r1806_the_link_declaration_covers_the_placed_board() {
+    let audit = spec::dashboard_links().audit(&placed_kinds());
+    assert!(
+        audit.agrees(),
+        "the link declaration and the placed board disagree: {}",
+        audit.fault().unwrap_or_default()
+    );
+    // And the gate is not vacuous — the board really does place cards.
+    assert_eq!(placed_kinds().len(), spec::BOARD.len());
+}
+
+#[test]
+fn r1806_every_saved_filter_has_exactly_one_rule() {
+    assert_eq!(
+        spec::FILTER_CHIP_RULES.len(),
+        spec::FILTER_CHIPS.len(),
+        "★ one rule per chip, asserted rather than trusted — a chip with no rule \
+         is a chip whose click means nothing to any other card"
+    );
+    for n in 0..spec::FILTER_CHIPS.len() {
+        assert!(spec::chip_rule(n).is_some(), "chip {n} has no rule");
+    }
+    assert!(spec::chip_rule(spec::FILTER_CHIPS.len()).is_none());
+}
+
+/// ★★★★★ The painted half: choosing a saved filter **fades the stream rows it
+/// does not select** — on a card the chip does not live on.
+///
+/// Asserted as the two SETS of row indices, derived from the chip's own stated
+/// rule, so the test cannot agree with a painter that faded the wrong rows or
+/// all of them.
+#[test]
+fn r1806_choosing_a_saved_filter_fades_the_rows_it_does_not_select() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let packet = state
+            .cards
+            .get()
+            .into_iter()
+            .find(|c| kind_of(c.id().as_str()) == "packet")
+            .expect("the opening board places the stream card");
+        let id = packet.id().as_str().to_string();
+
+        // Which rows a given chip's rule selects, straight from the specification.
+        let selected_by = |n: usize| -> std::collections::BTreeSet<usize> {
+            let rule = spec::chip_rule(n).expect("the chip has a rule");
+            spec::STREAM_ROWS
+                .iter()
+                .enumerate()
+                .filter(|(_, (_, kind, name, _))| rule.selects(kind, name))
+                .map(|(i, _)| i)
+                .collect()
+        };
+
+        // Which rows the SCENE actually faded, read off the painted ink.
+        let faded_rows = || -> std::collections::BTreeSet<usize> {
+            let scene = super::view(ScreenState::default(), pinion_core::Frame::default());
+            let faded = probe_faded_ink();
+            let mut out = std::collections::BTreeSet::new();
+            scene.for_each_node(&mut |visit| {
+                let Some(tag) = visit.node.tag() else { return };
+                let Some(rest) = tag.strip_prefix(&format!("card.{id}.cell.")) else {
+                    return;
+                };
+                let Some((row, _)) = rest.split_once('_') else {
+                    return;
+                };
+                let Ok(row) = row.parse::<usize>() else {
+                    return;
+                };
+                if let pinion_core::Scene::Text(text) = visit.node
+                    && text.style.fg_color == faded
+                {
+                    out.insert(row);
+                }
+            });
+            out
+        };
+
+        // The opening state lights chip 0 ("units only"), so the board opens
+        // ALREADY cross-filtered — which is the honest reading of a saved filter
+        // that the specification says is on.
+        assert_eq!(state.filter_chip.get(), Some(0));
+        let painted_rows: std::collections::BTreeSet<usize> =
+            (0..spec::STREAM_ROWS.len()).collect();
+        assert_eq!(
+            faded_rows(),
+            painted_rows
+                .difference(&selected_by(0))
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>(),
+            "★ exactly the rows the lit filter does NOT select are faded"
+        );
+
+        // A different filter fades a different set — so the painter is reading
+        // the rule and not a constant.
+        super::ShellOracle::choose_filter(&state, &id_of_filter_card(&state), 4);
+        assert_eq!(state.filter_chip.get(), Some(4));
+        let declares_only = selected_by(4);
+        assert!(
+            !declares_only.is_empty() && declares_only.len() < spec::STREAM_ROWS.len(),
+            "the fixture chip must split the rows, or this proves nothing"
+        );
+        assert_eq!(
+            faded_rows(),
+            painted_rows
+                .difference(&declares_only)
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>(),
+            "★ a second filter fades a DIFFERENT set of rows"
+        );
+
+        // And turning the filter off restores every row to full strength: the
+        // crossfilter convention that no selection is not an empty one.
+        super::ShellOracle::choose_filter(&state, &id_of_filter_card(&state), 4);
+        assert_eq!(state.filter_chip.get(), None);
+        assert!(
+            faded_rows().is_empty(),
+            "with no saved filter applied nothing is outside it"
+        );
+    });
+}
+
+/// The filter card's id on the opening board — the chip row's address.
+fn id_of_filter_card(state: &std::rc::Rc<super::ShellState>) -> String {
+    state
+        .cards
+        .get()
+        .into_iter()
+        .find(|c| kind_of(c.id().as_str()) == "filter")
+        .expect("the opening board places the filter card")
+        .id()
+        .as_str()
+        .to_string()
+}
+
+/// The ink a faded row takes, resolved the same way the painter resolves it.
+fn probe_faded_ink() -> pinion_core::style::Color {
+    let theme = pinion_core::theme::use_theme(super::THEME_TAG).theme_animated();
+    theme.resolve(pinion_core::theme::ColorRole::Outline)
 }

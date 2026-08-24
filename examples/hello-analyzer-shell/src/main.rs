@@ -4797,6 +4797,14 @@ struct Palette {
     warn: Color,
     /// R1719 — the ink the toast's bullet takes when what it says is a refusal.
     refused: Color,
+    /// ★ R1806 — the ink a row **outside the active cross-filter** is drawn in.
+    ///
+    /// Fainter than [`muted`](Self::muted), which this screen already spends on
+    /// "present but not the point", because a filtered-out row is a third
+    /// thing: still there, deliberately not current. A role rather than a
+    /// hand-picked grey, for `warn` and `refused`'s reason — a literal holds
+    /// its contrast in exactly one of the two themes.
+    faded: Color,
 }
 
 /// A text run at an exact place in its container.
@@ -6454,10 +6462,38 @@ fn body_scene(state: &ShellState, card: &Card, rect: Rect, palette: Palette) -> 
 /// compares painted rows against `spec`, and a placeholder has no rows to
 /// compare. Each body is drawn from the specification's own table, so a row
 /// added there appears here and nowhere is there a second copy to disagree.
+/// ★★★★★ R1806 — **the cross-filter the board is under, as the framework
+/// reports it.**
+///
+/// The saved-filter chip has had state since R1721 and exactly one reader: its
+/// own chip row. Clicking it lit a chip and changed nothing else on the board,
+/// which is the census row `dashboard.t2.4` — *click to cross-filter every
+/// linked view* — with **every** meaning one.
+///
+/// This publishes the lit chip as a
+/// [`Selection`](pinion_chart::Selection) into the board's declared
+/// [`LinkGroup`](pinion_chart::LinkGroup) and hands back the
+/// [`Reach`](pinion_chart::Reach). A card asks the reach what it must apply
+/// rather than being handed a window, so "was I part of this?" and "what do I
+/// narrow to?" are one question — and a card that is *not* part of it can say
+/// why, which is what the refusals carry.
+///
+/// `None` when no chip is lit: the crossfilter convention that no selection is
+/// not the same as an empty one, and every card renders full.
+fn cross_filter(state: &ShellState) -> Option<pinion_chart::Reach> {
+    let n = state.filter_chip.get()?;
+    let (name, _) = spec::FILTER_CHIPS.get(n)?;
+    Some(spec::dashboard_links().publish(&pinion_chart::Selection::Category((*name).to_string())))
+}
+
 fn ready_body(state: &ShellState, card: &Card, rect: Rect, palette: Palette) -> Vec<Scene> {
     let id = card.id().as_str();
     match kind_of(id) {
-        "packet" => stream_body(id, rect, palette),
+        // ★ R1806 — the stream is the card a saved filter actually narrows, and
+        // it is a DIFFERENT card from the one clicked. That is the whole of the
+        // census sentence: the chip lives on the filter card, and the rows that
+        // stop being current live here.
+        "packet" => stream_body(state, id, rect, palette),
         "decode" => decode_body(id, rect, palette),
         "keymap" => map_body(id, rect, palette),
         // ★★★★★ R1721 — the state is threaded rather than fetched. The first draft
@@ -6604,9 +6640,28 @@ fn head_cell_tag(id: &str, column: usize) -> String {
 }
 
 /// The message stream: a header row of columns over the opening rows.
-fn stream_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
+fn stream_body(state: &ShellState, id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
     const HEAD_H: u32 = 20;
     const ROW_H: u32 = 20;
+    // ★★★★★ R1806 — the selection this card was reached by, or `None`.
+    //
+    // Asked of the reach by NAME rather than read off the chip signal, and the
+    // difference is the point: this card does not know whether it is linked, it
+    // asks. Were its declaration removed from `spec::dashboard_links` the rows
+    // would go back to full strength AND
+    // `r1806_the_link_declaration_covers_the_placed_board` would name the card
+    // — where before this round removing a `.select_x_range` call failed
+    // nothing at all.
+    let selected = cross_filter(state)
+        .as_ref()
+        .and_then(|reach| reach.selection_for("packet").cloned());
+    let rule = selected.as_ref().and_then(|selection| {
+        let name = selection.category()?;
+        spec::FILTER_CHIPS
+            .iter()
+            .position(|(chip, _)| *chip == name)
+            .and_then(spec::chip_rule)
+    });
     let columns = stream_columns(rect.w);
     let mut out = vec![Scene::Container(
         ContainerNode::new(
@@ -6641,12 +6696,19 @@ fn stream_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
         // row's own values. Zipped rather than indexed: a narrow card drops
         // columns from the right, and indexing would reach past the end.
         let values = [*time, *kind, *name, *len];
+        // ★ R1806 — a row the active saved filter does not select mutes; it is
+        // not dropped. The crossfilter convention this crate documents: the
+        // reader must be able to see what fell outside the filter, or narrowing
+        // and having no data look the same.
+        let outside = rule.is_some_and(|rule| !rule.selects(kind, name));
         let cells = columns
             .iter()
             .zip(values)
             .enumerate()
             .map(|(c, ((column, x, w), value))| {
-                let ink = if *column == "type" {
+                let ink = if outside {
+                    palette.faded
+                } else if *column == "type" {
                     type_ink(value, palette)
                 } else if *column == "name" {
                     palette.ink
@@ -8607,6 +8669,7 @@ fn palette_of(theme: &Theme, dark: bool) -> Palette {
         // a role rather than a literal for `warn`'s reason: a red picked by
         // hand holds its contrast in exactly one of the two themes.
         refused: theme.resolve(ColorRole::Error),
+        faded: theme.resolve(ColorRole::Outline),
     }
 }
 

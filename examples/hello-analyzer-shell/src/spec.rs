@@ -1445,6 +1445,113 @@ pub const FILTER_CHIPS: &[(&str, bool)] = &[
     ("declares only", false),
 ];
 
+/// ★★★★★ R1806 — **what each saved filter selects**, as a rule rather than as
+/// a name.
+///
+/// [`FILTER_CHIPS`] holds five names and, until this round, nothing else: a
+/// chip could be lit, and being lit meant nothing to any other card on the
+/// board. A name a machine cannot evaluate is a caption, so the cross-filter
+/// had nowhere to start. One rule per chip, in [`FILTER_CHIPS`] order, and the
+/// bijection is asserted rather than trusted.
+///
+/// These are the demonstration capture's stated semantics, in the same sense
+/// [`STREAM_ROWS`] is a stated capture: content this file authors, evaluated
+/// against the rows this file also authors. A rule that matches nothing in
+/// this capture (`shared memory`) is kept deliberately — an empty result is a
+/// real outcome of a filter, and a board that can only be shown narrowing to a
+/// non-empty set has not demonstrated the case a reader most needs to trust.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChipRule {
+    /// Rows whose resource name mentions the word.
+    NameMentions(&'static str),
+    /// Rows of exactly this message type (a [`STREAM_TYPES`] word).
+    TypeIs(&'static str),
+    /// Every row whose resource name does **not** mention the word — the
+    /// exclusion form, which is not the negation of the others in general
+    /// because it is the only rule that can grow the shown set.
+    NameOmits(&'static str),
+}
+
+impl ChipRule {
+    /// Whether a [`STREAM_ROWS`] row is selected by this rule.
+    #[must_use]
+    pub fn selects(self, kind: &str, name: &str) -> bool {
+        match self {
+            Self::NameMentions(word) => name.contains(word),
+            Self::TypeIs(want) => kind == want,
+            Self::NameOmits(word) => !name.contains(word),
+        }
+    }
+}
+
+/// One rule per [`FILTER_CHIPS`] entry, in that order.
+pub const FILTER_CHIP_RULES: &[ChipRule] = &[
+    ChipRule::NameMentions("units"),
+    ChipRule::NameMentions("shm"),
+    ChipRule::NameMentions("fragment"),
+    ChipRule::NameOmits("P-03"),
+    ChipRule::TypeIs("Declare"),
+];
+
+/// The rule the `n`th saved filter applies.
+#[must_use]
+pub fn chip_rule(n: usize) -> Option<ChipRule> {
+    FILTER_CHIP_RULES.get(n).copied()
+}
+
+/// ★★★★★ R1806 — **the dashboard's linked views, declared.**
+///
+/// The census sentence this answers is *click to cross-filter every linked
+/// view*, and the word that had no referent anywhere in this tree was
+/// **every**. A cross-filter was an imperative call written once per chart, so
+/// "every linked view" was whatever set of calls somebody had remembered to
+/// write; a card added to the board and forgotten would render unfiltered and
+/// nothing would say so.
+///
+/// This is that set as a value. Each placed card declares which
+/// [`Domain`](pinion_chart::Domain)s of selection it can accept, or declares
+/// itself inert with the reason it accepts none — and
+/// [`LinkGroup::audit`](pinion_chart::LinkGroup::audit) compares the
+/// declaration against the cards the board actually painted, in both
+/// directions.
+///
+/// The two inert cards are the reason the *reason* matters. Neither will ever
+/// narrow, but they will not narrow for different causes: a decode inspector
+/// shows one selected message rather than a view over the population, and a key
+/// legend is not capture data at all. Left out of the group they would read as
+/// oversights; given an empty domain list they would read as mismatches. Stated
+/// inert, each says the true thing about itself.
+///
+/// The latency card is the interesting refusal: it is a genuine view over the
+/// capture and it **does** cross-filter — by
+/// [`XRange`](pinion_chart::Domain::XRange), the millisecond window its
+/// distribution is drawn in. A saved filter selects by category, and this card
+/// has no per-category breakdown of its samples to narrow by, so it is refused
+/// with both sides named. That is a fact about the capture's shape, and before
+/// this round the only way it could be expressed was for the card to quietly
+/// not change.
+///
+/// # Panics
+///
+/// Never in a shipped build: the declaration is a literal here and its only
+/// failure modes are a duplicate name or an unexplained mute, both of which the
+/// crate refuses at construction and both of which this module's tests cover.
+#[must_use]
+pub fn dashboard_links() -> pinion_chart::LinkGroup {
+    use pinion_chart::{Domain, Link, LinkGroup};
+    LinkGroup::new([
+        Link::new("packet", [Domain::Category, Domain::XRange]),
+        Link::new("filter", [Domain::Category]),
+        Link::new("latency", [Domain::XRange]),
+        Link::inert(
+            "decode",
+            "a decode of one selected message, not a view over the population",
+        ),
+        Link::inert("keymap", "a key legend, not capture data"),
+    ])
+    .expect("the dashboard's link declaration is well formed")
+}
+
 /// The filter card's three counts: value, then what it counts.
 ///
 /// Three rather than one because the reference's point is the *relation* — a

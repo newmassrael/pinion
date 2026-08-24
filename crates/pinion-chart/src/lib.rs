@@ -315,6 +315,7 @@ mod histogram;
 mod interpolate;
 mod legend;
 mod line;
+mod link;
 mod model;
 mod palette;
 mod plot;
@@ -355,6 +356,7 @@ pub use legend::{
     StaticLegend,
 };
 pub use line::LineChart;
+pub use link::{Audit, Domain, Link, LinkFault, LinkGroup, Reach, Refusal, Selection};
 pub use model::{CellTable, Field, Mapped, ModelMapper, Orientation, UnreadableCell, numeric};
 pub use palette::CategoricalPalette;
 pub use plot::OffScale;
