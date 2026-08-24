@@ -218,6 +218,27 @@ if ! python3 "$repo_root/tools/analyzer_census.py" --check-proofs >&2; then
     exit 1
 fi
 
+# ★★★★★ R1809 — the DEBT half of the same north star, which had no command at
+# all. Two steps, split for the reason the three above are: the selftest is pure
+# and instant, and the check reads a folder.
+#
+# ⚠ It reads a population OUTSIDE this repository (the agent's memory folder),
+# so on CI and in a fresh clone it FAILS OPEN and says so. That is deliberate —
+# absence of the folder is not evidence of no debt — and it is why the survey is
+# also snapshotted into `docs/analyzer-debts.json`, which a reader with no such
+# folder can still see. The check refuses when the two disagree.
+step "analysis-tool debts selftest"
+if ! python3 "$repo_root/tools/analyzer_debts.py" --selftest >&2; then
+    echo "pre-push: the analysis-tool debt survey failed its own tests" >&2
+    exit 1
+fi
+step "analysis-tool debts"
+if ! python3 "$repo_root/tools/analyzer_debts.py" --check >&2; then
+    echo "pre-push: an analysis-tool debt declares no standing, or the committed" >&2
+    echo "pre-push: snapshot has drifted from the memory folder — run --write" >&2
+    exit 1
+fi
+
 step "reference census"
 if ! python3 "$repo_root/tools/reference_census.py" --selftest >&2; then
     echo "pre-push: the reference census failed its own tests" >&2

@@ -1567,5 +1567,21 @@ ok "an unlabelled run still says pre-push" \
 ok "each analysis-tool census command is timed separately" \
    "$(grep -cE '^step "analysis-tool census ' "$repo_root/.githooks/pre-push")" "3"
 
+# ★★★★★ R1809 — the debt survey is wired, and its two commands are timed apart
+# for the reason the census's three are. Asserted structurally, because a step
+# that quietly stops happening is the failure mode this file exists for: the
+# survey reads a folder OUTSIDE the repository and fails open when it is
+# absent, so a missing step would look exactly like a machine without one.
+ok "the analysis-tool debt survey is a push gate" \
+   "$(grep -cE '^step "analysis-tool debts' "$repo_root/.githooks/pre-push")" "2"
+ok "the debt survey's selftest runs before the survey trusts itself" \
+   "$(awk '/^step "analysis-tool debts selftest"/{s=NR} /^step "analysis-tool debts"$/{c=NR} END{print (s>0 && c>s) ? "yes" : "no"}' \
+        "$repo_root/.githooks/pre-push")" "yes"
+# ⚠ And it must fail OPEN with no memory folder, or every fresh clone and every
+# CI run would refuse a push over a population it cannot see.
+ok "the debt survey passes where the memory folder is absent" \
+   "$(PINION_MEMORY_DIR=/nonexistent-for-this-test \
+        python3 "$repo_root/tools/analyzer_debts.py" --check >/dev/null 2>&1; echo $?)" "0"
+
 printf '[hooks] %d passed, %d failed\n' "$pass" "$fail"
 [[ "$fail" -eq 0 ]]

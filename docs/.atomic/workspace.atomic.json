@@ -64778,6 +64778,80 @@
         "⚠ The walk is a UNIT test over the view function; the demos remain the place a wire claim is checked against a running window. This does not replace them."
       ]
     },
+    "R1809": {
+      "decision_summary": "R1809 makes the north star's third condition — *the analysis-tool family of open debts is closed* — a command. It was the only one of the four that was not, and two measured facts explain why it could not become one.\n\nNOTHING SAID WHICH DEBTS ARE IN THE FAMILY. Measured over the memory folder: 317 open `debt-*.md`, with the word `analyzer` appearing in 68 of them — far too loose, because the analysis tool is what this whole tree is about and the word turns up in prose with nothing to do with it. There was no field, no list and no derivation, so \"analyzer-family\" was a judgement somebody made again each time they were asked.\n\nNOTHING SAID WHETHER A DEBT CAN BE WORKED ON NOW. The north star already excludes two census rows by name — one needs a ratified spec decision, one waits on Phase C — but that exclusion lived in the prompt rather than in the debts, so \"are the remaining ones all blocked?\" had no denominator and no verdict.\n\nAND COUNTING CLOSED DEBTS CANNOT ANSWER IT. This repository's closing discipline requires a debt to move whatever it did not repay into a NEW open file, so the honest rounds are the ones that keep the number up: R1806 closed one and opened one, R1807 closed one branch and opened two. A condition read as \"the count reached zero\" punishes the discipline that makes the count trustworthy.\n\nWHERE THE POPULATION LIVES. `git ls-files` matches zero paths under `memory/`: the debts are outside this repository and it cannot version them. That is a fact about the condition, not an obstacle to route around, and it decides two things below — the failure mode when the folder is absent, and why a snapshot is committed.",
+      "changes_bullets": [
+        "`tools/analyzer_debts.py` (new):",
+        "* **The population is DERIVED** from what each debt wrote: a `[[wiki-link]]` to one of seven declared roots, or an `analyzer-census.json` row id (`lab.t2.16`, `dashboard.t1.3`, ...). Transitive reachability was measured and rejected — the memory graph's hubs run to 169 in-edges, so everything reaches everything.",
+        "* **The roots are declared and therefore checked.** A root that stopped existing would silently SHRINK the family (R1798's class), so the tool refuses one that is not a file, and says which debts have quietly left.",
+        "* **The standing is declared** by each debt in its own front matter (`blocked_by:`), from a closed vocabulary drawn from what the debts already said: `buildable`, `campaign`, `unmeasured`, `spec-round`, `phase-c`, `gated-axis`. An unknown word is refused, not guessed at.",
+        "* **`campaign` and `unmeasured` do NOT block.** A campaign is buildable work that spans rounds; an unmeasured debt's next step is the measurement. That closes the one way a self-declared field could be abused — relabelling the backlog until the condition is met.",
+        "* **It fails OPEN and LOUD** where the memory folder is absent, and **snapshots** the survey into `docs/analyzer-debts.json`, which `--check` refuses to let drift. A reader with no memory folder has the snapshot; a machine with one has both, compared.",
+        "`docs/analyzer-debts.json` (new) — the committed snapshot.",
+        "The 33 family debts each gained a `blocked_by:` declaration. `debt-one-outline-role-does-two-jobs-and-clears-neither` additionally gained the census row it was born from, without which the survey could not see it.",
+        "`.githooks/pre-push` — two steps, split the way the census's three are: the selftest, then the survey.",
+        "`tools/test_hooks.sh` — three assertions: the survey is a push gate, its selftest runs before the survey trusts itself, and it passes where no memory folder exists. A step that quietly stops happening is the failure mode that file exists for, and this one reads a folder that is usually absent."
+      ],
+      "verification_bullets": [
+        "THE CONDITION IS NOW ANSWERED, AND THE ANSWER IS FALSE. `python3 tools/analyzer_debts.py --check` reports **33 in the family, all declared, 29 not blocked**. That is the point of the round: the condition went from a sentence nobody could evaluate to a number with a list behind it.",
+        "The breakdown, which is the report rather than a summary: `buildable` 20, `campaign` 6, `unmeasured` 2 — none of which block — and `spec-round` 2, `phase-c` 1, `gated-axis` 1, which do.",
+        "COUNTERFACTUALS, against a fixture memory folder built for them:",
+        "* An open family debt with no `blocked_by` is refused BY NAME, with the evidence that put it in the family quoted back (\"names lab.t2.16\").",
+        "* A declared root that no longer exists is refused with the consequence spelled out — \"every debt that linked it has quietly left the family\" — rather than the family silently shrinking.",
+        "* `PINION_MEMORY_DIR` pointing nowhere returns 0 and prints why, so a fresh clone and CI do not refuse a push over a population they cannot see.",
+        "SELFTEST: PASS, 0 failures, 16 cases. Two of them are the vocabulary's own guard — that a `campaign` and an `unmeasured` debt are NOT counted as blocked — because that is the property standing between a self-declared field and a relabelled backlog.",
+        "HOOK GATES: 182 assertions passed, 0 failed (179 before this round's three). `bash -n` clean on `pre-push`. `analyzer_census.py --selftest` PASS, unchanged.",
+        "MEASUREMENTS THIS ROUND RESTS ON, each re-derived here: 317 open debt files; 68 matching the bare word; 169 in-edges on the memory graph's largest hub; zero paths under `memory/` in `git ls-files`.",
+        "🟥 THE CLOSING AUDIT FOUND A HOLE IN THE DERIVATION I HAD JUST WRITTEN. `debt-one-outline-role-does-two-jobs-and-clears-neither` was opened at R1807 while proving census row `dashboard.t2.9` and names neither a root nor a row, so the survey that exists to see such debts could not see it. Repaired by making the debt name its origin; the implied rule is now written into the tool as the boundary it cannot see past.",
+        "⚠ NOT VERIFIED: whether the 33 standings are RIGHT. The tool checks that a word is in the vocabulary and never that it is the correct word — registered, not glossed over."
+      ],
+      "impact_refs": [
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "🟥 THE ROUND CREATED A DEFECT AND REGISTERED IT: `debt-a-debts-standing-is-one-persons-unreviewed-reading`. The 33 standings are one reading, done once, by me. The tool enforces the vocabulary and refuses absence; it asks nothing about correctness. That is the SAME CLASS as the second branch of `debt-analyzer-census-verdicts-are-unproven` — \"the plane/tier/verdict classification is one person's unreviewed reading\" — now reproduced on the debt side by a round that had that sentence in front of it.",
+        "⚠ The four entries to audit first are named there, and the reason is arithmetic: `spec-round` (2), `phase-c` (1) and `gated-axis` (1) are the ONLY ones that leave the denominator, so a single wrong one makes the condition false-as-true. Two of the four are not the two the north star named by hand, which is exactly the pair that needs re-measuring.",
+        "The cheapest next step is stated in that debt: make each `blocked_by` name the sentence in its own file that it was read from, the way a census `have` names the test that proves it. That lifts the tool from \"is there a declaration\" to \"does the declaration have evidence\".",
+        "⚠ The derivation is complete only over debts that NAME their origin, and nothing enforces that at the moment a debt is written — only the audit that found the one case.",
+        "29 of 33 are not blocked. Condition (3) is a long way from true, and now says so precisely instead of not saying anything."
+      ],
+      "publishable_decision_summary": "R1809 makes the north star's third condition — *the analysis-tool family of open debts is closed* — a command. It was the only one of the four that was not, and two measured facts explain why it could not become one.\n\nNOTHING SAID WHICH DEBTS ARE IN THE FAMILY. Measured over the memory folder: 317 open `debt-*.md`, with the word `analyzer` appearing in 68 of them — far too loose, because the analysis tool is what this whole tree is about and the word turns up in prose with nothing to do with it. There was no field, no list and no derivation, so \"analyzer-family\" was a judgement somebody made again each time they were asked.\n\nNOTHING SAID WHETHER A DEBT CAN BE WORKED ON NOW. The north star already excludes two census rows by name — one needs a ratified spec decision, one waits on Phase C — but that exclusion lived in the prompt rather than in the debts, so \"are the remaining ones all blocked?\" had no denominator and no verdict.\n\nAND COUNTING CLOSED DEBTS CANNOT ANSWER IT. This repository's closing discipline requires a debt to move whatever it did not repay into a NEW open file, so the honest rounds are the ones that keep the number up: R1806 closed one and opened one, R1807 closed one branch and opened two. A condition read as \"the count reached zero\" punishes the discipline that makes the count trustworthy.\n\nWHERE THE POPULATION LIVES. `git ls-files` matches zero paths under `memory/`: the debts are outside this repository and it cannot version them. That is a fact about the condition, not an obstacle to route around, and it decides two things below — the failure mode when the folder is absent, and why a snapshot is committed.",
+      "publishable_changes_bullets": [
+        "`tools/analyzer_debts.py` (new):",
+        "* **The population is DERIVED** from what each debt wrote: a `[[wiki-link]]` to one of seven declared roots, or an `analyzer-census.json` row id (`lab.t2.16`, `dashboard.t1.3`, ...). Transitive reachability was measured and rejected — the memory graph's hubs run to 169 in-edges, so everything reaches everything.",
+        "* **The roots are declared and therefore checked.** A root that stopped existing would silently SHRINK the family (R1798's class), so the tool refuses one that is not a file, and says which debts have quietly left.",
+        "* **The standing is declared** by each debt in its own front matter (`blocked_by:`), from a closed vocabulary drawn from what the debts already said: `buildable`, `campaign`, `unmeasured`, `spec-round`, `phase-c`, `gated-axis`. An unknown word is refused, not guessed at.",
+        "* **`campaign` and `unmeasured` do NOT block.** A campaign is buildable work that spans rounds; an unmeasured debt's next step is the measurement. That closes the one way a self-declared field could be abused — relabelling the backlog until the condition is met.",
+        "* **It fails OPEN and LOUD** where the memory folder is absent, and **snapshots** the survey into `docs/analyzer-debts.json`, which `--check` refuses to let drift. A reader with no memory folder has the snapshot; a machine with one has both, compared.",
+        "`docs/analyzer-debts.json` (new) — the committed snapshot.",
+        "The 33 family debts each gained a `blocked_by:` declaration. `debt-one-outline-role-does-two-jobs-and-clears-neither` additionally gained the census row it was born from, without which the survey could not see it.",
+        "`.githooks/pre-push` — two steps, split the way the census's three are: the selftest, then the survey.",
+        "`tools/test_hooks.sh` — three assertions: the survey is a push gate, its selftest runs before the survey trusts itself, and it passes where no memory folder exists. A step that quietly stops happening is the failure mode that file exists for, and this one reads a folder that is usually absent."
+      ],
+      "publishable_verification_bullets": [
+        "THE CONDITION IS NOW ANSWERED, AND THE ANSWER IS FALSE. `python3 tools/analyzer_debts.py --check` reports **33 in the family, all declared, 29 not blocked**. That is the point of the round: the condition went from a sentence nobody could evaluate to a number with a list behind it.",
+        "The breakdown, which is the report rather than a summary: `buildable` 20, `campaign` 6, `unmeasured` 2 — none of which block — and `spec-round` 2, `phase-c` 1, `gated-axis` 1, which do.",
+        "COUNTERFACTUALS, against a fixture memory folder built for them:",
+        "* An open family debt with no `blocked_by` is refused BY NAME, with the evidence that put it in the family quoted back (\"names lab.t2.16\").",
+        "* A declared root that no longer exists is refused with the consequence spelled out — \"every debt that linked it has quietly left the family\" — rather than the family silently shrinking.",
+        "* `PINION_MEMORY_DIR` pointing nowhere returns 0 and prints why, so a fresh clone and CI do not refuse a push over a population they cannot see.",
+        "SELFTEST: PASS, 0 failures, 16 cases. Two of them are the vocabulary's own guard — that a `campaign` and an `unmeasured` debt are NOT counted as blocked — because that is the property standing between a self-declared field and a relabelled backlog.",
+        "HOOK GATES: 182 assertions passed, 0 failed (179 before this round's three). `bash -n` clean on `pre-push`. `analyzer_census.py --selftest` PASS, unchanged.",
+        "MEASUREMENTS THIS ROUND RESTS ON, each re-derived here: 317 open debt files; 68 matching the bare word; 169 in-edges on the memory graph's largest hub; zero paths under `memory/` in `git ls-files`.",
+        "🟥 THE CLOSING AUDIT FOUND A HOLE IN THE DERIVATION I HAD JUST WRITTEN. `debt-one-outline-role-does-two-jobs-and-clears-neither` was opened at R1807 while proving census row `dashboard.t2.9` and names neither a root nor a row, so the survey that exists to see such debts could not see it. Repaired by making the debt name its origin; the implied rule is now written into the tool as the boundary it cannot see past.",
+        "⚠ NOT VERIFIED: whether the 33 standings are RIGHT. The tool checks that a word is in the vocabulary and never that it is the correct word — registered, not glossed over."
+      ],
+      "publishable_impact_refs": [
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "🟥 THE ROUND CREATED A DEFECT AND REGISTERED IT: `debt-a-debts-standing-is-one-persons-unreviewed-reading`. The 33 standings are one reading, done once, by me. The tool enforces the vocabulary and refuses absence; it asks nothing about correctness. That is the SAME CLASS as the second branch of `debt-analyzer-census-verdicts-are-unproven` — \"the plane/tier/verdict classification is one person's unreviewed reading\" — now reproduced on the debt side by a round that had that sentence in front of it.",
+        "⚠ The four entries to audit first are named there, and the reason is arithmetic: `spec-round` (2), `phase-c` (1) and `gated-axis` (1) are the ONLY ones that leave the denominator, so a single wrong one makes the condition false-as-true. Two of the four are not the two the north star named by hand, which is exactly the pair that needs re-measuring.",
+        "The cheapest next step is stated in that debt: make each `blocked_by` name the sentence in its own file that it was read from, the way a census `have` names the test that proves it. That lifts the tool from \"is there a declaration\" to \"does the declaration have evidence\".",
+        "⚠ The derivation is complete only over debts that NAME their origin, and nothing enforces that at the moment a debt is written — only the audit that found the one case.",
+        "29 of 33 are not blocked. Condition (3) is a long way from true, and now says so precisely instead of not saying anything."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
