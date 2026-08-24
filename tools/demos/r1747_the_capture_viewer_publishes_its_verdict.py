@@ -387,25 +387,53 @@ def section_d(app: RpcSubprocess) -> str:
     headings = {layer["id"] for layer in published["layers"]}
     marked = abs_rects_of(app.snapshot(source="paint"))
 
-    # 🟥 MEASURED HERE, and it is a gap rather than a quirk: a press on a LAYER
-    # heading folds it and leaves the selection where it was, so a layer row
-    # cannot be opened by a press at all -- while the same row opens over the
-    # wire. The behaviour reference binds selection to every row of its decode
-    # tree and has no fold. Asserted rather than worked around silently, and
-    # registered as `debt-a-layer-row-opens-over-the-wire-and-not-by-a-press`;
-    # the population below is derived from it.
+    # ★★★★★ R1815 CLOSED THE GAP THIS CHECK WAS WRITTEN TO RECORD, and flipping
+    # it is what the debt named as the completion signal.
+    #
+    # What it used to assert, measured at R1747: a press on a LAYER heading
+    # folded it and left the selection alone, so a layer row could not be opened
+    # by a press at all -- while the same row opened over the wire. The
+    # behaviour reference binds selection to EVERY row of its decode tree and
+    # has no fold, so that was a reproduction gap rather than a quirk.
+    #
+    # R1815 moved the fold onto the chevron that draws it (`pv.tree.layer.{id}`,
+    # a tag painted since R1693 that no arm in `Hit::of_tag` had ever matched)
+    # and left the row selecting, as the canon does. Both halves are asserted
+    # here, because a press that opened the row while ALSO folding it would
+    # satisfy either half alone.
+    heading = sorted(headings)[0]
     before = app.query(f"/{tag}{EXT}/selected_field")
     folded_before = app.query(f"/{tag}{EXT}/folded")
-    press_tag(app, f"pv.tree.field.{sorted(headings)[0]}")
-    ok(
-        "D: 🟥 a press on a layer heading FOLDS it and does not open it -- the "
-        "reference opens every row of its decode tree and has no fold, so this "
-        "is a gap and not a quirk (debt-a-layer-row-opens-over-the-wire-and-"
-        "not-by-a-press)",
-        app.query(f"/{tag}{EXT}/selected_field") == before
-        and app.query(f"/{tag}{EXT}/folded") != folded_before,
+    press_tag(app, f"pv.tree.field.{heading}")
+    after = app.query(f"/{tag}{EXT}/selected_field")
+    folded_after = app.query(f"/{tag}{EXT}/folded")
+    print(
+        f"  [tree] pressed {heading}: selected {before!r} -> {after!r}, "
+        f"folded {folded_before} -> {folded_after}"
     )
-    press_tag(app, f"pv.tree.field.{sorted(headings)[0]}")  # and unfold it again
+    # ★ Two facts, two checks. A single `and` here told the round only that
+    # something was wrong and cost a whole re-run to find out which half.
+    ok(
+        "D: a press on a layer heading OPENS it, as the reference opens every "
+        "row of its decode tree "
+        "(debt-a-layer-row-opens-over-the-wire-and-not-by-a-press, closed R1815)",
+        after == heading,
+    )
+    ok(
+        "D: and it does not fold it -- the fold answers to the chevron now",
+        folded_after == folded_before,
+    )
+    # ★ And the fold still exists -- it answers to the chevron now. Our own
+    # second-pass addition, kept: what the canon lacks and we have is not
+    # removed, it is moved onto the affordance that draws it.
+    press_tag(app, f"pv.tree.layer.{heading}")
+    ok(
+        "D: and the chevron folds that layer, without moving the selection",
+        app.query(f"/{tag}{EXT}/folded") != folded_before
+        and app.query(f"/{tag}{EXT}/selected_field") == heading,
+    )
+    press_tag(app, f"pv.tree.layer.{heading}")  # and unfold it again
+    press_tag(app, f"pv.tree.field.{before}")  # put the selection back
 
     fields = [f for f in app.query(f"/{tag}{EXT}/visible_fields") if f not in headings]
     worked_out = [f for f in fields if f"pv.tree.derived.{f}" in marked]
