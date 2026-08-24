@@ -12,8 +12,8 @@ use pinion_core::reactive::Owner;
 use pinion_core::widgets::field_bytes::{Coverage, FieldSpan, SourceId};
 
 use super::{
-    NAME_COLUMN, PacketView, cell_texts, char_count, comma, decode, frame_bytes, lane_reading,
-    list_cell_tag, pane_cursor, row_cells, select_byte, select_field, select_message,
+    NAME_COLUMN, PacketView, capture_filler, cell_texts, char_count, comma, decode, frame_bytes,
+    lane_reading, list_cell_tag, pane_cursor, row_cells, select_byte, select_field, select_message,
     sibling_place, spec, use_view_state,
 };
 use pinion_a11y::WidgetA11y;
@@ -224,6 +224,240 @@ fn r1663_the_frame_bytes_are_the_same_every_time() {
         frame_bytes(spec::OPENING_ROW + 1),
         "two messages must not dump the same bytes"
     );
+}
+
+/// How many framed fields state what their bytes encode — a **ratchet**, and
+/// it may only ever go up.
+///
+/// ★★★★★ R1814 — stated as what the table HAS rather than as a ceiling on what
+/// it lacks, which is R1813's lesson applied one round later on a different
+/// screen: a complement is not monotone when the work can widen the population,
+/// and adding a field to `spec::FIELDS` widens this one. Raising it means
+/// declaring an encoding the reference's own printed value determines. It is
+/// *not* raised by inventing a code for `reliable` or `drop` — see
+/// `spec::Wire`, and see the second assertion below, which is what would catch
+/// that.
+///
+/// ⚠ **Its ceiling is not the number of framed fields, and never will be.** A
+/// layer heading must never declare an encoding at all — its extent is its
+/// children's — and a leaf whose printed value does not determine a wire value
+/// cannot be declared without inventing one. The size of each group is printed
+/// by the test below rather than written here, because the first draft of this
+/// paragraph got both numbers wrong in the round that measured them.
+const DECLARED_ENCODINGS: usize = 6;
+
+/// Which fields of the described message state what their bytes hold, and
+/// whether the painted frame reads back as that — the **third direction**.
+///
+/// ★★★★★ R1814 — the direction this screen was built for and could not answer.
+/// R1663 made the field-to-bytes relation true and tested in both directions;
+/// the closing audit then measured that the bytes themselves were a hash of the
+/// row index, so `sn` lit two bytes reading 6172 beside a tree that said 3419,
+/// and the reference draws `0d 5b` there.
+///
+/// The assertion that carries the weight is the SECOND one. Reading the bytes
+/// back and comparing them to the declaration only proves the writer agrees
+/// with itself; a declaration fitted to whatever bytes were already there would
+/// pass it. So every declared value must also be a value **the screen prints**
+/// — a whole number token in the reference's own text, or the text itself.
+#[test]
+fn r1814_a_declared_field_encodes_the_value_the_screen_shows() {
+    let bytes = frame_bytes(spec::OPENING_ROW);
+    let mut declared = 0usize;
+    let mut covered = 0usize;
+    for field in spec::FIELDS {
+        if field.source != Some(0) || !field.wire.is_declared() {
+            continue;
+        }
+        declared += 1;
+        covered += field.len;
+
+        let slice = bytes
+            .get(field.at..field.at + field.len)
+            .unwrap_or_else(|| panic!("`{}` is declared outside the frame", field.path));
+        assert!(
+            field.wire.reads(slice),
+            "`{}` declares {:?} and the painted frame holds {:02x?} at {:#04x}..{:#04x}",
+            field.path,
+            field.wire,
+            slice,
+            field.at,
+            field.at + field.len
+        );
+
+        // ★★★★★ The anti-decoration half: the declared value has to be one the
+        // reader can see, or the round trip above is the writer checking the
+        // writer. This is the check that refuses a code invented to fit bytes.
+        let shown = match field.wire {
+            spec::Wire::Be(n) => number_tokens(field.value).contains(&n),
+            spec::Wire::Ascii(text) => field.value.contains(text),
+            spec::Wire::Flag(set) => field.value == if set { "true" } else { "false" },
+            spec::Wire::Undeclared(_) => unreachable!("filtered above"),
+        };
+        assert!(
+            shown,
+            "`{}` declares {:?}, which is not a value the screen shows — it prints {:?}",
+            field.path, field.wire, field.value
+        );
+    }
+
+    assert!(
+        declared >= DECLARED_ENCODINGS,
+        "only {declared} framed field(s) state what their bytes encode, down \
+         from the {DECLARED_ENCODINGS} this table had when the ratchet was set"
+    );
+
+    // ★★★★★ The census, printed rather than written down anywhere. R1814's
+    // closing audit found this round's own prose claiming `nine of fifteen`
+    // where the table says twelve of eighteen, which is what a hand-written
+    // count beside a list always eventually says.
+    let framed = spec::FIELDS.iter().filter(|f| f.source == Some(0)).count();
+    let headings = spec::FIELDS
+        .iter()
+        .filter(|f| f.source == Some(0) && spans_another(f))
+        .count();
+    let leaves_undeclared = framed - declared - headings;
+    println!(
+        "R1814 framed={framed} declared={declared} headings={headings} \
+         undeclared_leaves={leaves_undeclared} covered={covered}B of {}B frame",
+        spec::SOURCES[0].1
+    );
+}
+
+/// Whether another framed field's extent lies inside this one's — what makes a
+/// row a layer heading rather than a leaf, derived from the table instead of
+/// from the path's shape.
+///
+/// ★ Not `path.contains('.')`: that reads the NAME to answer a question about
+/// EXTENTS, and the two agree here only by convention. A table that nested a
+/// field one level deeper would break the name rule silently and this one not
+/// at all.
+fn spans_another(field: &spec::FieldSpecRow) -> bool {
+    spec::FIELDS.iter().any(|other| {
+        other.source == Some(0)
+            && !std::ptr::eq(field, other)
+            && other.len > 0
+            && other.at >= field.at
+            && other.at + other.len <= field.at + field.len
+    })
+}
+
+/// Every whole number the text prints, commas removed.
+///
+/// ★ A *token* rather than a substring, which is the whole strength of the
+/// check it serves: `4` is a substring of `3,419`, so a substring test would
+/// let a wrong declaration pass on a table where two fields hold 4.
+fn number_tokens(text: &str) -> Vec<u64> {
+    let mut out = Vec::new();
+    let mut digits = String::new();
+    for ch in text.chars().chain(std::iter::once(' ')) {
+        if ch.is_ascii_digit() {
+            digits.push(ch);
+        } else if ch == ',' && !digits.is_empty() {
+            // A thousands separator continues the number; a comma anywhere
+            // else ends it, and an empty run means it was not a separator.
+        } else {
+            if let Ok(n) = digits.parse::<u64>() {
+                out.push(n);
+            }
+            digits.clear();
+        }
+    }
+    out
+}
+
+/// A declared field must not span another, because the frame is written field
+/// by field and a layer heading's extent is its children's.
+///
+/// ★ Asserted rather than relied on: `frame_bytes` writes in table order, so
+/// with a declaration on `l1` the transport layer's four leaves would be
+/// silently overwritten or silently overwrite it, depending only on where the
+/// row sat in the list. That is a defect no amount of reading catches and one
+/// assertion makes impossible.
+#[test]
+fn r1814_no_declared_field_spans_another() {
+    for field in spec::FIELDS {
+        if field.source != Some(0) || !field.wire.is_declared() {
+            continue;
+        }
+        for other in spec::FIELDS {
+            if other.source != Some(0) || std::ptr::eq(field, other) || other.len == 0 {
+                continue;
+            }
+            let inside = other.at >= field.at && other.at + other.len <= field.at + field.len;
+            assert!(
+                !inside,
+                "`{}` declares an encoding over {:#04x}..{:#04x}, which contains `{}`",
+                field.path,
+                field.at,
+                field.at + field.len,
+                other.path
+            );
+        }
+    }
+}
+
+/// A field that declares nothing says **why**, and its bytes stay the capture.
+///
+/// ★★★★★ R1814 — the debt this round repays asked for exactly one of two
+/// things: encode the values, or *state in the screen's own documentation why
+/// not*. Nine fields take the second branch, and putting the reason in the
+/// specification rather than in a doc comment is what makes it checkable: an
+/// empty reason is a silence wearing a declaration's clothes.
+#[test]
+fn r1814_an_undeclared_field_says_why_and_keeps_the_capture() {
+    let painted = frame_bytes(spec::OPENING_ROW);
+    let filler = capture_filler(spec::OPENING_ROW, spec::SOURCES[0].1);
+    let mut undeclared = 0usize;
+    for field in spec::FIELDS {
+        let spec::Wire::Undeclared(reason) = field.wire else {
+            continue;
+        };
+        undeclared += 1;
+        assert!(
+            reason.len() > 12,
+            "`{}` declares no encoding and gives no reason worth reading: {reason:?}",
+            field.path
+        );
+        // A leaf that declares nothing must be untouched capture. Headings are
+        // skipped: their extent holds their children, which ARE written.
+        if field.source == Some(0) && field.len > 0 && !spans_another(field) {
+            assert_eq!(
+                painted.get(field.at..field.at + field.len),
+                filler.get(field.at..field.at + field.len),
+                "`{}` declares nothing, so its bytes must be the capture and \
+                 not something that looks like a decode",
+                field.path
+            );
+        }
+    }
+    assert!(
+        undeclared > 0,
+        "a table in which everything is declared would make the reason field \
+         dead, and this test vacuous"
+    );
+}
+
+/// The reference's own illustration, pinned as a number rather than a rule.
+///
+/// ★★★★★ R1814 — the debt names this exact case: the reference draws `0d 5b`
+/// where `sn` is lit, and this tree drew `18 1c`. A rule-level test can pass
+/// while the one byte pair a reader was told to look at is still wrong, so the
+/// pair is asserted directly.
+#[test]
+fn r1814_the_opening_field_paints_the_bytes_the_reference_draws() {
+    let field = spec::FIELDS
+        .iter()
+        .find(|f| f.path == spec::OPENING_FIELD)
+        .expect("the field the screen opens on is in the table");
+    let bytes = frame_bytes(spec::OPENING_ROW);
+    assert_eq!(
+        &bytes[field.at..field.at + field.len],
+        &[0x0d, 0x5b],
+        "the field the screen opens with selected must light the bytes that \
+         encode the number the tree prints beside it"
+    );
+    assert_eq!(field.value, "3419", "and 0x0d5b is that number");
 }
 
 /// A count is printed the way the reference prints one.

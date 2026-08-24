@@ -43,6 +43,14 @@
       ]
     },
     {
+      "name": "debt-a-link-address-is-printed-wider-than-its-extent",
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "why": [
+        "links analyzer-behaviour-canon-is-the-standalone-prototype"
+      ]
+    },
+    {
       "name": "debt-a-mounted-screen-draws-the-rail-its-host-already-has",
       "blocked_by": "buildable",
       "blocked_because": "",
@@ -196,14 +204,6 @@
       "blocked_because": "",
       "why": [
         "links debt-the-canon-is-one-app-and-we-are-many-binaries"
-      ]
-    },
-    {
-      "name": "debt-the-byte-pane-shows-bytes-that-do-not-encode-the-values",
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "why": [
-        "links analyzer-behaviour-canon-is-the-standalone-prototype"
       ]
     },
     {

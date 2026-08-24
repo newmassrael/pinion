@@ -562,8 +562,48 @@ impl ViewState {
 
 /// The frame bytes of message `row` — a stable pseudo-capture, so the dump is
 /// the same on every host and in every run.
+///
+/// ★★★★★ R1814 — and for the message the specification describes in full, the
+/// bytes under a field that **declares its encoding** are that encoding, not
+/// the filler. Before this the whole frame was a hash of the row index, so the
+/// two bytes `sn` lit read `18 1c` — 6172 — while the tree beside them said
+/// 3419. The relation between a field and its bytes was true and tested; the
+/// *content* of those bytes was decoration, on the one screen whose subject is
+/// field-to-byte fidelity.
+///
+/// Only leaves are written, and only where [`spec::Wire`] states an encoding.
+/// A layer heading spans its children, so writing its extent would overwrite
+/// them — `r1814_no_declared_field_spans_another` refuses that arrangement
+/// rather than relying on the order of this loop.
 fn frame_bytes(row: usize) -> Vec<u8> {
-    let len = spec::SOURCES[0].1;
+    let mut bytes = capture_filler(row, spec::SOURCES[0].1);
+    if row != spec::OPENING_ROW {
+        // Every other message's decode is the stand-in in `decode`, whose rows
+        // state an extent rather than a value — so there is nothing to encode,
+        // and pretending otherwise would be the same defect with a new face.
+        return bytes;
+    }
+    for field in spec::FIELDS {
+        if field.source != Some(0) {
+            continue;
+        }
+        let Some(encoded) = field.wire.encode(field.len) else {
+            continue;
+        };
+        if let Some(room) = bytes.get_mut(field.at..field.at + field.len) {
+            room.copy_from_slice(&encoded);
+        }
+    }
+    bytes
+}
+
+/// The capture a message's frame sits in: deterministic, host-independent, and
+/// not a claim about any value.
+///
+/// ★ R1814 split this out of [`frame_bytes`] so the two facts are separable.
+/// This is what a byte is when nothing has said what it holds; everything the
+/// specification *can* say is written over it.
+fn capture_filler(row: usize, len: usize) -> Vec<u8> {
     let seed = u32::try_from(row).unwrap_or(0).wrapping_mul(0x9e37) ^ 0x5a5a;
     (0..len)
         .map(|i| {
@@ -2992,6 +3032,11 @@ impl ExternalIntrospect for ViewOracle {
 /// The whole specification, as the wire sees it — so the demo reads the table
 /// from the running application rather than keeping a second copy of it.
 fn spec_json() -> serde_json::Value {
+    // ★★★★★ R1814 — the described message's frame, read once so each field can
+    // be asked whether the bytes actually there decode as it declares. This is
+    // the screen checking its OWN claim and publishing the answer, rather than
+    // publishing the claim and leaving a reader to trust it.
+    let described = frame_bytes(spec::OPENING_ROW);
     serde_json::json!({
         // ★★★★★ R1747 — the specification this screen is JUDGED against,
         // published beside the tables it is BUILT from, and they are two
@@ -3052,9 +3097,32 @@ fn spec_json() -> serde_json::Value {
         "layers": spec::LAYERS.iter().map(|(id, title)| serde_json::json!({
             "id": id, "title": title,
         })).collect::<Vec<_>>(),
+        // ★★★★★ R1814 — and each field now says whether its bytes ENCODE the
+        // value beside them, which is the question this screen exists to answer
+        // and could not. `encodes` is the fact; `undeclared_because` is the
+        // reason when it is false, because a reader — a person or an agent —
+        // seeing a hex pane reads it as the encoding of the value above it, and
+        // most of this table is a capture the specification cannot decode.
+        // Publishing the reason rather than only the bit is what makes the
+        // difference between a limitation and a silence. (How many is answered
+        // by `cargo test -p hello-packet-view r1814 -- --nocapture`; this
+        // round's audit caught a hand-written count here that was wrong.)
         "fields": spec::FIELDS.iter().map(|f| serde_json::json!({
             "path": f.path, "name": f.name, "value": f.value,
             "source": f.source, "at": f.at, "len": f.len,
+            "encodes": f.wire.is_declared(),
+            "undeclared_because": match f.wire {
+                spec::Wire::Undeclared(why) => Some(why),
+                _ => None,
+            },
+            // ★★★★★ The THIRD direction, on the wire: bytes to value. `encodes`
+            // is what the table CLAIMS; this is the painted frame decoded and
+            // compared against that claim, so an agent can tell a declaration
+            // from a decoration without rendering anything.
+            "reads_back": f.source == Some(0)
+                && described
+                    .get(f.at..f.at + f.len)
+                    .is_some_and(|bytes| f.wire.reads(bytes)),
         })).collect::<Vec<_>>(),
         "rows": spec::ROWS.iter().map(|r| serde_json::json!({
             "time": r.time, "hop": r.hop, "channel": r.channel, "sn": r.sn,
