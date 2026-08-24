@@ -45,6 +45,14 @@ pub mod clamp;
 // differently would disagree about the same defect.
 pub mod surface;
 
+// R1819 §5.32 §5.40 — every gesture a screen ADVERTISES does something, over a
+// population that is never empty. Its own module for the reason the four above
+// have one, and for a sharper one: this gate already existed TWICE and the two
+// copies had drifted, while the third screen that needed it had none at all —
+// so the honest next step was a third copy of a rule that was already differing
+// from itself.
+pub mod advertised;
+
 use std::borrow::Cow;
 
 use crate::Frame;

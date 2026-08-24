@@ -1231,6 +1231,33 @@ pub const BOARD: &[PlacedSpec] = &[
 /// says whether a pointer path actually reaches it. The gate drives BOTH and
 /// fails on an optimistic entry — and on a `verb: None` row that turns out to
 /// work, which is what keeps the absences honest as the screen grows.
+/// ★★★★★ R1819 — **what this screen tells a person the POINTER does**, which
+/// until now it never said at all.
+///
+/// The third and last of the tool's three screens to get one. Screen A prints a
+/// hint strip, screen B publishes a list, and this screen published nothing —
+/// so the gate over that population ran here over the EMPTY SET and passed,
+/// which is indistinguishable from a screen that keeps every promise. That is
+/// the debt this closes, and it is the same shape as the defect that opened it:
+/// screen A advertised `wheel -> zoom` for its whole life with the wheel dead,
+/// invisible because the operation table is a DIFFERENT population.
+///
+/// ⚠ This is not [`OPERATIONS`]. That table is what the screen can DO and how
+/// each is caused; this is what the screen SAYS a drag does. The two overlap
+/// and are not the same claim — a screen can perform an operation it never
+/// advertises, and advertise one it cannot perform, and only the second is a
+/// lie to a person.
+///
+/// Taken from the behaviour prototype's own board section rather than invented:
+/// it binds a drag on a floating panel's chrome, a drag on its corner, a drag
+/// on a card's grip, and a drag out of the palette onto the canvas.
+pub const GESTURES: &[(&str, &str)] = &[
+    ("drag a card by its grip", "moves it on the board"),
+    ("drag a detached panel", "moves the panel"),
+    ("drag a detached panel's corner", "resizes the panel"),
+    ("drag a palette entry to the board", "places that widget"),
+];
+
 pub const OPERATIONS: &[OperationSpec] = &[
     // ── a card on the board ──────────────────────────────────────
     OperationSpec {

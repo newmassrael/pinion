@@ -2997,6 +2997,74 @@ fn painted_order() -> Vec<String> {
 /// the wire, and the column that breaks is the pointer. And the witness is read
 /// through the introspection surface rather than off a field, so *changed*
 /// means changed where a client can see it.
+/// ★★★★★ R1819 — **every gesture this screen ADVERTISES does something**, and
+/// this screen advertises some at last.
+///
+/// The last of the tool's three screens to get this gate, and the reason the
+/// debt stayed open: a screen with no advertised list runs this check over the
+/// EMPTY SET, which passes and is indistinguishable from a screen keeping every
+/// promise. Screen A printed `wheel -> zoom` for its whole life with the wheel
+/// dead, and the operation gate next door could not see it in principle because
+/// the advertised list is a **different population**.
+///
+/// ⚠ The shape is NOT written here. It is
+/// [`pinion_core::test_fixtures::advertised`], because this gate already
+/// existed twice — on screens A and B — and the two copies had drifted, so
+/// writing it a third time would have been three versions of one rule. What
+/// this screen supplies is the driving and the witness, which is all that
+/// genuinely differs.
+///
+/// The witness is the WHOLE published layout rather than a slot chosen per
+/// gesture: an advertised effect is prose ("moves it", "resizes the panel"),
+/// and picking the slot to watch would be this test deciding what the prose
+/// meant. Pinning each effect to its own witness is the operation gate below.
+#[test]
+fn r1819_every_gesture_this_screen_advertises_does_something() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        pinion_core::test_fixtures::advertised::assert_every_advertised_gesture_acts(
+            "the analysis shell",
+            spec::GESTURES,
+            || {
+                // Everything a client can observe about the board, so a gesture
+                // that moved anything at all counts as having acted.
+                format!(
+                    "{}|{}|{}",
+                    witness(&state, "layout"),
+                    witness(&state, "floats"),
+                    witness(&state, "cards")
+                )
+            },
+            |gesture| {
+                let shot = painted();
+                match gesture {
+                    "drag a card by its grip" => {
+                        drag_tag(&state, &shot, "card.packet#0.grip", (CELL_STEP, 0));
+                    }
+                    // The panel has to BE detached before it can be dragged,
+                    // and it is detached the way a person detaches it rather
+                    // than by assignment — the same rule `reach_precondition`
+                    // follows for the operation table.
+                    "drag a detached panel" => {
+                        press_tag(&state, &shot, "card.packet#0.tear_off");
+                        let shot = painted();
+                        drag_tag(&state, &shot, "float.packet#0", (40, 25));
+                    }
+                    "drag a detached panel's corner" => {
+                        drag_tag(&state, &shot, "float.packet#0.resize", (60, 40));
+                    }
+                    "drag a palette entry to the board" => {
+                        press_tag(&state, &shot, "shell.palette.packet");
+                    }
+                    _ => return false,
+                }
+                true
+            },
+        );
+    });
+}
+
 #[test]
 fn r1697_every_declared_way_of_causing_an_operation_causes_it() {
     // The half a reader of the table alone can check, from the framework.

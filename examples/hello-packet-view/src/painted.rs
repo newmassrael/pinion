@@ -1118,45 +1118,50 @@ fn r1707_every_gesture_this_screen_advertises_is_answered() {
     // decoration. That is this tree's own recorded rule — an invariant true by
     // construction belongs to the compiler, and the test is for the values that
     // actually get passed. Emptying `spec::GESTURES` now fails to BUILD.
+    //
+    // ★★★★★ R1819 kept this line AND moved the rest of the gate into
+    // `pinion_core::test_fixtures::advertised`, which asserts the same
+    // non-emptiness at runtime for callers whose list is not a `const`. Both,
+    // deliberately: the compile-time one is strictly better where it applies
+    // and cannot be had by a screen building its list at run time, so the
+    // fixture carries the weaker form and this screen keeps the stronger.
     const _: () = assert!(!spec::GESTURES.is_empty());
 
     let owner = Owner::new();
     owner.run(|| {
         let state = use_view_state();
         let (shot, _) = painted_at(&state, (WIN_W, WIN_H));
-        let mut inert = Vec::new();
-        for (gesture, effect) in spec::GESTURES {
-            let before = witness(&state);
-            match *gesture {
-                "click a message" => {
-                    let rect = shot.tags["pv.list.row.2"];
-                    let (px, py) = centre(rect);
-                    super::move_cursor(&state, px, py);
-                    press(&state);
+        pinion_core::test_fixtures::advertised::assert_every_advertised_gesture_acts(
+            "the capture viewer",
+            spec::GESTURES,
+            || witness(&state),
+            |gesture| {
+                match gesture {
+                    "click a message" => {
+                        let rect = shot.tags["pv.list.row.2"];
+                        let (px, py) = centre(rect);
+                        super::move_cursor(&state, px, py);
+                        press(&state);
+                    }
+                    "click a decode field" => {
+                        let (path, ..) = visible_fields(&state)[4].clone();
+                        let rect = shot.tags[&format!("pv.tree.field.{path}")];
+                        let (px, py) = centre(rect);
+                        super::move_cursor(&state, px, py);
+                        press(&state);
+                    }
+                    "type in the filter" => {
+                        // Through the buffer the field owns, which is the thing a
+                        // keystroke reaches — not through a setter of our own.
+                        state.query.set_text("type = Query".to_owned());
+                    }
+                    // ★ R1819 — a gesture with no driver is now reported BY THE
+                    // FIXTURE rather than panicking here, so the message reads
+                    // the same on all three screens.
+                    _ => return false,
                 }
-                "click a decode field" => {
-                    let (path, ..) = visible_fields(&state)[4].clone();
-                    let rect = shot.tags[&format!("pv.tree.field.{path}")];
-                    let (px, py) = centre(rect);
-                    super::move_cursor(&state, px, py);
-                    press(&state);
-                }
-                "type in the filter" => {
-                    // Through the buffer the field owns, which is the thing a
-                    // keystroke reaches — not through a setter of our own.
-                    state.query.set_text("type = Query".to_owned());
-                }
-                other => panic!("no driver for the advertised gesture {other:?}"),
-            }
-            if witness(&state) == before {
-                inert.push(format!("{gesture:?} — the strip promises {effect:?}"));
-            }
-        }
-        assert!(
-            inert.is_empty(),
-            "{} advertised gesture(s) did nothing:\n  {}",
-            inert.len(),
-            inert.join("\n  ")
+                true
+            },
         );
     });
 }

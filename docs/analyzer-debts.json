@@ -159,14 +159,6 @@
       ]
     },
     {
-      "name": "debt-only-one-screen-prints-a-gesture-list-at-all",
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "why": [
-        "links analyzer-behaviour-canon-is-the-standalone-prototype"
-      ]
-    },
-    {
       "name": "debt-pins-spread-after-maximise-and-detach",
       "blocked_by": "unmeasured",
       "blocked_because": "",

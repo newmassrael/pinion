@@ -1,5 +1,18 @@
 // R1412 §5.49 — example bindings tolerate looser doc-markdown lints.
 #![allow(clippy::doc_markdown)]
+// ★★★★★ R1819 — `spec_json` publishes this screen's whole written-down
+// specification through one `serde_json::json!`, and that macro had reached the
+// default recursion budget: adding a FOURTH key of any kind failed to build.
+//
+// Worth stating rather than silently raising, because the failure is
+// misleading in a specific way — the compiler names whichever nested block
+// happens to expand last, so the error pointed at `silences`, then at `locked`,
+// while the actual cause was the outer object's depth. Extracting one block at
+// a time just moves the finger.
+//
+// ⇒ a published table that cannot grow is a surface that quietly stops
+// recording the screen, which is the opposite of what it is for.
+#![recursion_limit = "256"]
 
 //! `hello-analyzer-shell` — R1648/R1649 §5.21 §5.51 §2 #7 — the analysis-tool
 //! **dashboard shell**, assembled as one application and operated by hand.
@@ -7996,6 +8009,42 @@ fn carry_surfaces_json() -> serde_json::Value {
     )
 }
 
+/// The declared silences, expanded per member.
+///
+/// ★ Extracted by R1819 for the same reason as the function below it, and the
+/// two together are what made room: `spec_json`'s outer `json!` was already at
+/// the macro's recursion budget, so ANY new key would have failed to build. A
+/// published table that cannot grow is a surface that stops recording the
+/// screen, and the limit says nothing about which key is at fault — it names
+/// whichever nested block happens to be last.
+fn silences_json() -> Vec<serde_json::Value> {
+    spec::SILENCES
+        .iter()
+        .flat_map(|(tag, population, kind, at)| {
+            population.members().into_iter().map(move |member| {
+                serde_json::json!({
+                    "tag": tag.replace("{}", &member),
+                    "kind": kind,
+                    "at": where_word(*at),
+                })
+            })
+        })
+        .collect()
+}
+
+/// What this screen says the pointer does, as the wire carries it.
+///
+/// ★ A function rather than an inline `map` for the reason `operations_json`
+/// is one, and R1819 met that reason head on: adding four lines inline pushed
+/// `serde_json::json!` past its recursion limit and the build refused. The
+/// macro's depth is a real budget, and a published table is what spends it.
+fn gestures_json() -> Vec<serde_json::Value> {
+    spec::GESTURES
+        .iter()
+        .map(|(gesture, effect)| serde_json::json!({ "gesture": gesture, "effect": effect }))
+        .collect()
+}
+
 fn spec_json() -> serde_json::Value {
     serde_json::json!({
         "window": { "w": spec::WIN_W, "h": spec::WIN_H },
@@ -8045,6 +8094,17 @@ fn spec_json() -> serde_json::Value {
         // ★★ R1697 — what this screen can be ASKED to do, published so an
         // agent reads the operations rather than discovering them by trying.
         "operations": operations_json(),
+        // ★★★★★ R1819 — what this screen SAYS THE POINTER DOES, which it never
+        // said at all until now. The last of the tool's three screens to
+        // publish one, and the reason it mattered: the gate over this
+        // population ran here over the EMPTY SET, which passes and reads
+        // exactly like a screen that keeps every promise.
+        //
+        // ⚠ Not `operations` under another name. That is what the screen can be
+        // asked to DO; this is what it TELLS A PERSON a drag does, and only the
+        // second can be a lie to somebody looking at the screen. They overlap
+        // deliberately and neither is derived from the other.
+        "gestures": gestures_json(),
         // ★ R1797 — a section publishes the releases its ENTRIES occupy rather
         // than a single tier of its own. Both, when it holds both: the column
         // that used to be here could not say that, and this round is when a
@@ -8107,13 +8167,7 @@ fn spec_json() -> serde_json::Value {
                 "at": where_word(voice.at),
             }))
         }).collect::<Vec<_>>(),
-        "silences": spec::SILENCES.iter().flat_map(|(tag, population, kind, at)| {
-            population.members().into_iter().map(move |member| serde_json::json!({
-                "tag": tag.replace("{}", &member),
-                "kind": kind,
-                "at": where_word(*at),
-            }))
-        }).collect::<Vec<_>>(),
+        "silences": silences_json(),
         "locked": spec::LOCKED.iter().flat_map(|(tag, population, at)| {
             population.members().into_iter().map(move |member| serde_json::json!({
                 "tag": tag.replace("{}", &member),
