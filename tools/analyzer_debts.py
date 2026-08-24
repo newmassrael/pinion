@@ -354,7 +354,14 @@ def all_debts(folder: pathlib.Path) -> dict[str, dict]:
 
 
 def check_standings(rows: list[dict]) -> list[str]:
-    """Every family debt whose declared standing is missing or not a word."""
+    """Every family debt whose declared standings are missing or not words.
+
+    Two fields, and they are asymmetric on purpose: `blocked_by` is REQUIRED of
+    every family debt, because the family is what the condition ranges over and
+    a debt with no standing has no place in it. `closed_by` is optional, because
+    repaying IS closing unless something says otherwise — the default is the
+    common case, and only the exception declares itself.
+    """
     out: list[str] = []
     for row in rows:
         word = row["blocked_by"]
@@ -424,7 +431,12 @@ CITATION = re.compile(r"^(census|axis|rule):([A-Za-z0-9_.\-]+)$")
 
 
 def check_citations(rows: list[dict], census: dict, gated: set[str], rules) -> list[str]:
-    """Every BLOCKED family debt whose citation is missing, malformed or wrong.
+    """Every debt whose citation for a count-shrinking word is missing or wrong.
+
+    Two such words now, checked by one rule: a BLOCKED `blocked_by`, which takes
+    a debt out of the not-blocked count, and any `closed_by`, which takes it out
+    of what the loop can finish. The unblocking standings owe nothing — a wrong
+    `campaign` costs the work order, not the verdict.
 
     `census` maps a row id to its verdict, `gated` holds the axis keys the Phase
     B tally marks ungainable, and `rules` answers whether a memory file exists.
