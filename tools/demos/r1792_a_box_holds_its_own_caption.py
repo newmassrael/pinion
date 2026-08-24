@@ -147,7 +147,11 @@ def body() -> None:
 
         banner("B — the switch caption, which used to touch its own border")
         box = boxes["lab.palette.discovery"]
-        state = boxes["lab.palette.discovery.state"]
+        track = boxes["lab.palette.discovery.track"]
+        # ★ R1813 — `.caption`, not `.state`: the read-out is the switch box's
+        # own caption child now, and that suffix is the framework's name for the
+        # relation rather than one this screen chose.
+        state = boxes["lab.palette.discovery.caption"]
         right = (box[0] + box[2]) - (state[0] + state[2])
         left = state[0] - box[0]
         ok(
@@ -155,11 +159,28 @@ def body() -> None:
             f"leaves {right}px, where it left 0",
             right > 0,
         )
+        # ★★★★★ R1813 — this read `left > right`, standing in for "left-aligned
+        # after the track", and it was true only while the run rectangle was the
+        # whole ROOM. Placed by `caption::inside` the rectangle is the ink the
+        # shaper measured, so the short position word leaves more slack on the
+        # right than the track takes on the left and the proxy inverts -- while
+        # the glyphs have not moved. What the screen chose is CLEAR OF THE TRACK,
+        # so that is what is asked, of the track's own painted rectangle.
         ok(
-            f"B: and it is still left-aligned after the track ({left} in, {right} out), "
-            "because that is the layout this screen chose and this round did not "
-            "change what it chose -- only that the choice is expressible",
-            left > right,
+            f"B: and it starts clear of the track ({left} in, track ends at "
+            f"{track[0] + track[2] - box[0]} in), because that is the layout this "
+            "screen chose and this round did not change what it chose -- only "
+            "that the choice is expressible",
+            state[0] >= track[0] + track[2],
+        )
+        cap = next(
+            (r for r in runs if r["tag"] == "lab.palette.discovery.caption"), None
+        )
+        ok(
+            "B: and the switch's own box answers for it -- the reader's SECOND "
+            "site is a declared caption now, not a rectangle two edits could "
+            "drift apart",
+            cap is not None and cap["owner"] == "lab.palette.discovery",
         )
 
         banner("C — the caption is a child, so its own box answers for it")

@@ -1117,8 +1117,12 @@ pub const VOICES: &[VoiceSpec] = &[
         role: "switch",
         population: Population::One,
     },
+    // ★ R1813 — `.caption`, not `.state`: the switch's read-out is the switch
+    // box's own caption child now, and that suffix is the framework's statement
+    // of whose caption it is. The ROLE is unchanged — a caption that is also a
+    // live status region is both, and the two facts are on different axes.
     VoiceSpec {
-        tag: "lab.palette.discovery.state",
+        tag: "lab.palette.discovery.caption",
         role: "status",
         population: Population::One,
     },

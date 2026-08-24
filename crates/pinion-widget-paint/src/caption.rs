@@ -31,12 +31,26 @@
 //! indistinguishable while nothing declares which was meant.
 //!
 //! ⚠ **Those three numbers are R1792's, and their population is not the one a
-//! reader now has.** Re-measured at R1812 over the *assembled* application — six
-//! destinations walked as one program, which is how the tool actually ships —
-//! [`Survey`] reports **170** caption/box pairs of 1,153 runs in 697 boxes,
-//! **0** escaping, **154** declaring nothing. Both sets are true of what they
-//! counted. Neither supersedes the other, and the reason to say so here is that
-//! *230* and *170* look like the same measurement having drifted, and are not.
+//! reader now has.** They counted the five analyzer screens standing alone;
+//! [`Survey`] counts the *assembled* application, six destinations walked as one
+//! program, which is how the tool actually ships. Neither supersedes the other,
+//! and it is worth saying because the two totals look like one measurement
+//! having drifted and are not.
+//!
+//! **The current figures are not written here.** Run the gate:
+//!
+//! ```text
+//! cargo test -p hello-analyzer-shell r1812 -- --nocapture
+//! ```
+//!
+//! ★★★★★ R1813 removed R1812's figures — not R1792's above, which stay because
+//! their population is named — having caught R1812 publishing a paragraph whose
+//! numbers its own last edit had already superseded — the round measured 170
+//! pairs, repaired a caption, closed at 168, and left the 170 in prose. Worse
+//! than stale: R1813's work moved the count back to 170, so the wrong sentence
+//! became accidentally right again, which is the state in which nobody ever
+//! checks it. A measured number in prose starts rotting the moment it is
+//! written; this module already knows that and now practises it.
 //!
 //! ## What the floor does, built and run at 6.11
 //!
@@ -153,6 +167,76 @@ impl Fit {
     }
 }
 
+/// Room kept clear inside a box, **per side**.
+///
+/// ★★★★★ R1813 — the symmetric pair this replaced could not describe the second
+/// case a reader reported. The determinism switch's caption is inset 48px on the
+/// left because the switch's *track* is drawn there, and 14 on the right because
+/// that is the panel's margin. A single `pad_x` can only say one of those, so a
+/// caller had two options and both are wrong: state 48 and the readback declares
+/// 48px reserved on a side that has 88, while the room the caption is fitted
+/// against loses 34px it actually has — or state 14 and the caption is placed
+/// over the track.
+///
+/// 🟥 An earlier draft of this paragraph said the symmetric pair "would have
+/// flipped the caption to its short form". Measured on the screen: it is already
+/// the short form and fits either room, so no ink moves. The defect is a
+/// declaration that cannot be true and a fit budget that is wrong — which is the
+/// same class, one level quieter.
+///
+/// Per-side room is also what every toolkit in this class exposes (the reference
+/// toolkit's contents margins take four numbers, CSS's `padding` takes four),
+/// so a caller composing a captioned box out of this crate is not the one who
+/// has to discover that the general case was missing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Padding {
+    /// Room kept clear at the leading edge.
+    pub left: u32,
+    /// Room kept clear at the top.
+    pub top: u32,
+    /// Room kept clear at the trailing edge.
+    pub right: u32,
+    /// Room kept clear at the bottom.
+    pub bottom: u32,
+}
+
+impl Padding {
+    /// The same room on both sides of each axis — what [`Caption::padding`]
+    /// builds, and the common case.
+    #[must_use]
+    pub const fn symmetric(x: u32, y: u32) -> Self {
+        Self {
+            left: x,
+            top: y,
+            right: x,
+            bottom: y,
+        }
+    }
+
+    /// Room stated per side, clockwise from the leading edge.
+    #[must_use]
+    pub const fn each(left: u32, top: u32, right: u32, bottom: u32) -> Self {
+        Self {
+            left,
+            top,
+            right,
+            bottom,
+        }
+    }
+
+    /// What the horizontal pair costs the box's width.
+    #[must_use]
+    pub const fn width(self) -> u32 {
+        self.left.saturating_add(self.right)
+    }
+
+    /// What the vertical pair costs the box's height.
+    #[must_use]
+    pub const fn height(self) -> u32 {
+        self.top.saturating_add(self.bottom)
+    }
+}
+
 /// A caption and how it should sit in the box that holds it.
 #[derive(Debug, Clone)]
 pub struct Caption {
@@ -178,8 +262,7 @@ pub struct Caption {
     style: TextStyle,
     align_x: Align,
     align_y: Align,
-    pad_x: u32,
-    pad_y: u32,
+    pad: Padding,
     silence: Option<Silence>,
 }
 
@@ -202,8 +285,7 @@ impl Caption {
             style,
             align_x: Align::Start,
             align_y: Align::Start,
-            pad_x: 0,
-            pad_y: 0,
+            pad: Padding::symmetric(0, 0),
             silence: None,
         }
     }
@@ -262,8 +344,19 @@ impl Caption {
     /// Room kept clear inside the box, on each side of each axis.
     #[must_use]
     pub const fn padding(mut self, pad_x: u32, pad_y: u32) -> Self {
-        self.pad_x = pad_x;
-        self.pad_y = pad_y;
+        self.pad = Padding::symmetric(pad_x, pad_y);
+        self
+    }
+
+    /// Room kept clear inside the box, **stated per side**.
+    ///
+    /// For a caption that shares its box with something else — a switch's
+    /// track, a check indicator, an icon — where the clearance on one side is a
+    /// property of that other thing and the clearance on the other is the
+    /// panel's margin. See [`Padding`] for the case that forced it.
+    #[must_use]
+    pub const fn padded(mut self, pad: Padding) -> Self {
+        self.pad = pad;
         self
     }
 
@@ -328,7 +421,7 @@ pub struct Placed {
     fit: Fit,
     sized: Sized,
     holder: Rect,
-    pad: (u32, u32),
+    pad: Padding,
     declares: TextAlign,
 }
 
@@ -378,7 +471,12 @@ impl Placed {
         self.declares
     }
 
-    /// The room the caption declared it would keep clear, on each axis.
+    /// The room the caption declared it would keep clear, **per side**.
+    ///
+    /// ★ R1813 widened this from a pair to a [`Padding`]: the pair could not
+    /// describe a caption sharing its box with a switch's track, and a caller
+    /// reading it back had no way to notice that half the declaration had been
+    /// dropped on the way in.
     ///
     /// ★ R1812 — carry item 3 of the debt this module repairs. Padding has been
     /// *declarable* through [`Caption::padding`] since R1792 and was not
@@ -388,7 +486,7 @@ impl Placed {
     /// right rectangle rather than by declaring a margin, and this is what lets
     /// the next one declare instead.
     #[must_use]
-    pub const fn padding(self) -> (u32, u32) {
+    pub const fn padding(self) -> Padding {
         self.pad
     }
 
@@ -429,8 +527,8 @@ impl Placed {
 /// The returned rectangle is in the same space as `box_rect`.
 #[must_use]
 pub fn place(box_rect: Rect, caption: &Caption) -> Placed {
-    let room_x = box_rect.w.saturating_sub(caption.pad_x * 2);
-    let room_y = box_rect.h.saturating_sub(caption.pad_y * 2);
+    let room_x = box_rect.w.saturating_sub(caption.pad.width());
+    let room_y = box_rect.h.saturating_sub(caption.pad.height());
     let (want_x, want_y, sized) = caption.wants();
     // ★ Clamped to the inner region, which is what makes an escape
     // unrepresentable rather than merely discouraged. The overflow is reported
@@ -439,8 +537,8 @@ pub fn place(box_rect: Rect, caption: &Caption) -> Placed {
     let draw_x = want_x.min(room_x);
     let draw_y = want_y.min(room_y);
     let run = Rect::new(
-        box_rect.x + caption.pad_x + caption.align_x.offset(room_x, draw_x),
-        box_rect.y + caption.pad_y + caption.align_y.offset(room_y, draw_y),
+        box_rect.x + caption.pad.left + caption.align_x.offset(room_x, draw_x),
+        box_rect.y + caption.pad.top + caption.align_y.offset(room_y, draw_y),
         draw_x,
         draw_y,
     );
@@ -458,7 +556,7 @@ pub fn place(box_rect: Rect, caption: &Caption) -> Placed {
         fit,
         sized,
         holder: box_rect,
-        pad: (caption.pad_x, caption.pad_y),
+        pad: caption.pad,
         declares: caption.align_x.declared(),
     }
 }
@@ -490,26 +588,31 @@ pub enum Pointer {
 /// `lab.palette.protocol.` family went from 5 to 10 and its own gate said so.
 pub const CAPTION_SUFFIX: &str = ".caption";
 
-/// A tagged box **with its caption inside it**, and where the caption landed.
+/// A caption node **for a box the caller builds themselves**, positioned in
+/// that box's own coordinate space, and where it landed.
 ///
-/// The run is a CHILD, which is the second half of the repair: this tree
-/// attributes a painted mark to its nearest *tagged ancestor*, so a caption
-/// drawn as a sibling is filed under whatever container happens to enclose both
-/// — three chips' words arriving as one run of a pane, which is why two surfaces
-/// of the capture viewer could not be specified at all
-/// (`debt-a-word-painted-beside-its-box-is-filed-under-the-container`). A
-/// caption that is a child answers to its own box.
+/// ★★★★★ R1813 — the half [`captioned`] could not serve. `captioned` builds the
+/// box, so it fits a decorative chip and nothing else: a switch already owns a
+/// track, a frame already carries a border and a drag handle, a card already has
+/// a header. Measured on the shipped screen, every box whose caption was still a
+/// sibling was one `captioned` could not be applied to — which is why the
+/// repair R1792 published had stalled at the five chips it was written for.
 ///
-/// The caption's tag is the box's, suffixed `.caption`, so a gate can ask for
-/// either and neither shadows the other.
+/// The returned node is a `Scene::Text` laid out **absolutely inside
+/// `box_rect`**, so the caller drops it into their own container's children and
+/// the two rectangles cannot disagree. The [`Placed`] is in the caller's space,
+/// as [`place`]'s always is.
+///
+/// # It writes the tag, and that is the point
+///
+/// The caption's tag is `{tag}{CAPTION_SUFFIX}`, exactly as [`captioned`] does,
+/// because that suffix is what [`Survey`] reads as *this run is that box's
+/// caption*. A caller cannot choose it, and letting them would be letting them
+/// break the bond silently — R1813 measured two alternative criteria that would
+/// have freed the name, and both answered a different question. See rule 3 in
+/// [`Survey::of`].
 #[must_use]
-pub fn captioned(
-    tag: &str,
-    box_rect: Rect,
-    box_style: BoxStyle,
-    caption: &Caption,
-    pointer: Pointer,
-) -> (Scene, Placed) {
+pub fn inside(tag: &str, box_rect: Rect, caption: &Caption) -> (Scene, Placed) {
     let placed = place(box_rect, caption);
     // The child's rectangle is expressed in the box's own space: an absolute
     // layout inside a container is resolved against that container.
@@ -532,6 +635,30 @@ pub fn captioned(
     if let Some(silence) = caption.silence.clone() {
         run = run.silenced(silence);
     }
+    (run, placed)
+}
+
+/// A tagged box **with its caption inside it**, and where the caption landed.
+///
+/// The run is a CHILD, which is the second half of the repair: this tree
+/// attributes a painted mark to its nearest *tagged ancestor*, so a caption
+/// drawn as a sibling is filed under whatever container happens to enclose both
+/// — three chips' words arriving as one run of a pane, which is why two surfaces
+/// of the capture viewer could not be specified at all
+/// (`debt-a-word-painted-beside-its-box-is-filed-under-the-container`). A
+/// caption that is a child answers to its own box.
+///
+/// The caption's tag is the box's, suffixed `.caption`, so a gate can ask for
+/// either and neither shadows the other.
+#[must_use]
+pub fn captioned(
+    tag: &str,
+    box_rect: Rect,
+    box_style: BoxStyle,
+    caption: &Caption,
+    pointer: Pointer,
+) -> (Scene, Placed) {
+    let (run, placed) = inside(tag, box_rect, caption);
     let scene = Scene::Container(
         ContainerNode::new(vec![run])
             .with_tag(tag.to_owned())
@@ -997,6 +1124,33 @@ impl Survey {
         for run in &runs {
             // Rule 3: a caption the scene itself relates to a box is matched by
             // TAG, whatever the rectangles do.
+            //
+            // ★★★★★ R1813 tried twice to replace this with something that reads
+            // the tree instead of a name, and MEASURED both attempts wrong. They
+            // are recorded here because both sound better than what is written,
+            // and the next reader will otherwise reach for them again:
+            //
+            // 1. *A run inside a tagged box is that box's caption.* Reads the
+            //    tree, needs no convention. Measured: a run's enclosing
+            //    container is almost never the box a reader sees around it, so
+            //    the population filled with panes and with the window root —
+            //    and `lab.palette.discovery`, a box a reader had reported a
+            //    defect in, FELL OUT, its caption having bonded to the palette
+            //    enclosing it. Being *inside* a box is not being its caption.
+            //
+            // 2. *A run whose `Silence` names a box is that box's caption.* An
+            //    author's own declaration, carrying the box's real tag.
+            //    Measured: `Silence::name_of` / `part_of` say where a reader
+            //    RECEIVES the text, which is a different question from which box
+            //    holds it, and the two diverge exactly where it matters — the
+            //    protocol chips declare `part_of("lab.palette")` while being
+            //    drawn inside the chip, so every one of them bonded to the pane
+            //    and left the judged set.
+            //
+            // ⇒ the suffix is not a convention this module happens to like. It
+            // is the one thing in the painted scene that means *this run is that
+            // box's caption* and nothing else, and no caller ever spells it:
+            // [`captioned`] and [`inside`] write it.
             let declared = run
                 .tag
                 .as_deref()
@@ -1828,7 +1982,7 @@ mod tests {
             hold,
             &Caption::new("ok", style()).stating((20, 10)).padding(6, 4),
         );
-        assert_eq!(placed.padding(), (6, 4));
+        assert_eq!(placed.padding(), Padding::symmetric(6, 4));
         assert_eq!(placed.holder(), hold);
         let room = placed.room().expect("it fits");
         assert_eq!(
@@ -1939,6 +2093,169 @@ mod tests {
             panic!("the child is the caption")
         };
         assert_eq!(run.style.text_align, placed.declares());
+    }
+
+    /// ★★★★★ A caption for a box the caller builds is bonded to it, and does
+    /// **not** take the box's presses.
+    ///
+    /// The second half is what made adopting it safe on a shipped screen. The
+    /// node lab's frame tab is a drag handle: a press there moves the group, and
+    /// a caption that became a child and swallowed the press would have broken
+    /// the gesture while every containment check stayed green. It cannot,
+    /// because [`inside`] builds through `crate::run::text_run`, which is
+    /// pointer-transparent — asserted here rather than trusted, since nothing in
+    /// this module's own signature says so.
+    #[test]
+    fn r1813_a_caption_for_a_callers_own_box_is_bonded_and_transparent() {
+        let hold = Rect::new(40, 60, 200, 30);
+        let (run, placed) = inside(
+            "frame.host-a",
+            hold,
+            &Caption::new("host-a · ingest", style())
+                .stating((90, 12))
+                .padding(12, 3),
+        );
+        let Scene::Text(node) = &run else {
+            panic!("a caption is a run")
+        };
+        assert_eq!(
+            node.tag.as_deref(),
+            Some("frame.host-a.caption"),
+            "the module writes the tag that says whose caption this is"
+        );
+        assert!(
+            node.layout.pointer_transparent,
+            "a caption must not take the press its box is the target of"
+        );
+        assert_eq!(
+            (node.rect.x, node.rect.y),
+            (placed.run().x - hold.x, placed.run().y - hold.y),
+            "box-relative in the node, caller-space out of `place`"
+        );
+
+        // And the survey bonds it once the caller has put it in their box.
+        let scene = laid_out(
+            region(
+                "canvas",
+                Rect::new(0, 0, 400, 200),
+                vec![region("frame.host-a", hold, vec![run])],
+            ),
+            (400, 200),
+        );
+        let survey = Survey::of(&scene);
+        assert_eq!(survey.bound(), 1, "{:?}", survey.placements());
+        assert_eq!(survey.adjacent(), 0);
+        assert_eq!(survey.placements()[0].box_tag(), "frame.host-a");
+        assert!(!survey.placements()[0].escapes());
+    }
+
+    /// ★★★★★ Room stated per side, and the counterfactual that says why the
+    /// symmetric pair was not enough.
+    ///
+    /// The numbers are the determinism switch's, which is the second defect a
+    /// reader reported and the site R1813 was bonding when this was missing: a
+    /// 202-wide box, 48px of clearance on the left because the switch's TRACK is
+    /// drawn there, and the panel's 14px margin on the right. The caption's
+    /// width is STATED here rather than shaped, because this crate has no
+    /// shaper — so what this test proves is the capability, and what that costs
+    /// a real screen is measured on the screen
+    /// (`hello-node-lab`'s `r1813_the_switch_paints_the_position_…`).
+    ///
+    /// Saying `48` on both sides — the only thing [`Caption::padding`] can
+    /// express — takes 96 from a 202-wide box, so a caption between 107 and 140
+    /// px wide is reported as not fitting a box that has room for it. That is
+    /// the 34px this asserts.
+    #[test]
+    fn r1813_room_is_stated_per_side_and_the_symmetric_pair_could_not() {
+        let hold = Rect::new(69, 647, 202, 58);
+        let sentence = Caption::new("discovery off · fully specified", style()).stating((140, 12));
+
+        let per_side = place(hold, &sentence.clone().padded(Padding::each(48, 10, 14, 0)));
+        assert!(
+            per_side.fit().fits(),
+            "the sentence fits the room the screen actually gives it: {:?}",
+            per_side.fit()
+        );
+        assert_eq!(
+            per_side.run(),
+            Rect::new(69 + 48, 647 + 10, 140, 12),
+            "clear of the track, and starting where the left inset says"
+        );
+        let room = per_side.room().expect("it fits");
+        assert_eq!(
+            (room.left, room.right),
+            (48, 14),
+            "the two sides are different numbers, which is the whole point"
+        );
+        assert_eq!(per_side.padding(), Padding::each(48, 10, 14, 0));
+
+        // The counterfactual, run rather than argued.
+        let symmetric = place(hold, &sentence.padding(48, 10));
+        assert_eq!(
+            symmetric.fit(),
+            Fit::Overflows {
+                over_x: 34,
+                over_y: 0
+            },
+            "48 on both sides takes 96 from a 202-wide box, so a caption this \
+             box has room for is reported as not fitting"
+        );
+    }
+
+    /// ★★★★★ The two bond criteria R1813 measured WRONG, pinned so the next
+    /// reader does not have to measure them again.
+    ///
+    /// Both read the scene rather than a name and both sound strictly better
+    /// than the suffix. The scene here is the shape that refutes them: a pane
+    /// holding a chip, with the chip's word drawn beside the chip and declaring
+    /// — correctly, for a screen reader — that it is announced as part of the
+    /// PANE.
+    #[test]
+    fn r1813_a_run_inside_a_pane_is_not_the_panes_caption() {
+        let word = Scene::Text(
+            TextNode::styled("tcp".to_owned(), Rect::default(), style())
+                .with_tag("pane.word".to_owned())
+                .with_layout(
+                    LayoutStyle::new()
+                        .with_absolute_position(71, 590)
+                        .with_size(Size::px(32, 12))
+                        // The a11y decision, which names the PANE.
+                        .with_silence(Silence::part_of("pane")),
+                ),
+        );
+        let scene = laid_out(
+            region(
+                "pane",
+                Rect::new(0, 0, 300, 900),
+                vec![empty_box("pane.chip", Rect::new(69, 587, 36, 18)), word],
+            ),
+            (300, 900),
+        );
+
+        let survey = Survey::of(&scene);
+        let placement = survey
+            .placements()
+            .iter()
+            .find(|p| p.text() == "tcp")
+            .expect("the word is paired with something");
+
+        // Criterion 1 — *a run inside a tagged box is that box's caption* —
+        // would answer `pane`, the 300x900 container the run happens to sit in.
+        // Criterion 2 — *a run whose silence names a box is that box's caption*
+        // — would answer `pane` as well, because `part_of` says where a reader
+        // RECEIVES the text, which is a different question. Both lose the chip.
+        assert_eq!(
+            placement.box_tag(),
+            "pane.chip",
+            "the box a READER sees around the word is the chip, and neither the \
+             tree nor the silence says so"
+        );
+        assert_eq!(
+            placement.bond(),
+            Bond::Adjacent,
+            "and it is honestly a guess: nothing in this scene declares the \
+             relation, which is exactly what `inside` exists to fix"
+        );
     }
 
     /// Two surveys fold into one population, so a walk over an application adds

@@ -262,7 +262,7 @@ def body() -> None:
             if tag not in painted:
                 missing.append(tag)
         for frame in spec["frames"]:
-            for tag in (f"lab.frame.{frame['name']}", f"lab.frame.{frame['name']}.name"):
+            for tag in (f"lab.frame.{frame['name']}", f"lab.frame.{frame['name']}.caption"):
                 if tag not in painted:
                     missing.append(tag)
         # ★ R1678 — the reset the specification says is UNCONDITIONAL has to be
@@ -362,7 +362,7 @@ def body() -> None:
             declared.add(f"lab.palette.protocol.{word}")
         for frame in spec["frames"]:
             declared.add(f"lab.frame.{frame['name']}")
-            declared.add(f"lab.frame.{frame['name']}.name")
+            declared.add(f"lab.frame.{frame['name']}.caption")
         for node in spec["nodes"]:
             for suffix in ("", ".id", ".badge"):
                 declared.add(f"lab.node.{node['id']}{suffix}")

@@ -92,7 +92,9 @@ R1710_FIVE = [
     "lab.inspector.note",
     "lab.inspector.note.text",
     "lab.palette.discovery",
-    "lab.palette.discovery.state",
+    # ★ R1813 — was `.state`; the switch's read-out is its box's caption child
+    # now and the framework names the suffix.
+    "lab.palette.discovery.caption",
     "lab.palette.discovery.track",
 ]
 

@@ -3450,47 +3450,73 @@ fn r1808_the_tour_takes_both_populations_from_the_roster() {
 // pairing a rule about the TREE (`caption::Survey`), and then to arm the result
 // ONCE, here, where the population is the roster's.
 
-/// How many caption/box pairs in this application still say nothing about where
-/// they sit — a **ratchet**, and it may only ever go down.
+/// How many caption/box pairs in this application **say where they sit** — a
+/// ratchet, and it may only ever go UP.
 ///
 /// ★★★★★ This is the number the debt carried as prose, and prose does not
 /// ratchet: it said *225 of 230* at R1792 and nothing re-measured it for twenty
 /// rounds. A caption that declares nothing is not wrong — it is *unanswerable*,
 /// and `off-centre` and `deliberately left` are the same picture while it stays
-/// that way. Lowering this constant is what adopting `caption::Caption::align`
-/// at a site buys, and the test below refuses to let it rise.
+/// that way. Raising this constant is what adopting `caption::Caption::align`
+/// at a site buys.
 ///
-/// ⚠ **Its floor is not zero, and that is a property of the instrument.**
-/// `TextAlign::Start` is the framework default, so a caption that is at the
-/// start *on purpose* — the role chips' name-over-gist rows, every left-aligned
-/// list cell — is indistinguishable in the paint from one whose author never
-/// considered the question. This number can only ever fall to the count of
-/// deliberate `Start` captions, and nothing here knows what that count is.
-/// [`ADJACENT_CAPTIONS`] is the ratchet that can honestly reach zero.
-const SILENT_CAPTIONS: usize = 152;
+/// ★★★★★ **R1813 — it was `SILENT_CAPTIONS`, a ceiling on the complement, and
+/// the instrument caught its own defect within one round of being written.**
+/// Bonding the two frame captions raised `silent` from 152 to 154: they had
+/// FALLEN OUT of the watched population (R1812's own repair narrowed their runs
+/// past the scale rule), and bonding RETURNED them — as pairs that declare no
+/// alignment. So a repair that is unambiguously progress raised the number a
+/// ratchet had sworn could only fall.
+///
+/// The complement is not monotone because it is measured over a population the
+/// work itself widens. This is, in both directions: declaring at a site raises
+/// it, and widening the population never lowers it. Ratchet what the work
+/// controls, and state it as what you HAVE rather than what you lack.
+///
+/// ⚠ **Its ceiling is not the pair count, and that is a property of the
+/// instrument.** `TextAlign::Start` is the framework default, so a caption that
+/// is at the start *on purpose* — the role chips' name-over-gist rows, every
+/// left-aligned list cell — cannot say so: its declaration is spelled exactly
+/// like silence. This number can therefore only ever rise to the count of
+/// captions that are centred or end-aligned, and nothing here knows what that
+/// count is. [`ADJACENT_CAPTIONS`] is the ratchet whose bound really is zero.
+const CLAIMING_CAPTIONS: usize = 16;
 
 /// How many caption/box pairs are held together by **geometry alone** — a
 /// second ratchet, and the one whose floor really is zero.
 ///
-/// ★★★★★ Where [`SILENT_CAPTIONS`] is limited by what `TextAlign` can express,
-/// this one is not: every caption in this application *could* be a
-/// `caption::captioned` child of the box a reader sees around it, and each one
-/// that becomes one moves from a guess to a fact. It is also the number that
-/// keeps the gate honest in the other direction — a `Bond::Declared` caption
-/// cannot escape, so as this falls the escape check has less and less to look
-/// at, and a `0 escapes` verdict quietly stops meaning anything unless the split
-/// is on the record.
+/// ★★★★★ Where [`CLAIMING_CAPTIONS`] is bounded by what `TextAlign` can
+/// express, this one is not: every caption in this application *could* be a
+/// child of the box a reader sees around it, and each one that becomes one moves
+/// from a guess to a fact. It is also the number that keeps the gate honest in
+/// the other direction — a `Bond::Declared` caption cannot escape, so as this
+/// falls the escape check has less and less to look at, and a `0 escapes`
+/// verdict quietly stops meaning anything unless the split is on the record.
 ///
-/// ⚠ It fell from 154 to 152 in the round that set it, and **not** because two
-/// captions were adopted: repairing the frame caption to derive its width from
-/// its box made the run its own word's width instead of the whole seat, and a
-/// narrower run no longer passes the scale rule against a wide frame. So the
-/// caption became correct by construction and stopped being *watched* in the
-/// same edit. That is the dynamic this constant's own documentation warns
-/// about, observed on the first repair after it was written down, and closing it
-/// means making those two `captioned` children — which moves the tags the a11y
-/// silence and the hit test are written against, so it is its own round.
-const ADJACENT_CAPTIONS: usize = 152;
+/// ⚠ **R1812 set it at 152 after watching it fall from 154, and the fall was
+/// not a repayment.** Deriving the frame caption's width from its box made the
+/// run its own word's width instead of the whole seat, and a narrower run no
+/// longer passes the scale rule against a wide frame — so the caption became
+/// correct by construction and stopped being *watched* in the same edit.
+///
+/// ★★★★★ **R1813 closed that by bonding them, and the arithmetic is worth
+/// reading**: measured over the assembled application, `bound` rose 16 -> 22
+/// while this fell only 152 -> 148, because two of the six had not been in the
+/// population at all. A repair can *return* a caption to being watched, and
+/// returning one is invisible here — it is visible in `pairs`, 168 -> 170,
+/// which is why the gate prints both.
+///
+/// 🟥 **This paragraph said `+4 / -2` and this constant said 150 until the
+/// closing audit re-ran the gate.** Both were true when written — of a tree in
+/// which only the two frame tabs had been bonded — and the same round went on
+/// to bond the determinism switch, which moved them again. So neither was
+/// stale in the usual sense: they were a mid-round snapshot that reads like a
+/// result, and the ratchet passed anyway, because `<=` cannot notice a ceiling
+/// set two above the floor. ⇒ **a ratchet's constant is a MEASUREMENT, and has
+/// to be re-taken at the END of the round that moves it** — the same lesson
+/// this round's own module header applied by deleting its figures, applied
+/// there and missed here, three files apart, in one commit.
+const ADJACENT_CAPTIONS: usize = 148;
 
 /// ★★★★★ **No caption in this application escapes its box or sits somewhere
 /// other than where it says it does** — asked of every destination the roster
@@ -3634,23 +3660,35 @@ fn r1812_no_caption_in_the_application_escapes_or_breaks_its_claim() {
             all.boxes(),
             tags.len()
         );
-        assert!(
-            all.silent() <= SILENT_CAPTIONS,
-            "{} caption(s) say nothing about where they sit, up from the {} this \
-             application had when the ratchet was set. Adopting \
-             `caption::Caption::align` at a site is what lowers it; adding a \
-             caption that declares nothing is what raises it.",
-            all.silent(),
-            SILENT_CAPTIONS
-        );
-        assert!(
-            all.adjacent() <= ADJACENT_CAPTIONS,
-            "{} caption(s) are paired with their box by nothing but where they \
-             landed, up from the {} this application had when the ratchet was \
-             set. `caption::captioned` is what turns one into a fact the scene \
-             carries.",
-            all.adjacent(),
-            ADJACENT_CAPTIONS
-        );
+        assert_the_ratchets(&all);
     });
+}
+
+/// The two ratchets, split out so each reads as what it is.
+///
+/// ★ They move in OPPOSITE directions and that is the point: one counts what
+/// the application HAS ([`CLAIMING_CAPTIONS`], a floor), the other what it
+/// still lacks ([`ADJACENT_CAPTIONS`], a ceiling). Only the second can honestly
+/// reach its bound; the first is capped by what `TextAlign` can express.
+fn assert_the_ratchets(all: &pinion_widget_paint::caption::Survey) {
+    assert!(
+        all.claiming() >= CLAIMING_CAPTIONS,
+        "only {} caption(s) say where they sit, DOWN from the {} this \
+         application had when the ratchet was set — {} of {} pairs still cannot \
+         be told apart from a caption whose author never considered the \
+         question. `caption::Caption::align` at a site is what raises it.",
+        all.claiming(),
+        CLAIMING_CAPTIONS,
+        all.silent(),
+        all.pairs()
+    );
+    assert!(
+        all.adjacent() <= ADJACENT_CAPTIONS,
+        "{} caption(s) are paired with their box by nothing but where they \
+         landed, up from the {} this application had when the ratchet was set. \
+         `caption::captioned` and `caption::inside` are what turn one into a \
+         fact the scene carries.",
+        all.adjacent(),
+        ADJACENT_CAPTIONS
+    );
 }

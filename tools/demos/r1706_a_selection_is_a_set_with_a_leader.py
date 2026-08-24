@@ -158,7 +158,7 @@ def access_nodes(tf: RpcSubprocess) -> dict[str, dict]:
 
 def press_host_tab(tf: RpcSubprocess, host: str) -> None:
     shot = abs_rects_of(tf.snapshot(source="paint"))
-    tf.click(centre(shot[f"lab.frame.{host}.name"]))
+    tf.click(centre(shot[f"lab.frame.{host}.caption"]))
     tf.tick(16)
 
 
@@ -193,7 +193,7 @@ def b_the_same_gesture_selects_and_carries(tf: RpcSubprocess) -> None:
     assert_eq(selection_of(tf)[1], ["T-01"], "the run starts on one card of the OTHER host")
 
     before = card_positions(tf)
-    tab = abs_rects_of(tf.snapshot(source="paint"))["lab.frame.host-a.name"]
+    tab = abs_rects_of(tf.snapshot(source="paint"))["lab.frame.host-a.caption"]
     start = centre(tab)
     tf.drag(from_at=start, to_at=(start[0] + 48, start[1] + 36))
     tf.tick(16)
@@ -370,7 +370,7 @@ def g_the_agent_path_is_the_same_act(tf: RpcSubprocess) -> None:
     tf.invoke(f"{EXT}/select", "T-01")
     start_at = card_positions(tf)
     shot = abs_rects_of(tf.snapshot(source="paint"))
-    start = centre(shot["lab.frame.host-a.name"])
+    start = centre(shot["lab.frame.host-a.caption"])
     tf.drag(from_at=start, to_at=(start[0] + 32, start[1] + 24))
     tf.tick(16)
     by_gesture = selection_of(tf)

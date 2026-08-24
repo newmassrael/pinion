@@ -5378,12 +5378,29 @@ fn quiet(scene: Scene, silence: Silence) -> Scene {
 }
 
 fn box_at(tag: &str, rect: Rect, fill: Color, border: Option<Color>, radius: u32) -> Scene {
+    box_holding(tag, rect, fill, border, radius, Vec::new())
+}
+
+/// The same box, **holding something** — for a box whose caption is its own
+/// child rather than a run drawn beside it.
+///
+/// ★ R1813 — `box_at` has always built a childless container, which is why
+/// every caption on this screen started life as a sibling: there was nowhere to
+/// put one. `caption::inside` produces the node and this is where it goes.
+fn box_holding(
+    tag: &str,
+    rect: Rect,
+    fill: Color,
+    border: Option<Color>,
+    radius: u32,
+    children: Vec<Scene>,
+) -> Scene {
     let mut style = BoxStyle::filled(fill).with_corner_radius(radius);
     if let Some(colour) = border {
         style = style.with_border(Border::new(colour, 1));
     }
     Scene::Container(
-        ContainerNode::new(Vec::new())
+        ContainerNode::new(children)
             .with_tag(tag.to_owned())
             .with_style(style)
             .with_layout(absolute(rect)),
@@ -5797,6 +5814,18 @@ const fn discovery_word(on: bool) -> &'static str {
 /// clear of the track, which is 10 in and 30 wide.
 const DISCOVERY_CAPTION_INSET: u32 = 48;
 
+/// The tag the switch's caption carries, **derived rather than spelled**.
+///
+/// ★ R1813 — it was `lab.palette.discovery.state`, a name this file chose. The
+/// caption is now the switch box's own child, built by `caption::inside`, and
+/// the `.caption` suffix is what tells `caption::Survey` whose caption it is; a
+/// second spelling here could drift from the framework's in an edit nothing
+/// would catch. The a11y id is the same string on purpose — the switch's
+/// `described_by` points at a painted region a reader can also walk onto.
+fn discovery_caption_tag() -> String {
+    format!("lab.palette.discovery{}", caption::CAPTION_SUFFIX)
+}
+
 /// The determinism switch, off by default.
 fn palette_determinism(state: &LabState, rect: Rect, ink: Ink) -> Vec<Scene> {
     let local = |r: Rect| Rect::new(r.x - rect.x, r.y - rect.y, r.w, r.h);
@@ -5809,23 +5838,6 @@ fn palette_determinism(state: &LabState, rect: Rect, ink: Ink) -> Vec<Scene> {
         10,
         ink.text_3,
     ));
-    children.push(box_at(
-        "lab.palette.discovery",
-        toggle,
-        ink.raised,
-        Some(if on { ink.warn } else { ink.outline }),
-        9,
-    ));
-    children.push(quiet(
-        box_at(
-            "lab.palette.discovery.track",
-            Rect::new(toggle.x + 10, toggle.y + 12, 30, 16),
-            if on { ink.warn } else { ink.outline_2 },
-            None,
-            8,
-        ),
-        Silence::decorative("the switch's track, whose position the switch announces"),
-    ));
     // ★ The caption IS the switch's description — the switch points at it with
     // `described_by`, so it is announced when a reader lands on the control
     // rather than as a separate stop beside it.
@@ -5836,40 +5848,73 @@ fn palette_determinism(state: &LabState, rect: Rect, ink: Ink) -> Vec<Scene> {
     // this the full sentence was drawn and silently ellipsised to
     // `discovery off · fully specif…` — a reader reported it and nothing in the
     // tree had said so.
-    let caption_room = Rect::new(
-        toggle.x + DISCOVERY_CAPTION_INSET,
-        toggle.y + 10,
-        toggle.w.saturating_sub(DISCOVERY_CAPTION_INSET + PAD),
-        13,
-    );
-    let style = run_style(FONT_SMALL, ink.text_2);
+    //
+    // ★★★★★ R1792 — the room is what the BOX has left after the track, not what
+    // the PANE has left. This read `PALETTE_W - toggle.x - 48 - PAD`, derived
+    // against the pane, and the toggle's own right edge is already
+    // `PALETTE_W - PAD` — so subtracting `PAD` once landed the caption exactly
+    // flush with the box's right border. Measured off the paint: caption
+    // (117, 657, 154, 13) in box (69, 647, 202, 58), **48px of gap on the left
+    // and ZERO on the right**, which is what a reader sees as a word jammed
+    // against the panel edge.
+    //
+    // ★★★★★ R1813 — and now it is not derived at all. The caption is the
+    // switch's own CHILD, placed by `caption::inside`, which is what makes the
+    // relation a fact the scene carries rather than a rectangle two edits could
+    // drift apart: R1792 repaired the seat and left the pairing a guess, which
+    // is why the round after it could still be told the caption belonged to the
+    // palette. A press still reaches the switch: the run is pointer-transparent.
+    //
+    // The room is stated PER SIDE — 48 in from the left because the track is
+    // drawn there, the panel's margin on the right.
+    //
+    // 🟥🟥 R1813's closing audit REFUTED THE SENTENCE THAT FIRST STOOD HERE. It
+    // said a symmetric pair "would have swapped the sentence for its short
+    // form", and the sentence is already its short form: measured, the caption
+    // is 66px in a 202-wide box, which fits the symmetric room (106) as well as
+    // the per-side one (140), so nothing about today's ink would move. What
+    // per-side actually buys is those 34px of FIT BUDGET — the query above is
+    // what decides whether the clause can ever be painted — and a padding
+    // readback that is TRUE, where a symmetric 48 would declare 48px reserved
+    // on the right of a box that leaves 88. Pinned by
+    // `r1813_the_switch_paints_the_position_and_the_pair_would_not_have_moved_it`,
+    // because a counterfactual argued in prose is what got this wrong.
+    let caption_pad = caption::Padding::each(DISCOVERY_CAPTION_INSET, 10, PAD, 0);
+    let style = run_style(FONT_SMALL, ink.text);
     let full = discovery_caption(on);
-    let says = if caption::place(caption_room, &caption::Caption::new(full, style.clone()))
-        .fit()
-        .fits()
+    let says = if caption::place(
+        toggle,
+        &caption::Caption::new(full, style.clone()).padded(caption_pad),
+    )
+    .fit()
+    .fits()
     {
         full
     } else {
         discovery_word(on)
     };
-    children.push(tagged_label(
-        "lab.palette.discovery.state",
-        says,
-        // ★★★★★ R1792 — the room is what the BOX has left after the track, not
-        // what the PANE has left. This read `PALETTE_W - toggle.x - 48 - PAD`,
-        // derived against the pane, and the toggle's own right edge is already
-        // `PALETTE_W - PAD` — so subtracting `PAD` once landed the caption
-        // exactly flush with the box's right border. Measured off the paint:
-        // caption (117, 657, 154, 13) in box (69, 647, 202, 58), **48px of gap
-        // on the left and ZERO on the right**, which is what a reader sees as a
-        // word jammed against the panel edge.
-        //
-        // The same class as the protocol chips' `+7`: arithmetic against a
-        // rectangle the caption is not inside. Derived from `toggle` it cannot
-        // be flush, whatever the pane's width becomes.
-        caption_room,
-        FONT_SMALL,
-        ink.text,
+    let (state_caption, _) = caption::inside(
+        "lab.palette.discovery",
+        toggle,
+        &caption::Caption::new(says, style).padded(caption_pad),
+    );
+    children.push(box_holding(
+        "lab.palette.discovery",
+        toggle,
+        ink.raised,
+        Some(if on { ink.warn } else { ink.outline }),
+        9,
+        vec![state_caption],
+    ));
+    children.push(quiet(
+        box_at(
+            "lab.palette.discovery.track",
+            Rect::new(toggle.x + 10, toggle.y + 12, 30, 16),
+            if on { ink.warn } else { ink.outline_2 },
+            None,
+            8,
+        ),
+        Silence::decorative("the switch's track, whose position the switch announces"),
     ));
     children.push(label(
         "turning it on lets nodes acquire links nobody authored",
@@ -6212,7 +6257,30 @@ fn canvas_world(state: &LabState, ink: Ink) -> Vec<Scene> {
             .iter()
             .find(|f| f.name == name)
             .map_or("", |f| f.gist);
-        children.push(box_at(
+        // The tab is the frame's handle: the interior belongs to the cards, so
+        // a group can be moved without a press inside it stealing a node drag.
+        //
+        // ★★★★★ R1812 derived this caption from the frame's own rectangle
+        // instead of computing it beside one — it was `Rect::new(x + 12, y + 3,
+        // (w - 24).max(40), 13)`, and that `.max(40)` is a width floor that does
+        // not know how wide the box is, so at a frame 44 wide it put a 40px run
+        // 12px in and **8px outside the frame**.
+        //
+        // ★★★★★ R1813 makes it the frame's own CHILD, which is the half R1812
+        // could not reach: `captioned` builds the box, and this box already
+        // exists and carries a border, a drag handle and a hover state, so the
+        // caption stayed a sibling and stayed a guess to every check that reads
+        // the paint. `caption::inside` is the node for a box its caller builds,
+        // and it writes the `.caption` tag that says whose caption it is.
+        //
+        // A press still reaches the frame: `caption::inside` builds through
+        // `text_run`, which is pointer-transparent, so the tab drags the group
+        // exactly as it did when the caption was drawn beside it.
+        let cap = caption::Caption::new(frame_caption(&name, gist), run_style(10, ink.text_3))
+            .padding(12, 3)
+            .silent(Silence::name_of(format!("lab.frame.{name}")));
+        let (title, _) = caption::inside(&format!("lab.frame.{name}"), box_rect, &cap);
+        children.push(box_holding(
             &format!("lab.frame.{name}"),
             box_rect,
             Color::rgba(0x16, 0x18, 0x1D, 0x6b),
@@ -6222,36 +6290,7 @@ fn canvas_world(state: &LabState, ink: Ink) -> Vec<Scene> {
                 ink.outline_2
             }),
             12,
-        ));
-        // The tab is the frame's handle: the interior belongs to the cards, so
-        // a group can be moved without a press inside it stealing a node drag.
-        // ★★★★★ R1812 — DERIVED from the frame's own rectangle, not computed
-        // beside it. This was `Rect::new(x + 12, y + 3, (w - 24).max(40), 13)`,
-        // and the `.max(40)` is a width floor that does not know how wide the
-        // box is: at a frame 44 wide it produces a 40px run starting 12px in,
-        // whose right edge is **8px outside the frame**. Measured by
-        // `caption::Survey` the moment this screen's sweep was moved onto it —
-        // the previous arming could not see it, because it dropped every box
-        // that owns a run of its own and this frame owns the cards' text.
-        //
-        // The same class as the two a reader reported: arithmetic against a
-        // rectangle the caption is not inside. `caption::place` clamps to the
-        // room and reports `Fit::Overflows` rather than drawing outside, so the
-        // floor cannot be reintroduced by a future edit here.
-        let title = frame_caption(&name, gist);
-        let placed = caption::place(
-            box_rect,
-            &caption::Caption::new(title.clone(), run_style(10, ink.text_3)).padding(12, 3),
-        );
-        children.push(quiet(
-            placed_label(
-                &format!("lab.frame.{name}.name"),
-                title,
-                placed,
-                10,
-                ink.text_3,
-            ),
-            Silence::name_of(format!("lab.frame.{name}")),
+            vec![title],
         ));
     }
     children.extend(canvas_wires(state, ink));
@@ -12232,15 +12271,14 @@ fn palette_access(state: &LabState) -> Vec<AccessNode> {
                 ..AccessState::default()
             })
             .with_value(AccessValue::Bool(on))
-            .with_described_by("lab.palette.discovery.state"),
+            .with_described_by(discovery_caption_tag()),
     );
     // The caption the switch points at. It is PAINTED, so it gets a node with
     // the words it paints — a `described_by` naming a region a reader can also
     // walk onto is the ordinary shape, and the words come from one place so the
     // description and the ink cannot disagree.
     nodes.push(
-        AccessNode::new("lab.palette.discovery.state", AriaRole::Status)
-            .with_name(discovery_caption(on)),
+        AccessNode::new(discovery_caption_tag(), AriaRole::Status).with_name(discovery_caption(on)),
     );
     nodes
 }

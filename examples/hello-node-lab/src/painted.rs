@@ -526,7 +526,14 @@ fn declared_tags(state: &LabState) -> Vec<String> {
     }
     for frame in spec::FRAMES {
         want.push(format!("lab.frame.{}", frame.name));
-        want.push(format!("lab.frame.{}.name", frame.name));
+        // ★ R1813 — `.caption`, not `.name`: the frame's title is the frame's
+        // own caption child now, and the suffix is what says so to
+        // `caption::Survey`. The framework names it rather than this file.
+        want.push(format!(
+            "lab.frame.{}{}",
+            frame.name,
+            pinion_widget_paint::caption::CAPTION_SUFFIX
+        ));
     }
     // ★ R1678 — the reset affordances, derived from the same list that decides
     // which are painted. The gated four are demanded exactly when their scope
@@ -1921,6 +1928,17 @@ fn r1792_no_caption_is_drawn_outside_the_box_it_appears_in() {
 ///
 /// Asserted from the paint rather than from the formula, because the formula is
 /// what was wrong: a test that recomputed it would agree with the defect.
+///
+/// ★★★★★ R1813 — the second assertion used to be `left > right`, standing in for
+/// *left-aligned after the track*, and it was only ever true because the run
+/// rectangle was the whole ROOM rather than the ink. Now that the caption is
+/// placed by `caption::inside` the rectangle is what the shaper measured, so a
+/// short position word leaves more slack on the right than the track takes on
+/// the left and the proxy inverts — while the ink has not moved a pixel. The
+/// same lesson R1794 wrote about an exact-equality centring check: an assertion
+/// computed from a rectangle nobody drew can only survive on invented
+/// measurements. What the screen actually chose is *clear of the track*, so that
+/// is what is asked, of the track's own painted rectangle.
 #[test]
 fn r1792_the_switch_caption_is_not_flush_with_its_own_border() {
     let owner = Owner::new();
@@ -1928,7 +1946,11 @@ fn r1792_the_switch_caption_is_not_flush_with_its_own_border() {
         let state = use_lab_state();
         let shot = painted(&state);
         let box_rect = shot.tags["lab.palette.discovery"];
-        let caption = shot.tags["lab.palette.discovery.state"];
+        let track = shot.tags["lab.palette.discovery.track"];
+        let caption = shot.tags[&format!(
+            "lab.palette.discovery{}",
+            pinion_widget_paint::caption::CAPTION_SUFFIX
+        )];
         let right = (box_rect.x + box_rect.w) - (caption.x + caption.w);
         let left = caption.x - box_rect.x;
         assert!(
@@ -1937,9 +1959,74 @@ fn r1792_the_switch_caption_is_not_flush_with_its_own_border() {
              caption {caption:?} in box {box_rect:?} leaves {right}px"
         );
         assert!(
-            left > right,
-            "and it is still left-aligned after the track, which is the layout \
-             this screen chose: {left} in, {right} out"
+            caption.x >= track.x + track.w,
+            "and it starts clear of the track, which is the layout this screen \
+             chose: caption {caption:?} against track {track:?} ({left}px in)"
+        );
+    });
+}
+
+/// ★★★★★ What the switch PAINTS, what it ANNOUNCES, and the counterfactual
+/// R1813 wrote down wrong at the site before running it.
+///
+/// R1794 split the two — the position word is painted when the clause does not
+/// fit, and the clause is announced either way — and nothing in this tree has
+/// asked since, so the split has been a comment for nineteen rounds.
+///
+/// 🟥🟥 **The site's own justification for `caption::Padding` was refuted by
+/// this measurement.** The comment said a symmetric pair "would have swapped
+/// the sentence for its short form"; the sentence is ALREADY its short form,
+/// and the short form fits the symmetric room too, so nothing about today's
+/// ink would move. What per-side room actually buys here is the 34px of FIT
+/// BUDGET that decides whether the clause can ever be painted at all, and a
+/// padding readback that is TRUE — a symmetric 48 declares 48px reserved on the
+/// right of a box that leaves 88. The capability is right and the sentence
+/// arguing for it was measured against a caption that is not on the screen.
+#[test]
+fn r1813_the_switch_paints_the_position_and_the_pair_would_not_have_moved_it() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        let shot = painted(&state);
+        let tag = format!(
+            "lab.palette.discovery{}",
+            pinion_widget_paint::caption::CAPTION_SUFFIX
+        );
+        let box_rect = shot.tags["lab.palette.discovery"];
+        let caption = shot.tags[&tag];
+        let says = shot.said[&tag].as_str();
+
+        assert_eq!(
+            says,
+            super::discovery_word(false),
+            "the switch paints the POSITION, because the clause does not fit \
+             the room its box has left after the track"
+        );
+        assert!(
+            super::discovery_caption(false).starts_with(says),
+            "and what is painted is the opening of what is announced, never a \
+             third wording: painted {says:?}, announced {:?}",
+            super::discovery_caption(false)
+        );
+
+        // The counterfactual, run rather than argued — and it refutes the
+        // sentence this round first wrote at the site.
+        let per_side = box_rect.w - super::DISCOVERY_CAPTION_INSET - super::PAD;
+        let symmetric = box_rect.w - super::DISCOVERY_CAPTION_INSET * 2;
+        assert_eq!(
+            per_side - symmetric,
+            34,
+            "stating the room per side is worth 34px of fit budget in this \
+             {}-wide box: {per_side} against {symmetric}",
+            box_rect.w
+        );
+        assert!(
+            caption.w <= symmetric,
+            "and TODAY'S ink fits the symmetric room as well ({}px of {symmetric}), \
+             so the pair would not have swapped the sentence — the 34px is what \
+             decides whether the clause can ever be painted, not what is painted \
+             now",
+            caption.w
         );
     });
 }
@@ -2364,7 +2451,7 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
         drag_between(state, shot, "lab.node.P-03", "lab.frame.host-b");
     }),
     ("move a frame and its members", |state, shot| {
-        drag_tag(state, shot, "lab.frame.host-b.name", (30, 0));
+        drag_tag(state, shot, "lab.frame.host-b.caption", (30, 0));
     }),
     // ★★ R1682 — the node's own life. Each picks the card with the pointer
     // first, because the seats act on the SELECTED card and a driver that set

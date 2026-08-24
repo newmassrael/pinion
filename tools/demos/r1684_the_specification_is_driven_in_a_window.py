@@ -189,7 +189,7 @@ GESTURES = {
         tf, "lab.node.P-03", "lab.frame.host-b"
     ),
     "move a frame and its members": lambda tf: drag_by(
-        tf, "lab.frame.host-b.name", (30, 0)
+        tf, "lab.frame.host-b.caption", (30, 0)
     ),
     # the form
     # ★★ R1690 — the chip is named by the operation table's own argument rather
