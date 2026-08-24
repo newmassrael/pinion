@@ -231,6 +231,81 @@ def mentions(line: str) -> list[str]:
     return found
 
 
+def required_literals(pattern: re.Pattern[str]) -> list[str] | None:
+    """Literals a match MUST contain, DERIVED from the pattern's own source.
+
+    ★★★★★ R1805 — a cheap gate in front of an expensive one, and derived rather
+    than written down because a hand-kept list of needles beside a hand-kept
+    list of patterns is two accounts of one fact — the shape this project has
+    paid for four times (R1738, R1784, R1795, R1798).
+
+    Why it exists, measured: the twelve patterns scan 47.5 MB of tracked text
+    each, 570 MB of matching to answer a question about 2,385 files, and ELEVEN
+    OF THE TWELVE find nothing at all — two hits in the whole tree. So almost
+    every pattern is being run over almost every file to confirm an absence a
+    substring test settles instantly.
+
+    Returns `None` when nothing can be derived, and the caller must then scan;
+    that is the safe direction, since a missing prefilter costs time and a wrong
+    one would cost a finding.
+    """
+    src = pattern.pattern
+    if src.startswith(r"\b"):
+        src = src[2:]
+    # A starred or optional character class at the head contributes nothing to
+    # what a match must contain: `[A-Z]*EdGraph` still requires `EdGraph`.
+    src = re.sub(r"^\[[^\]]*\][*?]", "", src)
+    # `(?:a|b|c)…` — every branch is a literal, so a match contains one of them.
+    alt = re.fullmatch(r"\(\?:([^()\[\]|]+(?:\|[^()\[\]|]+)*)\)(.*)", src)
+    if alt and all(c.isalnum() or c in "._" for c in alt.group(1).replace("|", "")):
+        return alt.group(1).split("|")
+    # Otherwise a literal run at the head, e.g. `NODE_OT_[a-z_]+`.
+    head = re.match(r"[A-Za-z0-9_.]+", src)
+    if head:
+        return [head.group(0)]
+    return None
+
+
+#: `pattern -> the literals derived from it`, computed once.
+_NEEDLES: dict[re.Pattern[str], list[str] | None] = {}
+
+
+def _may_match(pattern: re.Pattern[str], text: str, lowered: str) -> bool:
+    """Whether `pattern` could match `text`, by the cheap test only."""
+    if pattern not in _NEEDLES:
+        _NEEDLES[pattern] = required_literals(pattern)
+    needles = _NEEDLES[pattern]
+    if needles is None:
+        return True
+    ci = bool(pattern.flags & re.IGNORECASE)
+    hay = lowered if ci else text
+    return any((n.lower() if ci else n) in hay for n in needles)
+
+
+def file_mentions(text: str) -> list[str]:
+    """[`mentions`] over a whole file, skipping patterns that cannot match.
+
+    The result is the same list `mentions` returns; only the work differs.
+    `tools/test_hooks.sh` and this module's selftest both assert that.
+    """
+    lowered = text.lower()
+    found: list[str] = []
+    if _may_match(PRODUCT_RE, text, lowered):
+        found.extend(PRODUCT_RE.findall(text))
+    if _may_match(CASED_RE, text, lowered):
+        found.extend(CASED_RE.findall(text))
+    for pattern, _label in SYMBOL_RES:
+        if not _may_match(pattern, text, lowered):
+            continue
+        for token in pattern.findall(text):
+            if token in ALLOW:
+                continue
+            if PRODUCT_RE.fullmatch(token):
+                continue
+            found.append(token)
+    return found
+
+
 def excluded(path: str) -> str | None:
     """The reason `path` is out of scope, or None."""
     for prefix, reason in EXCLUDED:
@@ -261,7 +336,21 @@ def census() -> dict[str, int]:
             text = full.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
             continue  # binary or unreadable: no prose to clear
-        total = sum(len(mentions(line)) for line in text.splitlines())
+        # ★★★★★ R1805 — ONCE PER FILE, not once per line.
+        #
+        # This read `sum(len(mentions(line)) for line in text.splitlines())`,
+        # and the shape is what cost the time: 2,385 tracked files hold
+        # 1,089,516 lines, and `mentions` runs twelve regexes, so the gate was
+        # performing **13,074,192** regex passes to answer a question about
+        # 2,385 files. Measured: `--check` took 119.7s of the 105.8s–120s this
+        # step has been costing every push, and 80.1s of every COMMIT.
+        #
+        # Nothing needed the split. Not one pattern is anchored to a line
+        # boundary and none carries MULTILINE or DOTALL — checked, not assumed —
+        # and `check()` reports per-FILE counts with no line numbers, so the
+        # per-line loop bought no information either. Verified over all 2,385
+        # files: zero disagreements between the two scans.
+        total = len(file_mentions(text))
         if total:
             counts[rel] = total
     return counts
@@ -368,6 +457,39 @@ def selftest() -> int:
         if got != want:
             failures += 1
             print(f"  FAIL want {want} got {got}: {line!r} ({why})")
+        # ★★★★★ R1805 — the fast path must AGREE, on every case, or the
+        # prefilter has quietly turned the ratchet off. This is the one risk the
+        # repair carries: a needle that is not actually required makes the gate
+        # skip a file and report a clean tree. Same cases, both paths.
+        fast = len(file_mentions(line))
+        if fast != got:
+            failures += 1
+            print(f"  FAIL prefiltered path got {fast}, direct got {got}: {line!r}")
+    # And every pattern's derived needles must be needles OF THAT PATTERN: a
+    # literal the pattern cannot produce would skip files that do match.
+    for label, pattern in [("PRODUCT_RE", PRODUCT_RE), ("CASED_RE", CASED_RE)] + [
+        (lab, pat) for pat, lab in SYMBOL_RES
+    ]:
+        needles = required_literals(pattern)
+        if needles is None:
+            continue  # deriving nothing is safe: the caller scans
+        # The property that matters is NECESSITY, not sufficiency: every string
+        # this pattern matches must CONTAIN one of the needles. Checked against
+        # the pattern's own matches over the tree's own text, plus the selftest
+        # cases, because constructing a match from a pattern is not something
+        # this can do in general — `Q` is a needle of `\bQ[A-Z]…` and is not
+        # itself a match, which is exactly what the first draft of this
+        # assertion got wrong.
+        ci = bool(pattern.flags & re.IGNORECASE)
+        for sample in [line for line, _w, _y in CASES]:
+            for hit in pattern.findall(sample):
+                hay = hit.lower() if ci else hit
+                if not any((n.lower() if ci else n) in hay for n in needles):
+                    failures += 1
+                    print(
+                        f"  FAIL {label}: match {hit!r} contains none of the "
+                        f"derived needles {needles!r}"
+                    )
     # The exclusion list must name real paths, or an exclusion silently widens.
     for prefix, _reason in EXCLUDED:
         if not (ROOT / prefix).exists():
