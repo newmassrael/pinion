@@ -5261,6 +5261,30 @@ fn tagged_label(tag: &str, text: impl Into<String>, rect: Rect, px: u32, fg: Col
     text_run(tag, text, rect, run_style(px, fg))
 }
 
+/// ★★★★★ R1812 — the same run, built from a [`caption::Placed`] so it carries
+/// the alignment the placement was made under.
+///
+/// [`tagged_label`] takes a rectangle, which is all a *painter* needs and half
+/// of what a *reader* needs. A caption derived through `caption::place` has an
+/// author who said where it should sit; passing only `placed.run()` throws that
+/// away, and the scene then declares the framework default on a caption that was
+/// explicitly centred. `caption::Survey` counts such a run as saying nothing,
+/// which is exactly what it was doing.
+fn placed_label(
+    tag: &str,
+    text: impl Into<String>,
+    placed: caption::Placed,
+    px: u32,
+    fg: Color,
+) -> Scene {
+    text_run(
+        tag,
+        text,
+        placed.run(),
+        run_style(px, fg).with_align(placed.declares()),
+    )
+}
+
 /// The style every run on this screen carries.
 ///
 /// ★ R1654 — including an overflow policy, because the box is exact and the
@@ -6201,16 +6225,29 @@ fn canvas_world(state: &LabState, ink: Ink) -> Vec<Scene> {
         ));
         // The tab is the frame's handle: the interior belongs to the cards, so
         // a group can be moved without a press inside it stealing a node drag.
+        // ★★★★★ R1812 — DERIVED from the frame's own rectangle, not computed
+        // beside it. This was `Rect::new(x + 12, y + 3, (w - 24).max(40), 13)`,
+        // and the `.max(40)` is a width floor that does not know how wide the
+        // box is: at a frame 44 wide it produces a 40px run starting 12px in,
+        // whose right edge is **8px outside the frame**. Measured by
+        // `caption::Survey` the moment this screen's sweep was moved onto it —
+        // the previous arming could not see it, because it dropped every box
+        // that owns a run of its own and this frame owns the cards' text.
+        //
+        // The same class as the two a reader reported: arithmetic against a
+        // rectangle the caption is not inside. `caption::place` clamps to the
+        // room and reports `Fit::Overflows` rather than drawing outside, so the
+        // floor cannot be reintroduced by a future edit here.
+        let title = frame_caption(&name, gist);
+        let placed = caption::place(
+            box_rect,
+            &caption::Caption::new(title.clone(), run_style(10, ink.text_3)).padding(12, 3),
+        );
         children.push(quiet(
-            tagged_label(
+            placed_label(
                 &format!("lab.frame.{name}.name"),
-                frame_caption(&name, gist),
-                Rect::new(
-                    box_rect.x + 12,
-                    box_rect.y + 3,
-                    box_rect.w.saturating_sub(24).max(40),
-                    13,
-                ),
+                title,
+                placed,
                 10,
                 ink.text_3,
             ),
@@ -6470,15 +6507,22 @@ fn link_affordances(chrome: &LinkChrome, ink: Ink) -> Vec<Scene> {
     // Through `caption::place` rather than a fourth local derivation — the
     // framework measures the word with the same shaper the frame paints with,
     // so the rectangle and the ink are one fact.
-    let inner = |seat: Rect, word: &str| -> Rect {
+    // ★★★★★ R1812 — the placement is carried whole rather than reduced to a
+    // rectangle. `.centred()` below is a DECLARATION, and until this round it
+    // was consumed to produce a number and then dropped: the run went into the
+    // scene carrying `TextAlign::Start`, so the paint told every reader — a
+    // gate, a conformance check, a person asking over the wire — the opposite
+    // of what this call says. `Placed::declares` is what carries it across
+    // without stating it twice, and `caption::Survey` is what would have
+    // noticed.
+    let inner = |seat: Rect, word: &str| -> caption::Placed {
         let pad = (chrome.font / 2).max(3);
-        let placed = caption::place(
+        caption::place(
             Rect::new(0, 0, seat.w, seat.h),
             &caption::Caption::new(word, run_style(chrome.font, MEASURING_INK))
                 .centred()
                 .padding(pad, 0),
-        );
-        placed.run()
+        )
     };
     let mut out = vec![panel(
         "lab.link.label",
@@ -6486,7 +6530,7 @@ fn link_affordances(chrome: &LinkChrome, ink: Ink) -> Vec<Scene> {
         ink.accent_soft,
         Some(ink.accent_line),
         vec![quiet(
-            tagged_label(
+            placed_label(
                 "lab.link.label.text",
                 chrome.caption.clone(),
                 inner(chrome.label, &chrome.caption),
@@ -6504,7 +6548,7 @@ fn link_affordances(chrome: &LinkChrome, ink: Ink) -> Vec<Scene> {
             ink.surface,
             Some(if picked { ink.accent } else { ink.outline }),
             vec![quiet(
-                tagged_label(
+                placed_label(
                     &format!("lab.link.endpoint.{n}.text"),
                     endpoint.clone(),
                     inner(*seat, endpoint),
@@ -6526,7 +6570,7 @@ fn link_affordances(chrome: &LinkChrome, ink: Ink) -> Vec<Scene> {
         ink.surface,
         Some(edge),
         vec![quiet(
-            tagged_label(
+            placed_label(
                 "lab.link.act.text",
                 word.to_owned(),
                 inner(chrome.act, word),

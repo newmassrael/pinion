@@ -3435,3 +3435,222 @@ fn r1808_the_tour_takes_both_populations_from_the_roster() {
         );
     });
 }
+
+// ── R1812 — every caption in the application, over the roster's own walk ─────
+//
+// ★★★★★ The debt R1792 left open said the escape check *"runs on one screen of
+// five"*, and that arming it elsewhere was one line. Both halves were true and
+// the conclusion was not: armed over the assembled application it reports SEVEN
+// escapes, and measured one by one at R1812 **every one is a false positive** —
+// four pair a run of this shell's own chrome with a box inside a mounted screen,
+// two treat a tagged text node as a box and pair it with an open dropdown's
+// option label. A gate that cries seven times is a gate somebody switches off.
+//
+// So the repair was not to arm the old check four more times. It was to give the
+// pairing a rule about the TREE (`caption::Survey`), and then to arm the result
+// ONCE, here, where the population is the roster's.
+
+/// How many caption/box pairs in this application still say nothing about where
+/// they sit — a **ratchet**, and it may only ever go down.
+///
+/// ★★★★★ This is the number the debt carried as prose, and prose does not
+/// ratchet: it said *225 of 230* at R1792 and nothing re-measured it for twenty
+/// rounds. A caption that declares nothing is not wrong — it is *unanswerable*,
+/// and `off-centre` and `deliberately left` are the same picture while it stays
+/// that way. Lowering this constant is what adopting `caption::Caption::align`
+/// at a site buys, and the test below refuses to let it rise.
+///
+/// ⚠ **Its floor is not zero, and that is a property of the instrument.**
+/// `TextAlign::Start` is the framework default, so a caption that is at the
+/// start *on purpose* — the role chips' name-over-gist rows, every left-aligned
+/// list cell — is indistinguishable in the paint from one whose author never
+/// considered the question. This number can only ever fall to the count of
+/// deliberate `Start` captions, and nothing here knows what that count is.
+/// [`ADJACENT_CAPTIONS`] is the ratchet that can honestly reach zero.
+const SILENT_CAPTIONS: usize = 152;
+
+/// How many caption/box pairs are held together by **geometry alone** — a
+/// second ratchet, and the one whose floor really is zero.
+///
+/// ★★★★★ Where [`SILENT_CAPTIONS`] is limited by what `TextAlign` can express,
+/// this one is not: every caption in this application *could* be a
+/// `caption::captioned` child of the box a reader sees around it, and each one
+/// that becomes one moves from a guess to a fact. It is also the number that
+/// keeps the gate honest in the other direction — a `Bond::Declared` caption
+/// cannot escape, so as this falls the escape check has less and less to look
+/// at, and a `0 escapes` verdict quietly stops meaning anything unless the split
+/// is on the record.
+///
+/// ⚠ It fell from 154 to 152 in the round that set it, and **not** because two
+/// captions were adopted: repairing the frame caption to derive its width from
+/// its box made the run its own word's width instead of the whole seat, and a
+/// narrower run no longer passes the scale rule against a wide frame. So the
+/// caption became correct by construction and stopped being *watched* in the
+/// same edit. That is the dynamic this constant's own documentation warns
+/// about, observed on the first repair after it was written down, and closing it
+/// means making those two `captioned` children — which moves the tags the a11y
+/// silence and the hit test are written against, so it is its own round.
+const ADJACENT_CAPTIONS: usize = 152;
+
+/// ★★★★★ **No caption in this application escapes its box or sits somewhere
+/// other than where it says it does** — asked of every destination the roster
+/// holds, in every pose those destinations ask for.
+///
+/// This is the debt's carry item 2, and the shape of the answer is the point:
+/// the itinerary is `Tour`'s, so a screen added to the roster tomorrow is
+/// covered without this file changing, and a screen removed takes its captions
+/// out of the population rather than leaving a check that quietly passes.
+/// Survey every caption the application paints, over the roster's own walk.
+///
+/// Split out so the assertions below read as assertions; the populations are
+/// still `Tour`'s, which is the property that matters.
+fn survey_the_application(
+    state: &std::rc::Rc<super::ShellState>,
+) -> (
+    pinion_widget_paint::caption::Survey,
+    usize,
+    pinion_screen::TourReport,
+) {
+    let mut all = pinion_widget_paint::caption::Survey::default();
+    let mut stops = 0usize;
+    let tour = pinion_screen::Tour::of(&state.screens).also_recording(super::VIEW_TAG);
+    let surfaces = tour.surfaces();
+    let report = tour.walk(
+        |key| {
+            state.go(key).expect("an open destination is reachable");
+            state.journey.get()
+        },
+        |_key, _pose| {
+            let mut scene = super::view(ScreenState::default(), pinion_core::Frame::default());
+            let mut cache = pinion_runtime::LayoutCache::new();
+            pinion_runtime::compute_layout(&mut scene, &mut cache, super::WIN_W, super::WIN_H);
+            pinion_core::scene_disabled::resolve_disabled(&mut scene);
+            let refs: Vec<&str> = surfaces.iter().map(String::as_str).collect();
+            let _ = pinion_runtime::record_painted_surfaces(&scene, &refs);
+            all.absorb(pinion_widget_paint::caption::Survey::of(&scene));
+            stops += 1;
+            scene
+        },
+    );
+    (all, stops, report)
+}
+
+#[test]
+fn r1812_no_caption_in_the_application_escapes_or_breaks_its_claim() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let (all, stops, report) = survey_the_application(&state);
+
+        // The denominators first (R1800): a green verdict below is worth
+        // nothing without them, and this check's population SHRINKS as the
+        // repair spreads — every site that adopts `captioned` moves a pair from
+        // `adjacent` to `bound`, so "0 escapes" could come to mean "0 looked at".
+        assert!(
+            stops >= report.itinerary().len(),
+            "the walk stood in every destination: {stops} stops for {:?}",
+            report.itinerary()
+        );
+        let mut tags: Vec<&str> = all
+            .placements()
+            .iter()
+            .map(pinion_widget_paint::caption::Placement::box_tag)
+            .collect();
+        tags.sort_unstable();
+        tags.dedup();
+        assert!(
+            all.pairs() >= 150 && all.runs() > 900 && tags.len() >= 80,
+            "the sweep has a population to judge: {} pairs over {} distinct \
+             boxes, of {} runs in {} boxes over {stops} stops",
+            all.pairs(),
+            tags.len(),
+            all.runs(),
+            all.boxes()
+        );
+
+        // ★★★★★ The anti-vacuity assertion that matters more than the counts:
+        // the two boxes a READER actually reported must be in what this gate
+        // judges. A pairing rule strict enough to be quiet is a pairing rule
+        // that can be strict enough to be blind, and the way to tell those
+        // apart is to name the cases the check exists for. `lab.palette.
+        // protocol.tcp` is the chip whose word hung 3px off the right edge;
+        // `lab.palette.discovery` is the panel whose caption sat flush against
+        // its own border.
+        for reported in ["lab.palette.protocol.tcp", "lab.palette.discovery"] {
+            assert!(
+                tags.contains(&reported),
+                "`{reported}` is a box a reader reported a caption defect in, \
+                 and this gate is not looking at it. Judged: {tags:?}"
+            );
+        }
+        assert_eq!(
+            all.bound() + all.adjacent(),
+            all.pairs(),
+            "every pair is related by the scene or by geometry, and the split \
+             is reported rather than averaged: bound={} adjacent={}",
+            all.bound(),
+            all.adjacent()
+        );
+
+        let escaped = all.escaped();
+        assert!(
+            escaped.is_empty(),
+            "{} caption(s) are drawn OUTSIDE the box a reader sees around them: \
+             {:?}",
+            escaped.len(),
+            escaped
+                .iter()
+                .map(|p| format!("{:?} past {} by {:?}", p.text(), p.box_tag(), p.past()))
+                .collect::<Vec<_>>()
+        );
+
+        let broken = all.broken();
+        assert!(
+            broken.is_empty(),
+            "{} caption(s) declare an alignment they are not sitting at — the \
+             one form of this defect that can be PROVED rather than suspected, \
+             because the scene carries both the claim and the placement: {:?}",
+            broken.len(),
+            broken
+                .iter()
+                .map(|p| format!(
+                    "{:?} in {} claims {:?} but sits {:?}",
+                    p.text(),
+                    p.box_tag(),
+                    p.claim(),
+                    p.room()
+                ))
+                .collect::<Vec<_>>()
+        );
+
+        println!(
+            "R1812 pairs={} bound={} adjacent={} silent={} claiming={} runs={} boxes={} tags={} stops={stops}",
+            all.pairs(),
+            all.bound(),
+            all.adjacent(),
+            all.silent(),
+            all.claiming(),
+            all.runs(),
+            all.boxes(),
+            tags.len()
+        );
+        assert!(
+            all.silent() <= SILENT_CAPTIONS,
+            "{} caption(s) say nothing about where they sit, up from the {} this \
+             application had when the ratchet was set. Adopting \
+             `caption::Caption::align` at a site is what lowers it; adding a \
+             caption that declares nothing is what raises it.",
+            all.silent(),
+            SILENT_CAPTIONS
+        );
+        assert!(
+            all.adjacent() <= ADJACENT_CAPTIONS,
+            "{} caption(s) are paired with their box by nothing but where they \
+             landed, up from the {} this application had when the ratchet was \
+             set. `caption::captioned` is what turns one into a fact the scene \
+             carries.",
+            all.adjacent(),
+            ADJACENT_CAPTIONS
+        );
+    });
+}

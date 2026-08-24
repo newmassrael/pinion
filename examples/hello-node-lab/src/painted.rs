@@ -1856,47 +1856,54 @@ fn r1792_no_caption_is_drawn_outside_the_box_it_appears_in() {
     owner.run(|| {
         let state = use_lab_state();
         let mut found = Vec::new();
-        let mut judged = 0;
+        let mut all = pinion_widget_paint::caption::Survey::default();
         for (when, mutate) in STATES {
             mutate(&state);
-            let shot = painted(&state);
-            // Boxes that paint no text of their own: those are the ones a
-            // caption can be drawn beside rather than in.
-            let owners: BTreeSet<&String> = shot
-                .runs
-                .iter()
-                .filter_map(|(_, _, o)| o.as_ref())
-                .collect();
-            let boxes: Vec<(String, Rect)> = shot
-                .tags
-                .iter()
-                .filter(|(tag, _)| !owners.contains(*tag))
-                .map(|(tag, rect)| (tag.clone(), *rect))
-                .collect();
-            let runs: Vec<(String, Rect)> = shot
-                .runs
-                .iter()
-                .map(|(text, rect, _)| (text.clone(), *rect))
-                .collect();
-            judged += runs.len();
-            for escape in pinion_widget_paint::caption::escapes(&boxes, &runs) {
+            // ★★★★★ R1812 — through `Survey`, which derives both the box list
+            // and the run list from the scene itself. This test used to build
+            // them here, and the recipe it used carried two holes that only
+            // showed when the same recipe was armed over the assembled
+            // application: it filtered out tags that OWN runs, which does not
+            // exclude a `Scene::Text` carrying its own tag (a text node is not
+            // its own ancestor), and it related a run to a box by geometry
+            // alone, which pairs this shell's chrome with a mounted screen's
+            // boxes. Seven escapes, all false. One derivation in the framework
+            // is what stops the next arming from carrying a third hole.
+            let (_, scene) = painted_at(&state, (WIN_W, WIN_H));
+            let survey = pinion_widget_paint::caption::Survey::of(&scene);
+            for escape in survey.escaped() {
                 found.push(format!(
                     "{when}: {:?} is drawn past {} by {:?}",
-                    escape.text, escape.box_tag, escape.past
+                    escape.text(),
+                    escape.box_tag(),
+                    escape.past()
                 ));
             }
+            for broken in survey.broken() {
+                found.push(format!(
+                    "{when}: {:?} in {} claims {:?} and does not sit there",
+                    broken.text(),
+                    broken.box_tag(),
+                    broken.claim()
+                ));
+            }
+            all.absorb(survey);
         }
         assert!(
-            judged > 1_000,
-            "the sweep has plenty of runs to judge: {judged}"
+            all.runs() > 1_000 && all.pairs() > 50,
+            "the sweep has plenty to judge: {} pairs of {} runs across {} states",
+            all.pairs(),
+            all.runs(),
+            STATES.len()
         );
         assert!(
             found.is_empty(),
-            "{} caption(s) are drawn OUTSIDE the box a reader sees around them. \
-             This is what a reader reported and what no other gate here could \
-             ask: a caption that is a sibling of its box is related to it by \
-             nothing, so containment has to be checked against the box the \
-             caption LOOKS like it is in. {found:?}",
+            "{} caption(s) are drawn OUTSIDE the box a reader sees around them, \
+             or sit somewhere other than where they say. This is what a reader \
+             reported and what no other gate here could ask: a caption that is a \
+             sibling of its box is related to it by nothing, so containment has \
+             to be checked against the box the caption LOOKS like it is in. \
+             {found:?}",
             found.len()
         );
     });
