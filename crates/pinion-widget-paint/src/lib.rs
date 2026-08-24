@@ -79,6 +79,7 @@ pub mod anchor;
 pub mod barrier;
 pub mod button;
 pub mod caption;
+pub mod card_header;
 pub mod checkbox;
 pub mod chip;
 pub mod chooser;

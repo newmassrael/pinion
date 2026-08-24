@@ -128,6 +128,7 @@ use pinion_core::widgets::picker::Picker;
 use pinion_screen::{Mount, Screen, ScreenRoster, ScreenState};
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{self, ButtonColors, ButtonStyle};
+use pinion_widget_paint::card_header;
 use pinion_widget_paint::chooser;
 use pinion_widget_paint::pages::{PagePointer, view_page_region};
 use pinion_widget_paint::pane::{PanePointer, scroll_pane};
@@ -1535,23 +1536,36 @@ const fn edit_bar_rect(card: Rect) -> Rect {
     )
 }
 
+/// This screen's card-header measurements.
+///
+/// ★★★★★ R1816 — the numbers stayed, the arithmetic left. Every rectangle in a
+/// card header used to be computed here, and the same arithmetic was written a
+/// second time inside `Hit::at`; both now call
+/// [`pinion_widget_paint::card_header`], so the paint and the gesture cannot
+/// answer differently about where a slot is. The census row for this capability
+/// read `app` rather than `have` precisely because the framework had the card's
+/// MODEL and none of its layout.
+const CARD_METRICS: card_header::CardMetrics = card_header::CardMetrics {
+    band_h: CARD_HDR,
+    slot_w: 28,
+    slot_inset_y: 4,
+    tail: 6,
+    grip_w: 18,
+    grip_inset: 4,
+    title_gap: 20,
+    min_title: 24,
+    badge_w: 54,
+};
+
 /// One header control slot. Right-aligned, in declaration order, so the
 /// rightmost is the last affordance the vocabulary declares.
-const SLOT_W: u32 = 28;
-
-const fn affordance_rect(header: Rect, count: u32, n: u32) -> Rect {
-    let from_right = count.saturating_sub(n);
-    Rect::new(
-        (header.x + header.w).saturating_sub(from_right * SLOT_W + 6),
-        header.y + 4,
-        SLOT_W,
-        CARD_HDR - 8,
-    )
+fn affordance_rect(header: Rect, count: u32, n: u32) -> Rect {
+    card_header::slot_rect(header, count, n, CARD_METRICS)
 }
 
 /// The drag handle at the left of a header — the reference's six-dot grip.
-const fn grip_rect(header: Rect) -> Rect {
-    Rect::new(header.x + 4, header.y + 4, 18, CARD_HDR - 8)
+fn grip_rect(header: Rect) -> Rect {
+    card_header::grip_rect(header, CARD_METRICS)
 }
 
 /// Where a not-ready card's remedy control sits.
@@ -6337,13 +6351,11 @@ fn grid_scene(rows: u32, palette: Palette, bright: bool) -> Vec<Scene> {
 
 /// A card's header: grip, status light, title, LIVE badge, controls.
 fn header_scene(card: &Card, rect: Rect, palette: Palette, maximized: bool) -> Vec<Scene> {
-    /// The clearance the affordance strip keeps at the header's right edge.
-    const HDR_TAIL: u32 = 6;
-    /// The narrowest a title may be and still be worth painting.
-    const MIN_TITLE: u32 = 24;
-    /// The ready badge: its dot, its word, and the gap before it.
-    const BADGE_W: u32 = 54;
-
+    // ★ R1816 — `HDR_TAIL`, `MIN_TITLE` and `BADGE_W` used to be declared here.
+    // They are `CARD_METRICS` now, and the compiler is what said so: after the
+    // arithmetic moved to the framework all three became dead code, which is
+    // this tree's proof that a lift LEFT NO COPY rather than adding a second
+    // one beside the first.
     let id = card.id().as_str();
     let colour = kind_color(kind_of(id));
     let grip = grip_rect(rect);
@@ -6381,51 +6393,29 @@ fn header_scene(card: &Card, rect: Rect, palette: Palette, maximized: bool) -> V
     // 3. the ready badge goes before the title does;
     // 4. the title takes what is left, and elides inside it.
     let offered = card.chrome().offered();
-    let text_x = grip.x + grip.w + 20;
-    let right = rect.x + rect.w;
-    // What the header can give the strip once the identity and a title that
-    // says something are paid for. Derived, so the count the paint walks and
-    // the width the strip is sized from are one number.
-    let shown = usize::min(
-        offered.len(),
-        (right.saturating_sub(text_x + MIN_TITLE + HDR_TAIL) / SLOT_W) as usize,
-    );
-    let dropped = offered.len() - shown;
-    let text_room = right.saturating_sub(text_x + u(shown) * SLOT_W + HDR_TAIL);
-    let show_badge = card.state().is_ready() && text_room >= BADGE_W + MIN_TITLE;
-    let title_w = if show_badge {
-        text_room - BADGE_W
-    } else {
-        text_room
-    };
-    if title_w > 0 {
-        out.push(label(
-            card.title(),
-            Rect::new(text_x, rect.y + 9, title_w, 16),
-            FONT_BODY,
-            palette.ink,
-        ));
+    // ★★★★★ R1816 — the give-way arbitration is the framework's now. The rules
+    // are unchanged and so are the numbers; what changed is that a second
+    // consumer gets them without copying, and that the property "no part is
+    // placed outside the band" is asserted over EVERY width by the crate
+    // instead of being true here by inspection.
+    let laid = card_header::lay_out(rect, offered.len(), card.state().is_ready(), CARD_METRICS);
+    if let Some(title) = laid.title() {
+        out.push(label(card.title(), title, FONT_BODY, palette.ink));
     }
-    if show_badge {
-        let badge_x = text_x + title_w + 4;
-        out.push(dot(
-            badge_x,
-            rect.y + CARD_HDR / 2 - 3,
-            6,
-            palette.accent_fg,
-        ));
+    if let Some(badge) = laid.badge() {
+        out.push(dot(badge.x, badge.y, 6, palette.accent_fg));
         out.push(label(
             "LIVE",
-            Rect::new(badge_x + 10, rect.y + 10, 40, 14),
+            Rect::new(badge.x + 10, rect.y + 10, 40, 14),
             FONT_TINY,
             palette.accent_fg,
         ));
     }
-    for (n, affordance) in offered.iter().enumerate().skip(dropped) {
-        let slot = affordance_rect(rect, u(offered.len()), u(n));
+    for (n, slot) in laid.slots().iter().copied() {
+        let affordance = offered[n];
         out.push(Scene::Container(
             ContainerNode::new(affordance_mark(
-                *affordance,
+                affordance,
                 local(slot),
                 palette.muted,
                 maximized,
