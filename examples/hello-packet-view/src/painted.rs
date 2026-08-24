@@ -99,6 +99,16 @@ const SIZES: &[(&str, (u32, u32))] = &[
     ("at its declared floor", (MIN_W, MIN_H)),
 ];
 
+/// How many runs on this screen sit in a box too short for their own face.
+///
+/// ★ R1800 — a **ratchet pin**. It is chosen from a measurement rather than
+/// wished at zero: this is the screen whose clipped descender a reader reported
+/// twice, so the population is known to be non-empty and a gate demanding zero
+/// on a tree that cannot give it is a gate somebody turns off. The repair is to
+/// lower this, and the test asserts EQUALITY so an improvement cannot happen
+/// without being recorded.
+const SHORT_BOX_BUDGET: usize = 288;
+
 /// Where every tag in the painted scene ended up, and every text run with it.
 struct Painted {
     /// Tag -> the rectangle the layout pass gave it, window-absolute.
@@ -176,7 +186,9 @@ impl Painted {
 /// of the panel holding it — was caught by nothing here, while the same break
 /// on screen A was caught immediately. A metric a screen owns but does not use
 /// is a vocabulary the screen cannot speak.
-use pinion_core::test_fixtures::screen_ink::{assert_contained_ink, stand_in_ink};
+use pinion_core::test_fixtures::screen_ink::{
+    assert_boxes_hold_their_text, assert_contained_ink, stand_in_ink,
+};
 
 /// Run the real pipeline at `size` and index what came out of it.
 fn painted_at(state: &std::rc::Rc<ViewState>, size: (u32, u32)) -> (Painted, Scene) {
@@ -578,6 +590,36 @@ fn r1663_every_painted_mark_is_inside_the_pane_its_address_names() {
 /// found three panes here painted over the outlines of the panels holding them
 /// with every test in this file green. The counterfactual that reintroduces it
 /// (`panel_content` handing back the box) is now caught.
+/// ★★★★★ R1800 — and a second question the one below cannot ask: was each run's
+/// **own** box authored tall enough for the face it is set in?
+///
+/// A reader reported the descender of `p` cut off on this screen, twice, eleven
+/// days apart. The gate below answered *escapes 0* both times and was right to:
+/// the panes are easily large enough to hold their rows, so nothing left its
+/// owner. What was wrong is one level down — a row's own box, authored shorter
+/// than the line it holds — and no check in this tree asked that.
+///
+/// Pure scene arithmetic ([`pinion_core::containment::line_box`]), so it needs
+/// no font and cannot differ between this machine and CI.
+#[test]
+fn r1800_no_run_sits_in_a_box_too_short_for_its_own_face() {
+    let mut worst = 0;
+    let mut cases = 0;
+    sweep(|_, _, scene, _, case| {
+        cases += 1;
+        worst = worst.max(assert_boxes_hold_their_text(case, scene, SHORT_BOX_BUDGET));
+    });
+    assert_eq!(
+        cases,
+        STATES.len() * SIZES.len(),
+        "the sweep covered {cases} of the (state, size) cases it declares",
+    );
+    assert_eq!(
+        worst, SHORT_BOX_BUDGET,
+        "the budget is a PIN, not a ceiling: {worst} run(s) are short, so lower it"
+    );
+}
+
 #[test]
 fn r1672_every_painted_mark_is_inside_the_box_that_owns_it() {
     let mut below = 0;

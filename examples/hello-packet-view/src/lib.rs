@@ -52,6 +52,7 @@ use pinion_a11y::{
     AccessFocus, AccessLive, AccessNode, AccessValue, AriaRole, GridCell, GridColumn, GridRow,
     WidgetA11y, grid_table_nodes,
 };
+use pinion_core::containment::line_rect_in;
 use pinion_core::external::{
     ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ObjectArgs, PointerTarget,
@@ -1707,9 +1708,14 @@ fn app_bar(state: &Rc<ViewState>, ink: Ink) -> Scene {
         ink.surface,
         Some(ink.outline),
         vec![
+            // ★ R1800 — the run the reader reported, twice, eleven days apart:
+            // the descender of `p` was cut off. The box was `h = 16` beside a
+            // `FONT_TITLE` of 14, two numbers chosen independently, and the
+            // face needs 23. Derived now, and centred in the bar rather than
+            // placed at a `+19` that centred the OLD height.
             label(
                 "packet view",
-                Rect::new(16, 19, 96, 16),
+                line_rect_in(Rect::new(0, 0, w, APP_BAR_H), 16, 96, FONT_TITLE),
                 FONT_TITLE,
                 ink.text,
             ),

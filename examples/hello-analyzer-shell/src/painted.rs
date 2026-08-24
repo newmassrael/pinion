@@ -155,6 +155,14 @@ const SIZES: &[(&str, (u32, u32))] = &[
     ("dragged part of the way out", (1760, 1080)),
 ];
 
+/// How many runs on this screen sit in a box too short for their own face.
+///
+/// ★ R1800 — a ratchet PIN, measured rather than wished at zero. The population
+/// across this tree was measured at 289 of 290 runs on one screen: not a
+/// backlog of slips but a convention that never consulted the face. Lowering
+/// this is the repair, and `containment::line_rect` is how.
+const SHORT_BOX_BUDGET: usize = 242;
+
 /// Where every tag in the painted scene ended up, and every text run with it.
 struct Painted {
     /// Tag -> the rectangle the layout pass gave it, window-absolute.
@@ -1160,6 +1168,30 @@ fn r1672_a_narrow_header_drops_affordances_from_the_left() {
 /// screen B without the check, so a break that put its panes over their panels'
 /// outlines was caught by nothing. The metric now comes from the crate
 /// ([`pinion_core::test_fixtures::screen_ink`]) and all three screens ask.
+/// ★ R1800 — and was each run's OWN box authored tall enough for its face?
+///
+/// The check below asks whether a mark left its PARENT and answers *no* on this
+/// screen. That is true and it is not the whole question: a pane roomy enough
+/// for its rows says nothing about a row three pixels short of the line it
+/// holds, which is what a reader sees as a cut descender. Pure scene
+/// arithmetic — no font, so no CI disagreement.
+#[test]
+fn r1800_no_run_sits_in_a_box_too_short_for_its_own_face() {
+    use pinion_core::test_fixtures::screen_ink::assert_boxes_hold_their_text;
+    let mut worst = 0;
+    sweep(|_, _, scene, case| {
+        worst = worst.max(assert_boxes_hold_their_text(
+            case.name,
+            scene,
+            SHORT_BOX_BUDGET,
+        ));
+    });
+    assert_eq!(
+        worst, SHORT_BOX_BUDGET,
+        "the budget is a PIN, not a ceiling: {worst} run(s) are short, so lower it"
+    );
+}
+
 #[test]
 fn r1672_every_painted_mark_is_inside_the_box_that_owns_it() {
     use pinion_core::test_fixtures::screen_ink::assert_contained_ink;

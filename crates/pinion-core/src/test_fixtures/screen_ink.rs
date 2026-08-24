@@ -25,13 +25,43 @@
 //! *"Is this string too long for its column"* is a question a font-independent
 //! stand-in answers conservatively — it is wider per character than any face a
 //! screen here uses, so a box that passes has room for a real one — and it is
-//! the question an author gets wrong. *"Is this line box tall enough for this
-//! face"* is answered by the layout pass from the host's real metrics, and
-//! re-deciding it here against a constant would make the gate green or red
-//! depending on which fonts are installed ([[zero-flake-policy]]).
+//! the question an author gets wrong. *"Is this run's INK taller than its box"*
+//! is answered by the layout pass from the host's real metrics, and re-deciding
+//! it here against a constant would make the gate green or red depending on
+//! which fonts are installed ([[zero-flake-policy]]).
 //!
 //! The shaped answer to both is what `scene/containment` reports at boot, on
 //! the machine that is actually painting.
+//!
+//! ## ★★★★★ R1800 — and that paragraph is why the vertical question went
+//! unasked for a hundred and thirty rounds
+//!
+//! It used to say *"is this line box tall enough for this face"* where it now
+//! says *"is this run's ink taller than its box"*, and those are two questions.
+//! The second is genuinely font-dependent and the paragraph is right about it.
+//! The FIRST is not: [`crate::containment::line_box`] is a **reservation**
+//! computed from the face size the author chose, with no face, no shaper and no
+//! host in it — measured against the floor toolkit's own metrics it sits two to
+//! three pixels ABOVE what any of them needs, deliberately. So it can be
+//! decided here, at boot, in a sync `view`, and identically on every machine.
+//!
+//! Under the old wording the whole vertical axis read as un-gateable, and a
+//! reader reported a clipped descender **twice, eleven days apart**, while this
+//! tree held every number required to answer them. A design note that answers a
+//! near-miss question closes the real one just as effectively as a wrong
+//! implementation, and is harder to see.
+//!
+//! [`assert_boxes_hold_their_text`] is the check that paragraph was blocking.
+//!
+//! ## What the stand-in can and cannot say about height
+//!
+//! [`stand_in_ink`] answers a run's ink height with **the box's own height**.
+//! That is right for what it is for — it feeds
+//! [`escapes`](crate::containment::escapes), which asks whether a mark left its
+//! PARENT — and it means the stand-in can never report a run overflowing its
+//! own box downward. A reader must not take that silence for a clean bill:
+//! `over_h == 0` from this metric is a structural constant, not a measurement.
+//! `the_stand_in_cannot_answer_whether_a_box_is_too_short` pins it.
 
 use crate::containment::{Escape, escapes};
 use crate::scene::{Scene, TextNode};
@@ -111,11 +141,207 @@ pub fn assert_contained_ink(when: &str, scene: &Scene, size: (u32, u32)) -> usiz
     offscreen
 }
 
+/// How many text runs the scene paints at all — the denominator every count of
+/// short boxes needs to mean anything.
+#[must_use]
+pub fn runs_in(scene: &Scene) -> usize {
+    let mut n = 0;
+    scene.for_each_node(&mut |visit| {
+        if matches!(visit.node, Scene::Text(_)) {
+            n += 1;
+        }
+    });
+    n
+}
+
+/// Assert that no run's own box was authored too short to hold it, naming the
+/// worst offenders; answers how many were short.
+///
+/// # Why a budget rather than zero
+///
+/// `budget` is a **ratchet**: the count may fall or hold and may not rise. The
+/// population was measured before this was written and it is not zero, and a
+/// gate that demands zero on a tree that cannot yet give it is a gate somebody
+/// turns off. R1656/R1664 established the idiom here for exactly that reason.
+///
+/// Pass `0` for a screen that has reached it. That is the direction of travel,
+/// and a screen that reaches zero and then regresses fails on the next run.
+///
+/// # Panics
+///
+/// When more runs are short than the budget allows.
+pub fn assert_boxes_hold_their_text(when: &str, scene: &Scene, budget: usize) -> usize {
+    let short = crate::containment::short_boxes(scene);
+    // ★ R1800 closing audit — the DENOMINATOR, because a count without its
+    // population is not a measurement, and this round wrote "289 of 289" into
+    // four files before noticing it had only ever measured the numerator. The
+    // difference matters more than it looks: 289 short of 289 is a convention,
+    // and 289 short of 2,890 is a backlog, and they call for opposite repairs.
+    let total = runs_in(scene);
+    assert!(
+        short.len() <= budget,
+        "{when}: {} of {total} run(s) are in a box too short for their own face, \
+         budget {budget} — {:?}",
+        short.len(),
+        short
+            .iter()
+            .map(|s| (
+                s.content.clone(),
+                s.px,
+                s.rect.h,
+                s.needs,
+                s.short_by,
+                s.tag.clone()
+            ))
+            .take(6)
+            .collect::<Vec<_>>()
+    );
+    short.len()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{assert_contained_ink, ink_escapes, stand_in_ink};
+    use super::{assert_boxes_hold_their_text, assert_contained_ink, ink_escapes, stand_in_ink};
+    use crate::containment::{line_box, short_boxes, short_by};
     use crate::scene::{BoxNode, ContainerNode, Rect, Scene, TextNode};
     use crate::style::{BoxStyle, Color, TextStyle};
+
+    /// ★★★★★ R1800 — the stand-in answers a run's ink HEIGHT with the box's own
+    /// height, so `over_h` computed from it is a structural zero.
+    ///
+    /// Pinned rather than described, because "this metric cannot see that" is
+    /// exactly the kind of sentence that stops being true quietly, and because
+    /// a reader who finds `over_h == 0` here must be able to learn that it was
+    /// never a measurement. The authoring rule is what does see it, and the
+    /// second half asserts the two disagree on the same node — which is the
+    /// whole reason both exist.
+    #[test]
+    fn the_stand_in_cannot_answer_whether_a_box_is_too_short() {
+        let px = 12;
+        let too_short = TextNode::styled(
+            "packet gjpqy".to_owned(),
+            Rect::new(0, 0, 120, line_box(px) - 6),
+            TextStyle::default().with_size_px(px),
+        );
+        assert_eq!(
+            stand_in_ink(&too_short).1,
+            too_short.rect.h,
+            "the stand-in answers the box's own height, whatever the face"
+        );
+        assert_eq!(
+            stand_in_ink(&too_short).1.saturating_sub(too_short.rect.h),
+            0,
+            "so an over_h derived from it is zero by construction"
+        );
+        assert_eq!(
+            short_by(&too_short),
+            6,
+            "while the authoring rule says the box is six pixels short"
+        );
+    }
+
+    /// The predicate itself, at its edges.
+    #[test]
+    fn r1800_a_box_is_short_only_when_it_could_not_have_held_the_line() {
+        let px = 12;
+        let at = |h: u32| {
+            short_by(&TextNode::styled(
+                "config".to_owned(),
+                Rect::new(0, 0, 60, h),
+                TextStyle::default().with_size_px(px),
+            ))
+        };
+        let need = line_box(px);
+        assert_eq!(at(need), 0, "exactly enough is enough");
+        assert_eq!(at(need + 40), 0, "and generous is fine");
+        assert_eq!(at(need - 1), 1, "one short is one");
+        assert_eq!(at(0), need, "a zero-height box is short by the whole line");
+    }
+
+    /// A wrapped run needs a line box PER LINE, and an unmeasured one is judged
+    /// against one — the floor of the demand, not a guess at it.
+    #[test]
+    fn r1800_a_wrapped_run_needs_a_line_box_for_every_line() {
+        let px = 12;
+        let need = line_box(px);
+        let mut node = TextNode::styled(
+            "two lines of it".to_owned(),
+            Rect::new(0, 0, 60, need),
+            TextStyle::default().with_size_px(px),
+        );
+        assert_eq!(node.line_count, 0, "no shape pass has run");
+        assert_eq!(short_by(&node), 0, "so one line is demanded, and it fits");
+        node.line_count = 2;
+        assert_eq!(
+            short_by(&node),
+            need,
+            "two lines in a one-line box is short by a whole line"
+        );
+    }
+
+    /// ★★★★★ The constructors cannot build a box the predicate then rejects.
+    ///
+    /// This is the property that makes the rule keepable: 289 of 289 runs on
+    /// one screen failed it, which means telling authors the rule does not
+    /// work — the rule has to be easier to obey than to break. Asserted across
+    /// the face sizes this tree actually ships and a couple beyond them, so a
+    /// change to `line_box` that broke the pairing lands here.
+    #[test]
+    fn r1800_a_box_built_by_the_rule_cannot_fail_the_rule() {
+        use crate::containment::{line_rect, line_rect_in};
+        for px in [1_u32, 8, 10, 11, 12, 13, 14, 16, 24, 48] {
+            let built = line_rect(16, 19, 96, px);
+            let node = TextNode::styled(
+                "packet gjpqy".to_owned(),
+                built,
+                TextStyle::default().with_size_px(px),
+            );
+            assert_eq!(short_by(&node), 0, "line_rect at px={px} is short");
+
+            let bar = Rect::new(0, 0, 400, 54);
+            let centred = line_rect_in(bar, 16, 96, px);
+            let node = TextNode::styled(
+                "packet gjpqy".to_owned(),
+                centred,
+                TextStyle::default().with_size_px(px),
+            );
+            assert_eq!(short_by(&node), 0, "line_rect_in at px={px} is short");
+            // Centred means the slack is shared, within the odd pixel.
+            if centred.h <= bar.h {
+                let above = centred.y - bar.y;
+                let below = bar.h - (above + centred.h);
+                assert!(
+                    above.abs_diff(below) <= 1,
+                    "px={px}: {above} above, {below} below"
+                );
+            }
+        }
+    }
+
+    /// The census reports the amount per run and skips what makes no promise.
+    #[test]
+    fn r1800_the_census_names_the_short_runs_and_only_those() {
+        let px = 12;
+        let need = line_box(px);
+        let scene = Scene::Container(ContainerNode {
+            rect: Rect::new(0, 0, 300, 200),
+            children: vec![
+                run("tall enough", Rect::new(0, 0, 100, need), px),
+                run("three short", Rect::new(0, 40, 100, need - 3), px),
+                // No extent: it promises to hold nothing, so it cannot fail.
+                run("no box", Rect::new(0, 80, 0, 0), px),
+            ],
+            ..ContainerNode::default()
+        });
+        let found = short_boxes(&scene);
+        assert_eq!(found.len(), 1, "one short run, not three: {found:?}");
+        assert_eq!(found[0].content, "three short");
+        assert_eq!(found[0].short_by, 3);
+        assert_eq!(found[0].needs, need);
+        assert_eq!(found[0].px, px);
+        // And the assert wrapper agrees with the census it wraps.
+        assert_eq!(assert_boxes_hold_their_text("probe", &scene, 1), 1);
+    }
 
     fn run(content: &str, rect: Rect, px: u32) -> Scene {
         Scene::Text(TextNode::styled(

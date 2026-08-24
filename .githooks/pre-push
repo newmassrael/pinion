@@ -339,6 +339,21 @@ if ! python3 "$repo_root/tools/shrink_population.py" --check >&2; then
     exit 1
 fi
 
+# R1800 — the same class again, one question over. `short_by` asks whether a
+# run's OWN box was authored tall enough for its face, which is what a reader
+# sees as a clipped descender and is NOT what the ink gate beside it asks. A
+# screen that judges its painted scene and is never asked this looks exactly
+# like a screen with nothing to report. Derived from the sources.
+step "short-box population"
+if ! python3 "$repo_root/tools/short_box_population.py" --selftest >&2; then
+    echo "pre-push: the short-box population computation failed its own tests" >&2
+    exit 1
+fi
+if ! python3 "$repo_root/tools/short_box_population.py" --check >&2; then
+    echo "pre-push: a screen judges its painted scene and nothing asks whether its boxes hold their text" >&2
+    exit 1
+fi
+
 # R1641 — the SCE dual pin: `Cargo.toml`'s rev, this repo's `Cargo.lock`, and
 # the `vendor/sce` submodule gitlink are three statements of one fact, and until
 # now the only thing holding them together was a comment in `Cargo.toml`

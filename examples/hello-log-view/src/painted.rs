@@ -20,7 +20,17 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use pinion_core::reactive::Owner;
 use pinion_core::scene::Rect;
-use pinion_core::test_fixtures::screen_ink::{assert_contained_ink, stand_in_ink};
+use pinion_core::test_fixtures::screen_ink::{
+    assert_boxes_hold_their_text, assert_contained_ink, stand_in_ink,
+};
+
+/// How many runs on this screen sit in a box too short for their own face.
+///
+/// ★ R1800 — a ratchet PIN, measured rather than wished at zero. The population
+/// across this tree was measured at 289 of 290 runs on one screen: not a
+/// backlog of slips but a convention that never consulted the face. Lowering
+/// this is the repair, and `containment::line_rect` is how.
+const SHORT_BOX_BUDGET: usize = 79;
 use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::{Frame, Scene};
 
@@ -424,6 +434,35 @@ fn r1731_with_nothing_typed_no_mark_escapes_at_all() {
             });
         }
     }
+}
+
+/// ★ R1800 — and was each run's OWN box authored tall enough for its face?
+///
+/// A different question from the one above, which asks whether a mark left its
+/// PARENT. Pure scene arithmetic, so it needs no font and cannot disagree
+/// between this machine and CI.
+#[test]
+fn r1800_no_run_sits_in_a_box_too_short_for_its_own_face() {
+    let mut worst = 0;
+    for (size_name, size) in SIZES {
+        for (state_name, edit) in STATES {
+            let owner = Owner::new();
+            owner.run(|| {
+                let state = use_view_state();
+                edit(&state);
+                let (_, scene) = painted_at(&state, *size);
+                worst = worst.max(assert_boxes_hold_their_text(
+                    &format!("{state_name} — {size_name}"),
+                    &scene,
+                    SHORT_BOX_BUDGET,
+                ));
+            });
+        }
+    }
+    assert_eq!(
+        worst, SHORT_BOX_BUDGET,
+        "the budget is a PIN, not a ceiling: {worst} run(s) are short, so lower it"
+    );
 }
 
 /// Each surface's parts are inside the region that owns them.

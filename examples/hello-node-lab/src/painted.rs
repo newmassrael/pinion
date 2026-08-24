@@ -1248,7 +1248,17 @@ fn r1656_a_cards_text_shrinks_with_the_diagram() {
 /// consumer followed) and this screen's own toolbar pill. An exception
 /// mechanism holding the empty set is a place for the next escape to be filed
 /// instead of fixed, so it is gone.
-use pinion_core::test_fixtures::screen_ink::{assert_contained_ink, ink_escapes, stand_in_ink};
+use pinion_core::test_fixtures::screen_ink::{
+    assert_boxes_hold_their_text, assert_contained_ink, ink_escapes, stand_in_ink,
+};
+
+/// How many runs on this screen sit in a box too short for their own face.
+///
+/// ★ R1800 — a ratchet PIN, measured rather than wished at zero. The population
+/// across this tree was measured at 289 of 290 runs on one screen: not a
+/// backlog of slips but a convention that never consulted the face. Lowering
+/// this is the repair, and `containment::line_rect` is how.
+const SHORT_BOX_BUDGET: usize = 152;
 
 /// The one sweep, over every state.
 #[test]
@@ -1260,6 +1270,9 @@ fn r1653_the_painted_screen_is_the_specification_in_every_state() {
         let mut richest = 0;
         let mut demanded_min = usize::MAX;
         let mut below_total = 0usize;
+        // ★ R1800 — the worst per-case count of runs whose own box is too short
+        // for their face, so the sweep can pin it once rather than per case.
+        let mut short_worst = 0usize;
         for (when, mutate) in STATES {
             mutate(&state);
             for (how_big, size) in SIZES {
@@ -1273,6 +1286,15 @@ fn r1653_the_painted_screen_is_the_specification_in_every_state() {
                 below_total += assert_contained(&label, &shot, *size);
                 assert_disjoint(&label, &shot);
                 below_total += assert_contained_ink(&label, &scene, *size);
+                // ★ R1800 — a second question the line above cannot ask: the
+                // check above is about a mark leaving its PARENT, this is about
+                // a run's OWN box being too short for the face it is set in.
+                // Pure scene arithmetic, no font.
+                short_worst = short_worst.max(assert_boxes_hold_their_text(
+                    &label,
+                    &scene,
+                    SHORT_BOX_BUDGET,
+                ));
             }
         }
         // ★ Floors on the SWEEP, not only on each state — because a state that
@@ -1283,6 +1305,12 @@ fn r1653_the_painted_screen_is_the_specification_in_every_state() {
             STATES.len() >= 8,
             "the sweep visits {} state(s)",
             STATES.len()
+        );
+        // ★ R1800 — a PIN, not a ceiling: lowering it is the repair, and the
+        // equality is what stops an improvement going unrecorded.
+        assert_eq!(
+            short_worst, SHORT_BOX_BUDGET,
+            "the short-box budget is a pin: {short_worst} run(s) are short, so lower it"
         );
         // ★ R1656 — a floor on the SIZE axis for the reason there is one on the
         // state axis: an axis with one entry looks like coverage and is a

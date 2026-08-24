@@ -85,6 +85,29 @@ pub struct PaintedTextReport {
     pub over_w: u32,
     /// How far the ink reaches past the box's bottom edge, in pixels.
     pub over_h: u32,
+    /// The face size this run is set in.
+    ///
+    /// ★ R1800 — the missing **input**. Every other number here is an outcome,
+    /// and without the face size a reader cannot apply the authoring rule the
+    /// framework already owns (`containment::line_box`), which is why the debt
+    /// that asked for this had to count `ink_h > h` instead — a weaker
+    /// substitute that answers a different question and is true of four fifths
+    /// of a screen.
+    pub px: u32,
+    /// How many pixels short of holding one line of its own face this run's box
+    /// was **authored**, or `0` when it is tall enough.
+    ///
+    /// ★ Different from [`Self::over_h`], and that is the whole reason it is
+    /// here. `over_h` measures INK against the box: it needs the host's fonts,
+    /// it changes with them, and one pixel of it is the shaper being a shade
+    /// more generous than the author reserved. This measures the BOX against
+    /// the face the author chose. It is a pure function of the scene, so it is
+    /// the same on every machine, and it is non-zero only when the box could
+    /// not have held the line under any shaping.
+    ///
+    /// A reader reported a clipped descender twice, eleven days apart, and in
+    /// between this surface published every number except the one that says so.
+    pub short_by: u32,
     /// Whether the ink is larger than the box the scene gave it.
     ///
     /// ★ The question this surface exists to answer. A rectangle in a scene is
@@ -169,6 +192,13 @@ pub fn collect_painted(scene: &Scene, cache: &mut LayoutCache) -> Vec<PaintedTex
             lines,
             over_w: ink_w.saturating_sub(t.rect.w.max(1) * u32::from(t.rect.w > 0)),
             over_h: ink_h.saturating_sub(t.rect.h.max(1) * u32::from(t.rect.h > 0)),
+            px: t.style.font_size_px,
+            // ★ The framework's own function, called — not re-derived here.
+            // Publishing the amount beside `px` follows what `over_h` already
+            // does (it too is derivable from published fields), and calling the
+            // one implementation is what stops the wire and a gate from
+            // disagreeing about the same run.
+            short_by: pinion_core::containment::short_by(t),
             // Against the box the SCENE gave the run, not against the clipped
             // rectangle: a run inside a scroll that is half out of view has
             // kept its promise, and reporting that as an overflow would make

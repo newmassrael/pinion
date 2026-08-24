@@ -1710,6 +1710,8 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("lines", WireTy::Integer, None),
                 WireField::new("over_w", WireTy::Integer, None),
                 WireField::new("over_h", WireTy::Integer, None),
+                WireField::new("px", WireTy::Integer, None),
+                WireField::new("short_by", WireTy::Integer, None),
                 WireField::new("overflows", WireTy::Boolean, None),
             ],
         },

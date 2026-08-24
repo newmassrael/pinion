@@ -112,6 +112,154 @@ pub const fn line_box(px: u32) -> u32 {
     px * 3 / 2 + 2
 }
 
+/// How many pixels short of holding its own text a run's box is. Zero when it
+/// is tall enough.
+///
+/// # This is a different question from the rest of this module
+///
+/// Everything else here asks **did a mark leave the box that owns it** — a
+/// mark against its *parent*. This asks whether a run's own box was authored
+/// tall enough for the face the run is set in, which is a mark against
+/// *itself*, and the two do not imply each other: a toolbar is easily big
+/// enough to hold a 13-pixel button whose own label box is five pixels too
+/// short, so `scene/containment` answers *escapes 0* while the descender of
+/// every `g` in it is destroyed. A reader reported exactly that twice, eleven
+/// days apart, and between the two reports this tree had every number needed
+/// to answer them and no predicate that asked.
+///
+/// # It needs no font, and that is the point
+///
+/// `line_box` is a reservation computed from the face size alone, so this is a
+/// pure function of the scene: no shaper, no host font, no measured ink. That
+/// makes it usable where the escape check is not — in a sync `view` function,
+/// at boot, and in a gate that cannot disagree between this machine and CI
+/// because there is nothing machine-dependent in it.
+///
+/// # Multi-line
+///
+/// A box must hold one line box per visual line. `lines` is the measured
+/// sidecar and is `0` before any shape pass, which is read as one line: the
+/// floor of the demand rather than a guess at it, so an un-laid-out tree is
+/// judged conservatively instead of arbitrarily.
+#[must_use]
+pub const fn short_by(text: &TextNode) -> u32 {
+    let lines = if text.line_count == 0 {
+        1
+    } else {
+        text.line_count
+    };
+    let needs = line_box(text.style.font_size_px).saturating_mul(lines);
+    needs.saturating_sub(text.rect.h)
+}
+
+/// A box that holds one line of a `px` face — so [`short_by`] of a run placed
+/// in it is `0` by construction.
+///
+/// ★★★★★ R1800 — the rule and the way to satisfy it, in one module, because
+/// **the measurement said the rule was the problem**. Pointed at the screen
+/// whose clipped descender a reader reported, [`short_boxes`] answered **289 of
+/// 290 runs**: not 289 authoring slips but one convention, applied almost
+/// everywhere, that never consulted the face. The framework has owned
+/// `line_box` since R1656 and exactly one production site in this tree sizes
+/// anything with it.
+///
+/// ⚠ That denominator was measured only because the gate was made to print it.
+/// This doc said "289 of 289" first — a numerator with a guessed denominator,
+/// written into five files before the closing audit caught it. Two runs on that
+/// screen do hold their text.
+///
+/// A constant nobody can reach for is a constant nobody uses. Reaching for this
+/// is easier than writing a number, which is the only reliable way a rule gets
+/// kept — the alternative is a gate that scolds 289 times and a person who
+/// turns it off.
+#[must_use]
+pub const fn line_rect(x: u32, y: u32, w: u32, px: u32) -> Rect {
+    Rect::new(x, y, w, line_box(px))
+}
+
+/// The same box, centred vertically inside `outer`.
+///
+/// The second half of the same defect: a run's vertical position in this tree
+/// is a hand-picked offset too, so a box can be tall enough and still sit low
+/// enough to look wrong. Five chips measured on one screen were placed with a
+/// `+4` where centring the box wanted `3` and centring the ink wanted `2`, and
+/// the reader's words for it were "the text is all pushed to the bottom".
+///
+/// Takes `outer` rather than a height so the caller cannot centre in the wrong
+/// thing by transposing two arguments.
+#[must_use]
+pub const fn line_rect_in(outer: Rect, x: u32, w: u32, px: u32) -> Rect {
+    let h = line_box(px);
+    Rect::new(x, outer.y + (outer.h.saturating_sub(h)) / 2, w, h)
+}
+
+/// One run whose own box cannot hold it, as [`short_boxes`] reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShortBox {
+    /// The run's tag, when it carries one.
+    pub tag: Option<String>,
+    /// The path to it, for a reader who has to find it.
+    pub path: Vec<String>,
+    /// What it says.
+    pub content: String,
+    /// The box as authored, in its scroll frame.
+    pub rect: Rect,
+    /// The face size the run is set in.
+    pub px: u32,
+    /// Visual lines as the scene records them, `0` when no shape pass has run.
+    /// Reported verbatim rather than normalised, so a reader can tell "one
+    /// line" from "nobody has measured yet".
+    pub lines: u32,
+    /// The height the box needed.
+    pub needs: u32,
+    /// `needs - rect.h`, always positive here.
+    pub short_by: u32,
+}
+
+/// Every run in the scene whose own box is too short for the face it is set in.
+///
+/// Reports the *amount* per run rather than a count, for the reason
+/// [`Overhang`] carries four numbers instead of a boolean: R1656 measured the
+/// nearest available flag — `scene/text_painted`'s `overflows` — as true for
+/// 124 of 157 runs on the first screen it was aimed at, and abandoned the axis
+/// because a signal that fires on four fifths of a screen cannot discriminate.
+/// That measurement was of *ink against the box*, where a one-pixel overshoot
+/// is the shaper being one pixel more generous than the author reserved. This
+/// asks the authoring question instead, so a run is short only when its box
+/// could not have held the line under any shaping.
+///
+/// No clip is folded in, deliberately: a box authored too short is authored too
+/// short whether or not something downstream then hides the evidence.
+#[must_use]
+pub fn short_boxes(scene: &Scene) -> Vec<ShortBox> {
+    let mut found = Vec::new();
+    scene.for_each_node(&mut |visit| {
+        let Scene::Text(t) = visit.node else {
+            return;
+        };
+        // A run with no box makes no promise about holding anything.
+        if t.rect.h == 0 || t.rect.w == 0 {
+            return;
+        }
+        let short = short_by(t);
+        if short == 0 {
+            return;
+        }
+        let lines = if t.line_count == 0 { 1 } else { t.line_count };
+        found.push(ShortBox {
+            tag: visit.node.tag().map(str::to_owned),
+            path: visit.path.to_vec(),
+            content: t.content.clone(),
+            rect: t.rect,
+            px: t.style.font_size_px,
+            lines: t.line_count,
+            needs: line_box(t.style.font_size_px).saturating_mul(lines),
+            short_by: short,
+        });
+    });
+    found
+}
+
 /// How far a mark reached past the box that owns it, per edge, in pixels.
 ///
 /// Four numbers rather than one boolean because the boolean was measured

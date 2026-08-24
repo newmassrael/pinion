@@ -31,7 +31,17 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use pinion_core::reactive::Owner;
 use pinion_core::scene::Rect;
-use pinion_core::test_fixtures::screen_ink::{assert_contained_ink, stand_in_ink};
+use pinion_core::test_fixtures::screen_ink::{
+    assert_boxes_hold_their_text, assert_contained_ink, stand_in_ink,
+};
+
+/// How many runs on this screen sit in a box too short for their own face.
+///
+/// ★ R1800 — a ratchet PIN, measured rather than wished at zero. The population
+/// across this tree was measured at 289 of 290 runs on one screen: not a
+/// backlog of slips but a convention that never consulted the face. Lowering
+/// this is the repair, and `containment::line_rect` is how.
+const SHORT_BOX_BUDGET: usize = 82;
 use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::{Frame, Scene};
 
@@ -506,6 +516,36 @@ fn r1730_every_mark_lies_inside_the_region_its_address_names() {
 /// widen: this asserts that with the field empty the screen escapes its boxes
 /// nowhere at all, so the one known escape is the field's *content* and not
 /// something the field does by existing.
+/// ★ R1800 — was each run's OWN box authored tall enough for its face?
+///
+/// A different question from every other check in this file, which ask whether
+/// a mark left its PARENT. A pane can be roomy while the row inside it is three
+/// pixels short of the line it holds, and that is what a reader sees as a cut
+/// descender. Pure scene arithmetic, so it needs no font.
+#[test]
+fn r1800_no_run_sits_in_a_box_too_short_for_its_own_face() {
+    let mut worst = 0;
+    for (size_name, size) in SIZES {
+        for (state_name, edit) in STATES {
+            let owner = Owner::new();
+            owner.run(|| {
+                let state = use_view_state();
+                edit(&state);
+                let (_, scene) = painted_at(&state, *size);
+                worst = worst.max(assert_boxes_hold_their_text(
+                    &format!("{state_name} — {size_name}"),
+                    &scene,
+                    SHORT_BOX_BUDGET,
+                ));
+            });
+        }
+    }
+    assert_eq!(
+        worst, SHORT_BOX_BUDGET,
+        "the budget is a PIN, not a ceiling: {worst} run(s) are short, so lower it"
+    );
+}
+
 #[test]
 fn r1730_with_nothing_typed_no_mark_escapes_at_all() {
     for (size_name, size) in SIZES {
