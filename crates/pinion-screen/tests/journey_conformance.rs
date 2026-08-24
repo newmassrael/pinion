@@ -97,6 +97,19 @@ impl WidgetView for InspectorFixture {
         }
     }
 
+    /// ★ R1808 — two, because the two surfaces below are alternatives. This is
+    /// the fixture of the real node lab's shape: a row and that row's open
+    /// roster cannot be on one frame, so a walk that looks once reports the
+    /// section as never reproducing its specification.
+    fn poses() -> usize {
+        2
+    }
+
+    /// Pose 0 shuts the roster (the row is on the frame); pose 1 opens it.
+    fn pose(nth: usize) {
+        ROSTER_OPEN.with(|open| open.set(nth == 1));
+    }
+
     /// The verdict, read back out of the marks the fixture recorded.
     ///
     /// The two surfaces are **alternatives**: the roster standing over the row
@@ -1009,5 +1022,179 @@ fn a_credit_is_dropped_when_the_surface_is_next_read_at_another_extent() {
         !after.conforms(),
         "★★★★★ so the walk stops claiming conformance on the strength of a size \
          that no longer exists -- which it did, measured, before this rule",
+    );
+}
+
+// ── R1808 — the tour: the populations a walk needs, taken off the roster ─────
+
+/// The empty scene a fixture stop hands back; these fixtures paint into the
+/// region store directly, so the scene itself carries nothing.
+fn nothing() -> pinion_core::Scene {
+    pinion_core::Scene::Container(pinion_core::scene::ContainerNode::new(Vec::new()))
+}
+
+/// ★ The itinerary is the roster's OPEN destinations — the closed one is not
+/// walked, because a reader cannot arrive there.
+#[test]
+fn r1808_the_itinerary_is_the_rosters_own_open_destinations() {
+    fresh();
+    let roster = roster();
+    let tour = pinion_screen::Tour::of(&roster);
+    assert_eq!(
+        tour.itinerary(),
+        vec![
+            "dashboard".to_string(),
+            "inspector".to_string(),
+            "stream".to_string()
+        ],
+        "every open destination, in roster order, and the closed one is absent"
+    );
+}
+
+/// ★ The surface list holds every mounted screen's paint root, plus whatever
+/// the host declared. This is the population that fails QUIETLY when it is
+/// short: the section paints, is judged, and reports reproducing nothing.
+#[test]
+fn r1808_the_surface_list_holds_every_mounted_paint_root() {
+    fresh();
+    let roster = roster();
+    let tour = pinion_screen::Tour::of(&roster).also_recording(BOARD_TAG);
+    let surfaces = tour.surfaces();
+    for tag in [INSPECTOR_TAG, STREAM_TAG, BOARD_TAG] {
+        assert!(
+            surfaces.iter().any(|held| held == tag),
+            "{tag} is missing from {surfaces:?}"
+        );
+    }
+    assert_eq!(surfaces.len(), 3, "and nothing else: {surfaces:?}");
+}
+
+/// ★★★★★ A tour that paints each section — in each pose the section asks
+/// for — reproduces the application.
+///
+/// Nothing here sets `ROSTER_OPEN`: the inspector poses itself, which is the
+/// whole point. A caller that had to know one screen's states would be a
+/// caller that stops working when a second screen grows one.
+#[test]
+fn r1808_a_tour_that_paints_every_section_conforms() {
+    fresh();
+    let roster = roster();
+    let report = pinion_screen::Tour::of(&roster).walk(at, |key, _pose| {
+        match key {
+            "inspector" => paint_inspector(),
+            "stream" => paint_stream(),
+            "dashboard" => paint_board(),
+            _ => {}
+        }
+        nothing()
+    });
+    assert!(report.covered(), "{}", report.why().unwrap_or_default());
+    assert_eq!(report.missed(), std::collections::BTreeSet::new());
+    assert!(report.conforms(), "{}", report.why().unwrap_or_default());
+}
+
+/// ★★★★★ **And it does not conform without the poses.** Driving the same walk
+/// with the inspector pinned to one state reproduces the failure the pose
+/// mechanism exists to remove — so the test above is not passing for some
+/// other reason.
+#[test]
+fn r1808_without_its_second_pose_the_alternating_section_cannot_reproduce() {
+    fresh();
+    let roster = roster();
+    let report = pinion_screen::Tour::of(&roster).walk(at, |key, _pose| {
+        // Pin the roster shut AFTER the pose ran, so the section never reaches
+        // its second state however many frames it is given.
+        ROSTER_OPEN.with(|open| open.set(false));
+        match key {
+            "inspector" => paint_inspector(),
+            "stream" => paint_stream(),
+            "dashboard" => paint_board(),
+            _ => {}
+        }
+        nothing()
+    });
+    assert!(report.covered(), "the walk still stood everywhere");
+    assert!(!report.conforms());
+    let why = report.why().expect("a refusal says why");
+    assert!(
+        why.contains("inspector") && why.contains("roster"),
+        "and it names the surface that never appeared: {why:?}"
+    );
+}
+
+/// ★★★★★ **The counterfactual.** A section the tour stood in but never painted
+/// must not be reported as reproducing anything — otherwise the gate above
+/// passes for an application that draws less of itself every round.
+#[test]
+fn r1808_a_section_that_was_walked_but_not_painted_refuses_the_application() {
+    fresh();
+    let roster = roster();
+    let report = pinion_screen::Tour::of(&roster).walk(at, |key, _pose| {
+        // Everything but the stream, which is stood in and left blank.
+        match key {
+            "inspector" => paint_inspector(),
+            "dashboard" => paint_board(),
+            _ => {}
+        }
+        nothing()
+    });
+    assert!(
+        report.covered(),
+        "the walk still STOOD in every section -- coverage and reproduction are \
+         different questions and this is the one that separates them"
+    );
+    assert!(!report.conforms());
+    let why = report.why().expect("a refusal says why");
+    assert!(why.contains("stream"), "and it names the section: {why:?}");
+}
+
+/// ★ The empty-itinerary arm of [`TourReport::conforms`] is defence in depth,
+/// not a reachable state: a rail with no destination cannot be built at all.
+///
+/// Written as a test of the refusal rather than deleted, because the arm's
+/// cost is one line and its absence would make a future rail that CAN be empty
+/// report conformance for standing nowhere.
+#[test]
+fn r1808_a_rail_with_no_destination_cannot_be_built() {
+    assert!(
+        Destinations::new(Vec::new()).is_err(),
+        "so a tour of nowhere is unreachable through a real roster"
+    );
+}
+
+/// ★ A section is posed as many times as it asks, and the count is the
+/// screen's own answer.
+#[test]
+fn r1808_a_section_is_painted_once_per_pose_it_declares() {
+    fresh();
+    let roster = roster();
+    let mut frames: Vec<(String, usize)> = Vec::new();
+    let _ = pinion_screen::Tour::of(&roster).walk(at, |key, pose| {
+        frames.push((key.to_owned(), pose));
+        match key {
+            "inspector" => paint_inspector(),
+            "stream" => paint_stream(),
+            "dashboard" => paint_board(),
+            _ => {}
+        }
+        nothing()
+    });
+    // The inspector declares two, the others one, and the ordinals prove the
+    // tour passes them through rather than counting frames itself.
+    assert_eq!(
+        frames,
+        vec![
+            ("dashboard".to_string(), 0),
+            ("inspector".to_string(), 0),
+            ("inspector".to_string(), 1),
+            ("stream".to_string(), 0),
+        ]
+    );
+    assert_eq!(roster.poses_of("inspector"), 2);
+    assert_eq!(roster.poses_of("stream"), 1);
+    assert_eq!(
+        roster.poses_of("dashboard"),
+        1,
+        "a page the host paints itself has no screen to ask"
     );
 }

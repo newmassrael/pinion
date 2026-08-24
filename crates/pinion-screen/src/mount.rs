@@ -91,6 +91,16 @@ impl<V: WidgetView> Screen for Mount<V> {
         V::conformance()
     }
 
+    // R1808 — the binding's own answer, so a host walking the application never
+    // has to know that this particular screen's surfaces exclude each other.
+    fn poses(&self) -> usize {
+        V::poses()
+    }
+
+    fn pose(&self, nth: usize) {
+        V::pose(nth);
+    }
+
     fn latch(&self, state_scene: &Scene) -> u64 {
         let next = V::read_state(state_scene);
         if self.latched.get() != Some(next) {

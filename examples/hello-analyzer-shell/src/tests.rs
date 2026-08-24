@@ -3268,3 +3268,170 @@ fn probe_faded_ink() -> pinion_core::style::Color {
     let theme = pinion_core::theme::use_theme(super::THEME_TAG).theme_animated();
     theme.resolve(pinion_core::theme::ColorRole::Outline)
 }
+
+// ── R1808 — the whole application, walked past its own specification ─────────
+//
+// ★★★★★ The mechanism for this has been complete since R1767: a walk records
+// each departing frame's verdict, folds the live section in, counts a section
+// nobody visited as unreproduced, and refuses the application while any is
+// unanswered. `ScreenRoster::journey_conformance` is that report, and this
+// application PUBLISHES it on the wire (`sections_json`).
+//
+// Nothing asserted it. Measured at R1808, every `conforms()` assertion in the
+// tree lived in `pinion-screen`'s own test file, over SYNTHETIC specifications
+// — three fixtures named `inspector`, `stream` and `board`. The three real
+// canonical screens have their own judges, their own specification tables and
+// their own per-screen tests, and had never once been driven through the walk
+// as ONE application. The framework could answer and nobody asked, which is
+// this tree's oldest recurring shape and the reason R1794 exists.
+
+/// The whole run, walked once: navigate, paint, record, hand the stop back.
+///
+/// ★ The two populations are the ROSTER'S, through `Tour` — where to go, and
+/// which surfaces the frame must record. The second is the one that fails
+/// quietly: a mounted screen whose paint-root tag is missing from the recording
+/// is painted, judged, and reported as reproducing nothing, for a reason that
+/// has nothing to do with the screen.
+fn walk_the_application(state: &std::rc::Rc<super::ShellState>) -> pinion_screen::TourReport {
+    let tour = pinion_screen::Tour::of(&state.screens).also_recording(super::VIEW_TAG);
+    let surfaces = tour.surfaces();
+    tour.walk(
+        // Navigate only. Painting here would destroy the departing frame the
+        // latch is about to read — see `Tour::walk`.
+        |key| {
+            state.go(key).expect("an open destination is reachable");
+            let journey = state.journey.get();
+            assert_eq!(journey.at(), key, "the walk arrived where it was sent");
+            journey
+        },
+        // Paint the arrived section, in whichever pose the section asked for,
+        // and record its surfaces. How many times this runs is the roster's
+        // answer, not a number written here.
+        |key, _pose| {
+            let mut scene = super::view(ScreenState::default(), pinion_core::Frame::default());
+            let mut cache = pinion_runtime::LayoutCache::new();
+            pinion_runtime::compute_layout(&mut scene, &mut cache, super::WIN_W, super::WIN_H);
+            // The cascade the window runs after layout, so a seat's inertness
+            // is resolved before anything judges it (why `painted.rs` runs it).
+            pinion_core::scene_disabled::resolve_disabled(&mut scene);
+
+            let refs: Vec<&str> = surfaces.iter().map(String::as_str).collect();
+            let recorded = pinion_runtime::record_painted_surfaces(&scene, &refs);
+            assert!(
+                recorded > 0,
+                "the frame at `{key}` recorded none of {refs:?}, so every \
+                 verdict below would be asked of a store it never filled"
+            );
+            scene
+        },
+    )
+}
+
+/// ★★★★★ **The three canonical screens, judged as one application.**
+///
+/// North-star condition (4). Screen A is the node lab (`lab`, mounted), screen
+/// B the capture viewer (`packets`, mounted) and screen C the dashboard
+/// (`dashboard`, a page this shell paints itself and judges with `BoardJudge`).
+/// They reach this assertion by the same route as every other open section,
+/// because the itinerary is the roster's and not a list written here.
+#[test]
+fn r1808_the_application_reproduces_every_section_over_one_walk() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let report = walk_the_application(&state);
+        assert!(
+            report.conforms(),
+            "the application did not reproduce its specification over the walk: {}",
+            report.why().unwrap_or_default()
+        );
+    });
+}
+
+/// The walk really did stand in all three canonical screens — asserted as a
+/// SUBSET relation over the itinerary, so the test above cannot pass by
+/// covering an application that no longer has them.
+#[test]
+fn r1808_the_walk_covers_the_three_canonical_screens() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let report = walk_the_application(&state);
+
+        let visited: std::collections::BTreeSet<&str> =
+            report.visited().iter().map(String::as_str).collect();
+        for key in ["lab", "packets", "dashboard"] {
+            assert!(
+                visited.contains(key),
+                "the walk never stood in `{key}`; it visited {visited:?}"
+            );
+        }
+        assert!(report.covered(), "{}", report.why().unwrap_or_default());
+        assert!(report.missed().is_empty() && report.strayed().is_empty());
+    });
+}
+
+/// ★★★★★ The populations are DERIVED, and this is what says so.
+///
+/// The itinerary must equal the roster's own open destinations and the surface
+/// list must hold every mounted screen's paint-root tag. A list written by hand
+/// beside the application is a list a section falls off, and the failure that
+/// follows is silent for the surfaces half.
+#[test]
+fn r1808_the_tour_takes_both_populations_from_the_roster() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let tour = pinion_screen::Tour::of(&state.screens).also_recording(super::VIEW_TAG);
+
+        let open: Vec<String> = state
+            .screens
+            .destinations()
+            .open()
+            .map(|destination| destination.key.to_string())
+            .collect();
+        assert_eq!(tour.itinerary(), open, "the itinerary is the roster's");
+        assert!(
+            open.len() >= 3,
+            "the fixture must have sections to walk, or every assertion here is \
+             vacuous: {open:?}"
+        );
+
+        let surfaces = tour.surfaces();
+        for key in state.screens.mounted_keys() {
+            let tag = state
+                .screens
+                .tag_of(key)
+                .expect("a mounted key has a paint root");
+            assert!(
+                surfaces.iter().any(|held| held == tag),
+                "`{key}`'s paint root `{tag}` is not in the recording list, so \
+                 its section would judge a store nobody filled"
+            );
+        }
+        assert!(
+            surfaces.iter().any(|held| held == super::VIEW_TAG),
+            "and the host's own page surface is recorded too"
+        );
+
+        // ★ The third population: how many frames each section needs. The node
+        // lab's specification names a value row and that row's OPEN roster, and
+        // the roster is the row's open state — mutually exclusive, so one frame
+        // cannot carry both. The roster answers this; nothing here counts it.
+        assert_eq!(
+            state.screens.poses_of("lab"),
+            2,
+            "the node lab declares the two states its specification describes"
+        );
+        assert_eq!(
+            state.screens.poses_of("packets"),
+            1,
+            "a section whose surfaces coexist asks for one frame"
+        );
+        assert_eq!(
+            state.screens.poses_of("dashboard"),
+            1,
+            "a page the host paints itself has no screen to ask, and gets one"
+        );
+    });
+}

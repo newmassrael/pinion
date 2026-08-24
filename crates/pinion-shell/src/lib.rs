@@ -1563,6 +1563,37 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
         None
     }
 
+    /// ★★★★★ R1808 — **how many frames this binding needs to show all of what
+    /// its specification describes.**
+    ///
+    /// One, for almost everything: a frame shows the section and the section's
+    /// surfaces are all on it. But a specification can name surfaces that
+    /// **exclude each other**, and then no single frame can reproduce it. This
+    /// tree's node lab is the measured case: it specifies a value row and it
+    /// specifies that row's open roster, and the roster is the row's open
+    /// state — so a walk that looks once reports the section as never
+    /// reproducing its specification, and is right to.
+    ///
+    /// A binding that answers more than `1` here is promising that
+    /// [`pose`](Self::pose) can put it into each of those states. A host walking
+    /// the application asks this rather than knowing anything about the screen,
+    /// which is what keeps "drive it to where its specification lives" out of
+    /// every host that ever mounts it.
+    #[must_use]
+    fn poses() -> usize {
+        1
+    }
+
+    /// Put this binding into pose `nth` — one of the [`poses`](Self::poses) its
+    /// specification needs, counted from zero.
+    ///
+    /// Called before the frame that will be judged for that pose. The default
+    /// does nothing, which is correct for a binding whose specification one
+    /// frame already covers.
+    fn pose(nth: usize) {
+        let _ = nth;
+    }
+
     /// R56.2.c §5.13 §5.38 — IME candidate window positioning hint.
     /// Returns the caret rect in **window-local logical-pixel
     /// coordinates** (origin at the top-left of the client area, the

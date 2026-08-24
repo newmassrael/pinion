@@ -11931,6 +11931,16 @@ impl External for LabOracle {
 /// tool one application rather than three executables. Nothing about the
 /// screen changed to allow that: a mounted screen is the binding it already
 /// was, and this line is the whole of the difference.
+/// The card [`NodeLabView::pose`] poses on.
+///
+/// ★ It does **not** arrive carrying a `routing.mode` row, and the first draft
+/// of the pose said it did. The row is one of the form's *addable* fields —
+/// offered as a palette chip, put on the card by a press — so a pose that only
+/// selected this card left the surface the specification is written against off
+/// the screen, and the walk reported the section as never reproducing it. The
+/// same fact is why R1732's own gate clicks the chip before it reads anything.
+const POSE_CARD: &str = "P-01";
+
 pub struct NodeLabView;
 
 impl WidgetCore for NodeLabView {
@@ -12626,6 +12636,75 @@ impl WidgetView for NodeLabView {
     /// has not put on screen.
     fn conformance() -> Option<pinion_core::conformance::DocumentReport> {
         Some(judge::conformance())
+    }
+
+    /// ★★★★★ R1808 — **two, and the reason is this screen's specification, not
+    /// its size.**
+    ///
+    /// `docs/analyzer-inspector-spec.json` names an `enum_row` surface and an
+    /// `enum_roster` surface, and the roster **is** that row's open state: the
+    /// row is specified with its roster shut, because a roster standing over it
+    /// is a part of the row that is not always there, and the roster is
+    /// specified open, because a shut one has no parts at all. So the two
+    /// exclude each other and no frame can carry both.
+    ///
+    /// R1732 already knew this — its own gate reads one surface, opens the
+    /// roster, and reads the other. What it could not do was tell a HOST, so an
+    /// assembled application walking its sections reported this one as never
+    /// reproducing its specification and was right to. This is that knowledge
+    /// moved to where a host can ask for it.
+    fn poses() -> usize {
+        2
+    }
+
+    /// Pose 0 selects a card that carries the enum row, with the roster shut;
+    /// pose 1 opens that row's roster over it.
+    ///
+    /// Through the same state the pointer path moves, so a pose cannot put the
+    /// screen somewhere a reader could not reach.
+    /// ★ It **refuses loudly** when it cannot reach the state, rather than
+    /// leaving the screen where it was. A pose that quietly does nothing looks
+    /// exactly like a screen that failed to reproduce its specification, and
+    /// the round that built this spent two runs on that ambiguity.
+    ///
+    /// ⚠ It poses through this screen's **state**, where R1732's own gate
+    /// drives the same two states through **presses** at painted coordinates.
+    /// That is a deliberate difference and not a duplication: R1732 is asserting
+    /// that a hand can get there, and this is asserting what the screen looks
+    /// like once it has. Posing by pointer would make every host that mounts
+    /// this screen depend on where its chips are drawn.
+    fn pose(nth: usize) {
+        let state = use_lab_state();
+        // Select the card AND put the specified row on it. The row is not there
+        // by default: it is one of the form's `addable` fields, offered as a
+        // palette chip, so a pose that only selected would leave the surface the
+        // specification is written against off the screen — which is what the
+        // walk reported before this was measured.
+        let carry_the_row = || {
+            let node = state
+                .node_of(POSE_CARD)
+                .unwrap_or_else(|| panic!("the opening graph has no `{POSE_CARD}` to select"));
+            state.selection.set(Selection::one(node));
+            // Through the same function the press arm calls, so a pose cannot
+            // reach a state a reader could not.
+            let _ = amend(&state, node, |form| form.add(spec::ENUM_KEY));
+        };
+        match nth {
+            0 => {
+                state.picking.set(None);
+                carry_the_row();
+            }
+            1 => {
+                carry_the_row();
+                open_roster(&state, spec::ENUM_KEY);
+                assert!(
+                    state.picking.get().is_some(),
+                    "pose 1 must open the `{}` roster and it did not",
+                    spec::ENUM_KEY
+                );
+            }
+            _ => {}
+        }
     }
 }
 

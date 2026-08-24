@@ -628,6 +628,24 @@ impl ScreenRoster {
         self.screens.get(key).map(|s| s.tag())
     }
 
+    /// ★ R1808 — how many frames the section at `key` needs to show all of what
+    /// its specification describes.
+    ///
+    /// `1` for a page the host paints itself: a host page has no screen to ask,
+    /// and a host that knows its own page needs two frames can drive them.
+    #[must_use]
+    pub fn poses_of(&self, key: &str) -> usize {
+        self.screens.get(key).map_or(1, |s| s.poses().max(1))
+    }
+
+    /// Put the section at `key` into pose `nth`. A page with no mounted screen
+    /// has nothing to pose and this does nothing.
+    pub fn pose(&self, key: &str, nth: usize) {
+        if let Some(screen) = self.screens.get(key) {
+            screen.pose(nth);
+        }
+    }
+
     /// What the screen mounted at `key` declares it needs to lay out in.
     ///
     /// ★ R1781 — the same asymmetry `tag_of` closed, one property over: a

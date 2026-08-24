@@ -79,6 +79,7 @@ pub mod journey;
 pub mod layering;
 mod mount;
 mod roster;
+pub mod tour;
 
 use std::rc::Rc;
 
@@ -98,6 +99,7 @@ pub use conformance::{ApplicationConformance, SectionJudge, SectionRow, SectionS
 pub use journey::{JourneyConformance, JourneySection, JourneyStanding, SurfaceVisit};
 pub use mount::Mount;
 pub use roster::{RosterDefect, ScreenRoster, ScreenState};
+pub use tour::{Tour, TourReport};
 
 /// One destination's page, when the page is a whole binding.
 ///
@@ -168,6 +170,26 @@ pub trait Screen {
     /// It costs the report nothing: an away surface reproduces 0 and does not
     /// reconcile, so a section cannot pass by drawing less of itself.
     fn conformance(&self) -> Option<pinion_core::conformance::DocumentReport>;
+
+    /// ★★★★★ R1808 — how many frames this screen needs to show all of what its
+    /// specification describes, and how to put it into each.
+    ///
+    /// Defaulted here, unlike [`conformance`](Self::conformance) above, and for
+    /// the opposite half of that decision's reason: *is this section judged* is
+    /// a question a host's inline page must answer out loud, while *do my
+    /// surfaces exclude each other* is answered `no` correctly for almost
+    /// everything, and a required hook would be that many sites writing `1`.
+    ///
+    /// See [`WidgetView::poses`](pinion_shell::WidgetView::poses) for the
+    /// measured case that forced it.
+    fn poses(&self) -> usize {
+        1
+    }
+
+    /// Put this screen into pose `nth`, counted from zero.
+    fn pose(&self, nth: usize) {
+        let _ = nth;
+    }
 
     // --- state --------------------------------------------------------------
 
