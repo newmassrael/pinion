@@ -43,6 +43,7 @@ pub mod derivation;
 pub mod directory;
 pub mod display;
 pub mod drop_target;
+pub mod edge_panel;
 pub mod event;
 pub mod external;
 pub mod file_dialog;

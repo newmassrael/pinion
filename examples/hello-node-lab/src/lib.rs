@@ -81,8 +81,8 @@ use pinion_core::scene::{
 use pinion_core::selection::Selection;
 use pinion_core::shrink::ShrinkPolicy;
 use pinion_core::style::{
-    Border, BoxStyle, Color, Dash, DotLattice, LayoutStyle, PathStyle, Size, Stroke, TextOverflow,
-    TextStyle,
+    Border, BoxStyle, ChromeEdge, Color, Dash, DotLattice, LayoutStyle, PathStyle, Size, Stroke,
+    TextOverflow, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::utterance::{Announced, Tone, Utterance};
@@ -9159,6 +9159,17 @@ const fn population_wire(population: spec::Population) -> &'static str {
     }
 }
 
+/// An edge's wire word — lower case, matching how every other enum reaches this
+/// surface, and a `match` so a fifth edge would land here as a compile error.
+fn edge_word(edge: ChromeEdge) -> &'static str {
+    match edge {
+        ChromeEdge::Top => "top",
+        ChromeEdge::Bottom => "bottom",
+        ChromeEdge::Left => "left",
+        ChromeEdge::Right => "right",
+    }
+}
+
 fn spec_json() -> serde_json::Value {
     serde_json::json!({
         // ★ R1664 — `body` is published too. R1662 added the column to the
@@ -9167,8 +9178,16 @@ fn spec_json() -> serde_json::Value {
         // not declare, and the demo's backward check went red on CI while
         // every local test passed. A fact added to the model and published by
         // half is the shape this project keeps paying for.
+        // ★★★★★ R1801 — `edges` and `foldable`, because the absence of exactly
+        // this is what a reader ran into three times. Asked which panels this
+        // surface lets a person move, the wire answered `clauses: []` — and it
+        // was right: nothing had ever said. A pane that may move now names the
+        // edges it admits, and a pane that may not answers `[]`, which is a
+        // different statement from not being asked.
         "panes": spec::PANES.iter().map(|p| serde_json::json!({
             "tag": p.tag, "title": p.title, "width": p.width, "body": p.body,
+            "edges": p.policy.allowed.iter().copied().map(edge_word).collect::<Vec<_>>(),
+            "foldable": p.policy.foldable,
         })).collect::<Vec<_>>(),
         // ★ R1681 — published so the demo's family pin is derived from the
         // specification rather than written down, the same way `links` is.

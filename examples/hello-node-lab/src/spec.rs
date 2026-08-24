@@ -23,6 +23,9 @@
 //! tool class uses generally; the structure and the behaviour are what is being
 //! reproduced, and those are what the table holds.
 
+use pinion_core::edge_panel::EdgePolicy;
+use pinion_core::style::ChromeEdge;
+
 /// One pane of the shell, and the width the reference gives it.
 pub struct PaneSpec {
     /// The paint tag.
@@ -40,6 +43,19 @@ pub struct PaneSpec {
     /// painted scene against it, so a pane that quietly stops scrolling fails
     /// rather than going silent.
     pub body: Option<&'static str>,
+    /// ★★★★★ R1801 — **where this pane may live**, declared rather than implied.
+    ///
+    /// A reader asked three times why the palette and the inspector cannot be
+    /// moved, and the measured answer came from the wire: `scene/drop_targets`
+    /// answers `clauses: []` for this surface. Nothing had ever *said* they were
+    /// movable, so there was nothing for a gesture to be checked against and
+    /// nothing for a reader of the specification to see.
+    ///
+    /// Declared here because that is where every other property of a pane is
+    /// declared, and because the specification is what the wire publishes: a
+    /// panel that may move now says so where a client can read it, and a rail
+    /// that may not says that too ([`EdgePolicy::fixed`]).
+    pub policy: EdgePolicy,
 }
 
 /// The four panes, left to right.
@@ -51,12 +67,17 @@ pub const PANES: &[PaneSpec] = &[
         // Fixed seats, one per destination: the rail's content is the
         // specification's own list and cannot outgrow the pane.
         body: None,
+        // A rail is where it is. Declaring that is not a formality: an empty
+        // allowed-set is a statement a client can read, and it is what makes
+        // "this one does not move" different from "nobody has said".
+        policy: EdgePolicy::fixed(),
     },
     PaneSpec {
         tag: "lab.palette",
         title: "Node Palette",
         width: 230,
         body: Some("lab.palette.body"),
+        policy: EdgePolicy::movable(SIDES),
     },
     PaneSpec {
         tag: "lab.canvas",
@@ -66,14 +87,25 @@ pub const PANES: &[PaneSpec] = &[
         // rather than over a scrolled body — a different gesture with a
         // different offset, so it is not this column's business.
         body: None,
+        // The canvas is what the side panels flank; it has no edge of its own.
+        policy: EdgePolicy::fixed(),
     },
     PaneSpec {
         tag: "lab.inspector",
         title: "Node Inspector",
         width: 312,
         body: Some("lab.inspector.body"),
+        policy: EdgePolicy::movable(SIDES),
     },
 ];
+
+/// The edges a side panel of this screen may occupy.
+///
+/// Left and right only, deliberately: the reference editor this screen is
+/// measured against gives its node editor a left tools region and a right
+/// sidebar, and puts the header on the horizontal edges. A top or bottom
+/// palette is a different screen, not a placement of this one.
+const SIDES: &[ChromeEdge] = &[ChromeEdge::Left, ChromeEdge::Right];
 
 /// The application bar's height, and the canvas toolbar's.
 pub const APP_BAR_H: u32 = 54;

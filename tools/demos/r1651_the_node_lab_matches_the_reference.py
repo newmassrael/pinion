@@ -196,6 +196,47 @@ def body() -> None:
               f"{len(spec['links'])} link(s), {len(spec['roles'])} role(s); "
               f"{len(painted)} tag(s) painted")
 
+        # ── (B2) R1801: every pane says WHERE IT MAY LIVE ───────────────────
+        #
+        # A reader asked three times why the palette and the inspector cannot be
+        # moved. Asked the same question, the wire answered `clauses: []` for
+        # this surface — and it was right: nothing had ever declared them
+        # movable, so there was nothing for a gesture to be checked against and
+        # nothing here for a client to read.
+        #
+        # Asserted from the running application rather than from the source,
+        # because the failure this replaces was a fact added to the model and
+        # published by half (R1664's, on this very structure).
+        EDGES = {"top", "bottom", "left", "right"}
+        movable = {}
+        for pane in spec["panes"]:
+            for key in ("edges", "foldable"):
+                if key not in pane:
+                    raise SystemExit(
+                        f"[B2] pane {pane['tag']} does not publish {key!r} — "
+                        "the placement declaration reached the model and not the wire"
+                    )
+            stray = set(pane["edges"]) - EDGES
+            if stray:
+                raise SystemExit(
+                    f"[B2] pane {pane['tag']} names {sorted(stray)}, which is not an edge"
+                )
+            if pane["edges"]:
+                movable[pane["tag"]] = sorted(pane["edges"])
+        # The SET, not the count: a pane that stopped being movable and a pane
+        # that started both have to fail, and a count catches neither on its own.
+        want = {
+            "lab.palette": ["left", "right"],
+            "lab.inspector": ["left", "right"],
+        }
+        if movable != want:
+            raise SystemExit(
+                f"[B2] the panes that declare they may move are {movable}, expected {want}"
+            )
+        print(f"[B2] {len(movable)} pane(s) declare where they may live: "
+              + ", ".join(f"{t} -> {'/'.join(e)}" for t, e in sorted(movable.items()))
+              + f"; the other {len(spec['panes']) - len(movable)} declare they stay put")
+
         # ── (C) FORWARD: every declared element is on the screen ────────────
         missing = []
         for pane in spec["panes"]:
