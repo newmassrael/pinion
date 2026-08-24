@@ -64,6 +64,10 @@ source "$hook_dir/lib/consumer-tests.sh"
 source "$hook_dir/lib/mnemosyne-tool.sh"
 # shellcheck source=SCRIPTDIR/lib/worktree-guard.sh
 source "$hook_dir/lib/worktree-guard.sh"
+# R1799 — `step` announces AND times, so the announcements cannot become a
+# second list of what this hook does.
+# shellcheck source=SCRIPTDIR/lib/step-timer.sh
+source "$hook_dir/lib/step-timer.sh"
 
 # --- R1495. The libraries this hook decides with, verified first ---
 #
@@ -75,7 +79,7 @@ source "$hook_dir/lib/worktree-guard.sh"
 # at R1779: 65.83s, the single largest step anyone has attributed in this hook.
 # The claim was never measured — it was inferred from "plain bash" — and the
 # CLAUDE.md copy of it was corrected while this one, the original, was not.
-echo "pre-push: hook library tests ..." >&2
+step "hook library tests"
 if ! bash "$repo_root/tools/test_hooks.sh" >&2; then
     echo "pre-push: the hook libraries failed their own tests" >&2
     exit 1
@@ -126,7 +130,7 @@ require_main_worktree_for push || exit 1
 # rebuilds the 2026-07-29 full-disk precondition. That makes the script load
 # bearing, and a load-bearing script whose own tests nobody runs is the thing
 # this hook exists to prevent. Milliseconds, no git, no writes.
-echo "pre-push: worktree tool selftest ..." >&2
+step "worktree tool selftest"
 if ! bash "$repo_root/tools/worktree.sh" --selftest >&2; then
     echo "pre-push: the worktree tool failed its own tests" >&2
     exit 1
@@ -138,7 +142,7 @@ fi
 # the driven binary running, and in CI four such orphans turned four
 # deterministic failures into thirty-seven that differed between runs. Runs in
 # under a second — no cargo, no display.
-echo "pre-push: demo harness lifecycle tests ..." >&2
+step "demo harness lifecycle tests"
 if ! python3 "$repo_root/tools/test_rpc_verify.py" >&2; then
     echo "pre-push: the demo harness failed its own tests" >&2
     exit 1
@@ -150,7 +154,7 @@ fi
 # quietly narrowed makes those sweeps pass while covering less — which is
 # exactly how a curated list of fourteen hid an absence in seventeen bindings
 # for fifty rounds. Runs in well under a second: it reads source, boots nothing.
-echo "pre-push: focus population derivation ..." >&2
+step "focus population derivation"
 if ! python3 "$repo_root/tools/test_binding_focus.py" >&2; then
     echo "pre-push: the shared focus population failed its own tests" >&2
     exit 1
@@ -172,7 +176,7 @@ fi
 # holds the judgement to a shape — every declared capability carries a verdict
 # from a closed set, a `have` names what covers it, and `unmeasured` is a
 # verdict rather than a silence.
-echo "pre-push: analysis-tool census ..." >&2
+step "analysis-tool census"
 if ! python3 "$repo_root/tools/analyzer_census.py" --selftest >&2; then
     echo "pre-push: the analysis-tool census failed its own tests" >&2
     exit 1
@@ -193,7 +197,7 @@ if ! python3 "$repo_root/tools/analyzer_census.py" --check-proofs >&2; then
     exit 1
 fi
 
-echo "pre-push: reference census ..." >&2
+step "reference census"
 if ! python3 "$repo_root/tools/reference_census.py" --selftest >&2; then
     echo "pre-push: the reference census failed its own tests" >&2
     exit 1
@@ -211,7 +215,7 @@ fi
 # directive whose state nobody can see is a directive that grows. This makes the
 # number monotone -- every push holds it or lowers it -- and refuses one that
 # adds a name to a file, or a name to a file that had none.
-echo "pre-push: reference names ..." >&2
+step "reference names"
 if ! python3 "$repo_root/tools/reference_names.py" --selftest >&2; then
     echo "pre-push: the reference-name ratchet failed its own tests" >&2
     exit 1
@@ -229,7 +233,7 @@ fi
 # stack, which is why the reported fix -- gate the deps this crate declares --
 # would have left the build broken. A third path is one ordinary-looking
 # `Cargo.toml` line away and nobody would see it.
-echo "pre-push: wire-only deps ..." >&2
+step "wire-only deps"
 if ! python3 "$repo_root/tools/wire_only_deps.py" --selftest >&2; then
     echo "pre-push: the wire-only dep gate failed its own tests" >&2
     exit 1
@@ -266,7 +270,7 @@ fi
 #
 # Pins the backlog rather than demanding zero: a count may fall or hold, and
 # a file may not acquire its first. Reads source with `ast`; boots nothing.
-echo "pre-push: demo clock units ..." >&2
+step "demo clock units"
 if ! python3 "$repo_root/tools/tick_units.py" --selftest >&2; then
     echo "pre-push: the demo-clock ratchet failed its own tests" >&2
     exit 1
@@ -275,7 +279,7 @@ if ! python3 "$repo_root/tools/tick_units.py" --check >&2; then
     exit 1
 fi
 
-echo "pre-push: round ledger ..." >&2
+step "round ledger"
 if ! python3 "$repo_root/tools/changelog_rounds.py" --selftest >&2; then
     echo "pre-push: the round-ledger gate failed its own tests" >&2
     exit 1
@@ -292,7 +296,7 @@ fi
 # scoped to a single test, so PASSED meant "that test does not catch it"; and a
 # classifier calling cargo's `error: test failed` a compile error). Its own
 # tests assert each of the five properties those defects cost.
-echo "pre-push: counterfactual driver ..." >&2
+step "counterfactual driver"
 if ! python3 "$repo_root/tools/test_counterfactual.py" >&2; then
     echo "pre-push: the counterfactual driver failed its own tests" >&2
     exit 1
@@ -314,7 +318,7 @@ fi
 # the parse still resolves launch targets and that every name it resolves is a
 # real example, so a rename that quietly emptied the mapping fails here instead
 # of turning the tool into a shorter hand-written list.
-echo "pre-push: demo radius selftest ..." >&2
+step "demo radius selftest"
 if ! python3 "$repo_root/tools/demo_radius.py" --selftest >&2; then
     echo "pre-push: the demo-radius computation failed its own tests" >&2
     exit 1
@@ -325,7 +329,7 @@ fi
 # hand-written list of three. Two screens grew a policy later, were never added,
 # and had been reporting the one verdict the framework calls inexcusable. This
 # derives the set from the sources and fails when the demo is short.
-echo "pre-push: shrink population ..." >&2
+step "shrink population"
 if ! python3 "$repo_root/tools/shrink_population.py" --selftest >&2; then
     echo "pre-push: the shrink-population computation failed its own tests" >&2
     exit 1
@@ -360,7 +364,11 @@ msg_gate_failed=0
 tmp_msg="$(mktemp)"
 # R1779 — every path this push publishes, accumulated across the ref updates.
 tmp_paths="$(mktemp)"
-trap 'rm -f "$tmp_msg" "$tmp_paths"' EXIT
+# R1799 — registered THROUGH the step timer rather than installed as a second
+# `trap ... EXIT`, because bash has one EXIT slot and a second trap replaces the
+# first. The timer took the slot when it was sourced so that the 34 `exit 1`s
+# above this line also report what they cost.
+step_at_exit 'rm -f "$tmp_msg" "$tmp_paths"'
 
 # git feeds pre-push the ref updates on stdin:
 #   <local ref> <local sha> <remote ref> <remote sha>
@@ -446,7 +454,7 @@ if [[ -n "$base_sha" && ! "$base_sha" =~ ^0+$ ]]; then
 fi
 
 mnemosyne_resolve
-echo "pre-push: mnemosyne-cli validate-workspace ($MN_CLI_SOURCE) ..." >&2
+step "mnemosyne-cli validate-workspace ($MN_CLI_SOURCE)"
 if ! mnemosyne_cli validate-workspace; then
     echo "pre-push: validate-workspace failed — fix violations before push" >&2
     exit 1
@@ -454,7 +462,7 @@ fi
 
 # R1026 §6.3 — rustfmt gate (unconditional; push validates the publishable
 # state). Cheap, and formatting drift is what makes a diff unreadable.
-echo "pre-push: cargo fmt --all --check ..." >&2
+step "cargo fmt --all --check"
 if ! cargo fmt --all --check; then
     echo "pre-push: cargo fmt --check failed — run 'cargo fmt --all' before push" >&2
     exit 1
@@ -492,7 +500,7 @@ fi
 #
 # Rustdoc stays in CI: its cost is real and its failure mode (a broken
 # intra-doc link) does not compile-break a consumer.
-echo "pre-push: cargo clippy --workspace --all-targets --features pinion-runtime/vello ..." >&2
+step "cargo clippy --workspace --all-targets --features pinion-runtime/vello"
 if ! cargo clippy --workspace --all-targets --features pinion-runtime/vello; then
     echo "pre-push: clippy failed — fix violations before push" >&2
     exit 1
@@ -524,7 +532,7 @@ fi
 # no compiling at all. A push that DOES touch them pays the build — which is
 # the push that needs the ratchet.
 if grep -qE '(\.scxml$|^crates/pinion-core/generated/|^crates/pinion-core/build\.rs$|^vendor/sce$|^Cargo\.(toml|lock)$)' "$tmp_paths"; then
-    echo "pre-push: statechart emit matches the pinned generator ..." >&2
+    step "statechart emit matches the pinned generator"
     if ! cargo test -p pinion-core --test statechart_emit; then
         echo "pre-push: the committed statechart emit is stale or hand-edited — run" >&2
         echo "  PINION_REGEN_STATECHARTS=1 cargo test -p pinion-core --test statechart_emit" >&2
@@ -543,7 +551,7 @@ fi
 # 3. validate-code-refs — hallucination-class citation gate (unconditional;
 #    push validates the publishable state). Output captured, surfaced only on
 #    failure (the info-level Path B binding axis is verbose).
-echo "pre-push: mnemosyne-cli validate-code-refs ..." >&2
+step "mnemosyne-cli validate-code-refs"
 if ! cr_out="$(mnemosyne_cli validate-code-refs 2>&1)"; then
     printf '%s\n' "$cr_out" | grep -E '\[(missing|section_missing)\]|violations: total' >&2 || true
     echo "pre-push: validate-code-refs found hallucination-class citations" >&2
@@ -581,5 +589,19 @@ enforce_target_budget "$repo_root" "pre-push"
 # shellcheck source=SCRIPTDIR/lib/phase-b-tally.sh
 source "$hook_dir/lib/phase-b-tally.sh"
 report_phase_b_tally "$repo_root"
+
+# 6. R1799 — where this hook's time went, printed by the hook itself.
+#
+# `debt-the-push-hook-has-never-been-profiled` records that nobody could answer
+# that, that two documented costs were wrong (`test_hooks.sh` was called
+# "milliseconds" and measures 65.83s), and that measuring from OUTSIDE is
+# impossible in principle because each tool buffers its own stdout into a pipe.
+# The last line's UNATTRIBUTED figure is the one this exists for: the steps
+# anybody had timed came to ~128s of runs that took 251–368s.
+#
+# Reports, never fails, for the reason the two reports above do — and it is not
+# called from here. `step_summary` runs from the EXIT trap the timer owns, so a
+# refused push reports what its gates cost too; see lib/step-timer.sh for why
+# that trap had to be composed rather than installed a second time.
 
 exit 0

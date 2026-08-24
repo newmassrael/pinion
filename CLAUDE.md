@@ -354,16 +354,35 @@ runs those tests before trusting them.
 
 `.githooks/pre-push` repeats those unconditionally (so amends / rebases cannot
 publish a state that fails them) and adds more. **Do not hand-maintain the
-list** — the hook announces every step it runs, so ask it:
+list, and do not hand-maintain the COUNT either** — since R1799 the hook
+announces every step, times it, and ends by saying how many it closed:
 
-```bash
-grep -oE '^pre-push: [a-z][^.]*\.\.\.' <a push log> | sed 's/^pre-push: //; s/ \.\.\.$//'
+```
+pre-push:   [<cost>s] hook library tests
+...
+pre-push: <n> step(s), <total>s total, <named>s named, <rest>s unattributed
 ```
 
-Measured that way at R1779 it is thirteen steps, and the previous version of
-this section named eight of them — `counterfactual driver`, `focus population
-derivation`, `analysis-tool census`, `demo harness lifecycle tests` and
-`worktree tool selftest` were simply absent from the prose.
+(A shape, not a sample — the numbers are whatever the run in front of you
+printed. Deliberately no figures here: a measured cost written into prose is a
+number that starts rotting the moment it is written, which is the defect the
+paragraph below records.)
+
+⚠ **This section carried a number that rotted while the recipe beside it stayed
+right.** It said "thirteen steps, measured at R1779" — correct when written, and
+measured again at R1799 the hook has **eighteen** `step` sites. The four added
+since are `demo clock units`, `demo radius selftest`, `shrink population`, and
+clippy, which R1779 removed and R1782 put back. Worse, thirteen was never the
+number of *sites*: it was what one push *ran*, because the statechart ratchet is
+path-gated and that push carried no chart. ⇒ **a step count is two different
+numbers** — what the hook can run, and what this push did — so read it off the
+run rather than off this file. `step_summary` prints the second one.
+
+The `unattributed` figure is what the instrument exists for. See
+`.githooks/lib/step-timer.sh` for why the measurement has to come from inside
+the hook (each tool buffers its own stdout into a pipe, so per-step attribution
+from outside is impossible in principle), and for the warning that a per-step
+cost is **not** what removing that step would save.
 
 **The statechart-emit ratchet is path-gated** (R1779): it runs only when the
 push carries a `.scxml`, the committed emit, the generator's `build.rs`, the

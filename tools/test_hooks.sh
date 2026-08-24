@@ -38,6 +38,8 @@ source "$repo_root/.githooks/lib/consumer-tests.sh"
 source "$repo_root/.githooks/lib/worktree-guard.sh"
 # shellcheck source=SCRIPTDIR/../.githooks/lib/ssh-keepalive.sh
 source "$repo_root/.githooks/lib/ssh-keepalive.sh"
+# shellcheck source=SCRIPTDIR/../.githooks/lib/step-timer.sh
+source "$repo_root/.githooks/lib/step-timer.sh"
 
 pass=0
 fail=0
@@ -1212,8 +1214,12 @@ ok "this repo is at or under its own budget" \
    "$(python3 "$repo_root/tools/reference_names.py" --check >/dev/null 2>&1; echo $?)" \
    "0"
 
-ratchet_tmp="$(mktemp -d)"
-trap 'rm -rf "$ratchet_tmp"' EXIT
+# R1799 — under the one root, NOT a second `trap ... EXIT`. This was a bare
+# `mktemp -d` plus its own trap, and that trap replaced the one installed at the
+# top of this file, so every run of this suite orphaned `_tmp_root` — the exact
+# failure its own comment up there describes, in the file that describes it.
+# Measured, not read: two traps in one shell, and only the second dir is gone.
+ratchet_tmp="$(mktemp_tracked)"
 git init -q "$ratchet_tmp/repo"
 mkdir -p "$ratchet_tmp/repo/tools" "$ratchet_tmp/repo/docs" \
          "$ratchet_tmp/repo/docs/.atomic" "$ratchet_tmp/repo/vendor" \
@@ -1429,6 +1435,101 @@ print("refused" if offenders(["2 #1"], {"2"}) else "accepted")
 PY
 )"
 ok "and it refuses the prose form of an invariant" "$impact_prose" "refused"
+
+# --- R1799: the step timer -------------------------------------------------
+#
+# It is an instrument, so what it has to get right is that it MEASURES: a step
+# that took time reports time, the announcement still reaches the reader
+# unchanged, and the summary's unattributed figure — the number the profiling
+# debt exists for — is the difference and not a guess.
+# A hook's stdout belongs to git, so every line this instrument writes has to go
+# to stderr. This was a `timer_out=` capture that nothing ever asserted on — and
+# its `2>/dev/null` sat on the ASSIGNMENT, which does not suppress the command
+# substitution's stderr, so running this suite printed five `pre-push:` lines
+# that no hook had printed. Now it is the assertion it was pretending to be.
+ok "the timer writes nothing to stdout, which belongs to git" \
+   "$(bash -c 'source "'"$repo_root"'/.githooks/lib/step-timer.sh"
+               step "a"; step "b"' 2>/dev/null | wc -c)" "0"
+timer_err="$(
+    {
+        _PINION_STEP_NAME=""
+        _PINION_STEP_TOTAL=0
+        _PINION_STEP_COUNT=0
+        _PINION_RUN_AT=$(_pinion_now_ms)
+        step "first thing"
+        sleep 0.15
+        step "second thing"
+        sleep 0.05
+        step_summary
+    } 2>&1 >/dev/null
+)"
+ok "the announcement a reader already knew still reaches them" \
+   "$(printf '%s\n' "$timer_err" | grep -c 'pre-push: first thing \.\.\.')" "1"
+ok "and the step that ran is reported with a cost" \
+   "$(printf '%s\n' "$timer_err" | grep -c '^pre-push:   \[.*\] first thing$')" "1"
+# ★ The measurement itself: a step that slept 150ms must not report 0. A timer
+# that always says zero passes every "is it printed" check ever written, which
+# is the shape this repository keeps finding — a gate that cannot fail.
+first_ms="$(printf '%s\n' "$timer_err" \
+    | sed -n 's/^pre-push:   \[ *\([0-9]*\)\.\([0-9]*\)s\] first thing$/\1\2/p')"
+ok "the timer measures rather than printing a constant" \
+   "$(( 10#${first_ms:-0} >= 100 && 10#${first_ms:-0} < 5000 ? 1 : 0 ))" "1"
+ok "the summary counts every step it closed" \
+   "$(printf '%s\n' "$timer_err" | grep -c '^pre-push: 2 step(s),')" "1"
+ok "and it names the unattributed remainder, which is what it is for" \
+   "$(printf '%s\n' "$timer_err" | grep -c 'unattributed')" "1"
+# A hook that announced a step and never closed it would lose that step's cost
+# into the remainder silently; `step_summary` closes the open one first.
+ok "the last step is closed by the summary rather than dropped" \
+   "$(printf '%s\n' "$timer_err" | grep -c '^pre-push:   \[.*\] second thing$')" "1"
+
+# ★★★★★ WHICH RUNS DOES IT REPORT ON? The first draft answered "the successful
+# ones", which is the wrong half: a step prints its cost when the NEXT step
+# opens, so an `exit 1` — pre-push has 34 — dropped the failing step's cost and
+# the summary with it, and the reader who most wants to know what a gate cost is
+# the one it just refused. The trap is what fixes that, so it is what is tested.
+fail_run="$(
+    bash -c '
+        source "'"$repo_root"'/.githooks/lib/step-timer.sh"
+        step_at_exit "echo CLEANUP-RAN >&2"
+        step "a gate that refuses"
+        exit 1
+    ' 2>&1 >/dev/null
+)"
+ok "a refused run still reports what its last step cost" \
+   "$(printf '%s\n' "$fail_run" | grep -c '^pre-push:   \[.*\] a gate that refuses$')" "1"
+ok "and a refused run still prints the summary" \
+   "$(printf '%s\n' "$fail_run" | grep -c '^pre-push: 1 step(s),')" "1"
+ok "a cleanup registered through the timer runs" \
+   "$(printf '%s\n' "$fail_run" | grep -c '^CLEANUP-RAN$')" "1"
+ok "and the cleanup runs BEFORE the summary, so the summary is read last" \
+   "$(printf '%s\n' "$fail_run" | grep -nE '^(CLEANUP-RAN|pre-push: 1 step)' \
+      | head -1 | grep -c CLEANUP-RAN)" "1"
+# A trap that swallowed the exit status would turn every refusal into a pass.
+ok "the trap preserves the exit status it was reached with" \
+   "$(bash -c 'source "'"$repo_root"'/.githooks/lib/step-timer.sh"; step x; exit 7' \
+      >/dev/null 2>&1; echo $?)" "7"
+# The suite itself sources this library; a summary from a process that timed
+# nothing would be a hook report no hook made.
+ok "a process that sourced the timer without using it stays silent" \
+   "$(bash -c 'source "'"$repo_root"'/.githooks/lib/step-timer.sh"; true' 2>&1 \
+      | grep -c 'step(s),')" "0"
+
+# ★★ THE ARRANGEMENT, ASSERTED RATHER THAN REMEMBERED. bash has ONE EXIT slot
+# and a second `trap ... EXIT` REPLACES the first — this file measured that at
+# R1522 and wrote it into the comment at its own head. The timer takes the slot
+# when pre-push sources it, so that the 34 exits above the hook's temp-file
+# cleanup also report; a bare trap anywhere in the hook would silently take it
+# back, and the instrument would go quiet on exactly the refused pushes with
+# nothing failing to say so.
+ok "the push hook installs no EXIT trap of its own" \
+   "$(grep -cE '^[[:space:]]*trap .* EXIT' "$repo_root/.githooks/pre-push")" "0"
+ok "it registers its cleanup through the timer instead" \
+   "$(grep -cE '^[[:space:]]*step_at_exit ' "$repo_root/.githooks/pre-push")" "1"
+# And this suite keeps to its own R1522 rule: ONE root, ONE trap. It had two,
+# so every run orphaned the first one's tree.
+ok "this suite keeps exactly one exit trap, as its own comment requires" \
+   "$(grep -cE '^[[:space:]]*trap .* EXIT' "$repo_root/tools/test_hooks.sh")" "1"
 
 printf '[hooks] %d passed, %d failed\n' "$pass" "$fail"
 [[ "$fail" -eq 0 ]]
