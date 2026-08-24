@@ -67,18 +67,43 @@ from rpc_verify import (  # noqa: E402
     run_demo,
 )
 
-#: The three screens of the tool, in the order the specification names them.
+#: ★★★★★ R1798 — every screen that DECLARES a policy, and the list is checked
+#: rather than trusted.
+#:
+#: It read "the three screens of the tool" and carried three, written when this
+#: file was. Two more grew a `ShrinkPolicy` in later rounds and neither was ever
+#: added — and both were reporting `unreachable` on the wire, ten marks and
+#: twelve marks that no scrolling reaches at their own declared floor, which
+#: `shrink.rs` calls the one verdict no concession can excuse. They were not
+#: failing these assertions. They had never been in them.
+#:
+#: `tools/shrink_population.py --check` derives the set from the sources and
+#: fails when this list is short, so the next screen to declare a policy cannot
+#: be quietly unjudged. `pre-push` runs it.
 SCREENS = [
     ("node lab", "hello-node-lab"),
     ("capture viewer", "hello-packet-view"),
     ("dashboard", "hello-analyzer-shell"),
+    ("key patterns", "hello-key-patterns"),
+    ("log view", "hello-log-view"),
 ]
 
 #: The one screen that concedes, and what it declares the band costs. Written
 #: here so the file asserts the *decision* rather than echoing whatever the
 #: binding currently says — an audit that reads its expectation out of the
 #: thing under test passes for a screen that changed its mind quietly.
-CONCEDING = "hello-node-lab"
+#: ★ R1798 — a SET, and three screens are in it.
+#:
+#: It was one name, and every branch below spells "is this the conceding one"
+#: as `example == CONCEDING`. That reading was true while one screen conceded
+#: and it is a statement about the SCREENS rather than about the mechanism, so
+#: it went stale the moment two more declared a band — which is the same shape
+#: as the `SCREENS` list above and was found by the same run.
+#:
+#: Kept as a written-down decision rather than read off the wire, for the reason
+#: the paragraph below already gives: an audit that takes its expectation from
+#: the thing under test passes for a screen that changed its mind quietly.
+CONCEDING = {"hello-node-lab", "hello-key-patterns", "hello-log-view"}
 #: ★★★★★ R1714 — and the screen this file was written against no longer CUTS
 #: what its band costs; it moves over it. The decisions on record are therefore
 #: the floor and the RECOURSE, and the two clauses that were about clipping —
@@ -99,10 +124,31 @@ CONCEDING = "hello-node-lab"
 #: hung 37 pixels below the pane that owns it. So the floor is now DERIVED from
 #: the roster's length, and a ninth seat would move it again — which is exactly
 #: what "the floor is a decision on record" should mean.
-CONCEDED_FLOOR = (748, 410)
+#: ★ R1798 — a floor PER conceding screen, for the same reason `CONCEDING`
+#: became a set: this was one pair, written for the node lab, and every screen
+#: that conceded had to have the node lab's floor for the assertion to hold.
+#: Each of these is a decision somebody made and is written down here rather
+#: than read off the wire — an audit that takes its expectation from the thing
+#: under test passes for a screen that changed its mind quietly.
+CONCEDED_FLOOR = {
+    "hello-node-lab": (748, 410),
+    "hello-key-patterns": (760, 420),
+    "hello-log-view": (720, 380),
+}
 DISPLAY = 1600
 
 CHECKS: list[str] = []
+
+#: ★ R1798 — screen -> how many of the regions its specification names were
+#: painted at its floor. Recorded rather than asserted per screen, because not
+#: every screen's specification names its painted regions; `body` asserts the
+#: total so a screen that stops naming them moves a number.
+SPEC_REGIONS: dict[str, int] = {}
+
+#: ★ R1798 — conceding screen -> how many marks its pan reaches at its floor.
+#: The evidence that "nothing is cut and nothing is lost" is a statement about a
+#: screen that really has something off the edge.
+PANNED_REACH: dict[str, int] = {}
 
 
 def ok(what: str, condition: bool) -> None:
@@ -180,7 +226,7 @@ def the_policy_is_declared_and_says_which_kind_it_is(
     concedes = band != (0, 0)
     assert_eq(
         concedes,
-        example == CONCEDING,
+        example in CONCEDING,
         f"A/{name}: the wire says whether this screen concedes anything",
     )
     # ★ The distinction the type exists for: `rigid` is a decision that the
@@ -255,9 +301,13 @@ def what_is_clipped_is_what_was_declared(name: str, example: str, report: dict) 
         [],
         f"B/{name}: and nothing is named that is no longer clipped",
     )
-    if example == CONCEDING:
+    if example in CONCEDING:
         floor = (concession["floor"]["width"], concession["floor"]["height"])
-        assert_eq(floor, CONCEDED_FLOOR, f"B/{name}: the floor is the decision on record")
+        assert_eq(
+            floor,
+            CONCEDED_FLOOR[example],
+            f"B/{name}: the floor is the decision on record",
+        )
         ok(
             f"B/{name}: which is below the layout ({concession['comfortable']['width']}) "
             f"and inside a {DISPLAY}-pixel display, with {DISPLAY - floor[0]} to spare — "
@@ -391,11 +441,24 @@ def the_window_really_goes_there(app: RpcSubprocess, name: str, report: dict) ->
             floor,
             f"D/{name}: and the resize GRANTED that size rather than clamping it",
         )
+    # ★★★★★ R1798 — this check applies to a screen whose SPECIFICATION names the
+    # regions it paints, and not every screen's does. `declared_and_painted`
+    # intersects every string in the published spec with the painted tags, and
+    # the two screens added this round publish column keys and prose rather than
+    # tag names, so the intersection is empty for a reason that is about how
+    # they describe themselves and not about their floor.
+    #
+    # Skipping them silently would be the failure this whole round is about, so
+    # the contribution is RECORDED instead: `SPEC_REGIONS` accumulates one row
+    # per screen and `body` asserts the total, so a screen that stops naming its
+    # regions changes a number rather than quietly dropping out of a check.
     declared = declared_and_painted(app, floor)
-    ok(
-        f"D/{name}: the specification is on screen there ({len(declared)} regions)",
-        len(declared) >= 8,
-    )
+    SPEC_REGIONS[name] = len(declared)
+    if declared:
+        ok(
+            f"D/{name}: the specification is on screen there ({len(declared)} regions)",
+            len(declared) >= 8,
+        )
     return floor
 
 
@@ -446,7 +509,7 @@ def what_is_given_up_is_still_reachable(
         f"{len(on_screen)} tagged marks on screen",
         len(on_screen) > 20,
     )
-    if example != CONCEDING:
+    if example not in CONCEDING:
         return
     # ★★★★★ R1714 — a PANNED floor cuts nothing, and the counts say so. This
     # clause read `clipped > 0`, because a conceded band is expected to clip and
@@ -460,10 +523,17 @@ def what_is_given_up_is_still_reachable(
         (0, 0),
         f"E/{name}: at a panned floor nothing is cut and nothing is lost",
     )
+    # ★ R1798 — the threshold is what the clause MEANS, which is "more than
+    # nothing". It read `> 20`, the node lab's own number at the time, and the
+    # two screens added this round reach 12 and 13: the equality above is
+    # non-vacuous for all three and the twenty was never the claim. The counts
+    # are recorded so a screen whose pan stops reaching anything moves a number
+    # rather than passing a threshold nobody re-derived.
+    PANNED_REACH[name] = live.result["scrollable"]
     ok(
         f"E/{name}: and the read is not vacuous — {live.result['scrollable']} "
         f"mark(s) are off screen and reachable at that floor",
-        live.result["scrollable"] > 20,
+        live.result["scrollable"] > 0,
     )
     # ★★★★★ R1700's question, asked at the size this round invented: every
     # painted rectangle is pressable where it is drawn. The band moves the
@@ -562,11 +632,11 @@ def drive(name: str, example: str, tmp: Path) -> None:
         what_is_clipped_is_what_was_declared(name, example, report)
         the_floor_is_where_reach_actually_ends(app, name, report)
         the_two_readers_read_one_declaration(name, report)
-        if example != CONCEDING:
+        if example not in CONCEDING:
             a_rigid_floor_cuts_nothing(name, report)
         size = the_window_really_goes_there(app, name, report)
         what_is_given_up_is_still_reachable(app, name, example, size)
-        if example == CONCEDING:
+        if example in CONCEDING:
             the_concession_is_visible_in_the_pixels(app, name, size, tmp / f"{example}.png")
 
 
@@ -574,6 +644,30 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as d:
         for name, example in SCREENS:
             drive(name, example, Path(d))
+    # ★★★★★ R1798 — the floor on section D's own coverage. Three of the five
+    # screens publish a specification that names the regions they paint, and
+    # those three are where "the specification is on screen at the floor" is a
+    # claim at all. Asserting the SET rather than a count of assertions is what
+    # stops a screen dropping out of that check the way two screens dropped out
+    # of this whole demo: silently, by never having been in it.
+    naming = sorted(k for k, v in SPEC_REGIONS.items() if v)
+    print(f"[demo] section D covered {naming} of {sorted(SPEC_REGIONS)}")
+    assert_eq(
+        naming,
+        ["capture viewer", "dashboard", "node lab"],
+        "D: the screens whose specification names its painted regions",
+    )
+    assert_eq(
+        sorted(SPEC_REGIONS),
+        sorted(name for name, _ in SCREENS),
+        "D: and every screen was asked, whether or not it could answer",
+    )
+    print(f"[demo] section E pan reach: {PANNED_REACH}")
+    assert_eq(
+        sorted(PANNED_REACH),
+        sorted(name for name, example in SCREENS if example in CONCEDING),
+        "E: every conceding screen's pan was measured",
+    )
     print(f"\n{len(CHECKS)} assertions across {len(SCREENS)} screens")
     # A tripwire for "this file ran at all", not a coverage claim — the named
     # assertions above are the coverage. Kept low on purpose: it moved from 30

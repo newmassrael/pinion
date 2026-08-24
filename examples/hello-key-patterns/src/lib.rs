@@ -173,11 +173,23 @@ const MIN_H: u32 = 460;
 /// and below the floor the right-hand columns clip. The record pane does not
 /// shrink — it restates a row the list is still showing, and a pane that
 /// narrowed would elide the very values a reader opened it for.
-const SHRINK: ShrinkPolicy = ShrinkPolicy::conceding(
-    (MIN_W, MIN_H),
-    (760, 420),
-    &["the columns right of the pattern clip before the record pane narrows"],
-);
+/// ★★★★★ R1798 — the paragraph above describes the intent exactly and the
+/// DECLARATION could not say it.
+///
+/// It was `conceding` over that sentence, and `ShrinkPolicy::covers` matches a
+/// name against a cut mark's tag or a step of its path — so the sentence
+/// matched nothing, `covered` was 0, and the wire reported this screen as
+/// **`unreachable`**: twelve marks of the record pane that no scrolling reaches
+/// at the floor, `kp.detail` short by 272 pixels. That is the reader's own
+/// report ("the right-hand sidebar is cut off"), which this tree had been
+/// answering on the wire and nobody had asked.
+///
+/// A **pan**, for the reason the sibling screen carries: naming the regions
+/// correctly would make the declaration true and still lose the twelve marks,
+/// and the module forbids losing rather than clipping. The prose stays above
+/// because it is the design intent and it is still what the screen does down to
+/// its layout minimum; what changed is what happens BELOW that.
+const SHRINK: ShrinkPolicy = ShrinkPolicy::panning((MIN_W, MIN_H), (760, 420));
 
 /// The section opens larger than the narrowest layout it can manage.
 ///

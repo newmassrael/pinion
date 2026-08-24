@@ -161,11 +161,24 @@ const _: () = assert!(
 );
 
 /// What this screen concedes when it is not given the room it wants.
-const SHRINK: ShrinkPolicy = ShrinkPolicy::conceding(
-    (MIN_W, MIN_H),
-    (720, 380),
-    &["the columns right of the message clip before the decode pane narrows"],
-);
+/// ★★★★★ R1798 — this was `conceding` over an ENGLISH SENTENCE, and the
+/// sentence could never match a mark.
+///
+/// `ShrinkPolicy::covers` compares each name against a cut mark's tag or a step
+/// of its path, so the declaration answered `covered = 0` for every mark it was
+/// supposed to excuse and the wire had been reporting this screen as
+/// **`unreachable`** — ten marks that no scrolling reaches at the floor — since
+/// the round that gave it a policy. `shrink.rs` calls that the one verdict no
+/// concession can excuse. Nothing failed because the gate that reads the
+/// verdict ran over a hand-written list of three screens that this one, added
+/// later, was never put into.
+///
+/// It is a **pan** now rather than a repaired list of tags, and that is the
+/// substantive half of the repair: a clip whose names were fixed would still
+/// lose those ten marks, and losing is the part the module forbids. A pan keeps
+/// every mark reachable and costs simultaneity instead — the node lab has
+/// shipped that answer since R1714 and reads `honoured`.
+const SHRINK: ShrinkPolicy = ShrinkPolicy::panning((MIN_W, MIN_H), (720, 380));
 
 fn window_size() -> (u32, u32) {
     pinion_core::external::layout_size(VIEW_TAG, SHRINK.comfortable(), (WIN_W, WIN_H))

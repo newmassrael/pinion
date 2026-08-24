@@ -320,6 +320,21 @@ if ! python3 "$repo_root/tools/demo_radius.py" --selftest >&2; then
     exit 1
 fi
 
+# R1798 — the same class one property over: `r1712`'s gate reads a screen's
+# concession verdict and refuses `unreachable`, and its population was a
+# hand-written list of three. Two screens grew a policy later, were never added,
+# and had been reporting the one verdict the framework calls inexcusable. This
+# derives the set from the sources and fails when the demo is short.
+echo "pre-push: shrink population ..." >&2
+if ! python3 "$repo_root/tools/shrink_population.py" --selftest >&2; then
+    echo "pre-push: the shrink-population computation failed its own tests" >&2
+    exit 1
+fi
+if ! python3 "$repo_root/tools/shrink_population.py" --check >&2; then
+    echo "pre-push: a screen declares a shrink policy and no gate asks it" >&2
+    exit 1
+fi
+
 # R1641 — the SCE dual pin: `Cargo.toml`'s rev, this repo's `Cargo.lock`, and
 # the `vendor/sce` submodule gitlink are three statements of one fact, and until
 # now the only thing holding them together was a comment in `Cargo.toml`

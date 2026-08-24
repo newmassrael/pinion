@@ -127,6 +127,33 @@ pub enum Fault {
     /// pans, so a policy saying it does describes a state the screen cannot
     /// enter. [`ShrinkPolicy::rigid`] is the shorter and true spelling.
     PanWithoutBand,
+    /// ★★★★★ (R1798) A name in `gives_up` **cannot be a tag**, so nothing it
+    /// says can ever match a mark.
+    ///
+    /// [`ShrinkPolicy::covers`] compares each name against a cut mark's own tag
+    /// or a step of its path. A name that is not shaped like one is therefore
+    /// not a coarse declaration or a stale one — it is a declaration that
+    /// **cannot be true of anything**, and the audit's arithmetic silently
+    /// answers `covered = 0`, `stale = <the whole list>`, and `unnamed = <every
+    /// mark that was cut>`. All three read exactly as a screen that gives up
+    /// something it never admitted to.
+    ///
+    /// Measured at R1798: two of the five shipped screens declared their
+    /// concession as an English sentence — *"the columns right of the message
+    /// clip before the decode pane narrows"* — and both had been reporting
+    /// `unreachable` on the wire since the round that gave them a policy, which
+    /// this module's own documentation calls the one verdict no concession can
+    /// excuse. Nothing failed, because the gate that reads the verdict runs
+    /// over a hand-written list of screens that those two were never added to.
+    ///
+    /// The rule is a space: a tag has none, and prose cannot avoid one. It is
+    /// deliberately crude — it will not catch a single misspelled word — but it
+    /// separates the two KINDS of wrong, and the kind it catches is the one
+    /// that cannot be right.
+    NameIsNotATag {
+        /// The name that cannot match a mark.
+        name: &'static str,
+    },
 }
 
 /// How a window serves the band between its layout minimum and its own floor.
@@ -288,6 +315,12 @@ impl ShrinkPolicy {
             Some(Fault::PanWithoutBand) => {
                 panic!("shrink policy: a pan is declared and there is no band to pan in")
             }
+            Some(Fault::NameIsNotATag { .. }) => {
+                panic!(
+                    "shrink policy: a name in `gives_up` is not shaped like a tag, so it \
+                     cannot match any mark — name the region, not what happens to it"
+                )
+            }
         }
     }
 
@@ -340,6 +373,25 @@ impl ShrinkPolicy {
                 floor: floor.1,
                 comfortable: comfortable.1,
             });
+        }
+        // ★ R1798 — before any question about the band: can these names match
+        // a mark at all? A `const fn` cannot use an iterator, so this is a
+        // hand-rolled walk over the bytes, which is also why the rule is one
+        // byte: a tag has no space and a sentence cannot avoid one.
+        let mut i = 0;
+        while i < gives_up.len() {
+            let bytes = gives_up[i].as_bytes();
+            let mut j = 0;
+            while j < bytes.len() {
+                if bytes[j] == b' ' {
+                    return Some(Fault::NameIsNotATag { name: gives_up[i] });
+                }
+                j += 1;
+            }
+            if bytes.is_empty() {
+                return Some(Fault::NameIsNotATag { name: gives_up[i] });
+            }
+            i += 1;
         }
         let band = floor.0 < comfortable.0 || floor.1 < comfortable.1;
         // ★ R1714 — the recourse decides what the names mean, so it decides
