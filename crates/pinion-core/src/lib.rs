@@ -54,6 +54,7 @@ pub mod frame;
 pub mod held;
 pub mod input;
 pub mod intent;
+pub mod legibility;
 pub mod marks;
 pub mod memory_census;
 pub mod mnemonic;

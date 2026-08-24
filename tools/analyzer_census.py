@@ -220,6 +220,70 @@ def check_assemblies(rows: list[dict], exists) -> list[str]:
     ]
 
 
+#: Rows allowed to carry an `app` verdict with no `assembled_by`.
+#:
+#: ★★★★★ R1807 — a RATCHET, not an exemption. `check_evidence` refuses any row
+#: whose verdict promises evidence and carries none; this names the ones that
+#: already did when the rule landed, so a NEW claim cannot join them silently
+#: and the backlog is a list a reader can shorten rather than a number in a
+#: summary line.
+#:
+#: `have` has no such list on purpose. R1807 took its backlog to zero in the
+#: round that built the rule, which is the only moment a ratchet can start
+#: empty — and an empty allowlist is the one that cannot rot.
+UNASSEMBLED: frozenset[str] = frozenset(
+    {
+        "capture.t1.9",
+        "capture.t1.11",
+        "capture.t2.14",
+        "capture.t2.18",
+        "dashboard.t1.8",
+        "dashboard.t1.9",
+        "lab.t1.8",
+        "lab.t1.9",
+        "lab.t1.11",
+        "lab.t2.17",
+        "lab.t2.19",
+    }
+)
+
+
+def check_evidence(rows: list[dict]) -> list[str]:
+    """Every row whose verdict PROMISES evidence and carries none.
+
+    ★★★★★ R1807 — the hole under both evidence checks. `check_proofs` iterates
+    the citations a `proven_by` makes, and `check_assemblies` the paths an
+    `assembled_by` names; a row carrying NEITHER field iterates zero times and
+    passes both. So the census refused a citation that had rotted and admitted a
+    `have` that never cited anything — the stronger claim, checked less. It was
+    visible only as prose in the report ("28 of 35 name a proof — the rest are
+    claims, and this says so"), which is a sentence a reader can agree with and
+    no gate can act on.
+
+    That is this project's recurring shape: a rule stated where it cannot be
+    enforced. `--check-proofs` was itself built (R1771) to end exactly this for
+    `proven_by`, and stopped one step short — it made the citations answerable
+    without making them REQUIRED.
+
+    Pure in `rows`, like its two siblings, so the rule is testable without a
+    toolchain or a filesystem.
+    """
+    out: list[str] = []
+    for row in rows:
+        verdict, ident = row["verdict"], row["id"]
+        if verdict == "have" and not proof_names(row) and not proof_paths(row):
+            out.append(
+                f"{ident}: a `have` must name a test that exercises it "
+                "(proven_by is empty)"
+            )
+        if verdict == "app" and not assembly_paths(row) and ident not in UNASSEMBLED:
+            out.append(
+                f"{ident}: an `app` must name the assembly that composes it "
+                "(assembled_by is empty)"
+            )
+    return out
+
+
 def proof_names(row: dict) -> list[str]:
     """The Rust test names a `proven_by` cites.
 
@@ -407,6 +471,37 @@ def selftest() -> int:
     check(
         "and a present one is not",
         check_assemblies(ok_app, lambda _p: True) == [],
+    )
+
+    # ★★★★★ R1807 — the row that names NOTHING, which both checks above pass
+    # vacuously: they iterate a field's contents, and an absent field has none.
+    bare_have = [{**good[0], "verdict": "have", "covered_by": "y"}]
+    check(
+        "a have that cites no test at all is refused",
+        [f for f in check_evidence(bare_have) if "proven_by is empty" in f] != [],
+    )
+    check(
+        "and the two older checks let it through, which is why this exists",
+        check_proofs(bare_have, lambda _n: False, lambda _p: False) == []
+        and check_assemblies(bare_have, lambda _p: False) == [],
+    )
+    cited_have = [{**bare_have[0], "proven_by": "some_module::tests::a_real_test_name"}]
+    check(
+        "a have that cites a test is not refused by this rule",
+        check_evidence(cited_have) == [],
+    )
+    bare_app = [{**good[0], "id": "capture.t9.9", "verdict": "app", "covered_by": "y"}]
+    check(
+        "an app that names no assembly is refused when it is not on the ratchet",
+        [f for f in check_evidence(bare_app) if "assembled_by is empty" in f] != [],
+    )
+    check(
+        "and is not refused when it IS on the ratchet",
+        check_evidence([{**bare_app[0], "id": next(iter(UNASSEMBLED))}]) == [],
+    )
+    check(
+        "the ratchet holds only app rows, so it cannot excuse a have",
+        check_evidence([{**bare_have[0], "id": next(iter(UNASSEMBLED))}]) != [],
     )
 
     # ★★★★★ R1771 — the same rules for the OTHER kind of evidence, which had
@@ -597,6 +692,35 @@ def main() -> int:
     if missing:
         for gone in missing:
             print(f"analyzer census: {gone}", file=sys.stderr)
+        return 1
+    # ★★★★★ R1807 — and the row that names NOTHING. Runs on every invocation,
+    # beside `check_assemblies` rather than under `--check-proofs`, because it
+    # builds nothing: it reads the pin. The expensive half (does the cited test
+    # RUN?) stays behind the flag; whether a claim cited anything at all is
+    # cheap enough to ask every time, and it is the half that was missing.
+    unevidenced = check_evidence(rows)
+    if unevidenced:
+        for gap in unevidenced:
+            print(f"analyzer census: {gap}", file=sys.stderr)
+        return 1
+    # The ratchet cannot be loosened by editing a row: a name in `UNASSEMBLED`
+    # that no longer needs to be there is a stale exemption, and a stale
+    # exemption is how a ratchet stops ratcheting.
+    stale = sorted(
+        ident
+        for ident in UNASSEMBLED
+        if not any(
+            row["id"] == ident and row["verdict"] == "app" and not assembly_paths(row)
+            for row in rows
+        )
+    )
+    if stale:
+        for ident in stale:
+            print(
+                f"analyzer census: {ident} is listed UNASSEMBLED and no longer "
+                "needs to be — remove it from the ratchet",
+                file=sys.stderr,
+            )
         return 1
     if "--check-proofs" in sys.argv:
         # ★★★★★ R1771 — the proofs, against the test runner. Separate from

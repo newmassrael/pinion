@@ -666,7 +666,18 @@ impl Theme {
 
     /// Canonical Dark Mode palette — Material 3 dark baseline with
     /// the accent lightened so the dark surface keeps WCAG AA
-    /// contrast on every paired role.
+    /// contrast on every paired **text** role.
+    ///
+    /// ★★★★★ R1807 — that sentence used to say "every paired role" and was
+    /// **false**, for a year and by nobody's fault in particular: no gate could
+    /// read it. `inverse_primary` on `inverse_surface` measured `3.56` here
+    /// against the light palette's `7.75` for the same pairing. It is now
+    /// checked rather than claimed — [`crate::legibility`] declares the
+    /// ink-over-ground table and its tests fail if the two palettes ever again
+    /// disagree about whether a pairing is legible. The word `text` above is
+    /// load-bearing: the one BOUNDARY pairing (`outline` on `surface`) is short
+    /// of its floor in both palettes, which that module reports separately and
+    /// deliberately does not fold into the parity verdict.
     ///
     /// - `surface` = `#121212` (Material 3 dark surface), the W3C
     ///   recommended dark-mode body background.
@@ -718,7 +729,20 @@ impl Theme {
             on_error_container: Color::rgb(0xf9, 0xde, 0xdc),
             inverse_surface: Color::rgb(0xe6, 0xe1, 0xe5),
             inverse_on_surface: Color::rgb(0x32, 0x2f, 0x35),
-            inverse_primary: Color::rgb(0x19, 0x76, 0xd2),
+            // ★★★★★ R1807 — was `#1976D2` (the light palette's own accent), and
+            // measured against this palette's light `inverse_surface` it read
+            // **3.56**, under the 4.5 an action label needs and under what this
+            // constructor's own doc comment claims for "every paired role". The
+            // light palette's mirror pairing reads 7.75, so the two themes
+            // disagreed about whether a snackbar's action label is legible —
+            // the exact defect `light and dark parity` is a claim about.
+            //
+            // Material Blue 900 rather than Blue 800 (`#1565C0`, measured 4.45):
+            // 4.45 is under the floor, and picking a value that lands within a
+            // rounding error of it would make the gate a coin toss on the next
+            // palette tweak. This reads 6.69, comparable headroom to the light
+            // side's 7.75. Pinned by `pinion_core::legibility`.
+            inverse_primary: Color::rgb(0x0d, 0x47, 0xa1),
             warning: Color::rgb(0xe8, 0xc0, 0x77),
             on_warning: Color::rgb(0x41, 0x2d, 0x00),
         }

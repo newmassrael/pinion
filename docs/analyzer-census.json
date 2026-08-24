@@ -125,7 +125,8 @@
     "tier": "t2",
     "capability": "injecting a recovered topology into the authoring canvas",
     "verdict": "have",
-    "covered_by": "`Document::observe` plus `Document::layers` (R1645): a reported link is a first-class part of the model and the difference from the drawn one is derived"
+    "covered_by": "`Document::observe` plus `Document::layers` (R1645): a reported link is a first-class part of the model and the difference from the drawn one is derived",
+    "proven_by": "pinion-node-graph::tests::r1645_observation_is_admitted_where_authoring_is_refused pinion-node-graph::tests::r1645_the_layer_of_a_link_is_derived_from_two_sets pinion-node-graph::tests::r1645_an_observation_changes_nothing_about_the_graph pinion-node-graph::tests::r1645_a_report_must_be_about_this_graph"
   },
   {
     "id": "capture.t2.16",
@@ -175,7 +176,8 @@
     "tier": "t0",
     "capability": "authoring an edge, with a direction and a transport choice",
     "verdict": "have",
-    "covered_by": "`Document::connect`, whose refusals name which rule failed, and `Flow` for the direction law"
+    "covered_by": "`Document::connect`, whose refusals name which rule failed, and `Flow` for the direction law",
+    "proven_by": "pinion-node-graph::tests::a_refused_wire_names_both_ends_and_both_types pinion-node-graph::tests::a_wire_that_would_close_a_cycle_names_the_path pinion-node-graph::tests::wiring_an_occupied_input_reports_what_it_displaced pinion-node-graph::tests::r1599_multiplicity_is_the_duality_and_unreal_derives_the_same_two_rules pinion-node-graph::tests::r1599_a_control_port_has_no_type_and_no_value_to_author"
   },
   {
     "id": "lab.t0.4",
@@ -183,7 +185,8 @@
     "tier": "t0",
     "capability": "a master auto-discovery switch, off by default",
     "verdict": "have",
-    "covered_by": "`Discovery` (R1645), off by default, and the default is argued as a determinism switch rather than a preference"
+    "covered_by": "`Discovery` (R1645), off by default, and the default is argued as a determinism switch rather than a preference",
+    "proven_by": "pinion-node-graph::tests::r1645_a_drawing_known_to_be_incomplete_says_so pinion-node-graph::tests::r1645_the_reported_layer_is_a_value"
   },
   {
     "id": "lab.t0.5",
@@ -363,7 +366,8 @@
     "tier": "t0",
     "capability": "multi-window: tear-off to an independent window, with an always-on-top option",
     "verdict": "have",
-    "covered_by": "`WindowSpec` with `display` and `level` (R1576 / R1610 / R1616 / R1617), and a display that disappears is reported by name"
+    "covered_by": "`WindowSpec` with `display` and `level` (R1576 / R1610 / R1616 / R1617), and a display that disappears is reported by name",
+    "proven_by": "pinion-core::window_level::tests::r1610_the_three_driving_backends_apply_both_stacking_requests pinion-core::window_level::tests::r1610_default_level_is_normal pinion-rpc::window_declare::tests::r1610_an_unknown_level_is_refused_before_anything_is_written pinion-core::display::tests::r1576_a_window_wholly_on_one_display_names_that_display pinion-core::display::tests::r1576_a_window_on_a_seam_names_both_and_the_shares_sum_to_the_visible"
   },
   {
     "id": "dashboard.t0.7",
@@ -398,7 +402,8 @@
     "tier": "t1",
     "capability": "a topology map",
     "verdict": "have",
-    "covered_by": "`pinion-node-graph` plus its `layout` (Sugiyama and a reproducible organic relaxation)"
+    "covered_by": "`pinion-node-graph` plus its `layout` (Sugiyama and a reproducible organic relaxation)",
+    "proven_by": "pinion-node-graph::tests::r1597_every_acyclic_edge_flows_forward_and_no_two_cards_overlap pinion-node-graph::tests::r1597_barycenter_reduces_crossings pinion-node-graph::tests::r1597_a_spring_holds_its_pair_tighter_than_repulsion_holds_a_stranger pinion-node-graph::tests::r1597_a_cyclic_document_lays_out_the_same_whatever_order_its_links_arrived_in pinion-node-graph::tests::r1597_layout_is_deterministic_and_idempotent"
   },
   {
     "id": "dashboard.t1.4",
@@ -476,7 +481,8 @@
     "tier": "t1",
     "capability": "report export",
     "verdict": "have",
-    "covered_by": "`pinion-rpc::export_pdf`. The TABULAR export the capture pane wants is a different gap, and it is capture.t1.12"
+    "covered_by": "`pinion-rpc::export_pdf`. The TABULAR export the capture pane wants is a different gap, and it is capture.t1.12",
+    "proven_by": "pinion-rpc::export_pdf::tests::r908_scene_bounds_page_is_wysiwyg pinion-rpc::export_pdf::tests::r908_named_page_letter_and_a4 pinion-rpc::export_pdf::tests::r908_landscape_swaps_named_page pinion-rpc::export_pdf::tests::r908_unknown_page_and_orientation_rejected"
   },
   {
     "id": "dashboard.t2.1",
@@ -556,7 +562,8 @@
     "tier": "t2",
     "capability": "light and dark parity",
     "verdict": "have",
-    "covered_by": "the theme system, with every demo asserting both"
+    "covered_by": "`pinion_core::legibility` (R1807): the ink-over-ground pairings are a DECLARED table and parity is a computed set, not a claim. `parity()` reads every pairing in both palettes and separates the two ways a palette can be wrong -- the two themes DISAGREEING about a pairing (the parity defect) from a pairing short of its floor in both (an absolute one, which the two agree about). Measured when the table was first run, the claim this row used to rest on was FALSE: dark `inverse_primary` on `inverse_surface` read 3.56 against light's 7.75, so a snackbar's action label cleared WCAG AA in one theme and not the other, while the dark palette's own constructor documented itself as keeping AA on every paired role. Nothing failed because nothing asked. The palette is fixed (Material Blue 900) and the pre-fix value is pinned as a counterfactual so the gate is proven against the real defect. The one remaining absolute shortfall (`outline`, 1.82 light / 1.81 dark) is carried openly rather than folded in",
+    "proven_by": "pinion-core::legibility::tests::r1807_the_two_palettes_agree_about_every_declared_pairing pinion-core::legibility::tests::r1807_the_value_this_round_replaced_would_still_be_caught pinion-core::legibility::tests::r1807_every_declared_pairing_is_accounted_for_exactly_once pinion-core::legibility::tests::r1807_the_one_absolute_shortfall_is_named_rather_than_hidden pinion-core::legibility::tests::r1807_the_pairing_table_is_not_vacuous"
   },
   {
     "id": "dashboard.t2.10",
