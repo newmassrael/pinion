@@ -502,24 +502,59 @@ fn r1663_every_painted_control_answers_at_the_centre_of_its_own_rectangle() {
             );
             checked += 1;
         }
-        // Decode rows, including the layer headings that fold.
+        // Decode rows — EVERY one of which selects, layer headings included.
+        //
+        // ★★★★★ R1815 — this expectation used to be
+        // `LAYERS.position(..).map_or_else(|| Hit::Field(path), Hit::Layer)`,
+        // which is the implementation restated as a requirement: it asserted
+        // that a layer heading answers `Layer`, so the very defect this round
+        // repairs was written into the gate meant to catch it. That is why a
+        // sweep pressing the centre of every painted control ran green for
+        // sixty-odd rounds over a row a pointer could not select.
+        //
+        // The contract now comes from the behaviour canon instead of from the
+        // code: the canon selects on every row of the decode tree. A gate whose
+        // expectation is derived from the thing it is checking cannot fail.
         for (path, ..) in visible_fields(state) {
             let tag = format!("pv.tree.field.{path}");
             let Some(rect) = shot.tags.get(&tag) else {
                 continue;
             };
             let (px, py) = centre(*rect);
-            let want = spec::LAYERS
-                .iter()
-                .position(|(id, _)| *id == path.as_str())
-                .map_or_else(|| Hit::Field(path.clone()), Hit::Layer);
             assert_eq!(
                 Hit::at(state, px, py),
-                want,
-                "{case}: pressing the middle of `{tag}` ({rect:?}) did not answer as itself"
+                Hit::Field(path.clone()),
+                "{case}: pressing the middle of `{tag}` ({rect:?}) did not answer as itself \
+                 — every row of the decode tree selects, which is what the behaviour canon does"
             );
             checked += 1;
         }
+        // ★★★★★ R1815 — and the fold chevrons, which were painted with a tag of
+        // their own since R1693 and were in NO check here. A control absent
+        // from the swept population is one the sweep's own headline — *every
+        // painted control answers for itself* — is silently false about.
+        let mut chevrons = 0;
+        for (index, (id, _)) in spec::LAYERS.iter().enumerate() {
+            let tag = format!("pv.tree.layer.{id}");
+            let Some(rect) = shot.tags.get(&tag) else {
+                continue;
+            };
+            let (px, py) = centre(*rect);
+            assert_eq!(
+                Hit::at(state, px, py),
+                Hit::Layer(index),
+                "{case}: pressing the middle of `{tag}` ({rect:?}) did not fold its layer"
+            );
+            chevrons += 1;
+            checked += 1;
+        }
+        // ★ Anti-vacuity, because every loop above it skips a tag it cannot
+        // find and a population of zero passes each one. The decode tree is on
+        // screen in every case this sweep runs, so its chevrons are too.
+        assert!(
+            chevrons > 0,
+            "{case}: no fold chevron was pressed — the check above is vacuous"
+        );
         // Byte cells.
         for byte in 0..spec::SOURCES[0].1 {
             let tag = format!("pv.bytes.cell.{byte}");

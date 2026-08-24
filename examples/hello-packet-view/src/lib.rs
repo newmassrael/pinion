@@ -1006,6 +1006,23 @@ fn tree_row(n: usize) -> Rect {
     )
 }
 
+/// The fold chevron of the `n`-th visible decode row, in the tree pane's own
+/// space.
+///
+/// ★★★★★ R1815 — read by the painter AND by the hit test, which is the whole
+/// point of it being a function. Before this the rectangle was a literal inside
+/// `tree_row_paint` and the hit test did not know the chevron existed: pressing
+/// anywhere on a layer row folded it, INCLUDING the name, so the row could not
+/// be selected by a pointer at all while the same row opened over the wire.
+///
+/// Only a layer row draws one. The rectangle is returned for any `n` because it
+/// is pure arithmetic; who draws it is [`tree_row_paint`]'s question and who
+/// answers for it is [`Hit::at`]'s, and both ask [`spec::LAYERS`].
+fn tree_chevron(n: usize) -> Rect {
+    let row = tree_row(n);
+    Rect::new(PAD - 6, row.y + 5, 10, 12)
+}
+
 /// The byte grid's column arithmetic — the crate's, so the painter and the hit
 /// test cannot each derive their own.
 fn hex_layout() -> HexLayout {
@@ -1115,13 +1132,22 @@ impl Hit {
         {
             return Self::Byte(b);
         }
-        if let Some(path) = tag.strip_prefix("pv.tree.field.") {
-            if let Some(layer) = spec::LAYERS.iter().position(|(id, _)| *id == path) {
-                return Self::Layer(layer);
-            }
-            if state.map.map().field(path).is_some() {
-                return Self::Field(path.to_owned());
-            }
+        // ★★★★★ R1815 — the chevron has its own tag and now its own arm. It has
+        // carried `pv.tree.layer.{id}` since R1693 and nothing here matched it,
+        // so the tag was addressable in the paint and inert to every press.
+        if let Some(id) = tag.strip_prefix("pv.tree.layer.")
+            && let Some(layer) = spec::LAYERS.iter().position(|(lid, _)| *lid == id)
+        {
+            return Self::Layer(layer);
+        }
+        if let Some(path) = tag.strip_prefix("pv.tree.field.")
+            && state.map.map().field(path).is_some()
+        {
+            // ★ A layer heading falls here too, and that is the repair: the row
+            // SELECTS, exactly as every other row of the tree does and as the
+            // behaviour canon does for all of them. Folding answers to the
+            // chevron's tag above.
+            return Self::Field(path.to_owned());
         }
         Self::None
     }
@@ -1185,9 +1211,31 @@ impl Hit {
             let (tx, ty) = in_pane(&state.tree_scroll, tree, px, py);
             for (n, (path, ..)) in visible_fields(state).into_iter().enumerate() {
                 if contains(tree_row(n), tx, ty) {
-                    if let Some(layer) =
-                        spec::LAYERS.iter().position(|(id, _)| *id == path.as_str())
+                    // ★★★★★ R1815 — **the fold is the CHEVRON's, and the rest of
+                    // the row selects.** This arm used to answer `Layer` for the
+                    // whole row, so a layer heading could not be opened by a
+                    // pointer at all — while `invoke select_field` opened it,
+                    // which is a screen whose two channels disagree about what
+                    // the same row does.
+                    //
+                    // The behaviour canon puts selection on EVERY row of the
+                    // decode tree and has no fold whatever; folding is this
+                    // screen's own addition, and it had quietly taken the
+                    // canon's gesture to pay for itself. The standing rule is
+                    // that what the canon has and we lack gets built, and what
+                    // we have and it lacks is kept — so the fold moves onto the
+                    // affordance that draws it rather than being removed.
+                    //
+                    // The two rectangles are disjoint by construction: the
+                    // chevron is 10px at `PAD - 6` and the name starts at
+                    // `indent + 6`, so no press is ambiguous.
+                    if spec::LAYERS.iter().any(|(id, _)| *id == path.as_str())
+                        && contains(tree_chevron(n), tx, ty)
                     {
+                        let layer = spec::LAYERS
+                            .iter()
+                            .position(|(id, _)| *id == path.as_str())
+                            .unwrap_or(0);
                         return Self::Layer(layer);
                     }
                     return Self::Field(path);
@@ -1682,6 +1730,52 @@ fn key_at(state: &Rc<ViewState>, focused: Option<&str>, chord: &str) -> bool {
             };
             select_message(state, next);
             true
+        }
+        // ★★★★★ R1815 — **expand and collapse, which is what a tree item
+        // announcing `aria-expanded` is contracting to accept.**
+        //
+        // This screen announces `aria-expanded` on every layer heading, and
+        // until this round NO KEY COULD CHANGE IT. The tree's cursor declares
+        // `Activation::Follows`, so an arrow moves the cursor and selects; there
+        // is nothing for `Enter` to activate, the roving consumes no such chord,
+        // and the fallback arm asks `Hit::of_tag` about the focused stop — the
+        // PANE tag, never the row's. Folding was reachable from the pointer
+        // alone.
+        //
+        // ★★★★★ That fact is MEASURED, in
+        // `r1815_the_arrows_expand_and_collapse_what_the_item_announces`, and it
+        // is measured because reading this code gave the wrong answer twice, in
+        // opposite directions — first that `Enter` folded a row, then that it
+        // did. Running it is what settled which. A claim about a keymap made by
+        // tracing control flow through a roving cursor, a landing enum and two
+        // fallback arms is a guess wearing a citation.
+        //
+        // The chevron cannot be the keyboard's answer either: it is declared
+        // part of its tree item rather than a stop of its own, which is the
+        // correct ARIA shape — a tree item owns its expansion — and is exactly
+        // why the *arrows* are where expansion belongs. The tree's roving is
+        // `Axis::Vertical`, so neither arrow is consumed and both fall through
+        // to here, where until now nothing claimed them.
+        //
+        // ⚠ This is the EXPANSION half of the ARIA tree pattern, not all of it:
+        // there, `ArrowRight` on an already-open node moves to its first child
+        // and `ArrowLeft` on a leaf moves to its parent. Those are navigation,
+        // they need a cursor that can address a parent, and they are not built
+        // — a chord that would only navigate returns `false` and falls through
+        // rather than silently doing nothing.
+        "ArrowRight" | "ArrowLeft" if focused == Some("pv.tree") => {
+            let path = state.field.get();
+            spec::LAYERS
+                .iter()
+                .position(|(id, _)| *id == path)
+                .is_some_and(|index| {
+                    let want_folded = chord == "ArrowLeft";
+                    if state.folded.get().get(index).copied().unwrap_or(false) == want_folded {
+                        return false;
+                    }
+                    toggle_layer(state, index);
+                    true
+                })
         }
         "Escape" => {
             state.field.set(spec::LAYERS[0].0.to_owned());
@@ -2214,7 +2308,7 @@ fn tree_row_paint(
                 } else {
                     "v"
                 },
-                Rect::new(PAD - 6, row.y + 5, 10, 12),
+                tree_chevron(n),
                 FONT_SMALL,
                 ink.text_3,
             )

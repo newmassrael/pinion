@@ -460,6 +460,146 @@ fn r1814_the_opening_field_paints_the_bytes_the_reference_draws() {
     assert_eq!(field.value, "3419", "and 0x0d5b is that number");
 }
 
+/// ★★★★★ A layer heading OPENS when it is pressed, and the two channels agree.
+///
+/// R1747 measured the defect by driving the running screen: pressing the middle
+/// of `pv.tree.field.l0` flipped `folded` and left `selected_field` alone, while
+/// `invoke select_field "l0"` on the same row opened it and lit twelve bytes. A
+/// screen whose pointer and whose wire disagree about what one row does is one
+/// this tree has closed under several names on its sibling screens.
+///
+/// The behaviour canon settles which of the two is right: its capture section
+/// puts selection on EVERY row of the decode tree, depth-0 rows included, and
+/// has no fold at all. Folding is this screen's own second-pass addition — kept,
+/// by the standing rule that what the canon lacks and we have is not removed —
+/// but it may not be paid for with the canon's own gesture, so it moves onto the
+/// chevron that draws it.
+#[test]
+fn r1815_a_layer_heading_opens_by_tag_and_folds_by_its_chevron() {
+    with_state(|state| {
+        let layer = spec::LAYERS[0].0;
+        assert_ne!(state.field.get(), layer, "the screen opens on a leaf");
+
+        // The row's own tag selects, which is the canon's contract and was the
+        // wire's answer all along.
+        assert!(
+            super::act_on_hit(
+                state,
+                super::Hit::of_tag(state, &format!("pv.tree.field.{layer}"))
+            ),
+            "the layer row must answer a press"
+        );
+        assert_eq!(
+            state.field.get(),
+            layer,
+            "pressing a layer heading opens it"
+        );
+        assert!(
+            !state.folded.get()[0],
+            "and opening it must not fold it — that is the defect this repairs"
+        );
+        assert!(
+            state.lit_selection().is_some(),
+            "an opened layer lights its bytes, which is what selecting it is FOR"
+        );
+
+        // ★★★★★ THE THIRD CHANNEL, which is the one that was right all along and
+        // the one nothing compared. `r1699_every_cursor_member_resolves_to_the
+        // _hit_its_tag_names` asserts `Hit::of_tag == Hit::at` and stayed green
+        // through this entire defect, because BOTH pointer channels answered
+        // `Layer` — an agreement gate is blind to an error its two sides share.
+        // The wire reaches `select_field` directly, never through `Hit`, so it
+        // was outside that comparison; R1747 found the defect by driving the
+        // running screen and noticing the wire and the pointer disagreeing.
+        let by_tag = state.field.get();
+        select_field(state, layer);
+        assert_eq!(
+            state.field.get(),
+            by_tag,
+            "pressing the row and invoking `select_field` on it are one act"
+        );
+
+        // The chevron's tag folds, and touches the selection not at all.
+        assert!(
+            super::act_on_hit(
+                state,
+                super::Hit::of_tag(state, &format!("pv.tree.layer.{layer}"))
+            ),
+            "the chevron must answer a press — it had a tag and no arm until R1815"
+        );
+        assert!(state.folded.get()[0], "the chevron folds its layer");
+        assert_eq!(
+            state.field.get(),
+            layer,
+            "and folding does not move the selection"
+        );
+    });
+}
+
+/// ★★★★★ The keyboard keeps the fold the pointer repair moved off its row.
+///
+/// This is not a feature beside the repair — without it the repair REMOVES a
+/// capability. `Enter` on a layer heading used to fold it, because the whole row
+/// answered `Hit::Layer`; once the row selects, the chevron owns the fold, and
+/// the chevron is declared part of its tree item rather than a stop of its own.
+/// That is the right ARIA shape — a tree item owns its expansion — and it is
+/// precisely why the ARROWS are where expansion has to live.
+///
+/// The screen was already announcing `aria-expanded` on its four layer items
+/// while no key on any keyboard could change it.
+#[test]
+fn r1815_the_arrows_expand_and_collapse_what_the_item_announces() {
+    with_state(|state| {
+        let layer = spec::LAYERS[0].0;
+        select_field(state, layer);
+        assert!(!state.folded.get()[0], "it starts open");
+
+        assert!(
+            super::key_at(state, Some("pv.tree"), "ArrowLeft"),
+            "ArrowLeft on an open layer collapses it"
+        );
+        assert!(state.folded.get()[0]);
+        assert!(
+            super::key_at(state, Some("pv.tree"), "ArrowRight"),
+            "ArrowRight on a collapsed layer expands it"
+        );
+        assert!(!state.folded.get()[0]);
+
+        // ★★★★★ WHAT `Enter` DOES, MEASURED — and this assertion exists because
+        // reading the code gave the wrong answer TWICE, in both directions.
+        //
+        // The tree's roving cursor declares `Activation::Follows`, so the cursor
+        // IS the selection: an arrow moves it and `seat_pane_cursor` calls
+        // `select_field`. There is nothing left for `Enter` to activate, so the
+        // roving consumes no such chord, and the fallback arm asks
+        // `Hit::of_tag` about the focused stop — which is the PANE tag
+        // `pv.tree`, never the row's — and gets `Hit::None`.
+        //
+        // ⇒ the keyboard could already SELECT a layer heading, by walking onto
+        // it. What no key could do was FOLD one, which is why the arrows are the
+        // repair and why the pointer was the channel that was broken.
+        select_field(state, layer);
+        assert!(
+            !super::key_at(state, Some("pv.tree"), "Enter"),
+            "a `Follows` tree has nothing for Enter to activate, so it reports \
+             that it did nothing rather than pretending"
+        );
+        assert_eq!(state.field.get(), layer, "and it moved nothing");
+
+        // A chord that would only navigate falls through rather than pretending.
+        assert!(
+            !super::key_at(state, Some("pv.tree"), "ArrowRight"),
+            "ArrowRight on an ALREADY open layer is the ARIA move-to-first-child \
+             case, which is not built — it must report that it did nothing"
+        );
+        select_field(state, "l1.sn");
+        assert!(
+            !super::key_at(state, Some("pv.tree"), "ArrowLeft"),
+            "and a leaf row has nothing to collapse"
+        );
+    });
+}
+
 /// A count is printed the way the reference prints one.
 #[test]
 fn r1663_counts_carry_thousands_separators() {
