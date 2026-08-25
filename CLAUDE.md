@@ -72,9 +72,25 @@ axis's **last audit** recorded — the audit round is stamped because several ar
 than the judgment they sit under. Full rationale for every judgment, verbatim:
 **`docs/phase-b-axis-history.md`**.
 
+★★★★★ **The OPEN ITEMS are the tool's now — ask it, do not read them off this
+table** (R1833):
+
+```bash
+python3 tools/phase_b_tally.py --owed    # every axis's remainder, with the round that named it
+```
+
+The prose below is the audit's *narrative*; `--owed` is its *list*. Until R1833
+the list existed only here and in a comment inside `phase_b_tally.py`, so
+`grep -l '^  status: open' memory/debt-*.md` — the query this project uses to ask
+what is open — could not see a single one of the 41. ⚠ And a hand-kept list rots
+in the direction that hides work: the very first act of writing this one down as
+data removed a **stale** item, a node-graph model this table said was still
+duplicated citing a debt that had closed **seven rounds before the audit that
+listed it**. Do not add an item here; add it to `REMAINDER` in the tool.
+
 | Axis | w | Gap, and the round that last audited it |
 |---|--:|---|
-| **Advanced DCC / IDE widgets** | 20 | **R1604** re-judged 98 → 86 — the largest move here and the second downward one. The node-graph third now has a *measured, test-backed* census where the 98 rested on a hand count: **the DCC 54/72 = 75%**, **the engine 60/149 = 40%**, so node graph 97 → 62 beside property grid ~98 / data grid ~98. **Nothing was lost — the meter is new.** Open (R1594): ~7 editor gestures; **execution semantics** (no DCC comparison will surface these — it is pure dataflow too); `hello-node-editor` still holds its own model ([[debt-two-node-graph-models]]) |
+| **Advanced DCC / IDE widgets** | 20 | **R1604** re-judged 98 → 86 — the largest move here and the second downward one. The node-graph third now has a *measured, test-backed* census where the 98 rested on a hand count: **the DCC 54/72 = 75%**, **the engine 60/149 = 40%**, so node graph 97 → 62 beside property grid ~98 / data grid ~98. **Nothing was lost — the meter is new.** Open (R1594): ~7 editor gestures; **execution semantics** (no DCC comparison will surface these — it is pure dataflow too); `~~hello-node-editor still holds its own model~~ — **STALE, removed R1833**: that debt closed at R1597, seven rounds BEFORE the R1604 audit that listed it, and a census re-run in R1833 finds no hand-rolled node-graph model outside the crate |
 | **Model/View at scale** | 16 | **R1563**: the section axis answers 2 of the toolkit's 4 header roles; **drag-select across sections** is blocked on the pointer wire not reporting held buttons (W3C `PointerEvent.buttons`); the keyboard has no two-axis vocabulary (`Ctrl+Space`, `Ctrl+Shift+Arrow`); `SelectColumns` has no binding; the eager `Table` keeps its own rectangle cell-selection, so the tree carries **two** cell-selection models |
 | **Common widget catalog** | 16 | **R1695** re-judged 98 → 99, and it is breadth: **the paged container is built** (`pinion_core::widgets::destination` + `pinion_widget_paint::pages` — keyed destinations, a navigation that refuses with the reason, and the page that is not current never constructed), so the absent-kinds list is **three**. Open: wheel on combo box / tab bar is still the largest cross-cutting item (`External::wheel` has exactly **two** widget implementors, `slider` and `spin_button`, unmoved since R1554); **three** absent widget kinds (dial, font picker, canned message box / input dialog — `hello-app-font` loads a face rather than picking one; the key-sequence editor landed R1569); mnemonic adoption is **5** declaring sites, measured (`group_box`, `menu`, and three screens) |
 | **Charting / dataviz** | 10 | **R1744** re-judged 96 → 97, demanded by the tool. Supersedes the R1568 row this table carried, **three of whose items were already closed** — label thinning and the category axis (R1633) and the polar chart's legend interaction (R1722) — while per-mark a11y stopped being charged to this axis at R1622 (the crate has no `AccessNode` at all; it is one accessibility debt). Open, from the R1629 audit: the y-window, the plot zoom's a11y and its second consumer; the polar **cross-filter leg** (the half of R1722's item still open); 3D-surface (Phase C's); and **five of ten chart builders publish nothing to derive** — of those a treemap's tiling and a timeline's lane packing are the two a reader genuinely cannot recover. Drag pan / rubber-band zoom has been **buildable since R1619** and is still unbuilt |

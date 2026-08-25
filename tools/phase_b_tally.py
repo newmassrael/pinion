@@ -2865,6 +2865,150 @@ AXES = [
 ]
 
 
+#: ★★★★★ R1833 — **what each axis still owes, as a QUERY rather than as prose.**
+#:
+#: # The defect this ends
+#:
+#: An axis judgment names what is left. Until this table those names lived in
+#: exactly two places, both prose: the judgment comment inside `AXES` above, and
+#: one cell per axis in `CLAUDE.md`. Neither is answerable by a command, so
+#: `grep -l '^  status: open' memory/debt-*.md` — the query this project uses to
+#: ask *what is open* — could not see any of them.
+#:
+#: Measured at R1833 across all eight axes: **41 named remainder items, of which
+#: 2 name a debt file.** The debt that asked for this had counted only the perf
+#: axis (7 items, 1 filed) and asked whether the others were the same. They are,
+#: so this is not perf's problem and the fix is not perf-shaped.
+#:
+#: ⚠ It was 42 before the transcription found a STALE one — see the note in
+#: `dcc` below. That is the first thing writing a prose list down as data did.
+#:
+#: # Why here and not 42 debt files
+#:
+#: Because a copy rots. This session watched exactly that happen twice — the
+#: charting cell carried R1568 text of which three items were already closed,
+#: and the perf cell carried R1744 text — which is the argument for ONE home,
+#: and for it being the home the judgment is already made in. The rule this
+#: project has learned three times is *derive, do not copy*: R1519 made the
+#: leverage ranking derived for the same reason.
+#:
+#: ⚠ **What this does NOT claim.** These are transcribed from each axis's LAST
+#: AUDIT, and `named_by` stamps which round said it. Nothing here re-verifies
+#: that an item is still open — that is per-item work, and `--owed` prints the
+#: stamp precisely so a reader can see how old the claim is rather than take it
+#: for current. An axis judged 77 rounds ago is reporting a 77-round-old list
+#: and now says so.
+#:
+#: A `debt` key names the memory file where an item has one. It is metadata and
+#: not a coupling: this tool runs at push, and the memory folder is outside the
+#: repository and absent from a fresh clone.
+REMAINDER: dict[str, list[dict]] = {
+    "dcc": [
+        {"id": "editor-gestures", "named_by": 1594,
+         "open": "roughly seven editor gestures the reference offers and this build does not"},
+        {"id": "execution-semantics", "named_by": 1594,
+         "open": "execution semantics — no reference comparison can surface these, being pure dataflow too"},
+        # ★★★★★ R1833 DROPPED A THIRD ITEM HERE, and finding it is the argument
+        # for this table existing at all. `CLAUDE.md`'s dcc cell listed
+        # "hello-node-editor still holds its own node-graph model", citing a
+        # debt — and that debt CLOSED at R1597, seven rounds before the R1604
+        # audit that listed it. Re-verified rather than trusted: a census for a
+        # hand-rolled `struct GraphNode` / `struct Edge` outside
+        # `pinion-node-graph` finds none, and the editor depends on the crate.
+        # An axis's remainder in prose accumulates items nobody re-reads; the
+        # first act of writing it down as data was to remove one.
+    ],
+    "modelview": [
+        {"id": "header-roles", "named_by": 1563,
+         "open": "the section axis answers 2 of the reference's 4 header roles"},
+        {"id": "drag-select-across-sections", "named_by": 1563,
+         "open": "drag-select across sections, blocked on the pointer wire not reporting held buttons"},
+        {"id": "two-axis-keyboard", "named_by": 1563,
+         "open": "the keyboard has no two-axis selection vocabulary"},
+        {"id": "select-columns-binding", "named_by": 1563,
+         "open": "`SelectColumns` has no binding"},
+        {"id": "two-cell-selection-models", "named_by": 1563,
+         "open": "the eager table keeps its own rectangle cell-selection, so the tree carries two"},
+    ],
+    "catalog": [
+        {"id": "wheel-on-combo-and-tabbar", "named_by": 1695,
+         "open": "wheel on combo box / tab bar — `External::wheel` has two widget implementors"},
+        {"id": "absent-widget-kinds", "named_by": 1695,
+         "open": "three absent widget kinds: dial, font picker, canned message/input dialog"},
+        {"id": "mnemonic-adoption", "named_by": 1695,
+         "open": "mnemonic adoption is five declaring sites"},
+    ],
+    "dataviz": [
+        {"id": "y-window", "named_by": 1629, "open": "the plot window is x-only; there is no y-window"},
+        {"id": "plot-zoom-a11y", "named_by": 1629, "open": "the plot zoom is invisible to a screen reader"},
+        {"id": "plot-zoom-second-consumer", "named_by": 1629,
+         "open": "the plot zoom has one consumer"},
+        {"id": "polar-cross-filter-leg", "named_by": 1722,
+         "open": "the polar chart has no cross-filter leg — the half of R1722's item still open"},
+        {"id": "three-d-surface", "named_by": 1629,
+         "open": "3D-surface waits on a 3D renderer and is Phase C's"},
+        {"id": "builders-publish-nothing", "named_by": 1629,
+         "open": "five of ten chart builders publish nothing to derive; a treemap's tiling and a "
+                 "timeline's lane packing are the two a reader cannot recover"},
+        {"id": "drag-pan-rubber-band", "named_by": 1619,
+         "open": "drag pan / rubber-band zoom, buildable since R1619 and still unbuilt"},
+    ],
+    "text": [
+        {"id": "set-markdown-to-html", "named_by": 1642,
+         "open": "`setMarkdown` / `toHtml` — the import/export half of the document model"},
+        {"id": "nested-tables", "named_by": 1642,
+         "open": "nested tables, which need the general text frame containment axis"},
+        {"id": "text-block-format-three", "named_by": 1642,
+         "open": "the text block format's three untaken properties"},
+        {"id": "character-half-remainder", "named_by": 1642,
+         "open": "the character half's remainder: super/subscript and overline"},
+        {"id": "grid-authoring-vocabulary", "named_by": 1642,
+         "open": "the grid's `minmax()` / `fit-content()` / `grid-auto-flow` AUTHORING vocabulary"},
+    ],
+    "perf": [
+        {"id": "render-us-bills-present", "named_by": 1756,
+         "open": "the headline instrument brackets a blocking present and calls it work",
+         "debt": "debt-render-us-bills-a-blocking-present-as-work"},
+        {"id": "present-latency", "named_by": 1558,
+         "open": "present latency is unmeasured and is genuinely external"},
+        {"id": "footprint-is-requested", "named_by": 1558,
+         "open": "footprint is what the allocator was ASKED for, not what is resident"},
+        {"id": "per-node-replay", "named_by": 1558,
+         "open": "per-node replay status is absent by construction"},
+        {"id": "profile-row-address-reader", "named_by": 1558,
+         "open": "a profile row's address has no general reader"},
+        {"id": "two-arenas-unpinned", "named_by": 1550,
+         "open": "the two modelled arenas are unpinned"},
+        {"id": "repeated-work-cost-model", "named_by": 1744,
+         "open": "the repeated / superseded work cost model is unaudited"},
+    ],
+    "osnative": [
+        {"id": "usable-region-probe", "named_by": 1576,
+         "open": "a display's usable region needs a platform probe"},
+        {"id": "no-hot-plug-event", "named_by": 1576,
+         "open": "no display hot-plug event — the window library emits none"},
+        {"id": "mac-win-surfaces", "named_by": 1576,
+         "open": "the Mac and Windows native surfaces this axis is judged short on, untouched"},
+    ],
+    "api": [
+        {"id": "method-type-binding", "named_by": 1642, "open": "no method -> type binding"},
+        {"id": "version-negotiation", "named_by": 1642, "open": "no version negotiation"},
+        {"id": "deprecation-path", "named_by": 1642, "open": "no deprecation path"},
+        {"id": "freeze", "named_by": 1642, "open": "the surface is not frozen"},
+        {"id": "per-method-error-taxonomy", "named_by": 1642, "open": "no per-method error taxonomy"},
+        {"id": "census-covers-one-crate", "named_by": 1642,
+         "open": "the census covers `pinion-rpc` only"},
+        {"id": "per-subscription-filter", "named_by": 1642, "open": "no per-subscription filter"},
+        {"id": "schema-channel-writable", "named_by": 1642,
+         "open": "`SchemaChannel` cannot say a slot is WRITABLE"},
+        {"id": "two-describing-surfaces", "named_by": 1642,
+         "open": "two self-describing surfaces at different maturity; the method surface is where "
+                 "R1585 left it",
+         "debt": "debt-two-describing-surfaces-at-different-maturity"},
+    ],
+}
+
+
 #: Examples that are NOT Phase B evidence, and why. Listing them with a reason
 #: is the difference between "excluded" and "invisible" — the dataviz campaign
 #: was invisible for 587 rounds precisely because nothing named it.
@@ -3410,13 +3554,79 @@ def selftest() -> int:
         "leverage ranks the less-complete axis higher at equal weight",
     )
 
+    # ★★★★★ R1833 — the remainder table, held to a bijection with the axes.
+    #
+    # The point of the bijection is the direction that is easy to miss: a NEW
+    # axis must declare a remainder (even an empty one) rather than be silently
+    # absent from `--owed`, which is the exact failure this table exists to end.
+    check(
+        set(REMAINDER) == {a["key"] for a in AXES},
+        "every axis declares a remainder list and no orphan key declares one",
+    )
+    for _key, _items in REMAINDER.items():
+        check(
+            all({"id", "named_by", "open"} <= set(i) for i in _items),
+            f"every {_key} remainder item carries an id, the round that named it, and a statement",
+        )
+        check(
+            len({i["id"] for i in _items}) == len(_items),
+            f"{_key}'s remainder ids are distinct, or two items are one row",
+        )
+        check(
+            all(isinstance(i["named_by"], int) and i["named_by"] > 0 for i in _items),
+            f"{_key}'s stamps are round numbers",
+        )
+    # ★ A non-empty population, asserted so the clauses above cannot pass over
+    # nothing — the standing lesson of this file's own axes.
+    check(
+        sum(len(v) for v in REMAINDER.values()) >= 40,
+        "the remainder table is populated; a near-empty one would make `--owed` a "
+        "question that answers nothing",
+    )
+
     for f in fails:
         print(f"SELFTEST FAIL: {f}")
     print(f"selftest: {'PASS' if not fails else 'FAIL'} ({len(fails)} failure(s))")
     return 1 if fails else 0
 
 
+def owed() -> int:
+    """★★★★★ R1833 — **what every axis still owes, as a query.**
+
+    The answer `grep -l '^  status: open' memory/debt-*.md` could not give,
+    because these live in an axis judgment rather than in a debt file. Prints
+    the round that NAMED each item beside it: an axis judged long ago is
+    reporting an old list, and this is where that shows.
+
+    Not a refusal. An open remainder is the normal state of an unfinished axis;
+    what was wrong was that it could not be asked for.
+    """
+    total = filed = 0
+    for axis in AXES:
+        items = REMAINDER.get(axis["key"], [])
+        gate = " (gated)" if axis["gated"] else ""
+        print(f"\n{axis['name']}{gate} — {len(items)} open")
+        for item in items:
+            total += 1
+            mark = ""
+            if "debt" in item:
+                filed += 1
+                mark = f"  [{item['debt']}]"
+            print(f"  R{item['named_by']:<5} {item['id']:<28} {item['open']}{mark}")
+    print(
+        f"\nphase B remainder: {total} named item(s) across {len(AXES)} axes, "
+        f"{filed} with a debt file"
+    )
+    print(
+        "  ⚠ each carries the round that NAMED it, not a re-verification — "
+        "an old stamp is an old claim"
+    )
+    return 0
+
+
 if __name__ == "__main__":
     if "--selftest" in sys.argv:
         sys.exit(selftest())
+    if "--owed" in sys.argv:
+        sys.exit(owed())
     sys.exit(report())

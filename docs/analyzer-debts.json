@@ -300,17 +300,6 @@
       ]
     },
     {
-      "name": "debt-the-pro-tool-perf-remainder-is-invisible-to-the-debt-census",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links analyzer-tool-capability-spec"
-      ]
-    },
-    {
       "name": "debt-the-property-grid-is-an-example-not-a-crate",
       "substituted": false,
       "blocked_by": "buildable",
