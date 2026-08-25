@@ -163,8 +163,10 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         # and outside it the declaration read `NONE`, which is not "no answer"
         # but *you are standalone*. So this screen laid its panes out without
         # the application bar and hit-tested them with it. Measured here before
-        # the repair: **41 of 182 painted regions addressed a DIFFERENT region
-        # at their own centre**, and 0 did so standalone at the same size.
+        # the repair: **41 regions addressed a DIFFERENT region at their own
+        # centre**, and 0 did so standalone at the same size. No denominator:
+        # the count of painted regions moves with what is scrolled into view,
+        # so it is a fact about the frame rather than about the defect.
         #
         # `astray` is the arm that says exactly that, and nothing was asserting
         # it: the harness's boot gate refuses only `unreachable`, and it runs

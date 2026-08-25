@@ -65990,6 +65990,44 @@
         "⚠**R1822's OTHER FINDING IS STILL ONLY A COMMENT.** That round recorded that a mounted inspector has 54 more pixels of room and an open roster's placement is derived from that room, and repaired the caption survey rather than the placement. This round did not revisit it."
       ]
     },
+    "R1825.1": {
+      "decision_summary": "the round's own figure was a fact about the frame. A comment correction, and the closing audit's SECOND question is what caught it — *is what this round WROTE true, re-measured*. R1825 wrote **41 of 182** into four source sites. Re-read from the two probe runs that round actually took: the reading it cites as authoritative was taken BEFORE any scrolling and painted **179**; 182 is the count from a frame taken AFTER a scroll. Both readings agree on everything that is about the DEFECT — 41 astray mounted, 0 standalone at the same size — and disagree only on how many regions happened to be in view. ⇒ ★★★★★A DENOMINATOR THAT MOVES WITH WHAT IS SCROLLED INTO VIEW IS A FACT ABOUT THE FRAME AND NOT ABOUT THE DEFECT, and attaching it to a claim sourced from a different frame is R1822's own lesson recurring one round later: the RELATION was right every time and the figure derived from it was not. The four sites now state the astray count and the standalone comparison and no denominator at all, with the reason written where the number used to be — so the next reader is told why the tempting number is missing rather than left to add it back.",
+      "changes_bullets": [
+        "crates/pinion-core/src/chrome.rs: three sites (the module header, the deferred-lift note, and `with_host_chrome_for`'s doc) lose the denominator and gain the reason. The header carries the correction itself, because a module that had just been corrected for asserting the wrong thing about its own design is the right place to record that its repair miscounted too.",
+        "examples/hello-node-lab/src/lib.rs: `draws_own_app_bar`'s measurement sentence, same change.",
+        "tools/demos/r1725_one_application_has_one_navigation.py: the comment above the new astray gate, same change."
+      ],
+      "verification_bullets": [
+        "Re-read off the probe logs rather than from memory: pre-scroll `painted: 179, astray: 41`; post-scroll `painted: 182, astray: 41`. The two disagree on the denominator and agree on the number the claim is about.",
+        "`cargo doc -p pinion-core --no-deps --document-private-items` rc=0; the two shells rebuilt; and the three demos R1825 repaired re-run against the rebuilt binaries — `r1695_the_rail_takes_you_there`, `r1725_one_application_has_one_navigation`, `r1742_a_screen_judges_what_is_on_screen`, 3 asserted / 3 run, all PASS.",
+        "`grep` for the old figure across `crates/`, `examples/` and `tools/` returns only the sentence that describes the correction."
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "⚠No `docs/phase-b-rounds.tsv` row: that ledger takes INTEGER rounds only, and the tally refuses `1825.1` by name. Learned by appending one and reading the refusal, which is the cheap way round and is recorded here so the next sub-round does not repeat it.",
+        "⚠The published R1825 changelog entry and its commit message still carry the old figure. An entry's audit half is frozen, so the correction lives here and in the source rather than being edited into the record — which is this repository's existing shape for R1820.1 / R1820.2 / R1818.1 and the reason `R<N>` and `R<N>.1` must both be queried before acting on a carry."
+      ],
+      "publishable_decision_summary": "the round's own figure was a fact about the frame. A comment correction, and the closing audit's SECOND question is what caught it — *is what this round WROTE true, re-measured*. R1825 wrote **41 of 182** into four source sites. Re-read from the two probe runs that round actually took: the reading it cites as authoritative was taken BEFORE any scrolling and painted **179**; 182 is the count from a frame taken AFTER a scroll. Both readings agree on everything that is about the DEFECT — 41 astray mounted, 0 standalone at the same size — and disagree only on how many regions happened to be in view. ⇒ ★★★★★A DENOMINATOR THAT MOVES WITH WHAT IS SCROLLED INTO VIEW IS A FACT ABOUT THE FRAME AND NOT ABOUT THE DEFECT, and attaching it to a claim sourced from a different frame is R1822's own lesson recurring one round later: the RELATION was right every time and the figure derived from it was not. The four sites now state the astray count and the standalone comparison and no denominator at all, with the reason written where the number used to be — so the next reader is told why the tempting number is missing rather than left to add it back.",
+      "publishable_changes_bullets": [
+        "crates/pinion-core/src/chrome.rs: three sites (the module header, the deferred-lift note, and `with_host_chrome_for`'s doc) lose the denominator and gain the reason. The header carries the correction itself, because a module that had just been corrected for asserting the wrong thing about its own design is the right place to record that its repair miscounted too.",
+        "examples/hello-node-lab/src/lib.rs: `draws_own_app_bar`'s measurement sentence, same change.",
+        "tools/demos/r1725_one_application_has_one_navigation.py: the comment above the new astray gate, same change."
+      ],
+      "publishable_verification_bullets": [
+        "Re-read off the probe logs rather than from memory: pre-scroll `painted: 179, astray: 41`; post-scroll `painted: 182, astray: 41`. The two disagree on the denominator and agree on the number the claim is about.",
+        "`cargo doc -p pinion-core --no-deps --document-private-items` rc=0; the two shells rebuilt; and the three demos R1825 repaired re-run against the rebuilt binaries — `r1695_the_rail_takes_you_there`, `r1725_one_application_has_one_navigation`, `r1742_a_screen_judges_what_is_on_screen`, 3 asserted / 3 run, all PASS.",
+        "`grep` for the old figure across `crates/`, `examples/` and `tools/` returns only the sentence that describes the correction."
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "⚠No `docs/phase-b-rounds.tsv` row: that ledger takes INTEGER rounds only, and the tally refuses `1825.1` by name. Learned by appending one and reading the refusal, which is the cheap way round and is recorded here so the next sub-round does not repeat it.",
+        "⚠The published R1825 changelog entry and its commit message still carry the old figure. An entry's audit half is frozen, so the correction lives here and in the source rather than being edited into the record — which is this repository's existing shape for R1820.1 / R1820.2 / R1818.1 and the reason `R<N>` and `R<N>.1` must both be queried before acting on a carry."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

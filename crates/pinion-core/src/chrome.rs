@@ -50,9 +50,18 @@
 //! framework calls a mounted guest's pointer, wheel and drag hooks from outside
 //! every scope, so a screen that laid its panes out for a host drawing the
 //! application bar hit-tested them for a window where it draws its own. On the
-//! analysis tool: **41 of the node lab's 182 painted regions addressed a
-//! DIFFERENT region at their own centre when mounted, and 0 did standalone at
-//! the same size.** [`with_host_chrome_for`] / [`host_chrome_for`] add the
+//! analysis tool: **41 of the node lab's regions addressed a DIFFERENT region
+//! at their own centre when mounted, and 0 did standalone at the same size.**
+//!
+//! ⚠ The number without a denominator on purpose, and R1825's own closing audit
+//! is why: this said *41 of 182* in four places, and 182 is the count of
+//! regions painted in a frame taken AFTER a scroll, while the reading cited as
+//! authoritative was taken before one and painted 179. The astray count is 41
+//! in both and the standalone comparison is 0 in both — those are the facts
+//! about the defect. A denominator that moves with what happens to be scrolled
+//! into view is a fact about the frame.
+//!
+//! [`with_host_chrome_for`] / [`host_chrome_for`] add the
 //! recorded fallback [`layout_size`](crate::external::layout_size) has had all
 //! along, and a screen should read the `_for` spelling.
 //!
@@ -206,8 +215,8 @@ thread_local! {
     /// in this crate. ⚠ And the pairing is the lesson a third site must inherit:
     /// **a scoped fact needs a fallback that is the last known truth, because
     /// its default is read as an answer.** The extent had one from the start
-    /// and chrome did not, and the difference cost a mounted screen 41 of its
-    /// 182 regions.
+    /// and chrome did not, and the difference cost a mounted screen 41 regions
+    /// that addressed something other than themselves.
     static PROVIDED: RefCell<Vec<HostChrome>> = const { RefCell::new(Vec::new()) };
 
     /// ★★★★★ R1825 — **the placed screen's declaration, for the calls that do
@@ -224,8 +233,9 @@ thread_local! {
     /// out for a host that draws the application bar and hit-tested them for a
     /// window where it draws its own, and every rectangle below the bar was one
     /// bar's height out of step. Measured on the analysis tool at R1825: 41 of
-    /// the node lab's 182 painted regions addressed a DIFFERENT region at their
-    /// own centre, and 0 did so standalone at the same size.
+    /// the node lab's regions addressed a DIFFERENT region at their own centre,
+    /// and 0 did so standalone at the same size. (No denominator: see this
+    /// module's header for why one would be a fact about the frame.)
     ///
     /// ⚠ Absence read as a default is the general shape, and this crate already
     /// had the answer to it one module over:

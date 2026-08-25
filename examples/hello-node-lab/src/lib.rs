@@ -238,9 +238,10 @@ fn draws_own_rail() -> bool {
 /// press lands, what the wheel does — runs outside it and got `NONE`, which is
 /// not "no answer" but *you are standalone*. So this screen laid its panes out
 /// without the bar and hit-tested them with it, and every rectangle below the
-/// strip was 54 pixels out of step. Measured: 41 of 182 painted regions
-/// addressed a DIFFERENT region at their own centre when mounted, and 0 did
-/// standalone at the same size.
+/// strip was 54 pixels out of step. Measured: **41** regions addressed a
+/// DIFFERENT region at their own centre when mounted, and **0** did standalone
+/// at the same size. (No denominator — see `pinion_core::chrome`'s header for
+/// why one would be a fact about the frame rather than about the defect.)
 fn draws_own_app_bar() -> bool {
     !pinion_core::chrome::host_chrome_for(VIEW_TAG)
         .provides(pinion_core::chrome::Part::ApplicationBar)
