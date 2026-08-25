@@ -53,10 +53,30 @@ declared rather than tolerated.
   be a gate nobody could pass on purpose.
 * **A round git cannot see.** The population is commit subjects, via the same
   parse the Phase B tally uses, so a round whose commits do not follow
-  `type(scope): R<N> …` is invisible to BOTH gates rather than to one. Measured
-  at R1746: no such subject exists in this history, and none carries a `!`
-  breaking marker either — which is the only reason the shared parse is safe to
-  rely on and is worth re-measuring if that convention ever loosens.
+  `type(scope): R<N> …` is invisible to BOTH gates rather than to one.
+
+  ★★★★★ R1828 — **this bullet carried a prose stamp and the stamp was false.**
+  It said *"Measured at R1746: no such subject exists in this history"*, which
+  is true of the CONVENTIONAL-COMMIT half of the shape and false of the `R<N>`
+  half, and the sentence names both. Re-measured with this module's own shared
+  parse, over the same history: **0** subjects fail `type(scope):`, **0** carry
+  a `!` breaking marker — and **61 of 2456 carry no round number at all**,
+  `aefbe934` (the commit that prompted this round) among them. The two clauses
+  were welded into one sentence, so the true half vouched for the false half.
+
+  The stamp is therefore replaced by a **printed line**, not by a better
+  number: `roundless_subjects` is counted and reported on every run, the way
+  `target/`'s size is. A count in prose starts rotting the moment it is
+  written; a count the tool prints cannot.
+
+  ⚠ **And what the line reports is not a defect.** A commit that closes no
+  round legitimately carries no round number — `COMMIT_FORMAT.md` recommends
+  `R<N>` and does not require it, and vendor bumps and CI fixes are the honest
+  majority of those 61. Which of them was *a round that forgot its number* is
+  not decidable from a subject, and this module does not pretend otherwise: it
+  reports the population and leaves the judgment to a reader. `aefbe934` is the
+  case that shows the distinction is real — it added a gate library, three hook
+  call sites and its tests, and needed an entry.
 """
 
 from __future__ import annotations
@@ -132,18 +152,44 @@ def store_keys(path: Path = STORE) -> list[str]:
     return list(json.loads(path.read_text(encoding="utf-8"))["changelog_entries"])
 
 
-def git_rounds() -> list[int]:
-    """Rounds git knows about. Git is the authority on which rounds EXIST — if
-    the ledger were also the census, a round that never appended would be
-    invisible instead of reported."""
-    out = subprocess.run(
+def git_subjects() -> str:
+    """Every non-merge commit subject, newest first.
+
+    Split out at R1828 so the two things read off it — the round population and
+    the count of subjects naming no round — come from ONE `git log` rather than
+    two that could disagree about the history they read.
+    """
+    return subprocess.run(
         ["git", "log", "--format=%s", "--no-merges"],
         cwd=ROOT,
         capture_output=True,
         text=True,
         check=True,
     ).stdout
-    return rounds_in(out)
+
+
+def git_rounds(subjects: str | None = None) -> list[int]:
+    """Rounds git knows about. Git is the authority on which rounds EXIST — if
+    the ledger were also the census, a round that never appended would be
+    invisible instead of reported."""
+    return rounds_in(git_subjects() if subjects is None else subjects)
+
+
+def roundless_subjects(subjects: str) -> list[str]:
+    """Commit subjects the shared parse yields no round for. Pure in `subjects`.
+
+    ★★★★★ R1828 — the measurement that replaced a prose stamp in the docstring
+    above. It is NOT a finding on its own: a commit closing no round carries no
+    round number legitimately. It exists so the number can never be *asserted*
+    from memory again, and so a reader who wants to know whether a substantive
+    change slipped past both round gates has a list to look at rather than a
+    sentence to trust.
+
+    Uses `rounds_in` — the parse the gates actually run — rather than a regex of
+    its own, because a second spelling of "does this subject name a round" is
+    exactly the drift this module's own header warns about one function up.
+    """
+    return [line for line in subjects.splitlines() if line.strip() and not rounds_in(line)]
 
 
 class Audit:
@@ -252,6 +298,49 @@ def selftest() -> int:
     check("RFC key names no round", round_of("SCE-RFC-002-004") is None)
     check("a word starting with R names no round", round_of("Rewrite-3") is None)
 
+    # --- 1b. R1828: the subjects that name no round -------------------------
+    #
+    # Discriminating on purpose, per this function's own rule: the fixture holds
+    # a round subject, a conventional subject with no round, and a subject whose
+    # `R` is not at the head of the message — because a reader that split on
+    # "contains R<digits>" would put the last one in the wrong bin, and that is
+    # the reader a hand-rolled regex here would have been.
+    fixture = "\n".join(
+        [
+            "feat(app): R1827 a reply names the message it answers",
+            "feat(hooks): gate the identity a commit and a push may carry",
+            "chore(vendor): bump the SCE pin to a80b06d, 19 upstream fixes",
+            "docs(meta): R1163b cross-window changelog",
+            "fix(core): the R2 rail is not a round number",
+        ]
+    )
+    roundless = roundless_subjects(fixture)
+    check(
+        "a subject with no round number is counted",
+        "feat(hooks): gate the identity a commit and a push may carry" in roundless,
+    )
+    check(
+        "a subject that names a round is not",
+        "feat(app): R1827 a reply names the message it answers" not in roundless,
+    )
+    check(
+        "a sub-round subject is not counted either",
+        "docs(meta): R1163b cross-window changelog" not in roundless,
+    )
+    check(
+        "an R inside the message is not a round number",
+        "fix(core): the R2 rail is not a round number" in roundless,
+    )
+    check("the fixture's roundless count is exactly three", len(roundless) == 3)
+    check("blank lines are not subjects", roundless_subjects("\n\n  \n") == [])
+    # The population and the round list partition the subjects — which is what
+    # makes the printed line readable beside `git: N rounds` rather than a third
+    # number nobody can reconcile with the other two.
+    check(
+        "roundless and named rounds partition the fixture",
+        len(roundless) + len({s for s in fixture.splitlines() if rounds_in(s)}) == 5,
+    )
+
     # --- 2. The reader that produced the phantom 34-round outage -------------
     #
     # R1744's evidence block matched `Round (\d+)` only. On a store holding both
@@ -325,8 +414,19 @@ def main() -> int:
     if args.selftest:
         return selftest()
 
-    audit = Audit(store_keys(), git_rounds())
+    subjects = git_subjects()
+    audit = Audit(store_keys(), git_rounds(subjects))
     report(audit)
+    # R1828 — printed every run, over budget or not, for the reason the
+    # build-cache size is: a number that only speaks when it fires leaves the
+    # trend unseen, and this one replaced a prose stamp that had gone stale
+    # unnoticed. It is a population, not a verdict — see `roundless_subjects`.
+    roundless = roundless_subjects(subjects)
+    total = len([s for s in subjects.splitlines() if s.strip()])
+    print(
+        f"subjects naming no round: {len(roundless)} of {total} "
+        f"(a commit closing no round carries none legitimately; not a refusal)"
+    )
     if args.check and not audit.ok():
         print("\nchangelog_rounds: the round ledger has a hole (above)")
         return 1

@@ -1,21 +1,69 @@
 #!/usr/bin/env bash
 # .githooks/lib/ident-gate.sh — which addresses may author or commit here.
 #
-# WHY THIS EXISTS, and it is not hypothetical. In a sibling repository of this
-# owner's, eight commits reached a PUBLIC remote authored with a work address
-# instead of the one every other commit carries. A history rewrite removed
-# them from the branch and that did NOT un-publish them: the host kept the
-# unreachable objects, went on serving all eight by SHA for days, and went on
-# listing the other account as a contributor the whole time. The only thing
-# that actually removed them was deleting and recreating the repository, which
-# cost 1146 runs of CI history. This gate exists so the next occurrence costs
-# a refused commit instead.
+# WHY THIS EXISTS, and it is not hypothetical. Commits reached a PUBLIC remote
+# of this owner's authored with an address other than the one every other
+# commit carries. A history rewrite removed them from the branch and did NOT
+# un-publish them; the repository had to be deleted and recreated, which threw
+# away its CI history. This gate exists so the next occurrence costs a refused
+# commit instead.
+#
+# ★★★★★ R1828 — THE PARAGRAPH ABOVE WAS RE-MEASURED, AND IT IS NOW WRITTEN IN
+# TWO HALVES, because its first draft argued from an incident it named in
+# numbers that nothing here can reproduce. A gate justified by an uncitable
+# event is the defect this repository has paid for repeatedly, so what follows
+# separates what a command answers from what no command can.
+#
+# WHAT REPRODUCES, with the command that answers it:
+#
+#   gh repo view newmassrael/watching-zenoh --json createdAt,isPrivate
+#     -> created 2026-08-25T07:02:05Z, public
+#   git -C /home/coin/watching-zenoh log --all --reverse --format=%aI | head -1
+#     -> 2026-04-24
+#   gh run list -R newmassrael/watching-zenoh --json databaseId -q length
+#     -> 2, against 3380 local commits
+#
+# A repository whose earliest commit is four months older than the repository
+# itself was deleted and recreated; two CI runs behind three thousand commits
+# is the history that cost. Run the same `createdAt` probe across this owner's
+# other repositories and every one of them lands within hours of its own first
+# commit -- so this is a signature, not the normal spread.
+#
+#   for r in <the owner's repos>; do
+#       git -C /home/coin/$r log --all --format=%ae; done | sort | uniq -c
+#     -> newmassrael@gmail.com everywhere, plus that account's own GitHub
+#        noreply forms, a github-actions bot, and one harness artifact.
+#        NO foreign address survives anywhere -- which is what a completed
+#        rewrite looks like, and is why the offending commits cannot be shown.
+#
+# WHAT DOES NOT REPRODUCE, and cannot, by construction. The first draft said
+# EIGHT commits, served by SHA FOR DAYS, the other account listed as a
+# contributor throughout, and 1146 runs of CI lost. Those are first-hand
+# observations from the session that lived through it. They are not re-derivable
+# from here and never will be: deleting the repository is what destroyed both
+# the commits and the run history, so the incident consumed its own evidence.
+# They are kept as testimony, labelled as testimony, and no count from them is
+# repeated anywhere this file can be read as measurement.
+#
+# ⚠ AND THE GATE DOES NOT REST ON THEM. Whether it was eight commits or one,
+# the reproducible half already carries the argument: a public repository of
+# this owner's was destroyed and rebuilt to unpublish an identity, this month.
 #
 # WHY A CONFIG WOULD NOT HAVE CAUGHT IT. `git config user.email` was already
 # correct there, in the clone AND in ~/.gitconfig. The commits came from a
 # different environment. A config is a DEFAULT and it is per-clone; a rule
 # that has to be present on the machine that gets it wrong has to travel with
 # the tree, which is what a tracked hook does.
+#
+# ★ R1828 — this one REPRODUCES, and it is the strongest half of the argument:
+#
+#   git config --global user.email                          -> the allowed one
+#   git -C /home/coin/watching-zenoh config --local user.email -> the allowed one
+#
+# Both were already right in the repository the commits escaped from. A config
+# that is correct and a history that is wrong is precisely the pair that shows
+# grading the config answers a different question -- which is the rule the next
+# paragraph states, now standing on a measurement rather than on a memory.
 #
 # WHY IT GRADES `git var` AND NEVER `git config`. The identity a commit will
 # carry is not what the config says: GIT_AUTHOR_EMAIL and GIT_COMMITTER_EMAIL
@@ -72,10 +120,13 @@ ident_refuse() {
         echo "${hook}: ${what} <${email}>,"
         echo "  which is not an identity this repository accepts."
         echo ""
-        echo "  Measured: eight commits reached a PUBLIC repo of this owner's"
-        echo "  under a different address. Rewriting history did NOT un-publish"
-        echo "  them -- they stayed reachable by SHA and the repository had to"
-        echo "  be deleted and recreated, costing 1146 runs of CI history."
+        echo "  Why: commits reached a PUBLIC repo of this owner's under a"
+        echo "  different address. Rewriting history did NOT un-publish them;"
+        echo "  the repository had to be deleted and recreated, and its CI"
+        echo "  history went with it. Checkable from here:"
+        echo "    gh repo view newmassrael/watching-zenoh --json createdAt"
+        echo "  answers a creation date months NEWER than that repo's own"
+        echo "  first commit -- the signature of exactly that repair."
         echo ""
         echo "  fix, in this clone:"
         echo "    git config user.email ${PINION_ALLOWED_IDENT_EMAILS[0]}"

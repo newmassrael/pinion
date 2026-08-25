@@ -63,14 +63,25 @@ trap 'rm -rf "$_tmp_root"' EXIT
 
 mktemp_tracked() { mktemp -d -p "$_tmp_root"; }
 
+# ★★★★★ R1828 — `PINION_HOOKS_VERBOSE=1` names every case as it passes.
+#
+# Default stays quiet, because this runs on every push and a wall of green is
+# noise there. But a suite that reports only `197 passed` cannot answer WHICH
+# 197, and that is not a cosmetic gap: the number is the only evidence a reader
+# gets, and a number cannot distinguish "the ident gate is covered" from "the
+# ident gate's cases were never reached". Asking for the names is how a reader
+# checks that a gate they care about is actually in the suite -- by its own
+# name, rather than by trusting that the count moved when it was added.
 ok() {
     local desc="$1" got="$2" want="$3"
     if [[ "$got" == "$want" ]]; then
         pass=$((pass + 1))
+        [[ -n "${PINION_HOOKS_VERBOSE:-}" ]] && printf '  ok  %s\n' "$desc"
     else
         fail=$((fail + 1))
         printf 'FAIL: %s\n  want: %q\n  got:  %q\n' "$desc" "$want" "$got" >&2
     fi
+    return 0
 }
 
 # `gh run list` emits tab-separated columns:
