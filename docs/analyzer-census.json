@@ -92,7 +92,8 @@
     "tier": "t1",
     "capability": "follow one session, in time order",
     "verdict": "app",
-    "covered_by": "a filter plus a sort over the substrate above"
+    "covered_by": "a filter plus a sort over the substrate above",
+    "assembled_by": "assembled by examples/hello-packet-view and driven on the wire by tools/demos/r1829_following_one_session_reads_it_in_time_order.py - the filter half is R1827's session attribute and the sort half is the framework's ordering SSOT (grid_order_by + cell_cmp), composed rather than hand-rolled, with cycle_col_sort for the header press and the grid wire vocabulary for the slot. THE PREMISE IS MEASURED, not assumed: this capture is written NEWEST FIRST, so following a session leaves the reply ABOVE the request it answers, and the demo shows that state before it shows the ordering that fixes it. R1829 also recorded what does NOT work: one path cannot be both a read and an action - the wire refuses it - so the fact is read at the slot `sort` and the act is invoked at the verb `order`, which is the split this screen already ran on `query` / `filter`. The framework grid's own intervene-at-one-path shape was built and dropped, because it costs a round-trip its peer does not and switches idioms halfway down one surface"
   },
   {
     "id": "capture.t1.12",

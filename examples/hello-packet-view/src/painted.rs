@@ -1185,6 +1185,19 @@ fn r1707_every_gesture_this_screen_advertises_is_answered() {
                         // keystroke reaches — not through a setter of our own.
                         state.query.set_text("type = Query".to_owned());
                     }
+                    // ★★★★★ R1829 — at the centre of the header's PAINTED
+                    // rectangle, like the two press drivers above it, so what is
+                    // exercised is the hit test and not `cycle_sort`. Column 0
+                    // is `time`, which is the one this screen's capability is
+                    // about; any column would satisfy the gate, and naming the
+                    // one the feature exists for is what makes the driver
+                    // readable as the gesture rather than as a poke.
+                    "click a column header" => {
+                        let rect = shot.tags["pv.list.head.0"];
+                        let (px, py) = centre(rect);
+                        super::move_cursor(&state, px, py);
+                        press(&state);
+                    }
                     // ★ R1819 — a gesture with no driver is now reported BY THE
                     // FIXTURE rather than panicking here, so the message reads
                     // the same on all three screens.
@@ -1731,6 +1744,12 @@ fn fresh_state_reaching(earlier: Option<&str>) -> std::rc::Rc<ViewState> {
     // reset that can silently not reset is worse than none.
     let state = use_view_state();
     super::run_filter(&state, "").expect("an empty query is the whole capture");
+    // ★★★★★ R1829 — the order too, and it was missed on the first pass of this
+    // round, which is this function's own warning coming true one field later:
+    // a reset that does not reset everything the rows touch lets one row pass
+    // on what another left behind. `sort` reaches `kept_rows`, so a leak here
+    // would move the witness of every filter row as well as its own.
+    state.sort.set(None);
     select_message(&state, 0);
     state.field.set(String::new());
     state.list_scroll.scroll_to(0, 0);
@@ -1856,6 +1875,36 @@ const OPERATION_GESTURES: &[(&str, GestureDriver)] = &[
     }),
     ("clear the filter", |state| {
         super::run_filter(state, "").expect("an empty query is the whole capture");
+    }),
+    // ★★★★★ R1829 — the header press, through `cycle_sort`, which is what the
+    // pointer reaches. Column 0 from unsorted goes to ascending, which is the
+    // `0:ascending` the specification's verb names — so the two channels land
+    // on the SAME value rather than on two orders that both merely differ from
+    // `none`, which is all a gate comparing "moved" would have caught.
+    ("order the list", |state| {
+        super::cycle_sort(state, 0);
+    }),
+    // ★★★★★ Press the header until the column lets go — which is what a person
+    // does, and a LOOP rather than a count because how many presses that takes
+    // depends on which way the column is currently pointing.
+    //
+    // The first draft of this driver wrote three presses, reasoning
+    // unsorted -> ascending -> descending -> unsorted. The gate refused it, and
+    // was right: this row declares `needs: "order the list"`, so it starts from
+    // ASCENDING, and three presses from there is a full lap back to ascending —
+    // `sort` ends where it began and the driver demonstrates nothing. A fixed
+    // count encodes an assumption about the starting state that the row's own
+    // `needs` had already made false.
+    //
+    // Bounded at three, which is the worst case: a press on a column that is
+    // not the sort column jumps to it ascending, and two more let go.
+    ("return to capture order", |state| {
+        for _ in 0..3 {
+            if state.sort.get().is_none() {
+                break;
+            }
+            super::cycle_sort(state, 0);
+        }
     }),
     ("select a message", |state| {
         select_message(state, 3);

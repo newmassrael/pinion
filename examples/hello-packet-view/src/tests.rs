@@ -12,9 +12,9 @@ use pinion_core::reactive::Owner;
 use pinion_core::widgets::field_bytes::{Coverage, FieldSpan, SourceId};
 
 use super::{
-    NAME_COLUMN, PacketView, capture_filler, cell_texts, char_count, comma, decode, frame_bytes,
-    lane_reading, link_width, list_cell_tag, pane_cursor, row_cells, run_width, select_byte,
-    select_field, select_message, sibling_place, spec, use_view_state,
+    NAME_COLUMN, PacketView, capture_filler, cell_texts, char_count, comma, cycle_sort, decode,
+    frame_bytes, lane_reading, link_width, list_cell_tag, pane_cursor, row_cells, run_sort,
+    run_width, select_byte, select_field, select_message, sibling_place, spec, use_view_state,
 };
 use pinion_a11y::WidgetA11y;
 use pinion_core::WidgetCore;
@@ -1792,4 +1792,290 @@ fn r1827_both_halves_of_an_exchange_are_one_session() {
         spec::QUERY_COLUMNS.len(),
         "a row's attributes and the roster a query reads have drifted",
     );
+}
+
+// ── R1829: follow one session, in time order ────────────────────────────────
+
+/// The index of the column titled `title`, so the assertions below name columns
+/// the way a reader does instead of by an ordinal that moves when a column does.
+fn column(title: &str) -> usize {
+    spec::COLUMNS
+        .iter()
+        .position(|c| c.title == title)
+        .unwrap_or_else(|| panic!("this list has no {title:?} column"))
+}
+
+/// ★★★★★ **The capture opens NEWEST FIRST — which is why ordering is a
+/// capability and not a preference.**
+///
+/// This is the premise the whole round rests on, so it is asserted rather than
+/// assumed: if the fixture were already chronological, every test below would
+/// pass against a screen that cannot sort at all.
+#[test]
+fn r1829_the_capture_opens_newest_first_so_a_reply_sits_above_its_request() {
+    let times: Vec<&str> = spec::ROWS.iter().map(|r| r.time).collect();
+    let mut descending = times.clone();
+    descending.sort_unstable();
+    descending.reverse();
+    assert_eq!(
+        times, descending,
+        "the capture is not in newest-first order"
+    );
+
+    // And the consequence, on the one exchange this capture holds: the reply is
+    // ABOVE the request it answers. A reader following the conversation top to
+    // bottom meets the answer before the question.
+    let reply = (0..spec::ROWS.len())
+        .find(|&n| spec::ROWS[n].kind == "Response" && spec::correlation(n).is_some())
+        .expect("this capture holds one exchange");
+    let request = spec::correlation(reply).expect("a linked reply has a request");
+    assert!(
+        reply < request,
+        "the reply is not above its request, so this screen has nothing to reorder",
+    );
+}
+
+/// ★★★★★ **Following one session reads it in time order** — the capability
+/// (`capture.t1.11`), end to end and in one test.
+///
+/// Filter to the session, order by time ascending, and the exchange comes out
+/// request-then-reply. The two halves are asserted SEPARATELY first, because a
+/// single end-to-end assertion that failed would not say which half broke.
+#[test]
+fn r1829_following_one_session_reads_it_in_time_order() {
+    with_state(|state| {
+        let reply = (0..spec::ROWS.len())
+            .find(|&n| spec::ROWS[n].kind == "Response" && spec::correlation(n).is_some())
+            .expect("this capture holds one exchange");
+        let request = spec::correlation(reply).expect("a linked reply has a request");
+        let session = spec::ROWS[reply].session();
+
+        // Half one: the filter keeps both ends and drops the rest.
+        run_sort(state, "none").expect("capture order is an order");
+        super::run_filter(state, &format!("session = {session}")).expect("the roster knows it");
+        let kept = state.kept();
+        assert!(
+            kept.contains(&reply) && kept.contains(&request),
+            "following a session dropped half of the exchange: {kept:?}",
+        );
+        assert!(
+            kept.len() < spec::ROWS.len(),
+            "the session filter kept the whole capture, so it filtered nothing",
+        );
+        // ★ And in the capture's own order the answer still comes first, which
+        // is the state the ordering exists to leave.
+        assert!(
+            kept.iter().position(|&n| n == reply) < kept.iter().position(|&n| n == request),
+            "the fixture stopped being newest-first under a filter",
+        );
+
+        // Half two: ordering by time turns it into the conversation.
+        run_sort(state, &format!("{}:ascending", column("time"))).expect("time is a column");
+        let walked = state.kept();
+        assert_eq!(
+            walked.len(),
+            kept.len(),
+            "ordering changed how many rows the filter kept",
+        );
+        assert!(
+            walked.iter().position(|&n| n == request) < walked.iter().position(|&n| n == reply),
+            "the request does not come before the reply it was answered by: {walked:?}",
+        );
+        // The whole kept run is chronological, not merely that one pair.
+        let times: Vec<&str> = walked.iter().map(|&n| spec::ROWS[n].time).collect();
+        let mut ascending = times.clone();
+        ascending.sort_unstable();
+        assert_eq!(times, ascending, "the ordered run is not chronological");
+    });
+}
+
+/// ★★★★★ **The comparator is chosen by a `parse`, so both branches are
+/// asserted** — on the real capture, not on a fixture built to suit them.
+///
+/// `cell_cmp` sorts numerically when both cells parse as `f64` and lexically
+/// otherwise. That decision is invisible at the call site and it is the one
+/// thing that could make this feature quietly wrong: `time` must come out
+/// chronological (it is text, and that is only chronological because every
+/// timestamp is the same width — see the R1827 test that pins it) and `len`
+/// must come out numerically (or 9 would sort after 512).
+#[test]
+fn r1829_ordering_by_time_is_chronological_and_by_length_numeric() {
+    with_state(|state| {
+        run_sort(state, &format!("{}:ascending", column("time"))).expect("time is a column");
+        let times: Vec<&str> = state.kept().iter().map(|&n| spec::ROWS[n].time).collect();
+        let mut want = times.clone();
+        want.sort_unstable();
+        assert_eq!(times, want, "time did not come out chronological");
+
+        run_sort(state, &format!("{}:ascending", column("len"))).expect("len is a column");
+        let lens: Vec<u32> = state.kept().iter().map(|&n| spec::ROWS[n].len).collect();
+        let mut want = lens.clone();
+        want.sort_unstable();
+        assert_eq!(lens, want, "len did not come out numerically");
+        // ★ The discrimination, and without it the assertion above is weak: a
+        // LEXICAL sort of these same lengths gives a different answer, so the
+        // test can tell the two comparators apart rather than passing under
+        // either. If this ever stops holding, the capture's lengths no longer
+        // discriminate and the test is telling the truth about that.
+        let mut lexical: Vec<String> = lens.iter().map(u32::to_string).collect();
+        lexical.sort();
+        let numeric: Vec<String> = want.iter().map(u32::to_string).collect();
+        assert_ne!(
+            lexical, numeric,
+            "these lengths sort the same either way, so this test cannot see the difference",
+        );
+    });
+}
+
+/// ★★★ **An order is a permutation: it never adds, drops or duplicates a row.**
+///
+/// The property that makes a sort safe to put underneath the paint, the hit test
+/// and the roster at once — all three read `kept`, and a sort that lost a row
+/// would make the screen disagree with its own count.
+#[test]
+fn r1829_ordering_is_a_permutation_of_what_the_filter_kept() {
+    with_state(|state| {
+        run_sort(state, "none").expect("capture order is an order");
+        let mut unsorted = state.kept();
+        assert_eq!(
+            unsorted,
+            (0..spec::ROWS.len()).collect::<Vec<_>>(),
+            "unsorted is not the capture's own order",
+        );
+        unsorted.sort_unstable();
+        for col in 0..spec::COLUMNS.len() {
+            for dir in ["ascending", "descending"] {
+                run_sort(state, &format!("{col}:{dir}")).expect("a real column");
+                let mut got = state.kept();
+                assert_eq!(
+                    got.len(),
+                    unsorted.len(),
+                    "column {col} {dir} changed the count"
+                );
+                got.sort_unstable();
+                assert_eq!(got, unsorted, "column {col} {dir} is not a permutation");
+            }
+        }
+    });
+}
+
+/// ★★★ **A header press cycles the way every grid in this tree cycles.**
+///
+/// unsorted → ascending → descending → unsorted, and a press on a DIFFERENT
+/// column jumps straight to it ascending. Asserted because it is a controller
+/// wiring: every state here is legal, so a screen that cycled its own way would
+/// be wrong in a way nothing else could notice.
+#[test]
+fn r1829_a_header_press_cycles_the_way_every_grid_here_cycles() {
+    with_state(|state| {
+        let (time, len) = (column("time"), column("len"));
+        assert_eq!(state.sort.get(), None, "the screen opens in capture order");
+        cycle_sort(state, time);
+        assert_eq!(
+            state.sort.get(),
+            Some((time, true)),
+            "first press: ascending"
+        );
+        cycle_sort(state, time);
+        assert_eq!(
+            state.sort.get(),
+            Some((time, false)),
+            "second press: descending"
+        );
+        cycle_sort(state, time);
+        assert_eq!(state.sort.get(), None, "third press: back to capture order");
+        cycle_sort(state, time);
+        cycle_sort(state, len);
+        assert_eq!(
+            state.sort.get(),
+            Some((len, true)),
+            "a different column jumps straight to it ascending",
+        );
+    });
+}
+
+/// ★★★★★ **A reader is told which column the list is ordered by** — the
+/// `aria-sort` slot that was hard-coded `None`.
+///
+/// Exactly one column carries it, it is the one that is sorted, and it says
+/// which way. The "exactly one" half is what a boolean check would miss: a
+/// builder that put the attribute on every header would be as wrong as one that
+/// put it on none, and both are states a `is_some()` assertion accepts.
+#[test]
+fn r1829_the_ordered_column_is_the_one_that_announces_it() {
+    with_state(|state| {
+        // Read off the tree the screen publishes, like its R1699 sibling above
+        // — the claim is that a READER is told, and the state saying so is a
+        // different claim from the tree carrying it.
+        let announced = || -> Vec<(usize, String)> {
+            PacketView::access_node(&IDLE_FIELD, None)
+                .into_iter()
+                .filter_map(|node| {
+                    let tag = node.tag.strip_prefix("pv.list.head.")?.to_owned();
+                    let dir = node.sort?;
+                    Some((tag.parse::<usize>().ok()?, format!("{dir:?}")))
+                })
+                .collect()
+        };
+        assert_eq!(
+            announced(),
+            Vec::new(),
+            "an unsorted list announces a sorted column",
+        );
+        let time = column("time");
+        run_sort(state, &format!("{time}:ascending")).expect("time is a column");
+        assert_eq!(
+            announced(),
+            vec![(time, "Ascending".to_owned())],
+            "the ascending order is not announced on exactly the time column",
+        );
+        run_sort(state, &format!("{time}:descending")).expect("time is a column");
+        assert_eq!(
+            announced(),
+            vec![(time, "Descending".to_owned())],
+            "the direction is not announced",
+        );
+    });
+}
+
+/// ★★★ **The wire form round-trips, and an unreadable one is refused BY NAME.**
+///
+/// Read and write share a vocabulary, so a client can save an order and restore
+/// it. The two refusal arms are separate facts: a string that is not an order at
+/// all, and a column that does not exist — a screen answering both with the same
+/// sentence would tell a caller who mistyped `ascending` to go looking for a
+/// missing column.
+#[test]
+fn r1829_the_order_round_trips_on_the_wire_and_a_bad_one_is_refused_by_name() {
+    with_state(|state| {
+        for spelling in ["none", "0:ascending", "3:descending"] {
+            run_sort(state, spelling).expect("a legal order");
+            assert_eq!(
+                super::grid_sort_str(state.sort.get()),
+                spelling,
+                "the order did not read back as it was written",
+            );
+        }
+        let before = state.sort.get();
+        let gibberish = run_sort(state, "by time please").expect_err("not an order");
+        assert!(
+            format!("{gibberish:?}").contains("is not an order"),
+            "a malformed order is not named as one: {gibberish:?}",
+        );
+        let phantom = run_sort(state, "99:ascending").expect_err("no column 99");
+        assert!(
+            format!("{phantom:?}").contains("no column 99"),
+            "a phantom column is not named: {phantom:?}",
+        );
+        assert_ne!(
+            format!("{gibberish:?}"),
+            format!("{phantom:?}"),
+            "the two refusals read the same, so a caller cannot tell them apart",
+        );
+        assert_eq!(
+            state.sort.get(),
+            before,
+            "a refused order changed the list anyway",
+        );
+    });
 }

@@ -50,7 +50,7 @@ use std::rc::Rc;
 
 use pinion_a11y::{
     AccessFocus, AccessLive, AccessNode, AccessValue, AriaRole, GridCell, GridColumn, GridRow,
-    WidgetA11y, grid_table_nodes,
+    SortDirection, WidgetA11y, grid_table_nodes,
 };
 use pinion_core::containment::line_rect_in;
 use pinion_core::external::{
@@ -73,12 +73,13 @@ use pinion_core::widgets::field_bytes::{
     ByteExtent, ByteMap, ByteMapExternal, ByteMapState, ByteSource, Coverage, FieldSpan, SourceId,
     use_byte_map,
 };
-use pinion_core::widgets::grid_sort::Admission;
+use pinion_core::widgets::grid_sort::{Admission, col_sort_dir, grid_sort_parse, grid_sort_str};
 use pinion_core::widgets::hex_dump::{ByteSelection, HexLayout};
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::roving::{Activation, Axis, Ends, Landing, Member, Roving, RovingSpec};
 use pinion_core::widgets::row_query::RowQuery;
 use pinion_core::widgets::scroll::ScrollState;
+use pinion_core::widgets::table::{cell_cmp, cycle_col_sort, grid_order_by};
 use pinion_core::widgets::table_export;
 use pinion_core::widgets::text_edit::{TextEditState, use_text_edit_state};
 use pinion_core::widgets::text_field::TextFieldState;
@@ -454,6 +455,31 @@ struct ViewState {
     /// handed to the row-filtering proxy reads back as the compiled regular
     /// expression and the pattern a person typed is gone.
     query: Rc<TextEditState>,
+    /// ★★★★★ R1829 — **which column the list is ordered by, and which way.**
+    ///
+    /// `None` is the capture's own order, which this capture writes NEWEST
+    /// FIRST — so "unsorted" here is not "no opinion", it is the arrival order
+    /// an analyser opens in. Following one exchange wants the opposite, and
+    /// that difference is the whole capability (`capture.t1.11`, *follow one
+    /// session, in time order*): a filter alone leaves the reply above the
+    /// request it answers.
+    ///
+    /// ★ The shape is the framework's `(column, ascending)` and not a bespoke
+    /// enum, because everything that consumes it is the framework's too —
+    /// [`col_sort_dir`] for the header glyph and `aria-sort`, [`grid_sort_str`]
+    /// / [`grid_sort_parse`] for the wire, [`cycle_col_sort`] for the header
+    /// press, [`grid_order_by`] for the permutation. A screen that invented its
+    /// own spelling would have to translate at four boundaries.
+    ///
+    /// ⚠ **What it deliberately does NOT do is adopt `GridSortState`.** That
+    /// type owns the cells, the filter AND the sort; this screen's filter is
+    /// [`RowQuery`], which parses column NAMES and keeps each clause's source
+    /// text, and is strictly richer than the `GridFilter` `GridSortState`
+    /// carries. Taking the whole object would put two filter models on one
+    /// list — the defect this tree already carries in two other places — so
+    /// what is taken is the ORDERING, which is published separately for
+    /// exactly this reason.
+    sort: Signal<Option<(usize, bool)>>,
     /// Which layers are folded, by index into [`spec::LAYERS`].
     folded: Signal<Vec<bool>>,
     /// The dissection of the selected message. **One** value: the tree, the
@@ -523,17 +549,56 @@ impl ViewState {
     /// accessibility tree and the wire all read this, so the list a person sees
     /// and the list a press lands in cannot be two lists — the failure this
     /// tree has paid for under several names.
+    /// ★★★★★ R1829 — **the rows the query kept, in the order the reader asked
+    /// for**, and it is ONE function because a screen with two of these has two
+    /// answers to *which message is at the top*.
+    ///
+    /// Filter-then-sort, through [`grid_order_by`] — the framework's ordering
+    /// SSOT, the same one the virtualised data grid runs on. Three things come
+    /// with taking it rather than writing a `sort_by` here:
+    ///
+    /// * `sort == None` returns the survivors in **source order**, so the
+    ///   screen's opening behaviour is unchanged by construction rather than by
+    ///   a branch somebody has to keep correct;
+    /// * the sort is **stable**, so equal keys hold their capture order in both
+    ///   directions — which is what makes two messages sharing a timestamp
+    ///   deterministic rather than merely usually-fine;
+    /// * the comparison is [`cell_cmp`], which is numeric-aware.
+    ///
+    /// ⚠ **That last one is a trap worth naming, because it chooses silently.**
+    /// `cell_cmp` sorts numerically when BOTH cells parse as `f64` and
+    /// lexically otherwise, so `len` and `sn` sort as numbers (12 before 100)
+    /// while `time` sorts as text. Text is chronological here only because
+    /// every timestamp is fixed-width `HH:MM:SS.mmm` — which is not an
+    /// assumption this screen is entitled to make quietly, and is why
+    /// `r1827_a_timestamp_sorts_as_text_because_every_one_is_the_same_shape`
+    /// exists. `r1829_ordering_by_time_is_chronological_and_by_length_numeric`
+    /// asserts both branches on the real capture, because a comparator picked
+    /// by a `parse` is one a reader cannot see.
+    ///
+    /// The cells compared are [`cell_texts`] — what the row PAINTS — so the
+    /// order a reader sees is the order of what they are looking at, not of
+    /// some parallel value the screen does not show.
     fn kept(&self) -> Vec<usize> {
         let query = self.query();
-        if query.is_everything() {
-            return (0..spec::ROWS.len()).collect();
-        }
-        (0..spec::ROWS.len())
-            .filter(|&n| {
-                let cells = spec::ROWS[n].attributes();
-                query.admit(|c| cells.get(c).map_or("", String::as_str)) == Admission::Admitted
-            })
-            .collect()
+        let everything = query.is_everything();
+        grid_order_by(
+            spec::ROWS.len(),
+            self.sort.get(),
+            |col, a, b| {
+                let (ca, cb) = (cell_texts(a), cell_texts(b));
+                match (ca.get(col), cb.get(col)) {
+                    (Some(x), Some(y)) => cell_cmp(x, y),
+                    _ => core::cmp::Ordering::Equal,
+                }
+            },
+            |n| {
+                everything || {
+                    let cells = spec::ROWS[n].attributes();
+                    query.admit(|c| cells.get(c).map_or("", String::as_str)) == Admission::Admitted
+                }
+            },
+        )
     }
 
     /// Which message the list's cursor is on: the selected one when the query
@@ -674,6 +739,10 @@ fn use_view_state() -> Rc<ViewState> {
         // unfiltered; see `spec::EXAMPLE_QUERY` for why the reference's own
         // query is a saved filter rather than the opening state.
         query,
+        // R1829 — the screen opens in the capture's own order, which is the
+        // arrival order the reference opens in. Ordering is something a reader
+        // asks for.
+        sort: Signal::new(None),
         folded: Signal::new(vec![false; spec::LAYERS.len()]),
         map,
         list_scroll,
@@ -984,6 +1053,19 @@ fn saved_bar(strip: Rect) -> Rect {
 }
 
 /// The n-th message row, in the list pane's own coordinates.
+/// ★ R1829 — the n-th column HEADER's pressable rectangle, in the list pane's
+/// own unscrolled coordinates: the column's width, the header band's height.
+///
+/// Deliberately taller than the 12px text run painted inside it. A header is
+/// pressed at the word, and a target the exact height of its glyphs is one a
+/// reader misses by two pixels — the run stays the thing that is DRAWN and this
+/// is the thing that is HIT, which is the same split every chip on this screen
+/// already has.
+fn list_head(n: usize) -> Rect {
+    let col = list_col(n);
+    Rect::new(col.x, 0, col.w, HEAD_H)
+}
+
 fn list_row(n: usize) -> Rect {
     Rect::new(
         0,
@@ -1087,6 +1169,13 @@ enum Hit {
     Saved(usize),
     /// A layer heading, which folds it.
     Layer(usize),
+    /// ★★★★★ R1829 — a column header, which cycles the list's order.
+    ///
+    /// The header band is the one part of the list pane that does NOT scroll
+    /// with the rows, so it is addressed in the pane's unscrolled coordinates —
+    /// see [`Hit::at`], where getting that wrong would make the header
+    /// pressable only while the list is at the top.
+    Header(usize),
     /// Nothing that answers.
     None,
 }
@@ -1106,6 +1195,16 @@ impl Hit {
     /// [`Hit::at`] answers at the centre of that tag's **painted** rectangle —
     /// two derivations of one fact, with the paint as the arbiter.
     fn of_tag(state: &ViewState, tag: &str) -> Self {
+        // R1829 — before the row arm, because `pv.list.head.` and
+        // `pv.list.row.` share a prefix up to the family and only diverge
+        // after it.
+        if let Some(n) = tag
+            .strip_prefix("pv.list.head.")
+            .and_then(|n| n.parse::<usize>().ok())
+            && n < spec::COLUMNS.len()
+        {
+            return Self::Header(n);
+        }
         if let Some(n) = tag
             .strip_prefix("pv.filter.saved.")
             .and_then(|n| n.parse::<usize>().ok())
@@ -1183,6 +1282,7 @@ impl Hit {
             Self::Byte(b) => format!("byte.{b}"),
             Self::Saved(n) => format!("saved.{n}"),
             Self::Layer(n) => format!("layer.{n}"),
+            Self::Header(n) => format!("header.{n}"),
             Self::None => return None,
         })
     }
@@ -1211,6 +1311,21 @@ impl Hit {
         }
         let list = list_rect();
         if contains(list, px, py) {
+            // ★★★★★ R1829 — the header band FIRST, and in UNSCROLLED pane
+            // coordinates. The rows below it are inside the scroll node and the
+            // header is not, so running the header through `in_pane` would
+            // shift it by the scroll offset and make it answer only while the
+            // list is at the top — a defect that hides completely in a test
+            // that never scrolls.
+            let (hx, hy) = (px.saturating_sub(list.x), py.saturating_sub(list.y));
+            if hy < HEAD_H {
+                for n in 0..spec::COLUMNS.len() {
+                    if contains(list_head(n), hx, hy) {
+                        return Self::Header(n);
+                    }
+                }
+                return Self::None;
+            }
             let (lx, ly) = in_pane(&state.list_scroll, list, px, py);
             // R1707 — walk what is DRAWN. A hit test over the source rows would
             // answer a hidden message under a filtered list, which is the exact
@@ -1356,6 +1471,68 @@ fn run_filter(state: &Rc<ViewState>, text: &str) -> Result<IntrospectValue, Invo
     })))
 }
 
+/// ★★★★★ R1829 — **order the list**, from the wire form the `sort` read answers.
+///
+/// # Why it refuses rather than clamps
+///
+/// `grid_sort_parse` returns `None` for a string it cannot read, and a column
+/// past the end is a different failure from a malformed one — so both are
+/// answered, by name, with the range the caller could have used. The
+/// alternative every grid in this tree offers instead is a SILENT clamp to
+/// unsorted, which is right for *restoring* a saved order (a stale column must
+/// not point the glyph at a phantom) and wrong for a command a client just
+/// issued: it would report success and leave the list in the order it was
+/// already in, which reads as "the sort did nothing" rather than "you asked for
+/// a column that is not there".
+///
+/// # What it answers
+///
+/// The order it ended in and the row now at the top, because that is the fact a
+/// caller is actually after: *which message am I looking at first*. A bare
+/// acknowledgement would make the caller ask again.
+fn run_sort(state: &Rc<ViewState>, text: &str) -> Result<IntrospectValue, InvokeError> {
+    let columns = spec::COLUMNS.len();
+    let sort = grid_sort_parse(text).ok_or_else(|| {
+        InvokeError::rejected(format!(
+            "{text:?} is not an order — use \"none\", or \"<column>:ascending\" \
+             / \"<column>:descending\" with a column in 0..{columns}"
+        ))
+    })?;
+    if let Some((col, _)) = sort
+        && col >= columns
+    {
+        return Err(InvokeError::rejected(format!(
+            "no column {col} — this list has {columns}, numbered 0..{}",
+            columns - 1
+        )));
+    }
+    state.sort.set(sort);
+    let kept = state.kept();
+    announce_sort(state);
+    Ok(IntrospectValue::Json(serde_json::json!({
+        "sort": grid_sort_str(state.sort.get()),
+        "kept": kept.len(),
+        "top": kept.first(),
+    })))
+}
+
+/// ★ R1829 — say what the order is now, naming the COLUMN rather than its
+/// index: the status line is read by a person, and "ordered by time, oldest
+/// first" is the sentence they would say. The index stays on the wire, where
+/// the reader is a client.
+fn announce_sort(state: &Rc<ViewState>) {
+    match state.sort.get() {
+        None => state.say(Utterance::done("capture order")),
+        Some((col, ascending)) => {
+            let title = spec::COLUMNS.get(col).map_or("?", |column| column.title);
+            state.say(Utterance::done(format!(
+                "ordered by {title}, {}",
+                if ascending { "ascending" } else { "descending" }
+            )));
+        }
+    }
+}
+
 /// R1707 — say what the running query did, in the words the bar prints.
 fn announce_query(state: &Rc<ViewState>) {
     match state.query_fault() {
@@ -1469,6 +1646,23 @@ fn toggle_layer(state: &Rc<ViewState>, n: usize) {
     }
 }
 
+/// ★★★★★ R1829 — pressing a column header cycles this list's order the way
+/// every other grid in this tree cycles: unsorted -> ascending -> descending ->
+/// unsorted, and a DIFFERENT column jumps straight to it ascending.
+///
+/// The transition is [`cycle_col_sort`], taken rather than re-matched. It is
+/// three lines to write and the reason not to write them is that this is a
+/// *controller wiring*: a screen whose header cycle disagreed with the rest of
+/// the tree would be a bug wearing the costume of a style choice, and nothing
+/// would catch it — the states are all legal, just not the ones a reader who
+/// has used another grid here expects.
+fn cycle_sort(state: &Rc<ViewState>, col: usize) {
+    state
+        .sort
+        .set(cycle_col_sort(state.sort.get(), col, spec::COLUMNS.len()));
+    announce_sort(state);
+}
+
 fn move_cursor(state: &Rc<ViewState>, px: u32, py: u32) {
     state.cursor.set((px, py));
 }
@@ -1496,6 +1690,7 @@ fn act_on_hit(state: &Rc<ViewState>, hit: Hit) -> bool {
         Hit::Byte(b) => select_byte(state, b),
         Hit::Saved(n) => toggle_saved(state, n),
         Hit::Layer(n) => toggle_layer(state, n),
+        Hit::Header(n) => cycle_sort(state, n),
         Hit::None => return false,
     }
     true
@@ -2908,6 +3103,35 @@ impl ExternalIntrospect for ViewOracle {
                     // the same shape of answer — a map from row index to a fact
                     // about that row, holding only the rows the fact is true of.
                     SchemaField::new("correlation", "json"),
+                    // ★★★★★ R1829 — the list's order, in the framework's own
+                    // wire vocabulary (`none` / `<col>:ascending` /
+                    // `<col>:descending`) rather than a spelling of this
+                    // screen's own. A client that can read the order of any
+                    // grid in this tree can read this one.
+                    //
+                    // ★★★★★ **A SLOT NAMES THE FACT AND A VERB NAMES THE ACT,
+                    // and finding out that this screen already had that rule is
+                    // what settled the shape.** The first draft declared `sort`
+                    // twice — as this read AND as an `invoke` action at the same
+                    // path — and the wire refused it: `PathIsAReadSlot`, a path
+                    // is one or the other. Two ways out were measured.
+                    //
+                    // The framework's own `GridSortExternal` publishes `sort` as
+                    // a read and takes its writes through `intervene`, at the
+                    // same path. That was built, and then dropped, for two
+                    // reasons that only appear once it is running: an
+                    // `intervene` returns unit, so the order, the kept count and
+                    // the row now at the top — all three of which `run_sort`
+                    // already knows — would cost a client a second round-trip
+                    // that its peer `filter` does not; and this screen does not
+                    // follow that convention anywhere else. Its filter is an
+                    // `invoke` action called `filter` whose FACT is read at
+                    // `query`, so the established rule here is a distinct path
+                    // per direction with ONE value vocabulary between them.
+                    // `sort` + `order` is that rule applied, and switching
+                    // idioms halfway down one surface is worse than differing
+                    // from a sibling crate.
+                    SchemaField::new("sort", "string"),
                     SchemaField::parametric(
                         "hit.<x>.<y>",
                         "string",
@@ -2951,6 +3175,11 @@ impl ExternalIntrospect for ViewOracle {
                     SchemaField::action("toggle_saved", "int"),
                     SchemaField::action("toggle_layer", "int"),
                     SchemaField::action("filter", "string"),
+                    // R1829 — the act. Takes exactly what the `sort` slot
+                    // answers, so a client saves an order and restores it
+                    // without translating; see that slot for why the two carry
+                    // different paths.
+                    SchemaField::action("order", "string"),
                     SchemaField::action("point", "string"),
                     SchemaField::action("press", "string"),
                     // ★ R1664 — declared, not merely handled. The router's press
@@ -3034,6 +3263,10 @@ impl ExternalIntrospect for ViewOracle {
                 .query_fault()
                 .map_or(IntrospectValue::Null, IntrospectValue::Text)),
             "kept_rows" => Ok(IntrospectValue::Json(serde_json::json!(state.kept()))),
+            // ★ R1829 — `grid_sort_str` and not a `format!` here. The wire form
+            // is the framework's, and the only way it stays the framework's is
+            // for this arm to ask the framework what it is.
+            "sort" => Ok(IntrospectValue::Text(grid_sort_str(state.sort.get()))),
             // ★ R1787 — the dialects `export` writes, each saying whether it
             // can carry any cell unchanged. Derived from the framework's one
             // roster, so this screen cannot offer a dialect the writer lacks.
@@ -3180,6 +3413,7 @@ impl ExternalIntrospect for ViewOracle {
                 Ok(IntrospectValue::Json(serde_json::json!(state.saved.get())))
             }
             "filter" => run_filter(&state, &Self::text(&args)?),
+            "order" => run_sort(&state, &Self::text(&args)?),
             "toggle_layer" => {
                 let n = args
                     .as_usize()
@@ -3707,10 +3941,19 @@ fn list_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
     // numbered one to sixteen out of seventeen, a header with no index at all,
     // and the first message standing where the header belongs. The rule now
     // lives once, in the builder, and the row's name-from-contents with it.
+    // ★★★★★ R1829 — `aria-sort`, and this slot was hard-coded `None` in exactly
+    // the way `GridCell::focused` was hard-coded `false` before R1699 — the
+    // defect this very function's comment records one paragraph up. A grid that
+    // can be ordered and never says so tells a reader the rows are in no
+    // particular order, which is a false statement rather than a missing one.
+    // `col_sort_dir` is the one home of "does THIS header carry the attribute",
+    // and `from_ascending` the one home of bool -> direction; both are taken
+    // rather than re-matched here.
+    let sort = state.sort.get();
     let grid_columns: Vec<GridColumn> = (0..columns)
         .map(|n| GridColumn {
             tag: format!("pv.list.head.{n}"),
-            sort: None,
+            sort: col_sort_dir(sort, n).map(SortDirection::from_ascending),
         })
         .collect();
     // ★★★ R1707 — a reader hears the list the query kept. WAI-ARIA's row count

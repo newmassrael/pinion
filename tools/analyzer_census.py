@@ -265,7 +265,6 @@ def check_assemblies(rows: list[dict], exists) -> list[str]:
 #: empty — and an empty allowlist is the one that cannot rot.
 UNASSEMBLED: frozenset[str] = frozenset(
     {
-        "capture.t1.11",
         "capture.t2.14",
         "capture.t2.18",
         "dashboard.t1.8",

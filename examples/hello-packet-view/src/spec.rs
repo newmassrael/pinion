@@ -137,6 +137,7 @@ pub const GESTURES: &[(&str, &str)] = &[
     ("click a message", "decode it"),
     ("click a decode field", "light its bytes"),
     ("type in the filter", "narrow the list"),
+    ("click a column header", "order the list by it"),
 ];
 
 /// What the query bar says when no query is running.
@@ -1819,6 +1820,41 @@ pub const OPERATIONS: &[OperationSpec] = &[
         gesture: true,
         witness: "kept_rows",
         needs: Some("filter the capture"),
+    },
+    // ★★★★★ R1829 — ordering, which is half of `follow one session, in time
+    // order`: a filter alone leaves the reply above the request it answers,
+    // because this capture is written newest-first.
+    //
+    // ⚠ The witness is `sort` and not `kept_rows`, and the first draft of this
+    // comment gave the wrong reason for that — it said a sort would leave
+    // `kept_rows` standing still, which is FALSE: the witness is the whole
+    // published array and ordering permutes it, so it moves. The real reason is
+    // that it moves only INCIDENTALLY. A filter that kept one row, or none,
+    // would order to the same array and the entry would pass while asserting
+    // nothing. `sort` names the fact the operation is about, so it moves
+    // whenever the operation happens and only then.
+    //
+    // ★ The verb is `order` and the witness is `sort` — the act and the fact,
+    // which is the same split this screen already runs on one axis over
+    // (`filter` is what you do, `query` is what it left). The two carry ONE
+    // value vocabulary, so an order read off `sort` can be handed straight back
+    // to `order`.
+    OperationSpec {
+        name: "order the list",
+        verb: Some(("order", "0:ascending")),
+        gesture: true,
+        witness: "sort",
+        needs: None,
+    },
+    // Returning to the capture's own order is its own operation, for the reason
+    // clearing the filter is: an analyser you cannot get back out of is a
+    // different tool from the one the reference describes.
+    OperationSpec {
+        name: "return to capture order",
+        verb: Some(("order", "none")),
+        gesture: true,
+        witness: "sort",
+        needs: Some("order the list"),
     },
     // ── the message list ─────────────────────────────────────────
     OperationSpec {
