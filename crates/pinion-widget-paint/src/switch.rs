@@ -55,6 +55,7 @@ use pinion_core::style::{
     AlignItems, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size,
 };
 use pinion_core::theme::{ColorRole, Theme};
+use pinion_core::voice::Silence;
 use pinion_core::widgets::interaction::InteractionState;
 
 /// R1574 §5.38 — the Switch's geometry and its interaction declarations.
@@ -89,6 +90,29 @@ pub struct SwitchStyle {
     /// binding that genuinely wants a non-focusable switch — one inside a
     /// composite that owns the Tab stop itself — clears it here.
     pub focusable: bool,
+    /// R1837 §5.13 — whether the tagged track lets a press through to whatever
+    /// is under it.
+    ///
+    /// Default `false`, which is what a switch that IS the pointer target
+    /// wants: the tag it carries is the `scene/click` address, and the router
+    /// resolving a press to it is the whole arrangement.
+    ///
+    /// ★★★★★ A switch drawn INSIDE another control needs the opposite, for
+    /// R1649.1's reason: the router resolves a press to the deepest TAGGED node
+    /// under the cursor and then looks for that tag's `External`, so a tagged
+    /// node that is an ADDRESS rather than a primitive swallows the press and
+    /// forwards nothing — that is how a whole screen was found dead to a real
+    /// mouse while 118 scripted assertions passed. The configuration form is
+    /// exactly that case: its boolean control publishes its geometry and the
+    /// consumer's hit test reads it, so the track has to be an address a census
+    /// can see rather than a target a press stops at.
+    ///
+    /// ★ And this field is a second answer to the question the module doc opens
+    /// with. A form that could not declare it here would either hand-roll a
+    /// thirteenth track or leave the track untagged — and an untagged track is
+    /// invisible to the conformance census that classifies a row by what its
+    /// control actually draws.
+    pub pointer_transparent: bool,
 }
 
 impl SwitchStyle {
@@ -103,6 +127,7 @@ impl SwitchStyle {
             knob_size: 24,
             knob_radius: 12,
             focusable: true,
+            pointer_transparent: false,
         }
     }
 }
@@ -176,6 +201,17 @@ pub fn switch_knob_for<S: InteractionState + Copy>(theme: &Theme, state: S, on: 
 /// The knob's position is [`JustifyContent`], not an offset: `Start` for off,
 /// `End` for on. That leaves the travel to the layout pass, so a binding that
 /// changes [`SwitchStyle::track_w`] gets the right throw without arithmetic.
+///
+/// ★★★★★ R1837 — `silence` is for a switch that does **not** announce itself,
+/// and it is required to be explicit rather than defaulted. A tagged, painted
+/// region that says nothing is `unvoiced` to the voice census, which is the
+/// whole apparatus R1691 built; a switch drawn inside a control that already
+/// announces the checkbox has to declare where a reader receives it instead of
+/// simply going quiet. `None` means this switch speaks for itself, which is
+/// what `aria_label` is then for. It is a parameter and not a
+/// [`SwitchStyle`] field because the relay names another node's tag, which is
+/// built per row and cannot be a `'static` constant — and [`Silence`] is not
+/// `Copy`, which that struct is.
 #[must_use]
 pub fn view_switch<S: InteractionState + Copy>(
     tag: impl Into<std::borrow::Cow<'static, str>>,
@@ -184,6 +220,7 @@ pub fn view_switch<S: InteractionState + Copy>(
     theme: &Theme,
     style: &SwitchStyle,
     aria_label: &str,
+    silence: Option<Silence>,
 ) -> Scene {
     let knob = Scene::Box(
         BoxNode::new(
@@ -193,6 +230,10 @@ pub fn view_switch<S: InteractionState + Copy>(
         )
         .with_layout(LayoutStyle::new().with_size(Size::px(style.knob_size, style.knob_size))),
     );
+    let quiet = match silence {
+        Some(silence) => LayoutStyle::new().with_silence(silence),
+        None => LayoutStyle::new(),
+    };
     let mut track = ContainerNode::new(vec![knob])
         .with_tag(tag)
         .with_style(
@@ -200,8 +241,9 @@ pub fn view_switch<S: InteractionState + Copy>(
                 .with_corner_radius(style.track_radius),
         )
         .with_layout(
-            LayoutStyle::new()
+            quiet
                 .with_focusable(style.focusable)
+                .with_pointer_transparent(style.pointer_transparent)
                 .flex(FlexDirection::Row)
                 .with_justify(if on {
                     JustifyContent::End
@@ -253,6 +295,7 @@ mod tests {
             &theme(),
             &SwitchStyle::m3(),
             "Dark mode",
+            None,
         );
         let track = track_of(&scene);
         assert_eq!(track.tag.as_deref(), Some("sw"));
@@ -265,13 +308,72 @@ mod tests {
         assert_eq!(track.aria_label.as_deref(), Some("Dark mode"));
     }
 
+    /// ★★★★★ R1837 — a switch drawn INSIDE another control lets the press
+    /// through, and the default does not.
+    ///
+    /// Both halves are asserted, because either alone is the wrong behaviour
+    /// somewhere. A switch that IS the pointer target must stop the press — its
+    /// tag is the `scene/click` address and the router resolving to it is the
+    /// whole arrangement. A switch that is one affordance inside a control must
+    /// not: the router resolves a press to the deepest TAGGED node and then
+    /// looks for that tag's `External`, so an address that swallows a press
+    /// leaves the control under it dead to a real mouse while every scripted
+    /// assertion stays green. That is R1649.1's defect, and it was found by a
+    /// hand after 118 of those assertions passed.
+    #[test]
+    fn r1837_a_switch_inside_a_control_lets_the_press_through() {
+        let style = SwitchStyle::m3();
+        let target = view_switch("sw", ToggleState::Idle, false, &theme(), &style, "x", None);
+        assert!(
+            !track_of(&target).layout.pointer_transparent,
+            "a switch that is the pointer target keeps the press it is the \
+             address for",
+        );
+        let inside = SwitchStyle {
+            pointer_transparent: true,
+            ..style
+        };
+        let nested = view_switch(
+            "sw",
+            ToggleState::Idle,
+            false,
+            &theme(),
+            &inside,
+            "",
+            Some(Silence::part_of("row.control")),
+        );
+        assert!(
+            track_of(&nested).layout.pointer_transparent,
+            "a switch inside another control forwards the press to it",
+        );
+        // ★★★★★ And it declares where a reader receives it. A tagged, painted
+        // region that says nothing is `unvoiced`; the tag cannot be dropped
+        // (a census classifies the control by it), so the silence is what makes
+        // keeping it legitimate.
+        assert_eq!(
+            track_of(&nested)
+                .layout
+                .silence
+                .as_ref()
+                .and_then(Silence::relay_target),
+            Some("row.control"),
+            "a quiet switch names the node a reader hears instead",
+        );
+        assert_eq!(
+            track_of(&nested).tag.as_deref(),
+            Some("sw"),
+            "and it keeps its tag — a census that classifies a control by what \
+             it draws cannot see an untagged track",
+        );
+    }
+
     #[test]
     fn r1574_a_binding_can_decline_the_focus_stop_and_the_name() {
         let style = SwitchStyle {
             focusable: false,
             ..SwitchStyle::m3()
         };
-        let scene = view_switch("sw", ToggleState::Idle, false, &theme(), &style, "");
+        let scene = view_switch("sw", ToggleState::Idle, false, &theme(), &style, "", None);
         let track = track_of(&scene);
         assert!(!track.layout.focusable, "a composite may own the Tab stop");
         assert_eq!(
@@ -285,8 +387,8 @@ mod tests {
     #[test]
     fn r1574_the_knob_travels_by_justification_not_by_arithmetic() {
         let style = SwitchStyle::m3();
-        let off = view_switch("sw", ToggleState::Idle, false, &theme(), &style, "x");
-        let on = view_switch("sw", ToggleState::Idle, true, &theme(), &style, "x");
+        let off = view_switch("sw", ToggleState::Idle, false, &theme(), &style, "x", None);
+        let on = view_switch("sw", ToggleState::Idle, true, &theme(), &style, "x", None);
         assert_eq!(track_of(&off).layout.justify_content, JustifyContent::Start);
         assert_eq!(track_of(&on).layout.justify_content, JustifyContent::End);
         // And the geometry is the style's, so a wider track throws further with
@@ -295,7 +397,7 @@ mod tests {
             track_w: 96,
             ..style
         };
-        let scene = view_switch("sw", ToggleState::Idle, true, &theme(), &wide, "x");
+        let scene = view_switch("sw", ToggleState::Idle, true, &theme(), &wide, "x", None);
         assert_eq!(
             track_of(&scene).layout.size,
             Size::px(96, style.track_h),

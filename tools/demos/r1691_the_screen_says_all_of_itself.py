@@ -343,9 +343,22 @@ def body() -> None:
             False,
             "and the bit is announced, which is what a reader's toggle reads",
         )
-        toggle = access_node_by_tag(access, f"lab.form.toggle.{boolean_key}")
-        assert toggle is not None and toggle["role"] == "checkbox", (
-            "the pill inside it is announced too, and as the same kind"
+        # ★★★★★ R1837 — announced ONCE, and this line used to demand the
+        # opposite. The form published a `toggle.<key>` square inside the
+        # control and announced it as a SECOND checkbox with the control's own
+        # name and the control's own bit, at a rectangle a fraction of its size:
+        # a reader met one checkbox twice. The control IS the switch now, so
+        # there is nothing inside it to announce — the same judgment R1732 made
+        # about the collapsed chooser's chevron, which was never carried across
+        # to the boolean beside it.
+        boolean_boxes = [
+            n["tag"]
+            for n in (access.get("nodes") or [])
+            if n.get("role") == "checkbox" and boolean_key in n.get("tag", "")
+        ]
+        assert boolean_boxes == [f"lab.form.control.{boolean_key}"], (
+            "one control, one checkbox — a reader who hears it twice cannot "
+            f"tell two controls from one said twice: {boolean_boxes}"
         )
         assert_eq(
             tf.voice()["counts"]["unvoiced"],

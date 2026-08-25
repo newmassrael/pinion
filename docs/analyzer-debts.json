@@ -42,17 +42,6 @@
   },
   "debts": [
     {
-      "name": "debt-a-boolean-row-reads-as-a-text-box",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links analyzer-behaviour-canon-is-the-standalone-prototype"
-      ]
-    },
-    {
       "name": "debt-a-gate-computes-its-expectation-from-the-code-it-checks",
       "substituted": false,
       "blocked_by": "buildable",

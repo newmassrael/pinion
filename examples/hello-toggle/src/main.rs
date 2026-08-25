@@ -150,6 +150,9 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
         // puts the label beside the control), so the scene-walk name derivation
         // cannot reach it and the name has to be stated here.
         "Dark mode",
+        // R1837 — it announces itself, so no silence: this switch IS the
+        // control, and the line above is the name it announces with.
+        None,
     );
     let label = Scene::Text(TextNode::styled(
         "Dark mode",

@@ -6272,6 +6272,9 @@ fn settings_option_rows(
                 &theme,
                 &SwitchStyle::m3(),
                 option.title,
+                // R1837 — it announces itself: this switch IS the control on
+                // the settings row, named by the option it turns on.
+                None,
             )])
             .with_layout(absolute(seat)),
         ));

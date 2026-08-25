@@ -231,6 +231,9 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
         &theme,
         &SwitchStyle::m3(),
         "Theme mode",
+        // R1837 — it announces itself, so no silence: this switch IS the
+        // control a reader meets.
+        None,
     );
 
     let status_str = if on { "Dark mode" } else { "Light mode" };

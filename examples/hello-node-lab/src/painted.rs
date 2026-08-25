@@ -671,7 +671,13 @@ fn must_answer(tag: &str) -> Option<String> {
             return Some(format!("{verb}:{rest}"));
         }
     }
-    for family in ["option", "step", "toggle", "item"] {
+    // ★★★★★ R1837 — `toggle` left with the affordance it named: a boolean row
+    // publishes no part now, so no `lab.form.toggle.*` tag is painted. Its
+    // successor `lab.form.switch.*` is deliberately NOT here — it is an address
+    // a census reads, not a press target, and it is pointer-transparent for
+    // exactly that reason. The control it sits in is what answers a press, and
+    // `r1684_the_centre_of_every_control_answers_a_press` is what demands it.
+    for family in ["option", "step", "item"] {
         if let Some(rest) = tag.strip_prefix(&format!("lab.form.{family}.")) {
             return Some(format!("{family}.{rest}"));
         }
@@ -730,15 +736,23 @@ fn must_answer(tag: &str) -> Option<String> {
 /// Both answers are about the same settings-form row.
 ///
 /// A control that holds affordances INSIDE it — a list's element rows, a
-/// stepper's arrows, a checkbox — legitimately answers with the affordance
-/// under the cursor rather than with the row. What must never happen is an
-/// answer naming a *different* row, which is what R1651.1's three defects and
-/// R1652.1's overlap all did.
+/// stepper's arrows, a set's option pills — legitimately answers with the
+/// affordance under the cursor rather than with the row. What must never happen
+/// is an answer naming a *different* row, which is what R1651.1's three defects
+/// and R1652.1's overlap all did.
+///
+/// ★★★★★ R1837 — a boolean used to be in that list and is not one of these.
+/// Its mark was a part inside the control; now the control IS the switch, so a
+/// press on it answers with the row, like a text box.
 fn same_row(want: &str, got: &str) -> bool {
     let Some(key) = want.strip_prefix("field:") else {
         return false;
     };
-    ["option.", "step.", "toggle.", "item."]
+    // ★★★★★ R1837 — `toggle.` left this list with the affordance it named. A
+    // boolean row publishes no part any more (the control IS the switch), so an
+    // answer can no longer start with it, and a matcher that keeps accepting a
+    // prefix nothing produces says the form still offers something it does not.
+    ["option.", "step.", "item."]
         .iter()
         .filter_map(|f| got.strip_prefix(f))
         .any(|rest| {

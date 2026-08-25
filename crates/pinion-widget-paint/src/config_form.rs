@@ -54,7 +54,10 @@ use pinion_core::widgets::config_form::{
     Applies, ConfigDefect, ConfigField, ConfigForm, FieldType, Source,
 };
 use pinion_core::widgets::picker::Picker;
+use pinion_core::widgets::toggle::ToggleState;
 use pinion_core::{Scene, measured_text_extent};
+
+use crate::switch::SwitchStyle;
 
 /// R1654 §5.36 — the base style every run in this form carries.
 ///
@@ -630,6 +633,18 @@ const STEP_W: u32 = 26;
 /// Vertical space between a list's element rows.
 const LIST_GAP: u32 = 4;
 
+/// The size a boolean's word is drawn at.
+const BOOL_WORD_PX: u32 = 12;
+/// The line box that word sits in, so it can be centred in the control rather
+/// than dropped at a fixed offset from the top.
+const BOOL_WORD_LINE: u32 = 14;
+/// The gap between a boolean's switch and its word. The behaviour canon's own
+/// `gap`, measured off its boolean control.
+const BOOL_WORD_GAP: u32 = 9;
+/// The horizontal padding inside a boolean's box, each side. The canon's, from
+/// the same rule.
+const BOOL_WORD_PAD: u32 = 10;
+
 /// Lay a form out, giving every part a rectangle.
 ///
 /// `origin` is where the form's first row starts. The geometry is the single
@@ -819,6 +834,71 @@ fn split_off_remove(header: Rect, key_line: u32) -> (Rect, Rect) {
     )
 }
 
+/// The word a boolean row shows.
+///
+/// One derivation, because the box that has to hold it and the paint that draws
+/// it must not disagree about which word it is.
+fn boolean_word(field: &ConfigField) -> &'static str {
+    if field.value().trim() == "true" {
+        "true"
+    } else {
+        "false"
+    }
+}
+
+/// The switch a boolean row wears, at the analysis tool's own metrics.
+///
+/// ★★★★★ R1837 — measured off the behaviour canon rather than chosen: its
+/// boolean control is a 30x17 pill track with a 13x13 knob inset 2 px, the
+/// track taking the accent when on. [`SwitchStyle::m3`]'s 64x32 is the size a
+/// settings row gives a switch and is half again as tall as this form's control
+/// line, which is why the metrics are stated here instead of defaulted.
+///
+/// Not focusable: the control container around it is the row's Tab stop, and a
+/// second stop inside it would make a reader press Tab twice to leave one
+/// control.
+const fn boolean_switch_style() -> SwitchStyle {
+    SwitchStyle {
+        track_w: 30,
+        track_h: 17,
+        track_radius: 8,
+        track_pad: 2,
+        knob_size: 13,
+        knob_radius: 6,
+        focusable: false,
+        // ★★★★★ R1837 — and pointer-TRANSPARENT, which is load-bearing rather
+        // than tidy. This form publishes its geometry and its consumer's hit
+        // test reads it; a tagged node that is an address rather than a
+        // primitive SWALLOWS a press and forwards nothing (R1649.1, a whole
+        // screen dead to a real mouse while 118 scripted assertions passed).
+        // The tag has to stay, because the conformance census classifies a row
+        // by the affordance its control draws and an untagged track is
+        // invisible to it — so the press must pass through instead.
+        pointer_transparent: true,
+    }
+}
+
+/// ★★★★★ R1837 — the knob's TRAVEL is the canon's, and it is checked rather
+/// than asserted in prose.
+///
+/// The canon puts its knob at `left: 2px` when off and `left: 15px` when on, so
+/// it moves **13 px**. [`SwitchStyle`] documents travel as
+/// `track_w - 2 * track_pad - knob_size`, and this form's metrics give
+/// `30 - 4 - 13`, which is the same 13 — derived from the track and knob rather
+/// than copied from the canon's two offsets.
+///
+/// A compile-time assertion because it is arithmetic over constants: a test
+/// would run it, and this cannot even build wrong. Restyling the track without
+/// restyling the knob is what it catches, which is the one edit that would move
+/// the knob's throw while every rendering still looked plausible.
+const _: () = {
+    let s = boolean_switch_style();
+    assert!(
+        s.track_w - 2 * s.track_pad - s.knob_size == 13,
+        "the switch's knob no longer travels the distance the canon's does"
+    );
+};
+
 /// Where a row's affordances land inside its control.
 ///
 /// One function over every shape, because the alternative is one per shape and
@@ -828,7 +908,7 @@ fn split_off_remove(header: Rect, key_line: u32) -> (Rect, Rect) {
 /// |---|---|
 /// | [`FieldType::Text`] / [`FieldType::Formatted`] | none — the control *is* the box |
 /// | [`FieldType::Integer`] | `step.<key>.down`, `step.<key>.up` |
-/// | [`FieldType::Boolean`] | `toggle.<key>` |
+/// | [`FieldType::Boolean`] | none — the control *is* the switch (R1837) |
 /// | [`FieldType::Choice`] / [`FieldType::Flags`] | `option.<key>.<word>` each |
 /// | [`FieldType::List`] | `item.<key>.<n>` each, then `item.<key>.add` |
 fn lay_parts(field: &ConfigField, control: Rect, style: &FormStyle) -> Vec<(String, Rect)> {
@@ -842,7 +922,19 @@ fn lay_parts(field: &ConfigField, control: Rect, style: &FormStyle) -> Vec<(Stri
     match field.shape() {
         // A formatted string is a text box too: what differs is what it will
         // accept, and that is not a part anybody can press.
-        FieldType::Text | FieldType::Formatted { .. } => Vec::new(),
+        //
+        // ★★★★★ R1837 — and a `Boolean` joined them, which is why the arm reads
+        // as one. It published `toggle.<key>` over a `h x h` square holding the
+        // mark alone, so the word `true`/`false` beside it sat outside every
+        // rectangle the form published — outside the press target, outside the
+        // announcement's bounds — while the whole box took the press. A person
+        // reported the row as unreadable ("is that a text edit or a button"),
+        // and a control whose published affordance is a square next to an
+        // unexplained word is what that reads as; the square was also announced
+        // as a SECOND checkbox carrying the control's own name and bit. The
+        // control IS the switch now, the same way a text row's control is its
+        // box.
+        FieldType::Text | FieldType::Formatted { .. } | FieldType::Boolean => Vec::new(),
         FieldType::Integer { .. } => {
             // A stepper pair at the trailing edge, so the value's text keeps
             // the left of the box and the two buttons never overlap it.
@@ -859,10 +951,6 @@ fn lay_parts(field: &ConfigField, control: Rect, style: &FormStyle) -> Vec<(Stri
                 ),
             ]
         }
-        FieldType::Boolean => vec![(
-            format!("toggle.{key}"),
-            Rect::new(control.x, control.y, control.h, control.h),
-        )],
         // ★★★★★ R1732 — one part, the chevron that opens the roster, at the
         // trailing edge where the reference draws it. The roster itself is not
         // in this list: it is a layer over the rows below, so it is published
@@ -1436,7 +1524,7 @@ fn view_control(
                 let chosen: Vec<&str> = FieldType::elements(&shown).collect();
                 option_chips(tag_prefix, row, &chosen, origin, theme)
             }
-            FieldType::Boolean => boolean_control(tag_prefix, row, field, origin, theme),
+            FieldType::Boolean => boolean_control(tag_prefix, row, field, worst, origin, theme),
             FieldType::Integer { .. } => {
                 number_control(tag_prefix, row, field, worst, origin, theme)
             }
@@ -1493,14 +1581,21 @@ const fn control_frame(shape: &FieldType) -> u32 {
         // the chevron seat at the trailing edge, and before the inset was
         // applied that seat stood on the control's own outline, which is
         // exactly the escape R1672 measured for the stepper pair.
+        //
+        // ★★★★★ R1837 — and a `Boolean` joined them when it stopped painting
+        // into an unstyled container. It wears the row box now, for the reason
+        // the behaviour canon does: the box is the same for a value you type
+        // and a value you flip, and what tells the two apart is the SWITCH
+        // inside it, not the presence of a frame.
         FieldType::Text
         | FieldType::Formatted { .. }
         | FieldType::Integer { .. }
+        | FieldType::Boolean
         | FieldType::Choice { .. } => CONTROL_FRAME,
-        // These paint into an unstyled container — a checkbox and its word, a
-        // row of option pills, a column of self-skinned item boxes. There is no
-        // outline of their own for a part to stand on.
-        FieldType::Boolean | FieldType::Flags { .. } | FieldType::List { .. } => 0,
+        // These paint into an unstyled container — a row of option pills, a
+        // column of self-skinned item boxes. There is no outline of their own
+        // for a part to stand on.
+        FieldType::Flags { .. } | FieldType::List { .. } => 0,
     }
 }
 
@@ -1707,40 +1802,113 @@ fn option_chips(
     )
 }
 
-/// A boolean row: a **checkbox**, not a box somebody types `true` into.
+/// A boolean row: **a switch and its word**, in the box every other row wears.
+///
+/// ★★★★★ R1837 — this drew a bordered pill carrying `U+2713` or a SPACE, in an
+/// unstyled container, and a person looking at the running window could not
+/// tell the row from a text field: *"is that a text edit or a button"*.
+///
+/// Two things were wrong and only one of them was the mark.
+///
+/// **The catalog already had the control, and this file drew a different one.**
+/// [`crate::switch`] was lifted at R1574 out of twelve bindings that had each
+/// hand-rolled a track and a knob. This file did not hand-roll a thirteenth —
+/// it drew something else entirely, a check pill, on a row that the behaviour
+/// canon and `docs/analyzer-inspector-spec.json` both call **a switch, and the
+/// word it is set to**. That is the worse of the two failures: a duplicated
+/// painter is a maintenance cost, and the wrong control kind is a screen that
+/// does not reproduce what it is specified against, with the right painter
+/// sitting one module away in the same crate.
+///
+/// **And the canon does not distinguish the two rows by their box.** Measured
+/// off the behaviour canon rather than reasoned about: its boolean control
+/// carries the *same* filled, bordered, 8 px-radius box as the rows a person
+/// types into, and what tells them apart is a 30x17 pill track with a 13x13
+/// knob that MOVES — off at 2 px, on at 15 px. A mark that only changes colour
+/// says nothing at a glance; a knob at the other end of its track is a
+/// different picture.
+///
+/// ⚠ **Not what the reference toolkit at 6.11 does, and the difference was
+/// measured rather than assumed.** Probed offscreen — four labels, two allotted
+/// widths, a real press at three points each — its check control HUGS its
+/// content: the pressable extent is the indicator plus the label's own advance
+/// plus about four pixels (`false` -> 49 px, a 32-character label -> 206 px),
+/// it does not grow with the room the layout hands the widget (284 px and 60 px
+/// of allotment give the same 49 px), a press one pixel past it does nothing,
+/// and the accessible bounds equal that extent exactly. That is a coherent
+/// design and it is **not this screen's**: the canon governs here, its box is
+/// the row's full cell with `cursor: pointer` across all of it, and this form's
+/// consumer already presses it that way. Recorded because "we did not copy the
+/// reference" should be a measurement, not an omission.
 fn boolean_control(
     tag_prefix: &str,
     row: &RowBox,
     field: &ConfigField,
+    worst: Option<&ConfigDefect>,
     origin: (u32, u32),
     theme: &Theme,
 ) -> Scene {
     let on = field.value().trim() == "true";
-    let seat = part_seat(row, &format!("toggle.{}", row.key));
-    let ink = if on {
-        theme.resolve(ColorRole::Accent)
-    } else {
-        theme.resolve(ColorRole::OnSurfaceMuted)
-    };
+    let style = boolean_switch_style();
+    let inner = inset_by(row.control, CONTROL_FRAME);
+    // Children are positioned against this container, so every rectangle below
+    // is RELATIVE to `row.control` — the frame included, because the content
+    // box starts inside the outline the skin strokes.
+    let left = CONTROL_FRAME + BOOL_WORD_PAD;
+    let track_y = CONTROL_FRAME + inner.h.saturating_sub(style.track_h) / 2;
+    let word_x = left + style.track_w + BOOL_WORD_GAP;
+    let word_w = inner
+        .w
+        .saturating_sub(BOOL_WORD_PAD * 2 + style.track_w + BOOL_WORD_GAP);
+    let word_y = CONTROL_FRAME + inner.h.saturating_sub(BOOL_WORD_LINE) / 2;
     Scene::Container(
         ContainerNode::new(vec![
-            part_pill(
-                format!("{tag_prefix}.toggle.{}", row.key),
-                if on { "\u{2713}" } else { " " },
-                ink,
-                seat,
-                (row.control.x, row.control.y),
-                theme,
+            // The switch is PLACED rather than flowed, because this container
+            // holds absolutely-positioned children like every other control
+            // here; the painter itself sizes the track, so the wrapper only
+            // says where it sits.
+            Scene::Container(
+                ContainerNode::new(vec![crate::switch::view_switch(
+                    format!("{tag_prefix}.switch.{}", row.key),
+                    ToggleState::Idle,
+                    on,
+                    theme,
+                    &style,
+                    // Empty: the caption is the control's own announcement,
+                    // which already carries this row's key and its checked bit.
+                    // A name here would be the same control announced twice.
+                    "",
+                    // ★★★★★ R1837 — and it declares WHERE a reader receives it,
+                    // rather than simply going quiet. A tagged, painted region
+                    // that says nothing is `unvoiced` to the voice census, which
+                    // is the apparatus R1691 built after 35 accessibility nodes
+                    // turned out to leave five regions unaccounted for. The tag
+                    // has to stay — the conformance census classifies this row
+                    // by it — so the silence is what makes it legitimate.
+                    Some(Silence::part_of(format!(
+                        "{tag_prefix}.control.{}",
+                        row.key
+                    ))),
+                )])
+                .with_layout(
+                    LayoutStyle::new()
+                        .with_absolute_position(left, track_y)
+                        .with_size(Size::px(style.track_w, style.track_h)),
+                ),
             ),
             Scene::Text(TextNode::styled(
-                if on { "true" } else { "false" }.to_owned(),
-                Rect::new(seat.w + 10, 8, 80, 14),
+                boolean_word(field).to_owned(),
+                // The room that is left, not a constant. An 80 px box was here,
+                // and a box that does not follow the control it sits in is a
+                // second answer to how much room the word has.
+                Rect::new(word_x, word_y, word_w, BOOL_WORD_LINE),
                 form_run_style()
-                    .with_size_px(12)
+                    .with_size_px(BOOL_WORD_PX)
                     .with_fg(theme.resolve(ColorRole::OnSurface)),
             )),
         ])
         .with_tag(format!("{tag_prefix}.control.{}", row.key))
+        .with_style(control_skin(worst, theme))
         .with_layout(placed(
             LayoutStyle::new().with_focusable(true),
             row.control,
@@ -2080,6 +2248,12 @@ pub fn row_access_nodes(
         // duplicate `Silence` exists to stop — so the painter declares it
         // folded into the control and this list leaves it out. The two have to
         // agree, and a test below asserts they do.
+        //
+        // ★★★★★ R1837 — a boolean has no part in this list any more, for the
+        // same reason: its mark was not an affordance INSIDE the control, it
+        // WAS the control, and the node above already announced a checkbox with
+        // the same name and the same bit. Two of them was one thing announced
+        // twice, at two rectangles, the second a square inside the first.
         for (suffix, seat) in row.parts.iter().filter(|(s, _)| !s.starts_with("pick.")) {
             nodes.push(part_access_node(tag_prefix, field, suffix, *seat));
         }
@@ -3401,18 +3575,18 @@ mod tests {
             }
         });
         let has = |t: &str| tags.iter().any(|x| x == t);
+        // Affordances published inside a row's control; three shapes answer 0.
+        let bare = |key: &str| geometry.row(key).expect("shown").parts.len();
 
         assert!(has("f.control.free"), "text: the control IS the box");
-        assert_eq!(
-            geometry.row("free").expect("shown").parts.len(),
-            0,
-            "and it has no parts inside it"
-        );
+        assert_eq!(bare("free"), 0, "and it has no parts inside it");
         assert!(
             has("f.step.count.up") && has("f.step.count.down"),
             "{tags:?}"
         );
-        assert!(has("f.toggle.on"), "a boolean is a checkbox: {tags:?}");
+        // ★★★★★ R1837 — a SWITCH; this read `f.toggle.on`, a pill this file rolled.
+        assert!(has("f.switch.on"), "a boolean is a switch: {tags:?}");
+        assert_eq!(bare("on"), 0, "the control IS the switch, so it holds none");
         // ★★★★★ R1732 — a choice is COLLAPSED: one chevron, and no option in
         // the row at all. The roster is a layer of its own and is drawn only
         // while it is open, which is what the two assertions below are about.
@@ -3470,14 +3644,11 @@ mod tests {
             has("f.control.ident"),
             "formatted: the control is the box too"
         );
-        assert_eq!(
-            geometry.row("ident").expect("shown").parts.len(),
-            0,
-            "and it has no parts inside it either"
-        );
+        assert_eq!(bare("ident"), 0, "and it has no parts inside it either");
         assert_eq!(FieldType::ARMS, 7);
         let with_parts = geometry.rows.iter().filter(|r| !r.parts.is_empty()).count();
-        assert_eq!(with_parts, 5, "five of seven shapes carry affordances");
+        // ★★★★★ R1837 — FOUR: the boolean left, third shape whose control is all of it.
+        assert_eq!(with_parts, 4, "four of seven shapes carry affordances");
     }
 
     #[test]
@@ -4097,7 +4268,11 @@ mod tests {
                 shape: FieldType::Boolean,
                 control: AriaRole::CheckBox,
                 value: "true",
-                parts: &[("toggle.k", AriaRole::CheckBox)],
+                // ★★★★★ R1837 — none. The control IS the switch, so there is
+                // no affordance inside it to announce; the mark used to be
+                // published here as a second checkbox carrying the control's
+                // own name and bit.
+                parts: &[],
                 silent: &[],
             },
             ShapeVoice {
@@ -4237,11 +4412,121 @@ mod tests {
         }
     }
 
-    /// The boolean row's state is the BIT, so a reader's toggle command reads
-    /// the same fact the ink does.
+    /// ★★★★★ R1837 — **a boolean row wears a switch whose knob moves.**
+    ///
+    /// The defect this ends: the control drew a bordered pill carrying
+    /// `U+2713` when on and a SPACE when off, so the two states differed by a
+    /// glyph and a colour and by nothing a person catches at a glance. Reported
+    /// from a running window as "is that a text edit or a button".
+    ///
+    /// [`crate::switch`] was lifted at R1574 out of twelve bindings that had
+    /// each hand-rolled a track and a knob, and this file hand-rolled a
+    /// thirteenth in the same crate.
+    ///
+    /// Asserted as a **relation**, never as a coordinate: the knob has to sit
+    /// at a DIFFERENT x in the two states. A pinned pair of numbers would pass
+    /// for a track whose knob never moved if the metrics were ever restyled.
     #[test]
-    fn r1691_a_boolean_row_announces_its_bit_in_both_places() {
-        use pinion_a11y::AccessValue;
+    fn r1837_a_boolean_rows_knob_moves_with_its_bit() {
+        let style = FormStyle::default();
+        let track_of = |value: &str| {
+            let form = ConfigForm::new(
+                vec![
+                    ConfigField::new("on", "bool", Applies::Hot, value)
+                        .with_shape(FieldType::Boolean),
+                ],
+                Vec::new(),
+            );
+            let geometry = form_geometry(&form, (0, 0), &style);
+            let scene = view_config_form("f", &form, &geometry, &Theme::dark());
+            let mut found = None;
+            scene.for_each_node(&mut |node| {
+                if node.node.tag() == Some("f.switch.on") {
+                    found = node.node.layout_style().cloned();
+                }
+            });
+            found.expect("the switch is painted and addressable")
+        };
+
+        let off = track_of("false");
+        let on = track_of("true");
+        let want = super::boolean_switch_style();
+        assert_eq!(
+            off.size,
+            pinion_core::style::Size::px(want.track_w, want.track_h),
+            "the track is not the size this form asked the painter for",
+        );
+        assert_eq!(off.size, on.size, "the TRACK must not change size");
+        assert_ne!(
+            off.justify_content, on.justify_content,
+            "the knob sits at the same end in both states — a mark that only \
+             changes colour is what a person could not read at a glance",
+        );
+        assert!(
+            !off.focusable,
+            "the control owns the Tab stop; a second stop inside it makes a \
+             reader press Tab twice to leave one control",
+        );
+    }
+
+    /// ★★★★★ R1837 — and the row wears the **same box** its neighbours do.
+    ///
+    /// Measured off the behaviour canon: its boolean control carries the filled,
+    /// bordered, rounded box a text row carries, and what separates them is the
+    /// switch inside. Ours painted into an unstyled container, so the boolean
+    /// row was the one row on the panel with no box at all — which is what put
+    /// the question "text edit or button" in a person's mouth in the first
+    /// place, from the CONTRAST with the rows around it.
+    ///
+    /// The declared frame and the painted one are held together by
+    /// `r1672_every_shapes_control_frame_is_the_one_it_paints`; this asserts the
+    /// half that test cannot see, which is that the skin is there at all.
+    #[test]
+    fn r1837_a_boolean_control_wears_the_box_its_neighbours_wear() {
+        let style = FormStyle::default();
+        let form = ConfigForm::new(
+            vec![
+                ConfigField::new("on", "bool", Applies::Hot, "false")
+                    .with_shape(FieldType::Boolean),
+                ConfigField::new("name", "text", Applies::Hot, "x"),
+            ],
+            Vec::new(),
+        );
+        let geometry = form_geometry(&form, (0, 0), &style);
+        let scene = view_config_form("f", &form, &geometry, &Theme::dark());
+        let skin_of = |tag: &str| {
+            let mut found = None;
+            scene.for_each_node(&mut |node| {
+                if node.node.tag() == Some(tag) {
+                    found = Some(node.node.box_style().cloned());
+                }
+            });
+            found.expect("the control is painted")
+        };
+        let boolean = skin_of("f.control.on").expect("a boolean control wears a skin");
+        let text = skin_of("f.control.name").expect("a text control wears a skin");
+        assert_eq!(
+            (boolean.corner_radius, boolean.border.map(|b| b.width)),
+            (text.corner_radius, text.border.map(|b| b.width)),
+            "the two rows wear different boxes — the canon distinguishes them by \
+             the control inside, not by whether there is a box",
+        );
+    }
+
+    /// The boolean row's state is the BIT, so a reader's toggle command reads
+    /// the same fact the ink does — announced **once**.
+    ///
+    /// ★★★★★ R1837 — this test used to be named `…_in_both_places` and required
+    /// the second announcement. It is rebuilt rather than deleted, because the
+    /// claim it made was a design decision and the way to retire one of those
+    /// here is to state the replacement: R1691 gave the mark its own checkbox
+    /// node to end a silence, and that was right at the time; what nobody asked
+    /// afterwards is whether the control above already said it. It did — same
+    /// role, same name, same bit — so a reader met one checkbox twice, at two
+    /// rectangles, and the second was a square inside the first.
+    #[test]
+    fn r1837_a_boolean_row_announces_its_bit_exactly_once() {
+        use pinion_a11y::{AccessValue, AriaRole};
 
         let style = FormStyle::default();
         for (value, want) in [("true", true), ("false", false)] {
@@ -4260,14 +4545,32 @@ mod tests {
                 .expect("announced");
             assert_eq!(control.state.checked, Some(want));
             assert_eq!(control.value, Some(AccessValue::Bool(want)));
-            let toggle = nodes
+            let checkboxes: Vec<&str> = nodes
                 .iter()
-                .find(|n| n.tag == "f.toggle.on")
-                .expect("the checkbox inside it is announced too");
+                .filter(|n| n.role == AriaRole::CheckBox)
+                .map(|n| n.tag.as_str())
+                .collect();
             assert_eq!(
-                toggle.state.checked,
-                Some(want),
-                "the pill and the control must not disagree about the bit",
+                checkboxes,
+                ["f.control.on"],
+                "one control, one checkbox — a reader who hears it twice cannot \
+                 tell two controls from one said twice",
+            );
+            // ★★★★★ And the rectangle it announces is the one a press lands
+            // in — which is the whole control, because the canon's boolean box
+            // takes the pointer across all of it and this form's consumer
+            // presses it that way. The square that used to be announced was a
+            // fraction of it.
+            let row = geometry.row("on").expect("shown");
+            assert_eq!(
+                control.bounds,
+                Some(row.control),
+                "the checkbox announces the box it presses",
+            );
+            assert!(
+                row.parts.is_empty(),
+                "a boolean publishes no part — the control IS the switch: {:?}",
+                row.parts,
             );
         }
     }

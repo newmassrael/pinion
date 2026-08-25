@@ -11695,6 +11695,12 @@ fn press_row(state: &Rc<LabState>, key: &str) {
         return;
     }
     let shape = field.shape().clone();
+    // ★★★★★ R1837 — and this is now the ONLY way a pointer flips a boolean.
+    // The form used to publish a `toggle.<key>` square inside the control, so a
+    // press on the mark arrived at `act_on_part` and a press anywhere else on
+    // the row arrived here. The square is gone and the control IS the switch,
+    // which is the behaviour canon's own shape: its boolean box takes the
+    // pointer across all of it.
     if shape == FieldType::Boolean {
         flip_boolean(state, key);
         return;
@@ -11782,7 +11788,11 @@ fn act_on_part(state: &Rc<LabState>, key: &str, part: &str) {
                 }
             }
         }
-        "toggle" => flip_boolean(state, key),
+        // ★★★★★ R1837 — `toggle` is GONE from this vocabulary, and the arm goes
+        // with it. A boolean row publishes no part any more: the control IS the
+        // switch, the way a text row's control is its box, so a press on it
+        // arrives as `Hit::Field` and `press_row` flips it. Leaving a dead arm
+        // here would say the form still names an affordance it does not.
         "step" => step_number(state, key, part.rsplit('.').next() == Some("up")),
         // ★★★ R1684 — a list's rows: `add` grows it, and a NUMBERED one opens
         // the field on that element. The numbered case fell through to nothing

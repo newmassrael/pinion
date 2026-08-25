@@ -294,7 +294,11 @@ fn row_part_title(part: &str) -> Option<String> {
         "defect" => "what is wrong with the value",
         "shown" => "the word the row holds",
         "pick" => "the arrow that opens the roster",
-        "toggle" => "the switch a boolean row is set with",
+        // ★★★★★ R1837 — `switch`, and it is the substrate's own track and knob
+        // now. This read `toggle`, which was the form's hand-rolled mark: a
+        // bordered pill carrying a tick or a SPACE, published as a part inside
+        // the control and announced as a second checkbox beside it.
+        "switch" => "the switch a boolean row is set with",
         "said" => "the row's spoken description",
         _ => return None,
     };
@@ -351,7 +355,13 @@ fn control_kinds(regions: &PaintedRegions) -> Built {
                 "enum",
                 "a collapsed control holding one word, and an arrow that opens the roster",
             )
-        } else if has("toggle") {
+        } else if has("switch") {
+            // ★★★★★ R1837 — classified by the SWITCH the row paints, which is
+            // what the specification's own sentence says a boolean is. It was
+            // classified by a `toggle` part that no longer exists: the control
+            // IS the switch now, so the form publishes no part for it and the
+            // painter is `pinion_widget_paint::switch` rather than a
+            // thirteenth hand-rolled track.
             ("bool", "a switch, and the word it is set to")
         } else if has("step") {
             ("int", "a stepper that cannot leave the declared range")
