@@ -97,7 +97,7 @@ use pinion_a11y::{
     page_region_node,
 };
 use pinion_chart::{
-    Bar, BarChart, BinEnds, Binned, ChartStyle, QuantileMethod, Quantiles, Sparkline,
+    Bar, BarChart, BinEnds, Binned, ChartStyle, Mute, QuantileMethod, Quantiles, Sparkline,
 };
 use pinion_core::availability::Unavailable;
 use pinion_core::drop_target::{
@@ -491,6 +491,15 @@ fn label_of(id: &str) -> String {
 
 /// The sparkline the filter card draws under its counts: how many messages
 /// matched, over the recent past.
+/// What the filter card's sparkline is a trend OF — the first of
+/// [`spec::FILTER_STATS`]'s three counts, over the recent past.
+///
+/// ★ R1824 — this is the name a `Selection::Category` is matched against, so it
+/// must be the measure's name and NOT a saved filter's: the whole point is that
+/// under any saved filter this trend is a trend of something else, and dims to
+/// context. Taken from the stat row it belongs to rather than written twice.
+const MATCH_SERIES_OF: &str = spec::FILTER_STATS[0].1;
+
 const MATCH_SERIES: [f64; 12] = [
     4.0, 6.0, 5.0, 9.0, 7.0, 12.0, 10.0, 14.0, 11.0, 15.0, 13.0, 17.0,
 ];
@@ -7302,6 +7311,7 @@ fn filter_body(state: &ShellState, id: &str, rect: Rect, palette: Palette) -> Ve
     );
     let last_line = placed.last().map_or(rect.y + 34, |(_, at)| at.y);
     out.extend(filter_counts(
+        state,
         id,
         Rect::new(
             rect.x,
@@ -7427,7 +7437,13 @@ fn filter_chip_rects(rect: Rect) -> Vec<(usize, Rect)> {
 /// reader is looking at a subset of a subset, and a single number cannot say
 /// which subset it is. The tiles go or stay together: a card too short for them
 /// shows the query and the chips, which are the parts a reader can still act on.
-fn filter_counts(id: &str, area: Rect, card: Rect, palette: Palette) -> Vec<Scene> {
+fn filter_counts(
+    state: &ShellState,
+    id: &str,
+    area: Rect,
+    card: Rect,
+    palette: Palette,
+) -> Vec<Scene> {
     let mut out = Vec::new();
     let stat_w = area.w.saturating_sub(2 * 8) / u(spec::FILTER_STATS.len());
     if stat_w < STAT_FLOOR || area.y + STAT_H > card.y + card.h {
@@ -7472,9 +7488,23 @@ fn filter_counts(id: &str, area: Rect, card: Rect, palette: Palette) -> Vec<Scen
                 // The plot area and its stroke are HOW the region is drawn; the
                 // region itself states the series, so these two are declared
                 // quiet rather than left undecided.
+                // ★★★★★ R1824 — the trend PARTICIPATES in the board's
+                // cross-filter, through the one API every chart kind answers
+                // (`pinion_chart::Mute`). Until this round it was the last
+                // thing on this screen that a saved filter reached and that
+                // went on looking exactly the same: `MATCH_SERIES` is the
+                // matched count of the WHOLE capture, so under a saved filter
+                // it is a trend of something other than what the reader is
+                // looking at, and it kept claiming otherwise at full strength.
+                //
+                // Named rather than tagged: `with_tag_prefix` addresses the
+                // chart, `labelled` says what the trend is OF, and it is the
+                // latter a `Selection::Category` is matched against.
                 Sparkline::new(MATCH_SERIES.to_vec())
+                    .labelled(MATCH_SERIES_OF)
                     .with_color(kind_color("filter"))
                     .with_tag_prefix("match.spark")
+                    .muted_by_reach(cross_filter(state).as_ref(), kind_of(id))
                     .build(
                         Rect::new(0, 0, area.w, card.y + card.h - spark_y),
                         &ChartStyle::default(),

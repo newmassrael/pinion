@@ -97,6 +97,7 @@ use crate::draw::{
     outline_box, plot_rect, to_f32, to_u32,
 };
 use crate::fit::Fitted;
+use crate::mute::{MarkKey, Mute, MuteState};
 use crate::palette::CategoricalPalette;
 use crate::plot::{axis_format, axis_ticks};
 use crate::scale::{Categories, CategoryScale, CategoryWindow, LinearScale, ValueScale};
@@ -186,6 +187,12 @@ pub struct BarChart {
     /// R1545 — the visible slice of the category axis (the toolkit
     /// `setRange`). `None` shows every category.
     x_window: Option<CategoryWindow>,
+    /// R1824 — the uniform cross-filter mask, one entry per bar. A THIRD
+    /// selection alongside [`selected`](Self::selected) and
+    /// [`select_x_range`](Self::select_x_range), on the same "either dims"
+    /// rule: it is the one a [`LinkGroup`](crate::LinkGroup) drives without
+    /// knowing the chart kind. See [`crate::mute`].
+    mute: MuteState,
     tag_prefix: String,
 }
 
@@ -206,6 +213,7 @@ impl BarChart {
             select_x_range: None,
             categories,
             x_window: None,
+            mute: MuteState::default(),
             tag_prefix: "chart".to_string(),
         }
     }
@@ -551,10 +559,13 @@ impl BarChart {
                 // (a histogram paints every bin uniform + its over-budget bins
                 // in the jank colour).
                 let base = bar.color.unwrap_or_else(|| self.palette.color(i));
-                // A bar is dimmed when EITHER cross-filter excludes it: the
-                // categorical set (R1384 — not in a non-empty active set) or the
-                // numeric brush window (R1395 — its bin outside `[lo, hi]`).
-                let muted = (any_selected && !self.is_active(i)) || self.is_x_muted(bar);
+                // A bar is dimmed when ANY cross-filter excludes it: the
+                // categorical set (R1384 — not in a non-empty active set), the
+                // numeric brush window (R1395 — its bin outside `[lo, hi]`), or
+                // the uniform selection a link group publishes (R1824).
+                let muted = (any_selected && !self.is_active(i))
+                    || self.is_x_muted(bar)
+                    || self.mute.dimmed_at(i);
                 let color = if muted {
                     base.with_alpha(MUTED_ALPHA)
                 } else {
@@ -875,6 +886,44 @@ fn value_text(bar: &Bar, y_step: f64) -> String {
         format_axis_tick(bar.value, y_step)
     } else {
         "\u{2014}".to_string()
+    }
+}
+
+/// R1824 — a bar chart's uniform mark is the BAR.
+///
+/// This kind had two selections already ([`select`](BarChart::select) by
+/// category set, [`select_x_range`](BarChart::select_x_range) by histogram
+/// bin) and both stay: they are how a *driver* states a filter it computed
+/// itself. This trait is how a [`LinkGroup`](crate::LinkGroup) states one
+/// without knowing which kind is on the other end, and all three dim on the
+/// same rule — any of them excluding a bar dims it.
+///
+/// A bar reports its numeric extent only when it HAS one — a
+/// [`bin`](Bar::bin) makes it a histogram bin with a position on an implicit
+/// axis, and a purely categorical bar has none. So a chart of plain bars
+/// accepts `Category` alone and refuses a numeric window with both sides
+/// named, where before it would have accepted the call and silently muted
+/// nothing.
+impl Mute for BarChart {
+    fn mark_keys(&self) -> Vec<MarkKey<'_>> {
+        self.bars
+            .iter()
+            .map(|b| {
+                let key = MarkKey::new().labelled(b.label.as_str());
+                match b.bin {
+                    Some((lo, hi)) => key.spanning(lo, hi),
+                    None => key,
+                }
+            })
+            .collect()
+    }
+
+    fn mute_state(&self) -> &MuteState {
+        &self.mute
+    }
+
+    fn mute_state_mut(&mut self) -> &mut MuteState {
+        &mut self.mute
     }
 }
 

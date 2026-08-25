@@ -58,6 +58,7 @@ use pinion_core::style::{Color, PathStyle, Stroke};
 
 use crate::derivations;
 use crate::legend::{ChartLegend, Legend, LegendEntry, LegendInteraction, LegendSeat};
+use crate::mute::{MarkKey, Mute, MuteState};
 
 use crate::draw::{
     CalloutRow, absolute, arc_beziers, box_node, callout, fill_parent, to_f32, to_u32,
@@ -126,6 +127,8 @@ pub struct DonutChart {
     inspect: Option<f32>,
     /// R1722 — what may be done to the legend. See [`crate::Legend`].
     legend_interaction: LegendInteraction,
+    /// R1824 — the cross-filter mask. See [`crate::mute`].
+    mute: MuteState,
     tag_prefix: String,
 }
 
@@ -141,6 +144,7 @@ impl DonutChart {
             inner_ratio: DEFAULT_INNER_RATIO,
             inspect: None,
             legend_interaction: LegendInteraction::default(),
+            mute: MuteState::default(),
             tag_prefix: "chart".to_string(),
         }
     }
@@ -254,9 +258,16 @@ impl DonutChart {
         // from `seg.slice` for the same reason, and this is R1379's rule for a
         // hidden series — its index survives — applied to the other hiding rule.
         for seg in &geom.segments {
-            let color = self.slices[seg.slice]
-                .color
-                .unwrap_or_else(|| self.palette.color(seg.slice));
+            // R1824 — the cross-filter dims a slice the active selection does
+            // not cover, by SLICE index (the same index the tag and the colour
+            // are taken by, so a hidden slice cannot shift which mark a mask
+            // entry means).
+            let color = self.mute.shade(
+                seg.slice,
+                self.slices[seg.slice]
+                    .color
+                    .unwrap_or_else(|| self.palette.color(seg.slice)),
+            );
             children.push(sector_node(
                 &geom,
                 seg.a0,
@@ -279,6 +290,48 @@ impl DonutChart {
 
         children.extend(tooltip);
         derivations::chart_root(children, self.tag_prefix.clone(), self.derivations())
+    }
+
+    /// The drawn slices' total — the denominator every share is a fraction of.
+    fn total(&self) -> f64 {
+        self.slices
+            .iter()
+            .filter(|s| s.visible && s.value.is_finite() && s.value > 0.0)
+            .map(|s| s.value)
+            .sum()
+    }
+
+    /// The per-drawn-slice angular segments, in sweep order.
+    ///
+    /// **Rect-independent by construction**: a slice's sweep is its share of
+    /// the total and nothing else. Split out of [`geom`](Self::geom) at R1824,
+    /// when [`crate::Mute`] needed a slice's angular extent to test a
+    /// [`Selection::Sector`](crate::Selection) against and the only place that
+    /// extent existed was inside a function that first needed a rectangle. Two
+    /// definitions of an angle that must agree exactly is how a highlight ring
+    /// lands next to its slice, so there is one.
+    fn segments(&self) -> Vec<Segment> {
+        let total = self.total();
+        let mut segments = Vec::new();
+        if total > 0.0 {
+            let mut a = 0.0_f32;
+            for (i, s) in self.slices.iter().enumerate() {
+                if s.visible && s.value.is_finite() && s.value > 0.0 {
+                    #[allow(
+                        clippy::cast_possible_truncation,
+                        reason = "an angular sweep in 0..2pi narrows to f32 for the pixel geometry; the sub-degree loss is invisible"
+                    )]
+                    let sweep = ((s.value / total) as f32) * 2.0 * PI;
+                    segments.push(Segment {
+                        slice: i,
+                        a0: a,
+                        a1: a + sweep,
+                    });
+                    a += sweep;
+                }
+            }
+        }
+        segments
     }
 
     /// The donut geometry: the centre + radii (in the rect's own frame) and the
@@ -304,31 +357,8 @@ impl DonutChart {
         let oy = to_u32(cy - r_out);
         let bbox = Rect::new(ox, oy, to_u32(r_out * 2.0) + 1, to_u32(r_out * 2.0) + 1);
 
-        let total: f64 = self
-            .slices
-            .iter()
-            .filter(|s| s.visible && s.value.is_finite() && s.value > 0.0)
-            .map(|s| s.value)
-            .sum();
-        let mut segments = Vec::new();
-        if total > 0.0 {
-            let mut a = 0.0_f32;
-            for (i, s) in self.slices.iter().enumerate() {
-                if s.visible && s.value.is_finite() && s.value > 0.0 {
-                    #[allow(
-                        clippy::cast_possible_truncation,
-                        reason = "an angular sweep in 0..2pi narrows to f32 for the pixel geometry; the sub-degree loss is invisible"
-                    )]
-                    let sweep = ((s.value / total) as f32) * 2.0 * PI;
-                    segments.push(Segment {
-                        slice: i,
-                        a0: a,
-                        a1: a + sweep,
-                    });
-                    a += sweep;
-                }
-            }
-        }
+        let total = self.total();
+        let segments = self.segments();
 
         DonutGeom {
             cx: cx - to_f32(ox),
@@ -519,6 +549,46 @@ fn percent_text(value: f64, total: f64) -> String {
     };
     let v = crate::ticks::format_si(value);
     format!("{v} ({pct}%)")
+}
+
+/// R1824 — the crate's first [`Domain::Sector`](crate::Domain) consumer.
+///
+/// A slice answers two questions: its **name** (a legend chip, a saved filter)
+/// and the **wedge** it fills. The angular extent comes from the same private
+/// `segments` resolve the arcs are drawn from, so a sector selection is tested
+/// against the arithmetic that draws the wedge rather than against a second
+/// copy of it. The radial band is the ring itself, reported in normalised radii
+/// (`inner_ratio .. 1.0`) because a donut's pixel radius is a property of the
+/// rect it is asked to fill and a selection is not.
+///
+/// A slice the chart does not draw — hidden, non-finite, zero or negative —
+/// carries no wedge, so it reports its name alone. That is what makes the
+/// derived domain honest: a chart whose slices are all hidden accepts
+/// `Category` and not `Sector`, because there is no angle to test.
+impl Mute for DonutChart {
+    fn mark_keys(&self) -> Vec<MarkKey<'_>> {
+        let segments = self.segments();
+        let radius = (f64::from(self.inner_ratio), 1.0);
+        self.slices
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                let key = MarkKey::new().labelled(s.label.as_str());
+                match segments.iter().find(|seg| seg.slice == i) {
+                    Some(seg) => key.in_sector((f64::from(seg.a0), f64::from(seg.a1)), radius),
+                    None => key,
+                }
+            })
+            .collect()
+    }
+
+    fn mute_state(&self) -> &MuteState {
+        &self.mute
+    }
+
+    fn mute_state_mut(&mut self) -> &mut MuteState {
+        &mut self.mute
+    }
 }
 
 impl ChartLegend for DonutChart {

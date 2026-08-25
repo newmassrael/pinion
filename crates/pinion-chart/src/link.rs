@@ -48,13 +48,20 @@
 //!
 //! This module owns the *selection and its accounting only*. What a view does
 //! with the selection it was handed stays in the view, exactly as it does for
-//! [`Brush`](crate::Brush): re-domain a chart for a zoom, or mute the marks
-//! outside the selection for a cross-filter
-//! ([`BarChart::select_x_range`](crate::BarChart::select_x_range),
-//! [`BarChart::select`](crate::BarChart::select),
-//! [`LineChart::select_x_range`](crate::LineChart::select_x_range),
-//! [`ScatterChart::select_x_range`](crate::ScatterChart::select_x_range)). A
-//! view that is not a chart at all — a table of rows, a tree of decoded
+//! [`Brush`](crate::Brush).
+//!
+//! For a view this crate draws, that half is [`crate::mute`] (R1824): every
+//! chart kind implements [`Mute`](crate::Mute), a
+//! [`Reach`] is applied with
+//! [`muted_by_reach`](crate::Mute::muted_by_reach), and the marks a selection
+//! does not cover are dimmed. **Until that module existed only three of the ten
+//! kinds could be told about a selection at all**, so a board could declare a
+//! ring chart, publish, be told it was reached, and paint it unchanged — the
+//! declaration was checkable and the drawing was not. A chart's own [`Link`] is
+//! now derived from its marks ([`Mute::link`](crate::Mute::link)), which is what
+//! closes that gap rather than papering over it.
+//!
+//! A view that is not a chart at all — a table of rows, a tree of decoded
 //! fields — participates on the same terms: it takes a `Selection` and decides
 //! what to mute. Nothing here requires the view to be drawn by this crate.
 //!
@@ -182,6 +189,35 @@ impl Selection {
     pub fn category(&self) -> Option<&str> {
         match self {
             Self::Category(name) => Some(name.as_str()),
+            _ => None,
+        }
+    }
+
+    /// The selected angular sector and radial band, when this is one — the
+    /// pair a polar geometry tests its marks against.
+    ///
+    /// R1824. Until then this variant could be *constructed* and never read,
+    /// which is what "a declared vocabulary with no implementation" looks like
+    /// from the outside: [`Domain::Sector`] was a value nothing consumed. See
+    /// [`crate::mute`].
+    #[must_use]
+    pub const fn sector(&self) -> Option<((f64, f64), (f64, f64))> {
+        match self {
+            Self::Sector { angle, radius } => Some((*angle, *radius)),
+            _ => None,
+        }
+    }
+
+    /// The selected lane and the time window inside it, when this is one.
+    ///
+    /// R1824, and the same story as [`sector`](Self::sector): the twin of
+    /// [`x_range`](Self::x_range) for the two-dimensional domain, so a track
+    /// view can narrow to one lane without a caller having to reach into the
+    /// enum.
+    #[must_use]
+    pub fn lane_window(&self) -> Option<(&str, (f64, f64))> {
+        match self {
+            Self::LaneWindow { lane, window } => Some((lane.as_str(), *window)),
             _ => None,
         }
     }

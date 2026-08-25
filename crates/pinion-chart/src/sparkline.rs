@@ -48,6 +48,7 @@ use pinion_core::style::{Color, Stroke};
 
 use crate::derivations;
 use crate::draw::{absolute, area_path, box_node, fill_parent, marker_node, stroke_path, to_f32};
+use crate::mute::{MarkKey, Mute, MuteState};
 use crate::palette::CategoricalPalette;
 use crate::scale::LinearScale;
 use crate::style::ChartStyle;
@@ -64,9 +65,14 @@ const SPARK_FILL_ALPHA: u8 = 0x3D;
 /// [`crate::line::LineChart`].
 pub struct Sparkline {
     values: Vec<f64>,
+    /// R1824 — what this trend is OF. `None` (the default) keeps the sparkline
+    /// anonymous. See [`Sparkline::labelled`].
+    label: Option<String>,
     color: Option<Color>,
     fill_area: bool,
     markers: bool,
+    /// R1824 — the cross-filter mask, one entry per VALUE. See [`crate::mute`].
+    mute: MuteState,
     tag_prefix: String,
 }
 
@@ -77,11 +83,40 @@ impl Sparkline {
     pub fn new(values: Vec<f64>) -> Self {
         Self {
             values,
+            label: None,
             color: None,
             fill_area: false,
             markers: false,
+            mute: MuteState::default(),
             tag_prefix: "spark".to_string(),
         }
+    }
+
+    /// Name what this trend is OF — the measure, not the widget.
+    ///
+    /// R1824. A sparkline is the one chart kind with no name anywhere in its
+    /// drawing: no axis, no legend, no per-sample label. That was fine while it
+    /// was only ever read beside the tile that names it, and stopped being fine
+    /// when a cross-filter arrived: a board publishing "narrow to X" had no way
+    /// to ask whether this trend is a trend of X, so an inline trend of the
+    /// whole population sat unchanged beside a table that had narrowed, still
+    /// claiming to describe what the reader was looking at.
+    ///
+    /// With a name the sparkline answers
+    /// [`Domain::Category`](crate::Domain) as well as the window over its run,
+    /// and a trend that is not the selected one dims to context. The name is
+    /// not drawn — see [`with_tag_prefix`](Self::with_tag_prefix) for the
+    /// separate thing that addresses the chart.
+    #[must_use]
+    pub fn labelled(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
+    /// What this trend is of, when it was named.
+    #[must_use]
+    pub fn label(&self) -> Option<&str> {
+        self.label.as_deref()
     }
 
     /// Set the line (and end-cap) colour. Defaults to the first categorical
@@ -173,9 +208,21 @@ impl Sparkline {
         }
 
         if let Some(g) = self.geom(rect, style) {
-            let color = self
+            let base = self
                 .color
                 .unwrap_or_else(|| CategoricalPalette::default().color(0));
+
+            // R1824 — the trend is ONE stroke over many samples, so it dims
+            // only when EVERY sample it draws is outside the selection. A
+            // window that keeps one sample keeps the line that reaches it;
+            // dimming the whole run because most of it fell outside would hide
+            // the very sample the reader selected.
+            let whole_run_muted = self.mute.all_dimmed(g.sources.iter().copied());
+            let color = if whole_run_muted {
+                crate::mute::dim(base)
+            } else {
+                base
+            };
 
             // A faint area wash under the line (an area sparkline).
             if self.fill_area && g.points.len() >= 2 {
@@ -206,12 +253,14 @@ impl Sparkline {
             // the sparkline is not blank.
             let r = style.marker_radius.max(1);
             if self.markers {
+                // R1824 — a reference dot marks ONE sample, so unlike the run
+                // it is dimmed by that sample's own verdict.
                 if let Some(&(mx, my)) = g.points.get(g.min_idx) {
                     children.push(marker_node(
                         mx,
                         my,
                         r,
-                        style.axis,
+                        self.mute.shade(g.source(g.min_idx), style.axis),
                         format!("{}.min", self.tag_prefix),
                     ));
                 }
@@ -220,7 +269,7 @@ impl Sparkline {
                         mx,
                         my,
                         r,
-                        style.axis,
+                        self.mute.shade(g.source(g.max_idx), style.axis),
                         format!("{}.max", self.tag_prefix),
                     ));
                 }
@@ -229,7 +278,7 @@ impl Sparkline {
                         ex,
                         ey,
                         r,
-                        color,
+                        self.mute.shade(g.source(g.points.len() - 1), base),
                         format!("{}.end", self.tag_prefix),
                     ));
                 }
@@ -239,7 +288,7 @@ impl Sparkline {
                         ex,
                         ey,
                         r,
-                        color,
+                        self.mute.shade(g.source(0), base),
                         format!("{}.end", self.tag_prefix),
                     ));
                 }
@@ -310,6 +359,12 @@ impl Sparkline {
         let span = right - left;
         let denom = if n > 1 { (n - 1) as f32 } else { 1.0 };
         let mut points: Vec<(f32, f32)> = Vec::new();
+        // R1824 — which VALUE each point came from. A non-finite sample draws
+        // no point, so the two numberings diverge, and the cross-filter mask is
+        // indexed by the value (which is what a window on the index axis is
+        // stated in). Without this the reference dots of a series holding one
+        // gap would be dimmed by the wrong sample's verdict.
+        let mut sources: Vec<usize> = Vec::new();
         let (mut min_idx, mut max_idx) = (0usize, 0usize);
         let (mut min_v, mut max_v) = (f64::INFINITY, f64::NEG_INFINITY);
         for (i, &v) in self.values.iter().enumerate() {
@@ -322,6 +377,7 @@ impl Sparkline {
                 f32::midpoint(left, right)
             };
             points.push((px, y.map(v)));
+            sources.push(i);
             if v < min_v {
                 min_v = v;
                 min_idx = points.len() - 1;
@@ -336,6 +392,7 @@ impl Sparkline {
         }
         Some(SparkGeom {
             points,
+            sources,
             baseline_y: bottom,
             min_idx,
             max_idx,
@@ -343,13 +400,64 @@ impl Sparkline {
     }
 }
 
-/// The resolved sparkline geometry: the pixel points, the area baseline, and
-/// which point is the min / max (for the reference dots).
+/// R1824 — a sparkline narrows by POSITION IN ITS RUN, and by what the run is
+/// OF when it was [`labelled`](Sparkline::labelled).
+///
+/// Every sample carries its index, which is exactly the implicit x this form
+/// plots against, so a window over the run
+/// ([`Selection::XRange`](crate::Selection)) is always available. A `Category`
+/// is available only when the chart was named: an unnamed trend has nothing a
+/// category could match, and the derived-domain rule then reports `XRange`
+/// alone rather than letting the kind claim an identity it does not have.
+///
+/// Two drawing units come out of that, and the difference is stated in
+/// `build_body`: a reference dot is one sample and dims on its own verdict; the
+/// trend stroke is every sample and dims only when all of them are outside.
+impl Mute for Sparkline {
+    fn mark_keys(&self) -> Vec<MarkKey<'_>> {
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "a sample index in a compact inline trend; a sparkline holding 2^53 points has other problems"
+        )]
+        self.values
+            .iter()
+            .enumerate()
+            .map(|(i, _)| {
+                let key = MarkKey::new().at_x(i as f64);
+                match self.label.as_deref() {
+                    Some(name) => key.labelled(name),
+                    None => key,
+                }
+            })
+            .collect()
+    }
+
+    fn mute_state(&self) -> &MuteState {
+        &self.mute
+    }
+
+    fn mute_state_mut(&mut self) -> &mut MuteState {
+        &mut self.mute
+    }
+}
+
+/// The resolved sparkline geometry: the pixel points, which VALUE each came
+/// from, the area baseline, and which point is the min / max (for the
+/// reference dots).
 struct SparkGeom {
     points: Vec<(f32, f32)>,
+    sources: Vec<usize>,
     baseline_y: f32,
     min_idx: usize,
     max_idx: usize,
+}
+
+impl SparkGeom {
+    /// The value index point `i` was plotted from — the address the
+    /// cross-filter mask is keyed by.
+    fn source(&self, i: usize) -> usize {
+        self.sources.get(i).copied().unwrap_or(usize::MAX)
+    }
 }
 
 #[cfg(test)]

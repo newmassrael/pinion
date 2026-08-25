@@ -76,6 +76,7 @@ use crate::draw::{
 };
 use crate::fit::Fitted;
 use crate::legend::{ChartLegend, Legend};
+use crate::mute::{MarkKey, Mute, MuteState};
 use crate::plot::{
     axis_domain, axis_format, axis_minor_ticks, axis_scale, axis_ticks, kind_extent, tick_pixels,
 };
@@ -222,6 +223,9 @@ pub struct CandlestickChart {
     falling: Color,
     doji: Color,
     caps: bool,
+    /// R1824 — the cross-filter mask, one entry per session. See
+    /// [`crate::mute`].
+    mute: MuteState,
     tag_prefix: String,
 }
 
@@ -257,6 +261,7 @@ impl CandlestickChart {
             falling: DEFAULT_FALLING,
             doji: DEFAULT_DOJI,
             caps: false,
+            mute: MuteState::default(),
             tag_prefix: "chart".to_string(),
         }
     }
@@ -727,7 +732,9 @@ impl CandlestickChart {
         let Some(body) = self.slot_geometry(g, i) else {
             return Vec::new();
         };
-        let color = self.direction_color(candle.direction());
+        // R1824 — a session is the mark; its bar and its three ticks dim
+        // together.
+        let color = self.mute.shade(i, self.direction_color(candle.direction()));
         let stroke = Stroke::new(color, style.series_width.max(1));
         let mut out = Vec::new();
         if let (Some(high), Some(low)) = (g.y.map(candle.high()), g.y.map(candle.low())) {
@@ -762,9 +769,16 @@ impl CandlestickChart {
             return Vec::new();
         };
         let direction = candle.direction();
-        let color = self.direction_color(direction);
+        // R1824 — dimmed by session index. `fill` is derived from the SHADED
+        // colour, so a hollow body (already drawn at a low alpha) dims by
+        // multiplication and stays fainter than a solid one, rather than the
+        // two converging on one strength.
+        let color = self.mute.shade(i, self.direction_color(direction));
         let stroke = Stroke::new(color, style.series_width.max(1));
-        let fill = color.with_alpha(direction.body_fill().alpha());
+        let fill = color.with_alpha(crate::draw::mul_alpha(
+            color.a,
+            direction.body_fill().alpha(),
+        ));
         let mut out = vec![polygon_node(
             &[
                 (body.left, body.top),
@@ -1222,6 +1236,44 @@ struct BodyRect {
 struct CandleInspect {
     highlight: Option<Scene>,
     tooltip: Vec<Scene>,
+}
+
+/// R1824 — a candlestick chart narrows by SESSION, in either of the two
+/// readings it draws.
+///
+/// This kind is the one that genuinely has both: an ordinal x (the slot names
+/// in [`sessions`](CandlestickChart::sessions)) and a numeric one (the
+/// instants), and it already switches between them at
+/// [`elapsed`](CandlestickChart::elapsed). The marks therefore carry both
+/// coordinates, and a board narrows it with whichever it happens to speak —
+/// a time brush from a neighbouring chart, or a session name from a table row.
+///
+/// The instant is a POINT, not a bar's width: a session is stamped at an
+/// instant and its slot width is a drawing decision. So a time window includes
+/// a session at its lower edge and excludes one at its upper, which is the
+/// convention a half-open window carries everywhere else in this crate.
+impl Mute for CandlestickChart {
+    fn mark_keys(&self) -> Vec<MarkKey<'_>> {
+        self.candles
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                let key = MarkKey::new().at_x(c.instant());
+                match self.sessions.at(i) {
+                    Some(name) => key.labelled(name),
+                    None => key,
+                }
+            })
+            .collect()
+    }
+
+    fn mute_state(&self) -> &MuteState {
+        &self.mute
+    }
+
+    fn mute_state_mut(&mut self) -> &mut MuteState {
+        &mut self.mute
+    }
 }
 
 impl ChartLegend for CandlestickChart {

@@ -105,6 +105,7 @@ use crate::legend::{ChartLegend, Legend, LegendEntry, LegendInteraction};
 // R1626 — one narrowing for the crate; R1625 had made a private second copy.
 use crate::scale::to_f32 as narrow_value;
 
+use crate::mute::{MarkKey, Mute, MuteState};
 use crate::palette::CategoricalPalette;
 use crate::plot::{
     AxisKinds, CartesianPlot, OffScale, Rescale, axis_format, axis_minor_ticks, axis_ticks,
@@ -143,6 +144,10 @@ pub struct LineChart {
     kinds: AxisKinds,
     /// R1625 — how consecutive samples are joined.
     interpolation: Interpolation,
+    /// R1824 — the uniform cross-filter mask, one entry per series. Distinct
+    /// from [`select_x_range`](Self::select_x_range), which is finer (it mutes
+    /// the polyline and overdraws the in-window run). See [`crate::mute`].
+    mute: MuteState,
     tag_prefix: String,
 }
 
@@ -166,6 +171,7 @@ impl LineChart {
             select_x_range: None,
             color: ValueEncoding::default(),
             kinds: AxisKinds::default(),
+            mute: MuteState::default(),
             tag_prefix: "chart".to_string(),
         }
     }
@@ -1011,7 +1017,15 @@ impl LineChart {
             if !s.visible {
                 continue;
             }
-            let color = s.color.unwrap_or_else(|| self.palette.color(i));
+            // R1824 — the uniform cross-filter ([`crate::Mute`]) dims a whole
+            // series the active selection does not cover. Applied to the
+            // series colour itself rather than as a second `muted` flag, so
+            // the focus overdraw below inherits it: a series the selection
+            // excluded must not be re-lit at full strength by an x-window that
+            // happens to cross it.
+            let color = self
+                .mute
+                .shade(i, s.color.unwrap_or_else(|| self.palette.color(i)));
             // Clip to the x-domain BEFORE mapping: path commands are
             // absolute device pixels the paint adapter does not clip to
             // the node rect, so an out-of-domain point would paint
@@ -1322,6 +1336,61 @@ impl LineChart {
             format!("{}.inspect.tooltip", self.tag_prefix),
         )
     }
+}
+
+/// R1824 — a line chart's uniform mark is the SERIES.
+///
+/// It already had a finer selection on its own axis
+/// ([`select_x_range`](LineChart::select_x_range), R1394: the whole trace ghosts
+/// and the in-window run is overdrawn at full strength), and that is not
+/// replaced. What was missing is the *other* direction — narrowing a board to
+/// one series by name — and a unit a [`LinkGroup`](crate::LinkGroup) can reach
+/// without knowing which chart kind it is talking to.
+///
+/// So the mark reports both: the series' name, and the closed x-extent of its
+/// finite samples. A window that misses that extent entirely dims the series;
+/// one that crosses it leaves the series lit and lets the finer selection do
+/// the per-run work. The extent is of the FINITE samples, because a
+/// non-finite one has no position and must not be able to widen a series into
+/// a window it does not reach.
+impl Mute for LineChart {
+    fn mark_keys(&self) -> Vec<MarkKey<'_>> {
+        self.series
+            .iter()
+            .map(|s| {
+                let key = MarkKey::new().labelled(s.name.as_str());
+                match finite_x_extent(s) {
+                    Some((lo, hi)) => key.spanning(lo, hi),
+                    None => key,
+                }
+            })
+            .collect()
+    }
+
+    fn mute_state(&self) -> &MuteState {
+        &self.mute
+    }
+
+    fn mute_state_mut(&mut self) -> &mut MuteState {
+        &mut self.mute
+    }
+}
+
+/// The closed x-extent of a series' finite samples — `None` when it has none.
+///
+/// R1824. Shared by [`LineChart`] and [`ScatterChart`](crate::ScatterChart),
+/// the two kinds whose uniform mark is a series on a numeric x, so the answer
+/// to "where is this series" has one definition across them.
+pub(crate) fn finite_x_extent(s: &Series) -> Option<(f64, f64)> {
+    let mut lo = f64::INFINITY;
+    let mut hi = f64::NEG_INFINITY;
+    for p in &s.points {
+        if p.x.is_finite() {
+            lo = lo.min(p.x);
+            hi = hi.max(p.x);
+        }
+    }
+    lo.is_finite().then_some((lo, hi))
 }
 
 impl ChartLegend for LineChart {

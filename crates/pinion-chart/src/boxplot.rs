@@ -65,6 +65,7 @@ use crate::draw::{
 use crate::legend::{ChartLegend, Legend};
 // R1626 — the crate's one f64 -> f32 narrowing, rather than a third copy of it.
 use crate::fit::Fitted;
+use crate::mute::{MarkKey, Mute, MuteState};
 use crate::palette::CategoricalPalette;
 use crate::plot::{
     axis_domain, axis_format, axis_minor_ticks, axis_scale, axis_ticks, kind_extent, tick_pixels,
@@ -229,6 +230,9 @@ pub struct BoxPlotChart {
     x_window: Option<CategoryWindow>,
     mark: DistributionMark,
     violin_scale: ViolinScale,
+    /// R1824 — the cross-filter mask, one entry per distribution. See
+    /// [`crate::mute`].
+    mute: MuteState,
     tag_prefix: String,
 }
 
@@ -250,6 +254,7 @@ impl BoxPlotChart {
             x_window: None,
             mark: DistributionMark::default(),
             violin_scale: ViolinScale::default(),
+            mute: MuteState::default(),
             tag_prefix: "chart".to_string(),
         }
     }
@@ -757,7 +762,12 @@ impl BoxPlotChart {
         let Some(dist) = self.distributions.get(i) else {
             return Vec::new();
         };
-        let color = self.palette.color(i);
+        // R1824 — a box plot's mark is the whole summary of ONE distribution:
+        // its box, median, whiskers, caps, outliers and violin all read as one
+        // thing, so the cross-filter dims them together. Shaded once, here,
+        // rather than at each of the six emit sites — a mark half-dimmed would
+        // read as a third state nobody defined.
+        let color = self.mute.shade(i, self.palette.color(i));
         let stroke = Stroke::new(color, style.series_width.max(1));
         let mut out = Vec::new();
 
@@ -769,7 +779,14 @@ impl BoxPlotChart {
         {
             out.push(polygon_node(
                 &outline,
-                PathStyle::filled(color.with_alpha(style.area_alpha)).with_stroke(stroke),
+                // R1824 — the area alpha MULTIPLIES the mark's own, rather than
+                // replacing it. Assigning it discards the cross-filter's
+                // dimming: measured by the per-kind proof, a muted box came out
+                // at exactly the alpha an unmuted one had.
+                PathStyle::filled(
+                    color.with_alpha(crate::draw::mul_alpha(color.a, style.area_alpha)),
+                )
+                .with_stroke(stroke),
                 format!("{}.violin.{i}", self.tag_prefix),
             ));
         }
@@ -1148,6 +1165,37 @@ struct BoxInspect {
 /// The category indices this geometry draws — the axis's visible window.
 fn visible_indices(g: &BoxGeom) -> impl Iterator<Item = usize> {
     g.x.visible().into_iter().flat_map(|w| w.lo()..=w.hi())
+}
+
+/// R1824 — a box plot narrows by CATEGORY, and deliberately by nothing else.
+///
+/// Its value axis is `y`, and each mark occupies the *whole* of it — a
+/// distribution is a summary of a spread, not a point on one. An `XRange` over
+/// that axis would therefore have to mean "distributions whose spread reaches
+/// into the window", which is true of nearly every distribution for nearly
+/// every window and so selects almost nothing. The x axis is the categories,
+/// which is the domain named here.
+///
+/// [`x_window`](BoxPlotChart::x_window) is a different thing and stays a
+/// different thing: it HIDES the categories outside a window (they leave the
+/// chart), where this DIMS the marks outside a selection (they stay as
+/// context). A reader can tell the two apart on screen, which is why they are
+/// not merged.
+impl Mute for BoxPlotChart {
+    fn mark_keys(&self) -> Vec<MarkKey<'_>> {
+        self.distributions
+            .iter()
+            .map(|d| MarkKey::new().labelled(d.label()))
+            .collect()
+    }
+
+    fn mute_state(&self) -> &MuteState {
+        &self.mute
+    }
+
+    fn mute_state_mut(&mut self) -> &mut MuteState {
+        &mut self.mute
+    }
 }
 
 impl ChartLegend for BoxPlotChart {

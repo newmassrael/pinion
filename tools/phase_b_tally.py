@@ -1863,9 +1863,45 @@ AXES = [
         # with nothing to derive, of which a treemap's TILING and a timeline's
         # LANE PACKING are the two that a reader genuinely cannot recover. Drag
         # pan / rubber-band zoom is still buildable and still unbuilt.
-        "judged_at": 1744,
-        "completion": 97,
-        "evidence_snapshot": {"example-name": 29, "round-axis": 17},
+        # R1824 re-judged 97 -> 98. NOT demanded by the tool (`round-axis`
+        # 17 -> 20, +18%, inside the band) — offered because the round closed a
+        # LISTED item and the list is the only thing that makes this number
+        # checkable.
+        #
+        # +1, and the accounting is what makes it +1 and not more:
+        #
+        #   * The POLAR CROSS-FILTER LEG is closed — the half of R1568's item
+        #     that R1722 left open and R1744 wrote down as still open. It closed
+        #     past what the list asked for: `Domain::Sector` finally has a
+        #     reader, and it is answered by the polar chart at SAMPLE
+        #     granularity (a rose's series spans the whole turn, so a per-series
+        #     test would find every series inside every sector and dim nothing)
+        #     and by the ring chart at slice granularity.
+        #   * And the item was one instance of a class the list had not named:
+        #     measured at entry by building every kind and reading its marks'
+        #     fill alphas, **three of ten** could be told about a selection at
+        #     all. `pinion_chart::Mute` is one API all ten answer, whose
+        #     accepted domains are DERIVED from the marks rather than declared,
+        #     so a kind cannot claim a domain its drawing cannot answer. By the
+        #     R1528 rule that is worth a point rather than more: naming the
+        #     class reveals more absent surface than the round that named it
+        #     fills — a chart still cannot PUBLISH a selection from a gesture of
+        #     its own, which is what a board needs for a click on a slice to
+        #     narrow its neighbours.
+        #   * Two DEFECTS were repaid and are not credited (R1744's rule,
+        #     applied a third time): a box plot's box fill and a hollow
+        #     candle's body assigned the style alpha and so discarded the
+        #     dimming, which the per-kind proof caught.
+        #
+        # The remainder is otherwise unchanged from the R1629 audit: the
+        # y-window, the plot zoom's a11y and its second consumer; 3D-surface
+        # (Phase C's); the five chart builders with nothing to derive, of which
+        # a treemap's TILING and a timeline's LANE PACKING are the two a reader
+        # genuinely cannot recover. Drag pan / rubber-band zoom is still
+        # buildable and still unbuilt.
+        "judged_at": 1824,
+        "completion": 98,
+        "evidence_snapshot": {"example-name": 29, "round-axis": 20},
     },
     {
         "key": "text",

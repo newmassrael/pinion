@@ -3250,6 +3250,78 @@ fn r1806_choosing_a_saved_filter_fades_the_rows_it_does_not_select() {
     });
 }
 
+/// ★★★★★ R1824 — **the cross-filter reaches a CHART on this screen, and the
+/// chart dims.**
+///
+/// R1806 made "every linked view" a set that can be named, and R1806's own
+/// painted proof (above) is about *rows*. The board's one chart that a saved
+/// filter reaches — the filter card's matched-count trend — kept drawing at full
+/// strength under every filter, because no chart kind but bar / line / scatter
+/// had any way to be told about a selection at all. Measured before the repair,
+/// by building every kind this framework ships and reading the fill alphas of
+/// its marks: three of ten dimmed anything.
+///
+/// The trend is of the WHOLE capture ([`MATCH_SERIES_OF`](super::MATCH_SERIES_OF)
+/// names the measure), so under any saved filter it describes something other
+/// than what the reader is looking at. Dimming it is the honest rendering of
+/// that, and it is applied through the one API every kind now answers
+/// (`pinion_chart::Mute`) rather than by a call written for this card.
+///
+/// Read off the PAINTED ink, like its sibling: a test that asked the chart
+/// whether it had been told would pass against a chart that stores a selection
+/// and paints without it, which is the exact defect.
+#[test]
+fn r1824_choosing_a_saved_filter_dims_the_trend_that_is_not_of_it() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let trend_alpha = || -> u8 {
+            let scene = super::view(ScreenState::default(), pinion_core::Frame::default());
+            let mut found = None;
+            scene.for_each_node(&mut |visit| {
+                if visit.node.tag() == Some("match.spark.line")
+                    && let pinion_core::Scene::Path(path) = visit.node
+                    && let Some(stroke) = path.style.stroke.as_ref()
+                {
+                    found = Some(stroke.color.a);
+                }
+            });
+            found.expect("the filter card paints its trend")
+        };
+
+        // The board opens with a saved filter already lit, so it opens with the
+        // trend already reading as context.
+        assert_eq!(state.filter_chip.get(), Some(0));
+        let under_filter = trend_alpha();
+
+        // Turning the filter off is what makes the trend the answer again.
+        super::ShellOracle::choose_filter(&state, &id_of_filter_card(&state), 0);
+        assert_eq!(state.filter_chip.get(), None);
+        let unfiltered = trend_alpha();
+
+        assert!(
+            under_filter < unfiltered,
+            "★ a trend of the whole capture must read as context while a saved \
+             filter is on: {under_filter} under the filter vs {unfiltered} with \
+             none"
+        );
+
+        // And the reach is what drove it — not the chip signal read directly.
+        super::ShellOracle::choose_filter(&state, &id_of_filter_card(&state), 2);
+        let reach = spec::dashboard_links().publish(&pinion_chart::Selection::Category(
+            spec::FILTER_CHIPS[2].0.to_string(),
+        ));
+        assert!(
+            reach.reaches("filter"),
+            "the filter card is a declared view of the board's link group"
+        );
+        assert!(
+            trend_alpha() < unfiltered,
+            "a different saved filter reaches it the same way"
+        );
+    });
+}
+
 /// The filter card's id on the opening board — the chip row's address.
 fn id_of_filter_card(state: &std::rc::Rc<super::ShellState>) -> String {
     state

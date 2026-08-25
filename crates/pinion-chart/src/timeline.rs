@@ -56,6 +56,7 @@ use crate::draw::{
     CalloutRow, absolute, box_node, callout, fill_parent, gridlines, label_node, plot_rect,
     stroke_path, to_f32, to_u32,
 };
+use crate::mute::{MarkKey, Mute, MuteState};
 use crate::palette::CategoricalPalette;
 use crate::scale::LinearScale;
 use crate::style::ChartStyle;
@@ -151,6 +152,9 @@ pub struct Timeline {
     x_domain: Option<(f64, f64)>,
     playhead: Option<f32>,
     time_axis: bool,
+    /// R1824 — the cross-filter mask, one entry per SPAN in
+    /// [`span_index`](Timeline::span_index) order. See [`crate::mute`].
+    mute: MuteState,
     tag_prefix: String,
 }
 
@@ -167,8 +171,25 @@ impl Timeline {
             x_domain: None,
             playhead: None,
             time_axis: false,
+            mute: MuteState::default(),
             tag_prefix: "timeline".to_string(),
         }
+    }
+
+    /// The flat mark index of span `j` in lane `i` — the address
+    /// [`crate::Mute`]'s mask is keyed by, and the order
+    /// [`mark_keys`](crate::Mute::mark_keys) enumerates in.
+    ///
+    /// A timeline's tags are two-dimensional (`lane.{i}.span.{j}`) and a mask
+    /// is one-dimensional, so the flattening is written once, here, rather than
+    /// at the two places that would otherwise each derive it.
+    fn span_index(&self, i: usize, j: usize) -> usize {
+        self.lanes
+            .iter()
+            .take(i)
+            .map(|l| l.spans.len())
+            .sum::<usize>()
+            + j
     }
 
     /// Override the default per-lane colour palette (a span's own
@@ -374,7 +395,10 @@ impl Timeline {
                 if let Some(rect) = Self::span_rect(&g, span, span_top, span_h) {
                     children.push(box_node(
                         rect,
-                        span.color.unwrap_or(color),
+                        // R1824 — a span is the timeline's mark, so it is what
+                        // a cross-filter dims.
+                        self.mute
+                            .shade(self.span_index(i, j), span.color.unwrap_or(color)),
                         format!("{}.lane.{i}.span.{j}", self.tag_prefix),
                     ));
                 }
@@ -565,6 +589,45 @@ impl Timeline {
             hi = lo + 1.0;
         }
         (lo, hi)
+    }
+}
+
+/// R1824 — the crate's [`Domain::LaneWindow`](crate::Domain) consumer, and the
+/// only kind that needs it.
+///
+/// A span sits at the crossing of two axes that are **not interchangeable**: a
+/// lane (nominal) and a time window (numeric). A selection that named only the
+/// window would reach every lane's span at that instant, which is precisely the
+/// question a track view exists to distinguish — "what was this lane doing
+/// then" is not "what was anything doing then". That is why `LaneWindow` was
+/// specified as one domain rather than a `Category` and an `XRange`, and this
+/// impl is what finally reads it.
+///
+/// The marks also carry a name and a span on their own, so a timeline answers
+/// `Category` (by span label) and `XRange` (by time window across all lanes)
+/// too — a board can therefore narrow it from a chart that speaks a simpler
+/// domain, without the timeline needing to know which one published.
+impl Mute for Timeline {
+    fn mark_keys(&self) -> Vec<MarkKey<'_>> {
+        self.lanes
+            .iter()
+            .flat_map(|lane| {
+                lane.spans.iter().map(move |s| {
+                    MarkKey::new()
+                        .labelled(s.label.as_str())
+                        .in_lane(lane.name.as_str())
+                        .spanning(s.start, s.end)
+                })
+            })
+            .collect()
+    }
+
+    fn mute_state(&self) -> &MuteState {
+        &self.mute
+    }
+
+    fn mute_state_mut(&mut self) -> &mut MuteState {
+        &mut self.mute
     }
 }
 

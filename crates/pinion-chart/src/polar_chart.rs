@@ -64,6 +64,7 @@ use crate::draw::{
     CalloutRow, absolute, box_node, callout, circle_commands, fill_parent, label_node, marker_node,
     plot_rect, polygon_node, stroke_path, to_f32, to_u32,
 };
+use crate::mute::{MarkKey, Mute, MuteState};
 use crate::palette::CategoricalPalette;
 use crate::plot::{OffScale, axis_domain, axis_format, axis_scale, axis_ticks, kind_extent};
 use crate::polar::{AngularScale, PolarPlot, Winding};
@@ -96,6 +97,9 @@ pub struct PolarChart {
     inspect: Option<f64>,
     /// R1722 — what may be done to the legend. See [`crate::Legend`].
     legend_interaction: LegendInteraction,
+    /// R1824 — the cross-filter mask, one entry per SAMPLE in
+    /// [`sample_index`](PolarChart::sample_index) order. See [`crate::mute`].
+    mute: MuteState,
     tag_prefix: String,
 }
 
@@ -120,8 +124,25 @@ impl PolarChart {
             markers: true,
             inspect: None,
             legend_interaction: LegendInteraction::default(),
+            mute: MuteState::default(),
             tag_prefix: "chart".to_string(),
         }
+    }
+
+    /// The flat mark index of sample `j` in series `i` — the address
+    /// [`crate::Mute`]'s mask is keyed by, and the order
+    /// [`mark_keys`](crate::Mute::mark_keys) enumerates in.
+    ///
+    /// Every series contributes its samples, hidden or not, so hiding a series
+    /// from the legend does not renumber another series' marks — the rule
+    /// R1722 set for the tags, applied to the mask that indexes them.
+    fn sample_index(&self, i: usize, j: usize) -> usize {
+        self.series
+            .iter()
+            .take(i)
+            .map(|s| s.points.len())
+            .sum::<usize>()
+            + j
     }
 
     /// A radar chart over `categories`: one spoke per category, in order, on
@@ -462,9 +483,22 @@ impl PolarChart {
             if !s.visible {
                 continue;
             }
-            let color = s.color.unwrap_or_else(|| self.palette.color(i));
+            let base = s.color.unwrap_or_else(|| self.palette.color(i));
             let pixels: Vec<(f32, f32)> =
                 s.points.iter().filter_map(|p| plot.map(p.x, p.y)).collect();
+            // R1824 — the polygon and its fill are ONE stroke over many
+            // samples, so they dim only when every sample of this series is
+            // outside the selection. A sector selection normally leaves them
+            // full and dims the point marks inside the wedge's complement,
+            // which is what makes a sector read as a highlight rather than as
+            // a redraw; a CATEGORY selection naming another series dims all of
+            // its samples and therefore the ring too.
+            let run = self.sample_index(i, 0)..self.sample_index(i, s.points.len());
+            let color = if self.mute.all_dimmed(run) {
+                crate::mute::dim(base)
+            } else {
+                base
+            };
             if pixels.len() >= 2 {
                 // THE ROUND, in one boolean: the segment from the last sample
                 // back to the first is a property of the AXIS, not of the
@@ -494,7 +528,9 @@ impl PolarChart {
                         x,
                         y,
                         style.marker_radius,
-                        color,
+                        // R1824 — a point mark is ONE sample, so it carries
+                        // its own verdict rather than the run's.
+                        self.mute.shade(self.sample_index(i, j), base),
                         format!("{}.point.{i}.{j}", self.tag_prefix),
                     ));
                 }
@@ -796,6 +832,47 @@ fn series_path(pixels: &[(f32, f32)], closed: bool, stroke: Stroke, tag: String)
         return polygon_node(pixels, PathStyle::stroked(stroke), tag);
     }
     stroke_path(pixels, stroke, tag)
+}
+
+/// R1824 — the geometry [`Domain::Sector`](crate::Domain) was specified for.
+///
+/// A wind rose, a radar and a ring chart all live on two axes, one of them
+/// cyclic, and a reader selects on this chart by dragging out a WEDGE: an
+/// angular arc together with a radial band. `Sector` carries both, which is why
+/// it is one domain rather than two `XRange`s — a pair of intervals with no
+/// order between them cannot say which is the angle.
+///
+/// The mark is the SAMPLE, not the series: every series of a rose typically
+/// spans the whole turn, so a per-series test would find every series inside
+/// every sector and dim nothing. Each sample reports its own angle and radius
+/// as degenerate intervals, in the chart's own angular units — the same numbers
+/// a caller passed to [`DataPoint`], never radians the chart converted to, so a
+/// selection can be stated in the units the reader sees on the rim.
+///
+/// A series name is on every sample too, so a legend chip or a saved filter can
+/// narrow the chart by `Category`; the run then dims whole, which `marks`
+/// derives rather than special-cases.
+impl Mute for PolarChart {
+    fn mark_keys(&self) -> Vec<MarkKey<'_>> {
+        self.series
+            .iter()
+            .flat_map(|s| {
+                s.points.iter().map(move |p| {
+                    MarkKey::new()
+                        .labelled(s.name.as_str())
+                        .in_sector((p.x, p.x), (p.y, p.y))
+                })
+            })
+            .collect()
+    }
+
+    fn mute_state(&self) -> &MuteState {
+        &self.mute
+    }
+
+    fn mute_state_mut(&mut self) -> &mut MuteState {
+        &mut self.mute
+    }
 }
 
 impl ChartLegend for PolarChart {

@@ -200,18 +200,6 @@
       ]
     },
     {
-      "name": "debt-eleven-chart-kinds-cannot-mute-their-own-marks",
-      "substituted": false,
-      "blocked_by": "campaign",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links analyzer-tool-capability-spec",
-        "names dashboard.t2.4"
-      ]
-    },
-    {
       "name": "debt-nine-reserved-widgets-cite-requirements-nobody-checked",
       "substituted": false,
       "blocked_by": "buildable",
@@ -275,6 +263,17 @@
       "closed_because": "",
       "why": [
         "links debt-the-canon-is-one-app-and-we-are-many-binaries"
+      ]
+    },
+    {
+      "name": "debt-the-canon-draws-a-traffic-share-donut-we-do-not",
+      "substituted": false,
+      "blocked_by": "spec-round",
+      "blocked_because": "rule:analyzer-behaviour-canon-is-the-standalone-prototype",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links analyzer-behaviour-canon-is-the-standalone-prototype, debt-canon-gui-surface-census"
       ]
     },
     {

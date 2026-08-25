@@ -236,9 +236,19 @@
 //!   ([`CandlestickChart::off_scale`]) rather than pinned to a domain floor —
 //!   R1528's stance, on the axis a long price history actually wants.
 //!
-//! Not yet: cross-filtering between two ARBITRARY chart types, and a y-rescale
+//! And (R1824) **cross-filtering between two ARBITRARY chart types** — the item
+//! this paragraph listed as "not yet" from R1567 until that round. [`Mute`] is
+//! one API every kind that carries marks implements: a kind supplies its
+//! [`MarkKey`]s and a place to keep the mask, and the domains it accepts, the
+//! refusal of one it cannot answer, and which marks survive are one algorithm
+//! rather than ten. Measured immediately before it, by building every kind and
+//! reading its marks' fill alphas: **three of ten** could dim anything, and
+//! [`Domain::Sector`] / [`Domain::LaneWindow`] were vocabulary with no reader at
+//! all. See [`mute`] for what a mark is per kind and why.
+//!
+//! Not yet: a y-rescale
 //! to a brush-zoomed x-window (distinct from R1381's rescale-to-VISIBLE-series)
-//! — follow-up slices on that same core. (A frequency *histogram* is a consumer
+//! — a follow-up slice on that same core. (A frequency *histogram* is a consumer
 //! pattern over [`BarChart`], not a distinct type — `hello-frame-profiler` bins
 //! its frame times into one, and R1375 lets a reader scrub it for each bin's
 //! frame count.)
@@ -317,6 +327,7 @@ mod legend;
 mod line;
 mod link;
 mod model;
+pub mod mute;
 mod palette;
 mod plot;
 mod polar;
@@ -358,6 +369,7 @@ pub use legend::{
 pub use line::LineChart;
 pub use link::{Audit, Domain, Link, LinkFault, LinkGroup, Reach, Refusal, Selection};
 pub use model::{CellTable, Field, Mapped, ModelMapper, Orientation, UnreadableCell, numeric};
+pub use mute::{MarkKey, Mute, MuteState, Muted};
 pub use palette::CategoricalPalette;
 pub use plot::OffScale;
 pub use polar::{AngularScale, Winding};

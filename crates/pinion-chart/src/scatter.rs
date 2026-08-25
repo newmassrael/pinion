@@ -55,6 +55,7 @@ use crate::draw::{
     legend_band_color_bar, marker_node, stroke_path, to_f32, to_u32,
 };
 use crate::legend::{ChartLegend, Legend, LegendEntry, LegendInteraction};
+use crate::mute::{MarkKey, Mute, MuteState};
 use crate::palette::CategoricalPalette;
 use crate::plot::{
     AxisKinds, CartesianPlot, OffScale, Rescale, axis_format, axis_minor_ticks, axis_ticks,
@@ -80,6 +81,10 @@ pub struct ScatterChart {
     legend_interaction: LegendInteraction,
     color: ValueEncoding,
     kinds: AxisKinds,
+    /// R1824 — the uniform cross-filter mask, one entry per series. Distinct
+    /// from [`select_x_range`](Self::select_x_range), which is finer (it dims
+    /// individual points). See [`crate::mute`].
+    mute: MuteState,
     tag_prefix: String,
 }
 
@@ -98,6 +103,7 @@ impl ScatterChart {
             legend_interaction: LegendInteraction::default(),
             color: ValueEncoding::default(),
             kinds: AxisKinds::default(),
+            mute: MuteState::default(),
             tag_prefix: "chart".to_string(),
         }
     }
@@ -581,10 +587,14 @@ impl ScatterChart {
                 let color = self.value_color(*p).unwrap_or(color);
                 // Cross-filter (R1391): a point outside the active brush range is
                 // dimmed but still drawn (context), unlike the domain drop above.
+                // R1824 — and the uniform cross-filter ([`crate::Mute`]) dims
+                // it when the SERIES is outside the selection. Either mutes,
+                // which is the rule `bar` has applied to its own two
+                // selections since R1395.
                 let mark_color = if self.is_muted(p.x) {
                     color.with_alpha(MUTED_ALPHA)
                 } else {
-                    color
+                    self.mute.shade(i, color)
                 };
                 let Some((px, py)) = plot.map_point(p) else {
                     continue;
@@ -815,6 +825,36 @@ struct Inspect {
     crosshair: Scene,
     rings: Vec<Scene>,
     tooltip: Vec<Scene>,
+}
+
+/// R1824 — a scatter chart's uniform mark is the SERIES, for the reason
+/// [`LineChart`](crate::LineChart)'s is.
+///
+/// [`select_x_range`](ScatterChart::select_x_range) (R1391) already dims
+/// individual points against a numeric window and keeps doing so; this adds the
+/// domain it could not speak — narrowing to a series by name — and the unit a
+/// [`LinkGroup`](crate::LinkGroup) reaches without knowing the kind.
+impl Mute for ScatterChart {
+    fn mark_keys(&self) -> Vec<MarkKey<'_>> {
+        self.series
+            .iter()
+            .map(|s| {
+                let key = MarkKey::new().labelled(s.name.as_str());
+                match crate::line::finite_x_extent(s) {
+                    Some((lo, hi)) => key.spanning(lo, hi),
+                    None => key,
+                }
+            })
+            .collect()
+    }
+
+    fn mute_state(&self) -> &MuteState {
+        &self.mute
+    }
+
+    fn mute_state_mut(&mut self) -> &mut MuteState {
+        &mut self.mute
+    }
 }
 
 impl ChartLegend for ScatterChart {

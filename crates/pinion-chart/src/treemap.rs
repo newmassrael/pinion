@@ -83,6 +83,7 @@ use crate::draw::{
     BarAxis, CalloutRow, absolute, box_node, callout, color_bar, fill_parent, label_box_h,
     label_node, outline_box, to_f32, to_u32, vertical_bar_width,
 };
+use crate::mute::{MarkKey, Mute, MuteState};
 use crate::palette::CategoricalPalette;
 use crate::style::ChartStyle;
 
@@ -225,6 +226,8 @@ pub struct Treemap {
     palette: CategoricalPalette,
     inspect: Option<f32>,
     color: ValueEncoding,
+    /// R1824 — the cross-filter mask. See [`crate::mute`].
+    mute: MuteState,
     tag_prefix: String,
 }
 
@@ -238,6 +241,7 @@ impl Treemap {
             palette: CategoricalPalette::default(),
             inspect: None,
             color: ValueEncoding::default(),
+            mute: MuteState::default(),
             tag_prefix: "chart".to_string(),
         }
     }
@@ -393,7 +397,9 @@ impl Treemap {
         let size = style.label_size_px.max(1);
         for (i, p) in geom.placed.iter().enumerate() {
             let tile = &self.tiles[p.tile];
-            let color = self.tile_color(p.tile);
+            // R1824 — dimmed by DRAW index, which is what `chart.tile.{i}`
+            // numbers by and therefore what `mark_keys` enumerates.
+            let color = self.mute.shade(i, self.tile_color(p.tile));
             children.push(box_node(
                 p.rect,
                 color,
@@ -501,6 +507,27 @@ impl Treemap {
         )
     }
 
+    /// The drawable tiles as `(source index, value)`, largest first — the
+    /// squarified layout's precondition, and the order `chart.tile.{i}` numbers
+    /// by.
+    ///
+    /// **Rect-independent by construction.** Split out of [`geom`](Self::geom)
+    /// at R1824 so [`crate::Mute`] can name a tile by the index its tag carries
+    /// without first being given a rectangle to lay out in — see
+    /// [`DonutChart::segments`](crate::DonutChart) for the same lift on the
+    /// other part-of-whole form.
+    fn ranked(&self) -> Vec<(usize, f64)> {
+        let mut items: Vec<(usize, f64)> = self
+            .tiles
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.value.is_finite() && t.value > 0.0)
+            .map(|(i, t)| (i, t.value))
+            .collect();
+        items.sort_by(|a, b| b.1.total_cmp(&a.1));
+        items
+    }
+
     /// The treemap geometry: the inset frame, the total, and the per-drawn-tile
     /// rectangles from the squarified layout — the ONE definition the painted
     /// tiles, the labels, the highlight ring, and the inspect hit-test all read
@@ -539,15 +566,7 @@ impl Treemap {
             to_f32(frame.h),
         );
 
-        // Positive finite tiles, largest first (the squarified precondition).
-        let mut items: Vec<(usize, f64)> = self
-            .tiles
-            .iter()
-            .enumerate()
-            .filter(|(_, t)| t.value.is_finite() && t.value > 0.0)
-            .map(|(i, t)| (i, t.value))
-            .collect();
-        items.sort_by(|a, b| b.1.total_cmp(&a.1));
+        let items = self.ranked();
 
         let total: f64 = items.iter().map(|(_, v)| *v).sum();
         let placed = if items.is_empty() || fw <= 0.0 || fh <= 0.0 || total <= 0.0 {
@@ -655,6 +674,36 @@ impl Treemap {
             tile.label,
             percent_text(tile.value, geom.total)
         ))
+    }
+}
+
+/// R1824 — a treemap narrows by NAME.
+///
+/// A tile's mark is its area, and an area has no numeric axis a window could be
+/// stated on: the squarified layout's `x` is a packing artefact, not a measure,
+/// so an `XRange` over it would select by where the algorithm happened to put
+/// a rectangle. What a treemap does answer is which category a tile *is*,
+/// which is the domain a legend chip, a saved filter or a sibling ring chart
+/// publishes.
+///
+/// The marks are enumerated in DRAW order (descending value) because that is
+/// what `chart.tile.{i}` numbers by. A tile the chart cannot draw — non-finite,
+/// zero or negative — has no mark at all and so cannot be muted or lit; it is
+/// absent from the picture either way.
+impl Mute for Treemap {
+    fn mark_keys(&self) -> Vec<MarkKey<'_>> {
+        self.ranked()
+            .into_iter()
+            .map(|(i, _)| MarkKey::new().labelled(self.tiles[i].label.as_str()))
+            .collect()
+    }
+
+    fn mute_state(&self) -> &MuteState {
+        &self.mute
+    }
+
+    fn mute_state_mut(&mut self) -> &mut MuteState {
+        &mut self.mute
     }
 }
 
