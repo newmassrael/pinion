@@ -53,18 +53,6 @@
       ]
     },
     {
-      "name": "debt-a-debts-standing-is-one-persons-unreviewed-reading",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links analyzer-debt-repayment-loop",
-        "names dashboard.t2.12, lab.t2.16"
-      ]
-    },
-    {
       "name": "debt-a-gate-computes-its-expectation-from-the-code-it-checks",
       "substituted": false,
       "blocked_by": "buildable",
@@ -113,7 +101,7 @@
       "name": "debt-a-node-graphs-only-state-is-a-delay",
       "substituted": false,
       "blocked_by": "spec-round",
-      "blocked_because": "census:lab.t2.16",
+      "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
       "why": [
@@ -147,7 +135,7 @@
       "name": "debt-a-three-dimensional-surface-waits-on-phase-c",
       "substituted": false,
       "blocked_by": "phase-c",
-      "blocked_because": "census:dashboard.t2.12",
+      "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
       "why": [
@@ -259,7 +247,7 @@
       "name": "debt-the-canon-draws-a-traffic-share-donut-we-do-not",
       "substituted": false,
       "blocked_by": "spec-round",
-      "blocked_because": "rule:analyzer-behaviour-canon-is-the-standalone-prototype",
+      "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
       "why": [
@@ -326,7 +314,7 @@
       "name": "debt-two-deliberate-divergences-from-the-behaviour-canon",
       "substituted": false,
       "blocked_by": "spec-round",
-      "blocked_because": "rule:zero-flake-policy",
+      "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
       "why": [
@@ -349,7 +337,7 @@
       "name": "debt-windows-platform-surface-absent",
       "substituted": false,
       "blocked_by": "gated-axis",
-      "blocked_because": "axis:osnative",
+      "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
       "why": [

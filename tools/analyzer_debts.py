@@ -261,7 +261,16 @@ def front_matter(text: str) -> dict[str, str]:
             break
         found = re.match(r"^  ([a-z_]+):\s*(.*?)\s*$", line)
         if found:
-            out[found.group(1)] = found.group(2)
+            value = found.group(2)
+            # ★ R1835 — a surrounding pair of quotes is YAML's, not the value's.
+            # These files already quote `description:` that way, and a citation
+            # holding a comma or a colon has to be quoted too; without this the
+            # quotes reached the matcher and every quoted citation was refused
+            # as malformed. Only a MATCHED pair is stripped, so a value that
+            # genuinely starts with a quote is left alone.
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1]
+            out[found.group(1)] = value
     return out
 
 
@@ -314,7 +323,19 @@ def survey(folder: pathlib.Path) -> list[dict]:
                 "public_name": meta.get("public_name", "") or path.stem,
                 "why": why,
                 "blocked_by": meta.get("blocked_by", ""),
-                "blocked_because": meta.get("blocked_because", ""),
+                # ★ R1835 — one field for "why this standing", whatever the
+                # standing is. It was `blocked_because` and required only of the
+                # words that BLOCK, which left every other standing a bare word;
+                # the old spelling is still read so a file that has not been
+                # migrated is a citation rather than a silence.
+                "standing_because": meta.get("standing_because", "")
+                or meta.get("blocked_because", ""),
+                # The file's own PROSE — front matter deliberately excluded, so
+                # a `body:` citation has to quote the reasoning rather than the
+                # `description:` sitting beside the word it is justifying.
+                # Citing the description would be the declaration vouching for
+                # itself, which is the shape this field exists to end.
+                "body": text.split("\n---\n", 2)[-1],
                 # R1820 — a second axis: who can close it, when that is not
                 # whoever repays it. Absent for almost every debt, which is the
                 # correct default: repaying is closing unless something says
@@ -429,14 +450,47 @@ def collisions(pairs: list[tuple[str, str]]) -> list[str]:
 #: while being false. Cite what leaves.
 CITATION = re.compile(r"^(census|axis|rule):([A-Za-z0-9_.\-]+)$")
 
+#: ★★★★★ R1835 — the fourth citation form, and the ONLY one a debt may point at
+#: itself with: the sentence in its own body that the standing came from.
+#:
+#: Deliberately not accepted where a standing SHRINKS a count. A debt leaving
+#: the denominator must cite something else — that is R1810's defence and the
+#: single abuse path this whole field exists to close. What `body:` is for is
+#: the other twenty-three: standings that stay in the count, whose word was one
+#: person's reading and which nothing asked to justify.
+#:
+#: ⚠ What it proves and what it does not. It proves the sentence EXISTS in that
+#: file, so a body rewritten without revisiting its standing fails — which is
+#: the drift this catches. It does NOT prove the standing follows from the
+#: sentence; no checker can. What it buys is that the basis is nameable and
+#: reviewable instead of being a word with nothing behind it, which is exactly
+#: the step from "is there a declaration" to "does the declaration have a
+#: basis".
+BODY_CITATION = re.compile(r"^body:(.+)$", re.S)
+
 
 def check_citations(rows: list[dict], census: dict, gated: set[str], rules) -> list[str]:
-    """Every debt whose citation for a count-shrinking word is missing or wrong.
+    """Every debt whose standing cites nothing, or cites something wrong.
 
-    Two such words now, checked by one rule: a BLOCKED `blocked_by`, which takes
-    a debt out of the not-blocked count, and any `closed_by`, which takes it out
-    of what the loop can finish. The unblocking standings owe nothing — a wrong
-    `campaign` costs the work order, not the verdict.
+    Two words SHRINK a count and owe an EXTERNAL citation: a BLOCKED
+    `blocked_by`, which takes a debt out of the not-blocked count, and any
+    `closed_by`, which takes it out of what the loop can finish. Those are
+    checked exactly as R1810 built them — `census:` / `axis:` / `rule:`, each
+    answered by something that is not this file.
+
+    ★★★★★ R1835 — **and every OTHER standing now owes one too.** This docstring
+    used to end *"the unblocking standings owe nothing — a wrong `campaign`
+    costs the work order, not the verdict"*, and that is true of the verdict and
+    false of the cost: measured at R1835, 23 of 28 open debts carried a bare
+    word with nothing behind it, so the order this loop picks work in rested on
+    one person's single reading of each file. A wrong `buildable` sends a round
+    at something that cannot be built; a wrong `campaign` hides a debt that
+    could have been closed in an afternoon.
+
+    So a non-blocking standing owes a `body:` citation — the sentence in its own
+    file the word came from. That is a WEAKER claim than the external forms and
+    is meant to be: it cannot leave the denominator, and a debt that tries to
+    shrink a count with one is refused by name.
 
     `census` maps a row id to its verdict, `gated` holds the axis keys the Phase
     B tally marks ungainable, and `rules` answers whether a memory file exists.
@@ -444,17 +498,43 @@ def check_citations(rows: list[dict], census: dict, gated: set[str], rules) -> l
     """
     out: list[str] = []
     for row in rows:
+        # ★★★★★ R1835 — the standing that does NOT shrink a count still owes its
+        # basis, and may cite its own body for it.
+        if row["blocked_by"] and row["blocked_by"] not in BLOCKED:
+            cited = row.get("standing_because", "")
+            if not cited:
+                out.append(
+                    f"{row['name']}: `blocked_by: {row['blocked_by']}` is a bare word — "
+                    "cite the sentence it came from (`standing_because: body:<phrase>`)"
+                )
+            elif CITATION.match(cited):
+                out.append(
+                    f"{row['name']}: `standing_because: {cited}` cites something ELSE, but "
+                    f"`{row['blocked_by']}` shrinks no count — cite this file's own sentence "
+                    "with `body:<phrase>`"
+                )
+            else:
+                found = BODY_CITATION.match(cited)
+                if not found:
+                    out.append(
+                        f"{row['name']}: `standing_because: {cited}` is not `body:<phrase>`"
+                    )
+                elif found.group(1).strip() not in row.get("body", ""):
+                    out.append(
+                        f"{row['name']}: cites a sentence its own body does not contain — "
+                        f"{found.group(1).strip()[:60]!r}"
+                    )
         # ★ R1820 — two fields, one rule. `blocked_by` takes a debt out of the
         # not-blocked count; `closed_by` takes it out of what the loop can
         # finish. Both are self-declared, both shrink something a condition is
         # read off, so both owe the same citation to something else.
         for field, word, triggers in (
-            ("blocked_because", row["blocked_by"], BLOCKED),
+            ("standing_because", row["blocked_by"], BLOCKED),
             ("closed_because", row.get("closed_by", ""), set(CLOSERS)),
         ):
             if word not in triggers:
                 continue
-            declared = field.replace("_because", "_by")
+            declared = "blocked_by" if field == "standing_because" else "closed_by"
             cited = row.get(field, "")
             if not cited:
                 out.append(
@@ -839,16 +919,69 @@ def selftest() -> int:
     gated = {"osnative"}
     rules = {"zero-flake-policy"}.__contains__
 
-    def cite(word: str, because: str) -> list[dict]:
-        return [{"name": "d", "why": ["x"], "blocked_by": word, "blocked_because": because}]
+    def cite(word: str, because: str, body: str = "") -> list[dict]:
+        return [
+            {
+                "name": "d",
+                "why": ["x"],
+                "blocked_by": word,
+                "standing_because": because,
+                "body": body,
+            }
+        ]
 
     check(
         "a blocked standing with no citation is refused",
         check_citations(cite("phase-c", ""), census, gated, rules) != [],
     )
+    # ── R1835: an UNBLOCKED standing owes one too ────────────────────────
+    #
+    # This block replaces a case that asserted the opposite — "an UNBLOCKED
+    # standing needs none — it never leaves the count" — which was true of the
+    # VERDICT and false of the work order: 23 of 28 open debts carried a bare
+    # word, so which debt the loop reached for next rested on one unreviewed
+    # reading of each file.
     check(
-        "an UNBLOCKED standing needs none — it never leaves the count",
-        check_citations(cite("buildable", ""), census, gated, rules) == [],
+        "an unblocked standing with no citation is refused too",
+        check_citations(cite("buildable", ""), census, gated, rules) != [],
+    )
+    check(
+        "and it is satisfied by a phrase its own body contains",
+        check_citations(
+            cite("buildable", "body:because the seam is already there", "because the seam is already there"),
+            census,
+            gated,
+            rules,
+        )
+        == [],
+    )
+    check(
+        "a body citation to a phrase the file does NOT contain is refused",
+        check_citations(
+            cite("buildable", "body:a sentence nobody wrote", "some other prose"),
+            census,
+            gated,
+            rules,
+        )
+        != [],
+    )
+    # ★★★★★ THE ABUSE PATH, held shut: a `body:` citation is the file vouching
+    # for itself, so it must never let a debt LEAVE the denominator. R1810 built
+    # that defence for the blocking words and R1835 must not open it by
+    # widening the field.
+    check(
+        "a blocked standing may NOT cite its own body",
+        check_citations(
+            cite("phase-c", "body:it is blocked, obviously", "it is blocked, obviously"),
+            census,
+            gated,
+            rules,
+        )
+        != [],
+    )
+    check(
+        "and an unblocked standing may not cite something ELSE instead",
+        check_citations(cite("buildable", "census:lab.t2.16"), census, gated, rules) != [],
     )
     check(
         "a census citation resolves when the row is a gap",
@@ -895,7 +1028,18 @@ def selftest() -> int:
 
     # ── R1820: the closer axis ───────────────────────────────────────────────
     def closer(**over) -> list[dict]:
-        row = {"name": "d", "why": ["links x"], "blocked_by": "buildable", "priority": ""}
+        # ★ R1835 — the standing half is satisfied here so these cases isolate
+        # the CLOSER axis. Without it the widened standing rule fires on every
+        # fixture and two closer assertions fail for a reason that has nothing
+        # to do with closers, which is how a fixture stops testing its variable.
+        row = {
+            "name": "d",
+            "why": ["links x"],
+            "blocked_by": "buildable",
+            "standing_because": "body:a stated basis",
+            "body": "a stated basis",
+            "priority": "",
+        }
         row.update(over)
         return [row]
 
