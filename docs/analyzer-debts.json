@@ -53,17 +53,6 @@
       ]
     },
     {
-      "name": "debt-a-card-collapses-detail-at-an-unmeasured-zoom",
-      "substituted": false,
-      "blocked_by": "unmeasured",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links analyzer-behaviour-canon-is-the-standalone-prototype"
-      ]
-    },
-    {
       "name": "debt-a-debts-standing-is-one-persons-unreviewed-reading",
       "substituted": false,
       "blocked_by": "buildable",
@@ -141,6 +130,17 @@
       "closed_because": "",
       "why": [
         "links screen-a-vs-canon-operation-census"
+      ]
+    },
+    {
+      "name": "debt-a-sub-pixel-face-is-drawn-but-never-looked-at",
+      "substituted": false,
+      "blocked_by": "unmeasured",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links analyzer-behaviour-canon-is-the-standalone-prototype"
       ]
     },
     {

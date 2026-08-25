@@ -11,9 +11,9 @@ use pinion_core::selection::Selection;
 use pinion_core::widgets::config_form::Applies;
 
 use super::{
-    Hit, INSP_W, LabState, MIN_W, PALETTE_W, PANEL_STRIP_W, RAIL_W, TOOLBAR_LEFT_CLUSTER,
-    canvas_rect, card_rect, content_to_window, deploy, inspector_rect, palette_rect, pin_rect,
-    spec, use_lab_state,
+    Hit, INSP_W, LabState, MIN_W, PALETTE_W, PANEL_STRIP_W, RAIL_W, TOOLBAR_LEFT_CLUSTER, ZOOM_MAX,
+    ZOOM_MIN, canvas_rect, card_rect, card_shape_at, content_to_window, deploy, inspector_rect,
+    palette_rect, pin_rect, spec, use_lab_state,
 };
 use crate::graph::Role;
 
@@ -2934,4 +2934,95 @@ fn r1802_a_folded_panel_leaves_a_strip_the_canvas_does_not_take() {
         // in the gate above for why that difference cost a diagnosis.
         state.palette_at.set(super::PALETTE_OPENS_AT);
     });
+}
+
+// ── R1834: a card shows the same rows at every zoom ─────────────────────────
+
+/// ★★★★★ **A card's rows do not depend on the zoom** — because the behaviour
+/// reference's do not.
+///
+/// This screen used to collapse every digest row below 67% zoom
+/// (`scaled(FONT_TINY) >= 6`). Measured against the reference by extracting its
+/// application logic: it applies ONE transform to the whole graph and contains
+/// **zero** conditionals on zoom in 195 KB — no level of detail, at any zoom in
+/// its 25%..=250% range. Our floor is the same 25%, so the collapse was hiding
+/// rows the reference draws across 25%..=66%.
+///
+/// ⚠ The assertion is over the ZOOM RANGE and not at two chosen points, because
+/// a threshold is exactly the shape a two-point test walks past: the old rule
+/// tripped at 67%, which neither the minimum nor 100% would have caught on its
+/// own.
+///
+/// The specification carries the reference's fact
+/// (`REFERENCE_COLLAPSES_CARD_DETAIL_AT_LOW_ZOOM`) so this reads it rather than
+/// restating it — R1651's shape, where a reference measurement lives in the
+/// specification and the gate cross-checks the screen against it.
+#[test]
+fn r1834_a_cards_rows_do_not_depend_on_the_zoom() {
+    // ★ The premise, asserted at COMPILE TIME. It was a runtime `assert!` and
+    // clippy refused it: the expression is constant, so the check could never
+    // fail while running and the "guard" was decoration. That is this tree's
+    // own recorded rule — an invariant true by construction belongs to the
+    // compiler — and it is stronger here: recording that the reference DOES
+    // collapse now fails to BUILD this gate, which is the moment to notice
+    // that its shape and the specification have parted.
+    const _: () = assert!(!spec::REFERENCE_COLLAPSES_CARD_DETAIL_AT_LOW_ZOOM);
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = state();
+        let node = state.cards()[0];
+        let at_full = card_shape_at(&state, node, 100)
+            .expect("a card of the opening graph has a shape at 100%")
+            .rows
+            .len();
+        assert!(
+            at_full > 0,
+            "the opening graph's first card has digest rows, or this gate \
+             asserts that zero equals zero at every zoom",
+        );
+
+        for zoom in (ZOOM_MIN..=ZOOM_MAX).step_by(5) {
+            let rows = card_shape_at(&state, node, zoom)
+                .expect("a card has a shape at every zoom the screen allows")
+                .rows
+                .len();
+            assert_eq!(
+                rows, at_full,
+                "★ at {zoom}% the card shows {rows} row(s) where it shows \
+                 {at_full} at 100% — the reference collapses at no zoom, so \
+                 neither may this screen",
+            );
+        }
+    });
+}
+
+/// ★★★ **A face shrinks with the diagram it sits in, all the way down.**
+///
+/// The cause the collapse was a symptom of. A floor at 6px stopped the face
+/// shrinking while the diagram kept shrinking, so a card grew relative to its
+/// neighbours until they overlapped — which is the defect R1656 measured and
+/// repaired with a level of detail. The floor is 1 now, and this asserts the
+/// relationship rather than the constant: halve the zoom and the face must not
+/// stay where it was.
+#[test]
+fn r1834_a_canvas_face_keeps_shrinking_below_the_old_floor() {
+    let big = super::canvas_font_by(spec::FONT_TINY_PX, 100);
+    let small = super::canvas_font_by(spec::FONT_TINY_PX, ZOOM_MIN);
+    assert!(
+        small < big,
+        "a face at {ZOOM_MIN}% ({small}) is not smaller than at 100% ({big})",
+    );
+    assert!(
+        small >= 1,
+        "a face of zero is not a small label, it is an invisible one",
+    );
+    // ★ The discrimination: under the OLD floor of 6 this would have been 6 at
+    // every zoom at or below 66%, so the assertion above would have passed on
+    // the broken build too. This one would not.
+    assert!(
+        small < 6,
+        "★ the face is still floored at the old 6px, which is what stopped a \
+         card shrinking with the diagram around it",
+    );
 }

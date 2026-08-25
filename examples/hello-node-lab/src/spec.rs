@@ -1446,3 +1446,30 @@ pub fn inspector_document() -> pinion_core::conformance::SpecDocument {
 /// does — press the chip, and the row is there. Named here rather than spelled
 /// in the gate so the two cannot part.
 pub const ENUM_KEY: &str = "routing.mode";
+
+/// ★★★★★ R1834 — **the reference has NO level of detail, and this records it as
+/// a fact rather than as an absence somebody remembers.**
+///
+/// The reference applies one transform to the whole graph, so a card and the
+/// diagram around it shrink together by construction. Measured over its 195 KB
+/// of application logic: **zero** conditionals on zoom, anywhere. It never
+/// collapses a card's contents, at any zoom it can reach — and its zoom clamp
+/// bottoms at 25%, which is this screen's floor too, so the divergence was one
+/// of DETAIL and not one of range.
+///
+/// This screen used to. `card_shape_at` carried `scaled(FONT_TINY) >= 6`, which
+/// hid every row below 67% — across 25%..=66%, a range the reference draws in
+/// full. The cause was a face floor of 6px: it stopped text shrinking while the
+/// diagram kept shrinking, so a card grew relative to its neighbours until they
+/// overlapped, and the collapse was a repair aimed at that symptom. R1834
+/// lowered the floor to 1 and removed the collapse.
+///
+/// Kept as a `const` so
+/// `r1834_a_cards_rows_do_not_depend_on_the_zoom` reads it rather than
+/// restating it, which is the R1651 shape: a reference fact belongs in the
+/// specification, and the gate cross-checks the screen against it.
+pub const REFERENCE_COLLAPSES_CARD_DETAIL_AT_LOW_ZOOM: bool = false;
+
+/// The face a digest row is authored at, so a gate can ask what it scales to
+/// without reaching for a private constant of the screen.
+pub const FONT_TINY_PX: u32 = 9;

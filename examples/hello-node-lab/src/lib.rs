@@ -266,7 +266,9 @@ const PAD: u32 = 14;
 const FONT_TITLE: u32 = 14;
 const FONT_BODY: u32 = 12;
 const FONT_SMALL: u32 = 11;
-const FONT_TINY: u32 = 9;
+/// ★ R1834 — taken from the specification rather than spelled twice: a gate has
+/// to ask what this face scales to, and two copies of a size are two answers.
+const FONT_TINY: u32 = spec::FONT_TINY_PX;
 
 /// The canvas: what is left between the palette and the inspector.
 /// The window this frame is being painted into.
@@ -2911,13 +2913,33 @@ struct CardShape {
 /// for `zoom * 15`. Floored rather than allowed to reach zero, because a face
 /// of 0px is not a smaller label, it is an invisible one — the same reason
 /// R1653 scaled the pins.
+///
+/// ★★★★★ R1834 — **the floor was 6 and that is what broke proportionality.**
+///
+/// A floor at 6 does not merely clip small text: it makes the face STOP
+/// shrinking while the diagram keeps shrinking, so a card grows relative to its
+/// neighbours all the way down. That is what produced the overlap R1656
+/// measured, and the level-of-detail collapse this function's caller used to
+/// carry was a repair aimed at the symptom.
+///
+/// Measured against the behaviour reference: it applies ONE transform to the
+/// whole graph, so everything scales together by construction, and its 195 KB
+/// of application logic contains **zero** conditionals on zoom — no
+/// level-of-detail anywhere, at any zoom in its 0.25–2.5 range. Our own zoom
+/// floor is the same 25%, so between 25% and 66% this screen was hiding rows
+/// the reference draws.
+///
+/// So the floor is **1**, not 6: zero is still refused for the reason above,
+/// and legibility at 25% is not a property the reference has either. What is
+/// restored is that a face and the diagram it sits in shrink together, which is
+/// the relationship the overlap was a symptom of losing.
 fn canvas_font(state: &LabState, px: u32) -> u32 {
     canvas_font_by(px, state.zoom.get())
 }
 
 /// The same, at a stated zoom — see [`scaled_by`].
 fn canvas_font_by(px: u32, zoom: u32) -> u32 {
-    scaled_by(px, zoom).max(6)
+    scaled_by(px, zoom).max(1)
 }
 
 /// Derive a node's card: where every part goes, and therefore how big it is.
@@ -2975,7 +2997,29 @@ fn card_shape_at(state: &LabState, node: NodeId, zoom: u32) -> Option<CardShape>
     // hid rows its own way would be a second answer to "what is on this card",
     // and the height — which IS the content — would be free to disagree with
     // it.
-    let detailed = !card_collapsed(state, node) && scaled(FONT_TINY) >= 6;
+    // ★★★★★ R1834 — the zoom half of this is GONE, and it is a divergence being
+    // repaid rather than a feature being dropped.
+    //
+    // It read `&& scaled(FONT_TINY) >= 6`, which collapsed every row below 67%
+    // zoom. Measured against the behaviour reference: it has NO level of detail
+    // — zero conditionals on zoom in its whole application logic — and its zoom
+    // range bottoms at 25%, which is this screen's floor too. So this line hid
+    // rows the reference draws, across 25%..=66%.
+    //
+    // What remains is the reader's own collapse, which the reference does have.
+    // The overlap that motivated the zoom half is repaired at its cause instead
+    // — see `canvas_font_by`, where a face floor of 6 was what stopped a card
+    // shrinking with the diagram around it.
+    //
+    // ★ The specification is READ rather than restated: if it is ever measured
+    // that the reference DOES collapse, this is the branch that turns back on,
+    // and the gate reads the same constant from the other side.
+    let reader_collapsed = card_collapsed(state, node);
+    let detailed = if spec::REFERENCE_COLLAPSES_CARD_DETAIL_AT_LOW_ZOOM {
+        !reader_collapsed && scaled(FONT_TINY) >= 6
+    } else {
+        !reader_collapsed
+    };
     let rows: Vec<(Rect, Rect)> = card_rows(state, node)
         .iter()
         .take(if detailed { usize::MAX } else { 0 })
