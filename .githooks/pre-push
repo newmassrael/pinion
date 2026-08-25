@@ -64,6 +64,8 @@ source "$hook_dir/lib/consumer-tests.sh"
 source "$hook_dir/lib/mnemosyne-tool.sh"
 # shellcheck source=SCRIPTDIR/lib/worktree-guard.sh
 source "$hook_dir/lib/worktree-guard.sh"
+# shellcheck source=SCRIPTDIR/lib/ident-gate.sh
+source "$hook_dir/lib/ident-gate.sh"
 # R1799 — `step` announces AND times, so the announcements cannot become a
 # second list of what this hook does.
 # shellcheck source=SCRIPTDIR/lib/step-timer.sh
@@ -418,6 +420,10 @@ if ! python3 "$repo_root/tools/pin_sync.py" --check-dual-pin >&2; then
 fi
 
 msg_gate_failed=0
+# Accumulated like `msg_gate_failed` and for the same reason: a multi-ref push
+# must be told about EVERY ref that carries a bad identity, not stopped at the
+# first, because the fix is one rebase whose scope the author needs whole.
+ident_gate_failed=0
 tmp_msg="$(mktemp)"
 # R1779 — every path this push publishes, accumulated across the ref updates.
 tmp_paths="$(mktemp)"
@@ -455,6 +461,19 @@ while read -r _local_ref local_sha _remote_ref remote_sha; do
         fi
     done < <(git rev-list "${range[@]}")
 
+    # The identities this push would publish, over the SAME range as the
+    # message lint above -- pre-commit grades only `git commit`, so a
+    # cherry-pick, a rebase, a merge or a commit made where the hooks are not
+    # installed reaches the remote without ever meeting it. That last one is
+    # the shape the incident in lib/ident-gate.sh actually had, and a push is
+    # the last moment before publication that this repository controls.
+    if ! ident_gate_range "pre-push" "${range[@]}"; then
+        echo "" >&2
+        echo "pre-push: the remote is public and a push does not un-publish." >&2
+        echo "          Rewrite the offending commits before pushing." >&2
+        ident_gate_failed=1
+    fi
+
     # ★ R1779 — the paths this push actually touches, for the gates below that
     # only have something to say about some of them. Collected from the SAME
     # range the message lint walks, so a gate cannot disagree with it about
@@ -465,6 +484,12 @@ while read -r _local_ref local_sha _remote_ref remote_sha; do
         git diff --name-only "$remote_sha" "$local_sha" >>"$tmp_paths" 2>/dev/null || true
     fi
 done
+
+if [[ "$ident_gate_failed" -ne 0 ]]; then
+    echo "pre-push: one or more pushed commits carry an identity this" >&2
+    echo "pre-push: repository does not accept (see above)" >&2
+    exit 1
+fi
 
 if [[ "$msg_gate_failed" -ne 0 ]]; then
     echo "pre-push: one or more pushed commit messages violate COMMIT_FORMAT.md" >&2

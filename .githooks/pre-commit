@@ -58,6 +58,8 @@ source "$hook_dir/lib/mnemosyne-tool.sh"
 source "$hook_dir/lib/consumer-tests.sh"
 # shellcheck source=SCRIPTDIR/lib/worktree-guard.sh
 source "$hook_dir/lib/worktree-guard.sh"
+# shellcheck source=SCRIPTDIR/lib/ident-gate.sh
+source "$hook_dir/lib/ident-gate.sh"
 # ★★★★★ R1804 — the same instrument `pre-push` got at R1799, because the reader
 # asked how long a commit takes and NOBODY COULD SAY. Four announcements here
 # and not one of them carried a cost, so "the commit is slow" had no number
@@ -80,6 +82,13 @@ source "$hook_dir/lib/step-timer.sh"
 # about not deciding with libraries it has not verified, and this one has no
 # such step to sit behind.)
 require_main_worktree_for commit || exit 1
+
+# The identity this commit would carry, graded before anything expensive --
+# same argument as the worktree guard directly above: a commit that is going
+# to be refused should be refused before `mnemosyne_resolve` spends a minute.
+# See lib/ident-gate.sh for the incident this is here for.
+step "commit identity"
+ident_gate_pending "pre-commit" || exit 1
 
 mnemosyne_resolve
 

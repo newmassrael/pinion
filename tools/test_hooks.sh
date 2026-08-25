@@ -40,6 +40,8 @@ source "$repo_root/.githooks/lib/worktree-guard.sh"
 source "$repo_root/.githooks/lib/ssh-keepalive.sh"
 # shellcheck source=SCRIPTDIR/../.githooks/lib/step-timer.sh
 source "$repo_root/.githooks/lib/step-timer.sh"
+# shellcheck source=SCRIPTDIR/../.githooks/lib/ident-gate.sh
+source "$repo_root/.githooks/lib/ident-gate.sh"
 
 pass=0
 fail=0
@@ -1613,6 +1615,78 @@ if [[ "$cohort_state" == "unreachable" ]]; then
     cohort_state="same"
 fi
 ok "the committed snapshot carries the pinned cohort" "$cohort_state" "same"
+
+# ── lib/ident-gate.sh ────────────────────────────────────────────────────────
+#
+# The range arm is reachable only from `pre-push`, and a gate nothing can
+# execute cannot be told apart from one that always passes -- the argument
+# this whole file was written for. So it is driven here against a throwaway
+# repository carrying, deliberately, one clean commit, one with a bad AUTHOR
+# and one with a bad COMMITTER: an author-only test would pass against a gate
+# that reads only `%ae`, which is half the surface.
+ident_tmp="$(mktemp_tracked)"
+ident_good="${PINION_ALLOWED_IDENT_EMAILS[0]}"
+ident_bad="nobody@example.invalid"
+(
+    cd "$ident_tmp" || exit 1
+    git init -q .
+    git config user.name probe
+    git config user.email "$ident_good"
+    : >a && git add a && git commit -q -m 'good'
+    : >b && git add b && GIT_AUTHOR_EMAIL="$ident_bad" GIT_AUTHOR_NAME=probe git commit -q -m 'bad author'
+    : >c && git add c && GIT_COMMITTER_EMAIL="$ident_bad" GIT_COMMITTER_NAME=probe git commit -q -m 'bad committer'
+) >/dev/null 2>&1
+ident_base="$(git -C "$ident_tmp" rev-list --max-parents=0 HEAD)"
+ident_tip="$(git -C "$ident_tmp" rev-parse HEAD)"
+
+ident_rc() { ( cd "$ident_tmp" && "$@" ) >/dev/null 2>&1 && echo 0 || echo 1; }
+
+ok "a range of allowed identities passes" \
+    "$(ident_rc ident_gate_range probe "$ident_base")" 0
+ok "a bad author in the range is refused" \
+    "$(ident_rc ident_gate_range probe "$ident_tip")" 1
+ok "the A..B range form is refused too" \
+    "$(ident_rc ident_gate_range probe "$ident_base..$ident_tip")" 1
+ok "the first-push form (--not --remotes) is graded" \
+    "$(ident_rc ident_gate_range probe "$ident_tip" --not --remotes)" 1
+ok "a range git cannot read fails rather than passing" \
+    "$(ident_rc ident_gate_range probe no-such-ref-anywhere)" 1
+# Every offender named, not just the first: the fix is one rebase and its
+# scope has to be visible before it starts. Three lines -- the bad author, the
+# bad committer, and the refusal header that quotes the address once.
+ok "every offending commit is named" \
+    "$( ( cd "$ident_tmp" && ident_gate_range probe "$ident_tip" ) 2>&1 >/dev/null \
+        | grep -c "$ident_bad" )" 3
+ok "the pending arm passes an allowed identity" \
+    "$(ident_rc ident_gate_pending probe)" 0
+ok "the pending arm refuses a bad author" \
+    "$( ( cd "$ident_tmp" && GIT_AUTHOR_EMAIL="$ident_bad" ident_gate_pending probe ) \
+        >/dev/null 2>&1 && echo 0 || echo 1 )" 1
+ok "the pending arm refuses a bad committer" \
+    "$( ( cd "$ident_tmp" && GIT_COMMITTER_EMAIL="$ident_bad" ident_gate_pending probe ) \
+        >/dev/null 2>&1 && echo 0 || echo 1 )" 1
+# A display name with spaces must still yield the address -- a field-counting
+# parse gets this wrong, and gets it wrong silently.
+ok "a spaced display name still yields the address" \
+    "$(ident_email_of 'Some One <who@example.com> 1756100000 +0900')" "who@example.com"
+# ★ THE WIRING, and it is here because its absence already cost a push. This
+# suite sources the library itself, so every case above passes whether or not
+# a HOOK sources it -- and `pre-push` did not. The push died on
+# `ident_gate_range: command not found`, which `set -e` turned into a refusal
+# that read like a bad identity. Fail-closed, but for the wrong reason and
+# with the wrong message, and no test could see it.
+#
+# Greps the hook TEXT rather than calling the hook: running `pre-push` here
+# would drag in eighteen other gates and two minutes, and what is in question
+# is one line.
+for ident_hook in pre-commit pre-push; do
+    ok "the ${ident_hook} hook sources lib/ident-gate.sh" \
+        "$(grep -c 'lib/ident-gate\.sh"' "$repo_root/.githooks/$ident_hook")" 1
+done
+ok "the pre-commit hook actually calls the pending arm" \
+    "$(grep -c 'ident_gate_pending' "$repo_root/.githooks/pre-commit")" 1
+ok "the pre-push hook actually calls the range arm" \
+    "$(grep -c 'ident_gate_range' "$repo_root/.githooks/pre-push")" 1
 
 printf '[hooks] %d passed, %d failed\n' "$pass" "$fail"
 [[ "$fail" -eq 0 ]]
