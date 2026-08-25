@@ -155,17 +155,6 @@
       ]
     },
     {
-      "name": "debt-a-torn-off-card-has-no-window",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "names dashboard.t0.4, dashboard.t0.6"
-      ]
-    },
-    {
       "name": "debt-analyzer-census-verdicts-are-unproven",
       "substituted": false,
       "blocked_by": "buildable",
@@ -219,6 +208,17 @@
       "closed_because": "",
       "why": [
         "links protocol-analyzer-class-tool-capability-audit"
+      ]
+    },
+    {
+      "name": "debt-one-card-is-claimed-by-a-panel-and-a-window",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "names dashboard.t0.6"
       ]
     },
     {
