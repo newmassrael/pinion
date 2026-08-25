@@ -157,6 +157,22 @@ pub fn forget_surface_size(tag: &str) {
 /// old size. The viewport read is also the tracked one, which is what makes the
 /// view re-run on the next resize at all.
 ///
+/// ★★★★★ R1838 — **and "the window" had to be said precisely, because it was
+/// answering about a DIFFERENT window.** The paragraph above is right about the
+/// quantity and was silent about which window it belonged to: the viewport
+/// signal is ONE, holding the PRIMARY window's extent by R1006's deliberate
+/// decision, so this branch answered the primary's size for every window a
+/// binding paints. Measured on `hello-analyzer-shell` painted into a 520x380
+/// window, `shell.appbar.search` sat at `x = 1140`, `1620` and `2194` for
+/// primaries 1440, 1920 and 2494 wide — maximising the main window pushed the
+/// content of every other window further out of its own edges.
+///
+/// The branch reads [`painting_extent`] now, which takes that same tracked
+/// read — so everything the paragraph above says about re-running on a resize
+/// still holds — and then prefers the extent
+/// [`with_window_extent`] states. For a binding with one window the two are
+/// the same number, published and stated by the same paint.
+///
 /// Outside a view the viewport signal cannot be read — that is the whole
 /// problem — and the surface's rectangle from the last painted frame is both
 /// available and the *better* answer: it is the very rectangle a pointer
@@ -220,7 +236,11 @@ pub fn layout_size(tag: &str, floor: (u32, u32), design: (u32, u32)) -> (u32, u3
         // and the recorded size is the previous frame's.
         Some(extent) => Some(extent),
         None => match crate::reactive::Owner::current() {
-            Some(_) => Some(crate::reactive::use_viewport_size()),
+            // ★★★★★ R1838 — the window BEING PAINTED, not the primary one.
+            // See [`painting_extent`]: the viewport read is still taken, so a
+            // resize still re-runs the view, and for the primary window the two
+            // are the same number.
+            Some(_) => Some(painting_extent()),
             None => surface_size(tag),
         },
     };
@@ -288,6 +308,101 @@ impl Drop for PopGrantOnDrop {
             stack.borrow_mut().pop();
         });
     }
+}
+
+thread_local! {
+    /// The extent of the window whose scene is being built right now. A stack
+    /// for [`with_surface_extent`]'s reason — a paint may re-enter — and
+    /// innermost-wins for the same one.
+    static PAINTING_EXTENTS: RefCell<Vec<(u32, u32)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// ★★★★★ R1838 §5.16 §5.21 — **state the extent of the window being painted,
+/// for the duration of building its scene.**
+///
+/// [`with_surface_extent`] is this one level down: a host that places a surface
+/// inside its own scene states the rectangle it placed it in. A window has no
+/// such host — the shell paints it — so the shell is what states it, and this
+/// is where.
+///
+/// # The defect it exists to remove
+///
+/// [`use_viewport_size`](crate::reactive::use_viewport_size) resolves ONE
+/// signal, and R1006 fixed its meaning deliberately: it is the **primary**
+/// window's extent, and a secondary window's paint must not clobber it (a
+/// binding reading "the viewport" while a torn-off panel repaints would
+/// otherwise see the panel). That decision is right and it stays.
+///
+/// What nothing had noticed is that [`layout_size`] read the same signal, so
+/// **every** window's layout answered the primary's size. Measured at R1838 on
+/// `hello-analyzer-shell` painted into a 520x380 window: `shell.appbar.search`
+/// at `x = 1140`, `1620` and `2194` for primaries 1440, 1920 and 2494 wide —
+/// the primary's width less 300, in a window 520 wide — with 294, 304 and 304
+/// marks outside the window they were painted into. Maximising the main window
+/// spread every other window's content, which is the shape a person reported
+/// from a running desktop and nothing here could reproduce at the level it was
+/// reported at.
+///
+/// # Why a scope and not a signal
+///
+/// The same argument [`with_surface_extent`] makes: the statement is true only
+/// while the shell is building the frame it computed that extent for, and
+/// ending it on scope exit is what stops a stale extent being read by the next
+/// window's paint. A second signal would also be a second thing that can
+/// disagree with `VIEWPORT_SIZE`; a scope cannot outlive the paint that opened
+/// it.
+///
+/// # Panics
+///
+/// If `extent` is zero on either axis — [`layout_size`]'s contract is that a
+/// surface of no extent is not something to lay out in, and a window of none
+/// is not a window.
+pub fn with_window_extent<R>(extent: (u32, u32), body: impl FnOnce() -> R) -> R {
+    assert!(
+        extent.0 > 0 && extent.1 > 0,
+        "a window extent must have both axes positive; got {extent:?}"
+    );
+    PAINTING_EXTENTS.with(|stack| stack.borrow_mut().push(extent));
+    // A guard rather than a line after `body()`, for `with_surface_extent`'s
+    // reason: a view that panics must not leave the statement standing.
+    let _pop = PopPaintingExtentOnDrop;
+    body()
+}
+
+struct PopPaintingExtentOnDrop;
+
+impl Drop for PopPaintingExtentOnDrop {
+    fn drop(&mut self) {
+        PAINTING_EXTENTS.with(|stack| {
+            stack.borrow_mut().pop();
+        });
+    }
+}
+
+/// The extent stated by the innermost enclosing [`with_window_extent`], if any.
+#[must_use]
+pub fn stated_window_extent() -> Option<(u32, u32)> {
+    PAINTING_EXTENTS.with(|stack| stack.borrow().last().copied())
+}
+
+/// ★★★★★ R1838 — **the extent a view is laying out in**, which is the window
+/// being painted where one says so and the published viewport otherwise.
+///
+/// The viewport read happens either way, and deliberately: it is the TRACKED
+/// one ([`use_viewport_size`](crate::reactive::use_viewport_size)), so a view
+/// that resolves its size through here still re-runs when the window resizes.
+/// Preferring the statement afterwards changes the ANSWER without changing the
+/// subscription — and for the primary window there is nothing to change, since
+/// the same paint publishes the viewport and states the extent.
+///
+/// # Panics
+///
+/// Through [`use_viewport_size`](crate::reactive::use_viewport_size), which
+/// requires an owner scope. Call it from inside a view.
+#[must_use]
+pub fn painting_extent() -> (u32, u32) {
+    let viewport = crate::reactive::use_viewport_size();
+    stated_window_extent().unwrap_or(viewport)
 }
 
 /// The extent granted to `tag` by the innermost enclosing

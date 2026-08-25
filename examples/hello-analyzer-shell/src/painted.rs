@@ -4745,3 +4745,173 @@ fn r1811_a_longer_toast_gets_a_wider_box() {
 /// not have measured that box — it was not the shape the first derivation
 /// looked for, which is the finding `slack`'s own documentation records.
 const TOAST_SLACK: u32 = 64;
+
+// --- R1838: the arrangement, across a gesture rather than inside a frame -----
+//
+// A person reported, from a running desktop, that maximising and restoring and
+// detaching made the pins of the node graph "spread enormously" and the
+// arrangement fall apart. Every gate above this line paints ONE frame and
+// asserts about it; none of them could see a claim about what a GESTURE does,
+// which is what `debt-pins-spread-after-maximise-and-detach` recorded as the
+// missing axis. These two are that axis.
+
+/// Every pin the mounted node lab painted, by tag.
+///
+/// The graph's pins are the sharpest marks on that screen: fourteen of them,
+/// two per card, so their positions are a fingerprint of the whole diagram's
+/// arrangement — if the layout spreads, these move.
+fn lab_pins(scene: &Scene) -> BTreeMap<String, Rect> {
+    let mut out = BTreeMap::new();
+    scene.for_each_node(&mut |visit| {
+        if let (Some(tag), Some(rect)) = (visit.node.tag(), visit.absolute_rect())
+            && tag.starts_with("lab.pin.")
+        {
+            out.entry(tag.to_owned()).or_insert(rect);
+        }
+    });
+    out
+}
+
+/// ★★★★★ R1838 — **one window's arrangement is not decided by another
+/// window's size**, which is what a maximise plus a detach can otherwise do.
+///
+/// Driven on the REAL per-window paint path ([`pinion_shell::ShellCore`]) and
+/// not on this module's single-window sweep, because that is the only place the
+/// question exists: a window painted while another window is a different size.
+///
+/// # What it caught
+///
+/// `VIEWPORT_SIZE` holds the PRIMARY window's extent by R1006's deliberate
+/// decision, and `pinion_core::external::layout_size` read it inside every
+/// view — so **every** window laid itself out at the primary's size. Measured
+/// here before the repair, painting this application into a 520x380 window:
+///
+/// | primary | `shell.appbar.search` | marks outside the 520x380 window |
+/// |---|---|---|
+/// | 1440x900 | x = 1140 | 294 |
+/// | 1920x1080 | x = 1620 | 304 |
+/// | 2494x1531 | x = 2194 | 304 |
+///
+/// The chip's x is the primary's width less 300, in a window 520 wide: a
+/// person maximising the main window pushed the content of every other window
+/// further out of it. The repair is `with_window_extent` — the shell states
+/// the extent of the window it is painting, and `layout_size` prefers that
+/// statement over the viewport read.
+///
+/// # Why the assertion is EQUALITY across primaries and not a containment
+///
+/// Marks still fall outside a 520x380 window afterwards, and that is this
+/// application's own declared policy rather than the defect:
+/// [`SHRINK`](super::SHRINK) is `rigid`, so below its comfortable size this
+/// shell clips instead of shrinking. A containment bound would therefore have
+/// to be a number, and a number would be asserting the rigidity. What the
+/// defect actually was is a DEPENDENCE, so a dependence is what is refused.
+#[test]
+fn r1838_a_windows_arrangement_is_not_decided_by_another_windows_size() {
+    let mut sc = pinion_shell::ShellCore::<super::AnalyzerShellView>::new();
+    let mut seen: Option<BTreeMap<String, Rect>> = None;
+    let mut ran = 0;
+    for primary in [(WIN_W, WIN_H), (1920, 1080), (2494, 1531)] {
+        let _ = sc.compute_paint_scene(primary.0, primary.1);
+        let scene = sc.compute_paint_scene_for_window("second", 520, 380);
+        let arrangement: BTreeMap<String, Rect> = scene
+            .absolute_rects_by_tag()
+            .into_iter()
+            .filter(|(tag, _)| tag.starts_with("shell."))
+            .collect();
+        assert!(
+            !arrangement.is_empty(),
+            "the second window painted this application, or nothing was compared"
+        );
+        match &seen {
+            None => seen = Some(arrangement),
+            Some(first) => assert_eq!(
+                &arrangement, first,
+                "\u{2605} a 520x380 window must paint the SAME arrangement whatever \
+                 size the primary window is \u{2014} before the repair every mark \
+                 moved with the primary's width (primary {}x{})",
+                primary.0, primary.1,
+            ),
+        }
+        ran += 1;
+    }
+    assert_eq!(ran, 3, "three primary sizes were compared");
+}
+
+/// ★★★★★ R1838 — **the mounted node lab's diagram survives the board's own
+/// gestures and the window's**, which is the claim the person's report was
+/// about and the one this repository had no instrument for.
+///
+/// The gestures are the reported ones, in the reported order: the window
+/// maximised and restored, then a card maximised, restored, detached into a
+/// window of its own and re-docked. The pins are read from the painted scene
+/// each time.
+///
+/// ★ The fidelity assertion is what makes the equalities mean anything. A
+/// mounted screen that never saw the resize at all would hold every pin still
+/// and pass, so the sweep first proves the lab DOES reflow: measured here, of
+/// its 171 painted marks at the opening size, 88 move when the window is
+/// maximised (`lab.canvas` 846x802 -> 1900x1433). The pins do not, and that is
+/// the correct answer rather than an absent one — the graph is a diagram
+/// anchored at the canvas origin, so a larger window reveals more of it rather
+/// than spreading it.
+#[test]
+fn r1838_the_mounted_labs_diagram_survives_maximise_and_detach() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        state.go("lab").expect("`lab` is an open destination");
+
+        let (opening, at_opening) = {
+            let (shot, scene) = painted_at((WIN_W, WIN_H));
+            (shot.tags, lab_pins(&scene))
+        };
+        assert_eq!(at_opening.len(), 14, "the graph paints fourteen pins");
+
+        // Fidelity first: the mounted screen reflows, so an equality below is
+        // a measurement and not a screen that cannot see a resize.
+        let maximised = painted_at((2494, 1531));
+        let lab_marks = |tags: &BTreeMap<String, Rect>| -> BTreeMap<String, Rect> {
+            tags.iter()
+                .filter(|(tag, _)| tag.starts_with("lab."))
+                .map(|(tag, rect)| (tag.clone(), *rect))
+                .collect()
+        };
+        let before = lab_marks(&opening);
+        let after = lab_marks(&maximised.0.tags);
+        let moved = before
+            .iter()
+            .filter(|(tag, rect)| after.get(*tag).is_some_and(|now| now != *rect))
+            .count();
+        assert!(
+            moved > before.len() / 4,
+            "\u{2605} the mounted lab must REFLOW with the window, or the pin \
+             equalities below prove nothing \u{2014} {moved} of {} marks moved",
+            before.len(),
+        );
+
+        // The window maximises and comes back.
+        assert_eq!(
+            lab_pins(&painted_at((WIN_W, WIN_H)).1),
+            at_opening,
+            "\u{2605} the graph is where it was after a maximise and a restore",
+        );
+
+        // The board's own gestures, on the page beside it.
+        state.go("dashboard").expect("`dashboard` is open");
+        let id = state.placed()[0].id().as_str().to_owned();
+        ShellOracle::maximize(&state, &id).expect("a placed card maximises");
+        let _ = painted_at((WIN_W, WIN_H));
+        ShellOracle::restore(&state).expect("and restores");
+        ShellOracle::detach(&state, &id).expect("and detaches");
+        let _ = painted_at((WIN_W, WIN_H));
+        ShellOracle::redock(&state, &id).expect("and re-docks");
+        state.go("lab").expect("`lab` is open");
+        assert_eq!(
+            lab_pins(&painted_at((WIN_W, WIN_H)).1),
+            at_opening,
+            "\u{2605}\u{2605} and after a card was maximised, restored, torn off \
+             and re-docked on the page beside it",
+        );
+    });
+}

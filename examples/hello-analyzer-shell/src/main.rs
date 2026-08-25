@@ -8235,9 +8235,20 @@ fn torn_window_scene(card_id: &str) -> Scene {
     let dark = theme_word(&state.theme) == "dark";
     let palette = palette_of(&theme, dark);
     // The float's own declared size is the window's, so the scene is authored
-    // at the size the topology asked the operating system for rather than at
-    // whatever `window_size()` reports for the MAIN window. And its ABSENCE is
-    // the whole answer — see the header.
+    // at the size the topology asked the operating system for. And its ABSENCE
+    // is the whole answer — see the header.
+    //
+    // ★★★★★ R1838 — this comment used to end "rather than at whatever
+    // `window_size()` reports for the MAIN window", and that clause was a
+    // FRAMEWORK DEFECT being worked around in prose. It was true: every
+    // window's `layout_size` answered the primary's extent, so a binding that
+    // did not hand-author its own size laid a torn-off window out at the main
+    // window's — and maximising the main window spread it further out of its
+    // own edges every time. This screen dodged it and wrote the dodge down
+    // instead of reporting it. `pinion_core::external::with_window_extent` is
+    // the repair, and `window_size()` would now answer this window; the float's
+    // declared size is still read here because it is the size the TOPOLOGY
+    // asked for, which is the fact this scene is about.
     let Some((w, h)) = state.float(card_id).map(|f| (f.w.max(1), f.h.max(1))) else {
         return Scene::Container(
             ContainerNode::new(Vec::new())

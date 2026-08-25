@@ -189,17 +189,6 @@
       ]
     },
     {
-      "name": "debt-pins-spread-after-maximise-and-detach",
-      "substituted": false,
-      "blocked_by": "unmeasured",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links debt-the-canon-is-one-app-and-we-are-many-binaries"
-      ]
-    },
-    {
       "name": "debt-text-is-not-centred-in-the-box-that-holds-it",
       "substituted": false,
       "blocked_by": "buildable",

@@ -1295,55 +1295,78 @@ fn window_view<V: WidgetView>(
     state: V::State,
     frame: Frame,
     chrome_h: Option<u32>,
+    extent: (u32, u32),
 ) -> Scene {
-    apply_chrome_inset(
-        owner.run(|| {
-            let scene = match window_id {
-                Some(id) => V::view_for_window(id, state, &frame),
-                None => V::view(state, &frame),
-            };
-            // ★★★★★ R1714 — the pan a binding's policy declares, applied here
-            // because here is where all three paint-scene producers already
-            // agree. A binding that declares no pan gets the very same `Scene`
-            // back, so this costs the 224 bindings that do not one comparison.
-            //
-            // Inside the owner wrap for the reason everything else here is: the
-            // window size is a tracked read, so a resize re-runs the view and
-            // the pan's viewport follows it. Before the chrome inset, because
-            // the pan is a viewport onto the SCREEN and the chrome strip is
-            // window furniture the shell adds around it.
-            //
-            // R1715.1 — the policy is read FIRST and the key only when there is
-            // a pan to key. R1714 passed `V::tag()` as an argument, so it was
-            // evaluated for all 225 bindings including the ones that declare no
-            // pan at all — and a no-primary binding (R1306 PR-51 topology B,
-            // `hello-floating-chart`) has no `tag()`: its own is `unreachable!`,
-            // by design, because `primary_surface()` returns `None`. That is
-            // R1306's standing rule ("every substrate site reads the binding's
-            // identity through the ONE `primary_surface` accessor, never a bare
-            // `V::tag()`") being broken, and it turned a feature 224 bindings
-            // ignore into a panic for the 225th.
-            let Some(policy) = V::shrink_policy() else {
-                return scene;
-            };
-            // A pan IS declared, so the binding needs a key for its offset. The
-            // primary's tag when there is one; the window otherwise, which is
-            // the frame the pan is a viewport onto anyway
-            // ([[debt-a-surface-size-is-keyed-by-tag-and-announced-per-window]]
-            // already records that keying this by tag is the questionable half).
-            let key = V::primary_surface()
-                .map_or(window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW), |p| {
-                    p.tag
-                });
-            pinion_core::shrink::pan(
-                Some(policy),
-                key,
-                pinion_core::reactive::use_viewport_size(),
-                scene,
-            )
-        }),
-        chrome_h,
-    )
+    // ★★★★★ R1838 — and the extent of the window this is, stated for the whole
+    // of building its scene. `VIEWPORT_SIZE` holds the PRIMARY window's size by
+    // R1006's deliberate decision, so without this every window's layout
+    // answered the primary's — see `pinion_core::external::with_window_extent`
+    // for what that measured. Stated here because here is where all three
+    // paint-scene producers already agree, and because a window's extent is the
+    // shell's fact: nothing inside the view knows which window it is running
+    // for. The FULL window size rather than the size less `chrome_h`: the
+    // inset wraps the scene AFTER the view runs, so the extent a view has
+    // always laid out in is the whole window, and stating anything else here
+    // would move every chromed binding.
+    pinion_core::external::with_window_extent(extent, || {
+        apply_chrome_inset(
+            owner.run(|| {
+                let scene = match window_id {
+                    Some(id) => V::view_for_window(id, state, &frame),
+                    None => V::view(state, &frame),
+                };
+                // ★★★★★ R1714 — the pan a binding's policy declares, applied here
+                // because here is where all three paint-scene producers already
+                // agree. A binding that declares no pan gets the very same `Scene`
+                // back, so this costs the 224 bindings that do not one comparison.
+                //
+                // Inside the owner wrap for the reason everything else here is: the
+                // window size is a tracked read, so a resize re-runs the view and
+                // the pan's viewport follows it. Before the chrome inset, because
+                // the pan is a viewport onto the SCREEN and the chrome strip is
+                // window furniture the shell adds around it.
+                //
+                // R1715.1 — the policy is read FIRST and the key only when there is
+                // a pan to key. R1714 passed `V::tag()` as an argument, so it was
+                // evaluated for all 225 bindings including the ones that declare no
+                // pan at all — and a no-primary binding (R1306 PR-51 topology B,
+                // `hello-floating-chart`) has no `tag()`: its own is `unreachable!`,
+                // by design, because `primary_surface()` returns `None`. That is
+                // R1306's standing rule ("every substrate site reads the binding's
+                // identity through the ONE `primary_surface` accessor, never a bare
+                // `V::tag()`") being broken, and it turned a feature 224 bindings
+                // ignore into a panic for the 225th.
+                let Some(policy) = V::shrink_policy() else {
+                    return scene;
+                };
+                // A pan IS declared, so the binding needs a key for its offset. The
+                // primary's tag when there is one; the window otherwise, which is
+                // the frame the pan is a viewport onto anyway
+                // ([[debt-a-surface-size-is-keyed-by-tag-and-announced-per-window]]
+                // already records that keying this by tag is the questionable half).
+                let key = V::primary_surface()
+                    .map_or(window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW), |p| {
+                        p.tag
+                    });
+                // ★★★★★ R1838 — the pan is a viewport onto THIS window, so its
+                // viewport is this window's extent. Through
+                // `painting_extent` rather than a bare `use_viewport_size`
+                // for the same reason the view above goes through `layout_size`:
+                // the tracked read still happens (a resize re-runs the view and the
+                // pan follows it) and the ANSWER becomes the window being painted.
+                // It was the primary's size for every window, which is the second
+                // consumer of the one defect and the reason both reads resolve
+                // through one expression now.
+                pinion_core::shrink::pan(
+                    Some(policy),
+                    key,
+                    pinion_core::external::painting_extent(),
+                    scene,
+                )
+            }),
+            chrome_h,
+        )
+    })
 }
 
 /// (R1121 §5.21) Apply the vertical flex-main idiom (`flex-basis: 0;
@@ -5241,8 +5264,9 @@ impl<V: WidgetView> ShellCore<V> {
         let chrome_h = overlays.chrome_inset();
         let (mut paint_scene, paint_work) = {
             let core = &self.core;
+            let owner = core.root_owner();
             let run_view =
-                || window_view::<V>(core.root_owner(), window_id, cached_state, frame, chrome_h);
+                || window_view::<V>(owner, window_id, cached_state, frame, chrome_h, (w, h));
             // R1072 §5.37 — the opt-in self-hosted measure override (None unless
             // `PINION_TEXT_ENGINE` is enabled). Borrows `self.text_engine` as a
             // field disjoint from the `&mut self.text_cache` the layout passes
@@ -5930,7 +5954,16 @@ impl<V: WidgetView> ShellCore<V> {
         let settle = settle_to_fixed_point(
             // R1121 §5.16 §5.21 — mirror the live path's borderless content inset
             // so the introspection snapshot matches the painted geometry (§2 #7).
-            || window_view::<V>(core.root_owner(), window_id, cached_state, frame, chrome_h),
+            || {
+                window_view::<V>(
+                    core.root_owner(),
+                    window_id,
+                    cached_state,
+                    frame,
+                    chrome_h,
+                    (w, h),
+                )
+            },
             |scene| {
                 let pass = compute_layout_with_text_measure(scene, text_cache, w, h, text_measure);
                 mirror_nodes = mirror_nodes.saturating_add(pass.nodes);
@@ -6827,6 +6860,7 @@ impl<V: WidgetView> ShellCore<V> {
                             cached_state,
                             frame,
                             chrome_h,
+                            (w, h),
                         )
                     },
                     |scene| {
@@ -8665,6 +8699,149 @@ mod r1006_viewport_seam_tests {
         assert_eq!(
             sc.core.root_owner().run(pinion_core::use_viewport_size),
             (800, 600),
+        );
+    }
+
+    /// ★★★★★ R1838 — **a window's own view lays out in THAT window, and it
+    /// used to lay out in the primary's.**
+    ///
+    /// The seam the test above pins is deliberate and stays: `VIEWPORT_SIZE`
+    /// is ONE signal holding the PRIMARY window's extent, because a secondary
+    /// paint must not clobber it (R1006). What nothing had noticed is the
+    /// consequence one layer down —
+    /// [`layout_size`](pinion_core::external::layout_size) reads that signal
+    /// inside a view, so **every** window's layout answered the primary's
+    /// size. Maximise the main window and the content of every other window
+    /// spread with it, past its own edges.
+    ///
+    /// Measured on `hello-analyzer-shell` before the repair: painted into a
+    /// 520x380 window, `shell.appbar.search` sat at `x = 1140`, `1620` and
+    /// `2194` for primaries of `1440`, `1920` and `2494` wide — the primary's
+    /// width less 300, in a window 520 wide — with 294, 304 and 304 marks
+    /// outside the window they were painted into.
+    ///
+    /// The repair is R1724's rule one level up: **whoever paints a window
+    /// states the extent it is painting into**, and `layout_size` prefers that
+    /// statement over the viewport read exactly as it prefers a surface grant.
+    /// For the primary the two are equal by construction — the same paint
+    /// publishes the viewport and states the extent — so nothing about a
+    /// single-window binding changes, which is what the assertions below fix
+    /// in both directions.
+    #[test]
+    fn r1838_a_secondary_window_lays_out_in_its_own_extent() {
+        use crate::WidgetView;
+        use pinion_a11y::WidgetA11y;
+        use pinion_core::scene::{ContainerNode, Rect};
+        use pinion_core::style::{LayoutStyle, Size};
+        use pinion_core::{External, Frame, Scene, WidgetCore};
+
+        const TAG: &str = "sized";
+        const OTHER: &str = "other";
+
+        /// A binding that paints ONE mark filling the size it believes it has.
+        struct SizedFixture;
+
+        impl WidgetCore for SizedFixture {
+            type State = ();
+            type Event = ();
+
+            fn create_external() -> Box<dyn External> {
+                <EchoButtonFixture as WidgetCore>::create_external()
+            }
+            fn tag() -> &'static str {
+                TAG
+            }
+            fn read_state(_scene: &Scene) -> Self::State {}
+            fn view(_state: Self::State, _frame: &Frame) -> Scene {
+                // The whole fixture: lay a tagged mark out at whatever the
+                // framework says this surface's extent is. Its painted
+                // rectangle IS the answer under test.
+                let (w, h) = pinion_core::external::layout_size(TAG, (1, 1), (640, 480));
+                Scene::Container(
+                    ContainerNode::new(vec![Scene::Container(
+                        ContainerNode::new(Vec::new()).with_tag(TAG).with_layout(
+                            LayoutStyle::new()
+                                .with_absolute_position(0, 0)
+                                .with_size(Size::px(w, h)),
+                        ),
+                    )])
+                    .with_layout(LayoutStyle::new()),
+                )
+            }
+            fn event_name(_event: Self::Event) -> &'static str {
+                "none"
+            }
+            fn title() -> &'static str {
+                "Sized"
+            }
+        }
+
+        impl WidgetA11y for SizedFixture {}
+
+        impl WidgetView for SizedFixture {
+            type Renderer = <EchoButtonFixture as WidgetView>::Renderer;
+
+            fn initial_size_strategy() -> crate::SizeStrategy {
+                crate::SizeStrategy::Fixed {
+                    width: 640,
+                    height: 480,
+                }
+            }
+
+            fn view_for_window(window_id: &str, state: Self::State, frame: &Frame) -> Scene {
+                assert_eq!(window_id, OTHER, "this fixture declares one secondary");
+                Self::view(state, frame)
+            }
+        }
+
+        let mut sc = ShellCore::<SizedFixture>::new();
+        let mark = |scene: &Scene| -> Rect {
+            pinion_runtime::rect_for_tag(scene, TAG).expect("the fixture paints its one mark")
+        };
+
+        // The primary, at two sizes, is unchanged by this repair: what it
+        // states and what it publishes are the same number.
+        let small = sc.compute_paint_scene(800, 600);
+        assert_eq!(
+            (mark(&small).w, mark(&small).h),
+            (800, 600),
+            "the primary lays out in the primary",
+        );
+        let big = sc.compute_paint_scene(2494, 1531);
+        assert_eq!(
+            (mark(&big).w, mark(&big).h),
+            (2494, 1531),
+            "and follows its own resize",
+        );
+
+        // ★ The defect: with the primary maximised, a 520x380 secondary.
+        let secondary = sc.compute_paint_scene_for_window(OTHER, 520, 380);
+        assert_eq!(
+            (mark(&secondary).w, mark(&secondary).h),
+            (520, 380),
+            "\u{2605} a secondary window lays out in ITS extent, not the \
+             primary's \u{2014} before the repair this was the primary's \
+             2494x1531 in a window 520x380",
+        );
+
+        // ★★ And the primary's size does not decide it, which is the half a
+        // single comparison cannot show: the same window painted while the
+        // primary is a different size must come out the same.
+        let _ = sc.compute_paint_scene(800, 600);
+        let again = sc.compute_paint_scene_for_window(OTHER, 520, 380);
+        assert_eq!(
+            mark(&again),
+            mark(&secondary),
+            "\u{2605}\u{2605} and it is the same rectangle whatever the \
+             primary is doing",
+        );
+
+        // ★★★ R1006's seam is untouched: the published viewport is still the
+        // PRIMARY's, and a secondary paint still does not clobber it.
+        assert_eq!(
+            sc.core.root_owner().run(pinion_core::use_viewport_size),
+            (800, 600),
+            "the viewport signal remains the primary's",
         );
     }
 }
