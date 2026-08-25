@@ -13,8 +13,8 @@ use pinion_core::widgets::field_bytes::{Coverage, FieldSpan, SourceId};
 
 use super::{
     NAME_COLUMN, PacketView, capture_filler, cell_texts, char_count, comma, decode, frame_bytes,
-    lane_reading, list_cell_tag, pane_cursor, row_cells, select_byte, select_field, select_message,
-    sibling_place, spec, use_view_state,
+    lane_reading, link_width, list_cell_tag, pane_cursor, row_cells, run_width, select_byte,
+    select_field, select_message, sibling_place, spec, use_view_state,
 };
 use pinion_a11y::WidgetA11y;
 use pinion_core::WidgetCore;
@@ -737,8 +737,8 @@ fn r1663_folding_a_layer_hides_its_children_only() {
 #[test]
 fn r1693_the_name_cell_announces_the_annotations_painted_beside_it() {
     for (n, message) in spec::ROWS.iter().enumerate() {
-        let painted = cell_texts(message);
-        let announced = row_cells(message);
+        let painted = cell_texts(n);
+        let announced = row_cells(n);
         assert_eq!(
             painted.len(),
             spec::COLUMNS.len(),
@@ -1441,4 +1441,355 @@ fn r1747_every_messages_decode_names_the_layers_the_session_declares() {
             );
         }
     });
+}
+
+// ── R1827: request-response correlation, derived from the capture ───────────
+
+/// A capture built for a test, so the rule can be asked about states the
+/// opening capture does not contain.
+///
+/// ★★★★★ R1827 — this is the point of `correlation_in` taking a slice. The
+/// screen's own capture holds exactly ONE exchange, so every assertion made
+/// against it is an assertion that one pair still pairs — which would leave the
+/// three states that actually decide whether the rule is right (a query answered
+/// more than once, a reply whose request is off the front, two exchanges sharing
+/// a channel) untested, and untested is where a rule stops being one.
+fn row(time: &'static str, hop: &'static str, kind: &'static str, sn: u32) -> spec::RowSpec {
+    spec::RowSpec {
+        time,
+        hop,
+        channel: "ihigh/rel",
+        sn,
+        kind,
+        name: "store/**",
+        len: 64,
+        fragment: None,
+        note: "",
+    }
+}
+
+/// ★★★★★ **A reply names the request it answers, and only a request in the same
+/// exchange.**
+///
+/// The four discriminating cases, none of which the screen's own capture can
+/// pose. Each is one variable away from the case above it.
+#[test]
+fn r1827_a_reply_answers_the_most_recent_request_it_could_have() {
+    // (a) the plain exchange: one request, one reply, both ways round.
+    let plain = [
+        row("12:00:00.000", "n4 -> r1", "Query", 1),
+        row("12:00:00.100", "r1 -> n4", "Response", 2),
+    ];
+    assert_eq!(
+        spec::correlation_in(&plain, 1),
+        Some(0),
+        "the reply's request"
+    );
+    assert_eq!(spec::correlation_in(&plain, 0), Some(1), "and back again");
+
+    // (b) two requests before one reply: the MOST RECENT is answered, not the
+    // first. Reversing this arm is the single likeliest way to get the rule
+    // wrong, and nothing in the opening capture would notice.
+    let two_asks = [
+        row("12:00:00.000", "n4 -> r1", "Query", 1),
+        row("12:00:00.500", "n4 -> r1", "Query", 2),
+        row("12:00:00.900", "r1 -> n4", "Response", 3),
+    ];
+    assert_eq!(
+        spec::correlation_in(&two_asks, 2),
+        Some(1),
+        "the most recent request"
+    );
+    assert_eq!(
+        spec::correlation_in(&two_asks, 0),
+        None,
+        "the older one is unanswered"
+    );
+
+    // (c) a reply BEFORE any request is not answering it. Time order is part of
+    // the rule and not an accident of how the rows are laid out.
+    let backwards = [
+        row("12:00:00.900", "n4 -> r1", "Query", 1),
+        row("12:00:00.000", "r1 -> n4", "Response", 2),
+    ];
+    assert_eq!(
+        spec::correlation_in(&backwards, 1),
+        None,
+        "nothing before it to answer"
+    );
+    assert_eq!(
+        spec::correlation_in(&backwards, 0),
+        None,
+        "and so nothing answers it"
+    );
+
+    // (d) same channel, DIFFERENT endpoints: not this exchange. The hop is
+    // compared as a reversed pair, so a third party's reply on the same channel
+    // must not be picked up.
+    let elsewhere = [
+        row("12:00:00.000", "n4 -> r1", "Query", 1),
+        row("12:00:00.100", "r1 -> n9", "Response", 2),
+    ];
+    assert_eq!(
+        spec::correlation_in(&elsewhere, 1),
+        None,
+        "a different conversation"
+    );
+}
+
+/// ★★★★★ **The relation is many-to-one, and the round that built it first
+/// claimed it was symmetric.**
+///
+/// This is the test that judgment cost. A query answered three times is named by
+/// all three replies and names the EARLIEST of them back — so following the link
+/// from the second reply does not come back to the second reply. The doc on
+/// `correlation_in` says so now; before this test it said the opposite, and the
+/// screen's own capture (one exchange, one reply) would have agreed with either
+/// sentence forever.
+#[test]
+fn r1827_a_request_answered_twice_names_the_first_reply_and_both_replies_name_it() {
+    let burst = [
+        row("12:00:00.000", "n4 -> r1", "Query", 1),
+        row("12:00:00.100", "r1 -> n4", "Response", 2),
+        row("12:00:00.200", "r1 -> n4", "Response", 3),
+        row("12:00:00.300", "r1 -> n4", "Response", 4),
+    ];
+    for reply in [1, 2, 3] {
+        assert_eq!(
+            spec::correlation_in(&burst, reply),
+            Some(0),
+            "reply {reply} answers the one request in this capture",
+        );
+    }
+    assert_eq!(
+        spec::correlation_in(&burst, 0),
+        Some(1),
+        "the request names the EARLIEST reply, not the last and not all three",
+    );
+    // Stated as the property rather than as three numbers, because the property
+    // is what the doc promises: from the reply end the walk always returns.
+    for reply in [1, 2, 3] {
+        let request = spec::correlation_in(&burst, reply).expect("a reply with a request");
+        assert!(
+            spec::correlation_in(&burst, request).is_some(),
+            "reply {reply} points at a request that points at nothing",
+        );
+    }
+}
+
+/// ★★★ **Every edge the capture derives joins a query to a response, one
+/// channel, one pair of endpoints, in time order.**
+///
+/// The screen's own capture, checked as a property rather than by naming the two
+/// rows that happen to pair. A row added to the fixture is covered by this the
+/// day it lands.
+#[test]
+fn r1827_every_derived_link_joins_a_query_to_a_response_on_one_channel() {
+    let mut edges = 0;
+    for n in 0..spec::ROWS.len() {
+        let Some(other) = spec::correlation(n) else {
+            continue;
+        };
+        edges += 1;
+        let (a, b) = (&spec::ROWS[n], &spec::ROWS[other]);
+        assert_ne!(a.kind, b.kind, "row {n} is paired with its own kind");
+        assert!(
+            matches!(
+                (a.kind, b.kind),
+                ("Query", "Response") | ("Response", "Query")
+            ),
+            "row {n} is paired across kinds {:?} and {:?}",
+            a.kind,
+            b.kind,
+        );
+        assert_eq!(a.channel, b.channel, "row {n}'s pair crosses channels");
+        assert_eq!(
+            a.session(),
+            b.session(),
+            "row {n}'s pair is not one conversation",
+        );
+        let (query, response) = if a.kind == "Query" { (a, b) } else { (b, a) };
+        assert!(
+            query.time < response.time,
+            "row {n}'s reply is older than the request it answers",
+        );
+    }
+    // ★ The denominator, because a property that holds over an empty set holds
+    // for the wrong reason: this capture contains one exchange, so two rows are
+    // linked, and if a future edit to `ROWS` silences the derivation the loop
+    // above would pass while asserting nothing.
+    assert_eq!(edges, 2, "the opening capture holds exactly one exchange");
+}
+
+/// ★★★★★ **A timestamp sorts as text because every one of them is the same
+/// shape** — which is the assumption the rule rests on, made checkable.
+///
+/// `correlation_in` compares `time` as bytes, so the ordering it derives is
+/// chronological only while every timestamp is fixed-width `HH:MM:SS.mmm`. A row
+/// added as `9:04:38.221` would sort after `12:04:38.221` and pair the wrong two
+/// messages, with no other test in this file able to see it.
+#[test]
+fn r1827_a_timestamp_sorts_as_text_because_every_one_is_the_same_shape() {
+    for (n, row) in spec::ROWS.iter().enumerate() {
+        let bytes = row.time.as_bytes();
+        assert_eq!(bytes.len(), 12, "row {n}'s timestamp is not fixed width");
+        for (i, b) in bytes.iter().enumerate() {
+            let want_separator = i == 2 || i == 5 || i == 8;
+            let expected = if i == 8 { b'.' } else { b':' };
+            if want_separator {
+                assert_eq!(*b, expected, "row {n}'s timestamp, byte {i}");
+            } else {
+                assert!(b.is_ascii_digit(), "row {n}'s timestamp, byte {i}");
+            }
+        }
+    }
+}
+
+/// ★★★★★ **The width the name column reserves for a link is the width the
+/// painter gives it.**
+///
+/// The round's one deliberate second spelling: `link_width` is `const` because
+/// the column's floor is, and a `const` cannot build the string, so the width is
+/// arithmetic over the word and the digit count while the paint is `run_box`
+/// over the text. Two spellings of one number is exactly the shape that drifts,
+/// so it is measured rather than trusted — including the `+ 8` gap, which the
+/// painter subtracts and the floor has to include or the two would agree on
+/// every row and still overflow.
+#[test]
+fn r1827_the_link_annotations_reserved_width_is_the_width_it_paints() {
+    let mut measured = 0;
+    for n in 0..spec::ROWS.len() {
+        match spec::link_text(n) {
+            None => assert_eq!(
+                link_width(spec::ROWS, n),
+                0,
+                "row {n} paints no link and the column reserves width for one",
+            ),
+            Some(text) => {
+                measured += 1;
+                assert_eq!(
+                    link_width(spec::ROWS, n),
+                    run_width(&text) + 8,
+                    "row {n} reserves a width the painter does not use for {text:?}",
+                );
+            }
+        }
+    }
+    assert_eq!(
+        measured, 2,
+        "the opening capture holds exactly one exchange"
+    );
+}
+
+/// ★★★★★ **The link is announced, and it is announced in the cell it is painted
+/// in.**
+///
+/// The decision this replaced painted an empty run in a `linked` column for
+/// every unpaired row, on the stated reason that the accessibility grid would
+/// otherwise report fewer cells on one row than another. That reason was false —
+/// the grid's cells come from `row_cells`, which is a fixed-length vector — and
+/// this is where the true arrangement is written down: a row in no pair says
+/// nothing extra, and a row in one says it inside its name cell.
+#[test]
+fn r1827_a_linked_row_announces_its_pair_inside_the_name_cell() {
+    let mut linked = 0;
+    for n in 0..spec::ROWS.len() {
+        let announced = row_cells(n);
+        assert_eq!(
+            announced.len(),
+            spec::COLUMNS.len(),
+            "row {n} announces one cell per column whether or not it is linked",
+        );
+        match spec::link_text(n) {
+            None => assert!(
+                !announced[NAME_COLUMN].contains(spec::ANSWERS)
+                    && !announced[NAME_COLUMN].contains(spec::ANSWERED_BY),
+                "row {n} is in no exchange and says it is",
+            ),
+            Some(text) => {
+                linked += 1;
+                assert!(
+                    announced[NAME_COLUMN].ends_with(&text),
+                    "row {n} paints {text:?} and announces {:?}",
+                    announced[NAME_COLUMN],
+                );
+                assert!(
+                    announced[NAME_COLUMN].starts_with(spec::ROWS[n].name),
+                    "row {n}'s name cell no longer opens with the resource name",
+                );
+            }
+        }
+    }
+    assert_eq!(linked, 2, "the opening capture holds exactly one exchange");
+}
+
+/// ★★★ **The two ends of an exchange use different words, and each is the word
+/// for its own end.**
+///
+/// The freedom an annotation run has that a column heading does not, asserted so
+/// it is a fact rather than a paragraph: a `linked` column could only have shown
+/// a bare number, because one heading cannot mean "answers" on one row and
+/// "answered by" on the next.
+#[test]
+fn r1827_each_end_of_an_exchange_says_which_end_it_is() {
+    let mut seen = Vec::new();
+    for n in 0..spec::ROWS.len() {
+        let Some(text) = spec::link_text(n) else {
+            continue;
+        };
+        let expected = match spec::ROWS[n].kind {
+            "Response" => spec::ANSWERS,
+            _ => spec::ANSWERED_BY,
+        };
+        assert!(
+            text.starts_with(expected),
+            "row {n} is a {:?} and its link reads {text:?}",
+            spec::ROWS[n].kind,
+        );
+        let other = spec::correlation(n).expect("a linked row has a counterpart");
+        assert!(
+            text.ends_with(&spec::ROWS[other].sn.to_string()),
+            "row {n}'s link does not name its counterpart's sequence number",
+        );
+        seen.push(expected);
+    }
+    seen.sort_unstable();
+    seen.dedup();
+    assert_eq!(seen.len(), 2, "both words are exercised by this capture");
+}
+
+/// ★★★ **A session is the conversation, whichever way a message travelled.**
+///
+/// `hop` is directed and a session is not, so both halves of an exchange produce
+/// one string — which is what makes `session` usable as a filter that keeps an
+/// exchange whole instead of keeping half of it and looking like it worked.
+#[test]
+fn r1827_both_halves_of_an_exchange_are_one_session() {
+    for n in 0..spec::ROWS.len() {
+        let Some(other) = spec::correlation(n) else {
+            continue;
+        };
+        assert_ne!(
+            spec::ROWS[n].hop,
+            spec::ROWS[other].hop,
+            "row {n}'s pair travels the same direction",
+        );
+        assert_eq!(
+            spec::ROWS[n].session(),
+            spec::ROWS[other].session(),
+            "row {n}'s pair is not one session",
+        );
+    }
+    // And the roster a query is written against knows the name, or every filter
+    // mentioning it would compare against the empty string and read as "nothing
+    // matches" — which looks exactly like a correct empty result.
+    assert!(
+        spec::QUERY_COLUMNS.contains(&"session"),
+        "a reader cannot filter by the thing the rows agree on",
+    );
+    assert_eq!(
+        spec::ROWS[0].attributes().len(),
+        spec::QUERY_COLUMNS.len(),
+        "a row's attributes and the roster a query reads have drifted",
+    );
 }

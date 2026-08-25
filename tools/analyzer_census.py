@@ -193,15 +193,47 @@ def load(text: str) -> list[dict]:
     return rows
 
 
-def assembly_paths(row: dict) -> list[str]:
-    """The paths an `assembled_by` names.
+def cited_paths(field: str) -> list[str]:
+    """The repo-relative paths a citation field names.
 
     Pure, and deliberately loose about the prose around them: a token is a path
     if it contains a separator, so the field can read as a sentence and still be
     checkable. The alternative — a list field — makes the reason unwriteable,
     and a citation with no reason is what R1611 spent a round unwinding.
+
+    ★★★★★ R1827 — **but a token must be repo-relative and have something on
+    both sides of every separator**, and that is not fussiness. Looseness is
+    safe only while a non-citation FAILS: a word that is not a path gets asked
+    of the filesystem, is absent, and says so. An ABSOLUTE token is the one
+    shape that can pass while naming nothing in this repository, because the
+    oracle these feed is `os.path.exists` and the filesystem root exists.
+    Measured in the round that added this: the prose `` `answers` /
+    `answered by` `` put a bare `/` into `capture.t1.9`, `assembly_paths`
+    returned it as a cited path, and `check_assemblies` confirmed it — a
+    phantom citation, admitted silently, in the field whose whole job is to
+    make a claim checkable. The other absolute shape this repo's prose is full
+    of is an RPC path (`/external/correlation`), which would be asked of the
+    filesystem and reported missing: loud, and equally wrong.
+
+    So the rule is: relative, and no empty segment. Both extractors share this
+    one function rather than spelling it twice, for the reason `cell_texts` and
+    `row_cells` in this round's other half share theirs — two spellings of one
+    rule is the shape that drifts.
     """
-    return [token.strip(",;") for token in str(row.get("assembled_by", "")).split() if "/" in token]
+    out: list[str] = []
+    for token in str(field).split():
+        path = token.strip(",;")
+        if "/" not in path or path.startswith("/"):
+            continue
+        if any(segment == "" for segment in path.split("/")):
+            continue
+        out.append(path)
+    return out
+
+
+def assembly_paths(row: dict) -> list[str]:
+    """The paths an `assembled_by` names. See [`cited_paths`] for the rule."""
+    return cited_paths(row.get("assembled_by", ""))
 
 
 def check_assemblies(rows: list[dict], exists) -> list[str]:
@@ -233,7 +265,6 @@ def check_assemblies(rows: list[dict], exists) -> list[str]:
 #: empty — and an empty allowlist is the one that cannot rot.
 UNASSEMBLED: frozenset[str] = frozenset(
     {
-        "capture.t1.9",
         "capture.t1.11",
         "capture.t2.14",
         "capture.t2.18",
@@ -321,8 +352,11 @@ def proof_names(row: dict) -> list[str]:
 
 
 def proof_paths(row: dict) -> list[str]:
-    """The files a `proven_by` cites — the end-to-end demos beside the tests."""
-    return [token.strip(",;") for token in str(row.get("proven_by", "")).split() if "/" in token]
+    """The files a `proven_by` cites — the end-to-end demos beside the tests.
+
+    Same rule as its peer, out of the same function: see [`cited_paths`].
+    """
+    return cited_paths(row.get("proven_by", ""))
 
 
 def check_proofs(rows: list[dict], known, exists) -> list[str]:
@@ -471,6 +505,38 @@ def selftest() -> int:
     check(
         "and a present one is not",
         check_assemblies(ok_app, lambda _p: True) == [],
+    )
+
+    # ★★★★★ R1827 — the phantom citation. A token that is not a path must not
+    # be extracted as one when the filesystem would AGREE with it: `/` exists,
+    # `/tmp` exists, and a row citing either would pass while naming nothing in
+    # this repository. Found in this round's own `assembled_by`, where the
+    # prose `` `answers` / `answered by` `` put a bare `/` in the field.
+    prosey = {
+        **ok_app[0],
+        "assembled_by": "assembled by examples/x, which says `answers` / `answered by`",
+    }
+    check(
+        "a bare separator in the prose is not a citation",
+        assembly_paths(prosey) == ["examples/x"],
+    )
+    check(
+        "and so the row is not confirmed by the filesystem root existing",
+        check_assemblies([prosey], lambda p: p in ("/", "examples/x")) == [],
+    )
+    check(
+        "an absolute token is not a citation either — an RPC path is not a file",
+        assembly_paths({**ok_app[0], "assembled_by": "read at /external/correlation"}) == [],
+    )
+    check(
+        "a token with an empty segment is not a citation",
+        cited_paths("tools//demos/y.py examples/x/") == [],
+    )
+    check(
+        "and the two extractors answer with one rule, not two",
+        assembly_paths({"assembled_by": "a/b /c d/ e//f"})
+        == proof_paths({"proven_by": "a/b /c d/ e//f"})
+        == ["a/b"],
     )
 
     # ★★★★★ R1807 — the row that names NOTHING, which both checks above pass

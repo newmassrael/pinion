@@ -87,8 +87,14 @@ pub const RATE: &str = "1,284 msg/s";
 /// and a saved filter changes meaning the day a column moves.
 ///
 /// The order is the roster's own and nothing derives an index from it.
+///
+/// ★★★★★ R1827 — `session` is the first name here that no column draws AND no
+/// row stores: it is [`RowSpec::session`], the unordered endpoint pair, derived
+/// from `hop`. That is what makes *follow one session* a filter rather than a
+/// second list — the roster is what a reader may ASK about, and a conversation
+/// is a thing a reader asks about even though no cell holds it.
 pub const QUERY_COLUMNS: &[&str] = &[
-    "time", "hop", "channel", "sn", "type", "name", "len", "note", "fragment",
+    "time", "hop", "channel", "sn", "type", "name", "len", "note", "fragment", "session",
 ];
 
 /// ★★★ R1787 — **what an export of this capture covers**, as the closed
@@ -266,7 +272,46 @@ pub struct ColumnSpec {
     pub width: u32,
 }
 
-/// The seven columns, left to right.
+/// The columns of the message list, left to right.
+///
+/// ★ R1827 — deliberately not a number in this sentence. It said "the seven
+/// columns", which is the shape a hand count in prose always eventually takes.
+/// Everything that consumes this table derives its arity from `COLUMNS.len()`.
+///
+/// ★★★★★ **And an eighth column does not fit here — that is a measurement, not
+/// a style preference.** R1827 set out to show request-response correlation as
+/// a `linked` column, built it, and re-ran the whole suite against it. **Six**
+/// gates refused it at the size this screen opens in, and they refused it for
+/// four distinct reasons, which is what makes this a property of the screen
+/// rather than one gate's opinion:
+///
+/// * `r1663_every_painted_mark_is_inside_the_pane_its_address_names` — the byte
+///   pane was painted **outside the window** (`pv.bytes.body` at x=1204 w=316,
+///   in a 1440-wide window);
+/// * `r1672_every_painted_mark_is_inside_the_box_that_owns_it` — the screen
+///   overhung its own root to the right;
+/// * `r1747_the_capture_viewer_reproduces_its_specification_or_says_why_not` —
+///   the surface carried a `part 7` that no specification declares;
+/// * `r1663_every_declared_element_of_the_screen_is_painted` and
+///   `r1693_the_screen_speaks_and_is_quiet_exactly_where_the_specification_says`
+///   — the empty runs, on which see `lib::name_column_paint`;
+/// * `r1800_no_run_sits_in_a_box_too_short_for_its_own_face` — the pin, moved by
+///   the new runs.
+///
+/// The cause is in this table's own arithmetic — `LIST_FLOOR` is
+/// `fixed_columns() + NAME_FLOOR + PAD * 2`, and the opening size clears that
+/// floor by a margin narrower than any usable column.
+///
+/// ⚠ **The overhang is deliberately not given as a number here.** The first
+/// draft of this comment recorded one (`47px`), and re-running the
+/// counterfactual measured **81px** — because the overhang is not a fact about
+/// the design at all, it is `the column's width minus the margin`, and the
+/// width of a column that was never going to ship is a number somebody picked.
+/// The gates above are what is reproducible; the pixel count is not.
+///
+/// So a new *fact* about a message goes where this screen already puts per-row
+/// derived facts: an annotation run inside the name column, beside the note and
+/// the fragment marker. See `lib::link_text`.
 pub const COLUMNS: &[ColumnSpec] = &[
     ColumnSpec {
         title: "time",
@@ -360,8 +405,296 @@ impl RowSpec {
             self.fragment
                 .as_ref()
                 .map_or_else(String::new, |f| f.marker.to_owned()),
+            self.session(),
         ]
     }
+
+    /// ★★★★★ R1827 — **the conversation this message belongs to**: the two
+    /// endpoints, unordered.
+    ///
+    /// `hop` is directed (`n4 -> r1`), and a session is not — a query and the
+    /// reply to it are the same conversation travelling opposite ways. Sorting
+    /// the two names is what makes both directions produce ONE string, so a
+    /// filter written against it keeps both halves of an exchange; taking the
+    /// text as written would keep half and look like a working filter.
+    ///
+    /// Spelled with the same separator [`SESSION`] uses, because a reader who
+    /// sees the negotiated session in the context strip and then filters by
+    /// session should be typing the thing they just read.
+    #[must_use]
+    pub fn session(&self) -> String {
+        let (from, to) = self.hop.split_once(HOP_SEP).unwrap_or((self.hop, self.hop));
+        let (a, b) = if from <= to { (from, to) } else { (to, from) };
+        format!("{a} <-> {b}")
+    }
+}
+
+// ── R1827: request-response correlation, derived from the capture ───────────
+
+/// `a == b`, at compile time.
+///
+/// Written out because `str`'s `PartialEq` is not `const`, and the correlation
+/// rule below has to run in a `const` context — see its own header for why that
+/// is not a preference.
+const fn str_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+/// `a < b` as text, at compile time.
+///
+/// ⚠ This is only *chronological* because every timestamp in a capture is the
+/// same fixed-width shape, and that is a thing to assert rather than assume:
+/// `r1827_a_timestamp_sorts_as_text_because_every_one_is_the_same_shape` is
+/// where it is asserted, so a row added in another format fails a test instead
+/// of silently pairing the wrong two messages.
+const fn str_lt(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    let mut i = 0;
+    while i < a.len() && i < b.len() {
+        if a[i] != b[i] {
+            return a[i] < b[i];
+        }
+        i += 1;
+    }
+    a.len() < b.len()
+}
+
+/// The separator a [`RowSpec::hop`] is written with.
+pub const HOP_SEP: &str = " -> ";
+
+/// Where the separator sits in a hop, or `usize::MAX` when it has none — which
+/// is the shape of "this hop is not a pair of endpoints", stated without an
+/// `Option` so the callers below stay `const`-simple.
+const fn arrow_at(hop: &str) -> usize {
+    let (b, sep) = (hop.as_bytes(), HOP_SEP.as_bytes());
+    let mut i = 0;
+    while i + sep.len() <= b.len() {
+        let mut k = 0;
+        while k < sep.len() && b[i + k] == sep[k] {
+            k += 1;
+        }
+        if k == sep.len() {
+            return i;
+        }
+        i += 1;
+    }
+    usize::MAX
+}
+
+/// `a[a0..a1] == b[b0..b1]`, over bytes, at compile time.
+const fn range_eq(a: &[u8], a0: usize, a1: usize, b: &[u8], b0: usize, b1: usize) -> bool {
+    if a1 - a0 != b1 - b0 {
+        return false;
+    }
+    let mut i = 0;
+    while a0 + i < a1 {
+        if a[a0 + i] != b[b0 + i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+/// `q` runs between the same two endpoints as `r`, the other way round.
+///
+/// Compared half against half rather than by building the reversed string,
+/// because `format!` does not exist in a `const` context — and because not
+/// building it means there is no second spelling of the separator to drift.
+const fn is_reverse_hop(q: &str, r: &str) -> bool {
+    let (qa, ra) = (arrow_at(q), arrow_at(r));
+    if qa == usize::MAX || ra == usize::MAX {
+        return false;
+    }
+    let (qb, rb) = (q.as_bytes(), r.as_bytes());
+    let sep = HOP_SEP.len();
+    range_eq(qb, 0, qa, rb, ra + sep, rb.len()) && range_eq(qb, qa + sep, qb.len(), rb, 0, ra)
+}
+
+/// ★★★★★ R1827 — **the message row `n` is paired with**, or `None`.
+///
+/// # Why this is derived and not stored
+///
+/// Because on the wire it is. A reply in this protocol carries no request id;
+/// what pairs the two is that they travel the same channel between the same two
+/// endpoints in opposite directions, and the reply comes after. An analyser that
+/// wanted a stored field would have to invent one the capture does not contain,
+/// and would then be showing its own bookkeeping rather than the exchange. The
+/// census row this answers (`capture.t1.9`) says the same in its own words — *a
+/// derived column over the model* — so storing it would also be this screen
+/// quietly disagreeing with the specification it is measured against.
+///
+/// # The rule, stated once because it is read from both ends
+///
+/// **A reply answers the most recent request before it on the same channel in
+/// the reverse direction.** The request end is not a second rule: it is that
+/// one, inverted — a request's counterpart is the **earliest** reply that picks
+/// it. Two rules would be two opportunities to disagree.
+///
+/// ⚠ **It is not a symmetric relation, and the first draft of this paragraph
+/// claimed it was.** Inverting a rule gives a relation that is many-to-one, not
+/// one-to-one: a query answered by three replies is named by all three and names
+/// only the first of them back. That is what the capture analysers this screen
+/// is measured against do, and it is the honest shape — the alternative, linking
+/// only the first reply so that the pointer always comes back, would leave the
+/// second and third replies looking like messages in no exchange at all. What
+/// IS guaranteed, and asserted by test:
+///
+/// * following from the **reply** end always returns — the request a reply
+///   answers always names some reply back;
+/// * every edge, from either end, joins a `Query` to a `Response` that share a
+///   channel, run between the same two endpoints, and are in time order.
+///
+/// # Against the floor
+///
+/// Against the reference toolkit at 6.11: an item model addresses a cell by row
+/// and column ordinal and has no vocabulary for a relation BETWEEN rows at all —
+/// a correlated pair there lives in whatever the caller wrote down beside the
+/// model. Here it is published (announced in the row, and whole on the wire), so
+/// an agent that never saw the screen can follow the exchange.
+///
+/// # Why a slice and not the fixture
+///
+/// So the rule can be exercised on a capture other than this screen's. The
+/// opening capture holds exactly ONE exchange, which leaves the interesting
+/// states — a query with several replies, a reply whose request is off the front
+/// of the capture, two exchanges on one channel — unreachable from it. Taking
+/// `rows` as an argument is what lets the tests build those captures instead of
+/// asserting that a single pair still pairs.
+///
+/// # Why `const`
+///
+/// Because the name column's floor has to include the link annotation, and that
+/// floor is a `const` this screen **derives** rather than picks (`lib`'s
+/// `NAME_FLOOR` records what it cost to learn that). A floor computed from an
+/// upper bound instead — "the widest sequence number, on every row" — is wider
+/// on the row that already carries the widest annotations by more headroom than
+/// the opening size has. So the exact answer is load-bearing, and the only way
+/// to have it exactly, in a `const`, with **one** rule rather than a `const`
+/// copy of a runtime rule, is for the rule itself to be `const`.
+#[must_use]
+pub const fn correlation_in(rows: &[RowSpec], n: usize) -> Option<usize> {
+    if n >= rows.len() {
+        return None;
+    }
+    if str_eq(rows[n].kind, "Response") {
+        return request_answered_by_in(rows, n);
+    }
+    if !str_eq(rows[n].kind, "Query") {
+        return None;
+    }
+    // The mirror, and it calls the arm above rather than restating it: the
+    // earliest reply whose own answer is this row.
+    let mut best: Option<usize> = None;
+    let mut reply = 0;
+    while reply < rows.len() {
+        let picks = match request_answered_by_in(rows, reply) {
+            Some(q) => q == n,
+            None => false,
+        };
+        if picks {
+            let take = match best {
+                Some(b) => str_lt(rows[reply].time, rows[b].time),
+                None => true,
+            };
+            if take {
+                best = Some(reply);
+            }
+        }
+        reply += 1;
+    }
+    best
+}
+
+/// [`correlation_in`] over the capture this screen is showing.
+#[must_use]
+pub const fn correlation(n: usize) -> Option<usize> {
+    correlation_in(ROWS, n)
+}
+
+/// The request a reply answers: the most recent one before it, same channel,
+/// reverse direction. `None` for a row that is not a reply, or for a reply with
+/// nothing before it to answer — which is a real state in a capture that began
+/// mid-conversation, and is why this is an `Option` rather than a panic.
+#[must_use]
+pub const fn request_answered_by_in(rows: &[RowSpec], reply: usize) -> Option<usize> {
+    if reply >= rows.len() {
+        return None;
+    }
+    let r = &rows[reply];
+    if !str_eq(r.kind, "Response") {
+        return None;
+    }
+    let mut best: Option<usize> = None;
+    let mut i = 0;
+    while i < rows.len() {
+        let q = &rows[i];
+        if str_eq(q.kind, "Query")
+            && str_eq(q.channel, r.channel)
+            && is_reverse_hop(q.hop, r.hop)
+            && str_lt(q.time, r.time)
+        {
+            let take = match best {
+                Some(b) => str_lt(rows[b].time, q.time),
+                None => true,
+            };
+            if take {
+                best = Some(i);
+            }
+        }
+        i += 1;
+    }
+    best
+}
+
+/// What a linked row's annotation opens with, said from that row's own end of
+/// the pair.
+///
+/// Two words and not one heading, which is the freedom an annotation run has and
+/// a column does not: a column that meant "answers" on one row and "answered by"
+/// on another would be two facts wearing one title, so the `linked` column this
+/// round abandoned could only ever have shown a bare number. Here each row says
+/// which end it is.
+pub const ANSWERS: &str = "answers ";
+/// The other end's word. See [`ANSWERS`].
+pub const ANSWERED_BY: &str = "answered by ";
+
+/// The word row `n` opens its link annotation with, or `""` when it has none.
+#[must_use]
+pub const fn link_word(rows: &[RowSpec], n: usize) -> &'static str {
+    match correlation_in(rows, n) {
+        None => "",
+        Some(_) => {
+            if str_eq(rows[n].kind, "Response") {
+                ANSWERS
+            } else {
+                ANSWERED_BY
+            }
+        }
+    }
+}
+
+/// Row `n`'s link annotation as painted and announced, or `None`.
+///
+/// The ONLY place the text is spelled. Its width has a second, `const`
+/// derivation (`lib`'s `link_width`) that cannot build this string, and
+/// `r1827_the_link_annotations_reserved_width_is_the_width_it_paints` is what
+/// keeps the two from drifting.
+#[must_use]
+pub fn link_text(n: usize) -> Option<String> {
+    let other = correlation(n)?;
+    Some(format!("{}{}", link_word(ROWS, n), ROWS[other].sn))
 }
 
 /// The opening capture — the rows the reference screen shows, in the order it
@@ -1096,6 +1429,16 @@ pub enum Population {
     Annotated,
     /// One per message that is one piece of a larger one, keyed by index.
     Fragmented,
+    /// ★★★★★ R1827 — one per message that is **half of an exchange**, keyed by
+    /// index.
+    ///
+    /// The first conditional family whose predicate is not a field of the row:
+    /// [`correlation`] is a relation between rows, so this population cannot be
+    /// answered by looking at one `RowSpec` the way `Annotated` and `Fragmented`
+    /// are. It is the reason the correlation rule lives in this file rather than
+    /// beside the painter — a population is a rule about the model, and the gate
+    /// that expands it has to be able to ask the model.
+    Correlated,
     /// One per [`FIELDS`] row the decoder **computed** rather than read from
     /// bytes, keyed by its path.
     Derived,
@@ -1132,6 +1475,13 @@ impl Population {
             Population::SavedFilters => indexes(SAVED_FILTERS.len()),
             Population::Annotated => picked(|row| !row.note.is_empty()),
             Population::Fragmented => picked(|row| row.fragment.is_some()),
+            // Not `picked`, and that is the point: its predicate takes a row,
+            // and whether a message is half of an exchange is not a fact the row
+            // holds.
+            Population::Correlated => (0..ROWS.len())
+                .filter(|&n| correlation(n).is_some())
+                .map(|n| n.to_string())
+                .collect(),
             Population::Derived => FIELDS
                 .iter()
                 .filter(|f| f.source.is_none())
@@ -1344,6 +1694,10 @@ pub const SILENCES: &[(&str, Population, &str)] = &[
     // "out of band" as its own stop names nothing.
     ("pv.list.row.{}.note", Population::Annotated, "part_of"),
     ("pv.list.row.{}.fragment", Population::Fragmented, "part_of"),
+    // ★★★★★ R1827 — and the exchange the message is half of. `part_of` for the
+    // same reason as its two neighbours: "answers 1182" read as its own stop
+    // names nothing, and the cell it belongs to announces it.
+    ("pv.list.row.{}.linked", Population::Correlated, "part_of"),
     // The fold chevron and the derived badge, announced with the item they
     // belong to: `aria-expanded` is the state the chevron draws, and "derived"
     // is a fact about the field beside it.

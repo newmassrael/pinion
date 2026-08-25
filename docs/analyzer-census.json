@@ -75,7 +75,8 @@
     "tier": "t1",
     "capability": "request-response correlation, one row linking to another",
     "verdict": "app",
-    "covered_by": "a derived column over the model; the list can already scroll to and select a row"
+    "covered_by": "a derived column over the model; the list can already scroll to and select a row",
+    "assembled_by": "assembled by examples/hello-packet-view and driven on the wire by tools/demos/r1827_a_reply_names_the_message_it_answers.py — the pairing is derived from the capture rather than stored (no request id exists on this wire), published as a relation keyed by ROW so following it is a lookup and not a second derivation, announced inside the name cell with the word for that row's own end (`answers` / `answered by`), and it survives a session filter that keeps both halves. R1827 also recorded what does NOT work, by building it and running the suite against it: the same fact as an eighth `linked` column was refused by SIX gates for FOUR distinct reasons - the byte pane painted outside the window, the screen overhanging its own root, the specification declaring no such column part, and the empty runs on the rows in no exchange - because this screen's minimum width is derived from its columns and the size it opens in clears that floor by less than one usable column"
   },
   {
     "id": "capture.t1.10",

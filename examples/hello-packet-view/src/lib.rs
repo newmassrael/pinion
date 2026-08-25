@@ -172,8 +172,15 @@ const fn run_width(text: &str) -> u32 {
 
 /// The width one message's annotations take out of the name column: the note,
 /// and the fragment marker with the gap that separates it.
-const fn annotations_width(row: &spec::RowSpec) -> u32 {
-    let mut width = 0;
+const fn annotations_width(rows: &[spec::RowSpec], n: usize) -> u32 {
+    let row = &rows[n];
+    // ★★★★★ R1827 — the link annotation is counted per ROW and not as an upper
+    // bound over the capture, which is what makes it free here: the two rows in
+    // an exchange carry no note and no fragment, so the widest annotated row is
+    // still the reassembled one and [`NAME_FLOOR`] does not move. A bound
+    // instead — the widest sequence number, charged to every row — would add it
+    // to that row too and push this screen's minimum past the size it opens in.
+    let mut width = link_width(rows, n);
     if !row.note.is_empty() {
         width += run_width(row.note);
     }
@@ -195,7 +202,7 @@ const fn widest_annotations() -> u32 {
     let mut widest = 0;
     let mut i = 0;
     while i < spec::ROWS.len() {
-        let width = annotations_width(&spec::ROWS[i]);
+        let width = annotations_width(spec::ROWS, i);
         if width > widest {
             widest = width;
         }
@@ -393,9 +400,19 @@ struct ViewState {
     /// pattern is two axes: the vertical one moves between rows, the horizontal
     /// one between the cells of the row you are on. R1698 built the first and
     /// nothing measured the second. R1699 did, by driving the running screen:
-    /// the sixteen rows each report seven cells to the accessibility tree, and
+    /// every row reported one cell per column to the accessibility tree, and
     /// `ArrowRight` standing on a row moved nothing — so the columns existed
     /// for a reader and were unreachable by one.
+    ///
+    /// ⚠ R1827 took two numbers out of that sentence ("the sixteen rows each
+    /// report seven cells"). **Both are still true, and that is the reason
+    /// rather than the objection**: this round built an eighth column, ran it
+    /// into the paint gates, and abandoned it, so for the length of an
+    /// afternoon this sentence asserted seven about a screen with eight and
+    /// nothing here could have said so. A number that survives by having the
+    /// change reverted is not a number that held. The arity lives in
+    /// `spec::COLUMNS.len()` and is asserted by
+    /// `r1693_the_name_cell_announces_the_annotations_painted_beside_it`.
     ///
     /// `Option` rather than a plain index because the descent is a fact and not
     /// a default: a reader who has not gone into a row should hear the row, and
@@ -2179,7 +2196,7 @@ fn list_row_paint(n: usize, visual: usize, selected: usize, ink: Ink) -> Vec<Sce
         // cell would sit above the row in paint order and take the press the row
         // needs (`scene/pointer_reach` refused exactly that shape in R1692).
         let text = ink.text;
-        let texts = cell_texts(message);
+        let texts = cell_texts(n);
         for (c, ink_for) in [
             ink.text_2,
             text,
@@ -2192,66 +2209,145 @@ fn list_row_paint(n: usize, visual: usize, selected: usize, ink: Ink) -> Vec<Sce
         {
             children.push(cell_label(n, c, texts[c].clone(), cell(c), ink_for));
         }
-        // ★ The name column is shared with the row's annotations, so the
-        // annotations are placed FIRST, from the right edge inward, and the
-        // name takes what is left. The first draft gave the name the whole
-        // column and put the annotations at fixed offsets inside it; the
-        // sweep's first run found `piece 1 of 3` painted underneath `First
-        // 1/3`. Subtracting what is already placed cannot produce that,
-        // whatever the strings turn out to be.
-        let name_col = cell(NAME_COLUMN);
-        let mut right = name_col.x + name_col.w;
-        if !message.note.is_empty() {
-            let width = run_box(message.note, 0, 0).w;
-            right = right.saturating_sub(width);
-            children.push(
-                tagged_label(
-                    &format!("pv.list.row.{n}.note"),
-                    message.note,
-                    Rect::new(right, row.y + 5, width, 12),
-                    FONT_SMALL,
-                    ink.warn,
-                )
-                // Painted inside the name column and announced as part of that
-                // cell: an annotation read as its own stop would tell a reader
-                // "out of band" with nothing to attach it to.
-                .silenced(Silence::part_of(list_cell_tag(n, NAME_COLUMN))),
-            );
-        }
-        if let Some(fragment) = &message.fragment {
-            let marker = format!("{} {}", fragment.marker, fragment.piece);
-            let width = run_box(&marker, 0, 0).w;
-            right = right.saturating_sub(width + 8);
-            children.push(
-                tagged_label(
-                    &format!("pv.list.row.{n}.fragment"),
-                    marker,
-                    Rect::new(right, row.y + 5, width, 12),
-                    FONT_SMALL,
-                    if fragment.marker == "Drop" {
-                        ink.err
-                    } else {
-                        ink.warn
-                    },
-                )
-                .silenced(Silence::part_of(list_cell_tag(n, NAME_COLUMN))),
-            );
-        }
-        children.push(cell_label(
+        children.extend(name_column_paint(
             n,
-            NAME_COLUMN,
-            texts[NAME_COLUMN].clone(),
-            Rect::new(
-                name_col.x,
-                row.y + 5,
-                right.saturating_sub(name_col.x + 8),
-                12,
-            ),
-            text,
+            cell(NAME_COLUMN),
+            row.y,
+            &texts[NAME_COLUMN],
+            ink,
         ));
         children.push(cell_label(n, 6, texts[6].clone(), cell(6), ink.text_2));
     }
     children
+}
+
+/// The name column: the row's annotations, then the resource name in what is
+/// left of the column after them.
+///
+/// ★ The name column is shared with the row's annotations, so the annotations
+/// are placed FIRST, from the right edge inward, and the name takes what is
+/// left. The first draft gave the name the whole column and put the annotations
+/// at fixed offsets inside it; the sweep's first run found `piece 1 of 3`
+/// painted underneath `First 1/3`. Subtracting what is already placed cannot
+/// produce that, whatever the strings turn out to be.
+///
+/// ★ R1827 — split out of [`list_row_paint`] when a third annotation took that
+/// function past the hundred-line bound, which is the same seam and the same
+/// reason `tree_row_paint` was split out of `tree_pane` at R1693. Worth having
+/// on its own terms: "what shares the name column, and in what order" is one
+/// decision, and it was the only part of the row's paint that had to be read as
+/// a sequence rather than as a list.
+fn name_column_paint(n: usize, name_col: Rect, y: u32, name: &str, ink: Ink) -> Vec<Scene> {
+    let message = &spec::ROWS[n];
+    let mut runs = Vec::new();
+    let mut right = name_col.x + name_col.w;
+    let mut annotation = |runs: &mut Vec<Scene>, suffix: &str, text: String, gap: u32, fg| {
+        let width = run_box(&text, 0, 0).w;
+        right = right.saturating_sub(width + gap);
+        runs.push(
+            tagged_label(
+                &format!("pv.list.row.{n}.{suffix}"),
+                text,
+                Rect::new(right, y + 5, width, 12),
+                FONT_SMALL,
+                fg,
+            )
+            // Painted inside the name column and announced as part of that
+            // cell: an annotation read as its own stop would tell a reader
+            // "out of band" with nothing to attach it to.
+            .silenced(Silence::part_of(list_cell_tag(n, NAME_COLUMN))),
+        );
+    };
+    // ★★★★★ R1827 — the exchange this message is half of, in the accent ink so a
+    // pair reads as a pair at a glance, and placed FIRST so links line up at the
+    // column's right edge across rows — which is how a reader scans a list for
+    // them.
+    //
+    // No row of this capture carries a link AND a note or a fragment, so the
+    // order among the three is a choice this round made and not a fact it
+    // measured. It is written down as a choice for that reason.
+    //
+    // A row in no pair paints NOTHING here, rather than a dash or an empty run.
+    // That is not a style call either: an empty run is not a painted mark, and
+    // the first draft of this round — which made the link a column and pushed an
+    // empty label for the unpaired rows — was refused by TWO gates for that
+    // alone, re-measured by rebuilding the draft and running the suite against
+    // it:
+    //
+    //   r1663_every_declared_element_of_the_screen_is_painted
+    //     `the specification declares 11 element(s) the screen does not paint
+    //      and no scroll reaches: ["pv.list.cell.4_7", … "pv.list.cell.15_7"]`
+    //   r1693_the_screen_speaks_and_is_quiet_exactly_where_the_specification_says
+    //     `the specification declares pv.list.row.2.linked quiet and nothing
+    //      paints it`
+    //
+    // A fact that is absent is absent. ⚠ Eleven, not the fourteen rows that are
+    // in no exchange — the gate runs at the DECLARED FLOOR, where four message
+    // rows fit, so the three unpaired rows above the fold are a different case
+    // from the eleven below it. The count is quoted because it was measured;
+    // which of the two cases each row fell into was not, and is not claimed.
+    if let Some(link) = spec::link_text(n) {
+        annotation(&mut runs, "linked", link, 8, ink.accent);
+    }
+    if !message.note.is_empty() {
+        annotation(&mut runs, "note", message.note.to_owned(), 0, ink.warn);
+    }
+    if let Some(fragment) = &message.fragment {
+        let ink_for = if fragment.marker == "Drop" {
+            ink.err
+        } else {
+            ink.warn
+        };
+        let marker = format!("{} {}", fragment.marker, fragment.piece);
+        annotation(&mut runs, "fragment", marker, 8, ink_for);
+    }
+    runs.push(cell_label(
+        n,
+        NAME_COLUMN,
+        name.to_owned(),
+        Rect::new(name_col.x, y + 5, right.saturating_sub(name_col.x + 8), 12),
+        ink.text,
+    ));
+    runs
+}
+
+/// ★★★★★ R1827 — **the exchange, as a relation an agent can follow.**
+///
+/// The name cell's annotation says "answers 1182", which is what a person
+/// reading a list needs and is not enough for a client: a sequence number is
+/// unique per channel, not per capture, so resolving it back to a row would mean
+/// re-deriving the pairing the screen already knows. This answers with the ROW,
+/// so following the exchange is a lookup rather than a second derivation — and
+/// with the row's own role, so a client can tell which end it is holding without
+/// re-reading the type column.
+///
+/// Keyed by row index like `why_hidden`, and for its reason: a map says *these
+/// rows and no others*, where a per-row read would make a client ask sixteen
+/// times to discover that fourteen answers are empty.
+///
+/// A function rather than an arm because the arm took `query` past the
+/// hundred-line bound. Which is the honest place for it anyway: an arm that
+/// builds a structure is a structure with a `match` in front of it.
+fn correlation_json() -> serde_json::Value {
+    serde_json::Value::Object(
+        (0..spec::ROWS.len())
+            .filter_map(|n| {
+                spec::correlation(n).map(|other| {
+                    (
+                        n.to_string(),
+                        serde_json::json!({
+                            "row": other,
+                            "sn": spec::ROWS[other].sn,
+                            "role": match spec::ROWS[n].kind {
+                                "Response" => "reply",
+                                _ => "request",
+                            },
+                        }),
+                    )
+                })
+            })
+            .collect(),
+    )
 }
 
 /// The tag one message cell is addressed by: the row and the column it is in.
@@ -2673,7 +2769,7 @@ impl ViewOracle {
             }
         };
         let headers: Vec<String> = spec::COLUMNS.iter().map(|c| c.title.to_owned()).collect();
-        let cells: Vec<Vec<String>> = rows.iter().map(|&n| row_cells(&spec::ROWS[n])).collect();
+        let cells: Vec<Vec<String>> = rows.iter().map(|&n| row_cells(n)).collect();
         let export = table_export::write(dialect, Some(&headers), &cells);
         let mut wire = export.to_wire();
         if let Some(obj) = wire.as_object_mut() {
@@ -2806,6 +2902,12 @@ impl ExternalIntrospect for ViewOracle {
                     SchemaField::new("query_fault", "string"),
                     SchemaField::new("kept_rows", "json"),
                     SchemaField::new("why_hidden", "json"),
+                    // ★★★★★ R1827 — **request-response correlation**, the
+                    // capability the analysis-tool census carries as
+                    // `capture.t1.9`. Declared beside `why_hidden` because it is
+                    // the same shape of answer — a map from row index to a fact
+                    // about that row, holding only the rows the fact is true of.
+                    SchemaField::new("correlation", "json"),
                     SchemaField::parametric(
                         "hit.<x>.<y>",
                         "string",
@@ -2816,8 +2918,21 @@ impl ExternalIntrospect for ViewOracle {
                     // dialects are readable BEFORE exporting, each saying
                     // whether it can carry any cell unchanged, and the answer
                     // names every cell its dialect could not — which on this
-                    // screen is not hypothetical: seven cells of the capture
-                    // hold a comma.
+                    // screen is not hypothetical: a cell of the message list
+                    // holds a comma (`reassembled 3,144 B`), so a naive
+                    // comma-separated export of this very screen would split a
+                    // column.
+                    //
+                    // ⚠ R1827 removed the number this comment carried. It said
+                    // "seven cells", which is what a grep of the fixture
+                    // answers — most of those literals belong to the decode
+                    // tree, which the message list does not export. R1787's own
+                    // demo measured it on the wire, got a different number, and
+                    // retracted "seven" in its docstring; this copy of the
+                    // sentence, three thousand lines away, kept it. It is
+                    // written here with no number at all —
+                    // `tools/demos/r1787_an_export_says_what_it_could_not_carry.py`
+                    // section B counts it on every run.
                     SchemaField::new("export_dialects", "json"),
                     SchemaField::action_with(
                         "export",
@@ -2939,6 +3054,22 @@ impl ExternalIntrospect for ViewOracle {
                     })
                     .collect(),
             ))),
+            // ★★★★★ R1827 — **the exchange, as a relation an agent can follow.**
+            //
+            // The `linked` column shows one sequence number, which is what a
+            // person reading a list needs and is not enough for a client: a
+            // sequence number is unique per channel, not per capture, so
+            // resolving it back to a row means re-deriving the pairing the
+            // screen already knows. This answers with the ROW, so following the
+            // exchange is a lookup rather than a second derivation — and with
+            // the row's own role, so a client can tell which end it is holding
+            // without re-reading the type column.
+            //
+            // Keyed by row index like `why_hidden`, and for its reason: a map
+            // says *these rows and no others*, where a per-row read would make
+            // a client ask sixteen times to discover that fourteen answers are
+            // empty.
+            "correlation" => Ok(IntrospectValue::Json(correlation_json())),
             "folded" => Ok(IntrospectValue::Json(serde_json::json!(state.folded.get()))),
             // ★★★★★ R1719 — `said` answers the VALUE now, not the sentence, and
             // it is spelled `said` on all three screens of this tool. It used
@@ -3588,12 +3719,11 @@ fn list_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
     let grid_rows: Vec<GridRow> = state
         .kept()
         .into_iter()
-        .map(|n| (n, &spec::ROWS[n]))
-        .map(|(n, message)| GridRow {
+        .map(|n| GridRow {
             tag: format!("pv.list.row.{n}"),
             selected: n == selected,
             state: RadioState::Idle,
-            cells: row_cells(message)
+            cells: row_cells(n)
                 .into_iter()
                 .enumerate()
                 .map(|(c, text)| GridCell {
@@ -3631,7 +3761,14 @@ const LIST_HEADER: &str = "pv.list.header";
 /// The painter's own source, so a column that changes what it shows changes it
 /// once. The name column holds the resource name only; the annotations painted
 /// beside it in that column are separate runs, placed from the right edge.
-fn cell_texts(message: &spec::RowSpec) -> Vec<String> {
+///
+/// ★ R1827 — takes the row's INDEX rather than the row, and stays that way even
+/// though every value below is the row's own: its peer [`row_cells`] announces a
+/// relation BETWEEN rows, which a `&RowSpec` cannot see. The two are a pair on
+/// purpose — that is the whole reason they share a function — so they take the
+/// same argument, and a caller cannot hold the one that would drift.
+fn cell_texts(n: usize) -> Vec<String> {
+    let message = &spec::ROWS[n];
     vec![
         message.time.to_owned(),
         message.hop.to_owned(),
@@ -3643,15 +3780,46 @@ fn cell_texts(message: &spec::RowSpec) -> Vec<String> {
     ]
 }
 
+/// How many digits `n` is written with.
+const fn digits(n: u32) -> u32 {
+    let mut digits = 1;
+    let mut rest = n / 10;
+    while rest > 0 {
+        digits += 1;
+        rest /= 10;
+    }
+    digits
+}
+
+/// The width row `n`'s link annotation takes out of the name column, including
+/// the gap the painter puts before it. Zero for a row in no pair.
+///
+/// ★★★★★ R1827 — the width **without** the string, because the string cannot be
+/// built in a `const` context and [`NAME_FLOOR`] needs this number in one. That
+/// makes it the round's one deliberate second spelling, so it is the round's one
+/// deliberate cross-check: `r1827_the_link_annotations_reserved_width_is_the_
+/// width_it_paints` measures the painted run against this number for every row,
+/// which is what turns "they agree" from care into a fact.
+const fn link_width(rows: &[spec::RowSpec], n: usize) -> u32 {
+    let word = spec::link_word(rows, n);
+    if word.is_empty() {
+        return 0;
+    }
+    match spec::correlation_in(rows, n) {
+        None => 0,
+        Some(other) => (char_count(word) + digits(rows[other].sn)) * (FONT_SMALL - 4) + 10 + 8,
+    }
+}
+
 /// What one message's cells **announce**.
 ///
 /// [`cell_texts`] plus the runs painted beside them, so the two cannot drift on
-/// the six plain columns and the seventh's difference is stated exactly here.
-/// The name column announces all three of its runs because all three are
-/// painted in that column, and a reader told only the first would never learn a
-/// piece was dropped.
-fn row_cells(message: &spec::RowSpec) -> Vec<String> {
-    let mut cells = cell_texts(message);
+/// every plain column and the name column's difference is stated exactly here.
+/// That column announces all three of its runs because all three are painted in
+/// it, and a reader told only the first would never learn a piece was dropped.
+fn row_cells(n: usize) -> Vec<String> {
+    let message = &spec::ROWS[n];
+    let mut cells = cell_texts(n);
     let name = &mut cells[NAME_COLUMN];
     if let Some(fragment) = &message.fragment {
         name.push(' ');
@@ -3662,6 +3830,16 @@ fn row_cells(message: &spec::RowSpec) -> Vec<String> {
     if !message.note.is_empty() {
         name.push(' ');
         name.push_str(message.note);
+    }
+    // ★★★★★ R1827 — and the exchange this message is half of, announced in the
+    // same cell it is painted in. A reader who cannot see the accent ink is the
+    // reason this is here rather than only in the paint: the link is the one
+    // annotation whose whole value is that it points somewhere, and a reader
+    // told "store/config" with no "answers 1182" would not know an exchange had
+    // happened at all.
+    if let Some(link) = spec::link_text(n) {
+        name.push(' ');
+        name.push_str(&link);
     }
     cells
 }
