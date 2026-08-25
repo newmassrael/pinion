@@ -365,9 +365,9 @@
     "plane": "dashboard",
     "tier": "t0",
     "capability": "multi-window: tear-off to an independent window, with an always-on-top option",
-    "verdict": "have",
-    "covered_by": "`WindowSpec` with `display` and `level` (R1576 / R1610 / R1616 / R1617), and a display that disappears is reported by name",
-    "proven_by": "pinion-core::window_level::tests::r1610_the_three_driving_backends_apply_both_stacking_requests pinion-core::window_level::tests::r1610_default_level_is_normal pinion-rpc::window_declare::tests::r1610_an_unknown_level_is_refused_before_anything_is_written pinion-core::display::tests::r1576_a_window_wholly_on_one_display_names_that_display pinion-core::display::tests::r1576_a_window_on_a_seam_names_both_and_the_shares_sum_to_the_visible"
+    "verdict": "app",
+    "covered_by": "R1826 re-classified this row from `have` to `app`, and the reason is what the row's own evidence had been saying: its citations were pinion-core::window_level::tests::r1610_the_three_driving_backends_apply_both_stacking_requests, r1610_default_level_is_normal, pinion-rpc::window_declare::tests::r1610_an_unknown_level_is_refused_before_anything_is_written, pinion-core::display::tests::r1576_a_window_wholly_on_one_display_names_that_display and r1576_a_window_on_a_seam_names_both_and_the_shares_sum_to_the_visible — five tests that prove the SUBSTRATE (`WindowSpec` with `display` and `level`, R1576 / R1610 / R1616 / R1617) and none that exercise a tear-off. Which card goes to which window is domain logic, and no unit test exercises a composition; the substrate stays exactly as proven and this row now carries the kind of evidence its capability can produce. debt-a-torn-off-card-has-no-window registered the gap the other way round in 2026-08-11 and prescribed adding `assembled_by` beside the `have` — which this census forbids by construction, the two fields being mutually exclusive by verdict.",
+    "assembled_by": "assembled by examples/hello-analyzer-shell and driven on the wire by tools/demos/r1826_a_torn_off_card_gets_a_window.py — the tear-off grows the declared topology, the new window paints that card and only that card, the board publishes which window carries it, the always-on-top option moves the declared level of that panel alone, and the redock closes it"
   },
   {
     "id": "dashboard.t0.7",

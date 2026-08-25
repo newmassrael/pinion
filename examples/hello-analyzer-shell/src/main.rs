@@ -87,6 +87,7 @@
 //!
 //! See `tools/demos/r1648_the_analyzer_shell_is_assembled.py`.
 
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -111,7 +112,7 @@ use pinion_core::external::{
 };
 use pinion_core::focus_state;
 use pinion_core::input::PointerReading;
-use pinion_core::reactive::{Owner, Signal};
+use pinion_core::reactive::{Effect, Owner, Signal};
 use pinion_core::scene::{ContainerNode, PathCommand, PathNode, PathPoint, Rect, TextNode};
 use pinion_core::shrink::ShrinkPolicy;
 use pinion_core::style::{
@@ -133,13 +134,14 @@ use pinion_core::widgets::tile_grid::{
 };
 use pinion_core::widgets::toggle::ToggleState;
 use pinion_core::widgets::transport::{TransportClock, TransportStatus, use_transport_clock};
+use pinion_core::window_level::WindowLevel;
 use pinion_core::{Frame, Scene, WidgetCore};
 // ★★★★★ R1724 — the axis that makes this file an application rather than a
 // screen: a destination's page can be another binding, mounted whole.
 use pinion_core::chrome::{HostChrome, Part as ChromePart};
 use pinion_core::widgets::picker::Picker;
 use pinion_screen::{Mount, Screen, ScreenRoster, ScreenState};
-use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
+use pinion_shell::{SizeStrategy, WidgetView, WindowSpec, vello_renderer_impl};
 use pinion_widget_paint::button::{self, ButtonColors, ButtonStyle};
 use pinion_widget_paint::card_header;
 use pinion_widget_paint::chooser;
@@ -207,6 +209,10 @@ fn win_h() -> u32 {
 const VIEW_TAG: &str = "analyzer_shell";
 const THEME_TAG: &str = "app";
 const STATE_KEY: &str = "hello-analyzer-shell/state";
+/// R1826 — the declared OS-window topology. See [`use_shell_windows`].
+const WINDOWS_KEY: &str = "hello-analyzer-shell/windows";
+/// R1826 — the subscription that keeps the topology equal to what is detached.
+const WINDOWS_EFFECT_KEY: &str = "hello-analyzer-shell/windows-sync";
 const TRANSPORT_KEY: &str = "hello-analyzer-shell/transport";
 /// R1776 — the cache key the toast's clock registers under, so it registers once.
 const TOAST_LIFE_KEY: &str = "hello-analyzer-shell/toast-life";
@@ -558,6 +564,29 @@ fn grid_ink(dark: bool) -> Color {
 
 // --- State -------------------------------------------------------------------
 
+/// ★★★★★ R1826 — the OS window that carries the card detached as `id`.
+///
+/// ONE definition, read by three things that must agree exactly or the arc
+/// breaks in a way no single one of them can see: the [`WindowSpec`] the
+/// topology mints, [`ShellState::detached`]'s published answer, and — through
+/// [`FLOAT_WINDOW_PREFIX`], which is the same spelling read backwards — the
+/// `view_for_window` arm that paints it. A second spelling anywhere would open a
+/// window nothing paints, or paint into a window nothing opened.
+///
+/// 🟥 This said FOUR, naming "the accessibility contribution for that window" as
+/// the fourth. There is no such thing: `WidgetView` has `windows_signal` and
+/// `view_for_window` and no per-window accessibility hook at all, so the count
+/// was of an arrangement that does not exist. A window's accessibility here
+/// comes from the nodes [`body_scene`] already attaches, which travel with the
+/// scene and read no id.
+fn float_window_id(card: &str) -> String {
+    format!("{FLOAT_WINDOW_PREFIX}{card}")
+}
+
+/// The prefix that marks a window as a detached card's, and separates the
+/// card's id from it. Chosen not to collide with `"main"`.
+const FLOAT_WINDOW_PREFIX: &str = "torn-";
+
 /// A detached panel: a card that has left the board and floats over it.
 ///
 /// Serialisable because it lives in a `Signal`, and because a session saved
@@ -585,6 +614,21 @@ struct Float {
     /// counter, because the reference's `raiseFloat` is what its drag calls
     /// first and the two are one gesture.
     z: u32,
+    /// ★★★★★ R1826 — whether this card's window stays above the application.
+    ///
+    /// The **option** half of the specification's multi-window clause — *tear
+    /// off -> independent window, always-on-top option*. Off by default,
+    /// because a window that arrives on top of everything is a decision a
+    /// reader makes about one panel and not a behaviour they discover.
+    ///
+    /// Per FLOAT rather than per application: the whole point is watching ONE
+    /// readout over other work, and an application-wide switch would put the
+    /// packet stream on top to keep an eye on a latency chart.
+    ///
+    /// `#[serde(default)]` so a session saved before this field existed still
+    /// loads — the same tolerance the arrangement's other additive fields take.
+    #[serde(default)]
+    on_top: bool,
 }
 
 /// A detached panel being moved or resized, in flight.
@@ -1076,6 +1120,28 @@ impl ShellState {
         self.floats.get().iter().any(|f| f.id == id)
     }
 
+    /// ★★★★★ R1826 — **what is detached, and where it went**, as one value.
+    ///
+    /// The board's own answer to the question a caller would otherwise have to
+    /// track for itself: for every detached card, the id of the OS window that
+    /// now carries it. Derived from [`floats`](Self::floats) — the one model —
+    /// so it cannot report a window for a card that is not detached, nor miss
+    /// one that is.
+    ///
+    /// This is the axis the reference toolkit at 6.11 does not have. A
+    /// reference dock hands a floated panel a top-level container and the
+    /// caller keeps the correspondence: there is no accessor that answers
+    /// *which window is this panel in* — the nearest is walking up the parent
+    /// chain to a top-level and comparing pointers, which answers only for a
+    /// panel the caller already holds. Here it is a published slot, so an agent
+    /// that never saw the gesture can ask.
+    fn detached(&self) -> Vec<(String, String)> {
+        self.floats_front_to_back()
+            .into_iter()
+            .map(|f| (f.id.clone(), float_window_id(&f.id)))
+            .collect()
+    }
+
     /// R1697 — the detached panels in stacking order, frontmost first.
     ///
     /// The hit test walks this and the paint walks its reverse, so the panel a
@@ -1358,6 +1424,161 @@ fn use_shell_state() -> Rc<ShellState> {
     });
     owner.cache(STATE_KEY, move || ShellState::new(clock, theme, toast))
 }
+
+/// ★★★★★ R1826 — **the OS windows this application wants**, derived from the
+/// detached cards rather than written beside them.
+///
+/// The board already had ONE model of what is detached — `state.floats` — and
+/// SEVERAL call sites write it (`raise_float`, `set_float`, `remove`, `detach`,
+/// `redock`, `set_on_top`, the preset reset — count them with `grep -n
+/// 'floats.set('` rather than trusting this list, which is why no number is
+/// written here). Minting a [`WindowSpec`] at each would be that many writers of
+/// a second model, which is the shape this repository keeps measuring the cost
+/// of: they agree until the day one is added without the other, and then a card
+/// is detached with no window or a window stands with no card. So the topology
+/// SUBSCRIBES to the floats and recomputes, and the number of writers stays one.
+///
+/// 🟥 This paragraph said "four call sites", named four, and was wrong when it
+/// was written — and then THIS ROUND ADDED A FIFTH (`set_on_top`) three thousand
+/// lines away in the same commit without touching the sentence. The closing
+/// audit caught it. ⇒ a hand count in prose rots from the moment it is written,
+/// and the round that writes one is the round most likely to invalidate it.
+///
+/// The float's own `x`/`y` become the window's declared position, so a panel
+/// that used to open at a 30-pixel stagger inside the canvas now opens at the
+/// same stagger on the desktop — the arrangement is preserved rather than
+/// re-invented, and `w`/`h` likewise become the window's size.
+///
+/// # 🟥🟥🟥 ★★★★★ A TOPOLOGY IS NOT LIVE GEOMETRY, and the first draft made it
+/// one
+///
+/// The first version of this Effect rebuilt the whole spec list from the
+/// floats and published it whenever the list differed — which meant on **every
+/// frame of a resize drag**, because a float's `w`/`h` change under the
+/// pointer. That made `r1697_a_torn_off_panel_can_be_moved` FLAKY rather than
+/// broken: the same binary, driven through the same sequence twice, once
+/// latched the grab and clamped at the floor and once latched nothing at all.
+/// A demo that is green when the machine is quiet is what
+/// [[zero-flake-policy]] refuses, and it was measured rather than suspected —
+/// baseline green under `git stash`, red with this file, and the two outcomes
+/// recorded from two runs.
+///
+/// The repair is not a damper on the Effect; it is saying the true thing.
+/// [`WindowSpec::strategy`] is **create-time intent** by the framework's own
+/// documentation, and it is the ONLY axis of the spec that is — `position`,
+/// `title`, `decorations`, `display` and `level` are each documented as live and
+/// reconcilable — so a topology that republished on every geometry change was
+/// asking the list to carry something it does not carry, and paying a window
+/// add/update reconcile per pointer frame for a value the shell then ignored.
+///
+/// 🟥 This said "only `position` and `title` are reconciled live", which the
+/// closing audit measured false against `WindowSpec`'s own field docs — and the
+/// sentence contradicted THIS ROUND'S OWN FEATURE, since `on_top` works
+/// precisely because `level` is one of the live axes.
+///
+/// So the topology is keyed on **which windows exist**: a spec is minted when
+/// a card's id appears, kept as it was while the id is present, and dropped
+/// when the id goes. A detached card's window therefore opens at the size and
+/// place the panel had when it was detached, which is the arrangement
+/// `detach` assigns, and it stops racing the gesture.
+///
+/// ⚠ What that costs, stated rather than hidden: **resizing the in-canvas
+/// float no longer resizes its window.** That is not a gap this round can
+/// close by patching, because it is the fork the debt itself flagged — one
+/// card now has two things claiming to be it, a panel on the canvas and a
+/// window on the desktop, and deciding which one a person manipulates is a
+/// design decision rather than an arithmetic one. Registered as its own debt.
+fn use_shell_windows() -> Rc<Signal<Vec<WindowSpec>>> {
+    let owner = Owner::current().expect("use_shell_windows requires an active Owner scope");
+    let windows: Rc<Signal<Vec<WindowSpec>>> =
+        owner.cache(WINDOWS_KEY, || Signal::new(vec![main_window_spec()]));
+    let state = use_shell_state();
+    let owner_for_effect = owner.clone();
+    let windows_e = Rc::clone(&windows);
+    // The Effect is kept alive by its own cache slot: dropped here it would
+    // unsubscribe at once and the topology would never move again. The
+    // precedent is the dock editor's window-title sync, which holds it the
+    // same way and for the same reason.
+    owner.cache(WINDOWS_EFFECT_KEY, move || {
+        // ★★★★★ What has been published, held HERE rather than read back off
+        // the signal. Reading `windows_e.get()` inside the Effect subscribes
+        // the Effect to its own output, so every publish re-triggers it — and
+        // measured, that is not a theoretical loop: with it in place
+        // `r1697_a_torn_off_panel_can_be_moved` failed at a DIFFERENT leg on
+        // each run (D, then E, then F), which is what a self-feeding Effect
+        // looks like from outside. `Signal` has no untracked read, and it
+        // should not need one: a memo of what this Effect last said is the
+        // Effect's own business.
+        let published: RefCell<Vec<WindowSpec>> = RefCell::new(vec![main_window_spec()]);
+        let effect = Effect::new(&owner_for_effect, move || {
+            // The ONE subscription: what is detached. Everything below it is a
+            // pure function of that and of what this Effect last published.
+            let floats = state.floats.get();
+            let standing = published.borrow().clone();
+            let mut specs = vec![main_window_spec()];
+            for float in &floats {
+                let id = float_window_id(&float.id);
+                // ★ A window that is already open KEEPS the spec it was opened
+                // with, except for the axes the shell reconciles live. Rebuilt
+                // from the float's current geometry it would change under a
+                // resize drag, and the topology would republish per pointer
+                // frame — see this function's header for what that cost.
+                let level = if float.on_top {
+                    WindowLevel::AlwaysOnTop
+                } else {
+                    WindowLevel::Normal
+                };
+                match standing.iter().find(|spec| spec.id == id) {
+                    Some(open) => specs.push(open.clone().with_level(level)),
+                    None => specs.push(
+                        WindowSpec::new(
+                            Cow::Owned(id),
+                            label_of(&float.id),
+                            SizeStrategy::Fixed {
+                                width: float.w,
+                                height: float.h,
+                            },
+                        )
+                        .with_position(
+                            i32::try_from(float.x).unwrap_or(0),
+                            i32::try_from(float.y).unwrap_or(0),
+                        )
+                        // R1826 — the specification's "always-on-top option",
+                        // per panel. `WindowLevel` is the framework's existing
+                        // declaration (R1610) and the shell applies it on a
+                        // same-id change, so toggling it re-levels the window
+                        // that is already open rather than needing a new one.
+                        .with_level(level),
+                    ),
+                }
+            }
+            if standing != specs {
+                published.borrow_mut().clone_from(&specs);
+                windows_e.set(specs);
+            }
+        });
+        WindowTopologySync { _effect: effect }
+    });
+    windows
+}
+
+/// Holds the topology's subscription for the owner's lifetime. See
+/// [`use_shell_windows`].
+struct WindowTopologySync {
+    _effect: Effect,
+}
+
+/// The main window's spec — the one every topology starts from.
+fn main_window_spec() -> WindowSpec {
+    WindowSpec::new(
+        Cow::Borrowed(MAIN_WINDOW),
+        AnalyzerShellView::title(),
+        SizeStrategy::shrinking(SHRINK, (WIN_W, WIN_H)),
+    )
+}
+
+/// The canonical id of this application's primary window.
+const MAIN_WINDOW: &str = "main";
 
 // --- Geometry: ONE source, read by the paint and by the gesture --------------
 //
@@ -2548,6 +2769,8 @@ impl ShellOracle {
             // A panel arrives in front, which is also what its `detachWidget`
             // does — it takes `floatZ + 1` in the same breath as its position.
             z,
+            // R1826 — ordinary stacking until a reader asks otherwise.
+            on_top: false,
         });
         state.floats.set(floats);
         state.say(Utterance::done(format!(
@@ -2584,6 +2807,44 @@ impl ShellOracle {
         );
         state.say(Utterance::done(format!("{} re-docked", label_of(id))));
         Ok(IntrospectValue::Text(format!("{id} redock")))
+    }
+
+    /// ★★★★★ R1826 — keep a detached card's window above the application, or
+    /// stop.
+    ///
+    /// The specification's *always-on-top option*, and a TOGGLE for the reason
+    /// R1697 gave the maximise control one: every window control that does a
+    /// thing undoes it, and a reader who put a panel on top with the wire and
+    /// could not take it off again would have a switch with one position.
+    ///
+    /// Refuses for a card that is not detached. A card on the board has no
+    /// window to level, and answering `ok` would be a claim about a window that
+    /// does not exist — the shape this round was opened by, one layer down.
+    fn set_on_top(state: &Rc<ShellState>, id: &str) -> Result<IntrospectValue, InvokeError> {
+        if !state.is_floating(id) {
+            return Err(InvokeError::rejected(format!(
+                "card {id:?} is not detached, so it has no window to keep on top"
+            )));
+        }
+        let mut floats = state.floats.get();
+        let mut now = false;
+        for float in &mut floats {
+            if float.id == id {
+                float.on_top = !float.on_top;
+                now = float.on_top;
+            }
+        }
+        state.floats.set(floats);
+        state.say(Utterance::done(format!(
+            "{} {}",
+            label_of(id),
+            if now {
+                "kept on top"
+            } else {
+                "no longer on top"
+            }
+        )));
+        Ok(IntrospectValue::Bool(now))
     }
 
     /// ★★★★★ R1733 — what the palette OFFERS of a kind: its catalogue entry
@@ -3090,6 +3351,8 @@ const FIELDS: &[SchemaField] = const {
         SchemaField::new("restore_to", "string"),
         SchemaField::new("floating", "string"),
         SchemaField::new("floats", "json"),
+        // R1826 — which OS window carries each detached card.
+        SchemaField::new("detached", "json"),
         SchemaField::new("float_grab", "string"),
         // named layouts
         SchemaField::new("preset", "string"),
@@ -3217,6 +3480,8 @@ const FIELDS: &[SchemaField] = const {
         SchemaField::action("maximize", "string"),
         SchemaField::action("restore", "string"),
         SchemaField::action("redock", "string"),
+        // R1826 — the specification's always-on-top option, per detached card.
+        SchemaField::action("on_top", "string"),
         SchemaField::action("save_preset", "string"),
         SchemaField::action("seek", "string"),
         SchemaField::action_with(
@@ -3240,6 +3505,22 @@ const FIELDS: &[SchemaField] = const {
 /// Its own function so the reply is one place and so the read arm stays inside
 /// the length the lints allow; the order IS the stacking order, so a client
 /// never has to sort for it.
+/// R1826 — which OS window carries each detached card, front to back.
+///
+/// Beside [`floats_json`] and for its reason: the reply is one place, and the
+/// read arm stays inside the length the lints allow — which this round proved
+/// is not a formality, having pushed `query` to 104 lines by writing the arm
+/// inline.
+fn detached_json(state: &ShellState) -> serde_json::Value {
+    serde_json::Value::Array(
+        state
+            .detached()
+            .into_iter()
+            .map(|(card, window)| serde_json::json!({"card": card, "window": window}))
+            .collect(),
+    )
+}
+
 fn floats_json(state: &ShellState) -> serde_json::Value {
     serde_json::Value::Array(
         state
@@ -3354,6 +3635,23 @@ impl ExternalIntrospect for ShellOracle {
             // Front to back, so the order IS the stacking order rather than
             // something a reader has to sort for.
             "floats" => Ok(IntrospectValue::Json(floats_json(state))),
+            // ★★★★★ R1826 — **what is detached, and WHERE IT WENT.**
+            //
+            // `floating` says which cards left the board and `floats` says
+            // where their panels sit inside the canvas; neither says which OS
+            // WINDOW now carries one, because until this round none did. A
+            // caller that wanted to snapshot a torn-off card had to know this
+            // application's window-naming convention and rebuild the id.
+            //
+            // This is the axis the reference toolkit at 6.11 has no answer for:
+            // a floated dock widget there gets a top-level container and the
+            // correspondence lives in whatever the caller wrote down — the
+            // nearest available signal is walking the parent chain of a widget
+            // the caller already holds, which cannot answer for a panel it does
+            // not. Published as a slot, it is answerable by an agent that never
+            // saw the gesture: `scene/query .../detached` then
+            // `scene/snapshot {window: <that id>}`.
+            "detached" => Ok(IntrospectValue::Json(detached_json(state))),
             // What the pointer is doing to a panel right now, or empty. The
             // peer of `drag` below, and separate for the reason the types are
             // separate: one gesture lands in a cell and the other in a pixel.
@@ -3501,10 +3799,10 @@ impl ExternalIntrospect for ShellOracle {
             }
             "preset" => ShellOracle::apply_preset(&state, &word(&value)?),
             "sources" | "cards" | "card_count" | "placed_count" | "layout" | "maximized"
-            | "restore_to" | "floating" | "floats" | "float_grab" | "presets" | "transport"
-            | "playhead" | "affordances" | "states" | "remedies" | "steppers" | "toast"
-            | "cursor" | "selected" | "hit" | "keymap" | "rail" | "tabs" | "catalogue"
-            | "config_open" | "drag" | "carrying" => Err(InterveneError::ReadOnly),
+            | "restore_to" | "floating" | "floats" | "detached" | "float_grab" | "presets"
+            | "transport" | "playhead" | "affordances" | "states" | "remedies" | "steppers"
+            | "toast" | "cursor" | "selected" | "hit" | "keymap" | "rail" | "tabs"
+            | "catalogue" | "config_open" | "drag" | "carrying" => Err(InterveneError::ReadOnly),
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -3541,6 +3839,12 @@ impl ExternalIntrospect for ShellOracle {
             "maximize" => Self::maximize(&state, Self::text(&args)?.trim()),
             "restore" => Self::restore(&state),
             "redock" => Self::redock(&state, Self::text(&args)?.trim()),
+            // ★★★★★ R1826 — the specification's "always-on-top option", as a
+            // verb rather than a setting nobody can reach. Refuses for a card
+            // that is not detached, because a card on the board has no window
+            // to level and answering `ok` would be a claim about a window that
+            // does not exist.
+            "on_top" => Self::set_on_top(&state, Self::text(&args)?.trim()),
             "resize" => {
                 let raw = Self::text(&args)?;
                 let (id, verb) = raw.split_once(',').ok_or_else(|| {
@@ -7845,6 +8149,81 @@ fn float_scene(state: &ShellState, float: &Float, palette: Palette) -> Option<Sc
     ))
 }
 
+/// ★★★★★ R1826 — what a detached card's OWN WINDOW paints: that card, filling
+/// it.
+///
+/// The body comes from [`body_scene`], the same function the board and the
+/// in-canvas float both call, so a card does not become a different card by
+/// leaving the board — which is the property a tear-off is FOR. What it does
+/// not carry is the float's chrome: a redock mark, a close mark and a resize
+/// grip are how a panel inside a canvas is moved, closed and sized, and a real
+/// window has an operating system for all three. Drawing them again would be
+/// the two-of-everything defect this application already refuses one level up
+/// (`pinion_core::chrome`).
+///
+/// The frame between a redock and the topology catching up paints this window's
+/// GROUND and nothing else — no badge, no title, no body. The window is about to
+/// be dropped, and a frame that drew the card as though nothing had happened
+/// would be the one frame that lies.
+///
+/// 🟥 That sentence was written here before it was true, and this round's
+/// closing audit is what caught it. The first draft keyed the content on
+/// `ShellState::card`, which answers for every card ON THE BOARD whether or not
+/// it is detached — so a re-docked card went on being painted, at the default
+/// float size, by a window whose whole subject had left. It is keyed on the
+/// FLOAT now, which is the fact the topology itself is keyed on, so a window and
+/// its content cannot disagree about whether this card is detached.
+fn torn_window_scene(card_id: &str) -> Scene {
+    let theme = use_theme(THEME_TAG).theme_animated();
+    let state = use_shell_state();
+    let dark = theme_word(&state.theme) == "dark";
+    let palette = palette_of(&theme, dark);
+    // The float's own declared size is the window's, so the scene is authored
+    // at the size the topology asked the operating system for rather than at
+    // whatever `window_size()` reports for the MAIN window. And its ABSENCE is
+    // the whole answer — see the header.
+    let Some((w, h)) = state.float(card_id).map(|f| (f.w.max(1), f.h.max(1))) else {
+        return Scene::Container(
+            ContainerNode::new(Vec::new())
+                .with_tag(format!("torn.{card_id}"))
+                .with_style(BoxStyle::filled(palette.canvas))
+                .with_layout(absolute(Rect::new(0, 0, FLOAT_W, FLOAT_H))),
+        );
+    };
+    let rect = Rect::new(0, 0, w, h);
+    let mut children = vec![Scene::Container(
+        ContainerNode::new(vec![label(
+            "DETACHED",
+            Rect::new(9, 4, 66, 12),
+            FONT_TINY,
+            palette.muted,
+        )])
+        .with_tag(format!("torn.{card_id}.badge"))
+        .with_style(
+            BoxStyle::filled(palette.raised)
+                .with_corner_radius(4)
+                .with_border(Border::new(palette.outline, 1)),
+        )
+        .with_layout(absolute(Rect::new(10, 10, 84, 20))),
+    )];
+    if let Some(card) = state.card(card_id) {
+        children.push(label(
+            card.title(),
+            Rect::new(104, 13, w.saturating_sub(114), 16),
+            FONT_BODY,
+            palette.ink,
+        ));
+        let body = Rect::new(10, 40, w.saturating_sub(20), h.saturating_sub(50));
+        children.extend(body_scene(&state, &card, body, palette));
+    }
+    Scene::Container(
+        ContainerNode::new(children)
+            .with_tag(format!("torn.{card_id}"))
+            .with_style(BoxStyle::filled(palette.canvas))
+            .with_layout(absolute(rect)),
+    )
+}
+
 /// R1668 — the reads that answer from the SPECIFICATION rather than from the
 /// shell's state.
 ///
@@ -10220,6 +10599,49 @@ impl WidgetView for AnalyzerShellView {
 
     fn shrink_policy() -> Option<ShrinkPolicy> {
         Some(SHRINK)
+    }
+
+    /// ★★★★★ R1826 — **the tear-off opens a real window.**
+    ///
+    /// Measured before this existed, by driving the running application:
+    /// `scene/windows` declared exactly one window, `main`, at boot AND after
+    /// `act packet#0,tear_off`. The card left the board and appeared as
+    /// `float.packet#0` — a panel painted inside the canvas — while the screen
+    /// said "packet#0 -> detached window" in a sentence a reader could see and
+    /// no window existed to match.
+    ///
+    /// The specification this shell reproduces asks for both halves — *widget =
+    /// independent card (… tear off …) · multi-window (tear off -> independent
+    /// window, always-on-top option)* — and the assembly had the first.
+    fn windows_signal() -> Option<Rc<Signal<Vec<WindowSpec>>>> {
+        Some(use_shell_windows())
+    }
+
+    /// ★★★★★ R1826 — what each window paints.
+    ///
+    /// The main window paints the application; a `torn-<card>` window paints
+    /// THAT card and nothing else. The card id is recovered from the window id
+    /// through the same prefix [`float_window_id`] built it with, so a window
+    /// that exists and a window that is painted cannot disagree about which
+    /// card they are about.
+    ///
+    /// A window whose card is no longer detached — the frame between a redock
+    /// and the topology catching up — still goes to [`torn_window_scene`],
+    /// which paints its ground and nothing else. 🟥 This paragraph said it
+    /// painted the APPLICATION, which the arm below has never done and which
+    /// contradicted `torn_window_scene`'s own header three thousand lines away;
+    /// the closing audit caught the pair. Two docstrings describing one branch
+    /// is how they come to disagree, so the answer lives at the function that
+    /// decides it and this one points there.
+    fn view_for_window(
+        window_id: &str,
+        state: <Self as pinion_core::WidgetCore>::State,
+        frame: &Frame,
+    ) -> Scene {
+        match window_id.strip_prefix(FLOAT_WINDOW_PREFIX) {
+            Some(card) => torn_window_scene(card),
+            None => Self::view(state, frame),
+        }
     }
 
     /// ★★★ R1724 — a text box inside the showing screen is that screen's, and

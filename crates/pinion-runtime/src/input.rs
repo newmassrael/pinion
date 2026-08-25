@@ -5905,6 +5905,90 @@ mod tests {
         );
     }
 
+    /// ★★★★★ R1826 — **a second window's paint does not forget the first
+    /// window's surface.**
+    ///
+    /// `announce_external_sizes` runs once per window, against that window's
+    /// paint scene and the binding's SHARED state scene — so the tag list is
+    /// the whole application's while the rectangles are one window's. Every
+    /// window was therefore answering for every surface, and a window that
+    /// simply does not draw one said "it is not on screen".
+    ///
+    /// What that costs is not subtle. `surface_size` is the basis
+    /// [`pinion_core::external::layout_point`] divides a pointer fraction back
+    /// out by; with no entry it falls to `(1, 1)` and floors every fraction to
+    /// zero. Measured on the running `hello-analyzer-shell` the round its
+    /// tear-off grew a real window: with two windows open, a hover at
+    /// (400, 300) left the screen reporting its cursor at **0,0** and its hit
+    /// as **nothing**, and every gesture on the MAIN window stopped landing.
+    /// It presented as flakiness because whichever window painted last decided
+    /// the answer.
+    ///
+    /// The two windows here are two `known` maps, which is exactly how the
+    /// shell holds them (keyed by window id) — so the fixture is the real
+    /// arrangement and not a model of it.
+    ///
+    /// ⚠ The residue this does NOT close is asserted at the end rather than
+    /// left for a reader to discover: two windows that both paint one tag share
+    /// one entry, so the second to stop painting it still wins.
+    #[test]
+    fn r1826_a_second_windows_paint_does_not_forget_the_first_windows_surface() {
+        let (handle, _sizes) = SizedExternal::new();
+        let mut state = Scene::Container(ContainerNode::new(vec![external_at(
+            "canvas",
+            Rect::new(0, 0, 0, 0),
+            handle,
+        )]));
+        pinion_core::external::forget_surface_size("canvas");
+
+        // The main window draws the surface.
+        let main_paint = painted_as("canvas", Rect::new(0, 0, 1440, 900));
+        let mut main_known = std::collections::HashMap::new();
+        announce_external_sizes(&main_paint, &mut state, &mut main_known);
+        assert_eq!(
+            pinion_core::external::surface_size("canvas"),
+            Some((1440, 900))
+        );
+
+        // A SECOND window opens and paints something else entirely — a
+        // torn-off card, a palette, a tool window. It has never drawn `canvas`.
+        let other_paint = painted_as("torn.packet", Rect::new(0, 0, 520, 380));
+        let mut other_known = std::collections::HashMap::new();
+        announce_external_sizes(&other_paint, &mut state, &mut other_known);
+        assert_eq!(
+            pinion_core::external::surface_size("canvas"),
+            Some((1440, 900)),
+            "★★★★★ a window that never drew this surface says nothing about it: \
+             before this round it forgot it, and every pointer fraction on the \
+             main window floored to zero"
+        );
+
+        // And the rule is an OWNERSHIP rule, not a "never forget" one: the
+        // window that DID draw it still forgets it when it stops.
+        let main_moved_on = painted_as("elsewhere", Rect::new(0, 0, 100, 100));
+        announce_external_sizes(&main_moved_on, &mut state, &mut main_known);
+        assert_eq!(
+            pinion_core::external::surface_size("canvas"),
+            None,
+            "★ the window that announced it is still the window that retires it"
+        );
+
+        // ⚠ The residue, asserted so it cannot be mistaken for closed: with
+        // BOTH windows drawing one tag, the second to stop still wins.
+        let mut a_known = std::collections::HashMap::new();
+        let mut b_known = std::collections::HashMap::new();
+        announce_external_sizes(&main_paint, &mut state, &mut a_known);
+        announce_external_sizes(&main_paint, &mut state, &mut b_known);
+        let b_stops = painted_as("elsewhere", Rect::new(0, 0, 100, 100));
+        announce_external_sizes(&b_stops, &mut state, &mut b_known);
+        assert_eq!(
+            pinion_core::external::surface_size("canvas"),
+            None,
+            "⚠ still open: the stores are keyed by tag with no window dimension, \
+             so one window's retirement retires the other's too"
+        );
+    }
+
     /// ★ The size announced is the WIDGET's rect, not the window's — because
     /// that is the rect `pointer_move` normalises over. A viewport inset by a
     /// toolbar would otherwise be handed a basis it never had.
@@ -15145,7 +15229,38 @@ pub fn announce_external_sizes(
         let Some(rect) = rect_for_tag(paint_scene, &tag) else {
             // Not painted this frame (a torn-off surface, a hidden pane). Drop
             // the memory so its size is announced again when it returns.
-            known.remove(&tag);
+            //
+            // ★★★★★ R1826 — but only a window that ANNOUNCED this surface may
+            // forget it, because the three stores below are keyed by tag alone
+            // while this function runs **once per window** against the SHARED
+            // state scene. So every window is asked about every surface in the
+            // binding, and a window that simply does not draw one was saying
+            // "it is not on screen" about a surface another window is drawing.
+            //
+            // Measured on `hello-analyzer-shell` the round the tear-off grew a
+            // real window: with two windows open, one hover at (400, 300)
+            // reported the screen's cursor at **0,0** and its hit as
+            // **nothing** — `surface_size` had been forgotten, so
+            // `layout_point` fell back to its `(1, 1)` basis and floored every
+            // fraction to zero. Every gesture on the main window stopped
+            // landing, and it presented as flakiness because whichever window
+            // painted last decided the answer.
+            //
+            // `known` is per-window (the shell keys it by window id) and holds
+            // exactly the tags this window last announced, so `remove`
+            // returning `None` IS "this window never drew it" — no new state,
+            // and the fact is read from where it already lives.
+            //
+            // ⚠ The residue, stated rather than hidden: two windows that BOTH
+            // paint one tag still share one entry, so the second to stop
+            // painting it wins. Closing that needs the stores to carry a window
+            // dimension, and they deliberately do not — `surface_size` is read
+            // from `pointer_move` / `query` / `invoke`, which the framework
+            // calls outside any window or owner scope. Registered as its own
+            // debt.
+            if known.remove(&tag).is_none() {
+                continue;
+            }
             pinion_core::external::forget_surface_size(&tag);
             pinion_core::painted::forget_painted_regions(&tag);
             // ★ R1737 — and its arrivals, for the same reason: a surface that is

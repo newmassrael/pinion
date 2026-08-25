@@ -2828,6 +2828,9 @@ fn r1697_a_press_brings_the_panel_under_it_to_the_front() {
                 w: first.w,
                 h: first.h,
                 z: second.z,
+                // R1826 — this case is about two panels overlapping on the
+                // canvas, which the window level has nothing to do with.
+                on_top: false,
             },
         );
         // ★ The point comes from the PAINTED rectangle, never from the state's

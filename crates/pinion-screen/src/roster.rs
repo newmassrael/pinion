@@ -880,9 +880,12 @@ impl ScreenRoster {
     /// Here because this is the per-frame moment that already names the current
     /// screen, so the fact and its consequence are one expression. The window
     /// path forgets a surface that is in the state scene and painted nothing
-    /// (`announce_external_sizes`, R1737); a screen the journey has left has no
-    /// externals in the state scene at all, so that loop never reaches it —
-    /// which is why the roster is the only thing that can.
+    /// (`announce_external_sizes`, R1737) — since R1826, one that THIS window
+    /// had itself announced, because that function runs once per window against
+    /// the shared state scene and every window was answering for every surface;
+    /// a screen the journey has left has no externals in the state scene at all,
+    /// so that loop never reaches it either way — which is why the roster is the
+    /// only thing that can.
     ///
     /// A screen's own nested surfaces (a text field that owns focus is an
     /// `External` of its own) keep their marks. Nothing reads them for a
