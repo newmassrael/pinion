@@ -110,17 +110,6 @@
       ]
     },
     {
-      "name": "debt-a-screen-is-not-looked-at-before-it-is-declared-done",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links screen-a-vs-canon-operation-census"
-      ]
-    },
-    {
       "name": "debt-a-sub-pixel-face-is-drawn-but-never-looked-at",
       "substituted": false,
       "blocked_by": "unmeasured",

@@ -53,6 +53,14 @@ pub mod surface;
 // from itself.
 pub mod advertised;
 
+// R1836 §5.32 §5.45 — a sweep's STRIDE against the window it must not step
+// over, which is the half R1774 left. That module asks whether a swept state
+// REACHED both sides of a guard; this one asks whether the sweep could have
+// reached them at all. R1704 measured the difference: a 90 px stride across a
+// 26 px window let the counterfactual for the WRONG spelling pass twice, and
+// the repair stayed a comment at one call site.
+pub mod sweep;
+
 use std::borrow::Cow;
 
 use crate::Frame;

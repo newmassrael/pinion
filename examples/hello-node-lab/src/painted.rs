@@ -3294,6 +3294,26 @@ fn r1704_the_picked_links_column_is_never_half_out_of_the_canvas() {
         // 90 px steps straight over it, which is exactly what the first draft
         // did — and the counterfactual for the wrong spelling PASSED twice
         // before the stride was measured against the geometry it samples.
+        //
+        // ★★★★★ R1836 — and that measurement is now a RULE rather than this
+        // comment. The stride is DERIVED from the window it must not step over,
+        // and the framework refuses one that could: a hand-picked number is
+        // exactly what drifts away from the geometry when the geometry moves,
+        // and here it let the counterfactual for the wrong spelling pass twice.
+        // ⚠ The stride KEEPS the value R1704 measured its way to. Deriving it
+        // here would have widened 8 -> 26 (the widest the rule allows), and
+        // changing what a sweep does in the same edit that installs a gate over
+        // it makes the two impossible to tell apart afterwards. What is new is
+        // the assertion; the sweep is untouched.
+        let differing_window_px: u32 = 26;
+        let stride_px: u32 = 8;
+        pinion_core::test_fixtures::sweep::assert_stride_cannot_skip(
+            "the picked link's column, where the two spellings of the guard differ",
+            differing_window_px,
+            stride_px,
+        );
+        let by = -i32::try_from(stride_px).unwrap_or(i32::MAX);
+
         let mut saw_all = 0;
         let mut saw_none = 0;
         for step in 0..300 {
@@ -3301,7 +3321,7 @@ fn r1704_the_picked_links_column_is_never_half_out_of_the_canvas() {
                 drag_from(
                     &state,
                     (canvas.x + canvas.w - 40, canvas.y + canvas.h - 40),
-                    (-8, 0),
+                    (by, 0),
                 );
             }
             if saw_none >= 2 {
