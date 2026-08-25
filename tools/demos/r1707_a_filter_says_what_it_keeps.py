@@ -204,6 +204,29 @@ def body(tf: RpcSubprocess) -> None:
     print(f"  swept {list_rect[3] // 3} points; reached only {sorted(reached)}")
     # Put the canon query back — the sweep moved the selection.
     tf.invoke(f"{EXT}/filter", tf.query(f"{EXT}/spec")["example_query"])
+    # ★★★★★ R1831 — and put the ORDER back, which the sweep now also moves.
+    #
+    # This line is a regression R1829 caused and CI caught: that round made the
+    # column headers pressable, and the sweep above walks the list rect from its
+    # TOP in three-pixel steps — straight through the header band, which until
+    # then answered nothing. Each of those presses cycles the sort, so the sweep
+    # left one active and `kept_rows` came back permuted:
+    # `expected [0, 6, 10, 11], got [10, 0, 6, 11]` — the same set in a
+    # different order, which is exactly what an ordering feature is supposed to
+    # be able to do.
+    #
+    # ⇒ ★★★★★ MAKING AN INERT REGION INTERACTIVE REACHES EVERY SWEEP THAT RELIED
+    # ON IT BEING INERT. Nothing in R1829's own round could see this: it ran its
+    # own demo and this screen's suites, and the caller that broke is a
+    # different demo whose subject is the filter. The full sweep is what found
+    # it, one push later.
+    #
+    # Restored here rather than by narrowing the sweep, because the sweep's
+    # claim — *no press inside the list reaches a hidden message* — is about the
+    # whole pane, header included, and starting below the header would stop
+    # testing a band that now answers presses. The demo already restores the
+    # query for this reason; the order is the second thing the sweep perturbs.
+    tf.invoke(f"{EXT}/order", "none")
 
     # ── D. pixels ──────────────────────────────────────────────────────────
     print("\n== D. the list is visibly shorter ==")
@@ -347,7 +370,29 @@ def body(tf: RpcSubprocess) -> None:
         "★ a screen that advertises nothing keeps every promise — the empty "
         "population this round's gate refuses"
     )
-    assert_eq(len(gestures), 3, "the gestures this screen declares")
+    # ★★★★★ R1831 — a PROPERTY rather than a count, and the count is why.
+    #
+    # This line pinned 3 and R1829 added a fourth gesture ("click a column
+    # header"), so it broke. The pin was not protecting anything a reader
+    # needs: what this section is about is that the screen's advertised
+    # gestures are a NON-EMPTY set the screen can be held to, which the
+    # assertion above already says — and `r1707_every_gesture_this_screen_
+    # advertises_is_answered` in the crate's own suite is what holds each of
+    # them to a driver. A number here is a second population that has to be
+    # updated by hand every time the screen gains an affordance, and it is the
+    # kind of number this tree has recorded going stale over and over.
+    #
+    # What IS worth pinning is that the advertised set stays a set of DISTINCT
+    # promises, each with a phrase on both sides — that cannot go stale as the
+    # screen grows, and it fails on the duplicate a copy-paste would introduce.
+    assert_eq(
+        len({g["gesture"] for g in gestures}),
+        len(gestures),
+        "every advertised gesture is a distinct promise",
+    )
+    for g in gestures:
+        assert g["gesture"] and g["effect"], f"an advertised gesture with a missing half: {g}"
+    checks += 1
     checks += 1
     for g in gestures:
         print(f"  {g['gesture']:<24} -> {g['effect']}")
