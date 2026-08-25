@@ -1,0 +1,96 @@
+{
+  "$comment": [
+    "R1832 — the analysis tool's DEFERRED REGISTER, written down once, in",
+    "neutral vocabulary, as the behaviour reference states it.",
+    "",
+    "WHY THIS FILE EXISTS. Several surfaces of this application show a seat that",
+    "is drawn but locked, and each one tells the reader WHICH requirement will",
+    "fill it. That number is the only thing the screen says about what is",
+    "coming, so a wrong one is a false statement to a reader — and until this",
+    "file there was nothing to check one against. The rail's two locked seats",
+    "carried their numbers in a `$note` (prose, unchecked) and the palette's",
+    "locked widgets carried theirs only in the Rust table.",
+    "",
+    "WHAT `where` MEANS. The reference exposes a deferred capability in one of",
+    "three ways, and it says which for every one of them:",
+    "  palette   — a locked seat in the dashboard's widget palette",
+    "  rail      — a locked seat in the navigation rail",
+    "  in-place  — foreshadowed inside a screen this build already has",
+    "  console   — deferred to a separate console that does not exist yet",
+    "",
+    "★★★★★ THE DEBT THAT PRODUCED THIS FILE HAD ITS DIAGNOSIS BACKWARDS, and",
+    "the entry re-measurement is what found it. It recorded that the reference",
+    "defers SIX requirements and that `admin`'s citation of 14 was therefore",
+    "wrong. Measured: the reference defers FIFTEEN (12 through 26) and says so",
+    "in one sentence; the six it had read are the six the PALETTE caption",
+    "happens to enumerate. 14 is a real deferred requirement — the admin query —",
+    "so the citation it called a defect is correct. Every palette and rail",
+    "citation in the tree is correct, which is what this file now holds them to.",
+    "",
+    "WHAT IS NOT COVERED, stated rather than left as an absence: the two key",
+    "rows on the settings screen cite requirements this register books to other",
+    "capabilities entirely. That is a real finding and it is NOT repaired here,",
+    "because inventing a number would be worse than naming the gap — see",
+    "`owed` below and the debt it points at.",
+    "",
+    "Vocabulary is this tree's own throughout. The reference's wording is not",
+    "reproduced; what is pinned is the ASSIGNMENT — which number books which",
+    "capability — because that is the fact a screen can be wrong about.",
+    "",
+    "★★★★★ ONE REQUIREMENT CAN SURFACE TWICE, and the gate is what taught it.",
+    "`deferred[].seat` is the PALETTE seat; `rail` below is a separate list",
+    "because the reference exposes requirement 18 on BOTH surfaces — a rail",
+    "destination and a widget seat, for one capability. The gate's first draft",
+    "asserted the two agreed and failed on exactly that, correctly. So what is",
+    "checked across surfaces is that the number is one this register defers at",
+    "all; WHICH seat carries it is per-surface."
+  ],
+
+  "deferred": [
+    { "requirement": 12, "books": "a live connection-structure map", "where": "palette", "seat": "topology" },
+    { "requirement": 13, "books": "observed structure drawn over declared", "where": "palette", "seat": "overlay" },
+    { "requirement": 14, "books": "an active query asking a node about itself", "where": "palette", "seat": "admin" },
+    { "requirement": 15, "books": "decoding a payload in a user-supplied format", "where": "in-place" },
+    { "requirement": 16, "books": "a throughput time series per resource", "where": "palette", "seat": "throughput" },
+    { "requirement": 17, "books": "share of volume by endpoint", "where": "palette", "seat": "share" },
+    { "requirement": 18, "books": "a session and error summary", "where": "palette", "seat": "health" },
+    { "requirement": 19, "books": "request-reply round-trip latency", "where": "palette", "seat": "latency" },
+    { "requirement": 20, "books": "sequence-gap lanes", "where": "palette", "seat": "loss" },
+    { "requirement": 21, "books": "highlight rules by severity", "where": "palette", "seat": "alarms" },
+    { "requirement": 22, "books": "an export of a report", "where": "in-place" },
+    { "requirement": 23, "books": "capture and replay", "where": "console" },
+    { "requirement": 24, "books": "control of timing and speed", "where": "console" },
+    { "requirement": 25, "books": "fuzzing", "where": "console" },
+    { "requirement": 26, "books": "a link-level capture source", "where": "in-place" }
+  ],
+
+  "rail": [
+    { "requirement": 12, "seat": "topology" },
+    { "requirement": 18, "seat": "sessions" }
+  ],
+
+  "$built_comment": [
+    "A palette seat the reference draws LOCKED that this build has since",
+    "BUILT. It is not a defect and not a divergence — it is the reference's",
+    "second phase arriving early — but it has to be declared, or the gate",
+    "cannot tell a seat we finished from a seat we forgot."
+  ],
+  "built": [
+    { "requirement": 19, "seat": "latency", "$note": "Built as a placed dashboard card at R1797." }
+  ],
+
+  "$owed_comment": [
+    "Citations in the tree that this register cannot source. Each is a false",
+    "statement to a reader until it is repaired, and repairing one means",
+    "finding what the requirement actually books — not choosing a number that",
+    "looks free."
+  ],
+  "owed": [
+    {
+      "surface": "settings key rows",
+      "cites": [22, 23],
+      "why": "Requirement 22 books an export of a report and 23 books capture and replay; neither is a key row. The reference draws no key rows on this screen at all, so there is nothing here to source a number from.",
+      "debt": "debt-two-key-rows-cite-requirements-that-book-something-else"
+    }
+  ]
+}

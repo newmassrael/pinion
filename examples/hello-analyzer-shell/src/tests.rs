@@ -3774,3 +3774,180 @@ fn assert_the_ratchets(all: &pinion_widget_paint::caption::Survey) {
         ADJACENT_CAPTIONS
     );
 }
+
+// ── R1832: every locked seat cites a requirement the register books ──────────
+
+/// The deferred register, parsed. See `docs/analyzer-reserved-spec.json`.
+fn reserved_pin() -> serde_json::Value {
+    serde_json::from_str(include_str!("../../../docs/analyzer-reserved-spec.json"))
+        .expect("the deferred register is readable JSON")
+}
+
+/// The requirement number a `reserved_for` string cites.
+///
+/// The tree spells it `requirement N` in neutral words and the register keys on
+/// the number. Parsing rather than string-matching is what lets the two use
+/// different vocabulary for one fact, which is the point of the neutralisation.
+fn cited(reserved_for: &str) -> Option<u64> {
+    reserved_for
+        .strip_prefix("requirement ")?
+        .trim()
+        .parse()
+        .ok()
+}
+
+/// ★★★★★ **Every locked seat cites a requirement the register books, and books
+/// to that seat.**
+///
+/// The defect this ends is a false statement to a reader: a locked seat's
+/// requirement number is the only thing the screen says about what will fill
+/// it, and until this gate nothing compared one against anything. The rail's
+/// two carried their numbers in a `$note` — prose — and the palette's carried
+/// theirs only in the Rust table this asserts against.
+///
+/// ★★★★★ THE DEBT THAT ASKED FOR THIS HAD ITS DIAGNOSIS BACKWARDS, which the
+/// entry re-measurement found: it recorded that the reference defers SIX
+/// requirements and that `admin`'s citation of 14 was therefore wrong. The
+/// reference defers FIFTEEN and says so in one sentence; the six are what the
+/// palette caption happens to enumerate. 14 books the admin query, so the
+/// citation it called a defect is correct — as this gate now proves for every
+/// one of them, rather than for the one somebody happened to look at.
+#[test]
+fn r1832_every_locked_seat_cites_a_requirement_the_register_books_to_it() {
+    let pin = reserved_pin();
+    let deferred = pin["deferred"]
+        .as_array()
+        .expect("the register declares a deferred array");
+
+    // requirement -> the seat the register books it to, where it books one.
+    let booked: std::collections::BTreeMap<u64, &str> = deferred
+        .iter()
+        .filter_map(|row| Some((row["requirement"].as_u64()?, row.get("seat")?.as_str()?)))
+        .collect();
+
+    let mut checked = 0usize;
+    for widget in spec::CATALOGUE
+        .iter()
+        .filter(|w| !w.reserved_for.is_empty())
+    {
+        let n = cited(widget.reserved_for).unwrap_or_else(|| {
+            panic!(
+                "{:?} cites {:?}, which is not a requirement number",
+                widget.kind, widget.reserved_for
+            )
+        });
+        let seat = booked.get(&n).unwrap_or_else(|| {
+            panic!(
+                "★ the palette's {:?} cites requirement {n}, which the register books to no \
+                 seat — either the citation is wrong or the register is missing a row",
+                widget.kind
+            )
+        });
+        assert_eq!(
+            *seat, widget.kind,
+            "★ the palette's {:?} cites requirement {n}, which the register books to {seat:?} \
+             — a locked seat naming another seat's requirement tells a reader the wrong thing \
+             is coming",
+            widget.kind,
+        );
+        checked += 1;
+    }
+
+    for row in pin["rail"]
+        .as_array()
+        .expect("the register declares a rail array")
+    {
+        let n = row["requirement"]
+            .as_u64()
+            .expect("a rail row names a requirement");
+        let seat = row["seat"].as_str().expect("a rail row names a seat");
+        let cite = spec::RAIL
+            .iter()
+            .find(|s| s.key == seat)
+            .and_then(spec::RailSpec::reserved_for)
+            .unwrap_or_else(|| panic!("the rail has no reserved seat {seat:?}"));
+        assert_eq!(
+            cited(cite),
+            Some(n),
+            "★ the rail's {seat:?} cites {cite:?} where the register books requirement {n}",
+        );
+        // ★★★★★ NOT an equality with the palette's seat, and this gate is what
+        // taught that: requirement 18 is booked to the palette's `health` AND
+        // to the rail's `sessions`, because the reference exposes that one
+        // capability on BOTH surfaces — a rail destination and a widget seat.
+        // The first draft asserted the two agreed and failed here, correctly.
+        // What is true across surfaces is that the number is one the register
+        // defers at all; which seat carries it is per-surface.
+        assert!(
+            deferred
+                .iter()
+                .any(|row| row["requirement"].as_u64() == Some(n)),
+            "the rail's {seat:?} cites requirement {n}, which the register does not defer",
+        );
+        checked += 1;
+    }
+
+    // ★ The denominator, because a loop over an empty set passes for the wrong
+    // reason. Eight palette seats and two rail seats is what this build has;
+    // `>=` on purpose — a new locked seat should be COVERED by this gate rather
+    // than have to update it.
+    assert!(
+        checked >= 10,
+        "only {checked} locked seat(s) were checked — a population this small \
+         cannot be this tool's, and the clauses above would be near-vacuous",
+    );
+}
+
+/// ★★★ **Every palette requirement the register books is either reserved here
+/// or declared BUILT** — so a seat we finished and a seat we forgot cannot look
+/// the same.
+///
+/// The reference draws nine locked widget seats. This build reserves eight and
+/// has BUILT the ninth (a latency card, R1797). Without the `built` list that
+/// is indistinguishable from a seat nobody noticed was missing, and the honest
+/// difference between *shipped early* and *overlooked* is what a register is
+/// for.
+#[test]
+fn r1832_a_palette_requirement_is_reserved_here_or_declared_built() {
+    let pin = reserved_pin();
+    let built: std::collections::BTreeSet<u64> = pin["built"]
+        .as_array()
+        .expect("the register declares a built array")
+        .iter()
+        .filter_map(|row| row["requirement"].as_u64())
+        .collect();
+    let reserved: std::collections::BTreeSet<u64> = spec::CATALOGUE
+        .iter()
+        .filter(|w| !w.reserved_for.is_empty())
+        .filter_map(|w| cited(w.reserved_for))
+        .collect();
+
+    let mut palette = 0usize;
+    for row in pin["deferred"].as_array().expect("a deferred array") {
+        if row["where"].as_str() != Some("palette") {
+            continue;
+        }
+        palette += 1;
+        let n = row["requirement"].as_u64().expect("a requirement number");
+        assert!(
+            reserved.contains(&n) || built.contains(&n),
+            "★ requirement {n} is a locked palette seat of the reference and this \
+             build neither reserves it nor declares it built — which is what a \
+             forgotten seat looks like",
+        );
+        assert!(
+            !(reserved.contains(&n) && built.contains(&n)),
+            "requirement {n} is both reserved and declared built, so the register \
+             and the tree disagree about whether it exists",
+        );
+    }
+    assert_eq!(
+        palette, 9,
+        "the reference's palette defers nine requirements"
+    );
+    assert_eq!(
+        reserved.len() + built.len(),
+        palette,
+        "the reserved seats and the built ones do not account for the palette",
+    );
+}

@@ -190,17 +190,6 @@
       ]
     },
     {
-      "name": "debt-nine-reserved-widgets-cite-requirements-nobody-checked",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links debt-canon-gui-surface-census"
-      ]
-    },
-    {
       "name": "debt-node-system-coverage-campaign",
       "substituted": true,
       "blocked_by": "campaign",
@@ -353,6 +342,18 @@
       "closed_because": "",
       "why": [
         "links analyzer-behaviour-canon-is-the-standalone-prototype"
+      ]
+    },
+    {
+      "name": "debt-two-key-rows-cite-requirements-that-book-something-else",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links analyzer-behaviour-canon-is-the-standalone-prototype, debt-canon-gui-surface-census",
+        "names dashboard.t2.9"
       ]
     },
     {
