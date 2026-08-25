@@ -1504,3 +1504,184 @@ fn r1784_the_unanswered_set_names_the_sections_the_question_never_reached() {
          worth gating",
     );
 }
+
+// --- R1830: what a section is GRANTED -----------------------------------------
+
+/// ★★★★★ **The roster can now hold BOTH halves of the size question, so it can
+/// check that they agree.**
+///
+/// R1784 built the want half (`laying_out`) and left the grant in the host: the
+/// gate that compared them reached into ONE host's `page_rect(key)`. That
+/// function is the shell's, another host has its own, and nothing portable
+/// could ask whether a section's want and its grant were about the same
+/// section. This is the missing registration, exercised with no host in sight —
+/// which is the whole claim: the pair is checkable from the roster alone.
+#[test]
+fn r1830_the_roster_holds_what_a_section_is_granted_as_well_as_what_it_wants() {
+    use pinion_screen::RosterDefect;
+
+    let sized = roster()
+        .laying_out("dashboard", BOARD_SHRINK)
+        .expect("`dashboard` is open and has no screen");
+
+    // A grant at a MOUNTED key is legal and is the point: a host puts chrome
+    // beside a guest exactly as it puts chrome beside a page it paints itself,
+    // and a screen stating its own want has said nothing about what it is given.
+    //
+    // ★★ What is declared is the INSET — what the host draws beside that
+    // section — and the width is DERIVED per frame. A width here could not be
+    // built: a host computes it from the window, and the roster is constructed
+    // inside a reactive cache factory that must not read one.
+    let granted = sized
+        .granting("catalog", 52)
+        .expect("a mounted section has chrome beside it like any other")
+        .granting("dashboard", 52 + 292)
+        .expect("`dashboard` is open");
+
+    assert_eq!(
+        granted.granted_of("catalog", 2000),
+        Some(1948),
+        "a mounted section is granted the window less the host's rail",
+    );
+    assert_eq!(
+        granted.granted_of("dashboard", 2000),
+        Some(1656),
+        "★ and a page the host paints itself is granted LESS in the same \
+         window, because the host's palette sits beside the page rather than \
+         in it -- the per-destination difference a single figure cannot carry",
+    );
+    assert_eq!(
+        granted.granted_of("dashboard", 10),
+        Some(0),
+        "a window narrower than the host's own chrome grants zero rather than \
+         wrapping -- zero is a true and checkable statement and a wrap is not",
+    );
+    assert_eq!(
+        granted.granted_of("stream", 2000),
+        None,
+        "a destination the host never granted answers `None` rather than a \
+         default -- a default here would be a number nobody chose, read as one \
+         somebody did",
+    );
+    // ★ The two halves are separate registrations about separate actors, and
+    // neither displaces the other.
+    assert_eq!(
+        granted.shrink_policy_of("dashboard"),
+        Some(BOARD_SHRINK),
+        "declaring a grant overwrote what the section wants",
+    );
+    assert_eq!(
+        granted.granting("dashboard", 901).err(),
+        Some(RosterDefect::DuplicateGrant {
+            key: "dashboard".to_owned()
+        }),
+        "two grants at one key must be refused, or the section's region \
+         depends on which registration a lookup reached first",
+    );
+    assert_eq!(
+        roster().granting("topology", 900).err(),
+        Some(RosterDefect::DestinationIsClosed {
+            key: "topology".to_owned()
+        }),
+        "a grant at a closed destination is a region for a section nobody can \
+         arrive at",
+    );
+    assert_eq!(
+        roster().granting("sessions", 900).err(),
+        Some(RosterDefect::NoSuchDestination {
+            key: "sessions".to_owned()
+        }),
+        "a grant at a key the roster does not hold",
+    );
+}
+
+/// ★★★★★ **A section that wants more than it is granted is named, and the
+/// naming is the roster's rather than one host's test file.**
+///
+/// ★★ The grant is PER-DESTINATION, which is the fact R1784's counterfactual
+/// had to discover: a page the host paints itself has the host's own chrome
+/// INSIDE its section, so it is handed less than a mounted screen in the same
+/// window. A single figure for the whole application is therefore wrong for at
+/// least one section — and this test is built so that one figure could not pass
+/// it: the two sections are granted different widths, and only the smaller
+/// grant is short.
+#[test]
+fn r1830_a_section_that_wants_more_than_its_grant_is_named_by_the_roster() {
+    // The builder consumes itself, so each arrangement below starts from a
+    // fresh roster rather than from the last one's leftovers — the same reason
+    // the operation gates on the analyzer screens rebuild their state per row.
+    let sized = || {
+        roster()
+            .laying_out("dashboard", BOARD_SHRINK)
+            .expect("`dashboard` is open and has no screen")
+    };
+
+    // Comfortable: the lab wants 1625 wide, the dashboard 820. The insets are
+    // chosen so that in one window the two sections are granted DIFFERENT
+    // widths — which is the arrangement a single application-wide figure
+    // cannot express, and the one R1784's counterfactual showed a gate passing
+    // over.
+    let arranged = |dashboard_beside: u32| {
+        sized()
+            .granting("catalog", 0)
+            .expect("open")
+            .granting("stream", 0)
+            .expect("open")
+            .granting("dashboard", dashboard_beside)
+            .expect("open")
+    };
+
+    // In a 1625-wide window the lab is granted exactly what it wants, and the
+    // dashboard is granted 820 — its comfortable width to the pixel.
+    let fits = arranged(1625 - 820);
+    assert_eq!(
+        fits.sections_short_of_their_grant(1625),
+        Vec::new(),
+        "every section fits its grant exactly, and `>` is the comparison -- \
+         equal is not short",
+    );
+
+    let squeezed = arranged(1625 - 819);
+    assert_eq!(
+        squeezed.sections_short_of_their_grant(1625),
+        vec![("dashboard", 820u32, 819u32)],
+        "★ one pixel short is short, and the row carries BOTH numbers -- a \
+         boolean here would say a section does not fit without saying by how \
+         much, which is the fact a repair needs",
+    );
+    // ★★ And the same roster in a WIDER window is short of nothing, which is
+    // what makes this a question about the frame rather than a constant: the
+    // grant is derived per frame from a static inset.
+    assert_eq!(
+        squeezed.sections_short_of_their_grant(1626),
+        Vec::new(),
+        "one more pixel of window closes it, so the check reads the frame",
+    );
+
+    // ★★★★★ THE HALF-ANSWERED CASES ARE NOT REPORTED HERE, AND THAT IS
+    // DELIBERATE. A section that never declared a want, or was never granted a
+    // width, has not been checked -- and reporting it as fitting would be a
+    // gate going green over a question nobody put. It is named by the two
+    // census methods instead, which is where an unanswerable question belongs.
+    let half = sized().granting("dashboard", 999).expect("open");
+    assert_eq!(
+        half.sections_short_of_their_grant(1000),
+        vec![("dashboard", 820u32, 1u32)],
+        "the granted section is judged",
+    );
+    let ungranted: Vec<&str> = half.ungranted_keys().collect();
+    assert_eq!(
+        ungranted,
+        ["catalog", "stream"],
+        "★ and the two nobody granted are NAMED rather than counted as fitting",
+    );
+    assert_eq!(
+        roster().ungranted_keys().collect::<Vec<_>>(),
+        ["dashboard", "catalog", "stream"],
+        "★ before any host speaks, every open destination is unanswered -- in \
+         ROSTER order, which is the rail's order and not the alphabet's, so a \
+         reader of this list walks it the way they walk the application. \
+         `topology` is absent because it is closed, so it is out of the \
+         population by construction rather than by being answered",
+    );
+}

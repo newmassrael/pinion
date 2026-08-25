@@ -115,6 +115,11 @@ pub enum RosterDefect {
         /// The key both claim.
         key: String,
     },
+    /// ★ R1830 — two grants declared for one destination.
+    DuplicateGrant {
+        /// The key both claim.
+        key: String,
+    },
 }
 
 impl core::fmt::Display for RosterDefect {
@@ -148,6 +153,9 @@ impl core::fmt::Display for RosterDefect {
             ),
             RosterDefect::DuplicateSize { key } => {
                 write!(f, "two sizes declared for destination `{key}`")
+            }
+            RosterDefect::DuplicateGrant { key } => {
+                write!(f, "two grants declared for destination `{key}`")
             }
         }
     }
@@ -184,6 +192,33 @@ pub struct ScreenRoster {
     /// that exists only to carry a number — is the route R1761 measured and
     /// refused, since such a screen would judge a section it does not paint.
     sizes: BTreeMap<String, ShrinkPolicy>,
+    /// ★★★★★ R1830 — **what the host draws BESIDE each section**, horizontally,
+    /// from which what the section is granted is derived.
+    ///
+    /// `sizes` is what a section *wants*; this is the half that says what it
+    /// *gets*. R1784 built the first and left the second in the host: a gate
+    /// compared `shrink_policy_of(key)` against the shell's own
+    /// `page_rect(key)`, which is one host's function — another host has its
+    /// own, and the roster could not check that the two agreed about a single
+    /// section.
+    ///
+    /// ★★★★★ **An INSET and not a width, and that is a measurement rather than
+    /// a preference.** The first shape of this field held the granted width
+    /// directly, and it could not be built: a host computes that width from the
+    /// window, the window is reactive state read through `Owner::cache`, and
+    /// this roster is itself constructed inside such a factory — so every
+    /// screen-owning test died on `Owner::cache factory closures must not call
+    /// Owner::cache`. The width is per-frame; what the host draws beside a page
+    /// is not. Holding the static half and deriving the rest is what the debt
+    /// that opened this asked for in as many words, and the re-entrancy panic
+    /// is what made the difference impossible to ignore.
+    ///
+    /// A fourth map, for the reason `sizes` is a third one: an inset is not a
+    /// size with a different meaning, and folding it into `sizes` would put two
+    /// accounts on one fact — the failure this crate is shaped to make
+    /// unrepresentable, and the one [`laying_out`](Self::laying_out)'s own
+    /// documentation warns about.
+    grants: BTreeMap<String, u32>,
     /// ★★★★★ R1725 — what this host already provides, which every screen it
     /// shows is told before it builds anything.
     ///
@@ -235,6 +270,7 @@ impl ScreenRoster {
             screens,
             judges: BTreeMap::new(),
             sizes: BTreeMap::new(),
+            grants: BTreeMap::new(),
             chrome: HostChrome::NONE,
             placed_extent: Cell::new((0, 0)),
             walk: RefCell::new(Walk::default()),
@@ -376,6 +412,123 @@ impl ScreenRoster {
                     .is_some_and(|d| d.standing.is_open())
             })
             .filter(|key| self.shrink_policy_of(key).is_none())
+    }
+
+    /// ★★★★★ R1830 — **declare what a section is GRANTED**: the width the host
+    /// actually hands that destination.
+    ///
+    /// The other half of [`laying_out`](Self::laying_out), and deliberately not
+    /// an extension of it. That one records what a section *wants*; this
+    /// records what it *receives*, and the two are different facts about
+    /// different actors — a section states its want, a host makes its grant.
+    /// Folding them into one registration would give one fact two accounts,
+    /// which is the failure mode `laying_out`'s own docs already name.
+    ///
+    /// # Why the roster has to hold it
+    ///
+    /// Because otherwise nothing can check the pair. R1784 built the want half
+    /// and left the grant in the host, so the gate that compared them read the
+    /// shell's own `page_rect(key)` — one host's function. Another host has its
+    /// own, and neither the roster nor anything portable could ask whether a
+    /// section's want and its grant agreed. Measured then and still true now:
+    /// what a section is granted is **per-destination**, because a page the
+    /// host paints itself has the host's chrome *inside* its section while a
+    /// mounted screen does not, so one figure for the whole application is
+    /// wrong for at least one of them.
+    ///
+    /// `beside` is the width this host paints BESIDE that section — its rail,
+    /// and any per-page chrome that sits outside the page region, like a
+    /// palette. Declared per key rather than derived, because the roster cannot
+    /// know it: a host may paint a palette beside one page and nothing beside
+    /// another, and that is a fact about the host's own layout.
+    ///
+    /// ★ An inset rather than the granted width itself, because the width is
+    /// per-frame and this registration is not — see the `grants` field for the
+    /// measurement that settled it. What the roster CAN then do — and now does
+    /// — is derive the width ([`granted_of`](Self::granted_of)), refuse to let
+    /// the fact go unstated ([`ungranted_keys`](Self::ungranted_keys)) and hold
+    /// it against the want
+    /// ([`sections_short_of_their_grant`](Self::sections_short_of_their_grant)).
+    ///
+    /// # Errors
+    ///
+    /// [`RosterDefect`] — a grant at a key the roster does not hold, at a key
+    /// it declares closed, or two grants at one key. A grant at a MOUNTED key
+    /// is legal and is the point: a host puts chrome beside a guest exactly as
+    /// it puts chrome beside a page it paints itself, and a screen stating its
+    /// own want does not state what it is given.
+    pub fn granting(mut self, key: &str, beside: u32) -> Result<Self, RosterDefect> {
+        Self::placeable(&self.destinations, key)?;
+        if self.grants.insert(key.to_owned(), beside).is_some() {
+            return Err(RosterDefect::DuplicateGrant {
+                key: key.to_owned(),
+            });
+        }
+        Ok(self)
+    }
+
+    /// The width `key` is granted in a window `window_w` wide, or `None` when
+    /// the host never declared what it draws beside that section.
+    ///
+    /// `saturating_sub`, so a window narrower than the host's own chrome
+    /// reports a grant of zero rather than wrapping to something enormous — a
+    /// section granted nothing is a true and checkable statement, and the
+    /// number a wrap would produce is neither.
+    #[must_use]
+    pub fn granted_of(&self, key: &str, window_w: u32) -> Option<u32> {
+        self.grants
+            .get(key)
+            .map(|beside| window_w.saturating_sub(*beside))
+    }
+
+    /// ★★★★★ R1830 — the open destinations the host never granted a width, in
+    /// roster order. The peer of [`unsized_keys`](Self::unsized_keys), and it
+    /// exists for that method's reason rather than for symmetry: a count of how
+    /// many grants were declared is true of an application that granted every
+    /// section and of one that granted two, and only this names the sections
+    /// the question never reached.
+    pub fn ungranted_keys(&self) -> impl Iterator<Item = &str> {
+        self.destinations
+            .keys()
+            .filter(|key| {
+                self.destinations
+                    .get(key)
+                    .is_some_and(|d| d.standing.is_open())
+            })
+            // Asks the map directly rather than `granted_of`, because the
+            // question here is whether the host SAID anything — which needs no
+            // window, and would be a different question if it took one.
+            .filter(|key| !self.grants.contains_key(*key))
+    }
+
+    /// ★★★★★ R1830 — **every open section whose want exceeds its grant**, as
+    /// `(key, wants, granted)`, in roster order.
+    ///
+    /// This is the check that used to live in one host's test file reading that
+    /// host's own function. It is here so that ANY host is held to it, and so
+    /// that the two halves it compares are both facts the roster holds.
+    ///
+    /// A section that declares no size, or that was granted nothing, is not
+    /// reported here — it is reported by [`unsized_keys`](Self::unsized_keys)
+    /// and [`ungranted_keys`](Self::ungranted_keys), which name what could not
+    /// be asked instead of counting what answered. Silently treating an absent
+    /// half as satisfied is the shape that makes a gate green over a question
+    /// nobody put.
+    #[must_use]
+    pub fn sections_short_of_their_grant(&self, window_w: u32) -> Vec<(&str, u32, u32)> {
+        self.destinations
+            .keys()
+            .filter(|key| {
+                self.destinations
+                    .get(key)
+                    .is_some_and(|d| d.standing.is_open())
+            })
+            .filter_map(|key| {
+                let wants = self.shrink_policy_of(key)?.comfortable().0;
+                let granted = self.granted_of(key, window_w)?;
+                (wants > granted).then_some((key, wants, granted))
+            })
+            .collect()
     }
 
     /// ★★★★★ R1725 — declare what this host draws for every screen it shows,

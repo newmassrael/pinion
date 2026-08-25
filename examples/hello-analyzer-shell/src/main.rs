@@ -837,7 +837,7 @@ struct ShellState {
 /// defect in this pairing rather than a state the running screen can reach.
 #[must_use]
 fn screen_roster() -> ScreenRoster {
-    ScreenRoster::new(
+    let mut roster = ScreenRoster::new(
         spec::destinations(),
         vec![
             // ★★★★★ R1729 — **the seat that used to say *elsewhere*.**
@@ -950,7 +950,60 @@ fn screen_roster() -> ScreenRoster {
         HostChrome::NONE
             .with(ChromePart::Navigation)
             .with(ChromePart::ApplicationBar),
-    )
+    );
+
+    // ★★★★★ R1830 — **and what each of those sections is GRANTED.**
+    //
+    // R1784 taught the roster what a section WANTS and left what it RECEIVES
+    // here, in this host. The gate that compared the two therefore read
+    // `page_rect` — this file's function. Another host has its own, so nothing
+    // portable could ask whether a section's want and its grant were about the
+    // same section, and the only thing holding the pair together was one
+    // assertion inside this application's own test file.
+    //
+    // Now the roster holds both halves, so `sections_short_of_their_grant`
+    // answers for any host and the assertion moves out of here.
+    //
+    // ★★★★★ WHAT IS DECLARED IS THE INSET, NOT THE WIDTH, and this round tried
+    // the width first and could not build it: `page_rect` reads the window
+    // through `Owner::cache`, this function runs inside such a factory, and
+    // every screen-owning test died on `Owner::cache factory closures must not
+    // call Owner::cache`. The width is per-frame; what this shell paints beside
+    // a page is not. So the static half is declared and the roster derives the
+    // rest — which is what the debt asked for in as many words, and the panic
+    // is what made the difference impossible to ignore.
+    //
+    // These are `page_rect`'s own two arms, read as insets: every destination
+    // loses the rail, and the dashboard loses its palette as well because that
+    // palette sits BESIDE the page region rather than in it. Vertical chrome is
+    // not declared because the question this answers is about width.
+    //
+    // Every open destination, from the roster's own list: a hand-written set
+    // here would be a second population that could drift from the rail, and
+    // `ungranted_keys` exists precisely so a missed one is named rather than
+    // read as fitting.
+    let open: Vec<String> = roster
+        .destinations()
+        .keys()
+        .filter(|key| {
+            roster
+                .destinations()
+                .get(key)
+                .is_some_and(|d| d.standing.is_open())
+        })
+        .map(str::to_owned)
+        .collect();
+    for key in open {
+        let beside = if key == "dashboard" {
+            RAIL_W + PALETTE_W
+        } else {
+            RAIL_W
+        };
+        roster = roster
+            .granting(&key, beside)
+            .expect("every key came from this roster's own open destinations");
+    }
+    roster
 }
 
 impl ShellState {

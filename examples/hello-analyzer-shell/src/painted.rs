@@ -4386,6 +4386,19 @@ fn r1781_the_shipping_window_cannot_give_every_screen_what_it_declares() {
              for it.",
         );
 
+        // ★★★★★ R1830 — the peer census, and it is asserted for the reason the
+        // one above is: an open destination this host never granted a width has
+        // not been checked, and a gate that skipped it would go green over a
+        // question nobody put. This is what makes `granted_of` safe to unwrap
+        // in the loop below.
+        let ungranted: Vec<&str> = roster.ungranted_keys().collect();
+        assert!(
+            ungranted.is_empty(),
+            "★ {ungranted:?} were never granted a width, so this window was \
+             never checked against what they RECEIVE. A host declares that \
+             through `ScreenRoster::granting`.",
+        );
+
         // The open destinations, which is what "a section a reader can arrive
         // at" means and what `unsized_keys` above filtered on. A closed seat
         // lays nothing out, so a size there would be a number about a page
@@ -4420,11 +4433,20 @@ fn r1781_the_shipping_window_cannot_give_every_screen_what_it_declares() {
             // reading — the window less the rail — is right for a mounted
             // screen and wrong for a page the host paints itself, whose
             // section includes chrome the host draws BESIDE the page region
-            // (the dashboard's palette is 292 of it). `page_rect` is the one
-            // place that difference is already expressed, so it is read rather
-            // than restated, and `granted` above stays as the floor this
-            // derivation must not fall below.
-            let region = super::page_rect(key).w;
+            // (the dashboard's palette is 292 of it).
+            //
+            // ★★★★★ R1830 — asked of the ROSTER, not of `super::page_rect`.
+            // That function is this host's; another host has its own, and while
+            // the grant lived only there the roster could not check that a
+            // section's want and its grant were about the same section — the
+            // only thing holding the pair together was this assertion. The host
+            // now DECLARES the grant (`ScreenRoster::granting`, in
+            // `screen_roster`), so the pair is checkable from the roster alone
+            // and `r1830_a_section_that_wants_more_than_its_grant_is_named_by_
+            // the_roster` holds it with no host in sight.
+            let region = roster
+                .granted_of(key, super::win_w())
+                .expect("the ungranted check above is empty, so every open key has one");
             let wants = policy.comfortable().0;
             rows.push((key.clone(), wants, region));
             if wants > region {
@@ -4434,9 +4456,21 @@ fn r1781_the_shipping_window_cannot_give_every_screen_what_it_declares() {
 
         // ★★★★★ THE ROW THAT PINS THE PER-DESTINATION GRANT. The dashboard's
         // region is the one that differs from every mounted screen's, so it is
-        // the row a wrong reading changes — and it is checked against
-        // `page_rect` rather than against a number written here, because the
-        // claim is that the gate reads the host's own function.
+        // the row a wrong reading changes.
+        //
+        // ★★★★★ R1830 CHANGED WHAT THIS ASSERTION IS FOR, and it is worth
+        // saying because the line did not move. It used to check that the gate
+        // read the host's own function. The gate now reads the ROSTER, so this
+        // is the CROSS-CHECK that keeps the declaration honest: the inset the
+        // host declared through `ScreenRoster::granting` must derive the same
+        // width the host actually paints through `page_rect`. Without it a host
+        // could declare a comfortable inset and paint a different one, and
+        // moving the grant into the roster would have bought portability at the
+        // cost of truthfulness.
+        //
+        // ⚠ Not vacuous, measured: replacing this round's per-destination inset
+        // with one figure for every section — the reading R1784's CF-5 showed a
+        // gate passing — fails HERE, `left: 1388, right: 1096`.
         let board = rows
             .iter()
             .find(|(key, ..)| key == "dashboard")

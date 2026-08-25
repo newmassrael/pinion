@@ -87,6 +87,18 @@
       ]
     },
     {
+      "name": "debt-a-grant-is-declared-beside-the-page-not-derived-from-it",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links debt-the-canon-is-one-app-and-we-are-many-binaries",
+        "names dashboard.t2.9"
+      ]
+    },
+    {
       "name": "debt-a-guest-derives-width-from-one-of-two-declarable-chrome-parts",
       "substituted": false,
       "blocked_by": "unmeasured",
@@ -129,17 +141,6 @@
       "closed_because": "",
       "why": [
         "links screen-a-vs-canon-operation-census"
-      ]
-    },
-    {
-      "name": "debt-a-sections-grant-lives-in-the-host-not-the-roster",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
     },
     {
