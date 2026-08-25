@@ -349,24 +349,48 @@ fn r1822_the_height_floor_drops_every_strip_the_host_provides() {
 fn r1822_the_graphs_name_is_announced_by_one_stop_in_both_configurations() {
     use pinion_core::chrome::{HostChrome, Part, with_host_chrome};
 
-    use pinion_core::voice::voice_census;
+    use pinion_core::voice::{Announcement, Voice, voice_census};
 
-    /// Whether `lab.toolbar.title` declares a silence, read off the scene the
-    /// screen actually builds rather than off the call that makes it.
-    fn title_is_quiet(state: &super::LabState) -> bool {
+    /// The census VERDICT on `lab.toolbar.title`, judged against the tree this
+    /// screen actually publishes.
+    ///
+    /// 🟥 ★★★★★ R1825 — this used to answer `silence.is_some()`, and that is
+    /// why it passed while the region was broken. `is_some()` cannot tell
+    /// *declares a name* from *declares nothing*: R1822 dropped the deferral
+    /// where the bar is absent and the node became `Unvoiced`, which this
+    /// helper reported as "not quiet" — the answer it wanted. The running
+    /// application's own census found it (one undecided region at the lab
+    /// destination) two rounds later.
+    ///
+    /// ⇒ **assert the smallest thing that changed, but assert the RIGHT
+    /// smallest thing** — a verdict has three arms here and a boolean has two.
+    /// The tree is passed in for the same reason: a silence is a REFERENCE, so
+    /// a census run against an empty tree cannot tell whether the node it
+    /// points at exists.
+    fn title_voice(state: &super::LabState) -> pinion_core::voice::Voice {
         let theme = super::use_theme(super::THEME_TAG).theme_animated();
         let scene = super::toolbar(state, super::ink(&theme));
-        voice_census(
-            &scene,
-            &std::collections::BTreeMap::new(),
-            &std::collections::BTreeSet::new(),
-        )
-        .nodes
-        .iter()
-        .find(|n| n.tag == "lab.toolbar.title")
-        .expect("the toolbar paints the graph's name")
-        .silence
-        .is_some()
+        let announced: std::collections::BTreeMap<String, Announcement> =
+            super::appbar_access(state)
+                .into_iter()
+                .map(|n| {
+                    (
+                        n.tag.clone(),
+                        Announcement {
+                            name: n.name.clone().unwrap_or_default(),
+                            name_required: false,
+                            live: false,
+                            composes: Vec::new(),
+                        },
+                    )
+                })
+                .collect();
+        voice_census(&scene, &announced, &std::collections::BTreeSet::new())
+            .nodes
+            .iter()
+            .find(|n| n.tag == "lab.toolbar.title")
+            .expect("the toolbar paints the graph's name")
+            .voice
     }
 
     let owner = Owner::new();
@@ -376,28 +400,40 @@ fn r1822_the_graphs_name_is_announced_by_one_stop_in_both_configurations() {
         // Standalone the bar is the stop that says it, so the toolbar's copy
         // defers to it and the tree holds the bar.
         assert!(super::draws_own_app_bar());
+        let landmarks: Vec<String> = super::appbar_access(&state)
+            .into_iter()
+            .map(|n| n.tag)
+            .collect();
         assert!(
-            !super::appbar_access(&state).is_empty(),
+            landmarks.iter().any(|t| t == "lab.appbar"),
             "★ the bar it draws is a landmark a reader can reach"
         );
-        assert!(
-            title_is_quiet(&state),
+        assert_eq!(
+            title_voice(&state),
+            Voice::Silent,
             "★ and the toolbar's copy of the name defers to it"
         );
 
         with_host_chrome(HostChrome::NONE.with(Part::ApplicationBar), || {
+            let landmarks: Vec<String> = super::appbar_access(&state)
+                .into_iter()
+                .map(|n| n.tag)
+                .collect();
             assert!(
-                super::appbar_access(&state).is_empty(),
+                !landmarks.iter().any(|t| t == "lab.appbar"),
                 "★★★★★ where it draws no bar it offers no landmark for one -- \
                  not an empty group, not a zero-height strip: absent, which is \
                  the only form of that claim a reader cannot trip over"
             );
-            assert!(
-                !title_is_quiet(&state),
-                "★★★★★ and the toolbar's copy STOPS deferring, because the node \
-                 it was deferring to is not in the tree. Left quiet, the graph's \
-                 name would be painted and announced by nobody -- which no \
-                 rectangle assertion and no layout check can see"
+            assert_eq!(
+                title_voice(&state),
+                Voice::Announced,
+                "★★★★★ and the toolbar's copy becomes the stop that SAYS the \
+                 name. 🟥 R1825: it used to only stop DEFERRING, and this \
+                 assertion used to read `silence.is_some()`, which cannot tell \
+                 `declares a name` from `declares nothing` -- so the node went \
+                 Unvoiced and the test agreed. A verdict has three arms here \
+                 and a boolean has two"
             );
         });
     });

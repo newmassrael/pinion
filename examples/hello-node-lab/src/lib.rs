@@ -195,8 +195,17 @@ fn rail_w() -> u32 {
 /// defect is exactly what happens when two of them read it separately: a screen
 /// that publishes a rule it does not keep. So the question is asked once, here,
 /// and the five derive from it.
+///
+/// ★★★★★ R1825 — and asked of the SURFACE, for the reason spelled out on
+/// [`draws_own_app_bar`]. Two of those five readers — the hit test and the
+/// keyboard — run outside the scope the host wraps the build in, so they were
+/// answering `NONE` and placing a rail this screen no longer paints. It cost
+/// nothing visible **only because the host's own rail occupies those same
+/// pixels and resolves a press first**; the bar's twin had no such cover and
+/// put 41 regions out of step. A defect that is invisible because something
+/// else happens to be in the way is still the defect.
 fn draws_own_rail() -> bool {
-    !pinion_core::chrome::host_chrome().provides(pinion_core::chrome::Part::Navigation)
+    !pinion_core::chrome::host_chrome_for(VIEW_TAG).provides(pinion_core::chrome::Part::Navigation)
 }
 
 /// ★★★★★ R1822 — **the app bar's twin of [`draws_own_rail`]**, and the reason
@@ -222,8 +231,19 @@ fn draws_own_rail() -> bool {
 ///
 /// ⇒ the bar is not a different sentence mounted. It is the same sentence,
 /// twice, in a strip 54 pixels tall that the canon does not have.
+///
+/// ★★★★★ R1825 — **asked of the SURFACE, not of the ambient scope.**
+/// `host_chrome()` answers only inside the build the host wraps; every hook the
+/// framework calls on this screen afterwards — what is under a pointer, where a
+/// press lands, what the wheel does — runs outside it and got `NONE`, which is
+/// not "no answer" but *you are standalone*. So this screen laid its panes out
+/// without the bar and hit-tested them with it, and every rectangle below the
+/// strip was 54 pixels out of step. Measured: 41 of 182 painted regions
+/// addressed a DIFFERENT region at their own centre when mounted, and 0 did
+/// standalone at the same size.
 fn draws_own_app_bar() -> bool {
-    !pinion_core::chrome::host_chrome().provides(pinion_core::chrome::Part::ApplicationBar)
+    !pinion_core::chrome::host_chrome_for(VIEW_TAG)
+        .provides(pinion_core::chrome::Part::ApplicationBar)
 }
 
 /// The app bar's height where it is being drawn — zero where the host draws it.
@@ -12481,8 +12501,27 @@ fn appbar_access(state: &LabState) -> Vec<AccessNode> {
     // ★★★★★ R1822 — empty where this screen draws no bar. The paint, the
     // layout, the silence above and this tree all read one predicate, so a
     // reader cannot be offered a landmark for a strip that is not on screen.
+    //
+    // 🟥🟥🟥 ★★★★★ R1825 — **and empty is not enough.** The graph's name is
+    // painted at `lab.toolbar.title`, which defers to this bar with a
+    // `Silence::name_of("lab.appbar")`. R1822 dropped that deferral where the
+    // bar is absent and stopped there, which moves the node from *wrongly
+    // quiet* to **undecided** — a different fault, not a repair. Measured on
+    // the running application: `lab.toolbar.title`, `voice: "unvoiced"`, the
+    // one region at the lab destination the census could not decide.
+    //
+    // ⚠ Its test could not see that, and the reason is worth keeping: it
+    // asserted `silence.is_some()` was false, and `is_some()` cannot tell
+    // *declares a name* from *declares nothing*. Asserting the smallest thing
+    // is right; asserting the wrong smallest thing passes for both answers.
+    //
+    // So where this screen draws no bar, the toolbar's copy of the name IS the
+    // stop that says it, and says so here.
     if !draws_own_app_bar() {
-        return vec![];
+        return vec![
+            AccessNode::new("lab.toolbar.title", AriaRole::Group)
+                .with_name(format!("node lab: {}", spec::GRAPH_NAME)),
+        ];
     }
     let running = state.running.get();
     vec![

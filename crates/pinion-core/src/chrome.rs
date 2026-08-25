@@ -41,9 +41,20 @@
 //! A screen does not know where it is, and it must not have to be told twice —
 //! once when it is constructed and again when it moves. The same binding is a
 //! window in one process and a page in another **in the same build**, and the
-//! answer differs per frame boundary rather than per instance. A scope is the
-//! only form in which the fact cannot be stale: it is true exactly while the
-//! host that established it is building the frame it established it for.
+//! answer differs per frame boundary rather than per instance.
+//!
+//! ⚠ **R1825 — this paragraph used to end "a scope is the only form in which
+//! the fact cannot be stale", and a measurement refuted it.** A scope makes the
+//! fact *absent* everywhere else, and absent is read as [`HostChrome::NONE`],
+//! which is not "no answer" but the specific answer *you are standalone*. The
+//! framework calls a mounted guest's pointer, wheel and drag hooks from outside
+//! every scope, so a screen that laid its panes out for a host drawing the
+//! application bar hit-tested them for a window where it draws its own. On the
+//! analysis tool: **41 of the node lab's 182 painted regions addressed a
+//! DIFFERENT region at their own centre when mounted, and 0 did standalone at
+//! the same size.** [`with_host_chrome_for`] / [`host_chrome_for`] add the
+//! recorded fallback [`layout_size`](crate::external::layout_size) has had all
+//! along, and a screen should read the `_for` spelling.
 //!
 //! ## Against the reference toolkit
 //!
@@ -187,7 +198,46 @@ thread_local! {
     /// the lift rule defers to a **third** identical site rather than the
     /// mechanical case it lifts at once. Whoever writes the third one lifts all
     /// three; the count is written here so that decision is not re-derived.
+    ///
+    /// ★ R1825 — **the two are now the same shape**, which strengthens that
+    /// deferred lift rather than weakening it: each is a scope for the build
+    /// plus a per-surface record for the calls the framework makes afterwards.
+    /// Re-measured this round, they are still the only two scoped *place* facts
+    /// in this crate. ⚠ And the pairing is the lesson a third site must inherit:
+    /// **a scoped fact needs a fallback that is the last known truth, because
+    /// its default is read as an answer.** The extent had one from the start
+    /// and chrome did not, and the difference cost a mounted screen 41 of its
+    /// 182 regions.
     static PROVIDED: RefCell<Vec<HostChrome>> = const { RefCell::new(Vec::new()) };
+
+    /// ★★★★★ R1825 — **the placed screen's declaration, for the calls that do
+    /// not happen inside a build.**
+    ///
+    /// The stack above is true exactly while the host is building the guest's
+    /// scene. The module header used to argue that this is the only form in
+    /// which the fact cannot be stale. **Measured, that argument was wrong in a
+    /// way that costs a screen its gestures**: the framework calls a mounted
+    /// guest's [`External`](crate::external::External) hooks — `target_at`, the
+    /// press path, `wheel` — from OUTSIDE every scope, and outside a scope
+    /// [`host_chrome`] answers [`HostChrome::NONE`], which is not "no answer"
+    /// but the specific answer *you are standalone*. So a guest laid its panes
+    /// out for a host that draws the application bar and hit-tested them for a
+    /// window where it draws its own, and every rectangle below the bar was one
+    /// bar's height out of step. Measured on the analysis tool at R1825: 41 of
+    /// the node lab's 182 painted regions addressed a DIFFERENT region at their
+    /// own centre, and 0 did so standalone at the same size.
+    ///
+    /// ⚠ Absence read as a default is the general shape, and this crate already
+    /// had the answer to it one module over:
+    /// [`layout_size`](crate::external::layout_size) falls back to the surface's
+    /// last RECORDED size rather than to a design constant, so a call from
+    /// outside a build gets the last known truth. Chrome had no such fallback.
+    /// This is it.
+    ///
+    /// Keyed by surface tag, and holding at most the screen that is placed:
+    /// [`forget_host_chrome`] is what a host calls when it stops placing one, so
+    /// a record cannot outlive the placement it describes.
+    static RECORDED: RefCell<Vec<(String, HostChrome)>> = const { RefCell::new(Vec::new()) };
 }
 
 /// State what this host provides, for the duration of `body`.
@@ -214,19 +264,160 @@ impl Drop for PopOnDrop {
     }
 }
 
+/// State what this host provides to the surface `tag`, for the duration of
+/// `body` **and** for the calls the framework makes on that surface afterwards.
+///
+/// R1825. Identical to [`with_host_chrome`] inside `body`, and additionally
+/// records the declaration against `tag` so [`host_chrome_for`] can answer from
+/// outside a build. The defect that asked for it is in this module's header: a
+/// mounted screen's pointer hooks run outside every scope, and a screen that
+/// answers "standalone" there lays out and hit-tests two different screens.
+///
+/// A host that calls this owes [`forget_host_chrome`] when it stops placing the
+/// surface, so a record cannot outlive the placement.
+pub fn with_host_chrome_for<R>(tag: &str, chrome: HostChrome, body: impl FnOnce() -> R) -> R {
+    RECORDED.with(|rec| {
+        let mut rec = rec.borrow_mut();
+        match rec.iter_mut().find(|(t, _)| t == tag) {
+            Some(slot) => slot.1 = chrome,
+            None => rec.push((tag.to_string(), chrome)),
+        }
+    });
+    with_host_chrome(chrome, body)
+}
+
+/// Drop the record [`with_host_chrome_for`] kept for `tag` — what a host calls
+/// when it stops placing that surface.
+///
+/// Idempotent, and cheap enough to call every frame: a host that is not placing
+/// anything can clear unconditionally rather than tracking whether it was.
+pub fn forget_host_chrome(tag: &str) {
+    RECORDED.with(|rec| rec.borrow_mut().retain(|(t, _)| t != tag));
+}
+
 /// What the innermost enclosing [`with_host_chrome`] provides.
 ///
 /// [`HostChrome::NONE`] outside any scope, which is a screen running in its own
 /// window — so a binding that never asks, and a binding asked while standalone,
 /// both behave exactly as they did before this existed.
+///
+/// ⚠ **A screen that is MOUNTED should read [`host_chrome_for`] instead.** This
+/// answers `NONE` outside a build, and for a placed screen that is a wrong
+/// answer rather than a missing one — see this module's header.
 #[must_use]
 pub fn host_chrome() -> HostChrome {
     PROVIDED.with(|stack| stack.borrow().last().copied().unwrap_or(HostChrome::NONE))
 }
 
+/// What the place the surface `tag` was put in provides — from the enclosing
+/// scope when there is one, and otherwise from what its host last declared.
+///
+/// R1825, and this is what a **screen** should ask. The scope answers while the
+/// host is building the guest's scene; the record answers for every call the
+/// framework makes on the guest afterwards, which is where the pointer, the
+/// wheel and the drag hooks all live. Both spellings agree inside a build, so a
+/// screen that reads this reads one fact rather than two.
+///
+/// [`HostChrome::NONE`] when neither has anything to say, which is a screen
+/// running in its own window.
+#[must_use]
+pub fn host_chrome_for(tag: &str) -> HostChrome {
+    if let Some(scoped) = PROVIDED.with(|stack| stack.borrow().last().copied()) {
+        return scoped;
+    }
+    RECORDED.with(|rec| {
+        rec.borrow()
+            .iter()
+            .find(|(t, _)| t == tag)
+            .map_or(HostChrome::NONE, |(_, chrome)| *chrome)
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{HostChrome, Part, host_chrome, with_host_chrome};
+    use super::{
+        HostChrome, Part, forget_host_chrome, host_chrome, host_chrome_for, with_host_chrome,
+        with_host_chrome_for,
+    };
+
+    /// ★★★★★ R1825 — **the declaration survives the build it was made in**,
+    /// which is the whole repair.
+    ///
+    /// The framework calls a mounted guest's pointer hooks from outside every
+    /// scope. Before this, such a call read `NONE` — the answer that means
+    /// *standalone* — so a placed screen laid out for one arrangement and
+    /// hit-tested for another.
+    #[test]
+    fn r1825_a_placed_surface_answers_after_the_build_scope_has_closed() {
+        forget_host_chrome("guest");
+        let placed = HostChrome::NONE.with(Part::ApplicationBar);
+
+        with_host_chrome_for("guest", placed, || {
+            assert_eq!(
+                host_chrome_for("guest"),
+                placed,
+                "inside, the scope answers"
+            );
+            assert_eq!(host_chrome(), placed, "and the old spelling agrees");
+        });
+
+        assert_eq!(
+            host_chrome(),
+            HostChrome::NONE,
+            "the scope really did close -- otherwise this proves nothing"
+        );
+        assert_eq!(
+            host_chrome_for("guest"),
+            placed,
+            "★ and the placed surface still reads its place, which is the call \
+             the framework makes when it asks what is under a pointer"
+        );
+        forget_host_chrome("guest");
+    }
+
+    #[test]
+    fn r1825_a_surface_nobody_placed_reads_nothing_from_the_record() {
+        forget_host_chrome("guest");
+        with_host_chrome_for("guest", HostChrome::NONE.with(Part::Navigation), || {});
+        assert_eq!(
+            host_chrome_for("other"),
+            HostChrome::NONE,
+            "the record is keyed by surface: one guest's place is not another's"
+        );
+        forget_host_chrome("guest");
+    }
+
+    #[test]
+    fn r1825_forgetting_is_what_stops_a_record_outliving_its_placement() {
+        forget_host_chrome("guest");
+        with_host_chrome_for("guest", HostChrome::NONE.with(Part::Navigation), || {});
+        assert!(host_chrome_for("guest").provides(Part::Navigation));
+        forget_host_chrome("guest");
+        assert_eq!(
+            host_chrome_for("guest"),
+            HostChrome::NONE,
+            "★ a screen that stops being placed must stop reading a place, or it \
+             would omit chrome nobody is drawing -- the failure the scope's own \
+             Drop guard exists to prevent, one level up"
+        );
+        forget_host_chrome("guest");
+    }
+
+    #[test]
+    fn r1825_an_inner_scope_still_wins_over_an_outer_record() {
+        forget_host_chrome("guest");
+        with_host_chrome_for("guest", HostChrome::NONE.with(Part::Navigation), || {
+            with_host_chrome(HostChrome::NONE.with(Part::ApplicationBar), || {
+                assert_eq!(
+                    host_chrome_for("guest"),
+                    HostChrome::NONE.with(Part::ApplicationBar),
+                    "a screen that places a screen answers about ITS guest's \
+                     place, and the record must not shadow that"
+                );
+            });
+        });
+        forget_host_chrome("guest");
+    }
 
     #[test]
     fn r1725_a_screen_that_is_not_placed_is_told_nothing() {

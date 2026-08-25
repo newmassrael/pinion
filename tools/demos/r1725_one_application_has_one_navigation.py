@@ -113,13 +113,77 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
             "A: none of the guest's rail seats is painted",
             not [t for t in rects if t.startswith("lab.rail.")],
         )
-        # ★ Two BARS is not the same question as two NAVIGATIONS, and this
-        # round deliberately answered only the second: the host's bar carries
-        # the capture source and the global search, the guest's carries the
-        # graph it is showing. Asserted so a later round cannot quietly fold
-        # them together without this failing.
+        # ★ R1725 answered only the NAVIGATION question and asserted the guest
+        # kept its own bar, "so a later round cannot quietly fold them together
+        # without this failing". The assertion did exactly its job: R1822 folded
+        # them, and this went red.
+        #
+        # 🟥🟥🟥 ★★★★★ R1825 — **and the later round was right**, which is the
+        # only reason this assertion is being turned over rather than the code.
+        # R1725's argument was that a host's bar carries the application's
+        # subject and a page's carries the page's, so they are different
+        # sentences. Its OWN round had already measured the behaviour canon and
+        # found one bar, the host's, on all three screens — with the graph's
+        # name and run state not in it but on the canvas toolbar, which is
+        # exactly where this screen already draws them. Measurement and prose
+        # diverged under one hand and the code kept the prose for 97 rounds.
+        #
+        # ⇒ the assertion is INVERTED rather than deleted, because the property
+        # it guards is still the one that matters: a later round must not be
+        # able to give the guest its bar back without saying so here.
         ok("A: the host's own bar is painted", "shell.appbar" in rects)
-        ok("A: and the guest's, which carries its own subject", "lab.appbar" in rects)
+        ok(
+            "A: ★★★★★ and the guest draws NO bar of its own -- one application, "
+            "one bar, which is what the behaviour canon has on all three of its "
+            "screens",
+            "lab.appbar" not in rects,
+        )
+        # ★★★★★ And the graph's name is still SAID. Dropping the strip is only
+        # half the move: the toolbar's copy of the name deferred to the bar with
+        # a silence, and a silence is a REFERENCE — left alone it points at a
+        # node that is not in the tree and the name is painted and announced by
+        # nobody. R1822 stopped at "not deferring", which is `unvoiced`, and the
+        # census caught it two rounds later. Asserted here on the ASSEMBLED
+        # application, which is the only place the mounted arrangement exists.
+        tree = nodes_by_tag(app)
+        ok(
+            "A: ★★★★★ and the graph's name is still announced by exactly one "
+            "stop -- the toolbar's copy, which the strip's removal must not "
+            "have left saying nothing",
+            "lab.appbar" not in tree
+            and bool(tree.get("lab.toolbar.title", {}).get("name")),
+        )
+
+        # 🟥🟥🟥 ★★★★★ R1825 — **a mounted guest must hit-test the screen it
+        # painted**, and this is the assertion whose absence cost three demos.
+        #
+        # What a host provides is stated in a SCOPE around the build. Every hook
+        # the framework calls on the guest afterwards — what is under a pointer,
+        # where a press lands, what the wheel does — runs outside that scope,
+        # and outside it the declaration read `NONE`, which is not "no answer"
+        # but *you are standalone*. So this screen laid its panes out without
+        # the application bar and hit-tested them with it. Measured here before
+        # the repair: **41 of 182 painted regions addressed a DIFFERENT region
+        # at their own centre**, and 0 did so standalone at the same size.
+        #
+        # `astray` is the arm that says exactly that, and nothing was asserting
+        # it: the harness's boot gate refuses only `unreachable`, and it runs
+        # before this demo has navigated anywhere.
+        #
+        # ⚠ Judged at the size this demo boots at, which is the limit R1742
+        # states about its own census: a screen can agree with itself at one
+        # size and not another. One size gated beats none, and the caveat is
+        # written rather than left for a reader to infer.
+        census = app.request("scene/pointer_target").result
+        guest = [s for s in census["surfaces"] if s["surface"] == "node_lab"]
+        ok("A: the mounted guest answers the pointer census at all", len(guest) == 1)
+        assert_eq(
+            guest[0]["astray"],
+            0,
+            "A: ★★★★★ no region of the mounted guest addresses a DIFFERENT "
+            "region at its own centre -- the paint and the hit test read one "
+            "set of facts about the place this screen was put in",
+        )
 
         # ★★★★★ The half a picture cannot show. Omitting the paint alone would
         # leave a landmark a screen reader walks to and a pointer cannot reach.
@@ -146,9 +210,18 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         ok("A: including its canvas", "lab.canvas" in rects)
         ok("A: and its inspector", "lab.inspector" in rects)
 
-        # The guest's OWN bar stays: it carries this screen's subject, which is
-        # not chrome the host provides. Only the navigation was duplicated.
-        ok("A: the guest keeps its own bar", "lab.appbar" in rects)
+        # ★ R1825 — the SECOND site that asserted the guest keeps its bar, and
+        # it is worth noting that it exists: turning over the first one left
+        # this one standing, and a demo whose whole subject is "one application
+        # has one X" had written the claim twice. The room the strip took is
+        # what the assertion is really about, so it now checks that instead of
+        # checking the strip is there.
+        ok("A: the guest draws no bar of its own", "lab.appbar" not in rects)
+        ok(
+            "A: and its content starts at the page's own top edge, in the room "
+            "the strip used to take",
+            rects["lab.palette"][1] == page[1],
+        )
 
         # ── (C) the host's navigation still navigates ─────────────────────
         banner("C — the application's own rail still works")

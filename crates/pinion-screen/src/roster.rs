@@ -12,7 +12,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 
-use pinion_core::chrome::{HostChrome, with_host_chrome};
+use pinion_core::chrome::{HostChrome, with_host_chrome_for};
 use pinion_core::external::with_surface_extent;
 use pinion_core::shrink::{ShrinkPolicy, pan};
 use pinion_core::widget_core::ExtraExternal;
@@ -749,13 +749,31 @@ impl ScreenRoster {
         journey: &Journey,
         body: impl FnOnce(&dyn Screen) -> R,
     ) -> Option<R> {
-        let screen = self.screens.get(journey.at())?;
+        let Some(screen) = self.screens.get(journey.at()) else {
+            // ★★★★★ R1825 — a host that is not placing a screen must not leave
+            // one reading a place. The declaration now OUTLIVES the build (see
+            // `with_host_chrome_for`), so dropping it is the host's job, and
+            // the honest moment is the one where it finds nothing to place.
+            for tag in self.screens.values().map(|s| s.tag()) {
+                pinion_core::chrome::forget_host_chrome(tag);
+            }
+            return None;
+        };
         let extent = self.placed_extent.get();
         // ★ R1725 — the chrome declaration wraps EVERY hook and not only the
         // view, for the reason the extent grant does: a guest that omits its
         // rail while painting must omit it from its accessibility tree and its
         // keyboard too, and those are different calls.
-        Some(with_host_chrome(self.chrome, || {
+        // ★★★★★ R1825 — the `_for` spelling, which RECORDS the declaration
+        // against this screen's surface as well as scoping it. The scope covers
+        // the hooks this roster calls; the record covers the ones the FRAMEWORK
+        // calls on the screen's `External` afterwards — `target_at`, the press
+        // path, `wheel`, the drag hooks — which run inside no scope at all and,
+        // before this, read `NONE` and behaved as if the screen were standalone.
+        // That is not a hypothetical: measured on the analysis tool, 41 of the
+        // node lab's painted regions addressed a different region at their own
+        // centre while mounted, and none did standalone at the same size.
+        Some(with_host_chrome_for(screen.tag(), self.chrome, || {
             if extent.0 == 0 || extent.1 == 0 {
                 // Nothing has placed the region yet, so there is no rectangle
                 // to grant and the pre-R1724 reading is the honest one.
