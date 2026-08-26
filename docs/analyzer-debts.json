@@ -233,17 +233,6 @@
       ]
     },
     {
-      "name": "debt-the-option-surface-is-declared-here-rather-than-sourced",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links screen-a-vs-canon-operation-census"
-      ]
-    },
-    {
       "name": "debt-the-property-grid-is-an-example-not-a-crate",
       "substituted": false,
       "blocked_by": "buildable",

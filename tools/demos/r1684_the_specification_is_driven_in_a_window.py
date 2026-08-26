@@ -207,7 +207,9 @@ GESTURES = {
     # read `gesture: false` from R1677 until now: the wire could take a row out
     # and the screen offered no way to, which the table was written to make
     # impossible to forget.
-    "remove a field": lambda tf: press(tf, "lab.form.remove.control.permissions"),
+    "remove a field": lambda tf: press(
+        tf, "lab.form.remove.admin.permissions.write"
+    ),
     # ★★★ R1716 — the same edge of a row nobody wrote: the seat takes the value
     # OVER. `mode` is worked out from the role on every card, so it is the row
     # this is always available on.
@@ -476,15 +478,24 @@ def body() -> None:
         )
         tf.key(path="lab.edit", name="Escape")
 
-        # A row whose value is a set of words: the chips are the shortcut and
-        # the row underneath them can still be typed, which is the only way a
-        # person can put an unknown word on an option row and see it reported.
-        press(tf, "lab.form.control.control.permissions")
+        # A row whose control is not a plain text box: the affordances are the
+        # shortcut and the row underneath them can still be typed, which is the
+        # only way a person can put a value the shortcut cannot reach on the row
+        # and see it reported.
+        #
+        # ★ R1842 — the whole-number row, where this was the set-of-words row
+        # until the option surface stopped being written from memory: the
+        # target declares no set-valued key here, so this screen has no such
+        # row any more. The claim is unchanged — the middle of a control with
+        # its own affordances is not dead space — and the stepper pair sits at
+        # the trailing edge, so the middle is exactly what is being pressed.
+        ROW_WITH_PARTS = "transport.link.tx.batch_size"
+        press(tf, f"lab.form.control.{ROW_WITH_PARTS}")
         assert_eq(
             json.loads(q(tf, "editing"))["target"],
-            "value:control.permissions",
-            "★ the middle of an option row opens the field too — before this "
-            "it was a bordered box with dead space inside it",
+            f"value:{ROW_WITH_PARTS}",
+            "★ the middle of a row with its own affordances opens the field "
+            "too — before this it was a bordered box with dead space inside it",
         )
         tf.key(path="lab.edit", name="Escape")
         assert_eq(
@@ -492,9 +503,9 @@ def body() -> None:
         )
         assert_eq(
             {f["key"]: f["value"] for f in json.loads(q(tf, "form"))}[
-                "control.permissions"
+                ROW_WITH_PARTS
             ],
-            held["control.permissions"]["value"],
+            held[ROW_WITH_PARTS]["value"],
             "changing nothing",
         )
 

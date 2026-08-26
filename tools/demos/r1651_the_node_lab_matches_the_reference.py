@@ -919,11 +919,11 @@ def body() -> None:
         click(tf, at(tf, "lab.node.P-01"))
         assert_eq(q(tf, "selected"), "P-01")
         form = json.loads(q(tf, "form"))
-        assert any(f["key"] == "discovery.multicast" for f in form), (
+        assert any(f["key"] == "discovery.multicast.enabled" for f in form), (
             "the peer the gate warned about holds the key it warned about"
         )
         painted = tags(paint(tf))
-        assert "lab.form.control.discovery.multicast" in painted
+        assert "lab.form.control.discovery.multicast.enabled" in painted
         assert find_by_tag(paint(tf), "lab.inspector.id") is not None
         print("[M] selecting another node re-derives its rows, badges and degree")
 

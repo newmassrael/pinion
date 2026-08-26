@@ -27,7 +27,7 @@
 //! specified surfaces are *session-dependent*: the inspector draws rows once a
 //! card is selected, and the roster one row collapses exists once that row is
 //! opened. A lab nobody has touched paints none of them. Reporting that as
-//! `0 of 15 reproduced` would say a working screen is broken; reporting nothing
+//! `0 of everything reproduced` would say a working screen is broken; reporting nothing
 //! is what it did for ten rounds. So each surface answers
 //! [`Built::Away`] with **its own
 //! reason**, the report counts it as unjudged rather than as reproduced, and

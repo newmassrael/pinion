@@ -82,11 +82,12 @@
     "★★ R1742 — AND `controls` IS JUDGED AGAINST THE FORM ON SCREEN. Its own",
     "comment below says the build's side is read from `a form holding one row of",
     "each kind`, which is a session and not a property of the build. Measured in",
-    "the assembled tool at rest: the card it opens on draws THREE kinds — a text",
-    "box, a row of permission chips and a list — so of the five fixed here,",
-    "three report absent and one reports out of place. True about that card, and",
-    "it reads as a claim about the build. The reading that would fix it is",
-    "refused",
+    "the assembled tool at rest, the card it opens on draws only some of the",
+    "kinds fixed here, so the rest report absent and the ordering shifts around",
+    "them — read the ledger below for which, rather than a count written here,",
+    "because that count went stale the first time the card's rows changed",
+    "(R1842). True about that card, and it reads as a claim about the build. The",
+    "reading that would fix it is refused",
     "on purpose: an away-condition of `the form does not hold a row of every",
     "specified kind` is an escape hatch wide enough to swallow the mechanism,",
     "because a painter drawing an enumeration as a row of chips (the defect",
@@ -121,16 +122,28 @@
     ],
     "owed": [
       {
+        "key": "perm",
+        "sentence": "part 3 `perm` (one chip per permission word, each on or off) is specified and the surface has no such part",
+        "since": "R1842",
+        "why": "★★★★★ The reference draws ONE control over a set of named booleans, and this screen stopped asking for one. R1842 moved the option surface off this crate's memory of the target and onto the target's own declaration, which declares the two permissions as SEPARATE boolean leaves and holds them as an object of booleans. The single set-valued row this screen had was keyed at a path that is not a leaf at all and composed an ARRAY there, so what it exported was a document the target refuses — and refuses loudly, since a wrong type stops it starting where an unknown key only warns. Two boolean rows are correct and this control is what they cost. It is NOT abandoned: a field shape that authors a set of named booleans as an object is on the common-widget-catalog axis's remainder (`python3 tools/phase_b_tally.py --owed`), and when it exists this entry is paid off by putting the row back."
+      },
+      {
+        "key": "derived",
+        "sentence": "`derived` is specified at part 4 and sits at part 3",
+        "since": "R1842",
+        "why": "The consequence of the entry above and nothing else: `perm` is specified between `bool` and `derived`, so a surface missing `perm` has `derived` one place earlier. Declared separately rather than folded into it because the two are different facts — one part is absent and one part is in the wrong place — and a ledger that let an absence excuse an ordering would stop noticing an ordering defect that had no absence behind it."
+      },
+      {
         "key": "int",
-        "sentence": "part 5 `int` is on the surface and no specification declares it",
+        "sentence": "part 4 `int` is on the surface and no specification declares it",
         "since": "R1732",
-        "why": "A second-pass improvement, kept deliberately. The reference draws a whole number in the plain text box — its text-kind list names the numeric types — so a value outside the range the configuration accepts is typed in and refused later. R1651 gave the shape its bounds and R1652 gave it a stepper that clamps, so the control cannot leave the range at all. The standing order rule keeps what the reference lacks."
+        "why": "A second-pass improvement, kept deliberately. The reference draws a whole number in the plain text box — its text-kind list names the numeric types — so a value outside the range the configuration accepts is typed in and refused later. R1651 gave the shape its bounds and R1652 gave it a stepper that clamps, so the control cannot leave the range at all. The standing order rule keeps what the reference lacks. (The ordinal in the sentence moved at R1842 with the `perm` row; the difference itself is unchanged.)"
       },
       {
         "key": "list",
-        "sentence": "part 6 `list` is on the surface and no specification declares it",
+        "sentence": "part 5 `list` is on the surface and no specification declares it",
         "since": "R1732",
-        "why": "The same, one kind over. The reference draws an array of addresses as one comma-separated text box, so a person editing the third element counts commas. R1652.1 gives a list one row per element and a row that appends one. Kept for the same reason."
+        "why": "The same, one kind over. The reference draws an array of addresses as one comma-separated text box, so a person editing the third element counts commas. R1652.1 gives a list one row per element and a row that appends one. Kept for the same reason. (Ordinal moved at R1842 with the `perm` row.)"
       }
     ]
   },
@@ -177,15 +190,23 @@
       "the run painted inside that option's box, so a roster whose third row drew",
       "the second word fails — which a key-only comparison could not see.",
       "",
+      "★★★★★ R1842 — AND THE WORDS CHANGED, BECAUSE THEY WERE THE WRONG ONES.",
+      "Until this round the roster held the three SESSION MODES, which is what",
+      "a node comes up as; the row is about how a node ROUTES, and the two are",
+      "different keys with different vocabularies. The mistake was invisible",
+      "while the option surface was written from this tree's memory of its",
+      "target — the row's key was a paraphrase, so nothing could be asked which",
+      "words it takes. Read from the target's own declaration, the routing row",
+      "offers two: every node talking to every other, and a computed map of the",
+      "links. The reference's own screen offers exactly those two on that row.",
+      "",
       "What the words mean, for a reader of this file rather than for the gate:",
-      "peer-to-peer is every node talking to every other, client is a node that",
-      "talks only to a router, and router is a node that carries other nodes'",
-      "traffic."
+      "peer-to-peer is every node talking to every other, and linkstate is each",
+      "node routing over a map of the links it has been told about."
     ],
     "canon": [
       { "ordinal": 1, "key": "peer_to_peer", "title": "peer_to_peer" },
-      { "ordinal": 2, "key": "client", "title": "client" },
-      { "ordinal": 3, "key": "router", "title": "router" }
+      { "ordinal": 2, "key": "linkstate", "title": "linkstate" }
     ],
     "owed": []
   }

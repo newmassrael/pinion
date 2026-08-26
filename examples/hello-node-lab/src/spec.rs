@@ -428,11 +428,28 @@ pub const FIELDS: &[FieldSpec] = &[
         source: None,
         aside: None,
     },
+    // ★★★★★ R1842 — TWO rows, where this was one `perm` row until the option
+    // surface stopped being written from memory. The target declares the two
+    // permissions as separate boolean leaves and takes them as an object of
+    // booleans; a single set-valued row composed an ARRAY at a path that is not
+    // a leaf at all, so the exported configuration was a document the target
+    // refuses — and refuses loudly, because a wrong TYPE stops it starting where
+    // an unknown key only warns. The reference paints one control over both,
+    // which this tree has no field shape for; that control is the widget-catalog
+    // axis's, and it is recorded there rather than papered over here.
     FieldSpec {
-        key: "control.permissions",
-        ty: "perm",
+        key: "admin.permissions.read",
+        ty: "bool",
         applies: "restart",
-        value: "read, write",
+        value: "true",
+        source: None,
+        aside: None,
+    },
+    FieldSpec {
+        key: "admin.permissions.write",
+        ty: "bool",
+        applies: "restart",
+        value: "true",
         source: None,
         aside: None,
     },
@@ -488,12 +505,21 @@ pub const ADDABLE: &[&str] = &[
     // with no drawn links: the row is worked out from the wires when there are
     // any, and offered here when there are none.
     "connect.endpoints",
-    "discovery.multicast",
+    // ★★★★★ R1842 — five of these seven changed spelling, and one was dropped
+    // outright. The option surface is read from the target's own declaration
+    // now, so a chip that names a key the target does not take is refusable
+    // rather than merely wrong: `discovery.multicast` and `compression.enabled`
+    // were sections of the real path, `routing.mode` was a paraphrase, and
+    // `plugins.names` named nothing at all. `qos.priority` is the dropped one
+    // and the sharpest of the six — it is not configuration in the first place,
+    // it is a per-message traffic parameter, and the reference marks it as such
+    // on its own rows.
+    "discovery.multicast.enabled",
     "timestamping.enabled",
-    "compression.enabled",
-    "qos.priority",
-    "routing.mode",
-    "plugins.names",
+    "transport.unicast.compression.enabled",
+    "namespace",
+    "routing.peer.mode",
+    "plugin_loading.search_dirs",
 ];
 
 /// The graph's name and the zoom the screen opens at.
@@ -787,7 +813,7 @@ pub const OPERATIONS: &[OperationSpec] = &[
     // it in the same act.
     OperationSpec {
         name: "remove a field",
-        verb: Some(("remove_field", "control.permissions")),
+        verb: Some(("remove_field", "admin.permissions.write")),
         gesture: true,
         witness: "form",
         needs: None,
@@ -1445,7 +1471,7 @@ pub fn inspector_document() -> pinion_core::conformance::SpecDocument {
 /// One of the keys the palette offers, so the gate reaches it the way a session
 /// does — press the chip, and the row is there. Named here rather than spelled
 /// in the gate so the two cannot part.
-pub const ENUM_KEY: &str = "routing.mode";
+pub const ENUM_KEY: &str = "routing.peer.mode";
 
 /// ★★★★★ R1834 — **the reference has NO level of detail, and this records it as
 /// a fact rather than as an absence somebody remembers.**

@@ -2937,6 +2937,20 @@ REMAINDER: dict[str, list[dict]] = {
          "open": "three absent widget kinds: dial, font picker, canned message/input dialog"},
         {"id": "mnemonic-adoption", "named_by": 1695,
          "open": "mnemonic adoption is five declaring sites"},
+        # ★★★★★ R1842 — a field shape, and it is here because a round PAID for
+        # its absence rather than because anyone noticed it missing. The
+        # reference draws ONE control over a set of named booleans (its
+        # permissions row: two switches under one label, composing an object of
+        # booleans). The nearest shape here is `FieldType::Flags`, which is a
+        # set of WORDS and composes an ARRAY — a different document, and the
+        # target this screen configures refuses a wrong type by refusing to
+        # start. So R1842 replaced the row with two boolean rows, which is
+        # correct and is one row where the reference has none, and the control
+        # went with it. `docs/analyzer-inspector-spec.json` carries the matching
+        # `perm` gap in its ledger; building this pays both off.
+        {"id": "named-boolean-set-control", "named_by": 1842,
+         "open": "no field shape authors a set of NAMED BOOLEANS as an object — "
+                 "`Flags` is a set of words and composes an array"},
     ],
     "dataviz": [
         {"id": "y-window", "named_by": 1629, "open": "the plot window is x-only; there is no y-window"},

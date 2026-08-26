@@ -1279,7 +1279,24 @@ use pinion_core::test_fixtures::screen_ink::{
 /// across this tree was measured at 289 of 290 runs on one screen: not a
 /// backlog of slips but a convention that never consulted the face. Lowering
 /// this is the repair, and `containment::line_rect` is how.
-const SHORT_BOX_BUDGET: usize = 152;
+///
+/// ★ R1842 — 152 → 166, and the rise is POPULATION rather than a new defect.
+/// The inspector's permissions row became two rows when the option surface
+/// stopped being written from this crate's memory of its target, so every state
+/// of this sweep carries more runs than it did.
+///
+/// **What says it is population and not a regression is a constant.** Three
+/// states of this sweep were measured while the pin was being moved: 156 of
+/// 245, 157 of 246, 166 of 255 — and `total - short` is **89 in every one of
+/// them**. The count of runs in a box tall enough for their face does not move
+/// when the screen grows, so a run added anywhere on this screen joins the
+/// short class by default. That is R1800's finding stated as a number rather
+/// than as a memory: the convention never consulted the face, so adequacy here
+/// is the exception and not the rule.
+///
+/// Raising a pin is not a repair and this one is still owed downward; what
+/// would move it is `containment::line_rect` at the sites that reserve a line.
+const SHORT_BOX_BUDGET: usize = 166;
 
 /// The one sweep, over every state.
 #[test]
@@ -2539,7 +2556,7 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
     // carried `gesture: false` since R1677 as the table's own record that the
     // wire could take a row out and nothing on the screen could.
     ("remove a field", |state, shot| {
-        press_tag(state, shot, "lab.form.remove.control.permissions");
+        press_tag(state, shot, "lab.form.remove.admin.permissions.write");
     }),
     // ★★★ R1716 — the same edge of the same row, on a row nobody wrote: the
     // seat takes the value OVER. `mode` is worked out from the role on every
@@ -4950,7 +4967,7 @@ fn r1690_reach_follows_the_palette_and_not_the_screen() {
             let catalogue: Vec<_> = forms
                 .iter()
                 .flat_map(|form| form.fields().iter().chain(form.addable()))
-                .filter(|field| field.key() != "qos.priority")
+                .filter(|field| field.key() != "namespace")
                 .map(|field| (field.key(), field.shape()))
                 .collect();
             crate::settings::reach(&catalogue)
@@ -4962,7 +4979,7 @@ fn r1690_reach_follows_the_palette_and_not_the_screen() {
             "and the section it was the only leaf of goes too",
         );
         assert!(
-            narrowed.leaves_missing.iter().any(|p| p == "qos.priority"),
+            narrowed.leaves_missing.iter().any(|p| p == "namespace"),
             "the report names it: {:?}",
             narrowed.leaves_missing,
         );
@@ -5242,11 +5259,17 @@ fn r1691_a_rows_control_announces_the_kind_its_shape_is() {
                 // form refuses.
                 _ if field.source.is_some() => "textbox",
                 "int" => "spinbutton",
+                // ★ R1842 — the arm this screen had no row for until the
+                // permissions pair arrived. A boolean row is one control that
+                // is on or off, so it announces as what it is rather than as
+                // the box a value is typed into, and the fallback below would
+                // have called it a textbox with nothing failing.
+                "bool" => "checkbox",
                 // R1693 — `address[]` is a `group` for the same reason `perm`
-                // is: what both shapes paint is a row of independent controls,
+                // was: what both shapes paint is a row of independent controls,
                 // not members of a collection. It was `list` until
                 // `scene/conform` asked what the list held.
-                "perm" | "address[]" => "group",
+                "address[]" => "group",
                 // `id` is a formatted string and `text` is free text; both are
                 // typed into.
                 _ => "textbox",
@@ -5269,11 +5292,14 @@ fn r1691_a_rows_control_announces_the_kind_its_shape_is() {
             ("lab.form.step.transport.link.tx.batch_size.down", "button"),
             ("lab.form.item.listen.endpoints.0", "textbox"),
             ("lab.form.item.listen.endpoints.add", "button"),
-            // A `perm` field takes any subset, so its options are independent
-            // checkboxes rather than a radio set — the distinction that tells a
-            // reader whether picking one un-picks another.
-            ("lab.form.option.control.permissions.read", "checkbox"),
-            ("lab.form.option.control.permissions.write", "checkbox"),
+            // ★ R1842 — the two `perm` option checkboxes that stood here are
+            // gone with the row: the target declares the two permissions as
+            // separate boolean leaves, so this screen has no set-valued field
+            // any more. The assertion did not die with the row — the same claim
+            // about a `Flags` field's options is made against the painter
+            // itself in `pinion_widget_paint::config_form`, which is where it
+            // belongs, since it is a property of the shape and not of this
+            // screen.
         ];
         for (tag, want) in want_part {
             assert_eq!(
@@ -5669,9 +5695,9 @@ fn r1770_the_gate_paints_at_the_size_the_pin_declares() {
 ///
 /// The decision the round is named for, asserted where it can fail. The three
 /// specified surfaces of this screen do not exist until a session builds them,
-/// so a freshly painted lab must say *away* for all three — not `0 of 15
-/// reproduced`, which would report a working screen as broken, and not silence,
-/// which is what it did for ten rounds.
+/// so a freshly painted lab must say *away* for all three — not `0 of
+/// everything reproduced`, which would report a working screen as broken, and
+/// not silence, which is what it did for ten rounds.
 ///
 /// ★ The fixture asserts the **shortfall is the same number** in both readings
 /// before it separates them. A build that draws nothing and a session that
@@ -5688,9 +5714,15 @@ fn r1742_an_untouched_lab_says_its_surfaces_are_away_rather_than_missing() {
         painted_at(&state, conformance_size());
         let shut = super::judge::conformance();
 
+        // ★ R1842 — fourteen, where it was fifteen. The routing row's roster is
+        // specified with the words the target takes on THAT key, and the target
+        // takes two; the three that were here were the session modes, which
+        // belong to a different row. A part left the specification because it
+        // was never that row's, which is a different move from a part being
+        // dropped — the pin's own comment carries the measurement.
         assert_eq!(
             shut.specified(),
-            15,
+            14,
             "what the inspector is specified to be does not depend on a session",
         );
         assert_eq!(shut.reproduced(), 0, "and none of it is on screen");
@@ -6085,15 +6117,14 @@ fn r1732_the_roster_is_driveable_from_the_keyboard_without_writing_as_it_moves()
         super::press(&state);
         super::release(&state);
 
-        // Two steps down the roster, and the document must not have moved.
+        // ★ R1842 — the highlight is read after the FIRST step and the document
+        // after the SECOND, where both used to be read after two. The roster is
+        // the target's own word list now and the target offers two words here,
+        // so two steps down a wrapping roster land back where they started —
+        // and the assertion that the reader has moved would have been reading a
+        // wrap rather than a failure to move. Split, it is stronger than it was:
+        // one press moves the highlight, and two presses still write nothing.
         assert!(super::key(&state, "ArrowDown"));
-        assert!(super::key(&state, "ArrowDown"));
-        assert_eq!(
-            held(),
-            opening,
-            "★★★★★ moving is not writing — the floor's collapsed control \
-             commits on every arrow press",
-        );
         let highlighted = state
             .picking
             .get()
@@ -6103,6 +6134,26 @@ fn r1732_the_roster_is_driveable_from_the_keyboard_without_writing_as_it_moves()
             .highlighted()
             .to_owned();
         assert_ne!(highlighted, opening, "the reader has moved off the value");
+        assert!(super::key(&state, "ArrowDown"));
+        assert!(super::key(&state, "ArrowUp"));
+        assert_eq!(
+            held(),
+            opening,
+            "★★★★★ moving is not writing — the floor's collapsed control \
+             commits on every arrow press",
+        );
+        assert_eq!(
+            state
+                .picking
+                .get()
+                .as_ref()
+                .expect("still open")
+                .1
+                .highlighted(),
+            highlighted,
+            "and down-then-up is back where it was, so what Enter writes below \
+             is the word this test named",
+        );
 
         assert!(super::key(&state, "Enter"));
         assert_eq!(held(), highlighted, "★ and Enter writes what was under it");

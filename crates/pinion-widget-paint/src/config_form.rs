@@ -635,9 +635,6 @@ const LIST_GAP: u32 = 4;
 
 /// The size a boolean's word is drawn at.
 const BOOL_WORD_PX: u32 = 12;
-/// The line box that word sits in, so it can be centred in the control rather
-/// than dropped at a fixed offset from the top.
-const BOOL_WORD_LINE: u32 = 14;
 /// The gap between a boolean's switch and its word. The behaviour canon's own
 /// `gap`, measured off its boolean control.
 const BOOL_WORD_GAP: u32 = 9;
@@ -1860,7 +1857,6 @@ fn boolean_control(
     let word_w = inner
         .w
         .saturating_sub(BOOL_WORD_PAD * 2 + style.track_w + BOOL_WORD_GAP);
-    let word_y = CONTROL_FRAME + inner.h.saturating_sub(BOOL_WORD_LINE) / 2;
     Scene::Container(
         ContainerNode::new(vec![
             // The switch is PLACED rather than flowed, because this container
@@ -1896,16 +1892,59 @@ fn boolean_control(
                         .with_size(Size::px(style.track_w, style.track_h)),
                 ),
             ),
-            Scene::Text(TextNode::styled(
-                boolean_word(field).to_owned(),
-                // The room that is left, not a constant. An 80 px box was here,
-                // and a box that does not follow the control it sits in is a
-                // second answer to how much room the word has.
-                Rect::new(word_x, word_y, word_w, BOOL_WORD_LINE),
-                form_run_style()
-                    .with_size_px(BOOL_WORD_PX)
-                    .with_fg(theme.resolve(ColorRole::OnSurface)),
-            )),
+            // ★★★★★ R1842 — the word is PLACED, the way the switch beside it
+            // is, and it was not before. A `TextNode`'s own rectangle is a
+            // declaration a laid-out parent does not read, so the rectangle
+            // computed below was dead data and the word landed at the
+            // control's ORIGIN: on top of the switch, and one pixel over the
+            // outline the control strokes inside itself.
+            //
+            // ⚠ THE FIRST DRAFT OF THIS COMMENT SAID EVERY OTHER CONTROL HERE
+            // PASSES `Rect::default()`, AND THIS ROUND'S OWN CLOSING AUDIT
+            // FOUND THAT FALSE. Count them rather than trusting a number:
+            // `grep -A2 'TextNode::styled' <this file> | grep -c 'Rect::new'`.
+            // The ones that do not are the SAME shape this repair removes — a
+            // computed rect under a `placed(...)` parent, carrying the same
+            // 14 px line box beside the same 12 px face. Whether their runs
+            // land wrong too is NOT measured here ⇒
+            // `debt-a-text-nodes-rectangle-is-dead-under-a-laid-out-parent`.
+            //
+            // Nothing saw it for two reasons worth writing down. The painter's
+            // own tests lay a form out and read the geometry, which is right
+            // about the rectangle and says nothing about where the run went;
+            // and the ink gate that WOULD have caught it runs over a screen,
+            // and no screen in this tree had a boolean row in the form it
+            // opens with until R1842 gave one two. The check existed, the
+            // population did not.
+            Scene::Container(
+                ContainerNode::new(vec![Scene::Text(TextNode::styled(
+                    boolean_word(field).to_owned(),
+                    Rect::default(),
+                    form_run_style()
+                        .with_size_px(BOOL_WORD_PX)
+                        .with_fg(theme.resolve(ColorRole::OnSurface)),
+                ))])
+                .with_layout(
+                    LayoutStyle::new()
+                        .flex(FlexDirection::Row)
+                        .with_align_items(AlignItems::Center)
+                        .with_absolute_position(word_x, CONTROL_FRAME)
+                        // The room that is left, not a constant. An 80 px box
+                        // was here, and a box that does not follow the control
+                        // it sits in is a second answer to how much room the
+                        // word has.
+                        //
+                        // ★ R1842 — the HEIGHT is the control's content height
+                        // and the run is centred in it, where a 14 px line box
+                        // was written down beside a 12 px face. That number was
+                        // a second answer to how tall a line is, and it was too
+                        // small: the run laid out four pixels below the box
+                        // that was supposed to hold it. A line box is the face
+                        // size plus what the face needs under it, so the only
+                        // honest way to reserve it is to let the run say.
+                        .with_size(Size::px(word_w, inner.h)),
+                ),
+            ),
         ])
         .with_tag(format!("{tag_prefix}.control.{}", row.key))
         .with_style(control_skin(worst, theme))

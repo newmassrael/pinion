@@ -1703,7 +1703,7 @@ impl LabState {
                     found.push((name.clone(), Finding::NothingListening));
                 }
                 if form
-                    .field("discovery.multicast")
+                    .field("discovery.multicast.enabled")
                     .is_some_and(|f| f.value().trim() == "true")
                 {
                     found.push((name.clone(), Finding::DiscoveryOn));
@@ -2490,17 +2490,25 @@ fn form_for(id: &str, role: Role) -> ConfigForm {
         // dialled a node it was not drawn to reach and missed one it was.
         // The row is worked out from the wires instead ([`dialled_row`]), and
         // a person who needs an address this canvas does not draw takes it over.
+        // ★★★★★ R1842 — two boolean rows where one set-valued row stood. The
+        // target declares the two permissions separately and holds them as an
+        // object of booleans; the single row composed an array at a path that
+        // is not a leaf, so what this screen exported was refused by the thing
+        // it configures. A router grants both, everything else reads only —
+        // which is what the one row said, now said in the target's own shape.
+        ConfigField::new("admin.permissions.read", "bool", Applies::Restart, "true")
+            .with_shape(shape("admin.permissions.read")),
         ConfigField::new(
-            "control.permissions",
-            "perm",
+            "admin.permissions.write",
+            "bool",
             Applies::Restart,
             if role == Role::Router {
-                "read, write"
+                "true"
             } else {
-                "read"
+                "false"
             },
         )
-        .with_shape(shape("control.permissions")),
+        .with_shape(shape("admin.permissions.write")),
         ConfigField::new(
             "transport.link.tx.batch_size",
             "int",
@@ -2512,8 +2520,13 @@ fn form_for(id: &str, role: Role) -> ConfigForm {
     // The two peers the reference draws with a warning dot have discovery on.
     if matches!(id, "P-01" | "P-02") {
         fields.push(
-            ConfigField::new("discovery.multicast", "bool", Applies::Restart, "true")
-                .with_shape(shape("discovery.multicast")),
+            ConfigField::new(
+                "discovery.multicast.enabled",
+                "bool",
+                Applies::Restart,
+                "true",
+            )
+            .with_shape(shape("discovery.multicast.enabled")),
         );
     }
     let addable = spec::ADDABLE
@@ -2602,11 +2615,11 @@ fn opening_id(id: &str) -> String {
 /// would refuse.
 fn offered(key: &str) -> ConfigField {
     let (word, applies, opening) = match key {
-        "discovery.multicast" | "timestamping.enabled" | "compression.enabled" => {
-            ("bool", Applies::Restart, "false")
-        }
-        "qos.priority" => ("int", Applies::Hot, "5"),
-        "routing.mode" => ("mode", Applies::Restart, "peer_to_peer"),
+        "discovery.multicast.enabled"
+        | "timestamping.enabled"
+        | "transport.unicast.compression.enabled" => ("bool", Applies::Restart, "false"),
+        "namespace" => ("path", Applies::Restart, "demo"),
+        "routing.peer.mode" => ("mode", Applies::Restart, "peer_to_peer"),
         // ★★ R1716 — offered so a card the canvas draws no link out of can
         // still be told to dial something: the graph is what this tool draws,
         // not the boundary of what the configuration may reach. A card that
@@ -2816,9 +2829,7 @@ fn card_rows(state: &LabState, node: NodeId) -> Vec<(String, String)> {
             .rows
             .iter()
             .map(|(k, v)| {
-                let live = form
-                    .and_then(|f| digest_path(k).and_then(|path| f.field(path)))
-                    .map(|f| f.value().into_owned());
+                let live = form.and_then(|f| digest_value(f, digest_paths(k)));
                 ((*k).to_owned(), live.unwrap_or_else(|| (*v).to_owned()))
             })
             .collect();
@@ -2838,18 +2849,47 @@ fn card_rows(state: &LabState, node: NodeId) -> Vec<(String, String)> {
         })
 }
 
-/// The configuration path a card's digest line is about, when it is about one.
+/// The configuration paths a card's digest line is about, when it is about any.
 ///
 /// A card row is a *label* a person reads at a glance (`listen`), and the form
 /// is keyed by the configuration path (`listen.endpoints`); this is the one
 /// mapping between them, so a digest line that names a path tracks it.
-const fn digest_path(key: &str) -> Option<&'static str> {
+///
+/// ★★ R1842 — a *slice*, because one line can be about more than one path. The
+/// permissions line is the case that forced it: the target declares the two
+/// permissions as separate boolean leaves, so a digest line reading only one of
+/// them would report half a fact and look like the whole one.
+const fn digest_paths(key: &str) -> &'static [&'static str] {
     match key.as_bytes() {
-        b"listen" => Some("listen.endpoints"),
-        b"id" => Some("id"),
-        b"control" => Some("control.permissions"),
-        b"discovery" => Some("discovery.multicast"),
-        _ => None,
+        b"listen" => &["listen.endpoints"],
+        b"id" => &["id"],
+        b"control" => &["admin.permissions.read", "admin.permissions.write"],
+        b"discovery" => &["discovery.multicast.enabled"],
+        _ => &[],
+    }
+}
+
+/// What a digest line reads off the form, when the form has what it names.
+///
+/// One path is its value. Several are read as a **set of named booleans** and
+/// rendered as the last segment of each one that is on — which is the spelling
+/// the specification's own digest uses (`read, write`) and the spelling the
+/// reference paints. `None` when the form carries none of them, so the caller
+/// falls back to the declared value rather than showing an empty line.
+fn digest_value(form: &ConfigForm, paths: &[&str]) -> Option<String> {
+    match paths {
+        [] => None,
+        [only] => form.field(only).map(|f| f.value().into_owned()),
+        many => {
+            let on: Vec<&str> = many
+                .iter()
+                .filter(|path| form.field(path).is_some_and(|f| f.value().trim() == "true"))
+                .filter_map(|path| path.rsplit('.').next())
+                .collect();
+            many.iter()
+                .any(|path| form.field(path).is_some())
+                .then(|| on.join(", "))
+        }
     }
 }
 
@@ -4992,10 +5032,13 @@ fn mode_row(role: Role) -> ConfigField {
         Some(implied) => (implied, "role"),
         None => ("peer", "example default"),
     };
+    // ★ R1842 — the shape comes from the option surface like every other row's.
+    // `mode` is a path the target declares, so the words it takes are the
+    // surface's business; this row spelled them again from `Role::MODES`, which
+    // is the shape-beside-the-row arrangement R1690 removed everywhere else.
+    // The surface refines `mode` FROM `Role::MODES`, so there is still one set.
     ConfigField::new("mode", "mode", Applies::Restart, value)
-        .with_shape(FieldType::Choice {
-            of: Role::MODES.iter().map(|m| (*m).into()).collect(),
-        })
+        .with_shape(settings::shape_or_free("mode"))
         .derived_from(from)
 }
 

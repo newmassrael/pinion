@@ -63,9 +63,14 @@ EXT = "/external"
 VIEWPORT = (1440, 900)
 
 # The row the specification's own example argument names, and the one this demo
-# takes out: an options row, so removing it also proves the seat is not confused
-# with the option chips beside it.
-ROW = "control.permissions"
+# takes out.
+#
+# ★ R1842 — a boolean row, where it was a set-of-words row until the option
+# surface stopped being written from this crate's memory of its target. The
+# reason the row is not a plain text box is unchanged and is the point:
+# removing it proves the seat is not confused with the control beside it, which
+# is now the switch rather than a row of option chips.
+ROW = "admin.permissions.write"
 
 
 def q(tf, path):
@@ -119,8 +124,7 @@ def assert_chips_answer_for_themselves(tf) -> None:
     layer under this screen: the chip row's widths come from the text measurer,
     which answers only inside an owner scope — so the paint (inside) and the hit
     test (outside) wrapped the row differently and a chip's rectangle carried a
-    neighbour's key. Pressing the chip painted `control.permissions` added
-    `plugins`.
+    neighbour's key. Pressing one chip added the key of the chip beside it.
 
     A gate over EVERY chip rather than the one that was wrong, which is R1684.2's
     lesson: a gate placed where the last defect was finds only the last defect.

@@ -367,7 +367,7 @@ def body() -> None:
             sentence = lines[0]["sentence"]
             tf.invoke(f"{EXT}/select", sentence.split(" ")[0])
             if "discovery" in sentence:
-                tf.invoke(f"{EXT}/set_field", "discovery.multicast=false")
+                tf.invoke(f"{EXT}/set_field", "discovery.multicast.enabled=false")
             else:
                 tf.invoke(f"{EXT}/set_field", f"listen.endpoints=tcp/0.0.0.0:{port}")
             repaired += 1
