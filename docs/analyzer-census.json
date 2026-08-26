@@ -119,7 +119,8 @@
     "tier": "t2",
     "capability": "building a topology from observed messages, with no management API",
     "verdict": "app",
-    "covered_by": "the parse is domain; where it LANDS is now `Document::observe` (R1645)"
+    "covered_by": "the parse is domain; where it LANDS is now `Document::observe` (R1645)",
+    "rests_on": "crates/pinion-node-graph/src/observed.rs#observe - R1847 checked the claim rather than the sentence: a topology built from what was seen needs somewhere for an observation to land, and this is it"
   },
   {
     "id": "capture.t2.15",
@@ -224,7 +225,8 @@
     "tier": "t1",
     "capability": "traffic nodes carrying rate, payload, priority, congestion and reliability",
     "verdict": "app",
-    "covered_by": "a taxonomy, which this crate deliberately does not own"
+    "covered_by": "a taxonomy, which this crate deliberately does not own",
+    "rests_on": "crates/pinion-node-graph/src/model.rs#NodeKind - what a taxonomy is DECLARED through. R1847: the row says the crate declines to own the vocabulary, and this is the seam that decline rests on; a crate with no way to say what a node IS would make this a gap"
   },
   {
     "id": "lab.t1.9",
@@ -250,7 +252,8 @@
     "tier": "t1",
     "capability": "a fault injection panel for the faults the target's own settings provide",
     "verdict": "app",
-    "covered_by": "a form; the link-level faults are stated out of scope by the capability list itself"
+    "covered_by": "a form; the link-level faults are stated out of scope by the capability list itself",
+    "rests_on": "crates/pinion-widget-paint/src/config_form.rs - R1847: `a form` is the whole substrate claim this row makes, and a form is a thing the catalog ships"
   },
   {
     "id": "lab.t1.12",
@@ -301,7 +304,8 @@
     "tier": "t2",
     "capability": "scenario diff and regression: two runs of one graph compared on order and latency distribution",
     "verdict": "app",
-    "covered_by": "`Run::trace` is comparable and the chart crate has the distributions; the comparison is the application's"
+    "covered_by": "`Run::trace` is comparable and the chart crate has the distributions; the comparison is the application's",
+    "rests_on": "crates/pinion-node-graph/src/run.rs#trace crates/pinion-chart/src/distribution.rs - R1847 checked BOTH halves of this row's sentence, because a row naming two pieces of substrate can be half wrong and read as right"
   },
   {
     "id": "lab.t2.18",
@@ -317,7 +321,8 @@
     "tier": "t2",
     "capability": "heterogeneous implementation node types, as a compatibility test graph",
     "verdict": "app",
-    "covered_by": "a taxonomy"
+    "covered_by": "a taxonomy",
+    "rests_on": "crates/pinion-node-graph/src/model.rs#NodeKind - the same seam `lab.t1.8` rests on, and R1847 states the duplication rather than hiding it: two rows resting on one thing is a fact about the substrate, not a smell in the census"
   },
   {
     "id": "dashboard.t0.1",
@@ -460,7 +465,8 @@
     "tier": "t1",
     "capability": "an alarm feed",
     "verdict": "app",
-    "covered_by": "a virtualised list with a severity column"
+    "covered_by": "a virtualised list with a severity column",
+    "rests_on": "crates/pinion-widget-paint/src/virtual_list.rs crates/pinion-widget-paint/src/column_header.rs - R1847: both halves of `a virtualised list with a severity column`, because the row's claim is the pair and a list with no column header would leave the severity nowhere"
   },
   {
     "id": "dashboard.t1.10",

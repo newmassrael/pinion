@@ -188,6 +188,31 @@ def load(text: str) -> list[dict]:
                 f"{where}: verdict app names a proof — an `app` is a claim about"
                 " composition, and no unit test exercises one; use assembled_by"
             )
+        # ★ R1847 — the third kind of evidence, and it does not cross either.
+        # `rests_on` is the substrate half of an `app` claim; a `have` or a
+        # `gap` naming one would be saying something its verdict does not mean.
+        if row.get("rests_on") and row["verdict"] != "app":
+            raise Finding(
+                f"{where}: verdict {row['verdict']} names substrate — `rests_on`"
+                " is what an `app` claims is already there"
+            )
+        if row.get("rests_on") and not rests_on_citations(row):
+            raise Finding(
+                f"{where}: rests_on names no path — the field exists to be"
+                " checked, and prose with no citation in it cannot be"
+            )
+        # ★★★★★ R1847 — a fragment is ONE WORD. Written `foo.rs#pub fn observe`
+        # the split leaves the symbol `pub`, which is in every Rust file: the
+        # citation reads as precise and checks nothing. Refused here rather than
+        # truncated silently, because the silent version is what shipped in this
+        # round's first draft and passed.
+        for path, symbol in rests_on_citations(row):
+            if symbol in KEYWORDS:
+                raise Finding(
+                    f"{where}: rests_on names the keyword {symbol!r} in {path} —"
+                    " a citation written `foo.rs#pub fn observe` splits at the"
+                    " space and checks `pub`, which every Rust file has"
+                )
         if not row["id"].startswith(f"{row['plane']}."):
             raise Finding(f"{where}: an id is <plane>.<tier>.<n>")
     return rows
@@ -234,6 +259,136 @@ def cited_paths(field: str) -> list[str]:
 def assembly_paths(row: dict) -> list[str]:
     """The paths an `assembled_by` names. See [`cited_paths`] for the rule."""
     return cited_paths(row.get("assembled_by", ""))
+
+
+def rests_on_citations(row: dict) -> list[tuple[str, str]]:
+    """The `(path, symbol)` pairs a `rests_on` names; `symbol` may be empty.
+
+    ★★★★★ R1847 — the field that makes an `app` verdict's OTHER half checkable.
+    `assembled_by` answers *has anyone composed this yet*; it says nothing about
+    the claim the verdict actually makes, which is **the substrate is already
+    here and only the domain logic is the application's**. A row whose substrate
+    is NOT here is not an `app` at all — it is a `gap`, and `gap` is the bin the
+    framework's owed number is counted from. That is the expensive direction:
+    a wrong `gap` self-corrects the moment somebody reaches for it, and a wrong
+    `app` deflates the owed number in silence.
+
+    A citation is `crates/…/foo.rs#symbol`, or a bare path. The fragment is what
+    makes this stronger than an existence check on a file — a module can survive
+    while the item the verdict rests on is renamed away.
+
+    ★★★★★ THE SYMBOL IS ONE WORD, AND THAT IS A RULE THIS FUNCTION LEARNED THE
+    HARD WAY. The first draft split the whole field on whitespace and then cut
+    at `#`, so a citation written `foo.rs#pub fn observe` yielded the symbol
+    `pub` — which occurs in every Rust file in the tree. The check passed, the
+    pin's six citations all had that shape, and **the gate was vacuous on the
+    very rows it was built for**. It was caught by trying to make it FAIL:
+    renaming the item to something absent still produced no finding. ⇒ a gate
+    nobody has watched fail is a gate nobody has tested.
+
+    So a fragment carrying a space is refused at load rather than quietly
+    truncated, and the symbol is matched as a DECLARATION (`fn x`, `struct x`,
+    `trait x`, …) rather than as a substring — the boundary rule this repo
+    already writes down for censuses, because an unbounded substring credits
+    another item's work.
+
+    ⚠ The limit, stated rather than left to be discovered: this answers "an item
+    with this name is declared in this file", not "it has this signature" or
+    "the verdict needs exactly this". Reading a source file for a declaration is
+    a sound use of search, which is why this is not the mistake R1771 refuses:
+    THAT rule is about proving a test RUNS, where search cannot see past `cfg`
+    and the oracle has to be the test runner. A declaration has no such hidden
+    state.
+    """
+    out: list[tuple[str, str]] = []
+    for token in str(row.get("rests_on", "")).split():
+        cite = token.strip(",;")
+        path, _, symbol = cite.partition("#")
+        if not cited_paths(path):
+            continue
+        out.append((path, symbol))
+    return out
+
+
+#: Words that are never the NAME of an item, only the grammar around one.
+#:
+#: ★★★★★ R1847 — the guard on the shape this round shipped in its own first
+#: draft. `rests_on` is split on whitespace before the `#` is cut, so a citation
+#: written `foo.rs#pub fn observe` yields the symbol `pub` — present in every
+#: Rust file, so the check passes and the gate is vacuous exactly where it was
+#: needed. The space itself cannot be seen after the split; what CAN be seen is
+#: that the surviving word is grammar rather than a name, and that is what this
+#: refuses. A citation naming an item is unaffected.
+KEYWORDS: frozenset[str] = frozenset(
+    {
+        "pub",
+        "fn",
+        "struct",
+        "trait",
+        "enum",
+        "const",
+        "static",
+        "type",
+        "mod",
+        "impl",
+        "use",
+        "let",
+        "crate",
+        "macro_rules!",
+    }
+)
+
+#: How a Rust item is introduced, for [`check_rests`]'s declaration match.
+DECLARES: tuple[str, ...] = (
+    "fn",
+    "struct",
+    "trait",
+    "enum",
+    "const",
+    "static",
+    "type",
+    "mod",
+    "macro_rules!",
+)
+
+
+def declares(text: str, symbol: str) -> bool:
+    """Whether `text` DECLARES `symbol`, rather than merely containing it.
+
+    Pure, and deliberately narrow: `<keyword> <symbol>` followed by a character
+    that cannot continue an identifier. `parse` therefore does not answer for
+    `parse_header`, which is the failure an unbounded substring produces.
+    """
+    for keyword in DECLARES:
+        at = 0
+        needle = f"{keyword} {symbol}"
+        while (at := text.find(needle, at)) != -1:
+            after = at + len(needle)
+            tail = text[after] if after < len(text) else " "
+            if not (tail.isalnum() or tail == "_"):
+                return True
+            at = after
+    return False
+
+
+def check_rests(rows: list[dict], exists, read) -> list[str]:
+    """Every substrate a `rests_on` names that the tree cannot answer for.
+
+    Pure in `exists` and `read`, like its two siblings, so the rule is testable
+    without a filesystem.
+    """
+    out: list[str] = []
+    for row in rows:
+        for path, symbol in rests_on_citations(row):
+            if not exists(path):
+                out.append(f"{row['id']}: rests_on names {path}, which is not there")
+                continue
+            if symbol and not declares(read(path), symbol):
+                out.append(
+                    f"{row['id']}: rests_on names {symbol} in {path},"
+                    " which declares no such item"
+                )
+    return out
 
 
 def check_assemblies(rows: list[dict], exists) -> list[str]:
@@ -318,6 +473,18 @@ def check_evidence(rows: list[dict]) -> list[str]:
             out.append(
                 f"{ident}: an `app` must name the assembly that composes it "
                 "(assembled_by is empty)"
+            )
+        # ★★★★★ R1847 — and the row on the ratchet owes the OTHER half. An
+        # `app` nobody has composed is a claim resting on nothing a reader can
+        # check: the only thing separating it from a `gap` is that the substrate
+        # is already here, and until R1847 no row said where. Required exactly
+        # where the assembly is absent, because a row that IS composed has an
+        # example driving the substrate, which is the stronger evidence of the
+        # two — demanding both there would be ceremony rather than a check.
+        if verdict == "app" and ident in UNASSEMBLED and not rests_on_citations(row):
+            out.append(
+                f"{ident}: an `app` with no assembly must name the substrate it "
+                "rests on, or it is a `gap` (rests_on is empty)"
             )
     return out
 
@@ -435,6 +602,11 @@ def report(rows: list[dict]) -> list[str]:
         f"  {len(assembled)} of {tally['app']} `app` verdict(s) name an assembly —"
         " the rest are claims about composition nobody has composed"
     )
+    rested = [r for r in rows if r["verdict"] == "app" and rests_on_citations(r)]
+    out.append(
+        f"  {len(rested)} of {tally['app']} `app` verdict(s) name the substrate they"
+        " rest on — every one nobody has composed must, or it is a `gap`"
+    )
     for row in owed_rows:
         out.append(f"    {row['verdict']:<10} {row['id']:<16} {row['capability']}")
     return out
@@ -490,6 +662,30 @@ def selftest() -> int:
     refuses(
         "an app that names a proof",
         [{**good[0], "verdict": "app", "covered_by": "", "proven_by": "crate::test"}],
+    )
+    # ★ R1847 — and the third kind does not cross either.
+    refuses(
+        "a have that names substrate",
+        [{**good[0], "rests_on": "crates/x/src/y.rs#Thing"}],
+    )
+    refuses(
+        "an app whose substrate is prose with no citation in it",
+        [{**good[0], "verdict": "app", "covered_by": "y", "rests_on": "it is there"}],
+    )
+    # ★★★★★ R1847 — and the shape that shipped in this round's own first draft:
+    # a fragment carrying a space checks only its first word. Written here as a
+    # refusal because a counterfactual found nothing catching its removal, which
+    # is how a rule comes to be believed rather than enforced.
+    refuses(
+        "an app whose symbol carries a space, so only its first word is checked",
+        [
+            {
+                **good[0],
+                "verdict": "app",
+                "covered_by": "y",
+                "rests_on": "crates/x/src/y.rs#pub fn observe",
+            }
+        ],
     )
     ok_app = [
         {
@@ -568,13 +764,63 @@ def selftest() -> int:
         "an app that names no assembly is refused when it is not on the ratchet",
         [f for f in check_evidence(bare_app) if "assembled_by is empty" in f] != [],
     )
+    # ★★★★★ R1847 — this case used to assert that a row on the ratchet is
+    # refused by NOTHING, and that was the hole: the ratchet excuses the
+    # ASSEMBLY, and until this round a row with neither an assembly nor a named
+    # substrate was an `app` verdict resting on a sentence. The exemption is
+    # narrowed to what it was for, and the case now says which half it excuses.
+    on_ratchet = {**bare_app[0], "id": next(iter(UNASSEMBLED))}
     check(
-        "and is not refused when it IS on the ratchet",
-        check_evidence([{**bare_app[0], "id": next(iter(UNASSEMBLED))}]) == [],
+        "the ratchet excuses the assembly and not the substrate",
+        [f for f in check_evidence([on_ratchet]) if "assembled_by is empty" in f] == []
+        and [f for f in check_evidence([on_ratchet]) if "rests_on is empty" in f] != [],
+    )
+    check(
+        "and a row on it that names its substrate is not refused at all",
+        check_evidence([{**on_ratchet, "rests_on": "crates/x/src/y.rs#Thing"}]) == [],
     )
     check(
         "the ratchet holds only app rows, so it cannot excuse a have",
         check_evidence([{**bare_have[0], "id": next(iter(UNASSEMBLED))}]) != [],
+    )
+
+    # ★★★★★ R1847 — `rests_on`, the substrate half of an `app` claim.
+    rested = [{**good[0], "verdict": "app", "covered_by": "y", "rests_on": "a/b.rs#Sym"}]
+    check(
+        "a substrate whose file is gone is refused",
+        check_rests(rested, lambda _p: False, lambda _p: "") != [],
+    )
+    check(
+        "a substrate whose file is there but whose symbol is not is refused too",
+        check_rests(rested, lambda _p: True, lambda _p: "nothing like it here") != [],
+    )
+    check(
+        "and the pair that answers is not refused",
+        check_rests(rested, lambda _p: True, lambda _p: "pub fn Sym()") == [],
+    )
+    # ★★★★★ R1847 — the case that separates a DECLARATION from a substring, and
+    # it exists because a counterfactual found nothing holding the difference:
+    # every other case here fails under either reading. `Sym` occurs in
+    # `Symbol`, so a plain `in` says yes and this must say no.
+    check(
+        "a symbol that is only a PREFIX of a declared item does not answer for it",
+        check_rests(rested, lambda _p: True, lambda _p: "pub fn Symbol() {}") != [],
+    )
+    check(
+        "and the boundary holds on the other side too",
+        not declares("fn parse_header() {}", "parse")
+        and declares("fn parse(x: u8) {}", "parse"),
+    )
+    check(
+        "a bare path with no symbol asks only that the file be there",
+        check_rests(
+            [{**rested[0], "rests_on": "a/b.rs"}], lambda _p: True, lambda _p: ""
+        )
+        == [],
+    )
+    check(
+        "prose in the field is skipped, and prose ALONE is refused at load",
+        rests_on_citations({"rests_on": "the parse is domain"}) == [],
     )
 
     # ★★★★★ R1771 — the same rules for the OTHER kind of evidence, which had
@@ -775,6 +1021,17 @@ def main() -> int:
     if unevidenced:
         for gap in unevidenced:
             print(f"analyzer census: {gap}", file=sys.stderr)
+        return 1
+    # ★★★★★ R1847 — and the substrate an `app` says is already there. Reads
+    # files, builds nothing, so it runs every invocation beside the two above.
+    adrift = check_rests(
+        rows,
+        lambda path: (ROOT / path).exists(),
+        lambda path: (ROOT / path).read_text(encoding="utf-8", errors="replace"),
+    )
+    if adrift:
+        for gone in adrift:
+            print(f"analyzer census: {gone}", file=sys.stderr)
         return 1
     # The ratchet cannot be loosened by editing a row: a name in `UNASSEMBLED`
     # that no longer needs to be there is a stale exemption, and a stale
