@@ -308,7 +308,18 @@ pub enum ColorRole {
     /// Foreground rendered on top of an [`Self::Accent`] fill — paired
     /// for guaranteed contrast. Material 3 `onPrimary`.
     OnAccent,
-    /// Hairline / divider / input-border color. Material 3 `outline`.
+    /// **Component boundary** — the stroke on the edge of a control: an input
+    /// field's border, a card's outline, a frame. Material 3 `outline`, and
+    /// WCAG 1.4.11's 3:1 non-text floor applies to it
+    /// ([`legibility::PAIRINGS`](crate::legibility::PAIRINGS) declares it).
+    ///
+    /// ★ R1839 — this said *"hairline / divider / input-border color"*, naming
+    /// two jobs a design system separates, and R1807 carried an open debt
+    /// about the ambiguity. Counted over six painted screens the role draws
+    /// **97 boundaries and 2 dividers**, so it is a boundary role and is
+    /// documented as one. A hairline that must read as *below* the surface is
+    /// deliberately not this: see `hello-analyzer-shell`'s canvas grid ink,
+    /// whose own comment says it is not a theme role.
     Outline,
     /// Filled-but-inactive container surface — the chip / track / pill
     /// background a widget shows in its **Off** posture, before any
@@ -524,7 +535,10 @@ impl ColorRole {
             ColorRole::OnSurfaceMuted => Color::rgb(0x60, 0x60, 0x60),
             ColorRole::Accent => Color::rgb(0x19, 0x76, 0xd2),
             ColorRole::OnAccent => Color::rgb(0xff, 0xff, 0xff),
-            ColorRole::Outline => Color::rgb(0xc0, 0xc0, 0xc0),
+            // R1839 — the nearest grey below the old `#c0c0c0` that clears
+            // WCAG 1.4.11's 3:1 boundary floor on this surface. Derived, and
+            // re-derived by `legibility::tests::r1839_the_boundary_floor_...`.
+            ColorRole::Outline => Color::rgb(0x94, 0x94, 0x94),
             ColorRole::SurfaceContainerHighest => Color::rgb(0xe6, 0xe0, 0xe9),
             ColorRole::SurfaceContainerLow => Color::rgb(0xf7, 0xf2, 0xfa),
             ColorRole::SurfaceContainer => Color::rgb(0xf3, 0xed, 0xf7),
@@ -647,7 +661,7 @@ impl Theme {
             on_surface_muted: Color::rgb(0x60, 0x60, 0x60),
             accent: Color::rgb(0x19, 0x76, 0xd2),
             on_accent: Color::rgb(0xff, 0xff, 0xff),
-            outline: Color::rgb(0xc0, 0xc0, 0xc0),
+            outline: Color::rgb(0x94, 0x94, 0x94),
             surface_container_highest: Color::rgb(0xe6, 0xe0, 0xe9),
             surface_container_low: Color::rgb(0xf7, 0xf2, 0xfa),
             surface_container: Color::rgb(0xf3, 0xed, 0xf7),
@@ -718,7 +732,7 @@ impl Theme {
             on_surface_muted: Color::rgb(0x9e, 0x9e, 0x9e),
             accent: Color::rgb(0x60, 0xa5, 0xfa),
             on_accent: Color::rgb(0x0b, 0x1f, 0x3f),
-            outline: Color::rgb(0x40, 0x40, 0x40),
+            outline: Color::rgb(0x61, 0x61, 0x61),
             surface_container_highest: Color::rgb(0x36, 0x34, 0x3b),
             surface_container_low: Color::rgb(0x1d, 0x1b, 0x20),
             surface_container: Color::rgb(0x21, 0x1f, 0x26),
@@ -1642,7 +1656,9 @@ mod tests {
         assert_eq!(t.on_surface_muted, Color::rgb(0x60, 0x60, 0x60));
         assert_eq!(t.accent, Color::rgb(0x19, 0x76, 0xd2));
         assert_eq!(t.on_accent, Color::rgb(0xff, 0xff, 0xff));
-        assert_eq!(t.outline, Color::rgb(0xc0, 0xc0, 0xc0));
+        // R1839 — raised from `#c0c0c0`, which measured 1.82 against a 3:1
+        // boundary floor. The value is derived; see `legibility`.
+        assert_eq!(t.outline, Color::rgb(0x94, 0x94, 0x94));
         assert_eq!(t.surface_container_highest, Color::rgb(0xe6, 0xe0, 0xe9),);
         assert_eq!(t.surface_container_low, Color::rgb(0xf7, 0xf2, 0xfa));
         assert_eq!(t.surface_container, Color::rgb(0xf3, 0xed, 0xf7));
@@ -1659,7 +1675,8 @@ mod tests {
         assert_eq!(t.on_surface_muted, Color::rgb(0x9e, 0x9e, 0x9e));
         assert_eq!(t.accent, Color::rgb(0x60, 0xa5, 0xfa));
         assert_eq!(t.on_accent, Color::rgb(0x0b, 0x1f, 0x3f));
-        assert_eq!(t.outline, Color::rgb(0x40, 0x40, 0x40));
+        // R1839 — raised from `#404040`, which measured 1.81. Derived.
+        assert_eq!(t.outline, Color::rgb(0x61, 0x61, 0x61));
         assert_eq!(t.surface_container_highest, Color::rgb(0x36, 0x34, 0x3b),);
         assert_eq!(t.surface_container_low, Color::rgb(0x1d, 0x1b, 0x20));
         assert_eq!(t.surface_container, Color::rgb(0x21, 0x1f, 0x26));

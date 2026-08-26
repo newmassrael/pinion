@@ -4915,3 +4915,101 @@ fn r1838_the_mounted_labs_diagram_survives_maximise_and_detach() {
         );
     });
 }
+
+/// ★★★★★ R1839 — **`ColorRole::Outline` draws component boundaries on this
+/// application, and the count is what says so.**
+///
+/// `pinion_core::legibility::PAIRINGS` holds `outline/surface` to WCAG
+/// 1.4.11's 3:1 boundary floor, and until R1839 that declaration rested on an
+/// assumption running the other way: that the role does TWO jobs — a boundary
+/// (3:1) and a decorative divider (no floor) — so no single floor could be
+/// right. `debt-one-outline-role-does-two-jobs-and-clears-neither` said so,
+/// and said the number had to be measured before the vocabulary was split.
+///
+/// This is that measurement, and it refutes the premise: over the six painted
+/// screens of this application the role draws **97 boundaries and 2 dividers**.
+/// One job, and the declared floor is right for it.
+///
+/// # Why the census reads the FRAME and not the source
+///
+/// `grep ColorRole::Outline` finds 145 mentions across this tree, most of them
+/// a `theme.resolve(...)` binding a local that is then used several times and
+/// sometimes differently. A mention is not a use, and WCAG is about the mark
+/// on the frame — so the classifier walks the painted scene and asks which
+/// slot the colour is in: the `border` of a box is the edge of something, and
+/// anything else is not.
+///
+/// # ⚠ What this application's own palette measures, which is NOT repaired here
+///
+/// The framework's canonical palettes clear the floor since R1839. This
+/// application replaces them with the reference tool's own tokens, and those
+/// are further short than the framework's ever were — asserted below so the
+/// number is a gated fact rather than an impression. Raising them would be a
+/// deliberate divergence from a behaviour reference this project is under
+/// standing instruction to reproduce, which is a decision rather than a fix:
+/// `debt-the-reference-palette-fails-the-boundary-floor` carries it.
+#[test]
+fn r1839_the_outline_role_draws_boundaries_on_every_screen() {
+    let owner = Owner::new();
+    owner.run(|| {
+        use pinion_core::contrast::contrast_ratio;
+        use pinion_core::legibility::{Floor, StrokeCensus, stroke_census};
+        use pinion_core::theme::ColorRole;
+
+        let state = use_shell_state();
+        let (light, dark) = super::reference_palettes();
+        let outline = dark.resolve(ColorRole::Outline);
+
+        let mut all = StrokeCensus::default();
+        let mut screens = 0;
+        let roster = spec::destinations();
+        let keys: Vec<String> = roster
+            .all()
+            .iter()
+            .map(|d| d.key.as_ref().to_owned())
+            .collect();
+        for destination in keys {
+            if state.go(&destination).is_err() {
+                // A closed seat is not a screen; the roster's own gate covers
+                // that it refuses, and this one is about what is painted.
+                continue;
+            }
+            let (_, scene) = painted_at((WIN_W, WIN_H));
+            all.absorb(&stroke_census(&scene, outline));
+            screens += 1;
+        }
+        assert!(
+            screens >= 6,
+            "every open destination was censused, not a sample: {screens}"
+        );
+
+        // ★ The finding. A ratio rather than two pinned numbers: what the
+        // declaration needs is that the role is a boundary role, and a screen
+        // gaining a divider must not fail a gate that is about the vocabulary.
+        assert!(
+            all.boundaries() > 0 && all.dividers() * 10 < all.boundaries(),
+            "\u{2605} `outline` must be overwhelmingly a component boundary for \
+             `PAIRINGS` to hold it to one floor \u{2014} measured {} boundary \
+             marks and {} divider marks",
+            all.boundaries(),
+            all.dividers(),
+        );
+
+        // ★★ And this application's own palette, measured rather than assumed.
+        // Both short of the boundary floor the framework now clears — see the
+        // header for why that is carried and not repaired here.
+        for (name, theme) in [("light", light), ("dark", dark)] {
+            let ratio = contrast_ratio(
+                theme.resolve(ColorRole::Outline),
+                theme.resolve(ColorRole::Surface),
+            );
+            assert!(
+                ratio < Floor::Boundary.ratio(),
+                "{name}: the reference palette's outline now CLEARS {} at \
+                 {ratio:.2} \u{2014} if it was raised deliberately, this gate \
+                 and the debt it points at are what say so",
+                Floor::Boundary.ratio(),
+            );
+        }
+    });
+}
