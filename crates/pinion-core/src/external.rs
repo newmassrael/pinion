@@ -356,7 +356,8 @@ thread_local! {
 ///
 /// If `extent` is zero on either axis — [`layout_size`]'s contract is that a
 /// surface of no extent is not something to lay out in, and a window of none
-/// is not a window.
+/// is not a window. A caller whose subject may not be a window at all wants
+/// [`maybe_with_window_extent`].
 pub fn with_window_extent<R>(extent: (u32, u32), body: impl FnOnce() -> R) -> R {
     assert!(
         extent.0 > 0 && extent.1 > 0,
@@ -367,6 +368,32 @@ pub fn with_window_extent<R>(extent: (u32, u32), body: impl FnOnce() -> R) -> R 
     // reason: a view that panics must not leave the statement standing.
     let _pop = PopPaintingExtentOnDrop;
     body()
+}
+
+/// ★★★★★ R1841 — **the same statement, declinable**, for the one caller whose
+/// subject is not a window.
+///
+/// [`with_window_extent`] panics on a zero axis and should: a window of none is
+/// not a window. The introspection mirror is not painting one — it asks *what
+/// would this screen fail to show whole at `(w, h)`* for `w` running down to
+/// zero, which `size_floor`'s bisection has done deliberately since R1711 and
+/// which its own comment calls "an extent nothing can be laid out in". R1838
+/// routed that question through the assertion and the shell died mid-request:
+/// four demos came back `timeout waiting for scene/size_floor` rather than with
+/// an answer.
+///
+/// So the caller says whether it has a window's extent to state, and declining
+/// costs nothing: [`painting_extent`] falls back to the tracked viewport, and
+/// the mirror publishes that same `(w, h)` into it before running the view.
+///
+/// ⚠ `None` is not "unknown" — it is *this is not a window*. A real paint that
+/// cannot say how big its window is has a defect, and it should reach
+/// [`with_window_extent`] and be told so.
+pub fn maybe_with_window_extent<R>(extent: Option<(u32, u32)>, body: impl FnOnce() -> R) -> R {
+    match extent {
+        Some(extent) => with_window_extent(extent, body),
+        None => body(),
+    }
 }
 
 struct PopPaintingExtentOnDrop;
@@ -4687,6 +4714,47 @@ impl ExternalIntrospect for CountedExternal {
 mod tests {
     use super::*;
     use crate::event::WindowEvent;
+
+    /// ★★★★★ R1841 — **a question about a size that is not a window is
+    /// answered, not fatal.**
+    ///
+    /// The assertion R1838 put on [`with_window_extent`] is right and stays:
+    /// driven here so the test proves the guard still bites rather than
+    /// asserting only the escape. What it must not do is reach a caller whose
+    /// subject is not a window — `size_floor`'s bisection asks about extents
+    /// down to zero, and routing that through the panic killed the shell
+    /// mid-request rather than answering the question.
+    ///
+    /// The two halves are asserted together because either alone is a
+    /// half-truth: a guard nobody can trip is decoration, and an escape that
+    /// does not actually run the body is an answer nobody gets.
+    #[test]
+    fn r1841_the_guard_bites_for_a_window_and_declines_for_a_question() {
+        for bad in [(0, 900), (900, 0), (0, 0)] {
+            let panicked = std::panic::catch_unwind(|| with_window_extent(bad, || ()));
+            assert!(
+                panicked.is_err(),
+                "{bad:?} is not a window and with_window_extent must say so"
+            );
+            // The same extent, offered as a question rather than as a window:
+            // the body runs, and nothing is stated for `painting_extent` to
+            // prefer over the tracked viewport.
+            let stated = maybe_with_window_extent(None, stated_window_extent);
+            assert_eq!(
+                stated, None,
+                "declining states nothing, so the viewport is what a view reads"
+            );
+        }
+        // And a real window still states, so the decline above is a branch and
+        // not the whole function.
+        let stated = maybe_with_window_extent(Some((520, 380)), stated_window_extent);
+        assert_eq!(stated, Some((520, 380)));
+        assert_eq!(
+            stated_window_extent(),
+            None,
+            "and the statement ends with the scope, panic or no panic"
+        );
+    }
 
     /// ★★★★★ R1714 — and its sibling had none either, which two counterfactuals
     /// said before a person did.

@@ -630,7 +630,11 @@ impl Theme {
     ///   normal text).
     /// - `accent` = Material Blue 700 (`#1976D2`), 4.6:1 on white.
     /// - `on_accent` = white (`#FFFFFF`), 4.6:1 on Material Blue 700.
-    /// - `outline` = `#C0C0C0`, the canonical W3C 1px hairline.
+    /// - `outline` = `#949494`, 3.03:1 on white. ★ R1841 — this line said
+    ///   `#C0C0C0` ("the canonical W3C 1px hairline") until R1841 measured it:
+    ///   R1839 raised the value here for the WCAG 1.4.11 3:1 boundary floor and
+    ///   did not carry the change into this list two hundred lines above it. A
+    ///   doc that names a colour is a second declaration of it.
     /// - `surface_container_highest` = `#E6E0E9`, the Material 3 light
     ///   `surfaceContainerHighest` tone — 1.1:1 against `surface`, the
     ///   highest-elevation chip surface that stays visibly distinct
@@ -702,8 +706,9 @@ impl Theme {
     ///   — lifted from Blue 700 so the accent stays legible against
     ///   the dark surface.
     /// - `on_accent` = `#0B1F3F`, 8.6:1 against Material Blue 400.
-    /// - `outline` = `#404040`, the dark-mode hairline used by
-    ///   Material 3 / `FluentUI`.
+    /// - `outline` = `#616161`, 3.03:1 on `#121212`. ★ R1841 — as with the
+    ///   light palette above, this said `#404040` after R1839 had raised it,
+    ///   which is the same defect twice in one file.
     /// - `surface_container_highest` = `#36343B`, the Material 3 dark
     ///   `surfaceContainerHighest` tone — the highest-elevation chip
     ///   surface that stays visibly distinct from the `#121212` panel
@@ -2670,8 +2675,8 @@ mod tests {
         //
         // Without the snap, R57.X.theme-fade cascade widget tests on
         // dark surface (`#121212`), light surface_container_highest
-        // (`#E6E0E9`), light outline (`#C0C0C0`), and dark outline
-        // (`#404040`) would fail intermittently — the lossy round-trip
+        // (`#E6E0E9`), light outline (`#949494`), and dark outline
+        // (`#616161`) would fail intermittently — the lossy round-trip
         // would land at `#111111` / `#E7E1EA` / ... on some platforms.
         set_system_color_scheme(SystemColorScheme::NoPreference);
         let owner = Owner::new();

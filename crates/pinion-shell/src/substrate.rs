@@ -1308,7 +1308,35 @@ fn window_view<V: WidgetView>(
     // inset wraps the scene AFTER the view runs, so the extent a view has
     // always laid out in is the whole window, and stating anything else here
     // would move every chromed binding.
-    pinion_core::external::with_window_extent(extent, || {
+    //
+    // ★★★★★ R1841 — and STATED ONLY WHERE IT IS A SIZE A WINDOW CAN BE, which
+    // is not a softening of the line above: it is where the line stops being
+    // about a window at all.
+    //
+    // `with_window_extent` panics on a zero axis, on the true premise that "a
+    // window of none is not a window". But this function has a second caller
+    // that is not painting a window: the introspection mirror, which asks *what
+    // would this screen fail to show whole at (w, h)* for w running down to
+    // zero — the bottom of `size_floor`'s bisection, deliberate since R1711 and
+    // documented there as "an extent nothing can be laid out in". R1838 sent
+    // that question through the assertion, so the shell PANICKED mid-request
+    // and four demos came back `timeout waiting for scene/size_floor`. A
+    // question answered by killing the process is the worst failure an RPC
+    // server has.
+    //
+    // ⚠ Nothing is lost by the guard: `painting_extent` falls back to the
+    // tracked viewport, and the mirror publishes exactly this `(w, h)` into it
+    // before running the view (`compute_paint_scene_pure_internal`'s
+    // `IntrospectionPaint::enter`), so the extent a zero-axis mirror reads is
+    // the same number this would have stated. The assertion keeps its whole
+    // meaning for every real paint, where the extent is a window's.
+    //
+    // ⚠⚠ What this does NOT repair is the reading underneath: a panning
+    // screen's measured floor of one pixel rests on evidence gathered at an
+    // extent that is not a size — registered as
+    // `debt-a-panning-screens-floor-rests-on-a-probe-at-a-non-size`.
+    let state_extent = extent.0 > 0 && extent.1 > 0;
+    pinion_core::external::maybe_with_window_extent(state_extent.then_some(extent), || {
         apply_chrome_inset(
             owner.run(|| {
                 let scene = match window_id {

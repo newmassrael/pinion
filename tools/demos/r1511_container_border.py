@@ -78,14 +78,40 @@ WIN = (360, 180)
 BOX_SIZE = 24
 BORDER_W = 2
 
-# Channel distance at which a pixel counts as ink rather than the page. Well
-# above the vello area-AA bleed at a rounded corner, well below any real
-# colour difference between the surface and the M3 outline.
+# Channel distance at which a pixel counts as ink rather than the page: enough
+# to ignore encoder noise, far below any painted stroke.
+#
+# ⚠ R1841 — THIS COMMENT USED TO CLAIM MORE THAN IS TRUE. It said 40 was "well
+# above the vello area-AA bleed at a rounded corner", and it is not: measured
+# on this very screen, the exact corner pixel of a `box_radius = 4` stroke
+# carries 56% of the stroke's strength — 60 of 255 against the mid-edge's 107,
+# now that R1839 raised the outline to `#949494` for the WCAG boundary floor.
+# ⚠ The corresponding ~35 of 255 under the old `#c0c0c0` is DERIVED from that
+# same fraction, not measured: the old palette is gone. The 56% is the measured
+# part, and it is the part that matters — the corner assertion below was
+# passing on the COLOUR, not on the geometry, and went red when the colour
+# moved, which is a thing only the ratio can say. The absolute
+# threshold keeps the job it can do (page vs any ink); the corner is judged
+# relatively, against the stroke measured in the same picture.
 INK = 40
+
+# What fraction of the mid-edge stroke a corner pixel may carry and still count
+# as OUTSIDE the rounded path. Measured 0.56 here; a square stroke would carry
+# 1.0, which is the thing this discriminates against.
+CORNER_MAX_OF_EDGE = 0.75
+
+
+def strength(img: Png, x: int, y: int, page: tuple[int, int, int, int]) -> int:
+    """How far this pixel is from the page, in the widest channel.
+
+    The quantity every judgment here is really about: `is_ink` is a threshold
+    on it, and the corner test is a ratio of two of them.
+    """
+    return max(abs(a - b) for a, b in zip(png_pixel(img, x, y), page))
 
 
 def is_ink(img: Png, x: int, y: int, page: tuple[int, int, int, int]) -> bool:
-    return max(abs(a - b) for a, b in zip(png_pixel(img, x, y), page)) > INK
+    return strength(img, x, y, page) > INK
 
 
 def capture(tf: RpcSubprocess, name: str) -> Png:
@@ -226,15 +252,34 @@ def body() -> None:
 
         # ── (E) the corner radius is real ──────────────────────────────
         # `box_radius = 4`, so the exact corner pixel lies outside the rounded
-        # path while the mid-edge is on it. A square stroke would ink both.
+        # path while the mid-edge is on it. A square stroke would cover both
+        # fully, and that is what this discriminates against.
+        #
+        # ★★★★★ R1841 — judged against the stroke measured in THIS picture, not
+        # against an absolute threshold. The old form asserted the corner
+        # carried no ink at all, which is not true of an area-antialiased
+        # rounded stroke: the corner carries 56% of the edge here. It passed
+        # only because `#c0c0c0` made 56% land under 40/255, so the assertion
+        # was about the palette, and R1839's WCAG repair turned it red. The
+        # ratio is the geometric claim and it holds whatever the outline
+        # becomes.
+        edge = max(
+            strength(unchecked, mx, y0, page),
+            strength(unchecked, x0, my, page),
+        )
+        assert edge > INK, f"the mid-edge stroke is measurable, got {edge}"
         for label, x, y in (
             ("top-left", x0, y0),
             ("top-right", x1, y0),
             ("bottom-left", x0, y1),
             ("bottom-right", x1, y1),
         ):
-            assert not is_ink(unchecked, x, y, page), (
-                f"{label} corner pixel is outside the rounded stroke"
+            corner = strength(unchecked, x, y, page)
+            assert corner <= CORNER_MAX_OF_EDGE * edge, (
+                f"{label} corner carries {corner}/{edge} = "
+                f"{corner / edge:.2f} of the stroke (max "
+                f"{CORNER_MAX_OF_EDGE}) — a square stroke would carry 1.00, "
+                f"so this reads as a corner that is not rounded"
             )
 
         # ── (F) checking fills the SAME rect the outline occupied ──────
