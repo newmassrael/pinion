@@ -116,6 +116,7 @@ pub mod scrollbar;
 pub mod slider;
 pub mod spacer;
 pub mod splitter;
+pub mod stat_tile;
 pub mod state_layer;
 pub mod switch;
 pub mod table;

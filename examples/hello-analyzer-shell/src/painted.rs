@@ -161,7 +161,25 @@ const SIZES: &[(&str, (u32, u32))] = &[
 /// across this tree was measured at 289 of 290 runs on one screen: not a
 /// backlog of slips but a convention that never consulted the face. Lowering
 /// this is the repair, and `containment::line_rect` is how.
-const SHORT_BOX_BUDGET: usize = 242;
+/// ⚠ R1843 moved it 242 -> 248, and the SHAPE of that move is the finding.
+///
+/// The screen gained a sixth card, so the population grew — and the round's
+/// first attempt read the pin as a ceiling and set it to the peak, 263. It is
+/// not a ceiling: this gate says *"the budget is a PIN, not a ceiling: N run(s)
+/// are short, so lower it"*, and that refusal is what produced the number here.
+///
+/// ★★★★★ Between those two figures the round derived the tile's row heights
+/// from [`line_box`](pinion_core::containment::line_box) instead of authoring
+/// them at the font size, and **fifteen short runs stopped being short** —
+/// 263 -> 248 while the card grew. A 12px label in a 12px box overflows by
+/// construction, so the new card had been contributing to this backlog on
+/// every row it drew. The pin therefore rises by six for the population and
+/// falls by fifteen for the repair, which is the direction this ratchet exists
+/// to record.
+///
+/// The repair for the remainder is unchanged: `containment::line_rect` at the
+/// sites that still reserve a line at the face's own size.
+const SHORT_BOX_BUDGET: usize = 248;
 
 /// Where every tag in the painted scene ended up, and every text run with it.
 struct Painted {
@@ -225,6 +243,31 @@ impl Painted {
             .map(String::as_str)
             .filter(|t| t.starts_with(stem))
             .collect()
+    }
+
+    /// How many ROWS of a family are painted — distinct `{n}`, not every tag
+    /// beneath it.
+    ///
+    /// ★★★★★ R1843 — [`Self::family`] counts descendants, and every body in
+    /// this screen used to have none: a row was one container with untagged
+    /// text inside it, so "tags under the stem" and "rows" were the same
+    /// number by accident of how the bodies happened to be built. The health
+    /// card is the first whose rows come from a CRATE, and
+    /// `pinion_widget_paint::stat_tile` tags each word's own box on purpose —
+    /// that is what stops a word being filed under whatever encloses it. So
+    /// the same five rows answered as fifty, and the gate read a richer body
+    /// as a wrong one.
+    ///
+    /// Counting the segment after the stem is what "rows" always meant. It is
+    /// unchanged for every body that has no tagged descendants, which is why
+    /// this is a repair rather than an exemption for one card.
+    fn rows(&self, stem: &str) -> usize {
+        self.tags
+            .keys()
+            .filter_map(|t| t.strip_prefix(stem))
+            .map(|rest| rest.split('.').next().unwrap_or(rest))
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
     }
 }
 
@@ -430,7 +473,7 @@ fn r1668_each_placed_card_paints_the_body_its_kind_is_specified_to_have() {
             let (family, rows) = body_family(kind)
                 .unwrap_or_else(|| panic!("{case}: {kind} is placed and unknown here"));
             let stem = format!("card.{id}.{family}.");
-            let painted = shot.family(&stem).len();
+            let painted = shot.rows(&stem);
             // ★ R1797 — a family whose rows are all-or-nothing may legitimately
             // paint none of them: the latency card's three tiles go together
             // when the card is too narrow for one of them to say anything, the
@@ -535,6 +578,12 @@ fn body_family(kind: &str) -> Option<(&'static str, usize)> {
         // card DERIVES them from its samples, so comparing painted words with
         // the specification's numbers is a check that can fail.
         "latency" => ("stat", spec::LATENCY_STAT_KEYS.len()),
+        // ★ R1843 — the health card's rows are its five KPI tiles, for the same
+        // reason the latency card's are its three: the sparkline beside each
+        // one carries no words, so a word check against a spark tag would
+        // assert nothing. The tiles are where this card's reproduction claim
+        // lives.
+        "health" => ("stat", spec::HEALTH_TILES.len()),
         _ => return None,
     })
 }
@@ -542,16 +591,42 @@ fn body_family(kind: &str) -> Option<(&'static str, usize)> {
 /// Whether `kind`'s body rows drop columns one at a time.
 fn body_cells(kind: &str) -> Cells {
     match kind {
-        "latency" => Cells::Whole,
+        // ★ R1843 added `health` beside `latency`, and the two are one claim:
+        // a stat tile's words go together. The label, the reading and the
+        // change are a single statement, and a tile showing two of the three
+        // says something a reader would misread — so both strips drop whole
+        // TILES as they narrow and never a tile's cells. The clamp gate is
+        // what asked for the declaration: it refuses a guard nothing
+        // exercises, and nothing will ever exercise a cell clamp that cannot
+        // happen.
+        "latency" | "health" => Cells::Whole,
         _ => Cells::Droppable,
     }
 }
 
 /// The text runs the painted scene put inside one tag.
 fn run_words(shot: &Painted, tag: &str) -> Vec<String> {
+    // ★★★★★ R1843 — a row's words, wherever UNDER it they are filed.
+    //
+    // This asked for runs owned by the tag EXACTLY, which found every word
+    // while a body row was one container with untagged text inside it: the
+    // nearest tagged ancestor of each word was the row itself. A row built by
+    // `pinion_widget_paint::stat_tile` tags each word's own box — which is the
+    // thing that stops a word being filed under whatever encloses it — so its
+    // words answer to `…stat.0.label` and this returned nothing at all. The
+    // gate read a row painting three words as a row painting none.
+    //
+    // The third site of one repair, with `Painted::rows` and the disjointness
+    // check: each assumed a flat body, and each had been exactly right until a
+    // body stopped being flat. A descendant's word is still the row's word.
+    let nested = format!("{tag}.");
     shot.runs
         .iter()
-        .filter(|(_, _, owner)| owner.as_deref() == Some(tag))
+        .filter(|(_, _, owner)| {
+            owner
+                .as_deref()
+                .is_some_and(|o| o == tag || o.starts_with(&nested))
+        })
         .map(|(text, ..)| text.clone())
         .collect()
 }
@@ -589,6 +664,21 @@ fn specified_row(kind: &str, n: usize) -> Vec<String> {
         "latency" => {
             let (key, value) = spec::latency_tile(n);
             vec![key.into(), value]
+        }
+        // ★ R1843 — the health tile's three words, in the order the tile paints
+        // them: what is counted, the reading, and the change. The reading is
+        // rebuilt here the way the body builds it (value, then unit when there
+        // is one) rather than read back from the painter, for the reason the
+        // latency arm above states — a check against the painter's own helper
+        // is one that cannot fail.
+        "health" => {
+            let tile = spec::HEALTH_TILES[n];
+            let heading = if tile.unit.is_empty() {
+                tile.label.to_owned()
+            } else {
+                format!("{} {}", tile.label, tile.unit)
+            };
+            vec![heading, tile.value.into(), tile.delta.into()]
         }
         other => panic!("{other} has no specified body"),
     }
@@ -706,7 +796,14 @@ fn r1669_the_sweep_reaches_both_sides_of_every_clamp() {
                 continue;
             };
             // The rows themselves.
-            let painted = shot.family(&format!("card.{id}.{family}.")).len();
+            //
+            // ★ R1843 — `rows`, not `family`. The latter counts every tag under
+            // the stem, which equalled the row count only while bodies had no
+            // tagged descendants; with a body whose rows tag their own words it
+            // over-counts, and `0..painted` below then indexes a specification
+            // table past its end. That is what it did: `the len is 5 but the
+            // index is 5`.
+            let painted = shot.rows(&format!("card.{id}.{family}."));
             note(format!("{kind}: rows"), painted < rows);
             // And the CELLS of each painted row, which is a second clamp with
             // the same shape: a column too narrow to say anything is dropped.
@@ -1462,6 +1559,92 @@ fn r1671_the_frame_walk_finds_an_untagged_crossing() {
     );
 }
 
+/// Kinds allowed to announce a row they do not paint.
+///
+/// ★★★★★ R1843 — a RATCHET, not an exemption, on R1807's `UNASSEMBLED` model.
+/// The gate below refuses a card that tells a reader about a row nobody drew;
+/// this names the ones that already did when the rule landed, so a NEW ghost
+/// cannot join them silently and the backlog is a list a reader can shorten
+/// rather than a number in a summary line.
+///
+/// ⚠⚠ **Every card this round did not build is on it**, and each name was
+/// MEASURED — the gate was run, the card it named was added, and it was run
+/// again, five times over. Shrunk to one cell, each announces a row it does not
+/// paint: `packet` row 5 of its stream, `decode` row 6 of its tree, `keymap`
+/// row 5 of its map, `filter` row 3 of its chips, `latency` row 0 of its stat
+/// strip. Not one was guessed from the pattern, because a name here is a claim
+/// that a card HAS this defect and an unproven one would be a slander that
+/// silences a real gate.
+///
+/// ★★★★★ The card that produced this rule — `health` — is deliberately NOT on
+/// the list. It was REPAIRED rather than admitted, by giving the paint and the
+/// accessibility tree one shared count (`health_tile_count`). Admitting the
+/// defect that motivated the gate would have made the gate ornamental.
+///
+/// So this list is the shape of the finding: the ghost is not a new card's
+/// mistake, it is what every body on this screen does, and it was invisible
+/// because nothing asked. Shortening it is the repair — a body's node builder
+/// must consult whatever its painter consults.
+///
+/// ⇒ `debt-a-card-announces-a-row-it-does-not-paint`.
+const GHOSTS: &[&str] = &["packet", "decode", "keymap", "filter", "latency"];
+
+/// ★★★★★ R1843 — **a card announces the rows it PAINTS, and no others.**
+///
+/// This gate exists because a counterfactual found nothing holding it. The
+/// health strip narrows by dropping whole tiles, and its accessibility tree
+/// announced the whole table regardless — so at the opening size the card
+/// painted three tiles and announced five, and a reader was told about two
+/// tiles nobody drew. The demo measured it (`3 tile(s) painted, 5 announced`);
+/// the Rust suite stayed green, and a demo is not run by `cargo test`.
+///
+/// ⚠ Written for EVERY card rather than for the one that had the defect. A
+/// ghost row is not a health-strip problem — it is what happens whenever a
+/// body's row count depends on something the node builder does not consult,
+/// and this screen now has two bodies whose row count depends on width.
+///
+/// The reverse direction is deliberately NOT asserted here: a painted row that
+/// is not announced is the voice census's question, and it answers it with a
+/// vocabulary this check does not have (`silent`, `unvoiced`, `ghost`).
+///
+/// ★★★★★ And its first run found a card this round did not touch. See
+/// [`GHOSTS`].
+#[test]
+fn r1843_a_card_announces_only_the_rows_it_paints() {
+    sweep(|state, shot, _, case| {
+        for id in &shown_cards(state) {
+            let id = id.as_str();
+            let kind = super::kind_of(id);
+            if GHOSTS.contains(&kind) {
+                continue;
+            }
+            let Some(card) = state.card(id) else { continue };
+            let Some((family, _)) = body_family(kind) else {
+                continue;
+            };
+            let stem = format!("card.{id}.{family}.");
+            let painted: std::collections::BTreeSet<String> = shot
+                .family(&stem)
+                .iter()
+                .map(|t| t[stem.len()..].split('.').next().unwrap_or("").to_owned())
+                .collect();
+            for node in super::card_nodes(state, &card) {
+                let Some(rest) = node.tag.strip_prefix(&stem) else {
+                    continue;
+                };
+                if rest.contains('.') {
+                    continue;
+                }
+                assert!(
+                    painted.contains(rest),
+                    "{case}: {id} announces row {rest} of its {family} and paints \
+                     none — a reader is told about a row nobody drew",
+                );
+            }
+        }
+    });
+}
+
 // -- 5. Disjoint: nothing is painted on top of anything ----------------------
 
 /// R1668 — no two rows of one card overlap.
@@ -1477,6 +1660,27 @@ fn r1668_no_two_rows_of_one_card_are_painted_over_each_other() {
                     .collect();
                 for (n, (a_tag, a)) in rects.iter().enumerate() {
                     for (b_tag, b) in &rects[n + 1..] {
+                        // ★★★★★ R1843 — a row and its own DESCENDANT are not
+                        // two rows, and a containment is not an overlap.
+                        //
+                        // This walks every tag under the stem and compares them
+                        // pairwise, which was exact while every body row was one
+                        // container with untagged text inside it — there were no
+                        // descendants to meet. `pinion_widget_paint::stat_tile`
+                        // tags each word's own box on purpose (that is what
+                        // stops a word being filed under whatever encloses it),
+                        // so `stat.0` now meets `stat.0.delta`, and a child
+                        // sitting inside its parent read as two rows painted on
+                        // top of each other.
+                        //
+                        // Ancestry is exactly what the tag says, so it is what
+                        // the skip tests. The rule the gate is FOR — no two
+                        // SIBLING rows overlapping — is untouched, and the same
+                        // repair as `Painted::rows` one screen over: the model
+                        // assumed flat bodies and a body stopped being flat.
+                        if b_tag.starts_with(&format!("{a_tag}.")) {
+                            continue;
+                        }
                         assert!(
                             a.x + a.w <= b.x
                                 || b.x + b.w <= a.x

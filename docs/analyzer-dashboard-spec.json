@@ -112,9 +112,9 @@
     "owed": [
       {
         "key": "operate",
-        "sentence": "`operate` is specified as \"DIAGNOSTICS · RELEASE 2\" and reads \"DIAGNOSE & OPERATE · RELEASE 2\"",
-        "since": "R1761",
-        "why": "The reference's third group holds three diagnostic widgets. This build's third group holds those and two that ACT on the system under study rather than report on it, so a heading saying only diagnostics would misname half of what is under it. The group's membership is the reference's requirement table's; the heading follows the membership."
+        "sentence": "`operate` is specified as \"DIAGNOSTICS · RELEASE 2\" and reads \"DIAGNOSE & OPERATE · RELEASE 1 + 2\"",
+        "since": "R1761, release span widened R1843",
+        "why": "The reference's third group holds three diagnostic widgets. This build's third group holds those and two that ACT on the system under study rather than report on it, so a heading saying only diagnostics would misname half of what is under it. The group's membership is the reference's requirement table's; the heading follows the membership. R1843 widened the release half for the reason R1797 widened `visual`'s: promoting the health seat puts one first-release widget under a heading that named only the second, and a heading naming a single release would be false about part of what is under it. The heading is DERIVED from the membership, so this sentence follows the promotion rather than being edited alongside it."
       },
       {
         "key": "visual",
@@ -150,7 +150,8 @@
       { "key": "decode#1", "title": "Decode Inspector" },
       { "key": "keymap#2", "title": "Identifier Map" },
       { "key": "filter#3", "title": "Search & Filter" },
-      { "key": "latency#4", "title": "Latency" }
+      { "key": "latency#4", "title": "Latency" },
+      { "key": "health#5", "title": "Health Tiles" }
     ],
     "owed": []
   }

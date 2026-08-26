@@ -148,6 +148,7 @@ use pinion_widget_paint::chooser;
 use pinion_widget_paint::pages::{PagePointer, view_page_region};
 use pinion_widget_paint::pane::{PanePointer, scroll_pane};
 use pinion_widget_paint::run::text_run;
+use pinion_widget_paint::stat_tile::StatTile;
 use pinion_widget_paint::switch::{self, SwitchStyle};
 
 mod judge;
@@ -6831,6 +6832,8 @@ fn ready_body(state: &ShellState, card: &Card, rect: Rect, palette: Palette) -> 
         // state a percentile its own bars contradict. The reference's can, and
         // measurably does.
         "latency" => latency_body(id, rect, palette),
+        // ★ R1843 — the sixth, and the first whose tile comes from a crate.
+        "health" => health_body(id, rect, palette),
         // A kind with no body painter of its own still reads as content rather
         // than as a gap. Reachable only if the catalogue grows a placeable kind
         // before its body does, which is the moment a placeholder is honest.
@@ -7881,6 +7884,232 @@ fn filter_counts(
         ));
     }
     out
+}
+
+/// One health tile's specification — its words and its skin, with no placement.
+///
+/// ★ R1843 — one definition, because the strip asks it TWICE: once to find how
+/// many tiles fit ([`StatTile::min_width`]) and once to paint them. Two
+/// spellings of a tile would let the fitting rule and the painted tile drift,
+/// and the drift would show as a card that fits four tiles and paints five.
+///
+/// ★ The UNIT rides with the label, not with the value, and the ink gate
+/// decided it: `"6.4k msg/s"` at the value face hung 42px past its box. The
+/// label draws at the tiny face and the value at the title face, so the same
+/// words cost far less beside the label — and a unit belongs to the quantity
+/// rather than to one reading of it.
+fn tile_metrics(tile: &spec::HealthTile) -> StatTile {
+    let heading = if tile.unit.is_empty() {
+        tile.label.to_owned()
+    } else {
+        format!("{} {}", tile.label, tile.unit)
+    };
+    StatTile::new(heading, tile.value)
+        .with_delta(tile.delta)
+        .with_label_style(TextStyle::new().with_size_px(FONT_TINY))
+        .with_value_style(TextStyle::new().with_size_px(FONT_TITLE))
+        .with_delta_style(TextStyle::new().with_size_px(FONT_TINY))
+}
+
+/// The same tile, wearing the board's colours.
+///
+/// ⚠ The split is not decoration. [`StatTile::min_width`] reads font sizes and
+/// never colours, and the accessibility tree has to ask that question WITHOUT a
+/// [`Palette`] — building one needs `use_theme`, which needs an `Owner` scope
+/// the shell's non-paint paths do not have (the R1721 lesson, learned when a
+/// body painter reached for `use_shell_state` and the running screen panicked).
+/// So the words and the faces live in [`tile_metrics`], which both readers
+/// share, and only the ink is added here.
+fn tile_spec(tile: &spec::HealthTile, palette: Palette) -> StatTile {
+    tile_metrics(tile)
+        .with_label_style(
+            TextStyle::new()
+                .with_size_px(FONT_TINY)
+                .with_fg(palette.muted),
+        )
+        .with_value_style(
+            TextStyle::new()
+                .with_size_px(FONT_TITLE)
+                .with_fg(palette.ink),
+        )
+        .with_delta_style(
+            TextStyle::new()
+                .with_size_px(FONT_TINY)
+                .with_fg(palette.muted),
+        )
+        .with_box_style(
+            BoxStyle::filled(palette.raised)
+                .with_corner_radius(8)
+                .with_border(Border::new(palette.outline, 1)),
+        )
+}
+
+/// Room between one tile of the health strip and the next.
+const TILE_GAP: u32 = 8;
+/// A tile narrower than this cannot hold a label and a value, so the strip
+/// draws nothing rather than a row of clipped words.
+const TILE_FLOOR: u32 = 84;
+/// The height the health strip draws a trend series in.
+const TREND_H: u32 = 16;
+
+/// How many tiles a health strip `width` px wide can show, or `None` for none.
+///
+/// ★★★★★ R1843 — ONE rule with TWO readers, and the demo is what forced it.
+///
+/// The strip narrows by dropping whole tiles, so how many it shows is a
+/// function of its width. That rule lived inside the painter, and the
+/// accessibility tree announced all five unconditionally — so at the opening
+/// size the card PAINTED three tiles and ANNOUNCED five. The demo measured
+/// exactly that (`3 tile(s) painted, 5 announced`), which is a reader being
+/// told about two tiles nobody drew.
+///
+/// ⚠ Worse than a miscount: the round had written that announcing all five was
+/// a VIRTUE — "a reader asking the card what it knows gets every quantity
+/// whatever the width let it draw". It is not a virtue, it is a ghost region,
+/// and the sentence was repaired in the same commit that found it.
+///
+/// The floor is what the first `n` tiles THEMSELVES need, asked of the widget
+/// through [`StatTile::min_width`] rather than picked here: a number chosen for
+/// one set of words says nothing about another set.
+fn health_tile_count(width: u32) -> Option<u32> {
+    let most = u32::try_from(spec::HEALTH_TILES.len()).unwrap_or(1);
+    let fits = |n: u32| {
+        n > 0 && {
+            let each = width.saturating_sub(TILE_GAP * (n - 1)) / n;
+            each >= TILE_FLOOR
+                && spec::HEALTH_TILES[..n as usize]
+                    .iter()
+                    .all(|t| tile_metrics(t).min_width() <= each)
+        }
+    };
+    (1..=most).rev().find(|n| fits(*n))
+}
+
+/// The health card: a strip of KPI tiles, each with its own trend sparkline.
+///
+/// ★★★★★ R1843 — the census's `dashboard.t1.8`, and the point of it is that the
+/// tile is no longer assembled here. `pinion_widget_paint::stat_tile` builds the
+/// box and PLACES the words through `caption`; this function decides only what
+/// the tiles say and how wide they are.
+///
+/// ★ The sparkline is passed IN rather than named by the tile, because
+/// `pinion-widget-paint` does not depend on `pinion-chart` and a tile that
+/// embedded a chart would make it. The seam is a closure taking the rectangle
+/// the tile reserved, so a figure cannot be built for a tile with no room.
+///
+/// ⚠⚠ **Every rectangle below is in its PARENT's space, and the first draft got
+/// this wrong twice in one function.** A child laid out absolutely resolves
+/// against its container, so passing a caller-space rectangle into a container
+/// that is itself absolutely positioned applies the offset twice. The ink gate
+/// reported `card.health#2.stat.0` at y=530 inside a card at y=462 — the body's
+/// own origin, added a second time. The tiles take strip-local coordinates and
+/// the sparkline takes trail-local ones for that reason.
+fn health_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
+    // ★★★★★ R1843 — how many tiles fit, rather than all of them or none.
+    //
+    // The first draft painted five or nothing, and nothing is what a
+    // four-column placement got. That is the wrong shape twice over: a card
+    // that paints nothing reads as a placeholder, and a strip that insists on
+    // five would clip every one of them. So the count comes DOWN from the
+    // width — the widest `n` whose tiles each clear `TILE_FLOOR` — and the
+    // reference does the same thing by a different means, letting its strip
+    // scroll sideways when its own presets place this seat narrow.
+    //
+    // ⚠ Fewer tiles is fewer FACTS on screen, so it is not free. What makes it
+    // honest here is that the tiles are ordered and the ones dropped are the
+    // last of them, and that the a11y tree still announces all five: a reader
+    // asking the card what it knows gets every quantity, whatever the width
+    // let it draw.
+    let Some(count) = health_tile_count(rect.w) else {
+        return Vec::new();
+    };
+    let tiles = &spec::HEALTH_TILES[..count as usize];
+    let tile_w = rect.w.saturating_sub(TILE_GAP * (count - 1)) / count;
+
+    let style = ChartStyle::default();
+    let mut out = Vec::new();
+    for (n, tile) in tiles.iter().enumerate() {
+        // ★ R1843 — the UNIT rides with the label, not with the value, and the
+        // ink gate is what decided it: `"6.4k msg/s"` at the value face hung
+        // 42px past its own box. The label is drawn at the tiny face and the
+        // value at the title face, so the same words cost far less beside the
+        // label — and a unit belongs to what is being measured rather than to
+        // this particular reading of it.
+        let built = tile_spec(tile, palette).with_trail(TREND_H).build_with(
+            &format!("card.{id}.stat.{n}"),
+            // Strip-local: the container below is what carries `rect`.
+            Rect::new(u(n) * (tile_w + TILE_GAP), 0, tile_w, rect.h),
+            |trail| {
+                // ★ The prefix is neither equal to nor a prefix of the
+                // container's tag (`…stat.{n}.trail`) — the collision R1797
+                // hit twice in one round, because a chart emits a root node
+                // carrying the bare prefix.
+                // ★ R1843 — the prefix sits UNDER the trail's tag, not
+                // beside it. R1797's rule is that a chart's prefix must be
+                // neither equal to nor a prefix of its container's tag, and
+                // `…stat.{n}.spark` satisfies that — but it also failed to
+                // say the chart is INSIDE `…stat.{n}.trail`, so the two
+                // regions shared one rectangle and the disjointness gate
+                // read them as painted over each other. Naming the chart as
+                // the trail's child expresses the nesting the scene already
+                // has, and still collides with nothing.
+                Sparkline::new(tile.trend.to_vec())
+                    .with_tag_prefix(format!("card.{id}.stat.{n}.trail.spark"))
+                    .with_color(palette.accent)
+                    // Trail-local, for the same reason as the tile above.
+                    .build(Rect::new(0, 0, trail.w, trail.h), &style)
+            },
+        );
+        out.push(built.into_scene());
+    }
+    vec![Scene::Container(
+        ContainerNode::new(out)
+            .with_tag(format!("card.{id}.tiles"))
+            .with_layout(absolute(rect)),
+    )]
+}
+
+/// The health card's tiles, as things an assistive reader can be told.
+///
+/// One [`AriaRole::Status`] per tile carrying its reading, under a group — the
+/// shape the latency card's strip already uses, so the two read alike. A series
+/// nobody can be read out is announced as the value it ends at, which is the
+/// fact rather than the picture.
+fn health_nodes(state: &ShellState, card: &Card) -> Vec<AccessNode> {
+    let id = card.id().as_str();
+    // ⚠ The SAME rule the painter runs, over the same width. `body_rect`
+    // narrows only in height when the board is editing, and the count depends
+    // on width alone, so `false` here is exact rather than approximate.
+    let board = state.board.get();
+    let Some(tile) = board.tile(card.id()) else {
+        return Vec::new();
+    };
+    let width = body_rect(cell_rect(tile), false).w;
+    let Some(count) = health_tile_count(width) else {
+        return Vec::new();
+    };
+    let mut nodes = Vec::new();
+    let mut group =
+        AccessNode::new(format!("card.{id}.tiles"), AriaRole::Group).with_name("Health");
+    for (n, tile) in spec::HEALTH_TILES[..count as usize].iter().enumerate() {
+        let tag = format!("card.{id}.stat.{n}");
+        group = group.with_child(tag.clone());
+        let unit = if tile.unit.is_empty() {
+            String::new()
+        } else {
+            format!(" {}", tile.unit)
+        };
+        nodes.push(
+            AccessNode::new(tag, AriaRole::Status)
+                .with_name(tile.label)
+                .with_value(AccessValue::Text(format!(
+                    "{}{unit}, {} since the previous window",
+                    tile.value, tile.delta
+                ))),
+        );
+    }
+    nodes.insert(0, group);
+    nodes
 }
 
 /// A kind with no body painter: its code and its one line, which is what the
@@ -10236,6 +10465,7 @@ fn card_nodes(state: &Rc<ShellState>, card: &Card) -> Vec<AccessNode> {
         Some("keymap") => map_nodes(id),
         Some("filter") => filter_nodes(state, id),
         Some("latency") => latency_nodes(id),
+        Some("health") => health_nodes(state, card),
         _ => Vec::new(),
     };
     for node in &body {

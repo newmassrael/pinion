@@ -449,7 +449,8 @@
     "tier": "t1",
     "capability": "KPI stat tiles with sparklines",
     "verdict": "app",
-    "covered_by": "MEASURED R1646: `sparkline`'s own doc names the KPI stat tile as a PLACE it is displayed, not as a widget the crate ships. The tile is a box, a label and a sparkline, assembled per application"
+    "covered_by": "MEASURED R1646: `sparkline`'s own doc named the KPI stat tile as a PLACE it is displayed, not as a widget the crate ships. R1843 SUPERSEDES half of that: `pinion_widget_paint::stat_tile` ships the tile, so a box, a label and a delta are no longer assembled per application. The verdict stays `app` deliberately — the tile does NOT name the chart, because `pinion-widget-paint` has no dependency on `pinion-chart` and a tile that embedded a sparkline would create one. The trailing figure is a scene the caller builds for a rectangle the tile reserves, so the COMPOSITION is still an application's to make, which is what an `app` verdict means.",
+    "assembled_by": "assembled by examples/hello-analyzer-shell and driven on the wire by tools/demos/r1843_a_health_strip_is_composed_not_hand_rolled.py — the health seat is promoted from the deferred register and placed on the opening board, the strip composes `stat_tile` with `pinion_chart::Sparkline` through the tile's trailing seam, every tile it paints is announced with its reading and its change, and it narrows by dropping whole tiles rather than a tile's words"
   },
   {
     "id": "dashboard.t1.9",

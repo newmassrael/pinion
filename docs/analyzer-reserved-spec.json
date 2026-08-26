@@ -76,7 +76,8 @@
     "cannot tell a seat we finished from a seat we forgot."
   ],
   "built": [
-    { "requirement": 19, "seat": "latency", "$note": "Built as a placed dashboard card at R1797." }
+    { "requirement": 19, "seat": "latency", "$note": "Built as a placed dashboard card at R1797." },
+    { "requirement": 18, "seat": "health", "$note": "Built as a placed dashboard card at R1843. The reference places this seat on its DEFAULT board and in four presets, and its catalogue entry for the seat names a sparkline no other widget of that catalogue has. The rail's `sessions` seat cites the same requirement and stays locked, which is why 18 remains in `deferred`." }
   ],
 
   "$owed_comment": [

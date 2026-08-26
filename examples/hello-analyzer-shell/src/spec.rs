@@ -1041,14 +1041,25 @@ pub const CATALOGUE: &[WidgetSpec] = &[
         tier: Tier::Placeable,
         reserved_for: "",
     },
+    // ★ R1843 — promoted from `Tier::Reserved`, on the R1797 pattern. The
+    // reference books this seat under its second release and it stayed booked
+    // here for as long as the framework could not draw what sits in it: a KPI
+    // tile is a box, a label, a value and a sparkline, and until
+    // `pinion_widget_paint::stat_tile` no crate had a tile at all — only two
+    // examples that had each hand-rolled one. What promotes it is the
+    // reference's own board, which places this seat by default and in four of
+    // its presets, and its catalogue entry naming the sparkline no other widget
+    // of that catalogue has. Promoting a seat changes the RELEASE structure the
+    // reference defines, so it is declared in the deferred register's `built`
+    // list rather than made to look like a seat that was never locked.
     WidgetSpec {
         kind: "health",
         code: "HLT",
         label: "Health Tiles",
         gist: "session and error summary",
         section: "operate",
-        tier: Tier::Reserved,
-        reserved_for: "requirement 18",
+        tier: Tier::Placeable,
+        reserved_for: "",
     },
     WidgetSpec {
         kind: "loss",
@@ -1145,14 +1156,14 @@ pub const BOARD: &[PlacedSpec] = &[
         kind: "packet",
         col: 0,
         row: 0,
-        cols: 7,
+        cols: 4,
         rows: 2,
     },
     PlacedSpec {
         kind: "decode",
-        col: 7,
+        col: 4,
         row: 0,
-        cols: 5,
+        cols: 4,
         rows: 2,
     },
     // ★★★★★ R1797 — the second row's three, and the width change is MEASURED
@@ -1173,22 +1184,56 @@ pub const BOARD: &[PlacedSpec] = &[
     // the reference's ROW assignment for all three is preserved, and every card
     // stays whole and visible. Recorded as a remainder in
     // `analyzer-dashboard-spec.json` rather than passed off as the reference's.
+    // ★★★★★ R1843 — the second band re-cut so a SIXTH card fits, and which
+    // card gave up its second row was MEASURED rather than chosen.
+    //
+    // The board is 12 columns by 4 rows and was exactly full: 7x2 + 5x2 + three
+    // 4x2 is 48 of 48 cells. A fifth row does not exist — `cell_rect` puts row
+    // `n`'s bottom at `GAP + n * ROW_H`, so four rows end at 712 in an 802-tall
+    // canvas and five would end at 886. A sixth card can therefore only come
+    // from cells another card gives up, and there are only 48.
+    //
+    // The first cut here took the row from `filter`, and `r1824` refused it by
+    // name — *the filter card paints its trend*, which it cannot do in one row.
+    // `latency` was already known to need two (R1797 measured its distribution
+    // at 332px). So the row comes from `keymap`, which is the one card of the
+    // band that no gate objects to at a single row.
+    //
+    // ⚠ That leaves the strip FOUR columns, not the six the reference's default
+    // board gives it — and this is reference-faithful rather than a compromise
+    // against it: the reference draws this same seat at `w:4` in one of its own
+    // presets. What four columns costs is tiles, and the body says so by
+    // painting the ones that fit instead of pretending to five.
+    // ⚠⚠ ORDER IS IDENTITY HERE. A card's id is `kind#n` where `n` is its INDEX
+    // in this array, so inserting a placement in the middle RENAMES every card
+    // after it. R1843's first cut put `health` third and renumbered `keymap#2`
+    // to `#3` and `filter#3` to `#4` — which is what six of that run's failures
+    // were, every one of them reading as a card that vanished: a cursor resting
+    // where nothing paints, a region announced and unpainted, a specification
+    // naming a part the surface no longer had. A new placement goes LAST.
     PlacedSpec {
         kind: "keymap",
+        col: 8,
+        row: 0,
+        cols: 4,
+        rows: 2,
+    },
+    PlacedSpec {
+        kind: "filter",
         col: 0,
         row: 2,
         cols: 4,
         rows: 2,
     },
     PlacedSpec {
-        kind: "filter",
+        kind: "latency",
         col: 4,
         row: 2,
         cols: 4,
         rows: 2,
     },
     PlacedSpec {
-        kind: "latency",
+        kind: "health",
         col: 8,
         row: 2,
         cols: 4,
@@ -1575,6 +1620,18 @@ pub fn dashboard_links() -> pinion_chart::LinkGroup {
             "a decode of one selected message, not a view over the population",
         ),
         Link::inert("keymap", "a key legend, not capture data"),
+        // ★ R1843 — inert, and the reason is the card's own honest limit rather
+        // than a claim about what a health summary must be. Its tiles are read
+        // over the whole capture window, and their series is a FIXTURE: nothing
+        // in this tree accumulates a per-window reading for these quantities,
+        // so there is no narrowed population for a cross-filter to recompute
+        // them against. `Inert` says "cannot answer this question", which is
+        // exactly the state — and it is distinct from "not part of this
+        // population", which a silence here would have meant.
+        Link::inert(
+            "health",
+            "a summary over the whole capture window, not a view over the current selection",
+        ),
     ])
     .expect("the dashboard's link declaration is well formed")
 }
@@ -1678,6 +1735,90 @@ pub const LATENCY_CAPTION: &str =
 
 /// The unit the tiles are read in.
 pub const LATENCY_UNIT: &str = "ms";
+
+/// One KPI tile of the health card: a label, a value in a unit, the change
+/// since the previous window, and the series that change is the end of.
+///
+/// ★ R1843 — the `trend` is what makes this card the census's *KPI stat tiles
+/// with sparklines* rather than a row of numbers. The reference gives this
+/// widget a sparkline-window setting and gives no other widget one, so the
+/// series is the seat's defining property and not decoration.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HealthTile {
+    /// What is being counted.
+    pub label: &'static str,
+    /// The latest reading.
+    pub value: &'static str,
+    /// The unit the reading is in, or `""` for a bare count.
+    pub unit: &'static str,
+    /// The change since the previous window, signed.
+    pub delta: &'static str,
+    /// The readings the value is the last of — the sparkline's series.
+    pub trend: &'static [f64],
+}
+
+/// The health card's five tiles.
+///
+/// ⚠ These are a FIXTURE, not a derivation. The latency card next door derives
+/// every number it draws from one capture record, and this card cannot yet:
+/// nothing in this tree accumulates a per-window series for these five
+/// quantities. Said here rather than letting a reader infer a measurement from
+/// a table that looks like one.
+///
+/// ★ The labels are SHORT, and that is a measurement rather than a style
+/// choice. The strip divides its card between five tiles, so a tile's inner
+/// width is about a fifth of the card less its padding; a label wider than that
+/// is placed by [`pinion_widget_paint::caption`] with `Fit::Overflows` and the
+/// ink gate reports it as a mark outside its box. R1843's first draft wrote
+/// "Active sessions" and the gate caught it hanging 37px past its own label
+/// box.
+pub const HEALTH_TILES: &[HealthTile] = &[
+    HealthTile {
+        label: "Sessions",
+        value: "5",
+        unit: "",
+        delta: "+1",
+        trend: &[3.0, 4.0, 4.0, 5.0, 4.0, 5.0, 5.0],
+    },
+    HealthTile {
+        label: "Errors",
+        value: "12",
+        unit: "",
+        delta: "+3",
+        trend: &[2.0, 4.0, 3.0, 6.0, 8.0, 9.0, 12.0],
+    },
+    HealthTile {
+        label: "Rate",
+        value: "6.4k",
+        // ★ Terse because the heading carries it: at the tile widths this card
+        // is placed at, "Rate msg/s" hung 12px past its own box and the ink
+        // gate said so. The a11y value spells the unit out.
+        unit: "/s",
+        delta: "+8%",
+        trend: &[5.0, 5.5, 6.0, 5.8, 6.2, 6.1, 6.4],
+    },
+    HealthTile {
+        label: "Loss",
+        value: "0.04",
+        unit: "%",
+        delta: "-0.01",
+        trend: &[0.08, 0.07, 0.06, 0.05, 0.05, 0.04, 0.04],
+    },
+    HealthTile {
+        // ★ R1843 — the abbreviation is load-bearing, not cosmetic. A tile's
+        // floor is its widest heading, so the LONGEST label caps how many tiles
+        // the strip can show at ANY width: with "Round trip ms" the fifth tile
+        // never appeared, even maximised. `r1669` refuses that by name — a
+        // clamp whose unclamped side no swept size reaches is a guard nothing
+        // exercises, and deleting it would change nothing. The a11y value
+        // spells the quantity out for a reader who needs it.
+        label: "RTT",
+        value: "3.2",
+        unit: "ms",
+        delta: "+0.4",
+        trend: &[2.6, 2.8, 3.0, 2.9, 3.1, 3.0, 3.2],
+    },
+];
 
 /// How many value-axis ticks the distribution draws.
 ///

@@ -66,10 +66,18 @@ fn probe_palette() -> super::Palette {
 /// was right, and a gate failed because the model had no way to hold a mixed
 /// section. The tier column is gone; the heading derives.
 #[test]
-fn r1668_the_catalogue_is_five_placeable_and_eight_reserved() {
+fn r1668_the_catalogue_partitions_into_placed_and_reserved() {
     assert_eq!(spec::CATALOGUE.len(), 13);
-    assert_eq!(spec::placeable_count(), 5, "the palette's footer says this");
-    assert_eq!(spec::reserved_count(), 8, "and this");
+    // ★ R1843 — written as a PARTITION rather than as two literals. A
+    // promotion moves one seat from the right-hand count to the left, and a
+    // pair of hardcoded numbers turns that legal move into two edits in a test
+    // whose subject is not the release structure at all.
+    assert_eq!(
+        spec::placeable_count() + spec::reserved_count(),
+        spec::CATALOGUE.len(),
+        "the palette's footer counts every entry exactly once",
+    );
+    assert_eq!(spec::placeable_count(), 6, "the palette's footer says this");
 
     let mut seen = std::collections::BTreeSet::new();
     let mut codes = std::collections::BTreeSet::new();
@@ -171,7 +179,11 @@ fn r1668_every_reserved_seat_names_what_it_waits_for() {
         .iter()
         .filter(|w| w.tier == spec::Tier::Reserved)
         .collect();
-    assert_eq!(reserved.len(), 8, "R1797 promoted the ninth");
+    assert_eq!(
+        reserved.len(),
+        spec::CATALOGUE.len() - spec::placeable_count(),
+        "the reserved seats are what the catalogue has left after the placed ones",
+    );
     for def in reserved {
         assert!(
             def.reserved_for.starts_with("requirement "),
@@ -3046,7 +3058,7 @@ fn r1806_a_saved_filter_reaches_the_declared_set_of_linked_views() {
             .keys()
             .map(String::as_str)
             .collect::<std::collections::BTreeSet<_>>(),
-        std::collections::BTreeSet::from(["decode", "keymap", "latency"]),
+        std::collections::BTreeSet::from(["decode", "health", "keymap", "latency"]),
         "and the ones it does not reach are named too, rather than merely absent"
     );
 
@@ -3888,13 +3900,36 @@ fn r1832_every_locked_seat_cites_a_requirement_the_register_books_to_it() {
     }
 
     // ★ The denominator, because a loop over an empty set passes for the wrong
-    // reason. Eight palette seats and two rail seats is what this build has;
-    // `>=` on purpose — a new locked seat should be COVERED by this gate rather
-    // than have to update it.
+    // reason.
+    //
+    // ★★★★★ R1843 RE-JUDGED this floor rather than bumping it. It read
+    // `checked >= 10`, written when the build had eight palette seats and two
+    // rail ones — a floor set at exactly the population of the day, with a
+    // comment saying `>=` was "on purpose" so a NEW locked seat would be
+    // covered without editing the gate. That reasoning is sound in one
+    // direction only: seats also move the other way, and promoting one is a
+    // legitimate move this screen has now made twice. The floor turned every
+    // promotion into a failing gate whose message blamed the population.
+    //
+    // What the floor was for is that the two loops above must not run over
+    // nothing. So the assertion is now that the count MATCHES the locked
+    // population this build declares — non-vacuous at any size, and no longer
+    // satisfiable by a loop that silently skipped a seat, which `>=` was.
+    let locked = spec::CATALOGUE
+        .iter()
+        .filter(|w| w.tier == spec::Tier::Reserved)
+        .count()
+        + pin["rail"].as_array().map_or(0, Vec::len);
     assert!(
-        checked >= 10,
-        "only {checked} locked seat(s) were checked — a population this small \
-         cannot be this tool's, and the clauses above would be near-vacuous",
+        locked > 0,
+        "this build locks no seat at all — the register would then describe a \
+         screen that does not exist",
+    );
+    assert_eq!(
+        checked, locked,
+        "the gate checked {checked} locked seat(s) where this build declares \
+         {locked} — a seat the loops above walked past is exactly what this \
+         denominator exists to catch",
     );
 }
 
@@ -3902,11 +3937,17 @@ fn r1832_every_locked_seat_cites_a_requirement_the_register_books_to_it() {
 /// or declared BUILT** — so a seat we finished and a seat we forgot cannot look
 /// the same.
 ///
-/// The reference draws nine locked widget seats. This build reserves eight and
-/// has BUILT the ninth (a latency card, R1797). Without the `built` list that
-/// is indistinguishable from a seat nobody noticed was missing, and the honest
-/// difference between *shipped early* and *overlooked* is what a register is
-/// for.
+/// The reference draws nine locked widget seats; this build has BUILT some of
+/// them (a latency card, R1797; a health card, R1843) and reserves the rest.
+/// Without the `built` list that is indistinguishable from a seat nobody
+/// noticed was missing, and the honest difference between *shipped early* and
+/// *overlooked* is what a register is for.
+///
+/// ⚠ The split is deliberately NOT written here as two numbers. R1843 moved a
+/// seat across it and found this comment saying "reserves eight and has BUILT
+/// the ninth" — correct when written, false the moment a promotion lands, and
+/// sitting in a doc comment no gate reads. The assertions below hold the
+/// invariant instead.
 #[test]
 fn r1832_a_palette_requirement_is_reserved_here_or_declared_built() {
     let pin = reserved_pin();
@@ -3949,5 +3990,81 @@ fn r1832_a_palette_requirement_is_reserved_here_or_declared_built() {
         reserved.len() + built.len(),
         palette,
         "the reserved seats and the built ones do not account for the palette",
+    );
+}
+
+/// ★★★★★ R1843 — **every placed card is at least as wide in place as it is
+/// torn off**, and the numbers that say so are EMITTED rather than reasoned.
+///
+/// This exists because of how R1843 nearly went wrong. Fitting a sixth card on
+/// the board, the round concluded twice — once by inference and once by what it
+/// called arithmetic — that six cards *could not* fit, and reverted working
+/// code on the strength of it. Both conclusions were false, and both for the
+/// same reason: the round measured card ROWS exhaustively (four cards proved to
+/// need their second row, each by a named failing gate) and never once measured
+/// card WIDTHS. The rule it had not read is the one below, and reading it
+/// turned "cannot fit" into a layout that fits exactly.
+///
+/// So the geometry is a gate now, and it PRINTS. Run it and the numbers that
+/// decided this board come out where a person can check them:
+///
+/// ```text
+/// cargo test -p hello-analyzer-shell r1843_the_board -- --nocapture
+/// ```
+///
+/// ⚠ The floor is not a number chosen here. [`FLOAT_MIN_W`](super::FLOAT_MIN_W)
+/// is what a card clamps to once it is torn off, and a card legible detached
+/// and illegible in place would be this shell disagreeing with itself about one
+/// thing. That is also why `board_canvas_floor` — and through it the shipping
+/// window gate `r1781` — is driven by the NARROWEST span on the board: shrink
+/// any card below this and the whole dashboard demands a wider window.
+#[test]
+fn r1843_the_board_is_wide_enough_for_every_card_it_places() {
+    let canvas_w = spec::WIN_W - spec::RAIL_W - spec::PALETTE_W;
+    let pitch = (canvas_w - super::GAP) / spec::GRID_COLS;
+    println!(
+        "board geometry at the opening size: window {} - rail {} - palette {} = canvas {canvas_w}; \
+         pitch = (canvas - gap {}) / {} cols = {pitch}; a card's float floor is {}",
+        spec::WIN_W,
+        spec::RAIL_W,
+        spec::PALETTE_W,
+        super::GAP,
+        spec::GRID_COLS,
+        super::FLOAT_MIN_W,
+    );
+
+    let mut narrowest = spec::GRID_COLS;
+    for tile in spec::BOARD {
+        let width = tile.cols * pitch - super::GAP;
+        println!(
+            "  {:9} {} col(s) x {} row(s) at ({}, {}) -> {width}px",
+            tile.kind, tile.cols, tile.rows, tile.col, tile.row,
+        );
+        assert!(
+            width >= super::FLOAT_MIN_W,
+            "★ {} spans {} column(s) = {width}px, under the {}px a card clamps to when torn \
+             off — so this card is legible detached and illegible in place, and the board's \
+             own floor rises with it",
+            tile.kind,
+            tile.cols,
+            super::FLOAT_MIN_W,
+        );
+        narrowest = narrowest.min(tile.cols);
+    }
+
+    // The consequence, printed beside its cause: the dashboard's declared floor
+    // is derived from the narrowest span, and the shipping window is what has
+    // to satisfy it. `r1781` is the gate that fails when it does not.
+    let floor =
+        (super::FLOAT_MIN_W + super::GAP).div_ceil(narrowest) * spec::GRID_COLS + super::GAP;
+    println!(
+        "narrowest span {narrowest} col(s) -> the dashboard declares a floor of {floor}px, \
+         and the shipping window leaves it {canvas_w}px"
+    );
+    assert!(
+        floor <= canvas_w,
+        "★ the board's narrowest card is {narrowest} column(s), which makes the dashboard \
+         declare a {floor}px floor where the shipping window leaves {canvas_w}px — widening \
+         the narrowest card is the repair, not widening the window",
     );
 }

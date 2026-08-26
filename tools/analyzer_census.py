@@ -267,7 +267,10 @@ UNASSEMBLED: frozenset[str] = frozenset(
     {
         "capture.t2.14",
         "capture.t2.18",
-        "dashboard.t1.8",
+        # `dashboard.t1.8` was here and is REPAID at R1843. Removing a name is
+        # the only way this list shortens, and the ratchet refuses both
+        # directions: a row that gains an `assembled_by` while still listed
+        # here fails by name, so the name and the field cannot drift apart.
         "dashboard.t1.9",
         "lab.t1.8",
         "lab.t1.9",
