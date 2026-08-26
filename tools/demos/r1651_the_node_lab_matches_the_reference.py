@@ -380,6 +380,19 @@ def body() -> None:
             # after they were given names.
             declared.add(f"lab.form.key.{field['key']}")
             declared.add(f"lab.form.type.{field['key']}")
+            # ★★★★★ R1850 — and a BOOLEAN row's switch. R1837 gave the boolean
+            # control the catalogue's switch and tagged it, and this list never
+            # learned the tag because no card on the opening graph had a
+            # boolean row: the one boolean the screen had (`multicast`) belongs
+            # to two peers this section does not walk. R1842 put two permission
+            # booleans on EVERY card and the tag arrived on the default one, so
+            # the gate reported two undeclared elements — correctly, about a
+            # part that has been specified since R1837.
+            #
+            # Keyed off the field's own declared type, so the declaration
+            # follows the row rather than being a second list to keep.
+            if field.get("ty") == "bool":
+                declared.add(f"lab.form.switch.{field['key']}")
             # ★★★★★ R1732 — a collapsed roster: the word it holds and the arrow
             # that opens it. The roster's own options are `option.<key>.<word>`
             # below, which is the vocabulary the expanded row already used — a
@@ -625,10 +638,26 @@ def body() -> None:
             "★ the dotted key IS the path and the declared type IS the type — a "
             "form and a settings file mapped by hand are mapped twice",
         )
+        # ★★★★★ R1850 — this asserted `control.permissions == ["read","write"]`,
+        # and that array is the document R1842 removed because the TARGET
+        # REFUSES IT. The target declares the two permissions as separate
+        # boolean leaves under `admin.permissions` and holds them as an object
+        # of booleans; the old row was keyed at a path that is not a leaf and
+        # composed an array there, so what this screen exported did not start.
+        # A gate asserting the broken shape is a gate that would have refused
+        # the repair — which is what it did for five rounds while the sweep it
+        # lives in was skipped behind a rustdoc failure.
         assert_eq(
-            document["control"]["permissions"],
-            ["read", "write"],
-            "and a set of flags is an array",
+            document["admin"]["permissions"],
+            {"read": True, "write": True},
+            "★ and a set of named permissions is an OBJECT OF BOOLEANS, which "
+            "is the shape the target declares",
+        )
+        assert "control" not in document or "permissions" not in document.get(
+            "control", {}
+        ), (
+            "★★ and the path the old row invented is gone — a document still "
+            f"carrying it is one the target refuses: {document.get('control')}"
         )
         assert isinstance(document["listen"]["endpoints"], list)
         print(f"[F] the form derives a deployable document: "

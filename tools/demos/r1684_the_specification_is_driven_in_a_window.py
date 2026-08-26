@@ -490,6 +490,16 @@ def body() -> None:
         # its own affordances is not dead space — and the stepper pair sits at
         # the trailing edge, so the middle is exactly what is being pressed.
         ROW_WITH_PARTS = "transport.link.tx.batch_size"
+        # ⚠ R1850 — read the row HERE rather than from `held`. R1842 repointed
+        # this section at the whole-number row without noticing that an EARLIER
+        # section of this same demo types `70000` into it and applies, so the
+        # stale snapshot said `65535` while the row held `70000` and the
+        # "changing nothing" assertion below failed on a change this demo had
+        # made itself. The claim is about what Escape does to the value that is
+        # there NOW; anything else is comparing two moments.
+        before_escape = {
+            f["key"]: f["value"] for f in json.loads(q(tf, "form"))
+        }[ROW_WITH_PARTS]
         press(tf, f"lab.form.control.{ROW_WITH_PARTS}")
         assert_eq(
             json.loads(q(tf, "editing"))["target"],
@@ -505,7 +515,7 @@ def body() -> None:
             {f["key"]: f["value"] for f in json.loads(q(tf, "form"))}[
                 ROW_WITH_PARTS
             ],
-            held[ROW_WITH_PARTS]["value"],
+            before_escape,
             "changing nothing",
         )
 

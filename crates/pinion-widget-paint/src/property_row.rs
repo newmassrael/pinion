@@ -38,7 +38,7 @@
 //! test and a11y read that answer instead of re-spelling the arithmetic.
 //!
 //! ★ **And the prediction is checked rather than asserted.**
-//! [`tests::r1849_the_published_geometry_is_the_layout_the_painter_produces`]
+//! `tests::r1849_the_published_geometry_is_the_layout_the_painter_produces`
 //! runs the painted row through the real layout pass and compares every
 //! published rectangle with the one the solver put there. A geometry nobody
 //! compares against the paint is precisely the second fact this class is about.

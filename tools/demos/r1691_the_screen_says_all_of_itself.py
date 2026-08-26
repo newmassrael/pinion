@@ -305,7 +305,24 @@ def body() -> None:
         # `listitem`s nothing builds — and a field with no entries yet announced
         # a collection with nothing in it at all. Both endpoint rows on this
         # screen open empty, which is how the census found it.
-        want_role = {"int": "spinbutton", "perm": "group", "address[]": "group"}
+        # ★★★★★ R1850 — `bool` was missing here, so a boolean row fell to the
+        # `textbox` default and this gate demanded that a switch announce as a
+        # box a reader types into. It went unnoticed until R1842 put two
+        # permission booleans on every card: the screen's one boolean lived on
+        # two peers this section does not walk, so the arm below had never been
+        # reached.
+        #
+        # ⚠ And this table is a SECOND COPY of the mapping `painted.rs` makes
+        # (`"bool" => "checkbox"`, added by R1842 in the same round that made
+        # the row exist). Two declarations of one rule, and the one that is not
+        # exercised is the one that rots — which is what happened. The screen
+        # does not publish the mapping, so the copy stays for now and says so.
+        want_role = {
+            "int": "spinbutton",
+            "perm": "group",
+            "address[]": "group",
+            "bool": "checkbox",
+        }
         for field in spec["fields"]:
             node = access_node_by_tag(access, f"lab.form.control.{field['key']}")
             assert node is not None, f"{field['key']} announces"

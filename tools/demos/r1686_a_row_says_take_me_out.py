@@ -62,15 +62,14 @@ EXAMPLE = "hello-node-lab"
 EXT = "/external"
 VIEWPORT = (1440, 900)
 
-# The row the specification's own example argument names, and the one this demo
-# takes out.
+# The row this demo takes out is ASKED FOR, not named — see `find_restorable`.
 #
-# ★ R1842 — a boolean row, where it was a set-of-words row until the option
-# surface stopped being written from this crate's memory of its target. The
-# reason the row is not a plain text box is unchanged and is the point:
-# removing it proves the seat is not confused with the control beside it, which
-# is now the switch rather than a row of option chips.
-ROW = "admin.permissions.write"
+# ★★★★★ R1850 — it was a constant here, and twice that constant went stale
+# under a surface change: R1690 named a set-of-words row, R1842 repointed it at
+# `admin.permissions.write`, and neither key is one the screen can offer back
+# now. The round trip this file is about needs a row that is BOTH written and
+# re-offerable, and which rows those are is a fact about the screen that the
+# screen can be asked for. A gate naming a key carries a copy of it.
 
 
 def q(tf, path):
@@ -98,6 +97,92 @@ def keys(tf):
 def press(tf, tag):
     box = rects(tf)[tag]
     tf.click(at=(box[0] + box[2] // 2, box[1] + box[3] // 2))
+
+
+def find_restorable(tf) -> tuple[str, str]:
+    """The first `(card, row)` where taking the row off is UNDOABLE.
+
+    ★★★★★ R1850 — two conditions, both asked of the screen rather than assumed:
+
+    * **offerable** — `catalogue.restorable` is the screen's own answer to
+      "which of these come back if you take them off". Measured at R1850, that
+      is not every row: the form object counts its present rows as catalogue
+      entries, but this screen rebuilds the form each render from its own list
+      of offerable keys, so a row it opened with can leave for good.
+    * **written**, not worked out from the canvas. A derived row is *disowned*
+      rather than removed, so it never leaves the form and section (C)'s claim
+      would be about a different act.
+    """
+    for card in [c for c in q(tf, "nodes").split(",") if c]:
+        tf.invoke(f"{EXT}/select", card)
+        rows = {f["key"]: f for f in form(tf)}
+        for key in json.loads(q(tf, "catalogue"))["restorable"]:
+            if rows[key].get("source") is None:
+                return card, key
+    raise AssertionError(
+        "no card has a written row the screen can offer back — the round trip "
+        "this file is about is unreachable, which is a finding and not a "
+        "reason to skip"
+    )
+
+
+def find_typeable_restorable(tf) -> str:
+    """A row that opens a FIELD when its control is pressed, and comes back.
+
+    ★★★★★ R1850 — section (H) needs both, and measured on this screen no row
+    that OPENS with the card is both: the only written, re-offerable rows are
+    booleans, whose control is the catalogue's switch (R1837) and toggles
+    rather than opening a box. So the row is made: an offered key is added,
+    which puts it in the intersection by construction, and the first one whose
+    published `ty` is neither a boolean nor a chooser is the one driven.
+
+    ⚠⚠ **Chosen by PRESSING, not by reading the type word.** The first draft
+    filtered on `ty != "bool"` and no `options`, and picked `connect.endpoints`
+    — an `address[]`, whose control is a column of per-element rows and opens
+    no box either. Adding `source is None` did not help, because on a card the
+    canvas draws no link out of, that row is written. ⇒ *which shapes get a
+    plain text box is a fact about the screen's control catalogue*, and a demo
+    enumerating them is a third copy of it. So the question is asked the only
+    way it is guaranteed to be answered correctly: press the control and see
+    whether a field opened.
+    """
+    for key in json.loads(q(tf, "catalogue"))["offered"]:
+        tf.invoke(f"{EXT}/add_field", key)
+        scroll_to(tf, f"lab.form.control.{key}")
+        press(tf, f"lab.form.control.{key}")
+        opened = json.loads(q(tf, "editing"))["target"] == f"value:{key}"
+        if opened:
+            # ⚠ Only when it opened: `lab.edit` is painted only while a field
+            # is up, so an unconditional Escape is a refusal from the wire
+            # ("tag not found in paint scene") rather than a tidy-up.
+            tf.key(path="lab.edit", name="Escape")
+            return key
+        tf.invoke(f"{EXT}/remove_field", key)
+    raise AssertionError(
+        "no offered key opens a field when its control is pressed — section "
+        "(H) is about a box standing over a row, and there is no row it can "
+        "stand over"
+    )
+
+
+def scroll_to(tf, tag: str) -> None:
+    """Bring `tag` into the painted viewport, or say it cannot be reached.
+
+    ⚠ R1850 — needed because R1842 grew the option surface from 53 paths to
+    111, and the offered chips grew with it: measured on this screen, six are
+    offered and TWO are in view. `scene/scroll_reach` reports the rest
+    `scrollable`, which is the screen being right — the chip is reachable and
+    is not on the first screenful. A press that assumed otherwise was asserting
+    the scroll position.
+    """
+    if tag in rects(tf):
+        return
+    for _ in range(40):
+        tf.scroll("lab.inspector.body", by=(0, 60))
+        tf.tick_ms(16)
+        if tag in rects(tf):
+            return
+    raise AssertionError(f"{tag} never came into view after scrolling")
 
 
 def type_keys(tf, text):
@@ -195,6 +280,10 @@ def body() -> None:
         assert_eq(op["verb"][0], "remove_field", "and still has its verb")
         assert_eq(op["absent"], False, "so the operation is answered on both channels")
 
+        # ★ R1850 — the card and the row, asked for rather than named.
+        card, ROW = find_restorable(tf)
+        tf.invoke(f"{EXT}/select", card)
+
         opening = keys(tf)
         assert ROW in opening, f"the opening form holds {ROW}"
         painted = rects(tf)
@@ -274,10 +363,12 @@ def body() -> None:
             "and the rest kept their order",
         )
         assert f"lab.form.remove.{ROW}" not in rects(tf), "its seat went with it"
-        assert f"lab.form.add.{ROW}" in rects(tf), (
+        assert ROW in set(json.loads(q(tf, "catalogue"))["offered"]), (
             "★ and the chip that puts it back is offered — the key is one this "
             "kind can have, which is why it opened holding it"
         )
+        scroll_to(tf, f"lab.form.add.{ROW}")
+        assert f"lab.form.add.{ROW}" in rects(tf), "and it is painted, in reach"
         assert_chips_answer_for_themselves(tf)
 
         # ── (D) put it back ────────────────────────────────────────
@@ -297,9 +388,19 @@ def body() -> None:
 
         # ── (E) the edit does not survive the round trip ────────────
         held = row_value(tf, ROW)
-        tf.invoke(f"{EXT}/set_field", f"{ROW}=write")
+        # ★ R1850 — the value to write is derived from the one that is there.
+        # This said `=write`, a word from the set-valued row the surface used
+        # to have; the row it drives now is whatever `find_restorable` picked,
+        # so the only value guaranteed to MOVE it is the other one it can hold.
+        assert held in ("true", "false"), (
+            f"this section flips a boolean row and {ROW} holds {held!r} — the "
+            "derivation picked a shape it cannot drive"
+        )
+        moved = "false" if held == "true" else "true"
+        tf.invoke(f"{EXT}/set_field", f"{ROW}={moved}")
         assert row_value(tf, ROW) != held, "the value moved"
         press(tf, f"lab.form.remove.{ROW}")
+        scroll_to(tf, f"lab.form.add.{ROW}")
         press(tf, f"lab.form.add.{ROW}")
         assert_eq(
             row_value(tf, ROW),
@@ -362,32 +463,36 @@ def body() -> None:
 
         # ── (H) the field open on that row is shut, not applied ────
         tf.invoke(f"{EXT}/select", "P-02")
-        # This card's own opening value, not the one captured in (E) — the
-        # reference gives a router and a peer different permissions, and an
+        # ★ R1850 — a row of its own, because this section needs one that OPENS
+        # A FIELD and the row the rest of the file drives is a boolean whose
+        # control is a switch. See `find_typeable_restorable`.
+        typed_row = find_typeable_restorable(tf)
+        # This card's own opening value, not one captured on another card — an
         # assertion comparing across cards would be comparing two facts.
-        opened_as = row_value(tf, ROW)
+        opened_as = row_value(tf, typed_row)
         # The card that made the chip defect visible: it holds one more row
         # than the router, so the offered set wraps onto three lines and the
         # measured/estimated difference changes which line a chip is on.
         assert_chips_answer_for_themselves(tf)
-        press(tf, f"lab.form.control.{ROW}")
+        press(tf, f"lab.form.control.{typed_row}")
         assert_eq(
             json.loads(q(tf, "editing"))["target"],
-            f"value:{ROW}",
+            f"value:{typed_row}",
             "the field is open on the row",
         )
         type_keys(tf, "x")
-        press(tf, f"lab.form.remove.{ROW}")
+        press(tf, f"lab.form.remove.{typed_row}")
         assert_eq(
             json.loads(q(tf, "editing"))["target"],
             None,
             "★★ the field shut with the row it was standing on — a box over a "
             "row that is gone is a box aimed at nothing",
         )
-        assert ROW not in keys(tf), "and the row went"
-        press(tf, f"lab.form.add.{ROW}")
+        assert typed_row not in keys(tf), "and the row went"
+        scroll_to(tf, f"lab.form.add.{typed_row}")
+        press(tf, f"lab.form.add.{typed_row}")
         assert_eq(
-            row_value(tf, ROW),
+            row_value(tf, typed_row),
             opened_as,
             "★ and what was half-typed into it was NOT applied on the way out",
         )

@@ -1410,6 +1410,27 @@ impl ConfigForm {
             .collect()
     }
 
+    /// ★★★★★ R1850 — **every key THIS FORM OBJECT is willing to hold**, which
+    /// is not the same as what a screen will offer back.
+    ///
+    /// [`new`](Self::new) puts the present rows into the catalogue as well as
+    /// the offered ones, so by this type's reckoning taking any row off is
+    /// reversible. That is true of a form a caller HOLDS across the removal.
+    /// It is not true of a caller that rebuilds the form every render from its
+    /// own list of offerable keys — and one screen in this tree does exactly
+    /// that, so a row it opened with vanishes for good while this accessor
+    /// says it comes back.
+    ///
+    /// ⚠ **So this is the model's answer and not the screen's**, and a consumer
+    /// asking "is this removal undoable" must ask whoever builds the form.
+    /// Registered as `debt-a-form-and-its-builder-disagree-about-what-returns`;
+    /// measured at R1850 when two demos went red asserting a chip that the
+    /// model said would be there.
+    #[must_use]
+    pub fn catalogue(&self) -> &[ConfigField] {
+        &self.catalogue
+    }
+
     /// The row at that path.
     #[must_use]
     pub fn field(&self, key: &str) -> Option<&ConfigField> {

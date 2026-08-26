@@ -248,9 +248,21 @@ impl StatTile {
     /// thing that knows what it has to say, so it is the thing that can answer
     /// how much room that needs.
     ///
-    /// Measured through [`Caption::extent`], the same sizing rule [`place`]
-    /// will use, so a caller that honours this width gets rows that fit rather
-    /// than rows that fit under a different rule.
+    /// ⚠ **Measured with the CENSUS's stand-in (`chars * px`), which is NOT
+    /// the rule [`place`] uses**, and the difference is deliberate — see the
+    /// comment in the body. `Caption`'s headless fallback is `chars * px / 2`,
+    /// a factor of two smaller, and R1843 spent four attempts trimming against
+    /// that one while the gate measured with this one. So a caller that
+    /// honours this width satisfies the gate; it is a conservative CEILING on
+    /// what `place` will ask for, not the same number.
+    ///
+    /// ⚠⚠ R1850 — this paragraph said "measured through `Caption::extent`, the
+    /// same sizing rule `place` will use", and BOTH halves were false: there is
+    /// no such item (which is the broken intra-doc link that took CI red for
+    /// five rounds), and the body twelve lines below already said the opposite
+    /// on purpose. A doc and a comment inside one function contradicting each
+    /// other is the same class as a gate that copies a value the framework
+    /// owns — two declarations of one fact, free to drift.
     ///
     /// [`place`]: crate::caption::place
     #[must_use]

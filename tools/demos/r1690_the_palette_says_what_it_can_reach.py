@@ -87,6 +87,37 @@ def rects(tf):
     return abs_rects_of(tf.snapshot(source="paint", viewport=viewport(tf)))
 
 
+def find_restorable(tf) -> tuple[str, str]:
+    """The first `(card, row)` where taking the row off is UNDOABLE.
+
+    ★★★★★ R1850 — asked, not named. This file used to drive a key written into
+    its own source, and R1842 rewrote the option surface from the target's own
+    declaration: that key stopped being one the screen offers back, so the
+    round trip below had no chip to press and the gate went red reporting a
+    defect that was its own copy going stale. A gate that must NAME a key
+    carries a duplicate of something the screen owns.
+
+    Two conditions, and both are measured rather than assumed:
+
+    * the row is **offerable** — `catalogue.restorable` is the screen's own
+      answer to "which of these come back if you take them off";
+    * the row is **written**, not worked out from the canvas. A derived row is
+      disowned rather than removed, so it never leaves the form and the claim
+      below would be about a different act.
+    """
+    for card in [c for c in q(tf, "nodes").split(",") if c]:
+        tf.invoke(f"{EXT}/select", card)
+        rows = {f["key"]: f for f in json.loads(q(tf, "form"))}
+        for key in json.loads(q(tf, "catalogue"))["restorable"]:
+            if rows[key].get("source") is None:
+                return card, key
+    raise AssertionError(
+        "no card has a written row the screen can offer back — the round trip "
+        "this section is about is unreachable, which is a finding and not a "
+        "reason to skip"
+    )
+
+
 def press(tf, tag):
     box = rects(tf)[tag]
     tf.click(at=(box[0] + box[2] // 2, box[1] + box[3] // 2))
@@ -159,12 +190,29 @@ def body() -> None:
 
         # ── (D) the figure falls when the palette narrows... ────────
         #      ...and does NOT when a row merely leaves the screen.
-        tf.invoke(f"{EXT}/select", spec["selected_node"])
+        # ★ R1850 — on the card that HAS such a row, found by asking rather
+        # than by naming one. Only a row that is written (not worked out from
+        # the wires) is removed rather than disowned, and only one the screen
+        # can offer back makes the round trip; the pair is not on every card.
+        node, restorable_row = find_restorable(tf)
+        tf.invoke(f"{EXT}/select", node)
         before = reach(tf)["leaves"]
-        tf.invoke(f"{EXT}/remove_field", "transport.link.tx.batch_size")
-        keys = {row["key"] for row in json.loads(q(tf, "form"))}
-        assert "transport.link.tx.batch_size" not in keys, (
-            f"the row really left the screen: {sorted(keys)}"
+        # ★★★★★ R1850 — the row is ASKED FOR, not named. This block used to
+        # drive `transport.link.tx.batch_size`, and R1842 rewrote the option
+        # surface from the target's own declaration: that key stopped being one
+        # the catalogue re-offers, so the chip below was genuinely absent and
+        # this gate went red reporting a defect that was its own copy going
+        # stale. A gate that must name a key carries a duplicate of something
+        # the form owns. `catalogue.restorable` is the screen's answer to "which
+        # of the rows in front of you come back if you take them off", which is
+        # exactly the precondition this claim needs.
+        row = restorable_row
+        tf.invoke(f"{EXT}/remove_field", row)
+        keys = {r["key"] for r in json.loads(q(tf, "form"))}
+        assert row not in keys, f"the row really left the screen: {sorted(keys)}"
+        assert row in set(json.loads(q(tf, "catalogue"))["offered"]), (
+            "★ and having left, it is now OFFERED — which is the half that "
+            "makes the reach below stay put"
         )
         assert_eq(
             reach(tf)["leaves"],
@@ -173,8 +221,26 @@ def body() -> None:
             "the TOOL can still author it — a meter that fell here would be "
             "reporting the session rather than the tool",
         )
-        press(tf, "lab.form.add.transport.link.tx.batch_size")
+        # ⚠ R1850 — through the VERB, where this used to press the chip. The
+        # claim this section makes is about the METER, and the chip's own
+        # reachability is `r1686`'s subject. Saying so matters because the
+        # reason it changed is a finding: since R1842 grew the option surface
+        # from 53 paths to 111 the panel is long enough that the chip is a
+        # scroll away, so a press here would have been asserting the scroll
+        # position rather than the figure.
+        tf.invoke(f"{EXT}/add_field", row)
+        assert row in {r["key"] for r in json.loads(q(tf, "form"))}, (
+            "the row is back on the form"
+        )
         assert_eq(reach(tf)["leaves"], before, "putting it back changes nothing either")
+        # ⚠ R1850 — and the selection goes BACK. This section had to move to a
+        # card that has a restorable written row, and section (F) below drives
+        # `id` and compares against a verdict captured while the ORIGINAL card
+        # was selected. Leaving the selection here made that comparison read
+        # two different cards and report six warnings against four — the exact
+        # mistake R1842 made in `r1684`, repeated here by the round repairing
+        # it. A section that moves the selection puts it back.
+        tf.invoke(f"{EXT}/select", spec["selected_node"])
 
         # ── (E) the string surface is partitioned, and uses all of it ─
         classes = [s["choices"], s["formats"], s["free"]]

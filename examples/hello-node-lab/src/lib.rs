@@ -8456,6 +8456,13 @@ const FIELDS: &[SchemaField] = &{
         SchemaField::new("verdict", "string"),
         SchemaField::new("gate", "string"),
         SchemaField::new("form", "string"),
+        // ★★★★★ R1850 — and what the form is WILLING to hold, which `form`
+        // cannot say. `form` lists the rows that are there; a reader deciding
+        // whether to take one off needs to know whether it comes back, and a
+        // key that is merely present and a key the catalogue can re-offer look
+        // identical on the screen. Published as the pair a caller actually
+        // asks for — the restorable rows and the ones a removal would end.
+        SchemaField::new("catalogue", "string"),
         SchemaField::new("document", "string"),
         SchemaField::new("nodes", "string"),
         SchemaField::new("links", "string"),
@@ -8852,6 +8859,43 @@ impl ExternalIntrospect for LabOracle {
                 )
                 .to_string(),
             ),
+            // ★★★★★ R1850 — the catalogue, split the way a caller reads it.
+            "catalogue" => {
+                let form = selected_form(state)
+                    .ok_or_else(|| ReadRefusal::unavailable("no node is selected"))?;
+                let held: Vec<&str> = form.fields().iter().map(ConfigField::key).collect();
+                // ⚠ `spec::ADDABLE` and NOT `form.catalogue()`. The form object
+                // counts its own present rows as catalogue entries, so it would
+                // answer "every row returns"; this screen rebuilds the form
+                // each render from `ADDABLE`, so what actually returns is that
+                // list. The two disagree — see `ConfigForm::catalogue`'s doc —
+                // and the one a reader needs is the builder's.
+                let known: Vec<&str> = spec::ADDABLE.to_vec();
+                // `restorable` is the half nothing could answer before: rows
+                // that are on the form AND offerable, so taking one off is
+                // undoable. `ends_it` is its complement over the rows that are
+                // there, and it is the one a reader is owed a warning about.
+                let restorable: Vec<&str> =
+                    held.iter().copied().filter(|k| known.contains(k)).collect();
+                let ends_it: Vec<&str> = held
+                    .iter()
+                    .copied()
+                    .filter(|k| !known.contains(k))
+                    .collect();
+                text(
+                    serde_json::json!({
+                        "known": known,
+                        "offered": form
+                            .addable()
+                            .iter()
+                            .map(|f| f.key())
+                            .collect::<Vec<_>>(),
+                        "restorable": restorable,
+                        "ends_it": ends_it,
+                    })
+                    .to_string(),
+                )
+            }
             "form" => {
                 let form = selected_form(state)
                 .ok_or_else(|| ReadRefusal::unavailable("no node is selected"))?;

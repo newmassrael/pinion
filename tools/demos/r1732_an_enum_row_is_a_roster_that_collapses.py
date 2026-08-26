@@ -164,19 +164,37 @@ def section_a(app: RpcSubprocess, spec: dict, key: str) -> None:
             "file's -- so an entry quietly paid off or quietly added fails here",
         )
 
-    # ★ The two entries that run the OTHER way: parts this build has and the
-    # reference does not. The order rule keeps them; the ledger records them.
+    # ★ The entries that run the OTHER way: parts this build draws differently
+    # from the reference, or does not draw at all. The order rule keeps them;
+    # the ledger records them.
+    #
+    # ★★★★★ R1850 — FOUR, where this said two, and the two R1842 added run the
+    # opposite way from the first two. `int` and `list` are parts this build
+    # has and the reference draws plainly; `perm` and `derived` are parts the
+    # REFERENCE has and this build does not, because R1842 found the single
+    # set-valued row was keyed at a path the target has no leaf for and
+    # exported an array it refuses. Both directions belong in one ledger — a
+    # remainder is a difference from the canon, whichever side is short.
+    #
+    # ⚠ And the list is read off the published ledger rather than counted:
+    # this said "the two", which is a number in prose, and it became wrong the
+    # moment a round recorded a third and a fourth.
     kept = [e["key"] for e in published["controls"]["owed"]]
     ok(
-        "A: ★★★ the two second-pass controls are RECORDED rather than deleted -- "
-        "the reference draws a whole number and an array in the plain text box, "
-        "and this build gives them a clamping stepper and per-element rows",
-        sorted(kept) == ["int", "list"],
+        "A: ★★★ every second-pass control is RECORDED rather than deleted -- "
+        "the reference draws a whole number and an array in the plain text box "
+        "where this build gives them a clamping stepper and per-element rows, "
+        "and it draws controls for a set of named booleans and for a read-out "
+        "that this build does not draw at all",
+        sorted(kept) == ["derived", "int", "list", "perm"],
     )
     for entry in published["controls"]["owed"]:
         ok(
             f"A: and the {entry['key']} entry says which round accepted it and why",
-            entry["since"] == "R1732" and len(entry["why"]) > 80,
+            # ⚠ A ROUND, not R1732: this demanded the round that wrote the first
+            # two, so the ledger could not take an entry from any later one
+            # without failing here for the wrong reason.
+            entry["since"].startswith("R") and len(entry["why"]) > 80,
         )
 
     rects = abs_rects_of(app.snapshot(source="paint"))
@@ -227,11 +245,18 @@ def section_b(app: RpcSubprocess, spec: dict, key: str) -> None:
     )
 
     before = row["value"]
-    app.invoke(f"{EXT}/key", "ArrowDown")
+    # ★★★★★ R1850 — ONE step, where this took two. The roster this drives has
+    # two words since R1842 read the option surface off the target's own
+    # declaration (`routing.peer.mode`, where the paraphrase `routing.mode` had
+    # three), so two steps WRAP BACK to where they started and the highlight
+    # "did not move" — a true reading of a step count that had stopped suiting
+    # the roster. One step moves it for any roster of two or more, which is the
+    # claim, and the roster's size is asserted rather than assumed.
+    assert len(words) >= 2, f"B: a roster of one has no step to take: {words}"
     app.invoke(f"{EXT}/key", "ArrowDown")
     app.tick(8)
     moved = qj(app, "picking")
-    ok("B: two steps moved the highlight", moved["highlighted"] != before)
+    ok("B: a step moved the highlight", moved["highlighted"] != before)
     assert_eq(
         next(r for r in qj(app, "form") if r["key"] == key)["value"],
         before,

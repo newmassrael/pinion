@@ -377,9 +377,14 @@ def f_the_document_carries_what_belongs_in_it(tf) -> None:
         "F: ★★★★★ what the plan ships for a card IS what the screen says its "
         "configuration is",
     )
+    # ★ R1850 — `admin` where this said `control`. R1842 moved the permissions
+    # off a path the target does not have (`control.permissions`, carrying an
+    # array) and onto the two boolean leaves it declares under `admin`, so the
+    # document's top-level roster changed with it. The claim is unchanged: both
+    # worked-out rows are in, and the placement row is not.
     assert_eq(
         sorted(produced["config"]["nodes"]["R-01"]),
-        ["connect", "control", "id", "listen", "mode", "transport"],
+        ["admin", "connect", "id", "listen", "mode", "transport"],
         "F: including both worked-out rows, and not the placement row",
     )
 
