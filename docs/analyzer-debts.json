@@ -301,17 +301,6 @@
       ]
     },
     {
-      "name": "debt-the-sixth-card-broke-three-demos-nobody-ran",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "names capture.t2.18, dashboard.t1.8"
-      ]
-    },
-    {
       "name": "debt-two-deliberate-divergences-from-the-behaviour-canon",
       "substituted": false,
       "blocked_by": "spec-round",

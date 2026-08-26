@@ -1772,6 +1772,29 @@ pub struct HealthTile {
 /// ink gate reports it as a mark outside its box. R1843's first draft wrote
 /// "Active sessions" and the gate caught it hanging 37px past its own label
 /// box.
+/// How many of [`HEALTH_TILES`] the strip actually draws on the opening board.
+///
+/// ★★★★★ R1846 — **the health strip is the first body whose row count is a
+/// function of its WIDTH, and the census had no way to say so.** Every other
+/// family here expands from a table: the latency card has three tiles and draws
+/// three. This card declares five and draws as many as clear
+/// `StatTile::min_width` in the space the board gives it — three at [`WIN_W`] —
+/// so a family over the whole table would demand two regions nobody paints, and
+/// a family over what is painted would be the paint answering the census.
+///
+/// ⚠ So this is a NUMBER, and it is here rather than derived because the rule
+/// that produces it needs the card's pixel width, which lives in the painter
+/// and is not reachable from a `const` table. What makes it honest is the gate:
+/// `r1846_the_strip_draws_what_the_census_declares` fails the moment the paint
+/// and this disagree, at every size the sweep runs. That is the same shape as
+/// this screen's other pinned numbers — a written value whose drift is what a
+/// test exists to catch.
+///
+/// ⇒ Registered as a debt in its own right: a width-dependent family cannot be
+/// DERIVED here, and until it can, every narrowing body will need a pin like
+/// this one.
+pub const HEALTH_TILES_SHOWN: usize = 3;
+
 pub const HEALTH_TILES: &[HealthTile] = &[
     HealthTile {
         label: "Sessions",
@@ -2010,6 +2033,34 @@ pub enum Population {
     /// grid lines and y labels the painter emits, and a number here that
     /// disagreed would demand regions nothing paints.
     LatencyTicks,
+    /// ★ R1846 — one per health tile the strip actually DRAWS, which is
+    /// [`HEALTH_TILES_SHOWN`] and not the whole of [`HEALTH_TILES`].
+    ///
+    /// The first family here whose size is a function of the card's width. See
+    /// that constant for why the number is pinned rather than derived, and for
+    /// the gate that makes the pin safe.
+    HealthTiles,
+    /// ★ R1846 — the health strip's own container, one per placed health card.
+    ///
+    /// It gets a row where `card.latency#4.tiles` deliberately does not,
+    /// because this one PAINTS: it is a real box in the scene and therefore an
+    /// addressable region, while the latency card's is a grouping node with no
+    /// rectangle. The comment beside that absence in [`VOICES`] is what made
+    /// the difference checkable rather than a judgement call.
+    HealthStrip,
+    /// ★ R1846 — the parts of each drawn health tile whose text IS the tile's
+    /// NAME: the label's box and the caption inside it.
+    HealthTileNames,
+    /// ★ R1846 — the parts of each drawn health tile that are folded into the
+    /// tile's announcement: the value, the delta, and the trailing figure with
+    /// the sparkline the caller hands it.
+    ///
+    /// ⚠ These two families are the SHAPE `pinion_widget_paint::stat_tile`
+    /// builds, written where this screen's census can see it. They are not a
+    /// second opinion about it: the crate declares the silence, and these rows
+    /// say the screen expects exactly those regions to be quiet. When the crate
+    /// changes its shape both must move, and the demo is what says so.
+    HealthTileParts,
     /// ★ One per catalogue entry the first release **reserves** — a predicate
     /// over [`CATALOGUE`] rather than the whole of it, so the gate demands
     /// exactly the nine locked seats and not thirteen.
@@ -2080,6 +2131,20 @@ impl Population {
             Population::Chips => indexes(FILTER_CHIPS.len()),
             Population::Stats => indexes(FILTER_STATS.len()),
             Population::LatencyTiles => indexes(LATENCY_STAT_KEYS.len()),
+            Population::HealthTiles => indexes(HEALTH_TILES_SHOWN),
+            Population::HealthStrip => {
+                card_of("health").map_or_else(Vec::new, |id| vec![format!("{id}.tiles")])
+            }
+            Population::HealthTileNames => health_tile_parts(&["label", "label.caption"]),
+            Population::HealthTileParts => health_tile_parts(&[
+                "value",
+                "value.caption",
+                "delta",
+                "delta.caption",
+                "trail",
+                "trail.spark",
+                "trail.spark.line",
+            ]),
             // The interior bins the ladder's boundaries describe, plus the two
             // unbounded ends `BinEnds::Open` adds.
             Population::LatencyBins => indexes(LATENCY_LADDER.len() + 1),
@@ -2152,6 +2217,26 @@ pub fn card_of(kind: &str) -> Option<String> {
         .iter()
         .position(|placed| placed.kind == kind)
         .map(|n| format!("{kind}#{n}"))
+}
+
+/// `{health card}.stat.{n}.{part}` for every part of every tile the strip draws.
+///
+/// ★ R1846 — the product of [`HEALTH_TILES_SHOWN`] and the suffixes the crate's
+/// tile builds. Written once rather than per suffix, because the suffixes are
+/// one fact — the shape of `pinion_widget_paint::stat_tile` — and nine rows of
+/// it would be nine places to update when that shape moves.
+fn health_tile_parts(parts: &[&str]) -> Vec<String> {
+    card_of("health").map_or_else(Vec::new, |id| {
+        (0..HEALTH_TILES_SHOWN)
+            .flat_map(|n| {
+                let id = id.clone();
+                parts
+                    .iter()
+                    .map(move |part| format!("{id}.stat.{n}.{part}"))
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    })
 }
 
 /// `{card}.cell.{row}_{column}` for every cell of a placed table card.
@@ -2422,6 +2507,30 @@ pub const VOICES: &[VoiceSpec] = &[
         population: Population::One,
         at: Where::At("dashboard"),
     },
+    // --- the health card (R1843, declared R1846) --------------------------
+    //
+    // ★★★★★ R1846 — these four rows were MISSING, and the round that built the
+    // card did not notice because the demo that asks is not run by
+    // `cargo test`. Measured before they were written: the running screen
+    // announced `card.health#5.tiles` and three `card.health#5.stat.{n}` that
+    // this table had never named — which is `r1694`'s "nothing speaks that the
+    // specification did not say would", failing in the direction that matters
+    // most, since an undeclared voice is one nobody reviewed.
+    //
+    // ⚠ Unlike `card.latency#4.tiles` (see the note above it) this strip's
+    // container PAINTS, so it is an addressable region and owes a row.
+    VoiceSpec {
+        tag: "card.{}",
+        role: "group",
+        population: Population::HealthStrip,
+        at: Where::At("dashboard"),
+    },
+    VoiceSpec {
+        tag: "card.health#5.stat.{}",
+        role: "status",
+        population: Population::HealthTiles,
+        at: Where::At("dashboard"),
+    },
     // ★ The caption is VOICED, not silenced. It says what is measured, what the
     // buckets are, and why some bars are emphasised — the third clause being
     // the one the reference could not write, since its tail is an index. A
@@ -2552,6 +2661,26 @@ pub const SILENCES: &[(&str, Population, &str, Where)] = &[
         Population::ValueRows,
         "part_of",
         Where::At("settings"),
+    ),
+    // ★★★★★ R1846 — every part of every health tile the strip draws, quiet
+    // because the tile itself speaks. These are the first silences in this
+    // table the SCREEN does not declare: `pinion_widget_paint::stat_tile` does,
+    // at the site that paints them, and this pair of rows is the screen saying
+    // it expects exactly that. Before R1846 the crate declared nothing and the
+    // running dashboard reported 27 undecided regions — one third of a card —
+    // while every `cargo test` gate stayed green, because a voice census needs
+    // a running screen and a demo is not run by `cargo test`.
+    (
+        "card.{}",
+        Population::HealthTileNames,
+        "name_of",
+        Where::At("dashboard"),
+    ),
+    (
+        "card.{}",
+        Population::HealthTileParts,
+        "part_of",
+        Where::At("dashboard"),
     ),
     (
         "shell.palette.head.title",

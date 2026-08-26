@@ -66,7 +66,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from analyzer_spec import closed_keys  # noqa: E402
+from analyzer_spec import (  # noqa: E402
+    closed_keys,
+    opening_kinds,
+    reserved_palette_kinds,
+)
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
@@ -186,13 +190,30 @@ def body() -> None:
         # TOTAL is what a number here can honestly pin: thirteen entries, split
         # by a release decision that moves. Asserting the split as two literals
         # made this demo fail for a change that is the release plan working.
+        #
+        # ★★★★★ R1846 — AND R1797 WROTE THAT SENTENCE AND LEFT THE TWO LITERALS
+        # STANDING ON THE NEXT LINE. R1843 promoted the health card, the split
+        # became six and seven, and this demo failed for exactly the reason the
+        # comment above names — for two rounds, because nobody ran it. The
+        # diagnosis was right and the repair was never made, so the split is now
+        # read from the specifications: the board from
+        # `docs/analyzer-dashboard-spec.json`, what is still booked from
+        # `docs/analyzer-reserved-spec.json`'s *deferred minus built*.
         assert_eq(
             spec["placeable_count"] + spec["reserved_count"],
             len(spec["catalogue"]),
             "A: every catalogue entry is either placed this release or reserved",
         )
-        assert_eq(spec["placeable_count"], 5, "A: five the first release places")
-        assert_eq(spec["reserved_count"], 8, "A: eight it reserves")
+        assert_eq(
+            spec["placeable_count"],
+            len(opening_kinds()),
+            "A: the split is the specification's, on the placed side",
+        )
+        assert_eq(
+            spec["reserved_count"],
+            len(reserved_palette_kinds()),
+            "A: and on the booked side",
+        )
         print(
             f"[demo] {len(voices)} region(s) owe a voice, {len(silences)} owe a "
             f"silence, {len(locked)} seat(s) are locked"

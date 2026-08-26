@@ -40,6 +40,8 @@ KEYS_SPEC_PATH = DOCS / "analyzer-keys-spec.json"
 PACKETS_SPEC_PATH = DOCS / "analyzer-packets-spec.json"
 BOARD_SPEC_PATH = DOCS / "analyzer-board-spec.json"
 SECTIONS_SPEC_PATH = DOCS / "analyzer-sections-spec.json"
+DASHBOARD_SPEC_PATH = DOCS / "analyzer-dashboard-spec.json"
+RESERVED_SPEC_PATH = DOCS / "analyzer-reserved-spec.json"
 
 
 def rail_spec() -> dict:
@@ -55,6 +57,17 @@ def board_spec() -> dict:
 def keys_spec() -> dict:
     """The key-pattern section's three surfaces, as their pin states them."""
     return json.loads(KEYS_SPEC_PATH.read_text(encoding="utf-8"))
+
+
+def dashboard_spec() -> dict:
+    """The dashboard's own surfaces, the opening board included."""
+    return json.loads(DASHBOARD_SPEC_PATH.read_text(encoding="utf-8"))
+
+
+def reserved_spec() -> dict:
+    """The deferred register: what each locked seat is booked under, and — in
+    `built` — which of those bookings a release has since DELIVERED."""
+    return json.loads(RESERVED_SPEC_PATH.read_text(encoding="utf-8"))
 
 
 def packets_spec() -> dict:
@@ -123,6 +136,68 @@ def open_keys() -> list[str]:
     """What is left: the seats this build is expected to open."""
     shut = set(closed_keys())
     return sorted(key for key in rail_keys() if key not in shut)
+
+
+def opening_board() -> list[str]:
+    """The cards the dashboard opens with, in board order, as the SPECIFICATION
+    states them — `packet#0`-style seat ids, position included.
+
+    ★★★★★ R1846 — this exists because three demos wrote the board out by hand
+    and R1843 promoted a sixth card onto it. All three broke, none was run for
+    46 rounds, and the promotion itself was correct: the board is what moved,
+    and a demo that pins it as a literal fails for the release plan WORKING.
+    R1797 had already written that sentence into `r1694` — and then left two
+    literals standing on the next line.
+
+    ⚠ Still not the running application's answer, which is the point of this
+    module: a demo comparing a screen with a document written by another hand
+    is the comparison. A demo comparing a screen with itself agrees with
+    whatever the screen happens to say.
+    """
+    return [seat["key"] for seat in dashboard_spec()["board"]["canon"]]
+
+
+def opening_kinds() -> list[str]:
+    """The same board with each seat's POSITION dropped — `packet#0` -> `packet`.
+
+    The catalogue is keyed by kind and the board by seat, and every consumer
+    that wants to ask "is this kind placed this release?" was splitting the id
+    itself.
+    """
+    return [key.split("#", 1)[0] for key in opening_board()]
+
+
+def reserved_palette_kinds() -> list[str]:
+    """The palette seats a later release still books, in the register's order.
+
+    DERIVED as *deferred minus built*, because a seat leaves this list by being
+    BUILT and the register records that separately — R1843's `health` entry
+    sits in `built` while requirement 18 stays in `deferred`, since the rail's
+    `sessions` seat cites the same requirement and is still locked. Reading
+    `deferred` alone would report a seat this release places as reserved.
+    """
+    built = {entry["seat"] for entry in reserved_spec()["built"]}
+    return [
+        entry["seat"]
+        for entry in reserved_spec()["deferred"]
+        if entry.get("where") == "palette" and entry["seat"] not in built
+    ]
+
+
+def palette_bookings() -> dict[str, str]:
+    """Each still-reserved palette seat and the booking it refuses under, in the
+    wording a screen puts in front of a person."""
+    # ⚠ Not every deferred entry names a seat — requirement 15 books decoding a
+    # payload in a user-supplied format, which is `where: in-place` and has no
+    # palette tile to sit on. Keying the register by seat without saying so
+    # raises on the first entry that is a capability rather than a widget.
+    deferred = {
+        entry["seat"]: entry for entry in reserved_spec()["deferred"] if "seat" in entry
+    }
+    return {
+        seat: f"requirement {deferred[seat]['requirement']}"
+        for seat in reserved_palette_kinds()
+    }
 
 
 def surfaces(spec: dict) -> list[str]:

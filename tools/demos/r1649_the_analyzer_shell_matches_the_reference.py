@@ -53,7 +53,12 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from analyzer_spec import owed_keys  # noqa: E402
+from analyzer_spec import (  # noqa: E402
+    opening_board,
+    opening_kinds,
+    owed_keys,
+    palette_bookings,
+)
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
@@ -89,24 +94,41 @@ CATALOGUE = [
     "admin",
 ]
 
-#: The five the first release places, and the board it opens with.
+#: The board this release opens with, DERIVED from the specification.
 #:
 #: ★ R1797 — `latency#4` joined them. Its seat was booked under the reference's
 #: second release for as long as the framework could not draw what sits in it:
 #: a latency distribution needs geometric buckets with an unbounded tail, and
 #: the histogram had neither until that round.
-OPENING = ["packet#0", "decode#1", "keymap#2", "filter#3", "latency#4"]
+#:
+#: ★★★★★ R1846 — and R1843 promoted `health#5` the same way, at which point
+#: this line — a literal five — FAILED FOR A CHANGE THAT WAS THE RELEASE PLAN
+#: WORKING, and stayed failing for two rounds because nothing ran it. The board
+#: is exactly the kind of fact that moves, so it is read from
+#: `docs/analyzer-dashboard-spec.json` now, which is a document written by
+#: another hand and is what makes the comparison below a comparison. The
+#: ORDER pin is [`CATALOGUE`] above and stays a literal, because order is what
+#: a literal can honestly hold.
+OPENING = opening_board()
 
-#: The eight it reserves, and the requirement each is booked under.
+#: What a later release still books, and the requirement each is booked under,
+#: in PALETTE order.
+#:
+#: ★★★★★ R1846 — derived as *deferred minus built*, because a seat leaves this
+#: list by being BUILT: `docs/analyzer-reserved-spec.json` records `latency`
+#: (R1797) and `health` (R1843) in `built` while requirement 18 stays in
+#: `deferred`, since the rail's `sessions` seat cites the same requirement and
+#: is still locked. Written out by hand this held `health` for two rounds after
+#: the card was on the board.
+#:
+#: Ordered by [`CATALOGUE`] rather than by the register, because the assertion
+#: below compares against the palette the screen draws — the register's order
+#: is the order requirements were written in, which is a different fact.
 RESERVED = {
-    "topology": "requirement 12",
-    "overlay": "requirement 13",
-    "throughput": "requirement 16",
-    "share": "requirement 17",
-    "health": "requirement 18",
-    "loss": "requirement 20",
-    "alarms": "requirement 21",
-    "admin": "requirement 14",
+    kind: booking
+    for kind, booking in sorted(
+        palette_bookings().items(), key=lambda pair: CATALOGUE.index(pair[0])
+    )
 }
 
 #: ★ R1797 — the latency card's own numbers, as the reference publishes them.
@@ -190,8 +212,12 @@ def body() -> None:
 
         # ── (A) the shell is assembled: a catalogue, a board, and a count ─
         assert_eq(q(tf, "catalogue"), ",".join(CATALOGUE), "A: thirteen kinds offered")
-        assert_eq(q(tf, "cards"), ",".join(OPENING), "A: five placed, in board order")
-        assert_eq(q(tf, "placed_count"), 5, "A: and the count agrees")
+        assert_eq(
+            q(tf, "cards"),
+            ",".join(OPENING),
+            f"A: the specification's {len(OPENING)} placed, in board order",
+        )
+        assert_eq(q(tf, "placed_count"), len(OPENING), "A: and the count agrees")
         assert_eq(q(tf, "preset"), "Overview", "A: the layout it opens on")
         assert_eq(
             q(tf, "rail"),
@@ -213,39 +239,69 @@ def body() -> None:
         # ── (B) ★ a card is ADDED from the palette, not seeded ───────────
         # The reason the palette exists: what is on the board is a decision
         # somebody made, so two places on screen have to agree about how many.
-        assert_eq(inv(tf, "add", "packet"), "packet#5", "B: a new card takes the next ordinal")
-        assert_eq(q(tf, "placed_count"), 6, "B: and the board grew")
+        # ★★★★★ R1846 — every ordinal below is DERIVED from the board's size.
+        # They were literals, and every one of them was a second recording of
+        # how many cards this release opens with: promoting a sixth card moved
+        # `packet#5` to `packet#6` and each count by one, so a demo that was
+        # already failing on line one would have failed nine more times on the
+        # way down. `next_id` is the first free ordinal — ids ascend and are
+        # never reused, which is the fact these numbers actually rest on.
+        next_id = len(OPENING)
+        assert_eq(
+            inv(tf, "add", "packet"),
+            f"packet#{next_id}",
+            "B: a new card takes the next ordinal",
+        )
+        assert_eq(q(tf, "placed_count"), next_id + 1, "B: and the board grew")
         assert "is not a widget kind" in refused(tf, "add", "nonesuch"), (
             "B: the catalogue is closed, and the refusal lists it"
         )
         # A kind can be placed twice — which is why an id carries an ordinal.
-        assert_eq(inv(tf, "add", "packet"), "packet#6", "B: twice is allowed")
-        assert_eq(q(tf, "placed_count"), 7, "B: seven on the board")
+        assert_eq(
+            inv(tf, "add", "packet"), f"packet#{next_id + 1}", "B: twice is allowed"
+        )
+        assert_eq(q(tf, "placed_count"), next_id + 2, "B: two more on the board")
         # Closed over the wire rather than by hand: the fifth card lands below
         # the viewport, and this shell does not scroll its canvas
         # (debt-the-analyzer-canvas-does-not-scroll). Stated here rather than
         # worked around silently, because a demo that quietly avoided the edge
         # of the window would be hiding the difference from the reference.
-        inv(tf, "act", "packet#6,close")
-        assert_eq(q(tf, "placed_count"), 6, "B: and one closed")
+        inv(tf, "act", f"packet#{next_id + 1},close")
+        assert_eq(q(tf, "placed_count"), next_id + 1, "B: and one closed")
         # And placing one from the PALETTE, which is the gesture that matters.
+        # ★ The ordinal keeps climbing past the id just closed — they are not
+        # reused, which is what makes an id a name rather than a slot number.
         click(tf, at(tf, "shell.palette.keymap"))
-        assert_eq(q(tf, "placed_count"), 7, "B: ★ the palette places a card")
-        assert q(tf, "cards").endswith("keymap#7"), f"B: by kind: {q(tf, 'cards')}"
-        inv(tf, "act", "keymap#7,close")
-        assert_eq(q(tf, "placed_count"), 6, "B: the added card stays for what follows")
+        assert_eq(q(tf, "placed_count"), next_id + 2, "B: ★ the palette places a card")
+        assert q(tf, "cards").endswith(f"keymap#{next_id + 2}"), (
+            f"B: by kind: {q(tf, 'cards')}"
+        )
+        inv(tf, "act", f"keymap#{next_id + 2},close")
+        assert_eq(
+            q(tf, "placed_count"),
+            next_id + 1,
+            "B: the added card stays for what follows",
+        )
 
         # ── (B2) ★ R1668 — the eight seats a later release opens ──────────
         # The reference shows them rather than hiding them, so the shape of the
         # finished tool is legible now. Each one says what it is waiting for,
         # and no path here places it.
         spec = q(tf, "spec")
-        assert_eq(spec["placeable_count"], 5, "B2: five this release places")
-        assert_eq(spec["reserved_count"], 8, "B2: and eight it reserves")
+        assert_eq(
+            spec["placeable_count"],
+            len(OPENING),
+            "B2: what this release places is what the specification places",
+        )
+        assert_eq(
+            spec["reserved_count"],
+            len(RESERVED),
+            "B2: and what it reserves is what the register still books",
+        )
         assert_eq(
             [w["kind"] for w in spec["catalogue"] if w["tier"] == "reserved"],
             list(RESERVED),
-            "B2: the reserved eight, in palette order",
+            "B2: the reserved seats, in palette order",
         )
         # ★★ R1797 — a section publishes the releases its ENTRIES occupy, and
         # `visual` now holds both. Before this round a section carried a single
@@ -267,7 +323,11 @@ def body() -> None:
             assert_eq(entry["reserved_for"], booking, f"B2: {kind} states its booking")
             why = refused(tf, "add", kind)
             assert booking in why, f"B2: ★ {kind} refuses AND names the booking: {why}"
-        assert_eq(q(tf, "placed_count"), 6, "B2: and not one of them reached the board")
+        assert_eq(
+            q(tf, "placed_count"),
+            next_id + 1,
+            "B2: and not one of them reached the board",
+        )
 
         # ★ The same fact on the READ channel, from the framework's own cascade
         # rather than from anything this shell wrote down: `scene/disabled` says
@@ -281,7 +341,10 @@ def body() -> None:
             assert_eq(row["reason"], "reserved", f"B2: {kind} is inert as a reservation")
             assert_eq(row["detail"], booking, f"B2: {kind} reports its booking on the wire")
             assert_eq(row["recourse"], "await_release", f"B2: {kind} derives its recourse")
-        for kind in ("packet", "decode", "keymap", "filter"):
+        # ★ R1846 — the placeable kinds, derived. Written out by hand this said
+        # four and had said four since R1668, so neither `latency` nor `health`
+        # was ever checked for being live: the loop passed by not looking.
+        for kind in set(opening_kinds()):
             assert f"shell.palette.{kind}" not in inert, f"B2: {kind} is placeable and live"
         # ★ R1728 — requirement 18, not 14. The reference names the requirement
         # in the seat's own tooltip, and 14 is not among the six it defers.
@@ -426,8 +489,19 @@ def body() -> None:
                 "settings,tear_off,maximize,close",
                 f"C: {card} carries the same four as every other card",
             )
-        assert "is not an affordance" in refused(tf, "act", "packet#5,float"), "C: closed set"
-        assert "is not <card>,<affordance>" in refused(tf, "act", "packet#5"), "C: malformed"
+        # ★ R1846 — addressed at the card section (B) added, not at a literal
+        # ordinal: `packet#5` was the id that section produced when the board
+        # opened with five cards, so this line was silently asking about a card
+        # that does not exist the moment a sixth was promoted — and a refusal
+        # for the WRONG reason ("no such card") would still contain neither of
+        # the words asserted, so the check would have gone on passing for a
+        # reason it was not written for if the wording had been looser.
+        assert "is not an affordance" in refused(tf, "act", f"packet#{next_id},float"), (
+            "C: closed set"
+        )
+        assert "is not <card>,<affordance>" in refused(tf, "act", f"packet#{next_id}"), (
+            "C: malformed"
+        )
 
         # ── (D) ★ the body state, and its DERIVED remedy ─────────────────
         assert_eq(
@@ -440,7 +514,7 @@ def body() -> None:
         for word, card, detail, remedy, actionable in [
             ("loading", "decode#1", None, "wait", "no"),
             ("empty", "keymap#2", None, "widen", "yes"),
-            ("failed", "packet#5", "collector unreachable", "retry", "yes"),
+            ("failed", f"packet#{next_id}", "collector unreachable", "retry", "yes"),
         ]:
             arg = f"{card},{word}" if detail is None else f"{card},{word},{detail}"
             inv(tf, "set_state", arg)
@@ -475,13 +549,27 @@ def body() -> None:
         # ── (E) ★ a drag PREVIEWS, and commits on release ────────────────
         assert_eq(q(tf, "drag"), "", "E: nothing is being dragged")
         before = json.loads(q(tf, "layout"))
-        assert_eq(cell_of(before, "keymap#2"), (0, 2), "E: where it starts")
+        # ★★★★★ R1846 — the start cell is READ, not pinned. It was `(0, 2)`, and
+        # R1843 promoting a sixth card reflowed the board so the card starts
+        # somewhere else — a literal here encodes the whole board's arrangement
+        # in a line about one drag, and fails for any change to the arrangement
+        # whether or not the drag still works. What this section is FOR is that
+        # the drag previews and commits, and both assertions below are stronger
+        # read this way: `drag` and `layout` are two separate wire answers, so
+        # comparing them asks whether the drag opened on the cell the board says
+        # the card is in, rather than whether both match a number typed here.
+        start = cell_of(before, "keymap#2")
+        assert start is not None, "E: the board says where the card starts"
         inv(tf, "point", at(tf, "card.keymap#2.grip"))
         inv(tf, "send", "PointerDown")
-        assert_eq(q(tf, "drag"), "keymap#2,0,2", "E: the drag opens on its own cell")
+        assert_eq(
+            q(tf, "drag"),
+            f"keymap#2,{start[0]},{start[1]}",
+            "E: the drag opens on its own cell",
+        )
         inv(tf, "point", "760,620")
         snap = q(tf, "drag")
-        assert snap.startswith("keymap#2,") and snap != "keymap#2,0,2", (
+        assert snap.startswith("keymap#2,") and snap != f"keymap#2,{start[0]},{start[1]}", (
             f"E: the snap preview follows the cursor: {snap}"
         )
         assert_eq(
@@ -610,7 +698,20 @@ def body() -> None:
             f"card decided: {texts_of(opaque)}"
         )
         assert find_by_tag(snap, "card.packet#0.tear_off") is not None, "J: offered, so painted"
-        assert find_by_tag(snap, "card.packet#5.tear_off") is None, (
+        # ★★★★★ R1846 — THIS ASSERTION WAS VACUOUS AND ITS STATED REASON WAS
+        # FALSE. It read `card.packet#5.tear_off is None` and explained the
+        # absence as "not offered, so absent from the scene" — but by section J
+        # the preset applied in (I) has restored the OPENING board, so
+        # `packet#5` is not on it at all. The tag was missing because the CARD
+        # was gone, and `tear_off` is one of the four every card carries, which
+        # (C) asserts three sections earlier. Found by deriving the ordinals:
+        # once `packet#5` became `packet#{next_id}` the line still passed, and
+        # asking why is what showed it had never tested what it said.
+        #
+        # Repaired to the claim the sentence beside it actually makes: the
+        # affordance (C) refuses on the wire is the affordance the scene does
+        # not paint, on a card that IS on the board.
+        assert find_by_tag(snap, "card.packet#0.float") is None, (
             "J: not offered, so absent from the scene — the wire refusal in (C) "
             "and this are the same set, read two ways"
         )

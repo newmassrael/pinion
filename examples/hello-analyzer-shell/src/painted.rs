@@ -1961,6 +1961,42 @@ fn painted_at_destination(destination: &str) -> Painted {
     painted_at((WIN_W, WIN_H)).0
 }
 
+/// ★★★★★ R1846 — **the health strip draws exactly what the census declares.**
+///
+/// The gate that makes [`spec::HEALTH_TILES_SHOWN`] safe to be a written
+/// number. That constant is what `Population::HealthTiles` expands to, and it
+/// is the first family on this screen whose size is a function of the card's
+/// WIDTH rather than of a table — so it could not be derived from a `const`,
+/// and a pin with no gate is the defect this project keeps repairing.
+///
+/// ⚠ Asserted at the OPENING size only, on purpose: at a wider window the strip
+/// draws more tiles and the census's rows are about the board a reader opens
+/// with. That the voice table describes one window size and not all of them is
+/// a real limit, and it is the sibling of the one
+/// `debt-the-voice-gate-judges-only-the-opening-screen` already records.
+#[test]
+fn r1846_the_strip_draws_what_the_census_declares() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let shot = painted_at((WIN_W, WIN_H)).0;
+        let id = spec::card_of("health").expect("the opening board places the health card");
+        let drawn = shot.rows(&format!("card.{id}.stat."));
+        assert_eq!(
+            drawn,
+            spec::HEALTH_TILES_SHOWN,
+            "the strip draws {drawn} tile(s) and the census declares {}, so \
+             `r1694`'s voice comparison is about to disagree with the paint",
+            spec::HEALTH_TILES_SHOWN
+        );
+        assert!(
+            drawn < spec::HEALTH_TILES.len(),
+            "this pin only earns its keep while the strip narrows — with all \
+             {} tiles drawn the family should expand from the table instead",
+            spec::HEALTH_TILES.len()
+        );
+    });
+}
+
 /// ★★★★★ R1721 — **a press at the centre of a painted saved-filter chip reaches
 /// that chip.**
 ///

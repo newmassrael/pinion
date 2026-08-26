@@ -41,6 +41,36 @@
 //! carrying its caption at the framework's own
 //! [`crate::caption::CAPTION_SUFFIX`].
 //!
+//! ## ★★★★★ A TILE IS ONE REGION TO A READER, AND R1846 IS WHERE IT SAID SO
+//!
+//! Tagging each word's own box is what the section above is for, and it has a
+//! consequence the first version did not answer: **a tagged region this tree
+//! cannot classify is `unvoiced`**, and the tile authored four of them per
+//! tile — nine once their captions and a caller's figure are counted. Measured
+//! at R1846 on the one screen that composes this tile, `scene/voice` reported
+//! **27 undecided regions**, one third of a card that every other gate called
+//! green.
+//!
+//! So each region now declares what it is:
+//!
+//! | region | declaration | why |
+//! |---|---|---|
+//! | `{tag}.label` | [`Silence::name_of`] | its text IS the tile's name — a voice here says it twice |
+//! | `{tag}.value` | [`Silence::part_of`] | folded into the tile's value |
+//! | `{tag}.delta` | [`Silence::part_of`] | folded into the tile's value |
+//! | `{tag}.trail` | [`Silence::part_of`] | the tile's trailing figure, and this one covers the CALLER's scene |
+//!
+//! All four name the tile's own tag, and [`pinion_core::voice::SilenceKind`]
+//! says a borrowed name and a folded part both reach the subtree — which is
+//! how four declarations answer for nine regions, captions included.
+//!
+//! ⚠ **What this asks of a consumer, stated rather than assumed: the tile's
+//! own tag must be a node that speaks.** A tile whose root has no
+//! `AccessNode` now reports four `dangling` regions instead of nine `unvoiced`
+//! ones — a NAMED defect where there had been an anonymous one, which is the
+//! direction this project moves such things. It is not a new requirement; a
+//! stat tile nothing announces was always unreadable.
+//!
 //! ## The placements are in the TILE's space
 //!
 //! A child laid out absolutely resolves against its container, so the rows are
@@ -54,6 +84,7 @@ use pinion_core::Scene;
 use pinion_core::containment::line_box;
 use pinion_core::scene::{ContainerNode, Rect};
 use pinion_core::style::{BoxStyle, LayoutStyle, Size, TextOverflow, TextStyle};
+use pinion_core::voice::Silence;
 
 use crate::caption::{Align, Caption, Placed, Pointer, captioned};
 
@@ -358,6 +389,10 @@ impl StatTile {
             &self.label_style,
             Rect::new(self.pad_x, y, inner_w, row_height(&self.label_style)),
         );
+        // ★★★★★ R1846 — the label's text is the tile's NAME, so a voice here
+        // would say it twice. See [`Self::assemble`]'s own note below for why
+        // every region this tile authors has to answer that question.
+        let label_scene = label_scene.silenced(Silence::name_of(tag.to_owned()));
         y += row_height(&self.label_style) + self.gap;
 
         let (value_scene, value) = self.row(
@@ -366,6 +401,7 @@ impl StatTile {
             &self.value_style,
             Rect::new(self.pad_x, y, inner_w, row_height(&self.value_style)),
         );
+        let value_scene = value_scene.silenced(Silence::part_of(tag.to_owned()));
         y += row_height(&self.value_style);
 
         let mut children = vec![label_scene, value_scene];
@@ -377,7 +413,7 @@ impl StatTile {
                 &self.delta_style,
                 Rect::new(self.pad_x, y, inner_w, row_height(&self.delta_style)),
             );
-            children.push(scene);
+            children.push(scene.silenced(Silence::part_of(tag.to_owned())));
             placed
         });
 
@@ -385,16 +421,33 @@ impl StatTile {
             let where_ = self
                 .trail_rect(rect)
                 .unwrap_or_else(|| Rect::new(self.pad_x, self.rows_bottom(), inner_w, 0));
-            children.push(Scene::Container(
-                ContainerNode::new(vec![scene])
-                    .with_tag(format!("{tag}.trail"))
-                    .with_layout(
-                        LayoutStyle::new()
-                            .with_absolute_position(where_.x, where_.y)
-                            .with_size(Size::px(where_.w, where_.h))
-                            .with_pointer_transparent(true),
-                    ),
-            ));
+            children.push(
+                Scene::Container(
+                    ContainerNode::new(vec![scene])
+                        .with_tag(format!("{tag}.trail"))
+                        .with_layout(
+                            LayoutStyle::new()
+                                .with_absolute_position(where_.x, where_.y)
+                                .with_size(Size::px(where_.w, where_.h))
+                                .with_pointer_transparent(true),
+                        ),
+                )
+                // ★★★★★ R1846 — and this one COVERS the caller's figure, which
+                // is a claim about the tile's contract rather than about the
+                // figure. `build_with` hands a rectangle the tile reserved to a
+                // closure; what comes back is the tile's trailing figure, folded
+                // into the tile's own announcement the way the delta is. A
+                // figure that has to speak for itself is not a tile's trail —
+                // it is a chart, and it wants its own region.
+                //
+                // ⚠ Stated here rather than left to each caller because a
+                // silence the crate does not declare is a silence NOBODY
+                // declares: measured at R1846, `pinion_chart::Sparkline` paints
+                // `spark` and `spark.line` with no voice of their own, so the
+                // two regions inside every trail were undecided in the one
+                // screen that composes them.
+                .silenced(Silence::part_of(tag.to_owned())),
+            );
             where_
         });
 
@@ -485,6 +538,7 @@ mod tests {
     use super::*;
     use crate::caption::CAPTION_SUFFIX;
     use pinion_core::scene::BoxNode;
+    use pinion_core::voice::SilenceKind;
 
     /// A tile big enough for three rows and a figure.
     ///
@@ -653,5 +707,64 @@ mod tests {
             "a placement at {} is in the caller's space, not the tile's",
             tile.label().holder().y
         );
+    }
+
+    /// ★★★★★ R1846 — **every region this tile authors declares what it is.**
+    ///
+    /// The gate the module note above is about. A tagged region this tree
+    /// cannot classify is `unvoiced`, and tagging each word's own box — which
+    /// is why this crate exists — creates four of them per tile before any
+    /// caption or caller's figure is counted. Measured on the one screen that
+    /// composes this tile, that was 27 undecided regions in one card, invisible
+    /// to `cargo test` because a voice census runs over a running screen.
+    ///
+    /// ⚠ The assertion is the DECLARATION and not the census's verdict: whether
+    /// a borrowed name reaches a caption is `pinion_core::voice`'s question and
+    /// is answered by its own tests. What this crate can be held to is that it
+    /// answers for each region it makes, and names its own tile when it does.
+    #[test]
+    fn r1846_every_region_the_tile_authors_declares_a_voice() {
+        // `with_trail` is what reserves the figure's band — without it the tile
+        // builds three rows and no `.trail`, and the count below is what says
+        // so rather than the test quietly answering for one region fewer.
+        let tile = StatTile::new("throughput", "1.4 Gb/s")
+            .with_delta("+3%")
+            .with_trail(20)
+            .build_with("card.health.stat.0", ROOM, |rect| {
+                Scene::Box(BoxNode::new(rect, BoxStyle::default()))
+            });
+
+        // Every row the tile builds, and what it must say about itself. The
+        // label is the tile's NAME; the rest are folded into what the tile
+        // announces.
+        let expected = [
+            ("label", SilenceKind::NameOf),
+            ("value", SilenceKind::PartOf),
+            ("delta", SilenceKind::PartOf),
+            ("trail", SilenceKind::PartOf),
+        ];
+        let authored = tags_of(tile.scene());
+        assert_eq!(
+            authored.len(),
+            expected.len(),
+            "this test answers for every region the tile authors, and it built {authored:?}"
+        );
+
+        for (row, kind) in expected {
+            let tag = format!("card.health.stat.0.{row}");
+            let child = child_named(tile.scene(), &tag);
+            let silence = child
+                .layout_style()
+                .and_then(|style| style.silence.as_ref())
+                .unwrap_or_else(|| {
+                    panic!("{tag} declares no voice, so a census calls it undecided")
+                });
+            assert_eq!(silence.kind(), kind, "{row} declares the wrong kind");
+            assert_eq!(
+                silence.detail(),
+                "card.health.stat.0",
+                "{row} must name the tile it is part of, so the redirect can be checked"
+            );
+        }
     }
 }
