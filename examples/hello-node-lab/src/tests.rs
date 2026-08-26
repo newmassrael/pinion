@@ -13,7 +13,7 @@ use pinion_core::widgets::config_form::Applies;
 use super::{
     Hit, INSP_W, LabState, MIN_W, PALETTE_W, PANEL_STRIP_W, RAIL_W, TOOLBAR_LEFT_CLUSTER, ZOOM_MAX,
     ZOOM_MIN, canvas_rect, card_rect, card_shape_at, content_to_window, deploy, inspector_rect,
-    palette_rect, pin_rect, spec, use_lab_state,
+    palette_rect, pin_rect, scenario, spec, use_lab_state,
 };
 use crate::graph::Role;
 
@@ -3025,4 +3025,129 @@ fn r1834_a_canvas_face_keeps_shrinking_below_the_old_floor() {
         "★ the face is still floored at the old 6px, which is what stopped a \
          card shrinking with the diagram around it",
     );
+}
+
+// ── R1844 — checkpoints and assertions with a timeout ────────────────────────
+//
+// The census row `lab.t1.9`. R1789 gave this screen a clock and four acts that
+// all COMMAND the graph; none of them asks whether it did what it was told, so
+// a plan that starts a node at two seconds and kills it at eight could not say
+// *and it should have been up in between*. These are that fifth word's gates.
+//
+// ⚠ And they are the scenario module's FIRST gates. Measured before writing
+// them: no test in this crate named `scenario` at all — R1789's module was
+// covered only by a demo, and a demo is not run by `cargo test`.
+
+/// A scenario fixture: a state, and the name of a card that starts up.
+fn scenario_state() -> (std::rc::Rc<LabState>, String) {
+    let state = std::rc::Rc::new(state());
+    let card = state
+        .cards()
+        .first()
+        .map(|node| state.name_of(*node))
+        .expect("the opening graph has a card");
+    (state, card)
+}
+
+/// ★★★★★ R1844 — **the act that waits requires a deadline, and the acts that
+/// do not refuse one.**
+///
+/// Both directions, because they fail differently. A `check` with no timeout is
+/// a sample dressed as an assertion — true or false about one instant of
+/// whatever step the caller advanced by. A `kill` carrying one is worse: a
+/// number a reader sees in the plan that nothing will ever consult, which is a
+/// lie the surface tells once and then keeps telling.
+#[test]
+fn r1844_only_the_act_that_waits_takes_a_timeout() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let (state, card) = scenario_state();
+        assert!(
+            scenario::schedule(&state, "main", 1.0, "check", &card, None).is_err(),
+            "a check with no deadline asserts something about one instant only",
+        );
+        for act in ["start", "stop", "kill"] {
+            assert!(
+                scenario::schedule(&state, "main", 2.0, act, &card, Some(3.0)).is_err(),
+                "{act} happens at its moment, so a timeout on it would never be read",
+            );
+        }
+        assert!(scenario::schedule(&state, "main", 1.0, "check", &card, Some(3.0)).is_ok());
+    });
+}
+
+/// ★★★★★ R1844 — **a checkpoint waits, and the waiting is what it is for.**
+///
+/// Three verdicts over one plan, because two would not distinguish the
+/// mechanism from a sample: the card is DOWN when the checkpoint is crossed, so
+/// an assertion without a deadline would already have failed. It waits, the
+/// card comes up inside the window, and the verdict is `met`.
+#[test]
+fn r1844_a_checkpoint_waits_for_its_card_and_is_met() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let (state, card) = scenario_state();
+        scenario::schedule(&state, "main", 0.0, "stop", &card, None).expect("stop places");
+        scenario::schedule(&state, "main", 1.0, "check", &card, Some(4.0)).expect("check places");
+        scenario::schedule(&state, "main", 3.0, "start", &card, None).expect("start places");
+
+        // Crossed at 1s with the card down: waiting, not failed.
+        scenario::advance(&state, 2.0).expect("the clock moves");
+        assert_eq!(verdicts(&state), vec!["waiting".to_owned()]);
+
+        // The card comes up at 3s, inside the window that ends at 5s.
+        scenario::advance(&state, 2.0).expect("the clock moves");
+        assert_eq!(verdicts(&state), vec!["met".to_owned()]);
+    });
+}
+
+/// ★★★★★ R1844 — **and it fails when the deadline passes with the card still
+/// down**, which is the half that makes the verdict worth reading.
+#[test]
+fn r1844_a_checkpoint_fails_when_its_deadline_passes() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let (state, card) = scenario_state();
+        scenario::schedule(&state, "main", 0.0, "stop", &card, None).expect("stop places");
+        scenario::schedule(&state, "main", 1.0, "check", &card, Some(2.0)).expect("check places");
+
+        scenario::advance(&state, 2.0).expect("the clock moves");
+        assert_eq!(
+            verdicts(&state),
+            vec!["waiting".to_owned()],
+            "3s is the deadline"
+        );
+
+        scenario::advance(&state, 2.0).expect("the clock moves");
+        assert_eq!(verdicts(&state), vec!["failed".to_owned()]);
+    });
+}
+
+/// ★ R1844 — a check asserts and does not COMMAND, so it cannot contradict.
+///
+/// `conflicts` reports a moment where one card is told two opposite things.
+/// Asking is not telling: a check beside a kill at one second is a plan that
+/// asserts and then acts, which is exactly what a scenario is for.
+#[test]
+fn r1844_a_check_beside_a_command_is_not_a_conflict() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let (state, card) = scenario_state();
+        scenario::schedule(&state, "main", 1.0, "check", &card, Some(1.0)).expect("check places");
+        scenario::schedule(&state, "other", 1.0, "kill", &card, None).expect("kill places");
+        assert!(
+            scenario::conflicts(&state.scenario.borrow()).is_empty(),
+            "a checkpoint commands nothing, so it contradicts nothing",
+        );
+    });
+}
+
+/// Every checkpoint's verdict, in the order they were raised.
+fn verdicts(state: &std::rc::Rc<LabState>) -> Vec<String> {
+    state
+        .checks
+        .borrow()
+        .iter()
+        .map(|check| check.verdict().to_owned())
+        .collect()
 }

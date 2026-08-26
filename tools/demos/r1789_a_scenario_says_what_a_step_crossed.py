@@ -108,7 +108,12 @@ def body() -> None:
         plan = scenario(tf)
         assert_eq(
             sorted(plan),
-            ["acts", "conflicts", "duration", "lanes", "playhead"],
+            ["acts", "checks", "conflicts", "duration", "lanes", "playhead"],
+            # ★ R1844 added `checks`. A scenario that can ASSERT has a second
+            # thing to report beside what it did — the verdicts its checkpoints
+            # have reached — and this read is the one place a client learns the
+            # whole shape, so a new fact belongs in it rather than only on the
+            # answer to `advance`.
             "the whole shape in one read",
         )
         assert_eq(plan["lanes"], [], "no lanes yet")
@@ -116,7 +121,11 @@ def body() -> None:
         assert_eq(plan["playhead"], 0.0, "the playhead is at the start")
         assert_eq(
             plan["acts"],
-            ["warmup", "start", "stop", "kill"],
+            ["warmup", "start", "stop", "kill", "check"],
+            # ★★ R1844 appended `check`, and the ORDER is load-bearing: the
+            # roster is `Act::ALL`'s order and the case table below is derived
+            # from the same list, so a word added in one place cannot fail to
+            # appear in the other.
             "★ the closed vocabulary, published — a client enumerates a valid "
             "call instead of guessing one",
         )
@@ -126,10 +135,24 @@ def body() -> None:
         assert_eq(place["channel"], "invoke", "an invoke channel")
         args = {a["name"]: a for a in place["args"]}
         assert_eq(sorted(args), ["act", "at", "lane", "target"], "four arguments")
+        # ★★★★★ R1844 — `act` became a DISCRIMINANT. It was `one_of`, a closed
+        # list and nothing more; now choosing `check` brings a timeout and the
+        # other four bring nothing, so the domain has to say which. The roster
+        # claim survives the change and is asserted the same way: the case
+        # VALUES are still exactly the list the read publishes, in order.
+        domain = args["act"]["domain"]
+        assert_eq(domain["kind"], "one_of_with", "the act decides the rest of the call")
         assert_eq(
-            args["act"]["domain"],
-            {"kind": "one_of", "values": plan["acts"]},
+            [case["value"] for case in domain["cases"]],
+            plan["acts"],
             "★ and the domain IS the roster the read publishes — one list",
+        )
+        brings = {case["value"]: [a["name"] for a in case["then"]] for case in domain["cases"]}
+        assert_eq(
+            brings,
+            {"warmup": [], "start": [], "stop": [], "kill": [], "check": ["timeout"]},
+            "★ one word waits and says so in the declaration, so a client reads "
+            "the timeout off the surface instead of learning it from a refusal",
         )
         ok("a lane and a target may be omitted", args["lane"]["optional"] and args["target"]["optional"])
 

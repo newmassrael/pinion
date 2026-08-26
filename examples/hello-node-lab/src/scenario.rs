@@ -33,7 +33,7 @@
 
 use std::rc::Rc;
 
-use pinion_core::external::InvokeError;
+use pinion_core::external::{ArgCase, InvokeError, SchemaArg};
 use pinion_core::widgets::track::{Misplaced, Schedule, Seconds};
 use serde_json::Value;
 
@@ -63,15 +63,41 @@ pub enum Act {
     /// tell them apart. The reference groups them under one heading and this
     /// does not.
     Kill,
+    /// ★★★★★ R1844 — **assert that a card is up, and wait a stated while for
+    /// it.** The census's `lab.t1.9`, *checkpoints and assertions with a
+    /// timeout*.
+    ///
+    /// The fifth word, and the first that CHANGES NOTHING. Every act above
+    /// tells the graph to be different; this one asks whether it is, and the
+    /// scenario is worth less than it looks without one — a plan that starts a
+    /// node at two seconds and kills it at eight has, until now, no way to say
+    /// *and it should have been running in between*. A person reading the
+    /// timeline could see what was commanded and never what was expected.
+    ///
+    /// ⚠ **The timeout is what makes it an assertion rather than a sample.**
+    /// Checked only at the instant it is crossed, a checkpoint asserts
+    /// something about one moment of a discrete clock, which is a fact about
+    /// the step size a caller happened to advance by. With a deadline it
+    /// asserts something about an INTERVAL: true if the card comes up at any
+    /// point before it expires, failed when the playhead passes it still
+    /// unmet. That is the difference between a scenario that can be replayed
+    /// at a different step and one that cannot.
+    Check,
 }
 
 impl Act {
     /// Every arm, in wire order.
-    pub const ALL: &'static [Self] = &[Self::Warmup, Self::Start, Self::Stop, Self::Kill];
+    pub const ALL: &'static [Self] = &[
+        Self::Warmup,
+        Self::Start,
+        Self::Stop,
+        Self::Kill,
+        Self::Check,
+    ];
 
     /// Every arm's wire name, in [`ALL`](Self::ALL) order — the closed
     /// vocabulary the `schedule` action's argument domain is drawn from.
-    pub const WIRE_NAMES: &'static [&'static str] = &["warmup", "start", "stop", "kill"];
+    pub const WIRE_NAMES: &'static [&'static str] = &["warmup", "start", "stop", "kill", "check"];
 
     /// The wire name of this act.
     #[must_use]
@@ -81,7 +107,21 @@ impl Act {
             Self::Start => "start",
             Self::Stop => "stop",
             Self::Kill => "kill",
+            Self::Check => "check",
         }
+    }
+
+    /// Whether this act carries a deadline — true for [`Check`](Self::Check)
+    /// alone.
+    ///
+    /// ★ R1844 — this is what the `schedule` action's CONDITIONAL argument is
+    /// derived from, so the wire's case table and the dispatcher cannot
+    /// disagree about which word brings a timeout. R1630's ratchet applied to
+    /// a mapping rather than to a count: a hand-written case table can be
+    /// wrong about what a value implies, not merely about how many there are.
+    #[must_use]
+    pub const fn needs_timeout(self) -> bool {
+        matches!(self, Self::Check)
     }
 
     /// The act `name` names, or `None`.
@@ -100,17 +140,84 @@ impl Act {
     }
 }
 
-/// One scheduled thing: an act, and the card it happens to.
+/// The `act` argument's case table: every word, and what choosing it adds.
+///
+/// ★★★★★ R1844 — DERIVED from [`Act`] rather than spelled at the call site,
+/// which is R1630's ratchet applied to a mapping. A hand-written table can
+/// disagree with the dispatcher about what a value IMPLIES, not merely about
+/// how many values there are — and this table's whole content is an
+/// implication: `check` brings a timeout and the other four do not.
+pub const ACT_CASES: [ArgCase; Act::ALL.len()] = {
+    let mut cases = [ArgCase::EMPTY; Act::ALL.len()];
+    let mut n = 0;
+    while n < Act::ALL.len() {
+        let act = Act::ALL[n];
+        cases[n] = ArgCase::new(
+            act.as_wire_name(),
+            if act.needs_timeout() {
+                const { &[SchemaArg::open("timeout", "number")] }
+            } else {
+                &[]
+            },
+        );
+        n += 1;
+    }
+    cases
+};
+
+/// One scheduled thing: an act, the card it happens to, and how long it will
+/// wait.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Entry {
     /// What happens.
     pub act: Act,
     /// The card it happens to, or empty for an act that needs none.
     pub target: String,
+    /// How long a [`Check`](Act::Check) keeps waiting, and `None` for every
+    /// act that does not wait.
+    ///
+    /// ★ [`Seconds`] and not `f32`, for the reason [`conflicts`] gives about
+    /// its own key: the framework hands back a VALIDATED moment, finite by
+    /// construction, so `Eq` on it is a real equality rather than the float
+    /// comparison a lint rightly refuses. An `Entry` that derived `Eq` around a
+    /// raw `f32` could not exist.
+    pub timeout: Option<Seconds>,
 }
 
 /// This screen's scenario: named lanes of [`Entry`].
 pub type Plan = Schedule<Entry>;
+
+/// One checkpoint the playhead has raised, and what it has decided.
+///
+/// ★★★★★ R1844 — the verdict is a THREE-valued thing and the third value is
+/// the point. `Some(true)` is met, `Some(false)` is failed, and `None` is
+/// *still waiting* — a checkpoint whose card is not up yet but whose deadline
+/// has not passed. Collapsing that into `false` would make every assertion
+/// depend on the step the caller advanced by, which is precisely what the
+/// timeout exists to stop.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Checkpoint {
+    /// The moment the checkpoint was scheduled at.
+    pub at: Seconds,
+    /// The card it asks about.
+    pub target: String,
+    /// The moment after which waiting stops.
+    pub deadline: Seconds,
+    /// Met, failed, or still waiting.
+    pub met: Option<bool>,
+}
+
+impl Checkpoint {
+    /// The word the wire reports this verdict as.
+    #[must_use]
+    pub const fn verdict(&self) -> &'static str {
+        match self.met {
+            Some(true) => "met",
+            Some(false) => "failed",
+            None => "waiting",
+        }
+    }
+}
 
 /// The lane a scheduled act goes on when the caller does not say.
 pub const DEFAULT_LANE: &str = "main";
@@ -127,6 +234,7 @@ pub fn schedule(
     at: f32,
     act: &str,
     target: &str,
+    timeout: Option<f32>,
 ) -> Result<String, InvokeError> {
     let Some(act) = Act::from_wire_name(act) else {
         return Err(InvokeError::rejected(format!(
@@ -154,9 +262,35 @@ pub fn schedule(
             act.as_wire_name()
         )));
     }
+    // ★★★★★ R1844 — the timeout is REQUIRED by the act that waits and REFUSED
+    // by every act that does not, and both directions are refusals rather than
+    // one being quietly ignored.
+    //
+    // A `check` with no deadline would be a sample dressed as an assertion —
+    // true or false about one instant of whatever step the caller happened to
+    // advance by. A `kill` carrying one would be a number a reader can see in
+    // the plan and nothing will ever consult, which is the worse of the two:
+    // an ignored argument is a lie the surface tells once and keeps telling.
+    let timeout = match (timeout, act.needs_timeout()) {
+        (Some(secs), true) => Some(Seconds::new(secs).map_err(refusal)?),
+        (None, true) => {
+            return Err(InvokeError::rejected(format!(
+                "{} waits, so it needs a timeout in seconds",
+                act.as_wire_name()
+            )));
+        }
+        (Some(_), false) => {
+            return Err(InvokeError::rejected(format!(
+                "{} happens at its moment and does not wait, so it takes no timeout",
+                act.as_wire_name()
+            )));
+        }
+        (None, false) => None,
+    };
     let entry = Entry {
         act,
         target: target.to_owned(),
+        timeout,
     };
     state
         .scenario
@@ -198,7 +332,7 @@ pub fn advance(state: &Rc<LabState>, by: f32) -> Result<Value, InvokeError> {
     // ★ The FIRST advance has to include an entry at zero, and `due` is open
     // below on purpose (see its doc — that is what stops a boundary entry being
     // delivered twice). `from_start` is the window that has no lower bound.
-    let crossed: Vec<(String, Entry)> = {
+    let crossed: Vec<(String, f32, Entry)> = {
         let plan = state.scenario.borrow();
         let upto = Seconds::new(to).map_err(refusal)?;
         let window = if from <= 0.0 && by > 0.0 {
@@ -209,13 +343,41 @@ pub fn advance(state: &Rc<LabState>, by: f32) -> Result<Value, InvokeError> {
         };
         window
             .into_iter()
-            .map(|(lane, key)| (lane.to_owned(), key.value().clone()))
+            // ★ R1844 — the entry's OWN moment is carried through, because a
+            // checkpoint's deadline is measured from when it was scheduled and
+            // not from where the playhead happens to have stopped. A step that
+            // crosses a checkpoint and runs on would otherwise give it a
+            // deadline that grows with the caller's step size.
+            .map(|(lane, key)| (lane.to_owned(), key.at().secs(), key.value().clone()))
             .collect()
     };
+    // ★ R1844 — a restart forgets the previous run's verdicts. The window
+    // above already treats `from <= 0` as the beginning; a checkpoint that
+    // survived it would report on a graph state that no longer exists.
+    if from <= 0.0 && by > 0.0 {
+        state.checks.borrow_mut().clear();
+    }
     state.playhead.set(to);
 
     let mut done: Vec<Value> = Vec::new();
-    for (lane, entry) in crossed {
+    for (lane, at, entry) in crossed {
+        // ★★★★★ R1844 — a check RAISES rather than does. Every other act is
+        // finished when it is crossed; this one starts waiting, and `done` is
+        // false for it because nothing about the graph moved. Reporting a
+        // check as `done: true` would make the crossing log say the scenario
+        // changed something when its whole purpose is that it did not.
+        if entry.act == Act::Check {
+            let wait = entry.timeout.map_or(0.0, Seconds::secs);
+            let (Ok(raised), Ok(deadline)) = (Seconds::new(at), Seconds::new(at + wait)) else {
+                continue;
+            };
+            state.checks.borrow_mut().push(Checkpoint {
+                at: raised,
+                target: entry.target.clone(),
+                deadline,
+                met: None,
+            });
+        }
         let outcome = apply(state, entry.act, &entry.target);
         done.push(serde_json::json!({
             "lane": lane,
@@ -224,10 +386,59 @@ pub fn advance(state: &Rc<LabState>, by: f32) -> Result<Value, InvokeError> {
             "done": outcome,
         }));
     }
+    settle_checks(state, to);
     Ok(serde_json::json!({
         "playhead": to,
         "crossed": done,
+        "checks": checks_wire(state),
     }))
+}
+
+/// Decide every checkpoint the playhead can now decide.
+///
+/// ★ Runs AFTER the acts of this step, so a checkpoint scheduled at the same
+/// moment as the `start` it is waiting for sees the started card. The
+/// alternative — deciding before — would make a plan that starts and checks at
+/// one second depend on lane order, which is exactly the defect [`conflicts`]
+/// exists to report rather than one to introduce.
+fn settle_checks(state: &Rc<LabState>, now: f32) {
+    let mut checks = state.checks.borrow_mut();
+    for check in checks.iter_mut().filter(|c| c.met.is_none()) {
+        if is_running(state, &check.target) {
+            check.met = Some(true);
+        } else if now > check.deadline.secs() {
+            check.met = Some(false);
+        }
+    }
+}
+
+/// Whether `target` names a card that is currently up.
+fn is_running(state: &Rc<LabState>, target: &str) -> bool {
+    state.node_of(target).is_some_and(|node| {
+        state
+            .doc
+            .borrow()
+            .tree(ROOT)
+            .and_then(|tree| tree.node(node))
+            .is_some_and(|slot| !slot.disabled)
+    })
+}
+
+/// Every checkpoint raised so far, as the wire reads it.
+fn checks_wire(state: &LabState) -> Vec<Value> {
+    state
+        .checks
+        .borrow()
+        .iter()
+        .map(|check| {
+            serde_json::json!({
+                "at": check.at.secs(),
+                "target": check.target,
+                "deadline": check.deadline.secs(),
+                "verdict": check.verdict(),
+            })
+        })
+        .collect()
 }
 
 /// Do one act, and say whether the graph moved.
@@ -236,6 +447,14 @@ pub fn advance(state: &Rc<LabState>, by: f32) -> Result<Value, InvokeError> {
 /// rather than refused: a scenario is a script, and a script that stops when
 /// the world is already in the state it asked for is one nobody can replay.
 fn apply(state: &Rc<LabState>, act: Act, target: &str) -> bool {
+    // ★ R1844 — a check moves nothing, so it reports `false` here and its
+    // verdict is carried by `checks` instead. Folding it into this boolean
+    // would put an assertion's outcome in a field that means "the graph
+    // changed", and a reader would have no way to tell a met checkpoint from a
+    // node that was switched on.
+    if act == Act::Check {
+        return false;
+    }
     let Some(node) = state.node_of(target) else {
         return false;
     };
@@ -262,7 +481,13 @@ fn apply(state: &Rc<LabState>, act: Act, target: &str) -> bool {
 /// contradictory; `Warmup` has no target and cannot contradict anything.
 const fn leaves_running(act: Act) -> Option<bool> {
     match act {
-        Act::Warmup => None,
+        // ★ R1844 — a `check` answers `None` for the same reason `warmup`
+        // does, arrived at from the opposite direction: warmup has no target
+        // to contradict anything about, and a check has one but commands it
+        // nothing. Two acts contradict when they tell one card to be two
+        // things; asking is not telling, so a check beside a kill at one
+        // moment is a plan that asserts and then acts, which is legitimate.
+        Act::Warmup | Act::Check => None,
         Act::Start => Some(true),
         Act::Stop | Act::Kill => Some(false),
     }
@@ -373,6 +598,11 @@ pub fn wire(state: &LabState) -> Value {
                         "at": key.at().secs(),
                         "act": key.value().act.as_wire_name(),
                         "target": key.value().target,
+                        // ★ R1844 — null for an act that does not wait, rather
+                        // than absent. A reader diffing two entries can then
+                        // see that one has no deadline, where a missing key
+                        // reads as "this surface did not say".
+                        "timeout": key.value().timeout.map(Seconds::secs),
                     }))
                     .collect::<Vec<_>>(),
             })
@@ -384,6 +614,7 @@ pub fn wire(state: &LabState) -> Value {
         "acts": Act::WIRE_NAMES,
         "lanes": lanes,
         "conflicts": conflicts(&plan),
+        "checks": checks_wire(state),
     })
 }
 

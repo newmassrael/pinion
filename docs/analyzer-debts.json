@@ -53,6 +53,17 @@
       ]
     },
     {
+      "name": "debt-a-checkpoints-verdict-is-on-the-wire-and-not-on-the-screen",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "names lab.t1.9"
+      ]
+    },
+    {
       "name": "debt-a-gate-computes-its-expectation-from-the-code-it-checks",
       "substituted": false,
       "blocked_by": "buildable",

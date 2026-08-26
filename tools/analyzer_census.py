@@ -273,7 +273,9 @@ UNASSEMBLED: frozenset[str] = frozenset(
         # here fails by name, so the name and the field cannot drift apart.
         "dashboard.t1.9",
         "lab.t1.8",
-        "lab.t1.9",
+        # `lab.t1.9` was here and is REPAID at R1844 — the scenario gained a
+        # fifth act that ASKS rather than commands, with the timeout that makes
+        # it an assertion about an interval instead of a sample of one instant.
         "lab.t1.11",
         "lab.t2.17",
         "lab.t2.19",

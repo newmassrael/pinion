@@ -1117,6 +1117,15 @@ struct LabState {
     /// division, and the only one under which an assertion about this screen
     /// does not depend on how fast the machine is.
     playhead: Signal<f32>,
+    /// ★★★★★ R1844 — what the scenario's checkpoints have decided so far.
+    ///
+    /// A verdict has to OUTLIVE the advance that raised it, which is why this
+    /// is state and the other four acts need none: `start` is finished the
+    /// instant it is crossed, and a `check` with a timeout is not — it is
+    /// waiting, and something has to remember that it is. Cleared when the
+    /// playhead restarts, because a verdict from the previous run of a plan is
+    /// the most misleading thing this screen could show.
+    checks: RefCell<Vec<scenario::Checkpoint>>,
     /// The master auto-discovery switch: off by default, because a graph whose
     /// links are all authored is the one whose behaviour is a function of what
     /// is on the canvas.
@@ -1409,6 +1418,7 @@ impl LabState {
             palette_at: Signal::new(PALETTE_OPENS_AT),
             inspector_at: Signal::new(INSPECTOR_OPENS_AT),
             playhead: Signal::new(0.0),
+            checks: RefCell::new(Vec::new()),
             discovery: Signal::new(false),
             cursor: Signal::new((0, 0)),
             drag: Signal::new(None),
@@ -8606,7 +8616,12 @@ const FIELDS: &[SchemaField] = &{
             const {
                 &[
                     SchemaArg::open("at", "number"),
-                    SchemaArg::one_of("act", "string", scenario::Act::WIRE_NAMES),
+                    // ★★★★★ R1844 — `act` is a DISCRIMINANT now, not just a
+                    // closed vocabulary: choosing `check` brings a timeout and
+                    // the other four bring nothing, and the case table says so
+                    // rather than leaving a caller to discover it from a
+                    // refusal. The table is derived from `Act` itself.
+                    SchemaArg::one_of_with("act", "string", &scenario::ACT_CASES),
                     SchemaArg::key("target", "string", "cards").optional(),
                     SchemaArg::open("lane", "string").optional(),
                 ]
@@ -9552,6 +9567,12 @@ impl ExternalIntrospect for LabOracle {
                     at,
                     obj.word("act").unwrap_or(""),
                     obj.word("target").unwrap_or(""),
+                    // ★ R1844 — absent means ABSENT, not zero. A timeout of
+                    // zero is a legitimate deadline (check it now, wait no
+                    // longer) and `schedule` refuses a missing one by name, so
+                    // defaulting here would turn a caller's omission into a
+                    // silently different scenario.
+                    obj.number("timeout").ok().map(seconds),
                 )?))
             }
             "unschedule" => {
