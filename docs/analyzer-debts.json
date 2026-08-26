@@ -64,6 +64,17 @@
       ]
     },
     {
+      "name": "debt-a-fragment-run-arrives-backwards-in-the-capture",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "names capture.t2.18"
+      ]
+    },
+    {
       "name": "debt-a-gate-computes-its-expectation-from-the-code-it-checks",
       "substituted": false,
       "blocked_by": "buildable",
@@ -287,6 +298,17 @@
       "closed_because": "rule:analyzer-debt-repayment-loop",
       "why": [
         "links debt-the-canon-is-one-app-and-we-are-many-binaries"
+      ]
+    },
+    {
+      "name": "debt-the-sixth-card-broke-three-demos-nobody-ran",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "names capture.t2.18, dashboard.t1.8"
       ]
     },
     {

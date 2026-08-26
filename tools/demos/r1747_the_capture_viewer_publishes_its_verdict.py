@@ -358,11 +358,28 @@ def section_c(app: RpcSubprocess) -> None:
         "declared remainder matched, nothing undeclared",
         all(s["standing"] and not s["unreconciled"] for s in surfaces_of(app).values()),
     )
+    # ★★★★★ R1845 — THIS CHECK USED TO DEMAND THAT `reassembly` DECLARE A
+    # NON-EMPTY REMAINDER, and R1845 emptied it. Not by paying the entry off:
+    # the divergence R1747 recorded there was a claim about the reference (it
+    # announces `4 of 8 channels` above three drawn lanes) that turned out to be
+    # a claim about our own missing join — the carrying count and the lane
+    # roster are two facts, and this build now reproduces the reference's
+    # arrangement exactly. The entry was RETIRED as wrong.
+    #
+    # So the assertion MOVES rather than dies. What it was protecting is that
+    # "every declared remainder matched" is not vacuous; with the ledger
+    # legitimately at zero that half has no live case here (the `owed`
+    # machinery is exercised by seven other surface documents), and the half
+    # that IS live is the other one — `unreconciled == []` means nothing only
+    # if a surface specifies nothing. Both conjuncts below bite.
+    said = surfaces_of(app)
     ok(
-        "C: ★★ and one surface's declared remainder is NOT empty, so the "
-        "ledger is doing work rather than sitting at zero: "
-        f"{[o['key'] for o in surfaces_of(app)['reassembly']['owed']]}",
-        surfaces_of(app)["reassembly"]["owed"],
+        "C: ★★ this screen's ledger has reached ZERO — no surface declares a "
+        "remainder any more, which is a STRONGER state than the one this check "
+        "used to guard, and it says something only because every surface "
+        f"specifies parts: {sorted((n, s['specified']) for n, s in said.items())}",
+        all(not s["owed"] for s in said.values())
+        and all(s["specified"] > 0 for s in said.values()),
     )
     print(f"  [coverage] {PARTS_COMPARED} specified part(s) judged, {PRESSES} press(es)")
 

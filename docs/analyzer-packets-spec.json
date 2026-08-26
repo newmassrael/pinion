@@ -234,11 +234,23 @@
       "",
       "★ The reference draws the second of these as TWO readouts — one naming",
       "the channel axes and how many of the negotiated channels carry traffic,",
-      "one counting the reassemblies — and this build draws one. The merge is",
-      "not what the `owed` entry below is about: reading order cannot see the",
-      "difference between one run and two, and this document says at the top",
-      "that it does not fix markup granularity. What the entry IS about is the",
-      "number, and it is a difference worth keeping written down."
+      "one counting the reassemblies — and this build draws one. That merge is",
+      "not a divergence: reading order cannot see the difference between one",
+      "run and two, and this document says at the top that it does not fix",
+      "markup granularity.",
+      "",
+      "★★★★★ R1845 retired this section's `owed` entry, and the entry was not",
+      "paid off — it was WRONG. R1747 recorded the count as a deliberate",
+      "divergence on the finding that the reference announces four of eight",
+      "channels above three drawn lanes, called that a self-contradiction,",
+      "and derived the number from the lanes so 'the two cannot part'. They",
+      "are two facts. The capture carries FOUR channels and the strip draws",
+      "THREE lanes — exactly the arrangement the reference has — and R1845's",
+      "own gate refuses a capture where they cannot be told apart. What made",
+      "them look like one number was that a lane named no channel, so nothing",
+      "could compare a lane to a row and the only count in reach was the",
+      "roster's. ⇒ a divergence recorded against a reference is a claim about",
+      "the reference, and this one was a claim about our own missing join."
     ],
     "canon": [
       {
@@ -252,32 +264,7 @@
         "title": "priority × delivery · 4 of 8 channels · done 1,204 · in progress 2 · abandoned 1"
       }
     ],
-    "owed": [
-      {
-        "key": "counts",
-        "sentence": "`counts` is specified as \"priority × delivery · 4 of 8 channels · done 1,204 · in progress 2 · abandoned 1\" and reads \"3 of 8 channels carrying · done 1,204 · in progress 2 · abandoned 1\"",
-        "since": "R1747",
-        "why": [
-          "The reference's strip says four of eight channels are carrying and",
-          "then draws THREE lanes. Measured 2026-08-20 by counting the lanes in",
-          "its own markup: the number beside the axes and the number of lanes",
-          "below it disagree, and a reader who counts is right and the readout",
-          "is wrong. This build derives the number from the lanes it draws, so",
-          "the two cannot part.",
-          "",
-          "Kept as a divergence rather than reproduced, and this is the",
-          "direction the standing order rule does NOT decide for us: the rule",
-          "says the reference must be reproduced and is not a ceiling, which",
-          "settles what to do about something the reference has and we lack. It",
-          "says nothing about a place where the reference contradicts itself,",
-          "and copying that would mean painting a number this screen can prove",
-          "is wrong. The reference also names the two channel axes in the same",
-          "run and this build names them in the strip's title instead; that",
-          "half is a rewording rather than a correction, and it is inside this",
-          "same entry because one run cannot diverge twice."
-        ]
-      }
-    ]
+    "owed": []
   },
   "selection": {
     "$comment": [

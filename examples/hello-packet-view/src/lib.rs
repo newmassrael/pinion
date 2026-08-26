@@ -2822,9 +2822,44 @@ fn bytes_row_tag(row: usize) -> String {
     format!("pv.bytes.row.{row}")
 }
 
+/// The strip's totals sentence, in one place because it has two readers.
+///
+/// ★★★★★ R1845 — the *carrying* number is the CAPTURE's, not the lane roster's.
+/// It used to be `LANES.len()` written inline in the painter, so the header
+/// announced however many lanes happened to be drawn and called that "carrying".
+/// The reference's own strip draws three lanes beside the number four, which is
+/// what makes them demonstrably separate facts rather than one fact written
+/// twice — and this screen had the smaller one in both places.
+///
+/// ⚠ Lifted out of the painter because a sentence painted and nowhere else is a
+/// claim no test can reach: the label carried this text and the accessibility
+/// node beside it carried none, so a counterfactual swapping the two numbers
+/// back would have been caught by nothing.
+///
+/// ★★★★★ **AND THE REFERENCE WAS NOT CONTRADICTING ITSELF.** R1747 recorded
+/// this readout as a deliberate divergence, on the finding that the reference
+/// announces *four of eight channels* above *three* drawn lanes — "a reader who
+/// counts is right and the readout is wrong" — and derived the number from the
+/// lanes so "the two cannot part". They are two facts, and this capture is the
+/// proof: it carries four channels and the strip draws three lanes, exactly as
+/// the reference does. What made them look like one number was the absence of
+/// the join this round added — a lane naming no channel could not be compared
+/// to a row, so the only count in reach was the roster's. The divergence entry
+/// is retired with this sentence, which now reproduces the reference's.
+fn reassembly_counts() -> String {
+    let (done, running, dropped) = spec::REASSEMBLY;
+    format!(
+        "priority × delivery · {} of {} channels · done {} · in progress {} · abandoned {}",
+        spec::channels().len(),
+        spec::CHANNELS,
+        comma(done),
+        running,
+        dropped
+    )
+}
+
 fn reassembly_strip(ink: Ink) -> Scene {
     let rect = reassembly_rect();
-    let (done, running, dropped) = spec::REASSEMBLY;
     let mut children = vec![
         tagged_label(
             "pv.reassembly.title",
@@ -2836,15 +2871,8 @@ fn reassembly_strip(ink: Ink) -> Scene {
         .silenced(Silence::name_of("pv.reassembly")),
         tagged_label(
             "pv.reassembly.counts",
-            format!(
-                "{} of {} channels carrying · done {} · in progress {} · abandoned {}",
-                spec::LANES.len(),
-                spec::CHANNELS,
-                comma(done),
-                running,
-                dropped
-            ),
-            Rect::new(rect.w.saturating_sub(430), 10, 414, 12),
+            reassembly_counts(),
+            Rect::new(rect.w.saturating_sub(516), 10, 500, 12),
             FONT_SMALL,
             ink.text_2,
         ),
@@ -2856,7 +2884,10 @@ fn reassembly_strip(ink: Ink) -> Scene {
             &format!("pv.reassembly.lane.{n}"),
             local,
             ink.surface,
-            Some(if lane.continuous {
+            // ★ R1845 — the box is lit by what the lane has to REPORT, not by
+            // continuity alone: an abandoned reassembly is a fault a reader must
+            // see, and it is not a break in the sequence.
+            Some(if lane.faults().is_empty() {
                 ink.outline
             } else {
                 ink.err
@@ -2873,7 +2904,11 @@ fn reassembly_strip(ink: Ink) -> Scene {
             lane_reading(lane),
             Rect::new(local.x + 10, local.y + 24, local.w - 20, 12),
             FONT_SMALL,
-            if lane.continuous { ink.text_2 } else { ink.err },
+            if lane.faults().is_empty() {
+                ink.text_2
+            } else {
+                ink.err
+            },
         ));
     }
     panel("pv.reassembly", rect, ink.bg, Some(ink.outline), children)
@@ -3057,6 +3092,13 @@ impl ExternalIntrospect for ViewOracle {
             const {
                 &[
                     SchemaField::new("spec", "json"),
+                    // ★★★★★ R1845 — the protocol violations this capture
+                    // contains, derived. `violation_kinds` publishes the closed
+                    // vocabulary beside them so a client enumerates what can be
+                    // reported instead of discovering the words from a sample
+                    // that happens to contain them.
+                    SchemaField::new("violations", "json"),
+                    SchemaField::new("violation_kinds", "string"),
                     // ★★★★★ R1747 — how much of the capture viewer's written
                     // specification this build is showing, published beside the
                     // screen's own table. `json` rather than the `string` some
@@ -3222,6 +3264,12 @@ impl ExternalIntrospect for ViewOracle {
             "row_count" => Ok(IntrospectValue::Int(
                 i64::try_from(spec::ROWS.len()).unwrap_or(i64::MAX),
             )),
+            // ★★★★★ R1845 — the census's `capture.t2.18`. DERIVED from the
+            // capture rather than stored beside it, so a violation cannot drift
+            // from the rows it is about; every ingredient was already in
+            // `RowSpec` and nothing had asked.
+            "violations" => Ok(IntrospectValue::Json(violations_json())),
+            "violation_kinds" => Ok(IntrospectValue::Text(spec::VIOLATION_KINDS.join(","))),
             "selected_row" => Ok(IntrospectValue::Int(
                 i64::try_from(state.row.get()).unwrap_or(i64::MAX),
             )),
@@ -3488,6 +3536,28 @@ impl ExternalIntrospect for ViewOracle {
     }
 }
 
+/// The derived violation table in its wire form.
+///
+/// ★ R1845 — lifted out of `query`'s arm rather than shaped inside it. `query`
+/// is a DISPATCH table: an arm that also builds a document reads as if the shape
+/// were part of the routing, and the arm's twelve lines took the method past
+/// `clippy::too_many_lines`. The lint named a real thing — the two jobs had run
+/// together — so the repair is the split and not an allow.
+fn violations_json() -> serde_json::Value {
+    serde_json::Value::Array(
+        spec::violations()
+            .into_iter()
+            .map(|v| {
+                serde_json::json!({
+                    "kind": v.kind,
+                    "row": v.row,
+                    "why": v.why,
+                })
+            })
+            .collect(),
+    )
+}
+
 /// The whole specification, as the wire sees it — so the demo reads the table
 /// from the running application rather than keeping a second copy of it.
 fn spec_json() -> serde_json::Value {
@@ -3590,9 +3660,20 @@ fn spec_json() -> serde_json::Value {
                 "marker": f.marker, "piece": f.piece,
             })),
         })).collect::<Vec<_>>(),
+        // ★★★★★ R1845 — a lane publishes the channel it is about and the
+        // reading DERIVED from that channel's rows, so a client holding both
+        // halves of this document can check the strip against the capture. It
+        // could not before: the lane named no channel.
         "lanes": spec::LANES.iter().map(|l| serde_json::json!({
-            "name": l.name, "sn": l.sn, "continuous": l.continuous, "dropped": l.dropped,
+            "name": l.name, "channel": l.channel, "sn": l.sn(),
+            "continuous": l.continuous(), "dropped": l.dropped(),
+            "skipped": l.skipped(), "out_of_order": l.out_of_order(),
         })).collect::<Vec<_>>(),
+        "channels_carrying": spec::channels(),
+        // ★ R1845 — the premise the third violation kind is judged against. A
+        // client told an extension was "unnegotiated" and not told what WAS
+        // negotiated has been handed a verdict it cannot check.
+        "negotiated_extensions": spec::NEGOTIATED_EXTENSIONS,
         "sources": spec::SOURCES.iter().map(|(n, l)| serde_json::json!({
             "name": n, "len": l,
         })).collect::<Vec<_>>(),
@@ -4222,7 +4303,13 @@ fn reassembly_nodes() -> Vec<AccessNode> {
     let mut group = AccessNode::new("pv.reassembly", AriaRole::Group)
         .with_name_from_tag("pv.reassembly.title")
         .with_child("pv.reassembly.counts");
-    let mut nodes = vec![AccessNode::new("pv.reassembly.counts", AriaRole::Status)];
+    // ★ R1845 — the totals reach a reader who cannot see the label. This node
+    // was a bare `Status` with no value at all, so the one sentence that says
+    // how much of the session is carrying traffic was paint-only.
+    let mut nodes = vec![
+        AccessNode::new("pv.reassembly.counts", AriaRole::Status)
+            .with_value(AccessValue::Text(reassembly_counts())),
+    ];
     for (n, lane) in spec::LANES.iter().enumerate() {
         let tag = format!("pv.reassembly.lane.{n}");
         group = group.with_child(tag.clone());
@@ -4238,13 +4325,19 @@ fn reassembly_nodes() -> Vec<AccessNode> {
     nodes
 }
 
-/// What one reassembly lane reads as — its sequence number, and whether the
-/// sequence is unbroken.
+/// What one reassembly lane reads as — the sequence number its channel has
+/// reached, and what if anything is wrong with the sequence.
+///
+/// ★★★★★ R1845 — every word of this is now DERIVED from the capture's rows.
+/// Before, all three numbers were written down beside the lane with no channel
+/// code linking them to anything, and the else-arm reported `{dropped}
+/// abandoned` whatever the break actually was.
 fn lane_reading(lane: &spec::LaneSpec) -> String {
-    if lane.continuous {
-        format!("{} · unbroken", lane.sn)
+    let faults = lane.faults();
+    if faults.is_empty() {
+        format!("{} · unbroken", lane.sn())
     } else {
-        format!("{} · {} abandoned", lane.sn, lane.dropped)
+        format!("{} · {}", lane.sn(), faults.join(" · "))
     }
 }
 

@@ -266,7 +266,10 @@ def check_assemblies(rows: list[dict], exists) -> list[str]:
 UNASSEMBLED: frozenset[str] = frozenset(
     {
         "capture.t2.14",
-        "capture.t2.18",
+        # `capture.t2.18` was here and is REPAID at R1845 — the capture derives
+        # its own protocol violations, against a watermark rather than an
+        # adjacent difference, and the reassembly strip's lanes are the same
+        # reading, so a lane and a violation row cannot disagree.
         # `dashboard.t1.8` was here and is REPAID at R1843. Removing a name is
         # the only way this list shortens, and the ratchet refuses both
         # directions: a row that gains an `assembled_by` while still listed

@@ -211,6 +211,21 @@ pub const CAPTURED: u32 = 184_392;
 
 // ── The session-context strip ──────────────────────────────────────────────
 
+/// The extensions this session agreed to, by their wire marker.
+///
+/// ★★★★★ R1845 — the referent the third violation kind had none of. [`CONTEXT`]
+/// holds negotiated SETTINGS (an id width, a batch size, a compression flag);
+/// nothing said which EXTENSIONS were agreed, so a row carrying one could not
+/// be wrong about it. A capture that shows `extension 0x1f` and cannot say
+/// whether 0x1f was negotiated is showing a fact with no premise.
+///
+/// ⚠ Kept beside `CONTEXT` and not inside it because the two answer different
+/// questions: a context value is an input the decoder needs to read anything at
+/// all, and an extension is a capability the peers agreed to use. Folding them
+/// together would make the strip show a roster a reader has no use for on every
+/// screen.
+pub const NEGOTIATED_EXTENSIONS: &[&str] = &["0x02", "0x07", "0x11"];
+
 /// One negotiated value the decoder was given.
 pub struct ContextValue {
     /// The name the strip shows.
@@ -707,12 +722,39 @@ pub fn link_text(n: usize) -> Option<String> {
 /// read through, an out-of-band payload, and an unknown extension. A capture of
 /// only well-formed messages would let a screen pass while being unable to say
 /// any of it.
+///
+/// ★★★★★ R1845 — **the sequence numbers agree with the clock, and the faults
+/// they carry are SEPARATED on purpose.** They did not: measured before this
+/// round, the table descended in time while its `sn` ASCENDED down it — 10 of
+/// the 12 adjacent same-channel pairs — so a detector over them would have
+/// reported ten sequence regressions that were facts about the TABLE and not
+/// about a protocol. ⚠ Those two tens are different numbers, and this comment
+/// said `10 of 10` until the closing audit re-derived both: ten of twelve pairs
+/// ran the wrong way, and the watermark read over them answers ten regressions.
+///
+/// Renumbered, the capture now plants one of each fault the screen can name,
+/// **on different channels**:
+///
+/// | channel | what it carries |
+/// |---|---|
+/// | `data/rel` | a contiguous sequence with one row that ARRIVED OUT OF ORDER, and nothing missing |
+/// | `bg/beff` | numbers that never arrived, and an abandoned reassembly, and nothing out of order |
+/// | `ihigh/rel` | neither — an unbroken lane, so the continuous arm is not vacuous |
+///
+/// ⚠ **The separation is the load-bearing part and it was found by a
+/// counterfactual, not by design.** While both faults sat on one channel,
+/// [`LaneSpec::continuous`] could drop its out-of-order term and **nothing
+/// failed** — every lane with a regression also had a gap, so the second
+/// conjunct never changed an answer. A fixture where two faults always travel
+/// together cannot tell a reading that checks both from one that checks either.
+/// `r1845_a_lane_derives_its_reading_from_the_rows_it_is_about` asserts the
+/// separation, so a later edit cannot quietly collapse it again.
 pub const ROWS: &[RowSpec] = &[
     RowSpec {
         time: "12:04:38.221",
         hop: "n1 -> r1",
         channel: "data/rel",
-        sn: 3414,
+        sn: 3418,
         kind: "Data",
         name: "sensors/unit-1/pose",
         len: 48,
@@ -723,7 +765,7 @@ pub const ROWS: &[RowSpec] = &[
         time: "12:04:38.198",
         hop: "n4 -> r1",
         channel: "ihigh/rel",
-        sn: 1180,
+        sn: 1182,
         kind: "Query",
         name: "store/**",
         len: 64,
@@ -770,7 +812,7 @@ pub const ROWS: &[RowSpec] = &[
         time: "12:04:37.901",
         hop: "n1 -> r1",
         channel: "data/rel",
-        sn: 3418,
+        sn: 3415,
         kind: "Data",
         name: "piece 2 of 3",
         len: 1280,
@@ -784,7 +826,7 @@ pub const ROWS: &[RowSpec] = &[
         time: "12:04:37.900",
         hop: "n1 -> r1",
         channel: "data/rel",
-        sn: 3419,
+        sn: 3414,
         kind: "Data",
         name: "sensors/unit-1/depth",
         len: 584,
@@ -798,7 +840,7 @@ pub const ROWS: &[RowSpec] = &[
         time: "12:04:37.771",
         hop: "n5 -> r1",
         channel: "bg/beff",
-        sn: 802,
+        sn: 806,
         kind: "Transport",
         name: "keep-alive",
         len: 16,
@@ -809,7 +851,7 @@ pub const ROWS: &[RowSpec] = &[
         time: "12:04:37.660",
         hop: "n3 -> r1",
         channel: "data/rel",
-        sn: 3420,
+        sn: 3413,
         kind: "Data",
         name: "cameras/0/frame",
         len: 40,
@@ -820,7 +862,7 @@ pub const ROWS: &[RowSpec] = &[
         time: "12:04:37.540",
         hop: "n6 -> r1",
         channel: "data/rel",
-        sn: 3421,
+        sn: 3412,
         kind: "Data",
         name: "id 7 -> sensors/unit-2/pose",
         len: 48,
@@ -831,7 +873,7 @@ pub const ROWS: &[RowSpec] = &[
         time: "12:04:37.421",
         hop: "n4 -> r1",
         channel: "ihigh/rel",
-        sn: 1182,
+        sn: 1180,
         kind: "Query",
         name: "sensors/unit/**?since=5s",
         len: 72,
@@ -842,7 +884,7 @@ pub const ROWS: &[RowSpec] = &[
         time: "12:04:37.310",
         hop: "n1 -> r1",
         channel: "data/rel",
-        sn: 3422,
+        sn: 3411,
         kind: "Data",
         name: "sensors/unit-1/pose",
         len: 60,
@@ -853,7 +895,7 @@ pub const ROWS: &[RowSpec] = &[
         time: "12:04:37.204",
         hop: "n7 -> r1",
         channel: "bg/beff",
-        sn: 3410,
+        sn: 802,
         kind: "Data",
         name: "piece 2 of 4",
         len: 1280,
@@ -878,7 +920,7 @@ pub const ROWS: &[RowSpec] = &[
         time: "12:04:36.998",
         hop: "n5 -> r1",
         channel: "data/rel",
-        sn: 3409,
+        sn: 3410,
         kind: "Data",
         name: "mesh/telemetry",
         len: 96,
@@ -889,7 +931,7 @@ pub const ROWS: &[RowSpec] = &[
         time: "12:04:36.904",
         hop: "n2 -> r1",
         channel: "data/rel",
-        sn: 3408,
+        sn: 3409,
         kind: "Declare",
         name: "id 6 -> store/**",
         len: 28,
@@ -1304,40 +1346,184 @@ pub const BYTES_PER_ROW: usize = 8;
 // ── The reassembly strip ───────────────────────────────────────────────────
 
 /// One channel lane of the reassembly strip.
+///
+/// ★★★★★ R1845 — **a lane declares WHICH channel it is about and reads
+/// everything else off [`ROWS`].**
+///
+/// It used to carry `sn`, `continuous` and `dropped` as written-down values with
+/// no link to the capture at all — not even a channel code, so nothing *could*
+/// have compared them. What that permitted was measured before this was written:
+/// the strip said `data/rel` was unbroken while the rows on that channel skipped
+/// a number and one of them went backwards, and every gate was green. It is the
+/// defect R1797 took out of the latency card and R1842 out of the option
+/// surface, in its third setting.
+///
+/// ⚠ What stays declared is what a capture cannot answer: the **roster** — the
+/// reference's own strip draws three lanes beside a header that counts four
+/// carrying channels, so the two are separate facts — and the reader-facing
+/// **name**, which is prose the wire code `data/rel` does not contain.
 pub struct LaneSpec {
-    /// The channel's name.
+    /// The channel's name, as a reader sees it.
     pub name: &'static str,
-    /// The sequence number it has reached.
-    pub sn: u32,
-    /// Whether its sequence is unbroken.
-    pub continuous: bool,
-    /// How many pieces it has abandoned.
-    pub dropped: u32,
+    /// The wire code [`RowSpec::channel`] carries for it — the join between this
+    /// lane and the messages it is about, and the field whose absence made every
+    /// number above underivable.
+    pub channel: &'static str,
 }
 
-/// The channels carrying traffic, of the eight the session negotiated.
+/// The channels the strip draws a lane for, of the eight the session negotiated.
+///
+/// ⚠ Not "the channels carrying traffic" — that is [`channels`], which the
+/// capture answers and which this roster is deliberately smaller than.
 pub const LANES: &[LaneSpec] = &[
     LaneSpec {
         name: "data · reliable",
-        sn: 3419,
-        continuous: true,
-        dropped: 0,
+        channel: "data/rel",
     },
     LaneSpec {
         name: "interactive-high · reliable",
-        sn: 1182,
-        continuous: true,
-        dropped: 0,
+        channel: "ihigh/rel",
     },
     LaneSpec {
         name: "background · best-effort",
-        sn: 3410,
-        continuous: false,
-        dropped: 1,
+        channel: "bg/beff",
     },
 ];
 
-/// How many channels the session negotiated, of which [`LANES`] carry traffic.
+/// Every channel the capture carries, in the order it first shows one.
+///
+/// ★ The strip's *carrying* count is this and not [`LANES`]`.len()`. The two are
+/// different facts — the roster is what the strip DRAWS, this is what the
+/// capture HOLDS — and writing one where the other was meant is how the header
+/// came to announce three while the rows carried four.
+#[must_use]
+pub fn channels() -> Vec<&'static str> {
+    let mut out: Vec<&'static str> = Vec::new();
+    for row in ROWS {
+        if !out.contains(&row.channel) {
+            out.push(row.channel);
+        }
+    }
+    out
+}
+
+/// One channel's rows and their sequence numbers, **oldest first**.
+///
+/// ⚠ [`ROWS`] is newest first — R1829 built the ordering feature on that fact
+/// and R1845 re-measured it — so this walks the table backwards. A sequence is a
+/// claim about time and the table is ordered for a reader, so every reading of
+/// one has to turn it round first.
+#[must_use]
+pub fn series(channel: &str) -> Vec<(usize, u32)> {
+    ROWS.iter()
+        .enumerate()
+        .rev()
+        .filter(|(_, row)| row.channel == channel)
+        .map(|(n, row)| (n, row.sn))
+        .collect()
+}
+
+/// The rows on one channel that failed to beat the number the channel had
+/// already reached, each with the watermark it failed to beat.
+///
+/// ★★★★★ **A WATERMARK, NOT AN ADJACENT DIFFERENCE, and R1845 got that wrong
+/// first.** Differencing neighbouring pairs reports a break on BOTH SIDES of a
+/// row that goes backwards — a series holding one gap and one regression
+/// answered "three gaps" — because a backwards row makes each of its neighbours
+/// look non-consecutive. The highest number the channel has reached is the only
+/// reading that separates the two: a regression is a row that does not beat it,
+/// and a gap is a number the channel never showed at all.
+#[must_use]
+pub fn regressions(channel: &str) -> Vec<(usize, u32)> {
+    let mut highest: Option<u32> = None;
+    let mut out = Vec::new();
+    for (n, sn) in series(channel) {
+        if let Some(hi) = highest {
+            if sn <= hi {
+                out.push((n, hi));
+            }
+        }
+        highest = Some(highest.map_or(sn, |hi| hi.max(sn)));
+    }
+    out
+}
+
+impl LaneSpec {
+    /// The sequence number this channel has reached — the highest it showed.
+    #[must_use]
+    pub fn sn(&self) -> u32 {
+        series(self.channel)
+            .into_iter()
+            .map(|(_, sn)| sn)
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// The numbers between this channel's lowest and its highest that never
+    /// arrived.
+    #[must_use]
+    pub fn skipped(&self) -> Vec<u32> {
+        let seen: Vec<u32> = series(self.channel).into_iter().map(|(_, sn)| sn).collect();
+        let (Some(lo), Some(hi)) = (seen.iter().min().copied(), seen.iter().max().copied()) else {
+            return Vec::new();
+        };
+        (lo..hi).filter(|n| !seen.contains(n)).collect()
+    }
+
+    /// How many of this channel's rows arrived out of order — the same reading
+    /// [`violations`] publishes as a sequence regression, asked per lane.
+    #[must_use]
+    pub fn out_of_order(&self) -> usize {
+        regressions(self.channel).len()
+    }
+
+    /// How many reassemblies this channel abandoned — its rows marked `Drop`.
+    #[must_use]
+    pub fn dropped(&self) -> usize {
+        ROWS.iter()
+            .filter(|row| row.channel == self.channel)
+            .filter(|row| {
+                row.fragment
+                    .as_ref()
+                    .is_some_and(|piece| piece.marker == "Drop")
+            })
+            .count()
+    }
+
+    /// Whether this channel's sequence is unbroken: nothing skipped, nothing out
+    /// of order.
+    #[must_use]
+    pub fn continuous(&self) -> bool {
+        self.skipped().is_empty() && self.out_of_order() == 0
+    }
+
+    /// What is wrong with this lane, in report order. Empty when nothing is.
+    ///
+    /// ★ Three separate faults rather than one boolean, because the reading this
+    /// replaces said `{dropped} abandoned` for **every** kind of break — so a
+    /// channel that had skipped a number and abandoned nothing would have been
+    /// shown the sentence "0 abandoned" as its explanation.
+    #[must_use]
+    pub fn faults(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        let skipped = self.skipped().len();
+        if skipped > 0 {
+            out.push(format!("{skipped} missing"));
+        }
+        let out_of_order = self.out_of_order();
+        if out_of_order > 0 {
+            out.push(format!("{out_of_order} out of order"));
+        }
+        let dropped = self.dropped();
+        if dropped > 0 {
+            out.push(format!("{dropped} abandoned"));
+        }
+        out
+    }
+}
+
+/// How many channels the session negotiated, of which [`channels`] carry
+/// traffic and [`LANES`] draw a lane.
 pub const CHANNELS: u32 = 8;
 /// Reassemblies completed, in progress and abandoned.
 pub const REASSEMBLY: (u32, u32, u32) = (1_204, 2, 1);
@@ -1900,3 +2086,132 @@ pub const OPERATIONS: &[OperationSpec] = &[
         needs: None,
     },
 ];
+
+// ── R1845 — protocol violation rows, DERIVED ────────────────────────────────
+
+/// What a violation row says, and which capture row it is about.
+///
+/// ★★★★★ R1845 — the census's `capture.t2.18`, and the point is that every
+/// ingredient was already here. `RowSpec` carries a per-channel `sn`, a `name`
+/// that doubles as the declaration a row establishes, and a `note` that carries
+/// an extension marker. Nothing asked. This asks.
+///
+/// ⚠ **A derived row kind, not a stored one.** The capture is the source and
+/// this is a reading of it, so a violation cannot drift from the rows the way a
+/// second table would — the defect R1797 removed from the latency card and
+/// R1842 from the option surface, in its third setting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Violation {
+    /// Which of [`VIOLATION_KINDS`] this is.
+    pub kind: &'static str,
+    /// The index into [`ROWS`] the reader should look at.
+    pub row: usize,
+    /// The sentence a reader is shown.
+    pub why: String,
+}
+
+/// The three kinds the capability names, in report order.
+pub const VIOLATION_KINDS: &[&str] = &[
+    "sequence regression",
+    "undeclared reference",
+    "unnegotiated extension",
+];
+
+/// The id a row's name establishes or uses, when it names one.
+///
+/// A declaration and a reference are spelled the same way — `id N -> resource`
+/// — and which one it is comes from the row's KIND, not from the text. That is
+/// why this answers only the number and leaves the judgement to the caller.
+fn named_id(name: &str) -> Option<u32> {
+    name.strip_prefix("id ")
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|digits| digits.parse().ok())
+}
+
+/// The extension marker a row's note carries, when it carries one.
+fn noted_extension(note: &str) -> Option<&str> {
+    note.strip_prefix("extension ").map(str::trim)
+}
+
+/// Every violation the capture contains, in row order.
+///
+/// ★★★★★ THE TWO SEQUENCE KINDS ARE DERIVED AGAINST A WATERMARK, NOT AGAINST
+/// THE PREVIOUS ROW, and R1845 got that wrong first. Differencing adjacent
+/// pairs reports a gap on BOTH SIDES of a regression — a series with one gap
+/// and one regression answered "three gaps" — because a row that goes backwards
+/// makes its neighbours look non-consecutive. The watermark is the highest `sn`
+/// the channel has reached, so a regression is a row that does not beat it, and
+/// a gap is a number the channel never showed at all.
+///
+/// ⚠ And the capture is NEWEST FIRST (R1829 established it and this round
+/// re-measured it: `time` descends down [`ROWS`]). So the series is read in
+/// reverse, because a sequence is a fact about time and the table is ordered
+/// for a reader.
+#[must_use]
+pub fn violations() -> Vec<Violation> {
+    let mut out: Vec<Violation> = Vec::new();
+
+    // (1) sequence regression — per channel, read against the watermark.
+    //
+    // ★ The same [`regressions`] the reassembly strip's lanes are derived from,
+    // asked once per channel here and once per lane there. One reading of the
+    // rows with two readers, which is the whole point of the round: a violation
+    // row and a lane cannot disagree about whether a channel went backwards.
+    for channel in channels() {
+        for (n, highest) in regressions(channel) {
+            out.push(Violation {
+                kind: VIOLATION_KINDS[0],
+                row: n,
+                why: format!(
+                    "{channel} reached {highest} on an earlier message and this row is {}",
+                    ROWS[n].sn
+                ),
+            });
+        }
+    }
+
+    // (2) undeclared reference — a row that USES an id no row DECLARES.
+    //
+    // ★ Over the whole capture rather than "declared before it was used": a
+    // declaration this capture never contains is a different fact from one that
+    // arrives late, and the second needs an ordering claim the reference does
+    // not make. Reporting the stronger one only is the honest reading.
+    let declared: Vec<u32> = ROWS
+        .iter()
+        .filter(|row| row.kind == "Declare")
+        .filter_map(|row| named_id(row.name))
+        .collect();
+    for (n, row) in ROWS.iter().enumerate() {
+        if row.kind == "Declare" {
+            continue;
+        }
+        if let Some(id) = named_id(row.name) {
+            if !declared.contains(&id) {
+                out.push(Violation {
+                    kind: VIOLATION_KINDS[1],
+                    row: n,
+                    why: format!("id {id} is used here and no row in this capture declares it"),
+                });
+            }
+        }
+    }
+
+    // (3) unnegotiated extension — a marker outside what the session agreed.
+    for (n, row) in ROWS.iter().enumerate() {
+        if let Some(marker) = noted_extension(row.note) {
+            if !NEGOTIATED_EXTENSIONS.contains(&marker) {
+                out.push(Violation {
+                    kind: VIOLATION_KINDS[2],
+                    row: n,
+                    why: format!(
+                        "extension {marker} is carried here and the session negotiated {}",
+                        NEGOTIATED_EXTENSIONS.join(", ")
+                    ),
+                });
+            }
+        }
+    }
+
+    out.sort_by_key(|v| v.row);
+    out
+}

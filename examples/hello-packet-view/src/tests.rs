@@ -919,24 +919,39 @@ fn r1693_the_screen_is_a_keyboard_ring_of_its_composites_and_buttons() {
 
 /// A lane's reading is one function, so the strip and the accessibility tree
 /// cannot disagree about whether a channel's sequence is unbroken.
+///
+/// ⚠ R1845 rewrote what this compares against. It used to read the lane's own
+/// declared fields, which made it a check that a string agreed with the numbers
+/// sitting beside it — true of a lane whose numbers were about no capture at
+/// all. It now reads the derivation, so the sentence a reader is shown is
+/// pinned to the rows.
 #[test]
 fn r1693_a_lane_reads_the_same_to_both_of_its_readers() {
     for lane in spec::LANES {
         let said = lane_reading(lane);
-        assert!(said.contains(&lane.sn.to_string()));
-        assert_eq!(
-            said.contains("unbroken"),
-            lane.continuous,
-            "{} says the wrong thing about its continuity",
+        assert!(
+            said.contains(&lane.sn().to_string()),
+            "{} does not say the number its channel reached",
             lane.name,
         );
-        if !lane.continuous {
-            assert!(said.contains(&lane.dropped.to_string()));
+        assert_eq!(
+            said.contains("unbroken"),
+            lane.faults().is_empty(),
+            "{} says the wrong thing about what it has to report",
+            lane.name,
+        );
+        for fault in lane.faults() {
+            assert!(
+                said.contains(&fault),
+                "{} does not name its {fault:?}",
+                lane.name,
+            );
         }
     }
     // ★ Both arms are exercised: this capture has a broken lane, and a table of
     // only continuous ones would make half of the assertion above vacuous.
-    assert!(spec::LANES.iter().any(|l| !l.continuous));
+    assert!(spec::LANES.iter().any(|l| !l.faults().is_empty()));
+    assert!(spec::LANES.iter().any(|l| l.faults().is_empty()));
 }
 
 /// ★★ The compile-time character count the name column's floor is derived from.
@@ -2076,6 +2091,290 @@ fn r1829_the_order_round_trips_on_the_wire_and_a_bad_one_is_refused_by_name() {
             state.sort.get(),
             before,
             "a refused order changed the list anyway",
+        );
+    });
+}
+
+// ── R1845 — protocol violation rows, derived ────────────────────────────────
+
+/// ★★★★★ R1845 — **the capture's sequence numbers agree with its clock.**
+///
+/// The gate this round exists because of. Measured before it was written: the
+/// capture is newest-first (`time` descends down `ROWS`, which is what R1829's
+/// ordering feature rests on) while its `sn` ASCENDED downward — **10 of the 12
+/// adjacent same-channel pairs**. The two facts ran opposite, and nothing
+/// asked, so a violation detector built over them would have reported **ten**
+/// sequence regressions that were facts about the table rather than about a
+/// protocol.
+///
+/// ⚠ Those two tens are DIFFERENT NUMBERS and this comment said `10 of 10`
+/// until the closing audit re-derived both from `git show HEAD:` — a pair count
+/// and a regression count, each ten by coincidence, written down as one fact.
+/// Ten of twelve pairs ran the wrong way; the watermark read over them answers
+/// ten regressions (`data/rel` 7, `ihigh/rel` 2, `bg/beff` 1). The
+/// denominator was the half nobody counted.
+///
+/// ⚠ And nothing noticed when it was repaired: rewriting ten sequence numbers
+/// in the canonical capture broke NO test, because the painted column and the
+/// spec are one source. That is why this gate is not optional — the coherence
+/// it holds had no other holder.
+#[test]
+fn r1845_the_captures_sequence_agrees_with_its_clock() {
+    let ordered: Vec<&str> = spec::ROWS.iter().map(|row| row.time).collect();
+    let mut newest_first = ordered.clone();
+    newest_first.sort_unstable_by(|a, b| b.cmp(a));
+    assert_eq!(
+        ordered, newest_first,
+        "the capture is newest first, and its times say so"
+    );
+
+    let regressions: Vec<usize> = spec::violations()
+        .into_iter()
+        .filter(|v| v.kind == spec::VIOLATION_KINDS[0])
+        .map(|v| v.row)
+        .collect();
+    for channel in spec::ROWS.iter().map(|row| row.channel) {
+        let mut highest: Option<u32> = None;
+        for (n, row) in spec::ROWS.iter().enumerate().rev() {
+            if row.channel != channel {
+                continue;
+            }
+            if highest.is_some_and(|hi| row.sn <= hi) {
+                assert!(
+                    regressions.contains(&n),
+                    "row {n} on {channel} goes backwards and nothing reports it",
+                );
+            }
+            highest = Some(highest.map_or(row.sn, |hi| hi.max(row.sn)));
+        }
+    }
+}
+
+/// ★★★★★ R1845 — **all three violation kinds are in the capture, each once.**
+///
+/// A detector whose capture contains none of what it detects asserts nothing:
+/// every clause passes over an empty set. So the fixture carries one of each on
+/// purpose — a sequence that goes backwards, an id used and never declared, and
+/// an extension marker outside what the session agreed.
+#[test]
+fn r1845_the_capture_carries_one_of_each_violation() {
+    let found = spec::violations();
+    for kind in spec::VIOLATION_KINDS {
+        let count = found.iter().filter(|v| v.kind == *kind).count();
+        assert_eq!(count, 1, "{kind} is not found exactly once: {found:#?}");
+    }
+    for v in &found {
+        assert!(v.row < spec::ROWS.len(), "{v:?} points past the capture");
+        assert!(v.why.len() > 20, "{v:?} states no reason");
+    }
+}
+
+/// ★★★★★ R1845 — **a regression does not manufacture gaps.**
+///
+/// The modelling error this round made first, caught before any code was
+/// written. Differencing ADJACENT pairs reports a gap on both sides of a
+/// regression, because a row that goes backwards makes each of its neighbours
+/// look non-consecutive. On this capture's own `data/rel` series that reading
+/// manufactures **two** breaks where there is **nothing** missing — the
+/// sharpest form of the error, and the reason the derivation reads a watermark.
+///
+/// ⚠ The series is pinned AND checked against the live capture in the same
+/// test. A pinned constant that nothing compares to its subject is a claim
+/// about a table that has moved, which is the shape this whole round is about.
+#[test]
+fn r1845_a_regression_does_not_manufacture_gaps() {
+    /// The series `data/rel` carries, oldest first.
+    const SERIES: &[u32] = &[3409, 3410, 3411, 3412, 3413, 3414, 3415, 3417, 3416, 3418];
+
+    let live: Vec<u32> = spec::series("data/rel")
+        .into_iter()
+        .map(|(_, sn)| sn)
+        .collect();
+    assert_eq!(
+        live, SERIES,
+        "the series this pins is not the one the capture carries",
+    );
+
+    let naive = SERIES.windows(2).filter(|p| p[1] > p[0] + 1).count();
+    assert_eq!(
+        naive, 2,
+        "adjacent differencing over-counts, which is why it is not used",
+    );
+
+    let mut highest: Option<u32> = None;
+    let mut regressions = 0;
+    for sn in SERIES {
+        if highest.is_some_and(|hi| *sn <= hi) {
+            regressions += 1;
+        }
+        highest = Some(highest.map_or(*sn, |hi| hi.max(*sn)));
+    }
+    let seen: std::collections::BTreeSet<u32> = SERIES.iter().copied().collect();
+    let gaps = (*seen.first().expect("a series")..*seen.last().expect("a series"))
+        .filter(|n| !seen.contains(n))
+        .count();
+    assert_eq!(
+        (regressions, gaps),
+        (1, 0),
+        "one row out of order and NOTHING missing, which is what was authored — \
+         the naive reading answers {naive} breaks on the same numbers",
+    );
+}
+
+/// ★★★★★ R1845 — **the reassembly strip is a reading of the capture.**
+///
+/// The second half of the debt this round exists for. `LaneSpec` used to carry
+/// `sn`, `continuous` and `dropped` as declared values and **no channel code**,
+/// so no gate could have compared them to anything — and the R1693 gate that
+/// looks like it checks a lane only checked that its sentence agreed with the
+/// numbers written beside it. Every one of them is derived now, and this says so.
+#[test]
+fn r1845_a_lane_derives_its_reading_from_the_rows_it_is_about() {
+    let carried = spec::channels();
+    for lane in spec::LANES {
+        assert!(
+            carried.contains(&lane.channel),
+            "{} is a lane for {}, which this capture never shows — it would derive from nothing",
+            lane.name,
+            lane.channel,
+        );
+        let series: Vec<u32> = spec::series(lane.channel)
+            .into_iter()
+            .map(|(_, sn)| sn)
+            .collect();
+        assert!(!series.is_empty(), "{} has no rows", lane.channel);
+        assert_eq!(
+            lane.sn(),
+            series.iter().copied().max().expect("a series"),
+            "{} does not show the number its channel reached",
+            lane.name,
+        );
+        for skipped in lane.skipped() {
+            assert!(
+                !series.contains(&skipped),
+                "{} reports {skipped} missing and the capture shows it",
+                lane.name,
+            );
+        }
+    }
+
+    // ★★★★★ THE TWO TERMS OF `continuous` ARE SEPARATELY EXERCISED, and this
+    // clause exists because a counterfactual found that they were NOT. Dropping
+    // `&& self.out_of_order() == 0` from `LaneSpec::continuous` left the whole
+    // suite green: every lane that had a row out of order also had a number
+    // missing, so the second conjunct never changed an answer and a reading that
+    // checked only the first was indistinguishable from the right one.
+    //
+    // ⚠ The repair was to the CAPTURE, not to the assertion — the faults were
+    // renumbered onto different channels — and this is what keeps a later edit
+    // from quietly putting them back together. A fixture where two faults always
+    // travel together cannot tell the two readings apart, and no amount of
+    // asserting over it can.
+    assert!(
+        spec::LANES
+            .iter()
+            .any(|lane| !lane.continuous() && lane.skipped().is_empty()),
+        "no lane is broken ONLY by arriving out of order, so `continuous` could \
+         drop that term and nothing would fail",
+    );
+    assert!(
+        spec::LANES
+            .iter()
+            .any(|lane| !lane.continuous() && lane.out_of_order() == 0),
+        "no lane is broken ONLY by a number that never arrived, so `continuous` \
+         could drop that term and nothing would fail",
+    );
+
+    // ★ THE HEADER'S COUNT AND THE ROSTER ARE DIFFERENT FACTS, and this capture
+    // is what makes the difference observable: swapping one for the other used
+    // to be invisible because the painter wrote the roster in both places.
+    assert!(
+        carried.len() > spec::LANES.len(),
+        "the capture carries no channel the strip leaves undrawn, so the two \
+         numbers cannot be told apart and the header's source is unpinned",
+    );
+
+    // ★ The strip's abandoned total and its lanes come from one capture, so they
+    // agree by construction rather than by care.
+    let abandoned: usize = spec::LANES.iter().map(spec::LaneSpec::dropped).sum();
+    assert_eq!(
+        u32::try_from(abandoned).expect("a small count"),
+        spec::REASSEMBLY.2,
+        "the lanes and the totals disagree about how much was abandoned",
+    );
+
+    // ★ One reading of the rows with two readers: a lane and a violation row
+    // cannot disagree about whether a channel went backwards.
+    let reported = spec::violations()
+        .iter()
+        .filter(|v| v.kind == spec::VIOLATION_KINDS[0])
+        .count();
+    let by_lane: usize = spec::channels()
+        .into_iter()
+        .map(|channel| spec::regressions(channel).len())
+        .sum();
+    assert_eq!(
+        reported, by_lane,
+        "the violation table and the lanes count different regressions",
+    );
+}
+
+/// ★★★★★ R1845 — **a break that abandoned nothing is not described as
+/// "0 abandoned".**
+///
+/// The reading this round replaced had two arms: `unbroken`, or `{dropped}
+/// abandoned`. A channel that had skipped a number while abandoning nothing
+/// therefore got the second arm and was shown a count of zero as its
+/// explanation. This capture holds exactly that channel, which is what lets the
+/// assertion fail if the arms ever collapse back.
+#[test]
+fn r1845_a_lane_names_the_fault_it_actually_has() {
+    let broken_but_complete: Vec<&spec::LaneSpec> = spec::LANES
+        .iter()
+        .filter(|lane| !lane.continuous() && lane.dropped() == 0)
+        .collect();
+    assert!(
+        !broken_but_complete.is_empty(),
+        "this capture holds no channel whose sequence breaks without an \
+         abandoned reassembly, so the distinction is untested",
+    );
+    for lane in broken_but_complete {
+        let said = lane_reading(lane);
+        assert!(
+            !said.contains("abandoned"),
+            "{} abandoned nothing and its reading says it did: {said:?}",
+            lane.name,
+        );
+        assert!(
+            said.contains("missing") || said.contains("out of order"),
+            "{} is broken and its reading does not say how: {said:?}",
+            lane.name,
+        );
+    }
+}
+
+/// ★★★★★ R1845 — **the strip's totals reach a reader who cannot see them.**
+///
+/// `pv.reassembly.counts` was a bare `Status` node with no value: the one
+/// sentence saying how much of the session carries traffic existed only as
+/// paint. So the header's count had no reader at all, and the number it is
+/// derived from could have been swapped back with nothing failing.
+#[test]
+fn r1845_the_strips_totals_are_in_the_accessibility_tree() {
+    with_state(|_| {
+        let nodes = PacketView::access_node(&IDLE_FIELD, None);
+        let counts = nodes
+            .iter()
+            .find(|node| node.tag == "pv.reassembly.counts")
+            .expect("the strip announces its totals");
+        let said = format!("{:?}", counts.value);
+        assert!(
+            said.contains(&format!("{} of {}", spec::channels().len(), spec::CHANNELS)),
+            "the totals do not say how many channels carry traffic: {said}",
+        );
+        assert!(
+            !said.contains(&format!("{} of {}", spec::LANES.len(), spec::CHANNELS)),
+            "the totals announce the LANE ROSTER as the carrying count: {said}",
         );
     });
 }
