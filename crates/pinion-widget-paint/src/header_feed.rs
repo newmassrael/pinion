@@ -220,7 +220,6 @@ pub struct HeaderFeed<'a> {
     sort: Option<(usize, bool)>,
     focused: Option<usize>,
     row_count: usize,
-    viewport_silence: Option<Silence>,
 }
 
 impl<'a> HeaderFeed<'a> {
@@ -241,7 +240,6 @@ impl<'a> HeaderFeed<'a> {
             sort: None,
             focused: None,
             row_count,
-            viewport_silence: None,
         }
     }
 
@@ -263,17 +261,27 @@ impl<'a> HeaderFeed<'a> {
         self
     }
 
-    /// Why the scrolling viewport says nothing to an assistive reader.
+    /// Why the scrolling viewport and the body frame say nothing to a reader.
+    ///
+    /// ★★★★★ R1856 — **derived, and there is no way to omit it.**
     ///
     /// A tagged [`ScrollState`] makes the viewport an addressable region, and an
     /// addressable region that neither speaks nor declares why is what a voice
-    /// census reports as a hole. The clip is not a thing on the screen — what a
-    /// reader walks is the rows inside it — so the declaration belongs at the
-    /// site that paints it, and this is that site.
-    #[must_use]
-    pub fn with_viewport_silence(mut self, silence: Silence) -> Self {
-        self.viewport_silence = Some(silence);
-        self
+    /// census calls *undecided*. R1851 shipped this as an opt-in
+    /// (`with_viewport_silence`) and the only screen that assembled a feed never
+    /// called it, so the clip and the frame around it went out undecided — the
+    /// measured lesson being that **an optional declaration is a declaration
+    /// somebody forgets**, and the state was better made unrepresentable.
+    ///
+    /// The reason is the same every time this assembly is used, which is what
+    /// makes deriving it honest rather than convenient: a clip is not a thing on
+    /// the screen — what a reader walks is the rows inside it — so it arranges
+    /// and does not speak. That is
+    /// [`SilenceKind::Layout`](pinion_core::voice::SilenceKind::Layout), the one
+    /// arm that deliberately does **not** reach the subtree, so declaring it
+    /// says nothing about the rows and cannot silence them by accident.
+    fn frame_silence(&self, what: &str) -> Silence {
+        Silence::layout(format!("{}: {what}", self.tag_prefix))
     }
 
     /// The columns as header placements: cumulative x offsets over the sizes.
@@ -384,6 +392,24 @@ impl<'a> HeaderFeed<'a> {
     /// the same ones the header used. It is invoked **only** for the rows in
     /// [`window`](Self::window), which is the property a caller asserts by
     /// counting the calls.
+    ///
+    /// # ★★★★★ Which regions this assembly decides, and which are the caller's
+    ///
+    /// Every region painted here has a voice answer, and the split is by *who
+    /// can know it*. The assembly declares the ones whose reason is structural
+    /// and identical every time — the body frame and the scrolling clip (this
+    /// type's private `frame_silence`), the heading's label leaf and its sort
+    /// arrow (declared inside [`view_header_cell`]). The
+    /// caller announces the three SEMANTIC ones, because only it knows what they
+    /// are called: `<tag_prefix>` (the feed), `<tag_prefix>.head` (the heading
+    /// row) and `<tag_prefix>.head.col#<n>` (each heading, with its sort
+    /// direction).
+    ///
+    /// That is the whole contract, and `a_built_feed_leaves_no_region_undecided`
+    /// is the gate on it: it announces exactly those three shapes and asserts
+    /// the census comes back with **no undecided region and no defect**. A
+    /// region added here without a decision fails that test in the round that
+    /// adds it, rather than in whichever screen happens to assert a count.
     pub fn build(
         &self,
         scroll: &Rc<ScrollState>,
@@ -415,17 +441,15 @@ impl<'a> HeaderFeed<'a> {
 
         let body_rect = self.body_viewport();
         let row_pitch = self.style.row_pitch;
-        let mut rows = view_virtual_list(
+        let rows = view_virtual_list(
             scroll,
             Rect::new(0, 0, body_rect.w, body_rect.h),
             self.row_count,
             row_pitch,
             self.style.overscan,
             |index| build_row(index, Rect::new(0, 0, body_rect.w, row_pitch), &placements),
-        );
-        if let Some(silence) = self.viewport_silence.clone() {
-            rows = rows.silenced(silence);
-        }
+        )
+        .silenced(self.frame_silence("the clip the rows scroll inside"));
         let body = Scene::Container(
             ContainerNode::new(vec![rows])
                 .with_tag(format!("{}.body", self.tag_prefix))
@@ -434,7 +458,8 @@ impl<'a> HeaderFeed<'a> {
                         .with_absolute_position(0, self.style.header.height)
                         .with_size(Size::px(body_rect.w, body_rect.h)),
                 ),
-        );
+        )
+        .silenced(self.frame_silence("the frame the body's viewport sits in"));
 
         Scene::Container(
             ContainerNode::new(vec![head, body])
@@ -630,6 +655,123 @@ mod tests {
             built.len(),
             "every constructed row is in the scene: {tags:?}"
         );
+    }
+
+    /// ★★★★★ R1856 — the assembly's own ZERO gate: nothing it paints is left
+    /// undecided.
+    ///
+    /// This is the check whose absence let R1851 publish six undecided regions
+    /// on the shipped shell. The workspace's voice gate REPORTS `unvoiced` and
+    /// deliberately does not judge it, so whether an undecided region is refused
+    /// depended on which screen happened to assert the number itself — and the
+    /// two screens that did were not the ones R1851 ran. A gate on the assembly
+    /// does not have that dependence: it fails in the round that adds the
+    /// region.
+    ///
+    /// The caller's half is modelled exactly as the contract states it — the
+    /// feed, the heading row and each heading are announced here and NOTHING
+    /// else is — so a region this assembly stops declaring cannot be hidden by
+    /// the fixture announcing it. ⚠ That is the property to preserve when
+    /// editing this test: announcing a fourth shape would make it pass
+    /// vacuously.
+    #[test]
+    fn a_built_feed_leaves_no_region_undecided() {
+        use pinion_core::voice::{Announcement, Voice, voice_census};
+        use std::collections::{BTreeMap, BTreeSet};
+
+        let f = feed(Rect::new(0, 0, 340, 298), 40).with_sort(Some((1, false)));
+        let scroll = Rc::new(ScrollState::with_tag("feed.scroll"));
+        let theme = Theme::default();
+        let mut rows: Vec<String> = Vec::new();
+        let scene = f.build(&scroll, &theme, |index, _rect, _places| {
+            rows.push(format!("feed.row.{index}"));
+            Scene::Container(ContainerNode::new(Vec::new()).with_tag(format!("feed.row.{index}")))
+        });
+
+        let mut announced = BTreeMap::new();
+        announced.insert("feed".to_string(), Announcement::named("Alarms"));
+        announced.insert(
+            "feed.head".to_string(),
+            Announcement::named("Alarm columns"),
+        );
+        for (n, column) in COLUMNS.iter().enumerate() {
+            announced.insert(
+                format!("feed.head.col#{n}"),
+                Announcement::named(column.label),
+            );
+        }
+        for tag in &rows {
+            announced.insert(tag.clone(), Announcement::named("a row"));
+        }
+
+        let census = voice_census(&scene, &announced, &BTreeSet::new());
+        let undecided = census
+            .defects()
+            .map(|n| format!("{} is {}", n.tag, n.voice.name()))
+            .collect::<Vec<_>>();
+        assert!(
+            undecided.is_empty(),
+            "the assembly must decide every region it paints, and left: {undecided:?}"
+        );
+        assert_eq!(
+            census.count(Voice::Unvoiced),
+            0,
+            "no region may be painted with neither a node nor a reason"
+        );
+
+        // ★ And the two frames are decided as ARRANGING, not as ornament — the
+        // one arm that does not reach the subtree. A `decorative` clip would
+        // silence every row inside it and this census would still come back
+        // clean, which is why the KIND is asserted and not merely the absence
+        // of a defect.
+        let framed = |tag: &str| {
+            let mut kind = None;
+            scene.for_each_node(&mut |visit| {
+                if visit.node.tag() == Some(tag) {
+                    kind = visit
+                        .node
+                        .layout_style()
+                        .and_then(|l| l.silence.as_ref())
+                        .map(pinion_core::voice::Silence::kind);
+                }
+            });
+            kind
+        };
+        for tag in ["feed.body", "feed.scroll"] {
+            assert_eq!(
+                framed(tag),
+                Some(pinion_core::voice::SilenceKind::Layout),
+                "{tag} must arrange rather than decorate"
+            );
+        }
+    }
+
+    /// ★★★★★ R1856 — the sort arrow may be called ornament only because the
+    /// heading says the direction in words.
+    ///
+    /// [`view_header_cell`](crate::column_header::view_header_cell) declares the
+    /// arrow `decorative`, which is a claim that a reader loses nothing by never
+    /// reaching it. That claim rests entirely on the heading carrying the
+    /// direction, and nothing in this crate builds the heading's node — so the
+    /// pairing is asserted here, at the assembly that owns both halves, rather
+    /// than left as prose beside the declaration it justifies.
+    #[test]
+    fn a_sorted_column_is_the_only_one_that_paints_an_arrow() {
+        let arrows = |sort| {
+            feed(Rect::new(0, 0, 340, 298), 6)
+                .with_sort(sort)
+                .sections()
+                .into_iter()
+                .enumerate()
+                .filter(|(_, s)| s.sort_glyph.is_some())
+                .map(|(n, _)| n)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(arrows(None), Vec::<usize>::new());
+        assert_eq!(arrows(Some((1, true))), vec![1]);
+        // The third column is `fixed()`, so a sort naming it paints no arrow —
+        // and a reader is told nothing that is not also true of the heading.
+        assert_eq!(arrows(Some((2, true))), Vec::<usize>::new());
     }
 
     fn walk(scene: &Scene) -> Vec<String> {

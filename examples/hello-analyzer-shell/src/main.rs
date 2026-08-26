@@ -8656,9 +8656,17 @@ fn alarms_nodes(state: &ShellState, card: &Card) -> Vec<AccessNode> {
     // reports its MODEL's count and publishes nothing about the rows it built.
     //
     // ⚠ The rows hang off the TABLE and not off a node for `{tag}.body`. That
-    // container is the scrolling frame and this screen declares it quiet: a clip
-    // is not a thing on the screen, and announcing it would put a step between a
-    // reader and the rows for no fact gained.
+    // container is the scrolling frame and it is declared quiet: a clip is not a
+    // thing on the screen, and announcing it would put a step between a reader
+    // and the rows for no fact gained.
+    //
+    // ★★★★★ R1856 — this comment used to say "*this screen* declares it quiet",
+    // and no screen did. R1851 left the declaration an opt-in on the assembly
+    // and this caller never took it, so the frame and the clip inside it went
+    // out UNDECIDED — a region a reader is never told exists and no author
+    // chose. The declaration now lives in `HeaderFeed::build`, which is the only
+    // place that can state a reason true of every feed, and cannot be omitted.
+    // The comment names where it lives because a reader here will look for it.
     let mut table = AccessNode::new(tag.clone(), AriaRole::Table)
         .with_name(format!(
             "Alarms, {} of {} shown, {}",

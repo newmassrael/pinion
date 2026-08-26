@@ -31,6 +31,7 @@ use pinion_core::style::{
     BoxStyle, FontWeight, LayoutStyle, Size, TextAlign, TextOverflow, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme};
+use pinion_core::voice::Silence;
 use pinion_core::widgets::column_layout::{SectionPlacement, SectionSelection};
 
 /// Geometry + type scale for a header strip, in logical pixels.
@@ -208,6 +209,24 @@ fn label_style(section: &HeaderSection, style: &ColumnHeaderStyle, theme: &Theme
 /// `scene/click` presses in EVERY section rather than in whichever ones the
 /// string happened to be wide enough for — which is what makes this
 /// declaration load-bearing rather than incidental.
+///
+/// ★★★★★ R1856 — the leaf declares **why it is quiet**, and the declaration is
+/// derived from the tag it is a leaf of.
+///
+/// The section this label sits in is announced as a column heading whose NAME
+/// is this very string, so a reader who was also stopped on the label would be
+/// told the same word twice with no way to know it was one heading. That is a
+/// [`SilenceKind::NameOf`](pinion_core::voice::SilenceKind::NameOf) — the one
+/// arm whose detail is a tag, so the census can check that the peer it points
+/// at speaks rather than take the claim on trust.
+///
+/// It is declared HERE and not by the caller because this function is what
+/// knows the answer: it composes the label's tag out of `tag_prefix` and
+/// `visual`, so it can compose the section's out of the same two and cannot
+/// name a peer the caller did not paint. Before this round the leaf was painted
+/// with no node and no reason, which is the one outcome a voice census calls
+/// *undecided* — and both of this workspace's consumers of this composite
+/// carried it, which is what makes it the composite's defect and not a screen's.
 #[must_use]
 pub fn header_label_node(
     tag_prefix: &str,
@@ -232,6 +251,7 @@ pub fn header_label_node(
                 .with_pointer_transparent(true),
         ),
     )
+    .silenced(Silence::name_of(format!("{tag_prefix}#{visual}")))
 }
 
 /// R1506 §5.16 — one header section cell, tagged `<tag_prefix>#<visual>` so a
@@ -280,21 +300,36 @@ pub fn view_header_cell(
         // zero-width box makes no promise about holding anything and is skipped
         // by the census that would otherwise catch the next slip.
         let box_h = pinion_core::containment::line_box(style.text_px);
-        children.push(Scene::Text(
-            TextNode::styled(
-                glyph,
-                Rect::default(),
-                TextStyle::new()
-                    .with_size_px(style.text_px)
-                    .with_fg(theme.resolve(ColorRole::Accent)),
+        children.push(
+            Scene::Text(
+                TextNode::styled(
+                    glyph,
+                    Rect::default(),
+                    TextStyle::new()
+                        .with_size_px(style.text_px)
+                        .with_fg(theme.resolve(ColorRole::Accent)),
+                )
+                .with_tag(format!("{tag_prefix}_sort#{visual}"))
+                .with_layout(
+                    LayoutStyle::new()
+                        .with_absolute_position(sect_w.saturating_sub(style.glyph_w), style.label_y)
+                        .with_size(Size::px(style.glyph_w, box_h)),
+                ),
             )
-            .with_tag(format!("{tag_prefix}_sort#{visual}"))
-            .with_layout(
-                LayoutStyle::new()
-                    .with_absolute_position(sect_w.saturating_sub(style.glyph_w), style.label_y)
-                    .with_size(Size::px(style.glyph_w, box_h)),
-            ),
-        ));
+            // ★★★★★ R1856 — ornament, and the claim is CHECKED elsewhere.
+            //
+            // An arrow is not the fact; the direction is, and a heading node
+            // carries it as `aria-sort`. Declaring this leaf decorative is
+            // therefore true only while that stays so — which is why this module's
+            // own zero gate asserts a sorted heading announces its direction.
+            // Without that pairing this declaration would be the worse defect: an
+            // undecided region reads as unfinished, while a wrong `decorative`
+            // reads as handled and silently drops the one fact a reader scanning a
+            // sorted feed needs.
+            .silenced(Silence::decorative(
+                "the sort arrow; the heading it sits in announces the direction",
+            )),
+        );
     }
     Scene::Container(
         ContainerNode::new(children)

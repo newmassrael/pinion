@@ -2409,6 +2409,27 @@ pub enum Population {
     /// ★ R1851 — the part of each heading that carries the heading's own word,
     /// which the section it sits in already announces.
     AlarmColumnLabels,
+    /// ★★★★★ R1856 — the sort ARROW, which exists on exactly one heading.
+    ///
+    /// The first family here whose membership is a function of a value a reader
+    /// can CHANGE, and it is derived from [`ALARM_OPENING_SORT`] for that
+    /// reason: this table describes the destination as it opens, so the family
+    /// names the heading the feed opens sorted on and says so rather than
+    /// listing all three and being wrong about two.
+    ///
+    /// ⚠ The residue, stated: after a reader re-sorts, the painted arrow moves
+    /// and this row describes where it WAS. That is the same bargain
+    /// [`AlarmRows`](Self::AlarmRows) makes with the scroll offset, and it is
+    /// the honest one for an opening-state census — the alternative, a family
+    /// that reads live state, would make the specification a mirror of the paint
+    /// instead of a claim against it.
+    ///
+    /// Empty when the opening sort names a column [`ALARM_COLUMNS`] does not
+    /// have. Sortability is NOT consulted, because this table does not declare
+    /// it — every alarm heading is built sortable — and a claim about a
+    /// property the specification does not hold would be prose the code cannot
+    /// keep.
+    AlarmSortIndicator,
     /// ★★★★★ R1851 — one per alarm row the feed **CONSTRUCTS**, keyed by its
     /// slot in the window rather than by the alarm it holds.
     ///
@@ -2528,6 +2549,7 @@ impl Population {
             | Population::AlarmBody
             | Population::AlarmColumns
             | Population::AlarmColumnLabels
+            | Population::AlarmSortIndicator
             | Population::AlarmRows
             | Population::AlarmCells => alarm_members(self),
             // The interior bins the ladder's boundaries describe, plus the two
@@ -2653,6 +2675,18 @@ fn alarm_members(family: Population) -> Vec<String> {
                 .map(|n| format!("feed.head.col_label#{n}"))
                 .collect(),
         ),
+        Population::AlarmSortIndicator => {
+            let (col, _) = ALARM_OPENING_SORT;
+            // A column this table does not have paints no arrow, so the family
+            // is empty rather than naming a region the screen would then owe an
+            // explanation for.
+            named(
+                (col < cols)
+                    .then(|| format!("feed.head.col_sort#{col}"))
+                    .into_iter()
+                    .collect(),
+            )
+        }
         Population::AlarmRows => named(
             (0..ALARM_ROWS_SHOWN)
                 .map(|n| format!("feed.row.{n}"))
@@ -3182,12 +3216,32 @@ pub const SILENCES: &[(&str, Population, &str, Where)] = &[
         "name_of",
         Where::At("dashboard"),
     ),
+    // ★★★★★ R1856 — the arrow that says which way the feed is sorted, quiet
+    // because the heading it sits in announces the direction in words. A
+    // reader who never reaches this region loses nothing, which is what
+    // `decorative` claims; the heading's `aria-sort` is what makes the claim
+    // true, and `pinion_widget_paint::header_feed`'s own gate is what keeps the
+    // pairing.
+    (
+        "card.{}",
+        Population::AlarmSortIndicator,
+        "decorative",
+        Where::At("dashboard"),
+    ),
     // The feed's scrolling viewport is a clip, not a thing on the screen — the
     // same declaration the board's own viewport carries, and made at the site
-    // that paints it (`HeaderFeed::with_viewport_silence`) rather than here.
+    // that paints it (`HeaderFeed::build`) rather than here.
     // Two rows because the two regions are addressed differently: the frame is
     // under the card's id, and the clip answers to a `ScrollState` tag, which is
     // `&'static` and therefore names the KIND.
+    //
+    // ⚠ R1856 — these three rows were written at R1851 and were the SCREEN's
+    // half of a declaration the PAINT never made: the assembly left the silence
+    // an opt-in and this screen never took it, so every one of these regions
+    // shipped undecided while this table said otherwise. The gate that would
+    // have caught it is the `^` below, and it never ran, because the
+    // `unvoiced == 0` assertion in front of it failed first. A specification is
+    // a claim against the paint, and a claim nothing executes is prose.
     (
         "card.{}",
         Population::AlarmBody,

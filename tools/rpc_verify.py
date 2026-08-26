@@ -1839,11 +1839,29 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
                 f"`ghost` is announced for a tag nothing paints — paint it, "
                 f"compose it from what does, or stop emitting it."
             )
+        # ★★★★★ R1856 — an arm that is REPORTED and not judged must at least be
+        # NAMED.
+        #
+        # `unvoiced` is deliberately not refused here: the count is a backlog
+        # across ~200 surfaces, and a workspace-wide zero would be a ratchet
+        # rather than a gate. But until this round the report was a bare number,
+        # so a screen that grew an undecided region said `6` and nothing else —
+        # and the two demos that DO assert zero for their own screen failed with
+        # `expected 0, got 6`, which names neither the regions nor the widget
+        # that painted them. Reproducing R1851's six cost a hand-written probe
+        # against a booted binary to learn they were one card's feed.
+        #
+        # Bounded at eight so a surface with a large backlog reports its shape
+        # without burying the rest of the run; the count above is the total
+        # either way.
+        undecided = [r["tag"] for r in out.get("nodes", []) if r["voice"] == "unvoiced"]
+        shown = ", ".join(undecided[:8]) + (" …" if len(undecided) > 8 else "")
         print(
             f"[voice] {self.example}: {out.get('total', 0)} region(s) — "
             f"{counts.get('announced', 0)} announced, "
             f"{counts.get('silent', 0)} declared quiet, "
             f"{counts.get('unvoiced', 0)} undecided (reported, not judged)"
+            + (f" — {shown}" if undecided else "")
         )
 
     def _gate_aria_structure(self) -> None:
