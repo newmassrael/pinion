@@ -29,8 +29,8 @@
 //! # ★★★★★ The three facts that must not be read twice
 //!
 //! **1. The sort indicator is DERIVED from the sort state.** The glyph comes out
-//! of [`sort_glyph`](crate::glyph::sort_glyph) applied to
-//! [`col_sort_dir`](pinion_core::widgets::grid_sort::col_sort_dir) over the same
+//! of [`sort_glyph`] applied to
+//! [`col_sort_dir`] over the same
 //! `sort` the caller ordered its rows by, so the arrow cannot point one way
 //! while the rows run the other. On the toolkit floor at 6.11.1 the two are
 //! separate properties of separate objects — probed at R1851, the indicator sits

@@ -7810,7 +7810,7 @@ const FAULT_KINDS: [&str; fault_injection::DefectKind::ALL.len()] = {
 ///
 /// ★★★★★ R1853 — the whole point of this function is that there is no list.
 /// `pinion_core::widgets::fault_injection::injectable` reads the declared
-/// [`FieldType`](pinion_core::widgets::config_form::FieldType) of every row and
+/// [`FieldType`] of every row and
 /// asks the encoder whether the value it would offer really produces the arm it
 /// claims — so a field added to `node_form` appears here with nothing edited,
 /// and a field whose shape admits nothing contributes nothing.

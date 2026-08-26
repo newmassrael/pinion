@@ -77,7 +77,22 @@ jobs:
         # private_intra_doc_links) to errors, so a plain `cargo doc` fails on
         # any regression. This gate was absent until R1214, which is why ~1000
         # broken links accreted invisibly from ~R683 (CI ran clippy, never
-        # rustdoc). Mirrors the .githooks pre-commit + pre-push doc gate.
+        # rustdoc).
+        #
+        # ⚠ R1851.3 — THIS COMMENT USED TO END "Mirrors the .githooks pre-commit
+        # + pre-push doc gate". It does not, and has not since R1779 moved
+        # rustdoc out of BOTH hooks (R1782 returned clippy and not this):
+        # `grep -l 'cargo doc' .githooks/pre-push` answers nothing. So THIS IS
+        # RUSTDOC'S ONLY HOME and a broken link surfaces only after publishing.
+        #
+        # ★★★★★ AND THAT COSTS MORE THAN THE RED ITSELF, measured this round:
+        # `demo-sweep` and `gpu-tests` BOTH `needs: lint-and-test`, so a failure
+        # here SKIPS them — and in the run list a skipped job is
+        # indistinguishable from a passing one. R1470 recorded 99 pushes of
+        # exactly this shape; R1850 paid it off; R1851 re-closed it within two
+        # rounds with the two redundant-explicit-link errors this round fixes.
+        # If this gate is ever moved again, move the sweep's `needs:` with it —
+        # they share no build product.
         #
         # R1218 — added `--document-private-items`. Without it rustdoc only
         # checks links in PUBLIC items' docs; broken links in private items'
