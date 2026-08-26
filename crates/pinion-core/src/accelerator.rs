@@ -58,7 +58,8 @@
 //! [`ChordParseError`] names which part failed instead.
 //!
 //! The modifier *order* is fixed here rather than borrowed: the toolkit's
-//! lives in a private table in `qkeysequence.cpp`, so there is nothing to be compatible with
+//! lives in a private table inside its key-sequence translation unit, so there
+//! is nothing to be compatible with
 //! — only something to be canonical about, and canonical is what makes the
 //! round trip a property rather than a coincidence.
 //!

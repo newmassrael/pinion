@@ -58,8 +58,9 @@
 //! > public entry points.
 //!
 //! The toolkit's floor for all of this is MDI child window, and it is a real
-//! floor — keyboard move *and* resize exist there. Measured against `the toolkit's widget module/src/widgets/widgets/qmdisubwindow.cpp` in the
-//! toolkit 6.11.1, five things here are different on purpose:
+//! floor — keyboard move *and* resize exist there. Measured against that child
+//! window's implementation in the toolkit 6.11.1, five things here are
+//! different on purpose:
 //!
 //! * **No mode.** the toolkit's keyboard editing lives behind `isInInteractiveMode`,
 //!   entered only from the *system menu* — `_q_enterInteractiveMode` starts by

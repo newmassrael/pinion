@@ -77,7 +77,8 @@
 //! **The displacement is announced.** The board carries a `polite` [`AccessLive`] region
 //! whose text names what the last edit pushed, because the cards that moved
 //! are exactly the ones the user is not on. No widget in the toolkit fires an
-//! announcement for this — `qmdisubwindow.cpp`, `qmdiarea.cpp` and `qsizegrip.cpp` contain no accessibility
+//! announcement for this — the three translation units implementing its MDI
+//! child window, its MDI area and its size grip contain no accessibility
 //! notification of any kind, so a toolkit MDI window that moves or resizes is
 //! silent to a screen reader even though `state()` advertises `movable` and `sizeable`.
 
@@ -1342,8 +1343,10 @@ impl WidgetA11y for DashboardView {
         // changes without anyone navigating there.
         //
         // The toolkit has the capability (accessible announcement event, 6.8+)
-        // and no widget uses it: `qmdisubwindow.cpp`, `qmdiarea.cpp` and `qsizegrip.cpp` contain no accessibility
-        // notification at all, so a toolkit MDI window that moves is silent.
+        // and no widget uses it: the three translation units implementing its
+        // MDI child window, its MDI area and its size grip contain no
+        // accessibility notification at all, so a toolkit MDI window that moves
+        // is silent.
         nodes.push(
             AccessNode::new(REFLOW_TAG, AriaRole::Status)
                 .with_name("Layout change")

@@ -73,8 +73,9 @@ TAG = "spin"
 DEC = "spin#dec"
 INC = "spin#inc"
 
-# `SpinButtonExternal`'s default cadence == `AutoRepeat::desktop()` == the toolkit's `AUTO_REPEAT_DELAY` / `AUTO_REPEAT_INTERVAL`
-# (qabstractbutton.cpp).
+# `SpinButtonExternal`'s default cadence == `AutoRepeat::desktop()` == the
+# toolkit's `AUTO_REPEAT_DELAY` / `AUTO_REPEAT_INTERVAL`, the file-private
+# constants of its abstract-button base.
 DELAY = 0.300
 INTERVAL = 0.100
 # Comfortably inside a float step, and never equal to a fire instant: the

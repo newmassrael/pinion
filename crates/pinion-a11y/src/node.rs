@@ -458,10 +458,11 @@ pub struct AccessNode {
     ///
     /// The toolkit's peer is accessible announcement event (the toolkit 6.8+,
     /// with a `AnnouncementPoliteness` of `Polite` / `Assertive`), which is **fired** rather than declared — and
-    /// measured against the toolkit 6.11.1, *no widget in `the toolkit's widget module/src/widgets` fires one*: the
-    /// only references outside `qaccessible.{h,cpp}` are the platform adapters that deliver it
-    /// and `qtestaccessible.h`. So the capability is there and the widget set announces
-    /// nothing.
+    /// measured against the toolkit 6.11.1, *no widget in its widget module
+    /// fires one*: outside the accessibility module that DEFINES the event, the
+    /// only things naming it are the per-platform adapters that deliver it and
+    /// the test harness that observes it. So the capability is there and the
+    /// widget set announces nothing.
     ///
     /// Declaring it is also the only shape compatible with §2 #7. A fired event
     /// leaves no trace, so `scene/access` could not report it and a test could

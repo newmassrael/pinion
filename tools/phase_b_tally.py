@@ -1099,8 +1099,8 @@ AXES = [
         #     binding (derived from the PAINT scene, so it cannot disagree
         #     with what the user sees underlined) and the AT `accesskey` are
         #     all derived. Past the toolkit in four places: the map is published
-        #     (`scene/mnemonics`; the toolkit's lives in the private
-        #     `qshortcutmap_p.h`), a conflict is a STATIC property of the
+        #     (`scene/mnemonics`; the toolkit's lives in a shortcut map that
+        #     ships only a private header), a conflict is a STATIC property of the
         #     scene rather than a bool on the event the user triggered, the
         #     ink and the binding come from one parse instead of the toolkit's two,
         #     and `accesskey` stays distinct from `keyboard_shortcut` where

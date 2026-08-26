@@ -14,8 +14,8 @@
 //!
 //! ## Where this is more than the toolkit 6.11
 //!
-//! 1. **It exists.** the toolkit's shortcut state lives in shortcut map, a private
-//!    header (`qshortcutmap_p.h`), and `ShortcutOverride` is a
+//! 1. **It exists.** the toolkit's shortcut state lives in shortcut map, which
+//!    ships only a private header, and `ShortcutOverride` is a
 //!    transient event delivered per press. So a toolkit application — let alone an
 //!    external driver — can ask what <kbd>Alt</kbd>+<kbd>F</kbd> does right
 //!    now, and there is no moment at which the override is a readable fact.

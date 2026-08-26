@@ -10,8 +10,8 @@
 //! # Against the toolkit 6.11
 //!
 //! There is a toolkit peer to be at parity with. The toolkit's
-//! accelerator state lives in shortcut map, reachable only through `qshortcutmap_p.h` — a
-//! private header — so a toolkit application cannot enumerate its own
+//! accelerator state lives in shortcut map, reachable only through a private
+//! header — so a toolkit application cannot enumerate its own
 //! mnemonics, and an external driver certainly cannot. The nearest public
 //! surface is `shortcut()`, one widget at a time, and only for buttons.
 //!

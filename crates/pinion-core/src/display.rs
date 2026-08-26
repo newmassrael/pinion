@@ -45,7 +45,8 @@
 //!
 //! The toolkit's screen is the floor: it enumerates, and it reports geometry,
 //! scale and refresh rate. Six things here are not parity, each checked
-//! against `qscreen.h` / `qguiapplication.h` / `qwidget.h`:
+//! against its screen, application and widget headers — the three that publish
+//! everything a consumer can ask about a display:
 //!
 //! 1. **A display has a stable address.** screen has no id accessor at all —
 //!    `name()` is platform text with no uniqueness guarantee (two identical

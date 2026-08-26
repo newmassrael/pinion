@@ -38,9 +38,9 @@
 //! 1. **The map is a published fact.** [`scene_mnemonics`] enumerates every
 //!    mnemonic in a window with its target, its label and its conflicts; the
 //!    §5.12 `scene/mnemonics` method hands the same list to an agent. The toolkit's
-//!    equivalent state lives in shortcut map, which is private
-//!    (`qshortcutmap_p.h`) — an application cannot ask the toolkit what its own
-//!    accelerators are.
+//!    equivalent state lives in shortcut map, whose only header is a private
+//!    one — an application cannot ask the toolkit what its own accelerators
+//!    are.
 //! 2. **Ambiguity is static and reportable, not a dispatch-time surprise.** the toolkit
 //!    tells you two widgets claim <kbd>Alt</kbd>+F only when the user presses
 //!    it, via `isAmbiguous()`. [`MnemonicBinding::ambiguous`]

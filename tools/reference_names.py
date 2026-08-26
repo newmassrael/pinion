@@ -166,6 +166,23 @@ PRODUCTS: list[str] = [
 # will ever write.
 SYMBOL_PATTERNS: list[tuple[str, str]] = [
     (r"\bQ[A-Z][A-Za-z0-9]*[a-z][A-Za-z0-9]*\b", "toolkit class"),
+    # ★★★★★ R1854 — a SOURCE FILE NAME identifies its codebase exactly as
+    # surely as a class does, and the pattern above cannot see one: it requires
+    # a CAPITAL after the `Q`, and a source file name is all lowercase. So the
+    # whole form was invisible — measured at R1854, seventeen tracked files
+    # holding seventeen distinct names while `--check` reported `0 in 0 files`.
+    #
+    # ⚠ THIS IS R1612.1's LESSON, UNAPPLIED TO A SECOND VENDOR. That round
+    # widened the engine patterns to STEMS for exactly this reason ("a file name
+    # drops the `U`") and wrote the rule down four lines below; the toolkit
+    # pattern was left as a class matcher. And the case list even pinned the
+    # boundary that hid this — "lowercase q words are not classes", which is
+    # true of `queue` and was never true of a header name.
+    #
+    # The extension is what tells the two apart, so `quotient` and `queue` stay
+    # uncounted while a header or translation unit does not. This tree has no
+    # C++ of its own, so there is nothing here for it to false-positive on.
+    (r"\bq[a-z0-9_]{3,40}\.(?:h|hpp|cpp|cc|mm|qml)\b", "toolkit source file"),
     (r"\bNODE_OT_[a-z_]+\b", "DCC node operator"),
     (r"\bbpy\.[A-Za-z_.]+", "DCC python api"),
     (r"\b(?:bNode|bNodeTree|bNodeSocket|bNodeLink)[A-Za-z]*\b", "DCC C struct"),
@@ -447,6 +464,19 @@ CASES: list[tuple[str, int, str]] = [
     ("QtCharts is GPL", 1, "a product spelling wins over the class pattern"),
     ("ED_node_select_all", 1, "the editor function counts"),
     ("quotient, quantity, queue", 0, "lowercase q words are not classes"),
+    # ★ R1854 — the source-file form. The first three are the class of name that
+    # was invisible for seventeen files; the rest hold the boundary that keeps
+    # `queue` and our own paths out of it.
+    ("checked against qscreen.h and qwidget.h", 2, "header names count"),
+    ("the constants live in qabstractbutton.cpp", 1, "a translation unit counts"),
+    ("reachable only through qshortcutmap_p.h", 1, "a private header counts"),
+    ("queue.rs holds the ring buffer", 0, "our own module is not a citation"),
+    ("a quantity.h of our own would count", 1, "counting on doubt, as stated"),
+    # ⚠ The obvious boundary case here would have been the declarative-UI file
+    # extension, and it is NOT a boundary case: that word is already a counted
+    # PRODUCT spelling, so the case fails on the product pattern and says
+    # nothing about this one. Written down because the first draft used it.
+    ("main.rs and mod.rs and lib.rs", 0, "our own file names never count"),
 ]
 
 

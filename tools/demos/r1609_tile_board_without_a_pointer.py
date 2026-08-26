@@ -32,8 +32,9 @@ what this proves over the wire that the toolkit cannot do or does not do:
   `Operation` is in a `_p.h` and its region/cursor map is
   private, so no caller can ask a toolkit subwindow what handles it has.
 * **The displacement is ANNOUNCED.** the toolkit 6.8 added
-  accessible announcement event, and no widget in `the toolkit's widget module/src/widgets` fires
-  one: `qmdisubwindow.cpp`, `qmdiarea.cpp` and `qsizegrip.cpp` contain no
+  accessible announcement event, and no widget in its widget module fires
+  one: the three translation units implementing its MDI child window, its MDI
+  area and its size grip contain no
   accessibility notification of any kind, so a toolkit MDI window that moves is silent
   even though `state()` advertises `movable` and
   `sizeable`. Here the board carries an `aria-live` region, which is *readable*

@@ -154,7 +154,8 @@ impl DragLatch {
 ///
 /// [`Self::DEFAULT_DELAY_SECS`] = 300 ms and
 /// [`Self::DEFAULT_INTERVAL_SECS`] = 100 ms are the toolkit's
-/// `AUTO_REPEAT_DELAY` / `AUTO_REPEAT_INTERVAL` (`qabstractbutton.cpp`) —
+/// `AUTO_REPEAT_DELAY` / `AUTO_REPEAT_INTERVAL`, the file-private constants of
+/// its abstract-button base —
 /// the widest-deployed desktop pair, and the toolkit-parity floor this
 /// framework measures against. Platform *keyboard* repeat (the OS
 /// `repeat` flag pinion already forwards on key presses) is a separate,
@@ -2124,7 +2125,7 @@ mod tests {
     // R1549 §5.35 §5.38 — `AutoRepeat` cadence battery.
     // ─────────────────────────────────────────────────────────────
 
-    /// The declared defaults ARE the toolkit's `qabstractbutton.cpp` constants; a silent drift
+    /// The declared defaults ARE the toolkit's abstract-button constants; a silent drift
     /// here would silently change every held button in the catalogue, so the
     /// pair is pinned rather than merely documented.
     #[test]

@@ -828,8 +828,8 @@ pub fn attach_row_headers(
 ///
 /// # What the toolkit does not have here
 ///
-/// table corner button is a private abstract button built inside
-/// `qtableview.cpp` with **no text and no accessible name**, and table view
+/// table corner button is a private abstract button built inside the table
+/// view's own translation unit with **no text and no accessible name**, and it
 /// exposes only `setCornerButtonEnabled(bool)` / `isCornerButtonEnabled()` —
 /// no accessor for the button — so there is no supported way to name it. A
 /// screen-reader user meets an unnamed button whose state is not reported
