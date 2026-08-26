@@ -3109,8 +3109,17 @@ fn view_row(
     // R964 — the range is keyed by the row's leaf slot, so an array element
     // (id `elem.<k>` → no slot) never gauges, and the fill keeps its R964 wire
     // name `{GRID_TAG}#gauge<slot>` rather than being renamed on adoption.
+    //
+    // 🟥🟥 R1855 — **THE PREFIX IS PART OF THE NAME, and R1849's adoption dropped
+    // it** while the sentence above went on claiming otherwise. `part` is
+    // carried VERBATIM to the paint and to `PropertyRowGeometry::parts`, so a
+    // name given here without `{GRID_TAG}#` is the name a reader gets — and the
+    // reader that had been querying `property_grid#gauge8` since R964 stopped
+    // finding anything. Nothing failed loudly: the gauge went on painting at
+    // the right rectangle under the wrong name, which is why the demo reported
+    // `last=None` (tag absent) rather than a wrong width.
     let ranged = row_value_index(&row.id).and_then(|i| scalar_range(i).map(|r| (i, r)));
-    let gauge_part = ranged.map(|(slot, _)| format!("{GAUGE_PREFIX}{slot}"));
+    let gauge_part = ranged.map(|(slot, _)| format!("{GRID_TAG}#{GAUGE_PREFIX}{slot}"));
     let spec = PropertyRow {
         id: row.id.as_str(),
         label: row.label.as_str(),
@@ -7604,6 +7613,56 @@ mod tests {
                 scene.contains_tag(&format!("{GRID_TAG}#{RM_ELEM_PREFIX}0")),
                 "remove button painted"
             );
+        });
+    }
+
+    /// ★★★★★ R1855 — **the gauge fill's WIRE NAME, pinned where it is painted.**
+    ///
+    /// `property_grid#gauge8` has been R964's published name for a bounded
+    /// leaf's fill since R964, and R1849's adoption of
+    /// `pinion_widget_paint::property_row` dropped the `{GRID_TAG}#` half of it
+    /// while its own comment claimed the name was preserved. Nothing here
+    /// noticed, and nothing could: the fill went on painting at exactly the
+    /// right rectangle under a name no reader queried, so every test that
+    /// checked the GEOMETRY stayed green. The only witness was the wire demo,
+    /// which is run by CI's sweep — and that sweep had been `skipped` for seven
+    /// rounds behind a red `cargo doc`, so the break was invisible from R1849
+    /// until R1851.3 unblocked the job.
+    ///
+    /// ⇒ **a name is not checked by checking the box it names.** This asserts
+    /// the composed tag, in this crate, where a rename would have to pass it.
+    ///
+    /// ⚠ Asserted against the SIBLING shape rather than a bare literal: every
+    /// row is `{GRID_TAG}#{id}`, so the fill being `{GRID_TAG}#gauge<slot>` is
+    /// the property, and a future prefix change moves both together.
+    #[test]
+    fn r1855_the_gauge_fill_keeps_its_grid_prefixed_wire_name() {
+        Owner::new().run(|| {
+            let _scene = boot_scene();
+            let scene = view(idle_state(), &Frame::new());
+
+            // The premise: this build paints a bounded leaf at all.
+            let ranged: Vec<usize> = (0..64).filter(|i| scalar_range(*i).is_some()).collect();
+            assert!(
+                !ranged.is_empty(),
+                "no leaf is bounded, so this gate would be vacuous"
+            );
+
+            for slot in ranged {
+                let wire = format!("{GRID_TAG}#{GAUGE_PREFIX}{slot}");
+                assert!(
+                    scene.contains_tag(&wire),
+                    "★ the gauge fill must carry its published wire name {wire}, \
+                     and a reader querying it since R964 gets nothing otherwise"
+                );
+                // And the bare suffix must NOT be a tag of its own, or the two
+                // spellings would both "work" and the next adoption would pick
+                // whichever it liked.
+                assert!(
+                    !scene.contains_tag(&format!("{GAUGE_PREFIX}{slot}")),
+                    "★ the unprefixed spelling must not also be painted"
+                );
+            }
         });
     }
 

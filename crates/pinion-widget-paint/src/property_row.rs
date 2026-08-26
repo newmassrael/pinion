@@ -284,12 +284,22 @@ pub struct PropertyRow<'a> {
     pub control: ValueControl,
     /// Whether the roving cursor is on this row.
     pub focused: bool,
-    /// The tag suffix the control's own affordance carries, when the screen
-    /// wants one — R964's `gauge<slot>`, for instance.
+    /// The tag the control's own affordance carries, when the screen wants one.
     ///
-    /// The caller's rather than derived from [`Self::id`], because the suffix
-    /// is a **wire name** a reader may already query, and a painter that
-    /// renamed it on adoption would break that reader silently.
+    /// The caller's rather than derived from [`Self::id`], because it is a
+    /// **wire name** a reader may already query, and a painter that renamed it
+    /// on adoption would break that reader silently.
+    ///
+    /// ★★★★★ R1855 — **carried VERBATIM, prefix included, and this doc used to
+    /// say "suffix".** That word cost a round: a screen read it as *give me the
+    /// last segment and I will namespace it*, passed `gauge8` where its wire
+    /// name was `property_grid#gauge8`, and the fill went on painting at exactly
+    /// the right rectangle under a name nothing queried. Nothing failed loudly
+    /// because a renamed tag is not a wrong number — it is an ABSENT one, which
+    /// only the reader looking for it can notice. So: whatever a caller writes
+    /// here is what the scene carries and what
+    /// [`PropertyRowGeometry::parts`] reports, character for character. A
+    /// caller wanting the grid's prefix writes the grid's prefix.
     pub part: Option<&'a str>,
 }
 
