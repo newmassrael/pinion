@@ -19,6 +19,7 @@ pub mod destination;
 pub mod disclosure;
 pub mod disclosure_group;
 pub mod dock_panel;
+pub mod fault_injection;
 pub mod field_bytes;
 pub mod file_browser;
 pub mod grid_edit;

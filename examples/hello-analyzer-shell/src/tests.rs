@@ -4513,3 +4513,127 @@ fn r1851_the_order_the_arrow_and_the_threshold_cannot_disagree() {
         assert!(said.contains("info < warn < error"), "{said}");
     });
 }
+
+/// ★★★★★ R1853 — **the walk reaches a fault-injection panel derived from the
+/// target's own declaration, and it names the faults it cannot offer.**
+///
+/// Rule (7)'s form, the same as R1852's: the capability belongs to a SECTION of
+/// this application, reached over the walk every other section is reached by,
+/// and asserted from here rather than from the standalone screen's suite. Screen
+/// A is mounted through `pinion_screen::Mount<NodeLabView>`, so *the shell can
+/// reach it* and *the panel derives its offers* are two claims and this holds
+/// both.
+///
+/// ⚠ Asserted from what the section PAINTS and nothing else. This host mounts
+/// that screen; it does not read its specification module, and it must not — a
+/// host reaching into a mounted screen's internals can pass while the screen it
+/// hosts is broken. So the offers come out of the painted runs, which is the
+/// surface a reader has, and the only thing imported is the FRAMEWORK's own
+/// vocabulary — `Scope`, which is where the boundary is defined.
+///
+/// ```text
+/// cargo test -p hello-analyzer-shell r1853_the_walk -- --nocapture
+/// ```
+#[test]
+fn r1853_the_walk_reaches_a_fault_panel_derived_from_the_targets_own_settings() {
+    use pinion_core::widgets::fault_injection::Scope;
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        // The walk first: the claim is about a section of an application.
+        let report = walk_the_application(&state);
+        assert!(
+            report.conforms(),
+            "the application did not reproduce its specification over the walk: {}",
+            report.why().unwrap_or_default()
+        );
+        assert!(
+            report.itinerary().iter().any(|key| key == "lab"),
+            "the walk must stand in the node lab: {:?}",
+            report.itinerary()
+        );
+
+        // Stand in the lab and read what its inspector says about the faults it
+        // can and cannot inject. `state.go` is the same navigation the walk used.
+        state.go("lab").expect("the node lab section is open");
+        let mut scene = super::view(ScreenState::default(), pinion_core::Frame::default());
+        let mut cache = pinion_runtime::LayoutCache::new();
+        pinion_runtime::compute_layout(&mut scene, &mut cache, super::WIN_W, super::WIN_H);
+
+        let mut head: Vec<String> = Vec::new();
+        let mut offers: Vec<String> = Vec::new();
+        let mut boundary: Vec<String> = Vec::new();
+        scene.for_each_node(&mut |visit| {
+            let pinion_core::Scene::Text(text) = visit.node else {
+                return;
+            };
+            let said = text.content.clone();
+            if said.starts_with("fault injection") {
+                head.push(said);
+            } else if said.contains(" · ") && said.split(" · ").count() == 2 {
+                // A fault row reads `<key> · <arm>`. Kept only when the arm is
+                // one the FRAMEWORK publishes, so an unrelated run carrying the
+                // same separator cannot be counted as an offer.
+                let arm = said.split(" · ").nth(1).unwrap_or_default().to_owned();
+                if pinion_core::widgets::fault_injection::DefectKind::from_wire(&arm).is_some() {
+                    offers.push(said);
+                }
+            } else if said.contains("faults are not offered") {
+                boundary.push(said);
+            }
+        });
+        println!("head: {head:?}");
+        println!("{} offer(s) painted", offers.len());
+        println!("boundary: {boundary:?}");
+
+        assert_eq!(
+            head.len(),
+            1,
+            "★ exactly one heading — two would be two accounts of one panel"
+        );
+        // The heading's count is parsed rather than compared with a literal, so
+        // a declaration that gains a row moves this with it.
+        let counted: usize = head[0]
+            .split_whitespace()
+            .find_map(|word| word.parse().ok())
+            .unwrap_or_else(|| panic!("the heading states a count: {:?}", head[0]));
+        assert_eq!(
+            counted,
+            offers.len(),
+            "★ the heading counts what the panel painted: {:?}",
+            head[0],
+        );
+        assert!(
+            offers.len() >= 4,
+            "★★★★★ the panel must be OFFERING something inside the assembled \
+             tool — a derivation nobody composed is what this round exists to \
+             stop being true: {offers:?}",
+        );
+
+        // ★★★★★ And the boundary is stated, once per scope the panel cannot
+        // offer, in the framework's own words. Derived from `Scope` here too, so
+        // the host and the section agree by construction rather than by two
+        // hand-kept lists.
+        let owed: Vec<&Scope> = Scope::ALL
+            .iter()
+            .filter(|scope| !scope.injectable())
+            .collect();
+        assert_eq!(
+            boundary.len(),
+            owed.len(),
+            "★ every scope the panel cannot offer must be named on the assembled \
+             screen: {boundary:?}",
+        );
+        for scope in owed {
+            assert!(
+                boundary
+                    .iter()
+                    .any(|said| said.starts_with(scope.wire()) && said.contains(scope.because())),
+                "★ {} is not refused in the framework's own words anywhere on \
+                 this screen: {boundary:?}",
+                scope.wire(),
+            );
+        }
+    });
+}

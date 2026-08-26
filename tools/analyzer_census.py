@@ -454,7 +454,17 @@ UNASSEMBLED: frozenset[str] = frozenset(
         # `lab.t1.9` was here and is REPAID at R1844 — the scenario gained a
         # fifth act that ASKS rather than commands, with the timeout that makes
         # it an assertion about an interval instead of a sample of one instant.
-        "lab.t1.11",
+        # `lab.t1.11` was here and is REPAID at R1853 — a fault-injection panel
+        # whose offers are DERIVED from the target's declared settings and
+        # confirmed twice before being offered, with the faults it cannot reach
+        # named on screen by filtering the boundary rather than written out.
+        # ★ The row's covering sentence had been one word, `a form`, and the gap
+        # under it was real: a form can HOLD a bad value and nothing could
+        # enumerate which bad values a declaration admits.
+        # ★★★★★ And the round's own first derivation was refuted mid-round —
+        # `ConfigForm::adopt` reports an undeclared leaf as unplaceable, so *a
+        # key the target does not know* is a fault a form cannot reach. That is
+        # why `Scope` has three arms instead of two.
         "lab.t2.17",
         "lab.t2.19",
     }

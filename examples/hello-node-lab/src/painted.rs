@@ -784,7 +784,10 @@ fn owning_pane(tag: &str) -> Option<Rect> {
     if tag.starts_with("lab.toolbar") {
         return Some(toolbar_rect());
     }
-    if tag.starts_with("lab.inspector") || tag.starts_with("lab.form") {
+    if tag.starts_with("lab.inspector")
+        || tag.starts_with("lab.form")
+        || tag.starts_with("lab.faults")
+    {
         return Some(inspector_rect());
     }
     if tag.starts_with("lab.node.")
@@ -6234,6 +6237,367 @@ fn r1778_what_this_screen_says_leaves_the_frame_it_was_on() {
             !showing(&after),
             "{sentence:?} is still on the frame after its life ran out — either \
              the lifetime is absent or this owner never registered the clock",
+        );
+    });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// R1853 — the fault-injection panel.
+//
+// ★★★★★ THE RULE R1851 AND R1852 LEFT BEHIND, applied here on purpose: the ink
+// and voice ratchets are the shape of the BACKLOG, not the shape of the surface
+// being written now. A new panel that merely fails to raise a ratchet has been
+// checked against everything this tree owed before it existed and against
+// nothing it claims itself. So the five gates below are about `lab.faults` and
+// nothing else, and three of them are zeros.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Read the fault rows off the PAINT: `(key, arm)` per row, in painted order.
+///
+/// Parsed from the run rather than compared with a literal, so a panel that
+/// gained a row moves this with it. The separator is the one the panel writes.
+fn painted_faults(shot: &Painted) -> Vec<(String, String)> {
+    let mut out: Vec<(usize, String, String)> = Vec::new();
+    for (tag, text) in &shot.said {
+        let Some(rest) = tag.strip_prefix("lab.faults.row.") else {
+            continue;
+        };
+        let Some(n) = rest.strip_suffix(".what") else {
+            continue;
+        };
+        let n: usize = n.parse().expect("a row index");
+        let (key, arm) = text
+            .split_once(" · ")
+            .unwrap_or_else(|| panic!("a fault run reads <key> · <arm>: {text:?}"));
+        out.push((n, key.to_owned(), arm.to_owned()));
+    }
+    out.sort_unstable();
+    out.into_iter().map(|(_, key, arm)| (key, arm)).collect()
+}
+
+/// (1) The panel offers exactly what the DECLARATION admits — no hand list.
+///
+/// ★★★★★ The comparison is between two things neither of which is a literal:
+/// what the panel painted, and what `fault_injection::injectable` derives from
+/// the selected node's own `ConfigForm`. A panel maintaining its own list would
+/// have to be edited in lock-step with the declaration to keep this green, and
+/// the counterfactual gate below is the proof that it is not.
+#[test]
+fn r1853_the_panel_offers_exactly_the_faults_the_declaration_admits() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        let node = state.node_of("P-01").expect("the opening graph has it");
+        state.selection.set(Selection::one(node));
+        let shot = painted_at(&state, conformance_size()).0;
+
+        let from_paint = painted_faults(&shot);
+        let form = super::selected_form(&state).expect("a card is selected");
+        let from_declaration: Vec<(String, String)> =
+            pinion_core::widgets::fault_injection::injectable(&form)
+                .into_iter()
+                .map(|one| (one.key, one.kind.wire().to_owned()))
+                .collect();
+
+        println!("painted {} fault row(s)", from_paint.len());
+        assert_eq!(
+            from_paint, from_declaration,
+            "★ the painted panel and the declaration's derivation must be the \
+             same list, in the same order",
+        );
+        assert!(
+            from_paint.len() >= 4,
+            "and there must be enough of them for the comparison to mean \
+             something: {from_paint:?}",
+        );
+
+        // And the head's own count is the same number, so a reader who only
+        // reads the heading is not told a different thing from a reader who
+        // counts the rows.
+        let head = shot
+            .said
+            .get("lab.faults.head")
+            .expect("the panel is headed");
+        let counted: usize = head
+            .split_whitespace()
+            .find_map(|word| word.parse().ok())
+            .unwrap_or_else(|| panic!("the head states a count: {head:?}"));
+        assert_eq!(
+            counted,
+            from_paint.len(),
+            "the heading counts what the panel painted: {head:?}",
+        );
+    });
+}
+
+/// (2) THE COUNTERFACTUAL, performed as a gesture rather than argued.
+///
+/// ★★★★★ A row is added to the declaration the way a person adds one — by
+/// pressing the catalogue chip — and the panel gains that row's faults with no
+/// edit to the panel. Were the offer list maintained by hand, the new key would
+/// be absent here and this test would fail; that is the whole point of asserting
+/// on the key rather than on the count.
+#[test]
+fn r1853_a_row_added_to_the_declaration_gains_its_faults_without_the_panel_being_edited() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        let node = state.node_of("P-01").expect("the opening graph has it");
+        state.selection.set(Selection::one(node));
+
+        let before = painted_faults(&painted_at(&state, conformance_size()).0);
+        let added = spec::ENUM_KEY;
+        assert!(
+            !before.iter().any(|(key, _)| key == added),
+            "the premise: {added} is not in the declaration yet — {before:?}",
+        );
+
+        // The gesture, not a model poke: press the catalogue chip.
+        card_with_enum_row(&state);
+
+        let after = painted_faults(&painted_at(&state, conformance_size()).0);
+        let mine: Vec<&String> = after
+            .iter()
+            .filter(|(key, _)| key == added)
+            .map(|(_, arm)| arm)
+            .collect();
+        println!("{added} brought {mine:?} with it");
+        assert!(
+            !mine.is_empty(),
+            "★★★★★ a field added to the declaration must bring its faults with \
+             it. It did not, which is what a hand-maintained offer list looks \
+             like from here: {after:?}",
+        );
+        // And the arms it brought are exactly what ITS declaration admits —
+        // read from the field, not from a literal.
+        let form = super::selected_form(&state).expect("a card is selected");
+        let field = form
+            .fields()
+            .iter()
+            .find(|f| f.key() == added)
+            .unwrap_or_else(|| panic!("{added} is a row of the form now"));
+        let owed: Vec<String> = pinion_core::widgets::fault_injection::injectable_at(field)
+            .into_iter()
+            .map(|one| one.kind.wire().to_owned())
+            .collect();
+        assert_eq!(
+            mine,
+            owed.iter().collect::<Vec<_>>(),
+            "★ the new row's offers are its own declaration's, not a guess",
+        );
+
+        // ⚠ The TOTAL is deliberately not asserted to have grown. Measured at
+        // R1853: adopting this row makes another row *worked out* from it, and a
+        // row with no written half cannot receive a value — so its faults stop
+        // being offered and the list can get SHORTER while gaining a key. That
+        // is the derivation working, and an assertion on the count would have
+        // demanded it be wrong.
+        println!(
+            "the panel went from {} offer(s) to {} while gaining {added}",
+            before.len(),
+            after.len(),
+        );
+    });
+}
+
+/// (3) Every offer is PERFORMED, through the wire, and the form refuses it.
+///
+/// ★★★★★ The zero this asserts: no offer the panel makes fails to produce the
+/// fault it names. `inject` writes the derivation's own value onto the declared
+/// row, so the refusal comes from `FieldType::encode` — the single authority —
+/// and not from anything this panel believes.
+///
+/// ★ And the uniformity is asserted rather than assumed: **every fault this
+/// panel can offer BLOCKS a launch**, and that is not a coincidence. The only
+/// arm that merely warns is a key the declaration lacks, which
+/// `Scope::Document` puts out of a form's reach — so the boundary the panel
+/// paints is what makes this column constant.
+#[test]
+fn r1853_injecting_what_the_panel_offers_is_refused_by_the_form_that_receives_it() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        let node = state.node_of("P-01").expect("the opening graph has it");
+        state.selection.set(Selection::one(node));
+        card_with_enum_row(&state);
+        let offers = painted_faults(&painted_at(&state, conformance_size()).0);
+        assert!(
+            offers.len() >= 4,
+            "there is something to perform: {offers:?}"
+        );
+
+        // ★ One screen, and each fault UNDONE before the next — so what is
+        // measured is this fault's own effect and not the pile of the ones
+        // before it. The value put back is the row's own, read off the form,
+        // which is why this needs no knowledge of the opening document.
+        //
+        // ⚠ Measured at R1853: a second `Owner` inside one test is NOT the way
+        // to get a second screen. That draft reached the catalogue chip lookup
+        // with nothing painted for it and panicked naming the key, twice, and an
+        // extra paint pass did not fix it — the hook state a fresh `Owner` needs
+        // is not established by constructing one mid-test.
+        let mut performed = 0usize;
+        for (key, arm) in &offers {
+            let form = super::selected_form(&state).expect("a card is selected");
+            let Some(row) = form.fields().iter().find(|f| f.key() == key.as_str()) else {
+                panic!("{key} is a row of the form");
+            };
+            let was = row.value().to_string();
+            let before = state.verdict();
+
+            let answer = act(&state, "inject", &format!("{key}:{arm}"))
+                .unwrap_or_else(|why| panic!("the panel offered {key}:{arm} and the wire {why}"));
+            assert!(
+                answer.contains(key.as_str()) && answer.contains(arm.as_str()),
+                "the wire echoes what it injected: {answer}",
+            );
+
+            // The form's own verdict is the judge, and the DELTA is what is
+            // asserted: a screen that already blocked would make an absolute
+            // check pass without the injection doing anything.
+            let after = state.verdict();
+            assert_eq!(
+                after.blocking(),
+                before.blocking() + 1,
+                "★ {key}:{arm} must add exactly one blocking finding — before \
+                 {:?}, after {:?}",
+                before.sentence(),
+                after.sentence(),
+            );
+            assert!(
+                !after.may_launch(),
+                "★ {key}:{arm} was injected and the pre-launch check still says \
+                 the node may launch",
+            );
+
+            super::set_and_sync(&state, key, was);
+            let back = state.verdict();
+            assert_eq!(
+                back.blocking(),
+                before.blocking(),
+                "★ and putting the row's own value back must clear it, or the \
+                 next offer is measured against this one's residue: {key}:{arm}",
+            );
+            performed += 1;
+        }
+        println!("{performed} offer(s) performed, every one refused by the form");
+        assert_eq!(
+            performed,
+            offers.len(),
+            "★ ZERO offers unperformed — an offer nobody can perform is a claim",
+        );
+    });
+}
+
+/// (4) The faults the panel CANNOT offer are named, and derived.
+///
+/// ★★★★★ An absence nobody names is indistinguishable from an oversight — and
+/// this panel sits inside a tool whose subject is a network, so a reader will
+/// read three configuration faults as a claim about the faults there are. What
+/// is asserted here is not that a sentence exists but that the sentences are
+/// `Scope::ALL` minus the injectable ones: a scope that became injectable would
+/// stop being named without this screen being edited, and a fourth scope would
+/// start being named the same way.
+#[test]
+fn r1853_the_panel_names_the_faults_it_cannot_offer() {
+    use pinion_core::widgets::fault_injection::Scope;
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        let node = state.node_of("P-01").expect("the opening graph has it");
+        state.selection.set(Selection::one(node));
+        let shot = painted_at(&state, conformance_size()).0;
+
+        let named: BTreeSet<String> = shot
+            .said
+            .keys()
+            .filter_map(|tag| tag.strip_prefix("lab.faults.scope."))
+            .map(str::to_owned)
+            .collect();
+        let owed: BTreeSet<String> = Scope::ALL
+            .into_iter()
+            .filter(|scope| !scope.injectable())
+            .map(|scope| scope.wire().to_owned())
+            .collect();
+        println!("the panel names {named:?} as out of reach");
+        assert_eq!(
+            named, owed,
+            "★ the panel must name every scope it cannot offer, and no scope it \
+             can",
+        );
+        assert!(
+            named.len() >= 2,
+            "and there is more than one boundary to state: {named:?}",
+        );
+
+        // Each sentence carries its scope's own reason, in the framework's
+        // words rather than this screen's.
+        for scope in Scope::ALL.into_iter().filter(|s| !s.injectable()) {
+            let said = shot
+                .said
+                .get(&format!("lab.faults.scope.{}", scope.wire()))
+                .unwrap_or_else(|| panic!("{} is named", scope.wire()));
+            assert!(
+                said.contains(scope.because()),
+                "★ {} must be refused in the framework's own words: {said:?}",
+                scope.wire(),
+            );
+        }
+    });
+}
+
+/// (5) ZERO — no run of this panel sits in a box too short for its own face.
+///
+/// ★ The panel-local twin of R1851's dashboard gate, and it is here for the
+/// reason that round recorded: the workspace ink ratchet is a budget over
+/// everything this tree already owed, so a new surface can add a clipped
+/// descender and stay under it. This asks the question of `lab.faults` alone,
+/// and the answer must be none.
+#[test]
+fn r1853_no_fault_run_sits_in_a_box_too_short_for_its_own_face() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        let node = state.node_of("P-01").expect("the opening graph has it");
+        state.selection.set(Selection::one(node));
+        card_with_enum_row(&state);
+        let shot = painted_at(&state, conformance_size()).0;
+
+        // ★ Read by the run's OWN tag, not by its nearest tagged ancestor: the
+        // panel's labels are siblings of its row boxes in the scene tree, so an
+        // ancestor filter would match none of them and this gate would measure
+        // nothing while passing. `said` is exactly the named-run index.
+        let mut clipped: Vec<(String, u32, u32)> = Vec::new();
+        let mut looked = 0usize;
+        for (tag, text) in &shot.said {
+            if !tag.starts_with("lab.faults.") || text.is_empty() {
+                continue;
+            }
+            let rect = shot
+                .tags
+                .get(tag)
+                .unwrap_or_else(|| panic!("{tag} said {text:?}, so the layout pass gave it a box"));
+            looked += 1;
+            let needs = pinion_core::containment::line_box(if tag == "lab.faults.head" {
+                super::FONT_SMALL
+            } else {
+                super::FAULT_PX
+            });
+            if rect.h < needs {
+                clipped.push((tag.clone(), rect.h, needs));
+            }
+        }
+        println!("{looked} run(s) of the fault panel measured");
+        assert!(
+            looked >= 8,
+            "the panel must have painted enough runs for this to mean \
+             something: {looked}",
+        );
+        assert!(
+            clipped.is_empty(),
+            "★ run(s) of the fault panel are in a box too short for their own \
+             face: {clipped:?}",
         );
     });
 }

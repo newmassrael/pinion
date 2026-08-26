@@ -91,6 +91,7 @@ use pinion_core::voice::Silence;
 use pinion_core::widgets::config_form::{
     Applies, ConfigDefect, ConfigField, ConfigForm, FieldType, FormError, Source, Verdict,
 };
+use pinion_core::widgets::fault_injection::{self, Injection, Scope};
 use pinion_core::widgets::overflow;
 use pinion_core::widgets::picker::{Picked, Picker};
 use pinion_core::widgets::radio::RadioState;
@@ -7750,6 +7751,225 @@ fn card_switches(state: &LabState, node: NodeId) -> (bool, bool) {
         })
 }
 
+// ── R1853: the fault-injection panel ────────────────────────────────────────
+
+/// The faults the selected node's settings admit, as one value a client reads in
+/// a round trip.
+///
+/// ★★★★★ §2 #7 on this axis: an agent asking *what can I break about this node*
+/// gets the answer as DATA — the path, the arm, whether injecting it stops a
+/// launch, the badge that says whether a running node would even see it, and the
+/// part of the declaration that admits it. The reference toolkit's own answer to
+/// the same question is measured in `tools/demos/r1853_*.py`.
+fn faults_json(state: &LabState) -> serde_json::Value {
+    serde_json::Value::Array(
+        fault_rows(state)
+            .iter()
+            .map(|row| {
+                serde_json::json!({
+                    "key": row.key,
+                    "kind": row.kind.wire(),
+                    "value": row.value,
+                    "blocks": row.blocks(),
+                    "applies": row.applies.map(pinion_core::widgets::config_form::Applies::wire),
+                    "admitted_by": row.admitted_by,
+                })
+            })
+            .collect(),
+    )
+}
+
+/// How tall one fault row is.
+///
+/// ★ Derived from the two lines it holds rather than chosen: a row carries the
+/// path-and-arm on one line and the badge-and-reason on the next, and each line's
+/// box is `line_box` of its own face. R1851 measured what a hand-picked number
+/// costs here — a box shorter than its face is a clipped descender the ink
+/// census counts and nobody sees.
+const FAULT_LINE_H: u32 = pinion_core::containment::line_box(FAULT_PX) * 2 + 8;
+
+/// The face a fault row is set in.
+const FAULT_PX: u32 = 10;
+
+/// The closed set of fault arms the `inject` verb accepts.
+///
+/// ★ Projected from `DefectKind::ALL` in a `const` block rather than written
+/// out, so a fourth arm is a build failure here instead of a silently short
+/// declaration — R1630's ratchet, applied to a domain this screen publishes.
+const FAULT_KINDS: [&str; fault_injection::DefectKind::ALL.len()] = {
+    let mut out = [""; fault_injection::DefectKind::ALL.len()];
+    let mut at = 0;
+    while at < fault_injection::DefectKind::ALL.len() {
+        out[at] = fault_injection::DefectKind::ALL[at].wire();
+        at += 1;
+    }
+    out
+};
+
+/// The faults the selected node's own settings admit, DERIVED from its form.
+///
+/// ★★★★★ R1853 — the whole point of this function is that there is no list.
+/// `pinion_core::widgets::fault_injection::injectable` reads the declared
+/// [`FieldType`](pinion_core::widgets::config_form::FieldType) of every row and
+/// asks the encoder whether the value it would offer really produces the arm it
+/// claims — so a field added to `node_form` appears here with nothing edited,
+/// and a field whose shape admits nothing contributes nothing.
+///
+/// ⚠ That shape is not a preference. This workspace has paid four times for the
+/// opposite one — a correct gate over a population written down beside the thing
+/// it was about (R1738, R1784, R1795, R1798) — and a hand-kept fault list beside
+/// a declaration that decides the answer would be the fifth.
+fn fault_rows(state: &LabState) -> Vec<Injection> {
+    selected_form(state)
+        .as_ref()
+        .map(fault_injection::injectable)
+        .unwrap_or_default()
+}
+
+/// What the panel says it cannot derive, and why — in the framework's own words.
+///
+/// ★★★★★ An absence nobody names is indistinguishable from an oversight. This
+/// panel offers three kinds of configuration fault next to a tool whose whole
+/// subject is a network, so a reader will take it as claiming those are the
+/// faults there are. [`Scope::World`] is where the boundary is stated, and this
+/// is where the screen shows it.
+fn fault_scope_notes() -> Vec<(&'static str, String)> {
+    Scope::ALL
+        .into_iter()
+        .filter(|scope| !scope.injectable())
+        .map(|scope| {
+            (
+                scope.wire(),
+                format!(
+                    "{} faults are not offered — {}",
+                    scope.wire(),
+                    scope.because()
+                ),
+            )
+        })
+        .collect()
+}
+
+/// The same boundary as one sentence, for a reader who hears the panel rather
+/// than sees it.
+fn fault_scope_note() -> String {
+    fault_scope_notes()
+        .into_iter()
+        .map(|(_, sentence)| sentence)
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+/// The panel: a heading, one row per derived fault, and the boundary it cannot
+/// cross.
+fn fault_panel(state: &LabState, top: u32, ink: Ink) -> Vec<Scene> {
+    let rows = fault_rows(state);
+    let width = INSP_W - PAD * 2;
+    let line = pinion_core::containment::line_box(FAULT_PX);
+    let head_h = pinion_core::containment::line_box(FONT_SMALL);
+    let notes = fault_scope_notes();
+    // ★★★★★ THE BOUNDARY SITS ABOVE THE OFFERS, and that is a measurement
+    // rather than a taste: with the scope lines last, R1853's own gate found
+    // only ONE of the two painted — the offer list had grown until the second
+    // fell below the inspector's fold. A statement of what is *not* here is
+    // worthless at the mercy of how much *is*, so it goes where the row count
+    // cannot move it.
+    let scope_top = top + 10 + head_h + 8;
+    let rows_top = scope_top + u32::try_from(notes.len()).unwrap_or(0) * line + 8;
+    let height = rows_top - top + u32::try_from(rows.len()).unwrap_or(0) * FAULT_LINE_H + 8;
+    let mut out = vec![
+        box_at(
+            "lab.faults",
+            Rect::new(PAD, top, width, height),
+            ink.raised,
+            Some(ink.outline_2),
+            8,
+        ),
+        quiet(
+            tagged_label(
+                "lab.faults.head",
+                format!("fault injection — {} from this node's settings", rows.len()),
+                Rect::new(PAD + 10, top + 10, width - 20, head_h),
+                FONT_SMALL,
+                ink.text,
+            ),
+            Silence::name_of("lab.faults"),
+        ),
+    ];
+    for (n, row) in rows.iter().enumerate() {
+        let y = rows_top + u32::try_from(n).unwrap_or(0) * FAULT_LINE_H;
+        // ★ The ink is the framework's verdict, not this screen's opinion:
+        // `Injection::blocks` delegates to `ConfigDefect::blocks`, so a fault
+        // that only warns cannot be painted as one that stops a launch.
+        let ink_for = if row.blocks() { ink.err } else { ink.warn };
+        out.push(box_at(
+            &format!("lab.faults.row.{n}"),
+            Rect::new(PAD + 8, y, width - 16, FAULT_LINE_H - 4),
+            ink.surface,
+            Some(ink_for),
+            6,
+        ));
+        out.push(quiet(
+            tagged_label(
+                &format!("lab.faults.row.{n}.what"),
+                format!("{} · {}", row.key, row.kind.wire()),
+                Rect::new(PAD + 16, y + 2, width - 32, line),
+                FAULT_PX,
+                ink_for,
+            ),
+            Silence::name_of(format!("lab.faults.row.{n}")),
+        ));
+        out.push(quiet(
+            tagged_label(
+                &format!("lab.faults.row.{n}.badge"),
+                // ★ HOT/RESTART comes from the FIELD. Every offer has one, since
+                // the settings' third fault — a key the declaration lacks — is
+                // not offered at all; `None` here would be a badge about a row
+                // that does not exist.
+                row.applies
+                    .map_or_else(|| "form".to_string(), |applies| applies.wire().to_string()),
+                Rect::new(PAD + 16, y + 2 + line, 60, line),
+                FAULT_PX,
+                ink.text_3,
+            ),
+            Silence::part_of(format!("lab.faults.row.{n}")),
+        ));
+        out.push(quiet(
+            tagged_label(
+                &format!("lab.faults.row.{n}.why"),
+                row.admitted_by.clone(),
+                Rect::new(PAD + 80, y + 2 + line, width - 96, line),
+                FAULT_PX,
+                ink.text_3,
+            ),
+            Silence::part_of(format!("lab.faults.row.{n}")),
+        ));
+    }
+    // ★★★★★ One run per scope the panel does NOT offer, derived from
+    // `Scope::ALL` rather than written out: a fourth scope would be named here
+    // without this function being edited, and a scope that became injectable
+    // would stop being named. An absence stated by derivation cannot fall out
+    // of step with the boundary it states.
+    for (n, (wire, sentence)) in notes.iter().enumerate() {
+        out.push(quiet(
+            tagged_label(
+                &format!("lab.faults.scope.{wire}"),
+                sentence.clone(),
+                Rect::new(
+                    PAD + 10,
+                    scope_top + u32::try_from(n).unwrap_or(0) * line,
+                    width - 20,
+                    line,
+                ),
+                FAULT_PX,
+                ink.text_3,
+            ),
+            Silence::part_of("lab.faults"),
+        ));
+    }
+    out
+}
+
 /// What the restart note says — one derivation, read by the paint and by the
 /// announcement it is the words of.
 fn restart_note(form: &ConfigForm) -> String {
@@ -8160,6 +8380,11 @@ fn inspector_pane(
         ),
         Silence::name_of("lab.inspector.note"),
     ));
+    // ★★★★★ R1853 — the fault-injection panel, under the note, and every row of
+    // it is DERIVED from the form above rather than listed here. See
+    // `fault_rows` for the derivation and why a written list would be the
+    // fourth of a class this workspace has already paid for four times.
+    children.extend(fault_panel(state, note_y + 40 + 16, ink));
     // ★ R1662 — the form is now a CHILD of the pane body rather than a sibling
     // of the pane. It was a sibling because its geometry was in window
     // coordinates and nesting it under an absolutely-placed pane offset it
@@ -8456,6 +8681,16 @@ const FIELDS: &[SchemaField] = &{
         SchemaField::new("verdict", "string"),
         SchemaField::new("gate", "string"),
         SchemaField::new("form", "string"),
+        // ★★★★★ R1853 — the faults this node's own settings ADMIT, and the
+        // boundary of what that derivation can reach.
+        //
+        // Two slots and not one: the offers change with the selected node and
+        // the boundary does not, and a client that had to re-read the sentence
+        // about link-level faults on every selection would be re-reading a
+        // constant. The scopes are published so the absence is enumerable
+        // rather than inferred from a list that simply lacks them.
+        SchemaField::new("faults", "json"),
+        SchemaField::new("fault_scopes", "json"),
         // ★★★★★ R1850 — and what the form is WILLING to hold, which `form`
         // cannot say. `form` lists the rows that are there; a reader deciding
         // whether to take one off needs to know whether it comes back, and a
@@ -8554,6 +8789,21 @@ const FIELDS: &[SchemaField] = &{
                 &[
                     SchemaArg::key("key", "string", "form"),
                     SchemaArg::open("value", "string"),
+                ]
+            },
+        ),
+        // ★★★★★ R1853 — inject a fault the settings admit, by path and arm. The
+        // arm's domain is the CLOSED set the framework publishes; the path's is
+        // the `faults` slot, so a client picks from what is offered rather than
+        // guessing — and the value is the derivation's, never the caller's.
+        SchemaField::action_with(
+            "inject",
+            "string",
+            ArgForm::Delimited(':'),
+            const {
+                &[
+                    SchemaArg::key("key", "string", "faults"),
+                    SchemaArg::one_of("kind", "string", &FAULT_KINDS),
                 ]
             },
         ),
@@ -8835,6 +9085,26 @@ impl ExternalIntrospect for LabOracle {
                 let (x, y) = state.cursor.get();
                 text(format!("{x},{y}"))
             }
+            // ★★★★★ R1853 — every fault the selected node's settings admit, each
+            // saying which part of the DECLARATION admits it and what injecting
+            // it would do. Derived per call; nothing is stored, so a form that
+            // gains a row gains its faults here too.
+            "faults" => Ok(IntrospectValue::Json(faults_json(state))),
+            // The boundary, as data. `world` is not derivable from any
+            // declaration and says so in its own words — an absence a client can
+            // enumerate rather than one it has to notice.
+            "fault_scopes" => Ok(IntrospectValue::Json(serde_json::Value::Array(
+                Scope::ALL
+                    .iter()
+                    .map(|scope| {
+                        serde_json::json!({
+                            "scope": scope.wire(),
+                            "injectable": scope.injectable(),
+                            "because": scope.because(),
+                        })
+                    })
+                    .collect(),
+            ))),
             "verdict" => {
                 let verdict = state.verdict();
                 text(
@@ -9471,6 +9741,94 @@ impl ExternalIntrospect for LabOracle {
                     .active_card()
                     .ok_or_else(|| InvokeError::rejected("no node is selected"))?;
                 set_value(&state, node, key.trim(), value.trim()).map(IntrospectValue::Text)
+            }
+            // ★★★★★ R1853 — inject one of the faults this node's settings admit,
+            // named by its path and its arm.
+            //
+            // The value is NOT a parameter: it comes from the derivation, which
+            // is the whole difference between injecting a fault and typing a bad
+            // value. A caller naming `<key>:<kind>` gets the fault that kind
+            // actually is at that field, or a refusal saying which faults the
+            // field admits — so an agent discovers the vocabulary from the
+            // surface instead of guessing at values.
+            "inject" => {
+                let raw = Self::text(&args)?;
+                let (key, kind) = raw
+                    .split_once(':')
+                    .ok_or_else(|| InvokeError::rejected(format!("{raw:?} is not <key>:<kind>")))?;
+                let (key, kind) = (key.trim(), kind.trim());
+                let node = state
+                    .active_card()
+                    .ok_or_else(|| InvokeError::rejected("no node is selected"))?;
+                let offers = fault_rows(&state);
+                let wanted = fault_injection::DefectKind::from_wire(kind).ok_or_else(|| {
+                    InvokeError::rejected(format!(
+                        "{kind:?} is not a fault kind; they are {}",
+                        fault_injection::DefectKind::ALL
+                            .map(fault_injection::DefectKind::wire)
+                            .join(" / ")
+                    ))
+                })?;
+                let offer = offers
+                    .iter()
+                    .find(|one| one.key == key && one.kind == wanted)
+                    .ok_or_else(|| {
+                        // ⚠ The refusal NAMES what this field admits, because
+                        // *not offered* and *no such field* are different facts
+                        // and a caller has to be able to tell them apart. A
+                        // field whose shape admits nothing says exactly that.
+                        let mine: Vec<&str> = offers
+                            .iter()
+                            .filter(|one| one.key == key)
+                            .map(|one| one.kind.wire())
+                            .collect();
+                        // ★★★★★ THREE refusals and not two, and the third was
+                        // found by R1853's own demo driving it: a key the
+                        // declaration does not hold was being told its *declared
+                        // shape accepts every value*, which is a sentence about a
+                        // declaration that is not there. That is exactly the
+                        // conflation the comment above promises not to make, so
+                        // the form is asked whether it holds the key at all.
+                        let held = selected_form(&state)
+                            .is_some_and(|form| form.fields().iter().any(|f| f.key() == key));
+                        InvokeError::rejected(if !held {
+                            format!(
+                                "{key:?} is not a row of this node's settings — ask \
+                                 `faults` for the keys that are"
+                            )
+                        } else if mine.is_empty() {
+                            format!(
+                                "{key:?} admits no injectable fault — either its declared \
+                                 shape accepts every value a person can write, or the row \
+                                 is worked out from another and cannot receive one"
+                            )
+                        } else {
+                            format!("{key:?} admits {}, not {kind}", mine.join(" / "))
+                        })
+                    })?
+                    .clone();
+                // ★ Every offer is a declared row's, so writing the row IS the
+                // injection. The settings' third fault — a key the declaration
+                // lacks — is not offered, because a form reports an undeclared
+                // leaf unplaceable rather than taking it; `Scope::Document` is
+                // where that boundary is stated and `fault_scopes` publishes it.
+                set_value(&state, node, &offer.key, &offer.value)?;
+                state.say(Utterance::done(format!(
+                    "injected {} at {} — {}",
+                    offer.kind.wire(),
+                    offer.key,
+                    if offer.blocks() {
+                        "blocks a launch"
+                    } else {
+                        "warns and starts"
+                    }
+                )));
+                Ok(IntrospectValue::Text(format!(
+                    "{}:{}={}",
+                    offer.key,
+                    offer.kind.wire(),
+                    offer.value
+                )))
             }
             "add_field" => {
                 let key = Self::text(&args)?;
@@ -12687,6 +13045,7 @@ impl WidgetA11y for NodeLabView {
         nodes.extend(palette_access(&state));
         nodes.extend(canvas_access(&state));
         nodes.extend(gate_access(&state));
+        nodes.extend(fault_access(&state));
         nodes.extend(toolbar_access(&state));
         nodes.extend(inspector_access(&state));
         nodes
@@ -12952,6 +13311,47 @@ fn wire_access(state: &LabState) -> Vec<AccessNode> {
 /// ★ The findings are a **list**, because that is what a reader navigates them
 /// as: one at a time, with a position and a count. Folding them into the panel's
 /// value would make four problems one paragraph.
+/// The fault-injection panel's voice.
+///
+/// ★ A **list**, for the same reason the pre-launch check is one: a reader walks
+/// the injectable faults one at a time, with a position and a count. And the
+/// list is built from `fault_rows`, which is `fault_injection::injectable` over
+/// this node's declared settings — so a field added to the declaration gains a
+/// voice at the same moment it gains a row, without this function being edited.
+fn fault_access(state: &LabState) -> Vec<AccessNode> {
+    let rows = fault_rows(state);
+    let mut panel = AccessNode::new("lab.faults", AriaRole::List)
+        .with_name(format!(
+            "fault injection - {} from this node's settings",
+            rows.len()
+        ))
+        .with_value(AccessValue::Text(fault_scope_note()));
+    for n in 0..rows.len() {
+        panel = panel.with_child(format!("lab.faults.row.{n}"));
+    }
+    let mut nodes = vec![panel];
+    for (n, row) in rows.iter().enumerate() {
+        nodes.push(
+            AccessNode::new(format!("lab.faults.row.{n}"), AriaRole::ListItem)
+                .with_name(format!(
+                    "{} {}: {} - {}, admitted by {}",
+                    row.key,
+                    row.kind.wire(),
+                    if row.blocks() {
+                        "blocks launch"
+                    } else {
+                        "warning"
+                    },
+                    row.applies.map_or("form", Applies::wire),
+                    row.admitted_by,
+                ))
+                .with_value(AccessValue::Text(row.value.clone()))
+                .with_set_position(n, rows.len()),
+        );
+    }
+    nodes
+}
+
 fn gate_access(state: &LabState) -> Vec<AccessNode> {
     let verdict = state.verdict();
     let (shown, hidden) = gate_shown(state);
