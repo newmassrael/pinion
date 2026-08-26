@@ -264,6 +264,22 @@ pub fn view_header_cell(
         theme,
     )];
     if let Some(glyph) = section.sort_glyph {
+        // ★★★★★ R1851 — the glyph gets a BOX, and the box is the line its own
+        // face needs.
+        //
+        // It had a position and no size, so the layout pass resolved it to the
+        // run's intrinsic height — which is smaller than the line box the face
+        // requires, so the indicator's own descender was authored into a box too
+        // short for it. Measured at R1851 by a per-card zero gate on the analyzer
+        // shell: `"▼" at 11px in a 16px box needs 18`, in every state and at
+        // every size. The workspace's ink census had it inside a screen-wide
+        // ratchet, where one run of one widget is under the noise.
+        //
+        // Sized from [`pinion_core::containment::line_box`] rather than from a
+        // number here, and WIDTH as well as height, because a run with a
+        // zero-width box makes no promise about holding anything and is skipped
+        // by the census that would otherwise catch the next slip.
+        let box_h = pinion_core::containment::line_box(style.text_px);
         children.push(Scene::Text(
             TextNode::styled(
                 glyph,
@@ -275,7 +291,8 @@ pub fn view_header_cell(
             .with_tag(format!("{tag_prefix}_sort#{visual}"))
             .with_layout(
                 LayoutStyle::new()
-                    .with_absolute_position(sect_w.saturating_sub(style.glyph_w), style.label_y),
+                    .with_absolute_position(sect_w.saturating_sub(style.glyph_w), style.label_y)
+                    .with_size(Size::px(style.glyph_w, box_h)),
             ),
         ));
     }

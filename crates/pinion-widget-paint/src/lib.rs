@@ -103,6 +103,7 @@ mod frame_gate;
 pub mod glyph;
 pub mod group_box;
 pub mod group_header;
+pub mod header_feed;
 pub mod hex_dump;
 pub mod listbox;
 pub mod menu;

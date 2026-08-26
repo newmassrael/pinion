@@ -429,7 +429,13 @@ UNASSEMBLED: frozenset[str] = frozenset(
         # the only way this list shortens, and the ratchet refuses both
         # directions: a row that gains an `assembled_by` while still listed
         # here fails by name, so the name and the field cannot drift apart.
-        "dashboard.t1.9",
+        # `dashboard.t1.9` was here and is REPAID at R1851 — an alarm feed is a
+        # virtualised list under a sortable severity header, and R1851 measured
+        # what its verdict had been standing on: both halves existed and NOTHING
+        # composed them. `pinion_widget_paint::header_feed` is that join, and it
+        # exists to stop three facts being read twice — the indicator IS the
+        # order, the body's viewport is the rect minus the header, and the window
+        # a reader is told about is the window that was built.
         # `lab.t1.8` was here and is REPAID at R1848 — a traffic role declares
         # which of a closed vocabulary its nodes carry, and a card's stated and
         # unstated parameters are derived from that declaration and its own

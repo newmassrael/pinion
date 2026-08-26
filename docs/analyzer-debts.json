@@ -53,6 +53,17 @@
       ]
     },
     {
+      "name": "debt-a-card-settings-control-opens-nothing",
+      "substituted": false,
+      "blocked_by": "none",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "names dashboard.t1.9"
+      ]
+    },
+    {
       "name": "debt-a-checkpoints-verdict-is-on-the-wire-and-not-on-the-screen",
       "substituted": false,
       "blocked_by": "buildable",

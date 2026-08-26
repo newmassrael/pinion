@@ -151,7 +151,8 @@
       { "key": "keymap#2", "title": "Identifier Map" },
       { "key": "filter#3", "title": "Search & Filter" },
       { "key": "latency#4", "title": "Latency" },
-      { "key": "health#5", "title": "Health Tiles" }
+      { "key": "health#5", "title": "Health Tiles" },
+      { "key": "alarms#6", "title": "Alarms" }
     ],
     "owed": []
   }

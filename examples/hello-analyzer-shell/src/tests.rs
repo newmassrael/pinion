@@ -77,7 +77,7 @@ fn r1668_the_catalogue_partitions_into_placed_and_reserved() {
         spec::CATALOGUE.len(),
         "the palette's footer counts every entry exactly once",
     );
-    assert_eq!(spec::placeable_count(), 6, "the palette's footer says this");
+    assert_eq!(spec::placeable_count(), 7, "the palette's footer says this");
 
     let mut seen = std::collections::BTreeSet::new();
     let mut codes = std::collections::BTreeSet::new();
@@ -3058,7 +3058,7 @@ fn r1806_a_saved_filter_reaches_the_declared_set_of_linked_views() {
             .keys()
             .map(String::as_str)
             .collect::<std::collections::BTreeSet<_>>(),
-        std::collections::BTreeSet::from(["decode", "health", "keymap", "latency"]),
+        std::collections::BTreeSet::from(["alarms", "decode", "health", "keymap", "latency"]),
         "and the ones it does not reach are named too, rather than merely absent"
     );
 
@@ -4067,4 +4067,363 @@ fn r1843_the_board_is_wide_enough_for_every_card_it_places() {
          declare a {floor}px floor where the shipping window leaves {canvas_w}px — widening \
          the narrowest card is the repair, not widening the window",
     );
+}
+
+// ── The alarm feed (R1851) ──────────────────────────────────────────────────
+
+/// ★★★★★ R1851 — **the board's seventh card is what COUNTING left, and the count
+/// is printed.**
+///
+/// R1843's lesson, applied to the axis it did not cover. That round nearly
+/// reverted working code twice by concluding a card "could not fit" — once by
+/// inference and once by what it called arithmetic — because it measured rows
+/// exhaustively and never measured widths. This is the row half of the same
+/// discipline: which cards can give one up is a question every earlier round has
+/// already answered, and the answer is arithmetic rather than judgement.
+///
+/// ```text
+/// cargo test -p hello-analyzer-shell r1851_the_board -- --nocapture
+/// ```
+#[test]
+fn r1851_the_board_is_exactly_full_and_the_alarm_card_is_what_is_left() {
+    let cells: u32 = spec::BOARD.iter().map(|p| p.cols * p.rows).sum();
+    let grid = spec::GRID_COLS
+        * spec::BOARD
+            .iter()
+            .map(|p| p.row + p.rows)
+            .max()
+            .unwrap_or(0);
+    for placed in spec::BOARD {
+        println!(
+            "  {:9} {} col(s) x {} row(s) at ({}, {})",
+            placed.kind, placed.cols, placed.rows, placed.col, placed.row,
+        );
+    }
+    println!("  {cells} cell(s) placed in a {grid}-cell grid");
+    assert_eq!(cells, grid, "the board is exactly full — no cell is idle");
+    assert_eq!(grid, 48, "twelve columns by four rows");
+
+    // No two placements overlap, which a cell count alone cannot say: seven
+    // cards summing to 48 could still be stacked.
+    let mut taken = std::collections::BTreeSet::new();
+    for placed in spec::BOARD {
+        for c in placed.col..placed.col + placed.cols {
+            for r in placed.row..placed.row + placed.rows {
+                assert!(
+                    taken.insert((c, r)),
+                    "{} overlaps at ({c}, {r})",
+                    placed.kind
+                );
+            }
+        }
+    }
+    assert_eq!(super::u(taken.len()), grid, "and it covers every cell");
+
+    // The alarm card is the only one-row card besides `health`, and `health`'s
+    // single row is the reference's own footprint for that seat. So the alarm
+    // card's four cells are exactly what the other six left.
+    let alarms = spec::BOARD
+        .iter()
+        .find(|p| p.kind == "alarms")
+        .expect("the board places the alarm card");
+    let others: u32 = spec::BOARD
+        .iter()
+        .filter(|p| p.kind != "alarms")
+        .map(|p| p.cols * p.rows)
+        .sum();
+    println!("  the other six take {others}, leaving {}", grid - others);
+    assert_eq!(alarms.cols * alarms.rows, grid - others);
+    assert_eq!(
+        (alarms.cols, alarms.rows),
+        (4, 1),
+        "four cells is four columns by one row — the board's narrowest legal card"
+    );
+    assert_eq!(
+        spec::BOARD.last().map(|p| p.kind),
+        Some("alarms"),
+        "★ a new placement goes LAST: a card's id is `kind#index`, so inserting one \
+         in the middle renames every card after it (R1843 measured that as six \
+         gates reporting cards that had vanished)",
+    );
+}
+
+/// ★★★★★ R1851 — **the feed constructs the window it shows, and both numbers are
+/// printed.**
+///
+/// [`spec::ALARM_ROWS_SHOWN`] is a PIN, for `HEALTH_TILES_SHOWN`'s reason: the
+/// rule that produces it needs the card's pixel height, which lives in the
+/// painter and is not reachable from a `const` table. This is what makes the pin
+/// honest — and it asserts the thing the whole row is about, which is that a feed
+/// of eighteen alarms builds four rows.
+///
+/// ```text
+/// cargo test -p hello-analyzer-shell r1851_the_feed -- --nocapture
+/// ```
+#[test]
+fn r1851_the_feed_builds_only_the_window_it_shows() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let rect = super::alarm_body_rect(&state);
+        let columns = super::alarm_columns(rect.w).expect("the opening body holds the columns");
+        let feed = super::alarm_feed("probe", rect, &columns, spec::ALARMS.len());
+        let viewport = feed.body_viewport();
+        let window = feed.window(0);
+        println!(
+            "alarm body {}x{}; header {} leaves {}; pitch {} -> {} whole row(s); \
+             window {}..{} of {} alarm(s)",
+            rect.w,
+            rect.h,
+            spec::ALARM_HEAD_H,
+            viewport.h,
+            spec::ALARM_ROW_H,
+            feed.rows_in_view(),
+            window.first,
+            window.first + window.count,
+            spec::ALARMS.len(),
+        );
+        assert_eq!(
+            window.count,
+            spec::ALARM_ROWS_SHOWN,
+            "the pin and the window disagree"
+        );
+        // ★★★★★ THE CLAIM. A virtualised feed pays for what it shows, and this is
+        // the number the reference toolkit has no way to report at all: probed at
+        // 6.11.1, a tabular view over ten thousand rows answers ten thousand
+        // through its public surface, and asking which rows it built does not
+        // compile.
+        assert!(
+            window.count < spec::ALARMS.len(),
+            "a feed that builds every row it holds is not virtualised: {} of {}",
+            window.count,
+            spec::ALARMS.len(),
+        );
+        // And the body is a whole number of rows, so no row is drawn half.
+        assert_eq!(viewport.h % spec::ALARM_ROW_H, 0);
+        assert_eq!(viewport.h / spec::ALARM_ROW_H, super::u(window.count));
+        // The columns fill the body exactly — the one declared `0` takes the rest.
+        let spanned: u32 = columns.iter().map(|c| c.size).sum();
+        assert_eq!(spanned, rect.w, "the headings span the body exactly");
+
+        // ★★★★★ AND A READER IS TOLD ABOUT EXACTLY THOSE ROWS. This is the claim
+        // the paint-side ghost gate cannot make about this card — it reads the
+        // frame after the canvas's clip, and a scrolled-away row is a row the
+        // frame does not record — so it is made here, against the window the
+        // assembly actually built. R1843 shipped the opposite on the health
+        // strip (three tiles painted, five announced) and R1846 had to repair it.
+        let card = state
+            .card(&spec::card_of("alarms").expect("the board places the alarm card"))
+            .expect("and the shell holds it");
+        // ⚠ The bare ROWS, not their cells. `contains(".feed.row.")` matched
+        // both and reported sixteen — a row announces three cells, so the
+        // predicate has to say which of the two families it means.
+        let announced: Vec<String> = super::alarms_nodes(&state, &card)
+            .into_iter()
+            .map(|node| node.tag)
+            .filter(|tag| {
+                tag.rsplit_once(".feed.row.")
+                    .is_some_and(|(_, rest)| !rest.contains('.'))
+            })
+            .collect();
+        assert_eq!(
+            announced.len(),
+            window.count,
+            "the feed announces {} row(s) and built {}: {announced:?}",
+            announced.len(),
+            window.count,
+        );
+        for slot in 0..window.count {
+            assert!(
+                announced
+                    .iter()
+                    .any(|tag| tag.ends_with(&format!(".feed.row.{slot}"))),
+                "slot {slot} was built and is not announced: {announced:?}"
+            );
+        }
+        // A body too narrow for the feed announces NOTHING, which is the same
+        // refusal the painter makes — asserted rather than assumed, because the
+        // two are separate functions and this is the pair that must agree.
+        assert!(
+            super::alarm_columns(spec::ALARM_EVENT_FLOOR).is_none(),
+            "a body at the reading column's own floor cannot also hold the other two"
+        );
+    });
+}
+
+/// ★★★★★ R1851 — **every vocabulary this feed DECLARES on the wire is its own
+/// definition**, and not a second list that agrees today.
+///
+/// R1642's rule: a declaration admitting a call the surface refuses is worse than
+/// silence, because a client acts on it. The three closed sets `sort_alarms` and
+/// `filter_alarms` publish are `const`s, so they are exactly the kind of
+/// hand-written census R1630's ratchet exists to refuse — this is that ratchet,
+/// for this surface.
+#[test]
+fn r1851_the_declared_vocabularies_are_their_definitions() {
+    // The columns a client may sort by ARE the feed's columns.
+    assert_eq!(
+        super::ALARM_COLUMN_KEYS,
+        spec::ALARM_COLUMNS
+            .iter()
+            .map(|(label, _)| label.to_lowercase())
+            .collect::<Vec<_>>(),
+        "★ a column added to the feed and not to the verb's domain is a column a \
+         client cannot reach; the reverse is a domain admitting a call that is refused"
+    );
+    // The directions are the framework's own, read through its parser rather
+    // than compared with a literal spelled twice.
+    for word in super::ALARM_DIRECTIONS {
+        let parsed = pinion_core::widgets::view_order::sort_dir_from_str(word);
+        assert_eq!(
+            pinion_core::widgets::view_order::sort_dir_str(parsed),
+            *word,
+            "★ {word:?} is declared and does not survive the framework's own \
+             round trip, so the domain and the parser disagree"
+        );
+    }
+    assert!(
+        super::ALARM_DIRECTIONS.contains(&"none"),
+        "unsorted has to be reachable, or a client can start a cycle and not end it"
+    );
+    // The floors are the severity vocabulary, plus the word for *no floor*.
+    assert_eq!(
+        &super::ALARM_FLOORS[1..],
+        spec::SEVERITY.levels(),
+        "★ the declared floors and the scale's own words must be one list"
+    );
+    assert_eq!(
+        super::ALARM_FLOORS.first(),
+        Some(&"all"),
+        "and *all* is a different statement from the least severe level"
+    );
+    // Every alarm carries a word the scale holds — which is what lets the feed
+    // grade itself at all, and is exactly the property the behaviour prototype
+    // does NOT have (its control offers `error` over rows spelled `err`).
+    for alarm in spec::ALARMS {
+        assert!(
+            spec::SEVERITY.rank(alarm.severity).is_some(),
+            "{:?} is graded {:?}, which the vocabulary does not hold",
+            alarm.message,
+            alarm.severity,
+        );
+    }
+    // The first rows ARE the prototype's, which is the claim `ALARMS_IN_REFERENCE`
+    // makes; the rest are this build's and the constant says which is which.
+    assert!(spec::ALARMS_IN_REFERENCE < spec::ALARMS.len());
+    assert!(
+        spec::ALARMS.len() > spec::ALARM_ROWS_SHOWN * 2,
+        "a feed only twice its own viewport barely exercises a window"
+    );
+}
+
+/// ★★★★★ R1851 — **the order the feed is in, the arrow it shows and the threshold
+/// it applies are one state.**
+///
+/// Three separate claims that all reduce to *the feed does not hold the same fact
+/// twice*. On the toolkit floor at 6.11.1 the indicator and the order are
+/// properties of different objects, and its row filtering is a predicate over a
+/// string whose vocabulary is whatever the rows happen to be spelled — the two
+/// defects this test excludes by construction.
+#[test]
+fn r1851_the_order_the_arrow_and_the_threshold_cannot_disagree() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let rect = super::alarm_body_rect(&state);
+        let columns = super::alarm_columns(rect.w).expect("the opening body holds the columns");
+        let glyphs = |sort| {
+            super::alarm_feed("probe", rect, &columns, spec::ALARMS.len())
+                .with_sort(sort)
+                .sections()
+                .into_iter()
+                .map(|s| s.sort_glyph)
+                .collect::<Vec<_>>()
+        };
+
+        // The feed opens sorted by time, newest first, and the arrow is on that
+        // column and points that way.
+        let opening = state.alarm_sort.get();
+        assert_eq!(opening, Some(spec::ALARM_OPENING_SORT));
+        let shown = glyphs(opening);
+        let carrying: Vec<usize> = shown
+            .iter()
+            .enumerate()
+            .filter(|(_, g)| g.is_some())
+            .map(|(n, _)| n)
+            .collect();
+        assert_eq!(carrying, vec![spec::ALARM_OPENING_SORT.0]);
+        assert_ne!(
+            glyphs(Some((1, true)))[1],
+            glyphs(Some((1, false)))[1],
+            "the two directions draw different glyphs, or the arrow says nothing"
+        );
+
+        // The opening order really is newest first.
+        let order = super::alarm_order(&state);
+        let seconds: Vec<u32> = order.iter().map(|&n| spec::ALARMS[n].seconds()).collect();
+        assert_eq!(order.len(), spec::ALARMS.len(), "no floor hides anything");
+        let mut down = seconds.clone();
+        down.sort_unstable_by(|a, b| b.cmp(a));
+        assert_eq!(seconds, down, "the feed opens newest first");
+        // ★ And the prototype's own table is NOT in that order — its first two
+        // rows are out of sequence. Which is what makes the sort observable at
+        // all rather than a no-op that looks like a feature.
+        let stated: Vec<u32> = spec::ALARMS.iter().map(spec::AlarmSpec::seconds).collect();
+        assert_ne!(stated, seconds, "★ the table itself is not time-ordered");
+
+        // Sorting by severity orders by RANK, not by the word: alphabetically
+        // `error < info < warn`, which is not an order anybody means.
+        state.alarm_sort.set(Some((0, true)));
+        let by_severity = super::alarm_order(&state);
+        let ranks: Vec<usize> = by_severity
+            .iter()
+            .map(|&n| spec::SEVERITY.rank(spec::ALARMS[n].severity).unwrap_or(0))
+            .collect();
+        let mut up = ranks.clone();
+        up.sort_unstable();
+        assert_eq!(ranks, up, "least severe first");
+        let words: Vec<&str> = by_severity
+            .iter()
+            .map(|&n| spec::ALARMS[n].severity)
+            .collect();
+        let mut alphabetical = words.clone();
+        alphabetical.sort_unstable();
+        assert_ne!(
+            words, alphabetical,
+            "★ a rank order and an alphabetical order must differ here, or this \
+             test would pass on a feed that sorted the WORDS"
+        );
+
+        // A threshold is a position in the order: *warnings* means warnings AND
+        // errors, and errors are a subset of warnings.
+        state.alarm_sort.set(Some(spec::ALARM_OPENING_SORT));
+        state.alarm_floor.set(Some("warn".to_owned()));
+        let warned = super::alarm_order(&state);
+        state.alarm_floor.set(Some("error".to_owned()));
+        let strict = super::alarm_order(&state);
+        assert!(
+            strict.len() < warned.len(),
+            "errors are fewer than warnings"
+        );
+        assert!(
+            warned.len() < spec::ALARMS.len(),
+            "and warnings fewer than all"
+        );
+        let kept: std::collections::BTreeSet<usize> = warned.iter().copied().collect();
+        assert!(
+            strict.iter().all(|n| kept.contains(n)),
+            "★ every error is also a warning — that is what an ORDER means, and a \
+             set of three independent flags could not say it"
+        );
+
+        // ★★★★★ And a word the vocabulary does not hold is refused BY NAME, with
+        // the vocabulary in the refusal. Measured on the toolkit floor at 6.11.1:
+        // the same request there answers `0 of 6` and says nothing.
+        let refused = spec::SEVERITY
+            .at_least("error", "err")
+            .expect_err("`err` is not a word of this scale");
+        let said = refused.to_string();
+        assert!(said.contains("\"err\""), "{said}");
+        assert!(said.contains("info < warn < error"), "{said}");
+    });
 }

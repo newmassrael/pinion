@@ -101,15 +101,27 @@ const STATES: &[SweptState] = &[
         // Derived from the specification rather than written down, so a board
         // that changes shape fails the `expect` instead of quietly placing a
         // card somewhere nobody looks.
+        //
+        // ★★★★★ R1851 — the kind added is the SHORTEST placed one, and that is a
+        // measurement rather than a tidy-up. The board is exactly full (twelve
+        // columns by four rows is 48 cells and the seven placements fill them),
+        // so any add pushes the bottom card down. A TWO-row add pushes it two
+        // rows, which puts it entirely outside the canvas's clip: `cell_rect`
+        // puts row 5 at y=886 in an 802-tall canvas, so nothing of it intersects
+        // the viewport, the model still says the card is shown, and every
+        // containment gate here reports the screen failing to paint a card. A
+        // one-row add pushes one row, and row 4 still intersects the clip.
+        //
+        // Derived from the board rather than named, so a placement that changes
+        // height moves this with it — the same discipline as the cell below.
         let tail = spec::BOARD.last().expect("the board is not empty");
+        let shortest = spec::BOARD
+            .iter()
+            .min_by_key(|placed| placed.rows)
+            .expect("the board is not empty");
         ShellOracle::add(
             state,
-            &format!(
-                "{},{},{}",
-                spec::BOARD[0].kind,
-                tail.col + tail.cols,
-                tail.row
-            ),
+            &format!("{},{},{}", shortest.kind, tail.col + tail.cols, tail.row),
         )
         .expect("a placeable kind fits beside the board's last placement");
     }),
@@ -179,7 +191,25 @@ const SIZES: &[(&str, (u32, u32))] = &[
 ///
 /// The repair for the remainder is unchanged: `containment::line_rect` at the
 /// sites that still reserve a line at the face's own size.
-const SHORT_BOX_BUDGET: usize = 248;
+///
+/// ★★★★★ R1851 — **248 -> 211 while the screen grew a SEVENTH card**, and the
+/// thirty-seven were found by asking the question of one card instead of the
+/// screen.
+///
+/// The alarm card's own gate (`r1851_no_alarm_run_sits_in_a_box_too_short_for_
+/// its_own_face`) asks for ZERO, and its first run reported nothing about the
+/// alarm feed at all: it reported the card's size-stepper strip. Every run in
+/// that band — four stepper glyphs, two axis letters and the size reading — had
+/// been authored into 14px boxes for faces needing 18 and 20, on every card, in
+/// every editing state, at every size. Seven per card, invisible for as long as
+/// this number was a screen-wide ratchet: seven runs of one band sit under the
+/// noise of a population of 248, and a seventh card would have pushed the total
+/// over the line for a reason that had nothing to do with the card.
+///
+/// ⇒ **A ratchet is the right shape for a backlog and the wrong shape for a
+/// surface being written now.** The per-card zero gate is what a new card should
+/// carry, and this pin is what the backlog is measured by.
+const SHORT_BOX_BUDGET: usize = 211;
 
 /// Where every tag in the painted scene ended up, and every text run with it.
 struct Painted {
@@ -584,6 +614,14 @@ fn body_family(kind: &str) -> Option<(&'static str, usize)> {
         // assert nothing. The tiles are where this card's reproduction claim
         // lives.
         "health" => ("stat", spec::HEALTH_TILES.len()),
+        // ★★★★★ R1851 — the alarm feed's rows, and the count is the WINDOW rather
+        // than the table. Every other family here counts a specification table;
+        // this one cannot, because the feed is virtualised: it constructs the
+        // rows that fit its body plus an overscan row at each end, and eighteen
+        // alarms are never eighteen rows. `ALARM_ROWS_SHOWN` is that window at
+        // the opening size, and `r1851_the_feed_builds_only_the_window_it_shows`
+        // is what keeps the pin honest.
+        "alarms" => ("feed.row", spec::ALARM_ROWS_SHOWN),
         _ => return None,
     })
 }
@@ -599,7 +637,15 @@ fn body_cells(kind: &str) -> Cells {
         // what asked for the declaration: it refuses a guard nothing
         // exercises, and nothing will ever exercise a cell clamp that cannot
         // happen.
-        "latency" | "health" => Cells::Whole,
+        // ★ R1851 added `alarms` to the same claim. An alarm row says one
+        // thing — how bad, when, and what — and a row showing two of the three
+        // is a sentence a reader completes wrongly: a time and a message with
+        // no severity reads as routine. So the row's words go together, and the
+        // clamp that happens as the card narrows is a WORD giving way inside
+        // its own column box (which `TextOverflow::Ellipsis` shows) rather than
+        // a column being dropped. A cell clamp declared here would be a guard
+        // nothing exercises, which the census below refuses by name.
+        "latency" | "health" | "alarms" => Cells::Whole,
         _ => Cells::Droppable,
     }
 }
@@ -679,6 +725,32 @@ fn specified_row(kind: &str, n: usize) -> Vec<String> {
                 format!("{} {}", tile.label, tile.unit)
             };
             vec![heading, tile.value.into(), tile.delta.into()]
+        }
+        // ★★★★★ R1851 — a SECOND account of the feed's order, on purpose, which
+        // is the `latency` arm's rule applied to an ordering instead of to a
+        // number. The card asks `compute_order` through the severity scale; this
+        // sorts the specification's own table right here. Two implementations of
+        // one rule, so the assertion between them can fail — where reading the
+        // painter's own `alarm_order` would be a comparison that cannot.
+        //
+        // ⚠ Valid because the sweep never moves the feed's order: the opening
+        // sort is `ALARM_OPENING_SORT` (time, descending) with no floor, and
+        // nothing in a swept case sorts or filters. The moment a case does, this
+        // arm is wrong and says so by failing.
+        "alarms" => {
+            assert_eq!(
+                spec::ALARM_OPENING_SORT,
+                (1, false),
+                "this oracle sorts by time descending; the feed opens elsewhere"
+            );
+            let mut newest: Vec<&spec::AlarmSpec> = spec::ALARMS.iter().collect();
+            newest.sort_by_key(|a| std::cmp::Reverse(a.seconds()));
+            let alarm = newest[n];
+            vec![
+                alarm.severity.to_uppercase(),
+                alarm.clock(),
+                alarm.message.to_owned(),
+            ]
         }
         other => panic!("{other} has no specified body"),
     }
@@ -1587,7 +1659,23 @@ fn r1671_the_frame_walk_finds_an_untagged_crossing() {
 /// must consult whatever its painter consults.
 ///
 /// ⇒ `debt-a-card-announces-a-row-it-does-not-paint`.
-const GHOSTS: &[&str] = &["packet", "decode", "keymap", "filter", "latency"];
+/// ★★★★★ R1851 added `alarms`, and the reason is a MODEL limit rather than a
+/// card that gets a pass.
+///
+/// This gate reads *painted* off the finished frame, which is after the canvas's
+/// clip. Every other card is fully inside that clip in every swept state, so
+/// "painted" and "constructed" are the same set for them. The alarm card is the
+/// first that a swept state pushes partly OUTSIDE it: the board is exactly full,
+/// so adding a second card of a placed kind pushes the bottom row down one, and a
+/// row that exists and is scrolled away is a row the frame does not record. The
+/// gate then reads that as a row nobody drew, which is a true statement about the
+/// paint and a false one about the tree.
+///
+/// The claim is not lost — it is asserted where it can be exact, against the
+/// window the assembly actually built rather than against the clip:
+/// `r1851_the_feed_builds_only_the_window_it_shows`, and on the wire in
+/// `tools/demos/r1851_an_alarm_feed_is_graded_ordered_and_windowed.py` section F.
+const GHOSTS: &[&str] = &["packet", "decode", "keymap", "filter", "latency", "alarms"];
 
 /// ★★★★★ R1843 — **a card announces the rows it PAINTS, and no others.**
 ///
@@ -1645,6 +1733,55 @@ fn r1843_a_card_announces_only_the_rows_it_paints() {
     });
 }
 
+/// ★★★★★ R1851 — **not one run the alarm feed authors sits in a box too short
+/// for its own face**, at any size, in any state.
+///
+/// ZERO, not a budget. The screen-wide gate
+/// (`r1800_no_run_sits_in_a_box_too_short_for_its_own_face`) is a ratchet over a
+/// population measured before it existed, and a ratchet is the right shape for a
+/// backlog and the wrong shape for a surface being written now: a new card can
+/// add short runs and the ratchet only notices when the total crosses a line
+/// somebody else's work also moves. This asks the question of one card, where the
+/// answer can be zero.
+///
+/// It PRINTS what it finds, because "which run and by how much" is what a person
+/// fixing one needs and the screen-wide gate shows only the first six.
+///
+/// ```text
+/// cargo test -p hello-analyzer-shell r1851_no_alarm_run -- --nocapture
+/// ```
+#[test]
+fn r1851_no_alarm_run_sits_in_a_box_too_short_for_its_own_face() {
+    let mut worst: Vec<String> = Vec::new();
+    sweep(|state, _, scene, case| {
+        let Some(id) = shown_cards(state)
+            .into_iter()
+            .find(|id| super::kind_of(id) == "alarms")
+        else {
+            return;
+        };
+        let stem = format!("card.{id}.");
+        for short in pinion_core::containment::short_boxes(scene) {
+            let inside = short.tag.as_deref().is_some_and(|t| t.starts_with(&stem))
+                || short.path.iter().any(|t| t.starts_with(&stem));
+            if inside {
+                worst.push(format!(
+                    "{case}: {:?} at {}px in a {}px box needs {} (short by {}) — {:?}",
+                    short.content, short.px, short.rect.h, short.needs, short.short_by, short.tag,
+                ));
+            }
+        }
+    });
+    for line in &worst {
+        println!("{line}");
+    }
+    assert!(
+        worst.is_empty(),
+        "{} alarm run(s) are in a box too short for their own face",
+        worst.len()
+    );
+}
+
 // -- 5. Disjoint: nothing is painted on top of anything ----------------------
 
 /// R1668 — no two rows of one card overlap.
@@ -1652,7 +1789,18 @@ fn r1843_a_card_announces_only_the_rows_it_paints() {
 fn r1668_no_two_rows_of_one_card_are_painted_over_each_other() {
     sweep(|state, shot, _, case| {
         for id in &shown_cards(state) {
-            for stem in ["row.", "tree.", "map.", "chip.", "stat.", "bytes."] {
+            // ★ R1851 added `feed.row.` — the alarm feed's rows are absolutely
+            // positioned inside a virtualised sizer, which is precisely the
+            // arithmetic that can put two of them on the same pixels.
+            for stem in [
+                "row.",
+                "tree.",
+                "map.",
+                "chip.",
+                "stat.",
+                "bytes.",
+                "feed.row.",
+            ] {
                 let family = shot.family(&format!("card.{id}.{stem}"));
                 let rects: Vec<(&str, Rect)> = family
                     .iter()

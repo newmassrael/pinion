@@ -51,6 +51,7 @@ pub mod row_style;
 pub mod scroll;
 pub mod scrollbar;
 pub mod selection;
+pub mod severity;
 pub mod slider;
 pub mod snackbar;
 pub mod spin_button;

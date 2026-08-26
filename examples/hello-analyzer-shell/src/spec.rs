@@ -41,6 +41,7 @@ use pinion_core::widgets::destination::{
     Destination, Destinations, Required, RosterSpec, SeatSpec,
 };
 pub use pinion_core::widgets::roving::{Activation, Axis, Ends, RovingSpec};
+pub use pinion_core::widgets::severity::SeverityScale;
 
 /// The window the screen is specified at.
 pub const WIN_W: u32 = 1440;
@@ -1070,14 +1071,29 @@ pub const CATALOGUE: &[WidgetSpec] = &[
         tier: Tier::Reserved,
         reserved_for: "requirement 20",
     },
+    // ★ R1851 — promoted from `Tier::Reserved`, on the R1797 / R1843 pattern,
+    // and the evidence is the reference's OWN board rather than a preference.
+    // Measured in the behaviour prototype: its opening board places this seat
+    // (at column 4 of the fifth row, four columns by two rows), three of its
+    // four built-in presets place it, and its catalogue entry declares the
+    // footprint `4 x 2` this board now gives it. What it was waiting for was a
+    // framework that could draw the thing: a feed is a virtualised list under a
+    // sortable column header, and until `pinion_widget_paint::header_feed`
+    // nothing in this tree composed those two — measured the same round, the
+    // only surface holding both was the data grid, where every row is a row of
+    // cells and a severity swatch beside two lines of text is not.
+    //
+    // Promoting a seat changes the RELEASE structure the reference defines, so
+    // it is declared in the deferred register's `built` list rather than made
+    // to look like a seat that was never locked.
     WidgetSpec {
         kind: "alarms",
         code: "ALM",
         label: "Alarms",
         gist: "highlight rules by severity",
         section: "operate",
-        tier: Tier::Reserved,
-        reserved_for: "requirement 21",
+        tier: Tier::Placeable,
+        reserved_for: "",
     },
     WidgetSpec {
         kind: "admin",
@@ -1211,6 +1227,48 @@ pub const BOARD: &[PlacedSpec] = &[
     // were, every one of them reading as a card that vanished: a cursor resting
     // where nothing paints, a region announced and unpainted, a specification
     // naming a part the surface no longer had. A new placement goes LAST.
+    // ★★★★★ R1851 — a SEVENTH card fits, and its footprint is not a preference:
+    // it is what is left after COUNTING, and the count is entirely made of
+    // measurements other rounds already paid for.
+    //
+    // The board is 12 columns by 4 rows = 48 cells and six `4 x 2` cards filled
+    // it exactly. Three ways out, and two are closed by existing gates:
+    //
+    //   * a fifth row — `cell_rect` ends row `n` at `GAP + n * ROW_H`, so four
+    //     rows end at 712 in an 802-tall canvas and a card on row 4 begins at
+    //     the fold. R1797 TRIED that placement and the paint census refused it
+    //     by name, correctly: the card's whole point began where nobody could
+    //     see it.
+    //   * a narrower card — three columns is `3 * 90 - 16 = 254px` against the
+    //     320px a card clamps to when torn off, and `r1843` refuses it by name.
+    //   * cells another card gives up. Which leaves counting WHICH cards can.
+    //
+    // Every one of the six has already been measured on exactly that question:
+    //   packet / decode  — eight stream rows and a decode tree; neither fits
+    //   keymap           — R1669: at one row its body is 140px and its header
+    //                      plus seven rows need 144. Measured, named, refused
+    //   filter           — `r1824` refuses it by name: *the filter card paints
+    //                      its trend*, which it cannot do in one row
+    //   latency          — R1797 measured its distribution at 332px
+    //   health           — the behaviour prototype's own catalogue declares this
+    //                      seat `6 x 1`, so ONE row is its reference footprint
+    //                      rather than a concession
+    //
+    // So five cards need two rows (40 cells), `health` needs one (4), and what
+    // is left is FOUR CELLS. The alarm card is `4 x 1` because that is the only
+    // thing it can be — and the feed's row is shaped to that in `ALARM_ROW_H`,
+    // which is where the consequence is stated rather than hidden.
+    //
+    // ⚠ The prototype's catalogue declares this seat `4 x 2` and its own board
+    // is six rows deep. We reproduce the seat, not its depth, because the depth
+    // is what R1797's refusal is about. Stated, not glossed.
+    //
+    // ⚠⚠ ORDER IS IDENTITY HERE. A card's id is `kind#n` where `n` is its INDEX
+    // in this array, so inserting a placement in the middle RENAMES every card
+    // after it. R1843's first cut put `health` third and renumbered two cards,
+    // which surfaced as six gates reporting cards that had vanished. A new
+    // placement goes LAST — which is why `alarms` is last here even though it
+    // sits under `health` on the board.
     PlacedSpec {
         kind: "keymap",
         col: 8,
@@ -1237,7 +1295,14 @@ pub const BOARD: &[PlacedSpec] = &[
         col: 8,
         row: 2,
         cols: 4,
-        rows: 2,
+        rows: 1,
+    },
+    PlacedSpec {
+        kind: "alarms",
+        col: 8,
+        row: 3,
+        cols: 4,
+        rows: 1,
     },
 ];
 
@@ -1632,6 +1697,21 @@ pub fn dashboard_links() -> pinion_chart::LinkGroup {
             "health",
             "a summary over the whole capture window, not a view over the current selection",
         ),
+        // ★ R1851 — inert, and the reason is a MEASURED absence rather than a
+        // claim about what an alarm feed must be. This feed narrows: it has an
+        // ordered severity threshold, which is a stronger narrowing than any
+        // category selection on this board. What it cannot do is answer the
+        // CROSS-FILTER's question, because the endpoint an alarm concerns lives
+        // inside its reading rather than in a field of it, so there is nothing
+        // here to match a selection against. That is the same shape R1848 repaired
+        // for traffic roles — declare the taxonomy instead of parsing the prose —
+        // and it is a round of its own rather than a sentence to gloss.
+        Link::inert(
+            "alarms",
+            "graded by its own severity threshold; the endpoint an alarm concerns is \
+             inside its reading rather than a field of it, so a selection has nothing \
+             to match",
+        ),
     ])
     .expect("the dashboard's link declaration is well formed")
 }
@@ -1842,6 +1922,252 @@ pub const HEALTH_TILES: &[HealthTile] = &[
         trend: &[2.6, 2.8, 3.0, 2.9, 3.1, 3.0, 3.2],
     },
 ];
+
+// ── The alarm feed (R1851) ──────────────────────────────────────────────────
+
+/// The severity vocabulary this tool's alarms are graded on, **least severe
+/// first**.
+///
+/// ★★★★★ One ordered vocabulary rather than three words compared by hand, and
+/// the reason is measured on both the reference and the behaviour prototype.
+///
+/// The prototype's alarm card offers a *minimum severity* control whose options
+/// are spelled `info / warn / error` over a feed whose rows are spelled
+/// `info / warn / err` — so its most severe setting could never have matched a
+/// row, and nothing in it could say so. ⚠ And the control is never READ: the key
+/// occurs exactly once in the prototype's whole script, in the declaration that
+/// offers it (`grep -c minSev` over the extracted app logic answers 1), so the
+/// mismatch had no way of ever surfacing. Probed on the toolkit floor at 6.11.1,
+/// the same shape is what that toolkit's row filtering IS: a predicate over a
+/// string, which answers *zero of six* for the word `error` over rows spelled
+/// `err` and says nothing. `at least this severe` has to be written there as a
+/// pattern enumerating the words by hand, and one word misspelled inside it
+/// silently drops rows.
+///
+/// [`SeverityScale`] refuses a word it does not hold, by name, and carries the
+/// vocabulary in the refusal. That is the whole difference: an unspellable
+/// threshold is an error here and an empty feed there.
+pub const SEVERITY: SeverityScale = SeverityScale::new(&["info", "warn", "error"]);
+
+/// One alarm.
+///
+/// ★ The INSTANT is the stored fact and the clock reading is derived from it
+/// ([`AlarmSpec::clock`]). The prototype stores only the rendered string, which
+/// means its feed cannot be ordered by time without trusting that a lexical
+/// comparison of `HH:MM:SS` happens to be chronological — true for its six rows
+/// and luck rather than a guarantee. One fact, so the reading and the order
+/// cannot disagree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlarmSpec {
+    /// When it was seen, as `(hour, minute, second)` of the capture's day.
+    pub at: (u32, u32, u32),
+    /// How bad it is — a word of [`SEVERITY`], which is checked.
+    pub severity: &'static str,
+    /// The one-line reading.
+    pub message: &'static str,
+}
+
+impl AlarmSpec {
+    /// The instant, as seconds into the day — the sort key.
+    #[must_use]
+    pub const fn seconds(&self) -> u32 {
+        let (h, m, s) = self.at;
+        h * 3600 + m * 60 + s
+    }
+
+    /// The clock reading a reader sees, derived from [`seconds`](Self::seconds)'
+    /// own inputs.
+    #[must_use]
+    pub fn clock(&self) -> String {
+        let (h, m, s) = self.at;
+        format!("{h:02}:{m:02}:{s:02}")
+    }
+}
+
+/// How many of [`ALARMS`] the behaviour prototype's own feed publishes.
+///
+/// The first this many rows of the table below ARE that feed, in its order,
+/// neutrally worded. The rest are this build's, and the reason they exist is
+/// stated at [`ALARMS`].
+pub const ALARMS_IN_REFERENCE: usize = 6;
+
+/// The alarm feed's rows, newest first as the prototype writes them.
+///
+/// ⚠ A FIXTURE, not a derivation — like [`HEALTH_TILES`] and unlike the latency
+/// card, which derives every number it draws from one capture record. Nothing in
+/// this tree yet raises an alarm from the traffic it holds. Said here rather
+/// than letting a reader infer a measurement from a table that looks like one.
+///
+/// ⚠⚠ **Longer than the prototype's six, deliberately.** A feed that fits
+/// inside its own viewport is not a feed, and *the invisible row was not
+/// constructed* is not a claim anyone can make about six rows in a body six rows
+/// tall. The prototype is a first-prototype mockup and its six are a sample; the
+/// first [`ALARMS_IN_REFERENCE`] rows here reproduce them exactly, in their
+/// order, and the rest continue the same session backwards so the virtualisation
+/// and the ordering are things a gate can actually observe.
+///
+/// ★ The first two rows are OUT of time order — `12:04:34` then `12:04:36` — and
+/// that is the prototype's own quirk, kept. It is the cheapest possible proof
+/// that sorting this feed does something: unsorted, the newest alarm is second.
+pub const ALARMS: &[AlarmSpec] = &[
+    AlarmSpec {
+        at: (12, 4, 34),
+        severity: "error",
+        message: "Session closed - P-06 (link fault)",
+    },
+    AlarmSpec {
+        at: (12, 4, 36),
+        severity: "warn",
+        message: "Keep-alive timed out - P-03",
+    },
+    AlarmSpec {
+        at: (12, 2, 11),
+        severity: "warn",
+        message: "Endpoint unreachable - P-06",
+    },
+    AlarmSpec {
+        at: (11, 58, 3),
+        severity: "info",
+        message: "Protocol revision 0x09 agreed",
+    },
+    AlarmSpec {
+        at: (11, 55, 47),
+        severity: "error",
+        message: "Decode fault - malformed frame - P-04",
+    },
+    AlarmSpec {
+        at: (11, 52, 20),
+        severity: "info",
+        message: "Subscription declared - units/*/pose",
+    },
+    // ── this build's continuation; see the note above ──
+    AlarmSpec {
+        at: (11, 49, 58),
+        severity: "info",
+        message: "Session opened - P-04",
+    },
+    AlarmSpec {
+        at: (11, 47, 12),
+        severity: "warn",
+        message: "Retransmit budget at 80% - P-02",
+    },
+    AlarmSpec {
+        at: (11, 44, 30),
+        severity: "info",
+        message: "Identifier 7 bound - units/2/pose",
+    },
+    AlarmSpec {
+        at: (11, 41, 7),
+        severity: "error",
+        message: "Reply timed out - store/config",
+    },
+    AlarmSpec {
+        at: (11, 38, 44),
+        severity: "info",
+        message: "Endpoint joined - P-06",
+    },
+    AlarmSpec {
+        at: (11, 35, 19),
+        severity: "warn",
+        message: "Fragment reassembly deferred - P-05",
+    },
+    AlarmSpec {
+        at: (11, 32, 2),
+        severity: "info",
+        message: "Identifier 4 bound - units/*/pose",
+    },
+    AlarmSpec {
+        at: (11, 28, 51),
+        severity: "warn",
+        message: "Queue depth above watermark - P-01",
+    },
+    AlarmSpec {
+        at: (11, 25, 36),
+        severity: "info",
+        message: "Session opened - P-06",
+    },
+    AlarmSpec {
+        at: (11, 22, 10),
+        severity: "error",
+        message: "Frame discarded - checksum mismatch - P-03",
+    },
+    AlarmSpec {
+        at: (11, 19, 47),
+        severity: "info",
+        message: "Retention window reset - store/**",
+    },
+    AlarmSpec {
+        at: (11, 16, 22),
+        severity: "warn",
+        message: "Keep-alive late - P-05",
+    },
+];
+
+/// The alarm feed's three sortable columns, left to right.
+///
+/// The column whose width is `0` takes what the others leave — the same
+/// convention [`STREAM_COLUMNS`] uses on this screen, and it is not a shortcut:
+/// a card's body width is a function of the window's, so fixed numbers could
+/// equal the body at exactly one window size and would be wrong at every other.
+pub const ALARM_COLUMNS: &[(&str, u32)] = &[("Severity", 96), ("Time", 84), ("Event", 0)];
+
+/// One alarm row's vertical slot.
+///
+/// ★★★★★ ONE LINE, and this is the one place the prototype's row shape is not
+/// reproduced. The reason is [`BOARD`]'s count: the prototype draws this seat two
+/// board rows tall and gives its row two lines — a severity word beside a clock
+/// reading, then the message under both — and the count above leaves this board
+/// exactly ONE row for the card. In the body a single row gives, a two-line row
+/// at the prototype's own padding shows **two** alarms and a one-line row shows
+/// four; a feed showing two of eighteen is not a feed.
+///
+/// ⚠ And the divergence pays for itself twice, which is why it is this way round
+/// rather than dropping a column: a message on its own full-width second line
+/// can be headed by nothing, so the prototype's row admits at most TWO columns.
+/// One line puts all three parts side by side, which is what makes the message
+/// sortable and the header honest about what sits under it.
+///
+/// The swatch stays. It is the prototype's own three-pixel severity stripe and
+/// it is the thing a reader scanning for trouble actually uses.
+pub const ALARM_ROW_H: u32 = 24;
+
+/// The alarm feed's header strip.
+///
+/// Shorter than the column header's 40px default, because this strip sits inside
+/// a one-row card body and every pixel it takes is an alarm the feed cannot show.
+///
+/// ★ 26 and not 24, and the two pixels are load-bearing: the body a `4 x 1` card
+/// gives is 122px, the feed shows whole rows only, and `122 - 26 = 96` is exactly
+/// four rows where `122 - 24 = 98` is four rows and a two-pixel stripe. The
+/// remainder is better spent on the header than left as a gap.
+/// `r1851_the_feed_builds_only_the_window_it_shows` prints all four numbers.
+pub const ALARM_HEAD_H: u32 = 26;
+
+/// The narrowest the feed's reading column can be and still say anything.
+///
+/// Below it the feed draws NOTHING rather than three clipped words — the
+/// all-or-nothing clamp the health strip and the latency tiles already make, and
+/// for the same reason: an alarm row's three parts are one statement.
+pub const ALARM_EVENT_FLOOR: u32 = 120;
+
+/// How many alarm rows the feed CONSTRUCTS on the opening board.
+///
+/// The window that fits the body a `4 x 2` card gives, plus the overscan row at
+/// each end. Pinned rather than derived for [`HEALTH_TILES_SHOWN`]'s reason — the
+/// rule needs the card's pixel height, which lives in the painter — and honest
+/// for the same one: `r1851_the_feed_builds_only_the_window_it_shows` fails the
+/// moment the paint and this disagree, and PRINTS both.
+///
+/// ⚠ It is a count of SLOTS, not of alarms. [`ALARMS`] is longer, which is the
+/// whole point: the rows outside this window are never constructed.
+pub const ALARM_ROWS_SHOWN: usize = 4;
+
+/// Which column the feed opens sorted on, and whether ascending.
+///
+/// Time, descending — newest first, which is the order the prototype writes its
+/// own rows in and therefore the order it means. Unlike the prototype this build
+/// says so, and having said so cannot then paint them in a different one.
+pub const ALARM_OPENING_SORT: (usize, bool) = (1, false);
 
 /// How many value-axis ticks the distribution draws.
 ///
@@ -2061,6 +2387,54 @@ pub enum Population {
     /// say the screen expects exactly those regions to be quiet. When the crate
     /// changes its shape both must move, and the demo is what says so.
     HealthTileParts,
+    /// ★ R1851 — the alarm feed's assembly root: the TABLE itself.
+    AlarmFeed,
+    /// ★ R1851 — the feed's heading strip, which announces as a `row`.
+    ///
+    /// Its own family rather than part of [`AlarmFeed`](Self::AlarmFeed) because
+    /// the two announce as different KINDS, and the census pairs a family with
+    /// one role. WAI-ARIA is what decides it: a `columnheader` is a member of a
+    /// `row`, so a heading strip attached to anything else is a heading of
+    /// nothing — asserted by the structure gate, which refused the first draft
+    /// by name.
+    AlarmHead,
+    /// ★ R1851 — the container that frames the feed's rows.
+    ///
+    /// Separate from [`AlarmFeed`](Self::AlarmFeed) because this one is SILENT
+    /// and those two speak; a family spanning both would have to be split at the
+    /// gate instead of here.
+    AlarmBody,
+    /// ★ R1851 — one per [`ALARM_COLUMNS`] heading, keyed by its visual index.
+    AlarmColumns,
+    /// ★ R1851 — the part of each heading that carries the heading's own word,
+    /// which the section it sits in already announces.
+    AlarmColumnLabels,
+    /// ★★★★★ R1851 — one per alarm row the feed **CONSTRUCTS**, keyed by its
+    /// slot in the window rather than by the alarm it holds.
+    ///
+    /// The first family here whose size is a function of the card's HEIGHT and
+    /// whose membership changes with the SCROLL. Keyed by slot for exactly that
+    /// reason: the set of rows built is a window over [`ALARMS`], so a family
+    /// keyed by alarm would name eighteen regions of which the feed paints
+    /// [`ALARM_ROWS_SHOWN`] — and which eighteen depends on where a reader has
+    /// scrolled to. A slot is a place in the feed and there are always that
+    /// many of them; WHICH alarm is in one is the row's announcement, not its
+    /// address.
+    ///
+    /// ⚠ Like [`HEALTH_TILES_SHOWN`] this is a PINNED number rather than a
+    /// derived one, for that constant's reason: the rule that produces it needs
+    /// the card's pixel height, which lives in the painter and is not reachable
+    /// from a `const` table. The gate is what makes the pin honest.
+    AlarmRows,
+    /// ★★★★★ R1851 — one per CELL of each constructed alarm row.
+    ///
+    /// A `row` owns members of a cell role or it is an empty collection, which
+    /// the structure gate refuses; and a word painted with no tag is a word the
+    /// announcement cannot point at. So the row's three parts are cells, and
+    /// this is their family — the product of [`AlarmRows`](Self::AlarmRows) and
+    /// [`ALARM_COLUMNS`], written as a product rather than a number so a column
+    /// added there moves the census with it.
+    AlarmCells,
     /// ★ One per catalogue entry the first release **reserves** — a predicate
     /// over [`CATALOGUE`] rather than the whole of it, so the gate demands
     /// exactly the nine locked seats and not thirteen.
@@ -2145,6 +2519,17 @@ impl Population {
                 "trail.spark",
                 "trail.spark.line",
             ]),
+            // ★ R1851 — the alarm card's six families answer through one helper.
+            // Not for tidiness: `members` is at this crate's line limit, and a
+            // family added to one card should not have to argue with the size of
+            // a function about six others.
+            Population::AlarmFeed
+            | Population::AlarmHead
+            | Population::AlarmBody
+            | Population::AlarmColumns
+            | Population::AlarmColumnLabels
+            | Population::AlarmRows
+            | Population::AlarmCells => alarm_members(self),
             // The interior bins the ladder's boundaries describe, plus the two
             // unbounded ends `BinEnds::Open` adds.
             Population::LatencyBins => indexes(LATENCY_LADDER.len() + 1),
@@ -2236,6 +2621,62 @@ fn health_tile_parts(parts: &[&str]) -> Vec<String> {
                     .collect::<Vec<_>>()
             })
             .collect()
+    })
+}
+
+/// The members of one of the alarm card's seven families.
+///
+/// ★ Every one of them is a PRODUCT or a range over a declared table — the
+/// headings over [`ALARM_COLUMNS`], the rows over [`ALARM_ROWS_SHOWN`], the cells
+/// over both — written that way rather than as numbers so a column added to the
+/// feed moves the census with it.
+///
+/// # Panics
+///
+/// On a family that is not the alarm card's. Unreachable: the caller is
+/// [`Population::members`]'s own match arm, and adding a family to this card
+/// without adding it here is a non-exhaustive match rather than a run-time
+/// surprise.
+fn alarm_members(family: Population) -> Vec<String> {
+    let cols = ALARM_COLUMNS.len();
+    let named =
+        |parts: Vec<String>| alarm_parts(&parts.iter().map(String::as_str).collect::<Vec<_>>());
+    match family {
+        Population::AlarmFeed => alarm_parts(&["feed"]),
+        Population::AlarmHead => alarm_parts(&["feed.head"]),
+        Population::AlarmBody => alarm_parts(&["feed.body"]),
+        Population::AlarmColumns => {
+            named((0..cols).map(|n| format!("feed.head.col#{n}")).collect())
+        }
+        Population::AlarmColumnLabels => named(
+            (0..cols)
+                .map(|n| format!("feed.head.col_label#{n}"))
+                .collect(),
+        ),
+        Population::AlarmRows => named(
+            (0..ALARM_ROWS_SHOWN)
+                .map(|n| format!("feed.row.{n}"))
+                .collect(),
+        ),
+        Population::AlarmCells => named(
+            (0..ALARM_ROWS_SHOWN)
+                .flat_map(|n| (0..cols).map(move |k| format!("feed.row.{n}.cell.{k}")))
+                .collect(),
+        ),
+        other => unreachable!("{other:?} is not one of the alarm card's families"),
+    }
+}
+
+/// `{card}.{part}` for every named part of the placed alarms card.
+///
+/// The alarm card's peer of [`health_tile_parts`], and separate from it for the
+/// same reason that function is not a general helper: the SHAPE differs. A
+/// health tile's parts hang off a per-tile index; the feed's hang off the
+/// assembly root, and one function taking both would need a parameter saying
+/// which shape it was building.
+fn alarm_parts(parts: &[&str]) -> Vec<String> {
+    card_of("alarms").map_or_else(Vec::new, |id| {
+        parts.iter().map(|part| format!("{id}.{part}")).collect()
     })
 }
 
@@ -2541,6 +2982,55 @@ pub const VOICES: &[VoiceSpec] = &[
         population: Population::One,
         at: Where::At("dashboard"),
     },
+    // --- the alarm feed (R1851) -------------------------------------------
+    //
+    // ★★★★★ The feed and its header strip are GROUPS a reader descends through,
+    // each heading is a `columnheader` that says what its column holds AND
+    // which way it is sorted, and each constructed row announces the whole
+    // alarm. Written here BEFORE the card was drawn rather than after, which is
+    // R1846's lesson: that round built a card and found four voices the
+    // specification had never named, invisible to `cargo test` because a voice
+    // census needs a running screen.
+    // ★★★★★ A TABLE, whose heading strip is a `row` of `columnheader`s and whose
+    // data rows are `row`s of `cell`s. That shape is WAI-ARIA's structural rule
+    // rather than a preference, and the first draft — a `group` holding rows
+    // that held nothing — was refused by the structure gate at eleven nodes:
+    // every `columnheader` stray, every `row` empty. What the rule buys is the
+    // thing this card is FOR: `aria-sort` is a property of a column heading, and
+    // a heading not in a row is a heading of nothing.
+    VoiceSpec {
+        tag: "card.{}",
+        role: "table",
+        population: Population::AlarmFeed,
+        at: Where::At("dashboard"),
+    },
+    VoiceSpec {
+        tag: "card.{}",
+        role: "row",
+        population: Population::AlarmHead,
+        at: Where::At("dashboard"),
+    },
+    VoiceSpec {
+        tag: "card.{}",
+        role: "columnheader",
+        population: Population::AlarmColumns,
+        at: Where::At("dashboard"),
+    },
+    // ★ A row, not a status: this is tabular content a reader moves through,
+    // and the severity is part of what the row SAYS rather than an urgency the
+    // screen asserts. A live region here would interrupt on every scroll.
+    VoiceSpec {
+        tag: "card.{}",
+        role: "row",
+        population: Population::AlarmRows,
+        at: Where::At("dashboard"),
+    },
+    VoiceSpec {
+        tag: "card.{}",
+        role: "cell",
+        population: Population::AlarmCells,
+        at: Where::At("dashboard"),
+    },
     // --- the palette ----------------------------------------------------
     VoiceSpec {
         tag: "shell.palette",
@@ -2680,6 +3170,34 @@ pub const SILENCES: &[(&str, Population, &str, Where)] = &[
         "card.{}",
         Population::HealthTileParts,
         "part_of",
+        Where::At("dashboard"),
+    ),
+    // ★ R1851 — a heading's own word, quiet because the section it sits in
+    // announces it. `pinion_widget_paint::column_header` paints the label as a
+    // pointer-transparent leaf inside its section for exactly that reason, and
+    // this row is the screen saying it expects that region and no other.
+    (
+        "card.{}",
+        Population::AlarmColumnLabels,
+        "name_of",
+        Where::At("dashboard"),
+    ),
+    // The feed's scrolling viewport is a clip, not a thing on the screen — the
+    // same declaration the board's own viewport carries, and made at the site
+    // that paints it (`HeaderFeed::with_viewport_silence`) rather than here.
+    // Two rows because the two regions are addressed differently: the frame is
+    // under the card's id, and the clip answers to a `ScrollState` tag, which is
+    // `&'static` and therefore names the KIND.
+    (
+        "card.{}",
+        Population::AlarmBody,
+        "layout",
+        Where::At("dashboard"),
+    ),
+    (
+        "card.alarms.feed.scroll",
+        Population::One,
+        "layout",
         Where::At("dashboard"),
     ),
     (

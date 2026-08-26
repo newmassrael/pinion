@@ -94,7 +94,7 @@ use std::rc::Rc;
 
 use pinion_a11y::{
     AccessFocus, AccessLive, AccessNode, AccessState, AccessValue, AriaRole, GridCell, GridColumn,
-    GridRow, HasPopup, NavLink, WidgetA11y, grid_table_nodes, navigation_link_nodes,
+    GridRow, HasPopup, NavLink, SortDirection, WidgetA11y, grid_table_nodes, navigation_link_nodes,
     page_region_node,
 };
 use pinion_chart::{
@@ -126,14 +126,19 @@ use pinion_core::widgets::button::ButtonState;
 use pinion_core::widgets::card::{Card, CardAffordance, CardChrome, CardState, Remedy};
 use pinion_core::widgets::chip_group::{Chip, ChipGroup};
 use pinion_core::widgets::destination::{Destinations, Detour, Journey};
+use pinion_core::widgets::grid_sort::grid_sort_str;
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::roving::{Activation, Axis, Ends, Landing, Member, Roving, RovingSpec};
 use pinion_core::widgets::scroll::ScrollState;
+use pinion_core::widgets::severity::SeverityScale;
 use pinion_core::widgets::tile_grid::{
     Carried, Dropped, Maximized, Tile, TileDirection, TileDrag, TileGrid, TileId, TileNudge,
 };
 use pinion_core::widgets::toggle::ToggleState;
 use pinion_core::widgets::transport::{TransportClock, TransportStatus, use_transport_clock};
+use pinion_core::widgets::view_order::{
+    compute_order, cycle_sort, sort_dir_from_str, sort_dir_str,
+};
 use pinion_core::window_level::WindowLevel;
 use pinion_core::{Frame, Scene, WidgetCore};
 // ★★★★★ R1724 — the axis that makes this file an application rather than a
@@ -145,6 +150,7 @@ use pinion_shell::{SizeStrategy, WidgetView, WindowSpec, vello_renderer_impl};
 use pinion_widget_paint::button::{self, ButtonColors, ButtonStyle};
 use pinion_widget_paint::card_header;
 use pinion_widget_paint::chooser;
+use pinion_widget_paint::header_feed::{FeedColumn, HeaderFeed, HeaderFeedStyle};
 use pinion_widget_paint::pages::{PagePointer, view_page_region};
 use pinion_widget_paint::pane::{PanePointer, scroll_pane};
 use pinion_widget_paint::run::text_run;
@@ -278,6 +284,36 @@ const CANVAS_SCROLL: &str = "shell.canvas.body";
 /// controls were painted where no press could reach them — the gate caught it
 /// as a segment that would not change the theme.
 const SETTINGS_SCROLL: &str = "shell.settings.body";
+
+/// ★ R1851 — the words `sort_alarms` takes for a column.
+///
+/// A closed vocabulary, and tied to its definition by a gate rather than by
+/// hand: `r1851_the_declared_vocabularies_are_their_definitions` asserts these
+/// are exactly [`spec::ALARM_COLUMNS`]' headings, lowercased, so a column added
+/// there and not here is a failing test instead of a verb a client cannot reach.
+const ALARM_COLUMN_KEYS: &[&str] = &["severity", "time", "event"];
+
+/// ★ R1851 — the words `sort_alarms` takes for a direction.
+///
+/// The framework's own sort vocabulary plus the word for *unsorted*. Held to
+/// `sort_dir_str` / `sort_dir_from_str` by the same gate: a declaration spelled
+/// differently from what the parser accepts is a client told the wrong thing.
+const ALARM_DIRECTIONS: &[&str] = &["ascending", "descending", "none"];
+
+/// ★ R1851 — the words `filter_alarms` takes.
+///
+/// [`spec::SEVERITY`]'s vocabulary plus the word for *no floor*, which is a
+/// different statement from the least severe level: the two select the same rows
+/// today and stop doing so the moment the scale grows a word below `info`.
+const ALARM_FLOORS: &[&str] = &["all", "info", "warn", "error"];
+
+/// ★ R1851 — the alarm feed's own scrolling viewport.
+///
+/// A card's id carries its index on the board (`alarms#6`) and a `ScrollState`
+/// tag is `&'static`, so this names the KIND rather than the placement. That is
+/// exact rather than convenient: the board places one alarms card, and the gate
+/// that asserts no kind is placed twice is what keeps it exact.
+const ALARM_SCROLL: &str = "card.alarms.feed.scroll";
 
 const FONT_TITLE: u32 = 13;
 const FONT_BODY: u32 = 12;
@@ -814,6 +850,22 @@ struct ShellState {
     /// ★ R1762 — the preferences page's viewport, for the reason the reference
     /// gives its own page one: the groups are taller than the region.
     settings_scroll: Rc<ScrollState>,
+    /// ★ R1851 — the alarm feed's viewport. On the state rather than inside the
+    /// painter for `canvas_scroll`'s reason: the paint, the accessibility walk
+    /// and the wire all read the same offset, and a scroll offset created per
+    /// frame would reset itself on every repaint.
+    alarm_scroll: Rc<ScrollState>,
+    /// ★ R1851 — the order the alarm feed's rows are in, as
+    /// `(column, ascending)`. The header's indicator is DERIVED from this, so
+    /// there is no second place for the direction to live.
+    alarm_sort: Signal<Option<(usize, bool)>>,
+    /// ★ R1851 — the least severity the feed keeps, as a word of
+    /// [`spec::SEVERITY`], or `None` for *all*.
+    ///
+    /// A word rather than a rank because that is what a client writes and what a
+    /// reader is told; the rank is resolved through the scale, which REFUSES a
+    /// word the vocabulary does not hold instead of quietly keeping nothing.
+    alarm_floor: Signal<Option<String>>,
 }
 
 /// ★★★★★ R1724 — **the destinations of this application, and the screens
@@ -1097,6 +1149,9 @@ impl ShellState {
             next_id: RefCell::new(u(spec::BOARD.len())),
             canvas_scroll: Rc::new(ScrollState::with_tag(CANVAS_SCROLL)),
             settings_scroll: Rc::new(ScrollState::with_tag(SETTINGS_SCROLL)),
+            alarm_scroll: Rc::new(ScrollState::with_tag(ALARM_SCROLL)),
+            alarm_sort: Signal::new(Some(spec::ALARM_OPENING_SORT)),
+            alarm_floor: Signal::new(None),
         }
     }
 
@@ -2123,6 +2178,9 @@ enum Hit {
     Stepper(String, &'static str),
     /// R1721 — a saved filter on the filter card, by its index in the row.
     FilterChip(String, usize),
+    /// ★ R1851 — a heading of the alarm feed, by its column index. Pressing it
+    /// cycles that column's order.
+    AlarmColumn(String, usize),
     Remedy(String),
     Card(String),
     FloatRedock(String),
@@ -2475,6 +2533,20 @@ impl Hit {
                     }
                 }
             }
+            // ★★★★★ R1851 — a press on an alarm heading reaches the sort. The
+            // rectangles are the FEED's own placements, asked of the same
+            // builder the painter uses, so a heading drawn where it cannot be
+            // pressed is not a state this card can be in — which is the
+            // measured failure mode of every second copy of a layout on this
+            // screen ([[debt-paint-and-gesture-read-two-facts]]).
+            if kind_of(&id) == "alarms" {
+                let body = body_rect(inside, editing);
+                for (n, at) in alarm_head_rects(body) {
+                    if contains(at, lx, ly) {
+                        return Self::AlarmColumn(id, n);
+                    }
+                }
+            }
             return Self::Card(id);
         }
         Self::Nothing
@@ -2487,6 +2559,7 @@ impl Hit {
             | Self::Card(id)
             | Self::Grip(id)
             | Self::FilterChip(id, _)
+            | Self::AlarmColumn(id, _)
             | Self::Stepper(id, _) => Some(id),
             _ => None,
         }
@@ -2554,6 +2627,7 @@ fn hit_word(hit: &Hit) -> String {
         Hit::Stepper(id, verb) => format!("card.{id}.{verb}"),
         Hit::Remedy(id) => format!("card.{id}.remedy"),
         Hit::FilterChip(id, n) => format!("card.{id}.chip.{n}"),
+        Hit::AlarmColumn(id, n) => format!("card.{id}.feed.head.col#{n}"),
         Hit::Card(id) => format!("card.{id}"),
         Hit::FloatRedock(id) => format!("float.{id}.redock"),
         Hit::FloatClose(id) => format!("float.{id}.close"),
@@ -2694,6 +2768,84 @@ impl ShellOracle {
             .to_string(),
         };
         Some(Ok(IntrospectValue::Text(answer)))
+    }
+
+    /// `sort_alarms` — put the alarm feed in an order, as `<column>:<direction>`.
+    ///
+    /// ★ The order is set here and NOWHERE else derives a direction: the
+    /// header's indicator reads this same value through
+    /// `HeaderFeed::with_sort`, so a client that sorts descending cannot get an
+    /// ascending arrow.
+    fn sort_alarms(state: &Rc<ShellState>, raw: &str) -> Result<IntrospectValue, InvokeError> {
+        let (column, direction) = raw.split_once(':').ok_or_else(|| {
+            InvokeError::rejected(format!(
+                "{raw:?} is not <column>:<direction>; the columns are {} and the \
+                 directions are {}",
+                ALARM_COLUMN_KEYS.join(" / "),
+                ALARM_DIRECTIONS.join(" / ")
+            ))
+        })?;
+        let (column, direction) = (column.trim(), direction.trim());
+        let n = ALARM_COLUMN_KEYS
+            .iter()
+            .position(|known| *known == column)
+            .ok_or_else(|| {
+                InvokeError::rejected(format!(
+                    "{column:?} is not an alarm column; they are {}",
+                    ALARM_COLUMN_KEYS.join(" / ")
+                ))
+            })?;
+        // ★ `none` is the feed's own word and the other two are the framework's,
+        // read through `sort_dir_from_str` rather than matched here — so the verb
+        // accepts exactly what the wire grammar accepts.
+        let sort = match direction {
+            "none" => None,
+            word => Some((
+                n,
+                sort_dir_from_str(word).ok_or_else(|| {
+                    InvokeError::rejected(format!(
+                        "{word:?} is not a direction; they are {}",
+                        ALARM_DIRECTIONS.join(" / ")
+                    ))
+                })?,
+            )),
+        };
+        state.alarm_sort.set(sort);
+        // A new order means the window starts again: keeping the offset would
+        // leave a reader looking at row 12 of an order they have just replaced.
+        state.alarm_scroll.scroll_to(0, 0);
+        state.say(Utterance::done(format!(
+            "alarms sorted by {}",
+            grid_sort_str(sort)
+        )));
+        Ok(IntrospectValue::Text(grid_sort_str(sort)))
+    }
+
+    /// `filter_alarms` — keep only alarms at least this severe.
+    ///
+    /// ★★★★★ The REFUSAL is the point. Measured on the toolkit floor at 6.11.1,
+    /// filtering rows spelled `err` by the word `error` answers *zero of six*
+    /// and says nothing — and the behaviour prototype this build reproduces ships
+    /// exactly that mismatch between its control's words and its rows'. Here the
+    /// word goes through [`spec::SEVERITY`], which refuses one it does not hold
+    /// and names the vocabulary in the refusal.
+    fn filter_alarms(state: &Rc<ShellState>, raw: &str) -> Result<IntrospectValue, InvokeError> {
+        if raw == "all" {
+            state.alarm_floor.set(None);
+            state.alarm_scroll.scroll_to(0, 0);
+            state.say(Utterance::done("alarms show every severity"));
+            return Ok(IntrospectValue::Text("all".to_owned()));
+        }
+        // ⚠ `require` and not `rank().is_some()`: the refusal carries the word
+        // AND the vocabulary, which is what makes it actionable rather than a
+        // second way of saying no.
+        spec::SEVERITY
+            .require(raw)
+            .map_err(|why| InvokeError::rejected(why.to_string()))?;
+        state.alarm_floor.set(Some(raw.to_owned()));
+        state.alarm_scroll.scroll_to(0, 0);
+        state.say(Utterance::done(format!("alarms show {raw} and above")));
+        Ok(IntrospectValue::Text(raw.to_owned()))
     }
 
     /// `act` — perform one header affordance on one card.
@@ -3391,6 +3543,33 @@ const FIELDS: &[SchemaField] = const {
         SchemaField::new("options", "json"),
         SchemaField::new("editing", "bool"),
         SchemaField::new("config_open", "string"),
+        // ★★★★★ R1851 — the alarm feed, whole. Not `alarm_sort` and
+        // `alarm_floor` as two string slots: the order, the threshold and the
+        // rows are one reading, and a client that took them separately could
+        // see a threshold from one frame beside rows from another.
+        SchemaField::new("alarms", "json"),
+        // ★★★★★ R1851 — and the two verbs that move it. Both declare a CLOSED
+        // vocabulary, which is the half the reference cannot state: probed at
+        // 6.11.1, its row filtering is a predicate over a string, so the set of
+        // words that mean anything is whatever the rows happen to be spelled
+        // and a client discovers it by getting zero rows back.
+        SchemaField::action_with(
+            "sort_alarms",
+            "string",
+            ArgForm::Scalar,
+            const {
+                &[
+                    SchemaArg::one_of("column", "string", ALARM_COLUMN_KEYS),
+                    SchemaArg::one_of("direction", "string", ALARM_DIRECTIONS),
+                ]
+            },
+        ),
+        SchemaField::action_with(
+            "filter_alarms",
+            "string",
+            ArgForm::Scalar,
+            const { &[SchemaArg::one_of("severity", "string", ALARM_FLOORS)] },
+        ),
         // the catalogue and the board
         SchemaField::new("catalogue", "string"),
         // ★★ R1735 — what a release would do RIGHT NOW, as the router judged
@@ -3661,6 +3840,9 @@ impl ExternalIntrospect for ShellOracle {
             "drop_standing" => Ok(IntrospectValue::Json(standing_value(
                 &state.standing.borrow(),
             ))),
+            // ★★★★★ R1851 — the alarm feed as data: its vocabulary, its
+            // threshold, its order, the rows it kept and the rows it BUILT.
+            "alarms" => Ok(IntrospectValue::Json(alarms_wire(state))),
             "cards" => text(state.card_ids()),
             "card_count" => Ok(IntrospectValue::Int(i64::from(u(state.cards.get().len())))),
             "placed_count" => Ok(IntrospectValue::Int(i64::from(u(state.placed().len())))),
@@ -3888,6 +4070,8 @@ impl ExternalIntrospect for ShellOracle {
         }
         match path {
             "act" => Self::act(&state, &args),
+            "sort_alarms" => Self::sort_alarms(&state, Self::text(&args)?.trim()),
+            "filter_alarms" => Self::filter_alarms(&state, Self::text(&args)?.trim()),
             "set_state" => Self::set_state(&state, &args),
             "add" => Self::add(&state, &Self::text(&args)?),
             "maximize" => Self::maximize(&state, Self::text(&args)?.trim()),
@@ -4488,6 +4672,24 @@ impl ShellOracle {
             // (there is one: a rule that keeps one on) reaches the person by the
             // same path a success does.
             Hit::FilterChip(id, n) => Self::choose_filter(state, &id, n),
+            // ★ R1851 — the pointer and the wire arrive at ONE function. A
+            // heading press cycles this column's order through
+            // `cycle_sort` — the framework's own three-state cycle
+            // (ascending -> descending -> unsorted) — and then goes through the
+            // same verb a client calls, so the two paths cannot drift.
+            Hit::AlarmColumn(_, n) => {
+                let next = match state.alarm_sort.get() {
+                    Some((col, ascending)) if col == n => cycle_sort(Some(ascending)),
+                    // A press on a different column starts that column's cycle,
+                    // rather than inheriting the direction of the one before it.
+                    _ => Some(true),
+                };
+                let word = ALARM_COLUMN_KEYS.get(n).copied().unwrap_or_default();
+                let order = format!("{word}:{}", sort_dir_str(next));
+                if let Err(why) = Self::sort_alarms(state, &order) {
+                    state.say(Utterance::refused(&why.to_string()));
+                }
+            }
             Hit::FloatRedock(id) => {
                 if let Err(why) = Self::redock(state, &id) {
                     state.say(Utterance::refused(&why));
@@ -6834,6 +7036,11 @@ fn ready_body(state: &ShellState, card: &Card, rect: Rect, palette: Palette) -> 
         "latency" => latency_body(id, rect, palette),
         // ★ R1843 — the sixth, and the first whose tile comes from a crate.
         "health" => health_body(id, rect, palette),
+        // ★★★★★ R1851 — the seventh, and the first COMPOSITION that comes from a
+        // crate: a sortable column header over a virtualised body, which nothing
+        // in this tree had put together before. Every part is the framework's;
+        // the row is this screen's, which is the half a data grid cannot draw.
+        "alarms" => alarms_body(state, id, rect, palette),
         // A kind with no body painter of its own still reads as content rather
         // than as a gap. Reachable only if the catalogue grows a placeable kind
         // before its body does, which is the moment a placeholder is honest.
@@ -8069,6 +8276,470 @@ fn health_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
     )]
 }
 
+// --- The alarm feed (R1851) --------------------------------------------------
+
+/// The severity swatch's width — the stripe the behaviour prototype draws down
+/// a row's leading edge, which is how a reader who is scanning finds the severe
+/// rows without reading a word.
+const ALARM_BAR_W: u32 = 3;
+/// The clearance between the swatch and the first word.
+const ALARM_INSET: u32 = 11;
+
+/// The ink a severity is drawn in.
+///
+/// ★ Role-derived, never a literal, for the reason [`Palette::warn`]'s own
+/// comment gives: a hand-picked amber or red holds its contrast in exactly one
+/// of the two themes.
+///
+/// ⚠ The LEAST severe level recedes rather than taking a saturated ink. The
+/// behaviour prototype paints its `info` rows a strong blue, which competes with
+/// its warnings for a reader's attention; a row that is not an alert should be
+/// present and not the point. This is not this round's invention: measured at
+/// R1851, `hello-log-view` — the same product's other severity surface, written
+/// against the same reference — already resolves its `Info` to its muted text
+/// ink. Two screens, one mapping.
+///
+/// ⚠⚠ Two consumers is not three. The standing rule lifts a MECHANICAL
+/// duplicate at two and defers an OPINIONATED one to the third identical copy,
+/// and a severity-to-ink mapping is a design choice. So this stays here and the
+/// measurement is recorded rather than acted on.
+fn severity_ink(rank: usize, palette: Palette) -> Color {
+    match rank {
+        0 => palette.muted,
+        n if n + 1 >= spec::SEVERITY.len() => palette.refused,
+        _ => palette.warn,
+    }
+}
+
+/// The severity ranks of every alarm, or the refusal naming the first word the
+/// vocabulary does not hold.
+///
+/// ★ This cannot fail today — every word in [`spec::ALARMS`] is in
+/// [`spec::SEVERITY`], and a gate asserts it. It returns a `Result` anyway
+/// because the FLOOR comes off the wire, where a caller can write anything, and
+/// one resolution path for both means a bad word is refused in the same words
+/// wherever it came from.
+fn alarm_ranks() -> Result<Vec<usize>, pinion_core::widgets::severity::UnknownLevel> {
+    spec::SEVERITY.ranks(spec::ALARMS.iter().map(|a| a.severity))
+}
+
+/// The alarms the feed shows, in the order it shows them.
+///
+/// The permutation is [`compute_order`]'s — the framework's 1-D sort/filter SSOT
+/// since R747 — and everything this function adds is the two KEYS and the
+/// threshold. Nothing here sorts.
+fn alarm_order(state: &ShellState) -> Vec<usize> {
+    let Ok(ranks) = alarm_ranks() else {
+        return Vec::new();
+    };
+    // A floor already refused at the boundary cannot be stored, so a word here
+    // that the scale does not hold is impossible rather than merely unlikely —
+    // and if one ever were, `rank` answers `None` and the feed keeps everything,
+    // which is the reading that hides nothing from a person.
+    let floor = state
+        .alarm_floor
+        .get()
+        .and_then(|word| spec::SEVERITY.rank(&word));
+    let Some((column, ascending)) = state.alarm_sort.get() else {
+        // Unsorted: the table's own order, narrowed. Kept as a case rather than
+        // folded into `compute_order` with `None`, because a caller reading this
+        // wants to see that an unsorted feed is still FILTERED.
+        return (0..spec::ALARMS.len())
+            .filter(|&i| SeverityScale::passes(floor, ranks[i]))
+            .collect();
+    };
+    // One key type for three columns, and the unused components are held at a
+    // constant rather than left to vary: a tuple whose earlier component moves
+    // when it should not is a sort by a column nobody asked for.
+    let key = |i: usize| -> (usize, u32, &'static str) {
+        let alarm = &spec::ALARMS[i];
+        match column {
+            // ★ The severity column's key is the RANK and not the word: an
+            // alphabetical order over `error / info / warn` is not an order
+            // anybody means, and it is exactly what a string filter or a string
+            // sort gives you. Ties fall back to the instant, so equal
+            // severities read newest-first inside their band.
+            0 => (ranks[i], alarm.seconds(), ""),
+            // The instant, which is the STORED fact — not the rendered clock
+            // string, whose lexical order is chronological only by luck.
+            1 => (0, alarm.seconds(), ""),
+            // The reading. `compute_order`'s own documented idiom for a 1-D
+            // list is the row's display label as a `&str`.
+            _ => (0, 0, alarm.message),
+        }
+    };
+    compute_order(spec::ALARMS.len(), Some(ascending), key, |i| {
+        SeverityScale::passes(floor, ranks[i])
+    })
+}
+
+/// The feed assembly for a card body of `rect`, configured but not yet built.
+///
+/// ★ ONE constructor, called by the painter, by the accessibility walk and by
+/// the gates. The window a reader is told about has to be the window that was
+/// built, and three call sites configuring their own builder is three chances
+/// for those to differ — which is the defect class this screen has measured most
+/// often.
+fn alarm_feed<'a>(
+    tag: &'a str,
+    rect: Rect,
+    columns: &'a [FeedColumn<'a>],
+    rows: usize,
+) -> HeaderFeed<'a> {
+    HeaderFeed::new(
+        tag,
+        rect,
+        columns,
+        HeaderFeedStyle::new(spec::ALARM_ROW_H)
+            .with_header_text_px(FONT_SMALL)
+            .with_header_height(spec::ALARM_HEAD_H)
+            // ★ Whole rows, and NO overscan — the two go together. A feed in a
+            // fixed box read as a table must not show a half row (its words are
+            // clipped, so it looks present and cannot be read), and with the
+            // body already an exact multiple of the pitch an overscan row would
+            // be a constructed row with nothing visible in it — which every word
+            // census over the paint would correctly report as a row painting
+            // nothing.
+            .with_whole_rows()
+            .with_overscan(0),
+        rows,
+    )
+}
+
+/// The feed's columns at a body width, or `None` when the body cannot hold them.
+///
+/// ★ The stated widths, with the one declared `0` taking what the others leave —
+/// and an ALL-OR-NOTHING floor under that remainder. Below
+/// [`spec::ALARM_EVENT_FLOOR`] the feed draws nothing rather than three clipped
+/// words, the same clamp the health strip and the latency tiles make: an alarm
+/// row's severity, instant and reading are one statement, and two of the three
+/// is a sentence a reader completes wrongly.
+///
+/// ⚠ Measured, not chosen: without the floor the `4 x 1` card shrunk to one cell
+/// laid its columns out past its own body, and the ink gate reported seven marks
+/// outside the box that owns them — a heading overhanging by 21px and five clock
+/// readings by 12px each.
+fn alarm_columns(width: u32) -> Option<Vec<FeedColumn<'static>>> {
+    let stated: u32 = spec::ALARM_COLUMNS.iter().map(|(_, w)| *w).sum();
+    let rest = width.saturating_sub(stated);
+    if rest < spec::ALARM_EVENT_FLOOR {
+        return None;
+    }
+    Some(
+        spec::ALARM_COLUMNS
+            .iter()
+            .map(|(label, w)| FeedColumn::new(label, if *w == 0 { rest } else { *w }))
+            .collect(),
+    )
+}
+
+/// Where each alarm heading is, in the card's own space.
+///
+/// ★★★★★ The PAINT's rectangles, not a second set: the placements come from the
+/// same [`alarm_feed`] builder the painter hands to
+/// `pinion_widget_paint::header_feed`, and the strip's height from the same
+/// style. This screen's most expensive recurring defect is a rectangle computed
+/// twice ([[debt-paint-and-gesture-read-two-facts]]), and a header is exactly
+/// where it bites: a heading drawn at one x and hit-tested at another is a
+/// control that looks pressable and is not.
+fn alarm_head_rects(body: Rect) -> Vec<(usize, Rect)> {
+    // A body too narrow for the columns paints no header, so there is nothing
+    // there to press — the gesture and the paint agree about that too.
+    let Some(columns) = alarm_columns(body.w) else {
+        return Vec::new();
+    };
+    let feed = alarm_feed("card.alarms.feed", body, &columns, 0);
+    feed.placements()
+        .into_iter()
+        .map(|place| {
+            (
+                place.visual,
+                Rect::new(body.x + place.x, body.y, place.size, spec::ALARM_HEAD_H),
+            )
+        })
+        .collect()
+}
+
+/// The alarm card's body: a sortable severity header over a virtualised feed.
+///
+/// ★★★★★ R1851 — the composition, and every part of it comes from a crate.
+/// `pinion_widget_paint::header_feed` assembles the strip and the window,
+/// `pinion_core::widgets::severity` grades the rows and `compute_order` puts them
+/// in order. What this function contributes is the ROW — a swatch, a level, a
+/// clock reading and a message — which is the half a data grid cannot draw and
+/// therefore the half that makes this a feed.
+fn alarms_body(state: &ShellState, id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
+    let Ok(ranks) = alarm_ranks() else {
+        // Unreachable while the gate below holds, and honest if it ever is not:
+        // a feed that cannot grade its own rows says so instead of drawing an
+        // ungraded list.
+        return placeholder_body("alarms", id, rect, palette);
+    };
+    // ★ All or nothing: a body too narrow for the reading column draws no feed
+    // rather than three clipped words. The strip's own words would fit; what
+    // would not is the alarm, and an alarm card showing headings over nothing is
+    // worse than an empty one.
+    let Some(columns) = alarm_columns(rect.w) else {
+        return Vec::new();
+    };
+    let order = alarm_order(state);
+    let tag = format!("card.{id}.feed");
+    let feed = alarm_feed(&tag, rect, &columns, order.len()).with_sort(state.alarm_sort.get());
+    let window = feed.window(state.alarm_scroll.offset_y());
+    vec![feed.build(
+        &state.alarm_scroll,
+        &use_theme(THEME_TAG).theme_animated(),
+        |index, row, places| {
+            let alarm = order
+                .get(index)
+                .map_or(&spec::ALARMS[0], |&n| &spec::ALARMS[n]);
+            let rank = order.get(index).map_or(0, |&n| ranks[n]);
+            let ink = severity_ink(rank, palette);
+            let level = spec::SEVERITY.name(rank).unwrap_or("");
+            let slot = index.saturating_sub(window.first);
+            let line = pinion_core::containment::line_box(FONT_TINY);
+            let top = (row.h.saturating_sub(line)) / 2;
+            // ⚠ Each word sits in ITS OWN column, at the placement the header
+            // used. That is the whole reason `build_row` is handed `places`: a
+            // heading over a word the row put somewhere else is a heading that
+            // names nothing.
+            let cell = |n: usize| {
+                places.get(n).map_or((0, 0), |p| {
+                    (p.x + ALARM_INSET, p.size.saturating_sub(ALARM_INSET * 2))
+                })
+            };
+            // ★★★★★ Each word is a tagged CELL of the row, because that is what
+            // it is: this feed announces as a TABLE, and WAI-ARIA's structural
+            // rule is that a `row` owns members of a cell role. The first draft
+            // put the whole reading on the row and left the words anonymous, and
+            // the structure gate refused it by name — eleven nodes, `row` empty
+            // and `columnheader` stray. Tagged rather than anonymous so the
+            // announcement has something to point AT: an announced tag nothing
+            // paints is a name a reader can be sent to and not find.
+            let words: [(String, Color); 3] = [
+                (level.to_uppercase(), ink),
+                (alarm.clock(), palette.muted),
+                (alarm.message.to_owned(), palette.ink),
+            ];
+            let mut parts = vec![
+                // The prototype's own stripe: three pixels down the row's
+                // leading edge, in the severity's ink. Kept verbatim — it is
+                // what a reader scanning for trouble actually uses, and it is
+                // decoration beside a cell that says the same thing in words.
+                Scene::Container(
+                    ContainerNode::new(Vec::new())
+                        .with_style(BoxStyle::filled(ink).with_corner_radius(2))
+                        .with_layout(absolute(Rect::new(
+                            0,
+                            3,
+                            ALARM_BAR_W,
+                            row.h.saturating_sub(6),
+                        ))),
+                ),
+            ];
+            for (k, (text, fg)) in words.into_iter().enumerate() {
+                let (x, w) = cell(k);
+                parts.push(Scene::Container(
+                    ContainerNode::new(vec![label(&text, Rect::new(0, 0, w, line), FONT_TINY, fg)])
+                        .with_tag(format!("{tag}.row.{slot}.cell.{k}"))
+                        .with_layout(absolute(Rect::new(x, top, w, line))),
+                ));
+            }
+            Scene::Container(
+                ContainerNode::new(parts)
+                    // ★ `row.{slot}` and not `row#{slot}`: the `#` spelling is the
+                    // router's composite-subindex convention (which is why the
+                    // header's cells carry it — the crate emits them), and a feed
+                    // row is not a router target. The dotted spelling is what this
+                    // screen's body-row families are named in, so the gates that
+                    // walk every card's rows walk this card's too.
+                    .with_tag(format!("{tag}.row.{slot}"))
+                    .with_layout(absolute(Rect::new(0, 0, row.w, row.h))),
+            )
+        },
+    )]
+}
+
+/// The alarm feed's live state, as one value a client can read in a round trip.
+///
+/// ★★★★★ §2 #2 — the whole feed as data, which is the axis the reference has no
+/// answer for. Probed on the toolkit floor at 6.11.1: a virtualised tabular view
+/// over ten thousand rows reports ten thousand through its public surface and
+/// publishes NO count of the rows it actually built — asking it which those are
+/// does not compile. Here `built` is the window, `order` is the permutation, and
+/// `vocabulary` is the closed list a client picks a threshold from instead of
+/// guessing at spelling.
+fn alarms_wire(state: &ShellState) -> serde_json::Value {
+    let order = alarm_order(state);
+    let columns = alarm_columns(alarm_body_width(state)).unwrap_or_default();
+    let feed = alarm_feed(
+        "card.alarms.feed",
+        alarm_body_rect(state),
+        &columns,
+        order.len(),
+    )
+    .with_sort(state.alarm_sort.get());
+    let window = feed.window(state.alarm_scroll.offset_y());
+    serde_json::json!({
+        "vocabulary": spec::SEVERITY.levels(),
+        "floor": state.alarm_floor.get(),
+        "sort": grid_sort_str(state.alarm_sort.get()),
+        "total": spec::ALARMS.len(),
+        "shown": order.len(),
+        "in_reference": spec::ALARMS_IN_REFERENCE,
+        // ⚠ The rows the feed CONSTRUCTED, by their place in `order` — which is
+        // the fact the probe above could not get out of the reference at all.
+        "built": (window.first..window.first + window.count).collect::<Vec<_>>(),
+        "rows": order.iter().map(|&n| serde_json::json!({
+            "at": spec::ALARMS[n].clock(),
+            "seconds": spec::ALARMS[n].seconds(),
+            "severity": spec::ALARMS[n].severity,
+            "message": spec::ALARMS[n].message,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+/// The rectangle the alarm card's body occupies, or an empty one when the board
+/// does not hold that card.
+///
+/// One helper because three readers need it and none of them should re-derive
+/// it: the wire, the accessibility walk and the gates.
+fn alarm_body_rect(state: &ShellState) -> Rect {
+    let board = state.board.get();
+    spec::card_of("alarms")
+        .and_then(|id| state.card(&id))
+        .and_then(|card| board.tile(card.id()).map(cell_rect))
+        .map_or(Rect::default(), |cell| body_rect(cell, state.editing.get()))
+}
+
+/// The width of that rectangle.
+fn alarm_body_width(state: &ShellState) -> u32 {
+    alarm_body_rect(state).w
+}
+
+/// The alarm feed, as things an assistive reader can be told.
+///
+/// ⚠ The window is asked of the SAME builder the painter uses
+/// ([`alarm_feed`]), so a reader cannot be told about a row nobody constructed —
+/// which is the exact defect R1843 shipped on the health strip (three tiles
+/// painted, five announced) and R1846 had to repair.
+fn alarms_nodes(state: &ShellState, card: &Card) -> Vec<AccessNode> {
+    let id = card.id().as_str();
+    if state.board.get().tile(card.id()).is_none() {
+        return Vec::new();
+    }
+    let Ok(ranks) = alarm_ranks() else {
+        return Vec::new();
+    };
+    let rect = alarm_body_rect(state);
+    // ⚠ The SAME refusal the painter makes. A card too narrow for the feed paints
+    // nothing, so it announces nothing — a reader told about rows nobody drew is
+    // exactly the defect R1846 had to repair on the health strip.
+    let Some(columns) = alarm_columns(rect.w) else {
+        return Vec::new();
+    };
+    let order = alarm_order(state);
+    let tag = format!("card.{id}.feed");
+    let sort = state.alarm_sort.get();
+    let feed = alarm_feed(&tag, rect, &columns, order.len()).with_sort(sort);
+    let window = feed.window(state.alarm_scroll.offset_y());
+
+    let mut nodes = Vec::new();
+    // ★★★★★ A TABLE, and the row counts are the WHOLE feed rather than the
+    // window.
+    //
+    // This is the half of the composition a virtualised list cannot state on its
+    // own and the reference toolkit has no answer for at all: `aria-rowcount` is
+    // eighteen alarms plus the heading row, and each row carries its
+    // `aria-rowindex` inside that, so a reader is told *row 5 of 19* while four
+    // rows exist in the tree. Probed at 6.11.1, a virtualised tabular view there
+    // reports its MODEL's count and publishes nothing about the rows it built.
+    //
+    // ⚠ The rows hang off the TABLE and not off a node for `{tag}.body`. That
+    // container is the scrolling frame and this screen declares it quiet: a clip
+    // is not a thing on the screen, and announcing it would put a step between a
+    // reader and the rows for no fact gained.
+    let mut table = AccessNode::new(tag.clone(), AriaRole::Table)
+        .with_name(format!(
+            "Alarms, {} of {} shown, {}",
+            order.len(),
+            spec::ALARMS.len(),
+            match state.alarm_floor.get() {
+                Some(word) => format!("{word} and above"),
+                None => "every severity".to_string(),
+            }
+        ))
+        .with_row_count(u(order.len()) + 1)
+        .with_column_count(u(columns.len()));
+    let head_tag = format!("{tag}.head");
+    table = table.with_child(head_tag.clone());
+    // The heading strip IS a row — WAI-ARIA's rule, not a stylistic choice: a
+    // `columnheader` is a member of a `row`, and a heading attached anywhere
+    // else is a heading of nothing.
+    let mut head = AccessNode::new(head_tag, AriaRole::Row)
+        .with_name("Alarm columns")
+        .with_row(0);
+    // ★ Each heading says which way it is sorted, which is the fact a reader
+    // scanning a feed most needs and the one a coloured arrow alone withholds.
+    let mut heads = Vec::new();
+    for (n, column) in columns.iter().enumerate() {
+        let col_tag = format!("{tag}.head.col#{n}");
+        head = head.with_child(col_tag.clone());
+        let node = AccessNode::new(col_tag, AriaRole::ColumnHeader)
+            .with_name(column.label)
+            .with_column(n);
+        heads.push(match sort.filter(|(col, _)| *col == n) {
+            Some((_, ascending)) => node.with_sort(SortDirection::from_ascending(ascending)),
+            None => node,
+        });
+    }
+    let mut rows = Vec::new();
+    let mut cells = Vec::new();
+    for slot in 0..window.count {
+        let Some(&n) = order.get(window.first + slot) else {
+            continue;
+        };
+        let alarm = &spec::ALARMS[n];
+        let level = spec::SEVERITY.name(ranks[n]).unwrap_or("");
+        let row_tag = format!("{tag}.row.{slot}");
+        table = table.with_child(row_tag.clone());
+        let mut row = AccessNode::new(row_tag.clone(), AriaRole::Row)
+            .with_name(format!("{level} at {}", alarm.clock()))
+            // ★ The whole reading on the row as well as in its cells, so a
+            // reader who cannot see the stripe is told the severity in words and
+            // gets the row in one value rather than having to assemble it from
+            // three leaves.
+            .with_value(AccessValue::Text(format!(
+                "{}, {level}, {}",
+                alarm.clock(),
+                alarm.message
+            )))
+            // Where this row is in the WHOLE feed, not in the window — which is
+            // the fact a window otherwise withholds.
+            .with_row(window.first + slot + 1);
+        for (k, word) in [level, &alarm.clock(), alarm.message]
+            .into_iter()
+            .enumerate()
+        {
+            let cell_tag = format!("{row_tag}.cell.{k}");
+            row = row.with_child(cell_tag.clone());
+            cells.push(
+                AccessNode::new(cell_tag, AriaRole::Cell)
+                    .with_name(columns.get(k).map_or("", |c| c.label))
+                    .with_value(AccessValue::Text(word.to_owned()))
+                    .with_column(k),
+            );
+        }
+        rows.push(row);
+    }
+    nodes.push(table);
+    nodes.push(head);
+    nodes.extend(heads);
+    nodes.extend(rows);
+    nodes.extend(cells);
+    nodes
+}
+
 /// The health card's tiles, as things an assistive reader can be told.
 ///
 /// One [`AriaRole::Status`] per tile carrying its reading, under a group — the
@@ -8156,14 +8827,36 @@ const fn remedy_label(remedy: Remedy) -> &'static str {
 
 /// The size-stepper strip layout-edit mode puts on every card.
 fn edit_bar_scene(card_id: &str, bar: Rect, cell: (u32, u32), palette: Palette) -> Scene {
+    // ★★★★★ R1851 — every run in this strip is placed in a box that holds its own
+    // FACE, and before this round not one of them was.
+    //
+    // Measured by a per-card zero gate written for the alarm card: the four
+    // stepper glyphs, the two axis letters and the size reading were all authored
+    // into 14px boxes for faces needing 18 and 20 — seven short runs per card,
+    // in every editing state, at every size. They were invisible because the
+    // screen-wide gate is a RATCHET over a population measured before it existed,
+    // where seven runs of one band sit under the noise; what made them visible
+    // was asking the question of ONE card, where the answer can be zero.
+    //
+    // ⚠ This is what a seventh card would otherwise have COST: seven more short
+    // runs, pushing a ratchet over its budget for a reason that has nothing to do
+    // with the card. The repair takes the count down for all of them.
+    // ⚠ And the stepper's glyph is set one step SMALLER, which is a measurement
+    // rather than a taste. The button is 20px tall with a 1px border, so the box
+    // that owns its ink is 18px (R1672 made containment read the CONTENT box,
+    // because a border is ink the box owns inside itself); a 12px face needs a
+    // 20px line and overhung that content box by a pixel at each end. Either the
+    // button grows or the face gives way, and the button's size is the strip's
+    // own geometry — so the face gives way.
+    let small = pinion_core::containment::line_box(FONT_SMALL);
     let mut children = Vec::new();
     for (n, (verb, glyph)) in STEPPERS.iter().enumerate() {
         let slot = stepper_rect(bar, u(n));
         children.push(Scene::Container(
             ContainerNode::new(vec![label(
                 glyph,
-                Rect::new(6, 2, 14, 14),
-                FONT_BODY,
+                Rect::new(6, slot.h.saturating_sub(small) / 2, 14, small),
+                FONT_SMALL,
                 palette.ink,
             )])
             .with_tag(format!("card.{card_id}.{verb}"))
@@ -8180,21 +8873,22 @@ fn edit_bar_scene(card_id: &str, bar: Rect, cell: (u32, u32), palette: Palette) 
             ))),
         ));
     }
+    let axis_y = (bar.h.saturating_sub(small)) / 2;
     children.push(label(
         "W",
-        Rect::new(58, 6, 12, 14),
+        Rect::new(58, axis_y, 12, small),
         FONT_SMALL,
         palette.muted,
     ));
     children.push(label(
         "H",
-        Rect::new(136, 6, 12, 14),
+        Rect::new(136, axis_y, 12, small),
         FONT_SMALL,
         palette.muted,
     ));
     children.push(label(
         &format!("{}\u{00D7}{}", cell.0, cell.1),
-        Rect::new(bar.w.saturating_sub(48), 6, 40, 14),
+        Rect::new(bar.w.saturating_sub(48), axis_y, 40, small),
         FONT_SMALL,
         palette.accent_fg,
     ));
@@ -10466,6 +11160,7 @@ fn card_nodes(state: &Rc<ShellState>, card: &Card) -> Vec<AccessNode> {
         Some("filter") => filter_nodes(state, id),
         Some("latency") => latency_nodes(id),
         Some("health") => health_nodes(state, card),
+        Some("alarms") => alarms_nodes(state, card),
         _ => Vec::new(),
     };
     for node in &body {

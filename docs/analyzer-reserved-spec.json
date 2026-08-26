@@ -77,7 +77,8 @@
   ],
   "built": [
     { "requirement": 19, "seat": "latency", "$note": "Built as a placed dashboard card at R1797." },
-    { "requirement": 18, "seat": "health", "$note": "Built as a placed dashboard card at R1843. The reference places this seat on its DEFAULT board and in four presets, and its catalogue entry for the seat names a sparkline no other widget of that catalogue has. The rail's `sessions` seat cites the same requirement and stays locked, which is why 18 remains in `deferred`." }
+    { "requirement": 18, "seat": "health", "$note": "Built as a placed dashboard card at R1843. The reference places this seat on its DEFAULT board and in four presets, and its catalogue entry for the seat names a sparkline no other widget of that catalogue has. The rail's `sessions` seat cites the same requirement and stays locked, which is why 18 remains in `deferred`." },
+    { "requirement": 21, "seat": "alarms", "$note": "Built as a placed dashboard card at R1851, on the R1797 / R1843 pattern. The evidence is the reference's own board rather than a preference: it places this seat by default, three of its four built-in presets place it, and its catalogue entry declares the 4x2 footprint this board gives it. What the seat was waiting for was a framework that could draw the thing — a feed is a virtualised list under a sortable column header, and measured the same round nothing in this tree composed those two: counted by file, the virtualised list family had 27 consumers and the column header three, of which one is a screenshot harness and one a shell test - so exactly one screen had ever drawn a column header. The only surface holding both was the data grid, where every row is a row of cells and a severity swatch beside a graded word is not. `pinion_widget_paint::header_feed` is that composition and `pinion_core::widgets::severity` is the ordered vocabulary its threshold reads." }
   ],
 
   "$owed_comment": [
