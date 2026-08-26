@@ -158,7 +158,14 @@
       { "ordinal": 6, "key": "revision", "title": "1" },
       { "ordinal": 7, "key": "delivery", "title": "on" }
     ],
-    "owed": []
+    "owed": [
+      {
+        "key": "session",
+        "sentence": "`session` is specified as \"negotiated · session n1 <-> r1\" and reads \"negotiated · session n1 <-> r1 · 5 of 16 rows\"",
+        "since": "R1852",
+        "why": "A second-pass improvement, kept deliberately, and the reason is a measurement of the reference's own strip. It states a premise — these values were negotiated for THIS session, and nothing below is interpretable without them — and says nothing about how far the premise reaches. Measured over this capture's own hops at R1852: it shows eight endpoints across nine directions and seven conversations, and the session named here is one of the seven, so eleven of the sixteen rows below are being read against premises that are not theirs. Every ingredient was already in `RowSpec` — each row has said who sent and who received since the screen was written — and `hop` was read only to be painted and to pair a reply with its request. So the reference is not wrong here; it is silent, and the silence is the kind that reads as coverage. The WORDS are the reach and nothing else, because two gates refused the alternatives by name: a second run saying whether the premise covers the selected row pushed the last negotiated value 14px past the panel that owns it, and the same run reading a different sentence on such a row cannot be a declared remainder at all, since a remainder is one sentence. So whether the premise covers THIS row is carried by the run's INK — and by the accessibility value in words, because colour alone would be the wrong way to say it. Which hop the row is stays in that value and in the `topology` slot, where there is room for it. This is the same class R1845 closed for the extension marker — a fact shown with no premise — seen from the premise's side."
+      }
+    ]
   },
   "list_columns": {
     "$comment": [

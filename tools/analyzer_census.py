@@ -420,7 +420,15 @@ def check_assemblies(rows: list[dict], exists) -> list[str]:
 #: empty — and an empty allowlist is the one that cannot rot.
 UNASSEMBLED: frozenset[str] = frozenset(
     {
-        "capture.t2.14",
+        # `capture.t2.14` was here and is REPAID at R1852 — the capture builds a
+        # topology out of the hops it has always carried, and the entry
+        # re-measurement found the row's own `rests_on` pointing at the wrong
+        # half: `observe` records traffic between sockets that ALREADY EXIST, so
+        # it presupposes the drawing a capture does not have.
+        # `pinion_node_graph::SightedTopology` is that missing half, shaped by
+        # what a sightings-only graph may not say — `not seen` is not `no such
+        # link`, an isolated endpoint is not expressible, and the standing is
+        # never certain.
         # `capture.t2.18` was here and is REPAID at R1845 — the capture derives
         # its own protocol violations, against a watermark rather than an
         # adjacent difference, and the reassembly strip's lanes are the same

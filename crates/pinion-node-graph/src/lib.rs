@@ -231,6 +231,7 @@ mod partition;
 mod relink;
 mod run;
 mod select;
+mod sighted;
 mod swap;
 #[cfg(test)]
 mod tests;
@@ -273,6 +274,7 @@ pub use partition::{PortChange, RepartitionError, Repartitioned, Sharing};
 pub use relink::{RelinkError, Relinked};
 pub use run::{Run, RunError, Step, Stop};
 pub use select::{Grow, Grown, Reach, SelectError};
+pub use sighted::{Sighted, SightedTopology, Sighting, Vantage};
 pub use swap::{Carried, Swapped};
 pub use view::{Camera, Fit, Fitted, Margin, ZoomRange};
 

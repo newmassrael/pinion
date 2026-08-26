@@ -2014,7 +2014,7 @@ fn view(field: (TextFieldState, u32), _frame: Frame) -> Scene {
                 vec![
                     app_bar(&state, ink),
                     filter_bar(&state, field, &theme, ink),
-                    context_strip(ink),
+                    context_strip(&state, ink),
                     list_pane(&state, ink),
                     tree_pane(&state, ink),
                     bytes_pane(&state, ink),
@@ -2269,16 +2269,53 @@ fn run_box(text: &str, x: u32, y: u32) -> Rect {
     Rect::new(x, y, run_width(text), 14)
 }
 
-fn context_strip(ink: Ink) -> Scene {
+fn context_strip(state: &Rc<ViewState>, ink: Ink) -> Scene {
     let rect = context_rect();
-    let session = format!("negotiated · session {}", spec::SESSION);
+    // ★★★★★ R1852 — the premise now says HOW FAR IT REACHES.
+    //
+    // The reference keeps this strip on screen at all times because the decode
+    // below it is not interpretable without these values, and it names the
+    // session they were negotiated for. What it does not say — and what this
+    // capture's own hops answer — is that the session it names is ONE of the
+    // conversations the table shows, so most rows below are being read against
+    // a premise that is not theirs.
+    //
+    // Derived, never stored: `spec::rows_in_session` counts the hops, so a
+    // capture that gains a row moves this sentence with it.
+    //
+    // ★★★★★ ONE RUN, ONE SENTENCE, AND TWO INKS — and every part of that is a
+    // gate's answer rather than a preference. Two attempts were refused by name:
+    //
+    //  * a SECOND run saying whether the premise covers the selected row. The
+    //    ink gate refused it — the strip is a fixed band that the session plus
+    //    six negotiated values already fill, so the extra run pushed the last
+    //    value 14px past the panel that owns it.
+    //  * the SAME run with a different sentence on such a row. The conformance
+    //    gate refused that — a declared remainder is one sentence the run must
+    //    read, and a run that reads two cannot be declared once.
+    //
+    // ⇒ the WORDS are the reach, which is true of the capture whatever row is
+    // selected, and whether the premise covers THIS row is carried by the ink.
+    // Colour alone would be the wrong way to say it, which is why the
+    // accessibility value below says it in words: the pair is the rule, not the
+    // colour.
+    let covered = spec::row_in_session(state.row.get());
+    let session = format!(
+        "negotiated · session {} · {} of {} rows",
+        spec::SESSION,
+        spec::rows_in_session(),
+        spec::ROWS.len(),
+    );
     let session_box = run_box(&session, PAD, 12);
     let mut children = vec![tagged_label(
         "pv.context.session",
         session.clone(),
         session_box,
         FONT_SMALL,
-        ink.text_3,
+        // `warn` is this screen's role for *present and not to be trusted as it
+        // stands*, which is exactly what a decode read against another session's
+        // premises is.
+        if covered { ink.text_3 } else { ink.warn },
     )];
     let mut x = session_box.x + session_box.w + 24;
     for value in spec::CONTEXT {
@@ -3099,6 +3136,14 @@ impl ExternalIntrospect for ViewOracle {
                     // that happens to contain them.
                     SchemaField::new("violations", "json"),
                     SchemaField::new("violation_kinds", "string"),
+                    // ★★★★★ R1852 — the topology built from the hops, and the
+                    // two closed vocabularies its answers are drawn from. The
+                    // vocabularies are their own slot rather than repeated
+                    // inside every row: a client enumerates what an answer can
+                    // BE once, instead of discovering the words from whichever
+                    // sample this capture happens to be.
+                    SchemaField::new("topology", "json"),
+                    SchemaField::new("topology_vocabulary", "json"),
                     // ★★★★★ R1747 — how much of the capture viewer's written
                     // specification this build is showing, published beside the
                     // screen's own table. `json` rather than the `string` some
@@ -3270,6 +3315,18 @@ impl ExternalIntrospect for ViewOracle {
             // `RowSpec` and nothing had asked.
             "violations" => Ok(IntrospectValue::Json(violations_json())),
             "violation_kinds" => Ok(IntrospectValue::Text(spec::VIOLATION_KINDS.join(","))),
+            // ★★★★★ R1852 — the topology this capture SHOWS, with no management
+            // API asked. `pinion_node_graph::SightedTopology` builds it from the
+            // hops and the whole answer is on the wire rather than in a picture,
+            // because §2 #7 is that a scene is queryable as text and because a
+            // topology map is a later release's widget while this capability is
+            // not.
+            //
+            // ⚠ Both arms answer through one helper because clippy's line limit
+            // named a real thing: this `query` is at the limit, and a slot added
+            // here should not have to argue with the size of a function about
+            // every other slot. The lint's repair is the split, not an allow.
+            "topology" | "topology_vocabulary" => Ok(IntrospectValue::Json(topology_slot(path))),
             "selected_row" => Ok(IntrospectValue::Int(
                 i64::try_from(state.row.get()).unwrap_or(i64::MAX),
             )),
@@ -3543,6 +3600,70 @@ impl ExternalIntrospect for ViewOracle {
 /// were part of the routing, and the arm's twelve lines took the method past
 /// `clippy::too_many_lines`. The lint named a real thing — the two jobs had run
 /// together — so the repair is the split and not an allow.
+/// Either topology slot's answer, by path.
+///
+/// The vocabularies are their OWN slot rather than repeated inside every row: a
+/// client enumerates what an answer can BE once, instead of discovering the words
+/// from whichever sample this capture happens to be.
+fn topology_slot(path: &str) -> serde_json::Value {
+    if path == "topology_vocabulary" {
+        return serde_json::json!({
+            "vantage": pinion_node_graph::Vantage::WIRE_NAMES,
+            "sighted": pinion_node_graph::Sighted::WIRE_NAMES,
+        });
+    }
+    topology_json()
+}
+
+/// The topology this capture shows, as one value a client reads in a round trip.
+///
+/// ★★★★★ R1852 — §2 #7, on the axis the reference has no answer for. Every
+/// endpoint carries its VANTAGE and every direction its SIGHTED verdict, and the
+/// second is three-valued on purpose: `seen`, `not_seen` between two endpoints
+/// this capture knows, and `unknown` for a name it never mentioned. Probed
+/// against the toolkit floor at 6.11.1, a tabular model's cell accessor answers
+/// one empty value for *nothing here* and for *nothing known here*, so a client
+/// there cannot tell the two apart at all.
+///
+/// `standing` is `partial` by construction and says so with its reason: nothing
+/// drawn accounts for any of these directions, because there is no drawing.
+fn topology_json() -> serde_json::Value {
+    let seen = spec::sighted_topology();
+    let (a, b) = spec::session_endpoints();
+    serde_json::json!({
+        "endpoints": seen.endpoints().iter().map(|name| serde_json::json!({
+            "name": name,
+            "vantage": seen.vantage(name).map(pinion_node_graph::Vantage::name),
+            "sends_to": seen.degree(name).map(|(out, _)| out),
+            "hears_from": seen.degree(name).map(|(_, into)| into),
+            "peers": seen.peers(name),
+        })).collect::<Vec<_>>(),
+        "edges": seen.edges().map(|(from, to, times)| serde_json::json!({
+            "from": from, "to": to, "times": times,
+        })).collect::<Vec<_>>(),
+        "conversations": seen.conversations().iter().map(|(x, y)| serde_json::json!({
+            "a": x, "b": y,
+        })).collect::<Vec<_>>(),
+        "sightings": seen.sightings(),
+        "standing": seen.standing().name(),
+        "why_partial": seen.standing().to_string(),
+        // ★ THE PREMISE AND ITS REACH, which is what made this worth building:
+        // the strip states a negotiated context and this says how much of the
+        // table that context is about.
+        "negotiated_session": { "a": a, "b": b },
+        "negotiated_is_one_of": seen.conversations().len(),
+        "rows_in_session": spec::rows_in_session(),
+        "rows": spec::ROWS.len(),
+        // ⚠ And the three-valued answer, exercised on the wire rather than only
+        // described: the reverse of a seen direction, and a name no hop holds.
+        "probe": {
+            "seen": seen.sighted(a, b).name(),
+            "reverse": seen.sighted(b, a).name(),
+            "stranger": seen.sighted("no-such-endpoint", b).name(),
+        },
+    })
+}
+
 fn violations_json() -> serde_json::Value {
     serde_json::Value::Array(
         spec::violations()
@@ -3848,7 +3969,7 @@ impl WidgetA11y for PacketView {
         let state = use_view_state();
         let mut nodes = app_bar_nodes(&state);
         nodes.extend(filter_nodes(&state));
-        nodes.extend(context_nodes());
+        nodes.extend(context_nodes(&state));
         nodes.extend(list_nodes(&state));
         nodes.extend(tree_nodes(&state));
         nodes.extend(bytes_nodes(&state));
@@ -3970,11 +4091,40 @@ fn filter_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
 
 /// The negotiated session context: six values the decode is only interpretable
 /// against, each announced as what it is and what it was negotiated to.
-fn context_nodes() -> Vec<AccessNode> {
+fn context_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
     let mut group = AccessNode::new("pv.context", AriaRole::Group)
         .with_name("Session context")
         .with_child("pv.context.session");
-    let mut nodes = vec![AccessNode::new("pv.context.session", AriaRole::Status)];
+    // ★★★★★ R1852 — the session run says its own REACH, and when the selected
+    // row is outside it, WHICH hop that row is.
+    //
+    // The paint says *not this row* and stops there because the strip is a fixed
+    // band; a reader who cannot see it is under no such constraint, so this is
+    // where the hop goes. Same predicate as the paint, so the two cannot
+    // disagree about whether the premise applies — only about how much room they
+    // have to say it in.
+    let covered = spec::row_in_session(state.row.get());
+    let hop = spec::ROWS.get(state.row.get()).map_or("", |row| row.hop);
+    let mut nodes = vec![
+        AccessNode::new("pv.context.session", AriaRole::Status)
+            .with_name("Negotiated session")
+            .with_value(AccessValue::Text(if covered {
+                format!(
+                    "{}, covering {} of {} rows, including this one",
+                    spec::SESSION,
+                    spec::rows_in_session(),
+                    spec::ROWS.len(),
+                )
+            } else {
+                format!(
+                    "{}, covering {} of {} rows — the selected row is {hop}, so these \
+                     values were not negotiated for it",
+                    spec::SESSION,
+                    spec::rows_in_session(),
+                    spec::ROWS.len(),
+                )
+            })),
+    ];
     for value in spec::CONTEXT {
         let tag = format!("pv.context.{}", value.key.replace(' ', "_"));
         group = group.with_child(tag.clone());

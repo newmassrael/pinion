@@ -2255,3 +2255,193 @@ fn r1778_what_this_screen_says_leaves_the_frame_it_was_on() {
         );
     });
 }
+
+// ── R1852: the premise, and how far it reaches ──────────────────────────────
+
+use pinion_node_graph::Sighted;
+
+/// The ink of the first run painted under `tag`, or `None` when nothing is.
+fn run_ink(scene: &Scene, tag: &str) -> Option<pinion_core::style::Color> {
+    let mut found = None;
+    scene.for_each_node(&mut |visit| {
+        if found.is_some() {
+            return;
+        }
+        let Scene::Text(text) = visit.node else {
+            return;
+        };
+        // ⚠ The tag can be on the run ITSELF — `tagged_label` puts it there —
+        // or on the nearest tagged ancestor when the run is anonymous. Asking
+        // only about ancestors finds nothing for the first shape, which is what
+        // this gate's first run reported.
+        let owned_by_tag = text.tag.as_deref() == Some(tag)
+            || visit.ancestors.iter().rev().find_map(|node| node.tag()) == Some(tag);
+        if owned_by_tag {
+            found = Some(text.style.fg_color);
+        }
+    });
+    found
+}
+
+/// ★★★★★ R1852 — **the strip says how far its own premise reaches, and its ink
+/// says whether the premise covers the row a reader is on.**
+///
+/// The reference keeps this strip on screen at all times because the decode below
+/// it is not interpretable without these values, and it names the session they
+/// were negotiated for — and says nothing about how much of the table that
+/// session is. Measured over this capture's own hops at R1852: eight endpoints,
+/// nine directions, seven conversations, and the named session is one of the
+/// seven. So most rows below are read against premises that are not theirs, which
+/// is R1845's *a fact with no premise* seen from the premise's side.
+///
+/// Two things are asserted and the second is why this is a gate rather than a
+/// comment: the words are the reach, derived from the rows rather than written
+/// down — and the INK follows the selected row. A colour nothing asserts is a
+/// colour nothing exercises, and this sweep reaches both answers because two of
+/// its states select a row outside the negotiated session.
+///
+/// ```text
+/// cargo test -p hello-packet-view r1852_the_premise -- --nocapture
+/// ```
+#[test]
+fn r1852_the_premise_says_its_reach_and_its_ink_says_whether_it_covers_this_row() {
+    let reach = spec::rows_in_session();
+    let wanted = format!(
+        "negotiated · session {} · {reach} of {} rows",
+        spec::SESSION,
+        spec::ROWS.len()
+    );
+    println!("the premise covers {reach} of {} rows", spec::ROWS.len());
+    assert!(
+        reach > 0 && reach < spec::ROWS.len(),
+        "★ a reach of none or of all would make this gate vacuous: {reach} of {}",
+        spec::ROWS.len()
+    );
+
+    // Both answers must be REACHED by the sweep, or the ink rule is a guard
+    // nothing exercises.
+    let mut seen_covered = 0usize;
+    let mut seen_outside = 0usize;
+    sweep(|state, shot, scene, _, case| {
+        // ⚠ Matched by CONTENT and not by owner. `tagged_label` puts the tag on
+        // the text node itself, and `Painted::of` reads a run's owner as its
+        // nearest tagged ANCESTOR — so every run of this strip answers to
+        // `pv.context`, and filtering by the run's own tag finds nothing. R1851
+        // hit the mirror image of this on the other screen.
+        let said: Vec<&String> = shot
+            .runs
+            .iter()
+            .map(|(text, _, _)| text)
+            .filter(|text| text.starts_with("negotiated · session"))
+            .collect();
+        assert_eq!(
+            said,
+            vec![&wanted],
+            "{case}: the session run says its reach, derived from the rows"
+        );
+
+        let covered = spec::row_in_session(state.row.get());
+        let ink = run_ink(scene, "pv.context.session")
+            .unwrap_or_else(|| panic!("{case}: the session run is painted"));
+        let theme = pinion_core::theme::Theme::default();
+        let warn = theme.resolve(pinion_core::theme::ColorRole::Warning);
+        if covered {
+            seen_covered += 1;
+            assert_ne!(
+                ink,
+                warn,
+                "{case}: the premise covers row {} and the strip warns anyway",
+                state.row.get()
+            );
+        } else {
+            seen_outside += 1;
+            assert_eq!(
+                ink,
+                warn,
+                "{case}: row {} is {} and the strip does not say so",
+                state.row.get(),
+                spec::ROWS[state.row.get()].hop,
+            );
+        }
+    });
+    println!("{seen_covered} case(s) inside the session, {seen_outside} outside");
+    assert!(seen_covered > 0, "no swept state selects a covered row");
+    assert!(
+        seen_outside > 0,
+        "★ no swept state selects a row outside the negotiated session, so the \
+         ink rule is a guard nothing exercises — which this project refuses"
+    );
+}
+
+/// ★★★★★ R1852 — **the topology this capture shows, built from its own hops and
+/// nothing else**, and the three answers a direction can have.
+///
+/// The framework half is `pinion_node_graph::SightedTopology`; this holds the
+/// screen's use of it to the capture. Every figure is derived, so a capture that
+/// gains a row moves them all.
+#[test]
+fn r1852_the_capture_builds_a_topology_from_its_own_hops() {
+    let seen = spec::sighted_topology();
+    println!(
+        "{} endpoint(s), {} direction(s), {} conversation(s), {} sighting(s)",
+        seen.len(),
+        seen.edges().count(),
+        seen.conversations().len(),
+        seen.sightings(),
+    );
+    assert_eq!(seen.sightings(), spec::ROWS.len(), "every row is one hop");
+    assert!(
+        seen.len() > 2,
+        "a capture of one conversation would be vacuous"
+    );
+
+    // ★ The premise names ONE of the conversations, which is the finding.
+    let (a, b) = spec::session_endpoints();
+    assert!(
+        seen.converse(a, b),
+        "the negotiated session must be a conversation this capture shows"
+    );
+    assert!(
+        seen.conversations().len() > 1,
+        "★ if the capture held one conversation the strip could not be silent \
+         about its reach — the finding is that it holds {}",
+        seen.conversations().len()
+    );
+
+    // ★★★★★ THE THREE ANSWERS, on the capture rather than on a fixture.
+    assert!(matches!(seen.sighted(a, b), Sighted::Seen(n) if n > 0));
+    // A direction between two KNOWN endpoints that no row shows. Not a claim
+    // that the link does not exist — every hop in this capture runs toward the
+    // hub, so most reverse directions were simply not seen.
+    let unseen = seen
+        .endpoints()
+        .iter()
+        .find(|name| name.as_str() != b && seen.sighted(b, name).name() == "not_seen")
+        .expect("a hub that answers some peers and not others");
+    assert_eq!(seen.sighted(b, unseen), Sighted::NotSeen);
+    // And a name no hop holds.
+    assert_eq!(seen.sighted("no-such-endpoint", b), Sighted::Unknown);
+    assert_ne!(
+        seen.sighted(b, unseen),
+        seen.sighted("no-such-endpoint", b),
+        "★ *not seen* and *never heard of* must be different answers"
+    );
+
+    // The hub is the endpoint every other one was seen sending to, and its
+    // vantage says both — derived, not named here.
+    let hub = seen
+        .endpoints()
+        .iter()
+        .max_by_key(|name| seen.degree(name).map_or(0, |(_, into)| into))
+        .expect("the capture is not empty");
+    assert_eq!(hub.as_str(), b, "the negotiated session's second endpoint");
+    assert_eq!(seen.vantage(hub), Some(pinion_node_graph::Vantage::Both));
+
+    // ★ And the standing is partial, always. With no management API this is not
+    // a switch — it is what a topology assembled from traffic IS.
+    assert!(
+        !seen.standing().is_certain(),
+        "a topology built from sightings can never be certain: {}",
+        seen.standing()
+    );
+}

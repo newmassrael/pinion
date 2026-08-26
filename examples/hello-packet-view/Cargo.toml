@@ -35,6 +35,16 @@ pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.
 pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
 # R1537 §5.16 — the emitted renderer owns its wgpu device through pinion-gpu.
 pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
+# ★★★★★ R1852 — `pinion_node_graph::SightedTopology`, which builds a topology
+# out of the hops this capture already carries and NOTHING else.
+#
+# A capture-viewer depending on the node-graph crate reads oddly and is the
+# right home twice over. The type reuses `Standing`, the vocabulary R1645 gave
+# to "is this drawing the topology, or only a drawing" — and a second copy of
+# that word is how two crates come to disagree about what `partial` means. And
+# the census row this closes (`capture.t2.14`) names that crate itself as the
+# substrate it rests on, so the dependency is the row's own claim made real.
+pinion-node-graph = { path = "../../crates/pinion-node-graph", version = "0.0.1" }
 vello = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

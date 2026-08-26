@@ -18,6 +18,7 @@
 //! reproduced, and those are what this table holds.
 
 use pinion_core::widgets::chip_group::Choice;
+use pinion_node_graph::{SightedTopology, Sighting};
 
 /// One pane of the shell, and the width the reference gives it.
 pub struct PaneSpec {
@@ -277,6 +278,85 @@ pub const CONTEXT: &[ContextValue] = &[
 
 /// The session the context was negotiated for.
 pub const SESSION: &str = "n1 <-> r1";
+
+/// How the two endpoints of a session are written when neither direction is
+/// meant — the reference's own spelling in [`SESSION`].
+pub const SESSION_SEP: &str = " <-> ";
+
+// ── R1852: the topology this capture SHOWS, built from its own hops ─────────
+
+/// The topology this capture shows, built from its own hops and nothing else.
+///
+/// ★★★★★ THE MEASUREMENT THAT MADE THIS WORTH BUILDING, and it is about the
+/// strip above rather than about any missing widget.
+///
+/// [`CONTEXT`] holds the values the decoder was **given**, and the reference
+/// keeps them on screen at all times precisely because nothing below them is
+/// interpretable without them. [`SESSION`] says which session they were
+/// negotiated for. Measured over [`ROWS`] at R1852: this capture's hops mention
+/// **eight** endpoints across **nine** directions and **seven** conversations,
+/// and `SESSION` names exactly one of those seven. So the strip states a premise
+/// and the table below it shows rows the premise does not cover — a fact with no
+/// premise, which is the class R1845 closed for the extension marker and this
+/// closes for the negotiated context.
+///
+/// Nothing was missing to notice it: every hop has said who sent and who
+/// received since the screen was written, and `hop` was read only to be PAINTED
+/// and to pair a reply with its request. The ingredients were there and nothing
+/// asked.
+///
+/// ⚠ Built rather than stored, and rebuilt per call. The alternative is a cached
+/// graph beside the rows, which is a second account of the same fact — and this
+/// capture is sixteen rows, so the pass is not worth a cache that could drift.
+#[must_use]
+pub fn sighted_topology() -> SightedTopology {
+    SightedTopology::from_sightings(ROWS.iter().map(|row| {
+        let (from, to) = row.hop.split_once(HOP_SEP).unwrap_or((row.hop, row.hop));
+        Sighting::new(from, to)
+    }))
+}
+
+/// The two endpoints [`SESSION`] names, in the order it writes them.
+///
+/// A `Result`-free split with a stated fallback: a session written without the
+/// separator is one endpoint talking to itself, which is a shape a capture can
+/// have. The gate below holds `SESSION` to naming endpoints this capture
+/// actually shows, which is the check that matters.
+#[must_use]
+pub fn session_endpoints() -> (&'static str, &'static str) {
+    SESSION
+        .split_once(SESSION_SEP)
+        .unwrap_or((SESSION, SESSION))
+}
+
+/// How many of [`ROWS`] belong to the session [`CONTEXT`] was negotiated for.
+///
+/// ★ The premise's REACH. A row belongs to that session when its hop runs
+/// between those two endpoints either way — a session is a conversation and not
+/// a direction, which is why [`SESSION`] is written with `<->`.
+#[must_use]
+pub fn rows_in_session() -> usize {
+    let (a, b) = session_endpoints();
+    ROWS.iter()
+        .filter(|row| {
+            let (from, to) = row.hop.split_once(HOP_SEP).unwrap_or((row.hop, row.hop));
+            (from == a && to == b) || (from == b && to == a)
+        })
+        .count()
+}
+
+/// Whether the row at `n` is one the negotiated context covers.
+///
+/// The per-row form of [`rows_in_session`], for the strip that says so about the
+/// row a reader has selected.
+#[must_use]
+pub fn row_in_session(n: usize) -> bool {
+    let (a, b) = session_endpoints();
+    ROWS.get(n).is_some_and(|row| {
+        let (from, to) = row.hop.split_once(HOP_SEP).unwrap_or((row.hop, row.hop));
+        (from == a && to == b) || (from == b && to == a)
+    })
+}
 
 // ── The message list ───────────────────────────────────────────────────────
 

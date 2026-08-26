@@ -4316,6 +4316,92 @@ fn r1851_the_declared_vocabularies_are_their_definitions() {
     );
 }
 
+/// ★★★★★ R1852 — **the capture section this application mounts builds a topology
+/// out of its own hops, and the walk reaches it.**
+///
+/// Rule (7)'s form: the capability is not a separate binary's — it is a section
+/// of THIS application, reached over the same walk every other section is, and
+/// the derivation it publishes is asserted from here rather than from the
+/// standalone screen's own suite. Screen B is mounted through
+/// `pinion_screen::Mount<PacketView>`, so *the shell can reach it* and *the
+/// capture derives a topology* are two claims and this holds both.
+///
+/// ⚠ Asserted from what the section PAINTS and nothing else. The shell mounts
+/// that screen; it does not read its specification module, and it must not — a
+/// host reaching into a mounted screen's internals is a host that can pass while
+/// the screen it hosts is broken. So the numbers come out of the painted run,
+/// which is the same surface a reader has.
+///
+/// ```text
+/// cargo test -p hello-analyzer-shell r1852_the_walk -- --nocapture
+/// ```
+#[test]
+fn r1852_the_walk_reaches_a_topology_built_from_the_captures_own_hops() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        // The walk first, because what this asserts is about a section of an
+        // application rather than about a screen in isolation.
+        let report = walk_the_application(&state);
+        assert!(
+            report.conforms(),
+            "the application did not reproduce its specification over the walk: {}",
+            report.why().unwrap_or_default()
+        );
+        assert!(
+            report.itinerary().iter().any(|key| key == "packets"),
+            "the walk must stand in the capture section: {:?}",
+            report.itinerary()
+        );
+
+        // Stand in the capture section and read what it says about its own
+        // premise. `state.go` is the same navigation the walk used.
+        state.go("packets").expect("the capture section is open");
+        let mut scene = super::view(ScreenState::default(), pinion_core::Frame::default());
+        let mut cache = pinion_runtime::LayoutCache::new();
+        pinion_runtime::compute_layout(&mut scene, &mut cache, super::WIN_W, super::WIN_H);
+
+        let mut said: Vec<String> = Vec::new();
+        scene.for_each_node(&mut |visit| {
+            if let pinion_core::Scene::Text(text) = visit.node
+                && text.content.starts_with("negotiated · session")
+            {
+                said.push(text.content.clone());
+            }
+        });
+        println!("the capture section says: {said:?}");
+        assert_eq!(
+            said.len(),
+            1,
+            "★ exactly one premise run — two would be two accounts of one fact"
+        );
+        let sentence = &said[0];
+
+        // ★★★★★ THE FINDING, read off the integrated application's own frame:
+        // the always-visible premise now states HOW MUCH OF THE TABLE it is
+        // about, and it is not all of it. Parsed rather than compared with a
+        // literal, so a capture that gains a row moves this with it.
+        let (covered, total) = sentence
+            .rsplit_once(" of ")
+            .and_then(|(head, tail)| {
+                let covered = head.rsplit_once(' ')?.1.parse::<usize>().ok()?;
+                let total = tail.split_whitespace().next()?.parse::<usize>().ok()?;
+                Some((covered, total))
+            })
+            .unwrap_or_else(|| panic!("the premise states its reach: {sentence}"));
+        println!("the premise covers {covered} of {total} rows");
+        assert!(
+            covered > 0,
+            "a premise covering nothing would not be a premise"
+        );
+        assert!(
+            covered < total,
+            "★ a premise covering the whole table would make the strip's silence \
+             harmless — the finding is that it covers {covered} of {total}"
+        );
+    });
+}
+
 /// ★★★★★ R1851 — **the order the feed is in, the arrow it shows and the threshold
 /// it applies are one state.**
 ///
