@@ -664,9 +664,21 @@ mod tests {
     /// on the shipped shell. The workspace's voice gate REPORTS `unvoiced` and
     /// deliberately does not judge it, so whether an undecided region is refused
     /// depended on which screen happened to assert the number itself — and the
-    /// two screens that did were not the ones R1851 ran. A gate on the assembly
+    /// two demos that do were not the ones R1851 ran. A gate on the assembly
     /// does not have that dependence: it fails in the round that adds the
     /// region.
+    ///
+    /// ⚠ That last clause is READ, not inferred: R1851's own ledger entry has a
+    /// section headed "WHAT WAS NOT RUN, and why", which narrows its demo
+    /// population by capability and names `hello-column-reorder` as the demo to
+    /// watch. The screen that broke was the other one — the very screen the
+    /// round was building on. ⇒ **narrowing by "which capability changed" still
+    /// misses the capability a NEW consumer changes about ITSELF**, and the
+    /// remedy is not a wider sweep but a gate that travels with the composite.
+    ///
+    /// ```text
+    /// mnemosyne-cli query --changelog-entry R1851   # the section is verbatim
+    /// ```
     ///
     /// The caller's half is modelled exactly as the contract states it — the
     /// feed, the heading row and each heading are announced here and NOTHING

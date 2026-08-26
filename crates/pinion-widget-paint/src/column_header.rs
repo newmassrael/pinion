@@ -225,8 +225,17 @@ fn label_style(section: &HeaderSection, style: &ColumnHeaderStyle, theme: &Theme
 /// `visual`, so it can compose the section's out of the same two and cannot
 /// name a peer the caller did not paint. Before this round the leaf was painted
 /// with no node and no reason, which is the one outcome a voice census calls
-/// *undecided* — and both of this workspace's consumers of this composite
-/// carried it, which is what makes it the composite's defect and not a screen's.
+/// *undecided* — and both of the SCREENS that draw this composite carried it,
+/// which is what makes it the composite's defect and not a screen's.
+///
+/// ⚠ "Both screens", precisely: the composite has four users and two of them
+/// are harnesses (a pixel guard and an arm-coverage test) that never boot and
+/// so never run a voice census. Two of two is the measurement; four of four
+/// would have been a claim about surfaces that cannot hold it.
+///
+/// ```text
+/// git grep -ln 'view_header_cell\|header_label_node' -- crates examples
+/// ```
 #[must_use]
 pub fn header_label_node(
     tag_prefix: &str,
