@@ -109,6 +109,7 @@ pub mod menu;
 pub mod pages;
 pub mod pane;
 pub mod popup;
+pub mod property_row;
 pub mod radio_composite;
 pub mod run;
 pub mod scrim;

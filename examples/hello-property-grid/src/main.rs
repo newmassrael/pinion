@@ -130,14 +130,12 @@ use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::aria::apply_aria_activate;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
 use pinion_core::widgets::caret_blink::use_caret_blink;
-use pinion_core::widgets::checkbox::CheckboxState;
 use pinion_core::widgets::file_browser::{
     DirectoryExternal, DirectoryState, dir_nav_key_selecting, use_directory_state,
 };
 use pinion_core::widgets::listbox_item::ListboxItemState;
 use pinion_core::widgets::modal::{ModalState, modal_introspection_extra, use_modal};
 use pinion_core::widgets::scroll::use_scroll_state;
-use pinion_core::widgets::slider::SliderState;
 use pinion_core::widgets::text_edit::{TextEditState, use_text_edit_state};
 use pinion_core::widgets::text_field::{
     TextFieldExternal, TextFieldState, blur_committing_field_extra,
@@ -154,13 +152,18 @@ use pinion_widget_paint::barrier::dismiss_barrier;
 use pinion_widget_paint::button::{
     ButtonColors, ButtonStyle, button_a11y_state, button_scene, read_button_state,
 };
-use pinion_widget_paint::checkbox::{CheckboxStyle, view_checkbox_box};
 use pinion_widget_paint::dialog::{DialogContent, DialogStyle, view_dialog};
 use pinion_widget_paint::file_browser::{FileBrowserMetrics, file_browser_pane};
 use pinion_widget_paint::group_header::group_header_row;
 use pinion_widget_paint::listbox::{OptionRow, view_option};
 use pinion_widget_paint::popup::popup_surface;
-use pinion_widget_paint::slider::{slider_accent_for, slider_track_inactive};
+// R1849 §5.16 §5.38 — the lifted property-grid row: an indented name beside a
+// value cell whose control the value's own type chooses. This screen keeps the
+// slot metadata, the trailing affordances and the coordinator; the row is the
+// crate's ([[debt-the-property-grid-is-an-example-not-a-crate]]).
+use pinion_widget_paint::property_row::{
+    PropertyRow, PropertyRowStyle, PropertyRowTags, ValueControl, view_property_row,
+};
 use pinion_widget_paint::text_field as tf_paint;
 
 use pinion_widget_paint::state_layer::focus_fill;
@@ -246,8 +249,6 @@ const SCRUB_INT_PX_PER_STEP: f64 = 8.0;
 /// ("ranged") scalar (a normalised `0..1` factor). Named so [`scalar_range`]
 /// and the boot model ([`default_properties`]) agree on which slot is bounded.
 const OPACITY_SLOT: usize = 8;
-/// R964 — the in-cell slider gauge's track / fill strip height (px).
-const GAUGE_TRACK_H: u32 = 6;
 /// R964 — paint-tag prefix for a ranged leaf's gauge fill, namespaced under
 /// `GRID_TAG`. The fill is `pointer_transparent` (a press falls through to the
 /// row's scrub, the R954 cell-selection-overlay stance), so the `#` segment is
@@ -454,70 +455,6 @@ fn confirm_asset() {
     });
 }
 
-/// R964 — the bounded-slider value cell for a ranged `Float` leaf: the engine
-/// Details / the DCC "factor" gauge. The formatted number renders as before
-/// (flow, vertically centred), with a thin track + active fill pinned along
-/// the cell's bottom edge showing the value's position in `[min, max]`. Editing is
-/// unchanged (the existing clamped scrub / inline-edit / RPC write) — the
-/// gauge is the *visible range* affordance, so its bars are `pointer_transparent` and a press
-/// falls through to the row's scrub. The fill is tagged `{GRID_TAG}#gauge<slot>` so its rendered
-/// fraction is introspectable — the AI reads the gauge position from the
-/// painted frame, not just the value.
-fn ranged_slider_cell(slot: usize, value: f64, min: f64, max: f64, theme: &Theme) -> Scene {
-    let frac = if max > min {
-        ((value - min) / (max - min)).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
-    let track_w = VALUE_COL_W.saturating_sub(2 * CELL_PAD);
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "frac in [0,1] times a small track width — non-negative, bounded by track_w"
-    )]
-    let fill_w = (frac * f64::from(track_w)) as u32;
-    let strip_y = ROW_H.saturating_sub(GAUGE_TRACK_H);
-    let bar = |w: u32, fill: Color, tag: Option<String>| {
-        let mut node = ContainerNode::new(Vec::new())
-            .with_style(BoxStyle::filled(fill).with_corner_radius(GAUGE_TRACK_H / 2))
-            .with_layout(
-                LayoutStyle::new()
-                    .with_size(Size::px(w, GAUGE_TRACK_H))
-                    .with_absolute_position(0, strip_y)
-                    .with_pointer_transparent(true),
-            );
-        if let Some(t) = tag {
-            node = node.with_tag(t);
-        }
-        Scene::Container(node)
-    };
-    let idle = SliderState::Idle;
-    Scene::Container(
-        ContainerNode::new(vec![
-            // The number flows + centres exactly as the plain Float cell did.
-            Scene::Text(TextNode::styled(
-                CellValue::Float(value).display(),
-                Rect::default(),
-                TextStyle::new()
-                    .with_size_px(CELL_PX)
-                    .with_fg(theme.resolve(ColorRole::OnSurface)),
-            )),
-            bar(track_w, slider_track_inactive(theme, idle), None),
-            bar(
-                fill_w,
-                slider_accent_for(theme, idle),
-                Some(format!("{GRID_TAG}#{GAUGE_PREFIX}{slot}")),
-            ),
-        ])
-        .with_layout(
-            LayoutStyle::new()
-                .flex(FlexDirection::Row)
-                .with_align_items(AlignItems::Center)
-                .with_size(Size::px(track_w, ROW_H)),
-        ),
-    )
-}
-
 // ─── choice-popup geometry (R867) ─────────────────────────────────
 
 /// Fixed title-band height — makes the row → popup anchor math (and the
@@ -531,9 +468,6 @@ const GRID_BORDER: u32 = 1;
 const POPUP_OPT_H: u32 = 32;
 const POPUP_PAD: u32 = 6;
 const POPUP_W: u32 = VALUE_COL_W;
-/// U+25BE BLACK DOWN-POINTING SMALL TRIANGLE — the choice-cell dropdown
-/// affordance ([[non-ascii-literal-named-const-escape]]).
-const CHOICE_CHEVRON: &str = "\u{25BE}";
 
 // ─── tags + intents ───────────────────────────────────────────────
 
@@ -3117,15 +3051,30 @@ fn apply_key_search(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool 
 
 // ─── paint ────────────────────────────────────────────────────────
 
-/// Cell-sized M3 checkbox-box style. The bool value cell renders the lifted
-/// `view_checkbox_box` SSOT non-interactively (the grid coordinator owns the
-/// toggle, so there is no per-cell `CheckboxExternal`) — keeping one M3
-/// checkbox rendering across the catalog instead of a hand-rolled copy.
-fn cell_checkbox_style() -> CheckboxStyle {
-    CheckboxStyle {
-        box_size: CHECKBOX_SIZE,
-        glyph_size_px: 16,
-        ..CheckboxStyle::m3_filled()
+/// R1849 §5.16 §5.38 — the two External tags this screen's rows paint under,
+/// as the lifted painter's pair.
+const ROW_TAGS: PropertyRowTags = PropertyRowTags {
+    grid: GRID_TAG,
+    field: EDIT_TF_TAG,
+};
+
+/// R1849 §5.16 §5.38 — this inspector's density, as the lifted painter's
+/// measurements.
+///
+/// Built from this screen's own constants rather than taken from
+/// [`PropertyRowStyle::default`], even though the two currently agree: the
+/// default is the crate's opinion and these are this panel's, and a screen that
+/// widened a column would otherwise widen it in the header and nowhere else.
+fn row_style() -> PropertyRowStyle {
+    PropertyRowStyle {
+        name_col_w: NAME_COL_W,
+        value_col_w: VALUE_COL_W,
+        row_h: ROW_H,
+        indent_step: INDENT_STEP,
+        cell_pad: CELL_PAD,
+        text_px: CELL_PX,
+        checkbox_size: CHECKBOX_SIZE,
+        ..PropertyRowStyle::default()
     }
 }
 
@@ -3133,8 +3082,21 @@ fn cell_checkbox_style() -> CheckboxStyle {
 /// `property_grid#<value_index>` (`row.id`, the leaf node id) so a click routes
 /// to the coordinator. `row.label` is the in-context name (a struct field's
 /// short "X", a top-level property's full name); `row.depth` insets the name
-/// cell under its branch. The value cell paints the shared inline field while
-/// editing, else a checkbox glyph (bool) or the value text.
+/// cell under its branch.
+///
+/// ★★★★★ R1849 — **the row itself is
+/// [`pinion_widget_paint::property_row`]'s now**, and what is left here is the
+/// screen's half: which slot is bounded, which suffix its gauge carries, and
+/// what hangs at the row's trailing edge. The value cell's control is no longer
+/// decided here at all — [`ValueControl::resolve`] decides it, so the paint and
+/// anything else asking *what editor does this row open* read one answer.
+///
+/// [[debt-the-property-grid-is-an-example-not-a-crate]] is what this closes.
+/// Its remaining half after R1848.1 was exactly this function: the model was
+/// substrate (`tree_nav` flattens, `CellValue` types, `UndoStack` journals,
+/// `edit_field_keymap` binds) and every control was a painter in that crate,
+/// while the row that assembled them lived in an example an application would
+/// have had to copy.
 fn view_row(
     row: &VisibleRow,
     value: &CellValue,
@@ -3144,96 +3106,32 @@ fn view_row(
     theme: &Theme,
     edit_field: (TextFieldState, u32),
 ) -> Scene {
-    let mut name_children: Vec<Scene> = Vec::new();
-    let indent_px = row.depth * INDENT_STEP;
-    if indent_px > 0 {
-        name_children.push(Scene::Container(
-            ContainerNode::new(Vec::new())
-                .with_layout(LayoutStyle::new().with_size(Size::px(indent_px, ROW_H))),
-        ));
-    }
-    name_children.push(Scene::Text(TextNode::styled(
-        row.label.as_str(),
-        Rect::default(),
-        TextStyle::new()
-            .with_size_px(CELL_PX)
-            .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
-    )));
-    let name_cell = Scene::Container(
-        ContainerNode::new(name_children).with_layout(
-            LayoutStyle::new()
-                .flex(FlexDirection::Row)
-                .with_align_items(AlignItems::Center)
-                .with_padding(Rect::new(CELL_PAD, 0, CELL_PAD, 0))
-                .with_size(Size::px(NAME_COL_W, ROW_H)),
+    // R964 — the range is keyed by the row's leaf slot, so an array element
+    // (id `elem.<k>` → no slot) never gauges, and the fill keeps its R964 wire
+    // name `{GRID_TAG}#gauge<slot>` rather than being renamed on adoption.
+    let ranged = row_value_index(&row.id).and_then(|i| scalar_range(i).map(|r| (i, r)));
+    let gauge_part = ranged.map(|(slot, _)| format!("{GAUGE_PREFIX}{slot}"));
+    let spec = PropertyRow {
+        id: row.id.as_str(),
+        label: row.label.as_str(),
+        depth: row.depth,
+        control: ValueControl::resolve(
+            value,
+            ranged.map(|(_, r)| r),
+            edit_active.then_some(edit_field),
         ),
-    );
-
-    let value_inner = if edit_active {
-        let style = tf_paint::TextFieldStyle {
-            field_w: VALUE_COL_W - CELL_PAD,
-            field_h: ROW_H - 6,
-            ..tf_paint::TextFieldStyle::m3_filled()
-        };
-        tf_paint::view_field(EDIT_TF_TAG, edit_field.0, edit_field.1, theme, &style, "")
-    } else {
-        match value {
-            CellValue::Bool(b) => {
-                view_checkbox_box(*b, CheckboxState::Idle, theme, &cell_checkbox_style())
-            }
-            CellValue::Choice { selected, options } => choice_value_cell(*selected, options, theme),
-            CellValue::Color(c) => color_value_cell(*c, theme),
-            // R964 — a ranged Float leaf renders the bounded-slider gauge; every
-            // other scalar (unranged Float / Int / Text) keeps the plain value
-            // text. The range is keyed by the row's leaf slot, so an array
-            // element (id `elem.<k>` → no slot) never gauges.
-            other => match (
-                other,
-                row_value_index(&row.id).and_then(|i| scalar_range(i).map(|(lo, hi)| (i, lo, hi))),
-            ) {
-                (CellValue::Float(f), Some((slot, lo, hi))) => {
-                    ranged_slider_cell(slot, *f, lo, hi, theme)
-                }
-                _ => Scene::Text(TextNode::styled(
-                    other.display(),
-                    Rect::default(),
-                    TextStyle::new()
-                        .with_size_px(CELL_PX)
-                        .with_fg(theme.resolve(ColorRole::OnSurface)),
-                )),
-            },
-        }
+        focused: is_focused,
+        part: gauge_part.as_deref(),
     };
-    let value_cell = Scene::Container(
-        ContainerNode::new(vec![value_inner]).with_layout(
-            LayoutStyle::new()
-                .flex(FlexDirection::Row)
-                .with_align_items(AlignItems::Center)
-                .with_padding(Rect::new(CELL_PAD, 0, CELL_PAD, 0))
-                .with_size(Size::px(VALUE_COL_W, ROW_H)),
-        ),
-    );
-
-    // R919 / R931 / R936 — the row's trailing affordances at its trailing edge:
+    // R919 / R931 / R936 — the row's trailing affordances stay this screen's:
     // a scalar's reset arrow (`{GRID_TAG}#reset<index>`, whose presence IS the
     // modified indicator), or an array element's remove button PLUS — when the
     // element is modified — its reset arrow one slot to the left. Each is
-    // absolutely positioned (at its own [`RESET_DOT_X`] / [`RESET_DOT_X2`] inset),
-    // so they overlay the trailing padding without shifting the Property / Value
-    // column layout, and come last in paint order so a click wins over the row.
-    let mut children = vec![name_cell, value_cell];
-    children.extend(trailing);
-    Scene::Container(
-        ContainerNode::new(children)
-            .with_tag(format!("{GRID_TAG}#{}", row.id))
-            .with_style(BoxStyle::filled(focus_fill(theme, is_focused)))
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Row)
-                    .with_align_items(AlignItems::Center)
-                    .with_size(Size::px(NAME_COL_W + VALUE_COL_W, ROW_H)),
-            ),
-    )
+    // absolutely positioned (at its own [`RESET_DOT_X`] / [`RESET_DOT_X2`]
+    // inset), so they overlay the trailing padding without shifting the
+    // Property / Value column layout, and the painter puts them last so a click
+    // wins over the row.
+    view_property_row(ROW_TAGS, &spec, &row_style(), trailing, theme)
 }
 
 /// R919 / R921 / R936 — the reset arrow for a modified row, a small accent mark
@@ -3482,65 +3380,6 @@ fn struct_header_row(
                     .with_align_items(AlignItems::Center)
                     .with_size(Size::px(NAME_COL_W + VALUE_COL_W, ROW_H)),
             ),
-    )
-}
-
-/// A closed choice cell: the selected option label on the left and a
-/// dropdown chevron on the right (the combobox affordance). Fills the value
-/// cell's inner width so the chevron sits at the trailing edge.
-fn choice_value_cell(selected: usize, options: &[String], theme: &Theme) -> Scene {
-    let label = options.get(selected).map_or("", String::as_str);
-    let label_node = Scene::Text(TextNode::styled(
-        label,
-        Rect::default(),
-        TextStyle::new()
-            .with_size_px(CELL_PX)
-            .with_fg(theme.resolve(ColorRole::OnSurface)),
-    ));
-    let chevron = Scene::Text(TextNode::styled(
-        CHOICE_CHEVRON,
-        Rect::default(),
-        TextStyle::new()
-            .with_size_px(CELL_PX)
-            .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
-    ));
-    Scene::Container(
-        ContainerNode::new(vec![label_node, chevron]).with_layout(
-            LayoutStyle::new()
-                .flex(FlexDirection::Row)
-                .with_align_items(AlignItems::Center)
-                .with_justify(JustifyContent::SpaceBetween)
-                .with_size(Size::px(VALUE_COL_W - 2 * CELL_PAD, ROW_H)),
-        ),
-    )
-}
-
-/// A closed colour cell: a filled swatch chip plus the `#RRGGBB` hex value.
-fn color_value_cell(color: Color, theme: &Theme) -> Scene {
-    let swatch = Scene::Container(
-        ContainerNode::new(vec![])
-            .with_style(
-                BoxStyle::filled(color)
-                    .with_corner_radius(4)
-                    .with_border(Border::new(theme.resolve(ColorRole::Outline), 1)),
-            )
-            .with_layout(LayoutStyle::new().with_size(Size::px(CELL_PX + 6, CELL_PX + 6))),
-    );
-    let hex = Scene::Text(TextNode::styled(
-        color.to_hex(),
-        Rect::default(),
-        TextStyle::new()
-            .with_size_px(CELL_PX)
-            .with_fg(theme.resolve(ColorRole::OnSurface)),
-    ));
-    Scene::Container(
-        ContainerNode::new(vec![swatch, hex]).with_layout(
-            LayoutStyle::new()
-                .flex(FlexDirection::Row)
-                .with_align_items(AlignItems::Center)
-                .with_gap(8)
-                .with_size(Size::px(VALUE_COL_W - 2 * CELL_PAD, ROW_H)),
-        ),
     )
 }
 

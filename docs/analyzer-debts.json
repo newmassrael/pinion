@@ -266,18 +266,6 @@
       ]
     },
     {
-      "name": "debt-the-property-grid-is-an-example-not-a-crate",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links analyzer-tool-capability-spec, protocol-analyzer-class-tool-capability-audit",
-        "names lab.t0.2"
-      ]
-    },
-    {
       "name": "debt-the-reference-palette-fails-the-boundary-floor",
       "substituted": false,
       "blocked_by": "buildable",
