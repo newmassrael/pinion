@@ -430,6 +430,96 @@ impl ConfigSchema {
         }
         census
     }
+
+    /// ★★★★★ R1840 — **this schema against the surface the TARGET declares.**
+    ///
+    /// # The question a schema cannot answer about itself
+    ///
+    /// Every other number here is a fraction of THIS table — `reached_by` and
+    /// `reached_by_keys` measure a form and a palette against it, `collisions`
+    /// measures documents against it, and `strings` is a census OF it. So all
+    /// of them answer over *what we wrote down*. That
+    /// is the right denominator for asking whether the editor covers its own
+    /// declaration, and it is the wrong one for the question a person picking
+    /// the tool asks — *can I configure the thing with it?*
+    ///
+    /// The two only coincide while the declaration keeps up with the target,
+    /// and the drift between them has a DIRECTION that hides itself: a
+    /// declaration that falls behind loses leaves from the denominator, so the
+    /// coverage figure RISES. Falling behind reads as progress. That is why
+    /// this is a comparison against an outside list rather than another
+    /// statistic over the same one.
+    ///
+    /// # What `sourced` has to be, and what it must not be
+    ///
+    /// A path list the target itself declares, read from outside the crate
+    /// that declares this schema — a specification document, a generated type,
+    /// the target's own default configuration. A list written beside the
+    /// schema by the same hand in the same edit answers nothing: it is this
+    /// table spelled twice, and two copies of one claim agree by construction.
+    ///
+    /// The caller supplies it and says where it came from, because only the
+    /// caller knows what its target is. That is the whole of what this
+    /// function refuses to guess.
+    #[must_use]
+    pub fn against<'a>(&'a self, sourced: &'a [String]) -> SurfaceDrift<'a> {
+        let declared: BTreeSet<&str> = self.leaves.iter().map(|l| l.path.as_ref()).collect();
+        let sourced: BTreeSet<&str> = sourced.iter().map(String::as_str).collect();
+        SurfaceDrift {
+            both: declared.intersection(&sourced).copied().collect(),
+            declared_only: declared.difference(&sourced).copied().collect(),
+            sourced_only: sourced.difference(&declared).copied().collect(),
+        }
+    }
+}
+
+/// ★★★★★ R1840 — **what a hand-written option surface and the target's own
+/// declaration disagree about**, from [`ConfigSchema::against`].
+///
+/// Three sets rather than a number, because the two differences mean opposite
+/// things and a single figure would average them into nonsense:
+///
+/// * [`sourced_only`](Self::sourced_only) — the target takes it and this tool
+///   cannot say so. **This is the debt**: every one of these is missing from
+///   the denominator of every coverage meter, so it inflates every one of them.
+/// * [`declared_only`](Self::declared_only) — this tool declares it and the
+///   source does not. Not automatically a defect: a source can be partial, and
+///   a path can be one the target added since. It is a question, and a
+///   question is what a report should raise.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SurfaceDrift<'a> {
+    /// Paths both sides have.
+    pub both: Vec<&'a str>,
+    /// Paths only the hand-written schema has.
+    pub declared_only: Vec<&'a str>,
+    /// Paths only the sourced surface has — the inflation.
+    pub sourced_only: Vec<&'a str>,
+}
+
+impl SurfaceDrift<'_> {
+    /// How much of the sourced surface the schema declares, as `(hit, total)`.
+    ///
+    /// `(0, 0)` for an empty source, which is the truthful answer to "how much
+    /// of nothing" and is why a caller that could have failed to load its
+    /// source must check the total rather than the fraction.
+    #[must_use]
+    pub fn covered(&self) -> (usize, usize) {
+        (self.both.len(), self.both.len() + self.sourced_only.len())
+    }
+
+    /// A sentence naming the shortfall and its size.
+    #[must_use]
+    pub fn sentence(&self) -> String {
+        let (hit, total) = self.covered();
+        if self.sourced_only.is_empty() {
+            return format!("{hit} of {total} declared paths, none missing");
+        }
+        format!(
+            "{hit} of {total} declared paths \u{2014} {} the target takes and this does not: {}",
+            self.sourced_only.len(),
+            self.sourced_only.join(", "),
+        )
+    }
 }
 
 /// Which of the three kinds a string leaf is.
@@ -693,6 +783,62 @@ mod tests {
                 len: Span::between(1, 32),
             },
         }
+    }
+
+    /// ★★★★★ R1840 — **the comparison separates a paraphrase from an
+    /// absence, which is the whole reason it is three sets and not a number.**
+    ///
+    /// The case is taken from the measurement that motivated it: a
+    /// hand-written surface names `a.multicast` where the target declares
+    /// `a.multicast.enabled`. Both sides mean the same option and the strings
+    /// differ, so the pair must show up on BOTH difference lists — as a path
+    /// the target takes and we cannot name, and as a path we name and the
+    /// target does not. A comparison reporting one number would call that
+    /// "one missing" and hide that we also have a key the target would refuse.
+    #[test]
+    fn r1840_a_paraphrased_path_is_missing_from_both_directions() {
+        let schema = ConfigSchema::new(vec![
+            SchemaLeaf::new("a.multicast", FieldType::Boolean),
+            SchemaLeaf::new("b.shared", FieldType::Text),
+        ])
+        .expect("a document");
+        let sourced = vec!["a.multicast.enabled".to_owned(), "b.shared".to_owned()];
+        let drift = schema.against(&sourced);
+
+        assert_eq!(drift.both, vec!["b.shared"]);
+        assert_eq!(drift.sourced_only, vec!["a.multicast.enabled"]);
+        assert_eq!(drift.declared_only, vec!["a.multicast"]);
+        assert_eq!(drift.covered(), (1, 2));
+        assert!(
+            drift.sentence().contains("a.multicast.enabled"),
+            "the sentence names what is missing: {}",
+            drift.sentence(),
+        );
+    }
+
+    /// ★★★★★ R1840 — **an empty source reports nothing covered, not
+    /// everything.**
+    ///
+    /// The failure this forbids is the one the whole round is about, in its
+    /// sharpest form: a comparison whose source failed to load answering "no
+    /// paths missing" and reading as a clean bill. `covered()` returns a total
+    /// of zero, so a caller checking the fraction alone would see `0/0`, and
+    /// the consumer's own gate asserts the total against the pin's length for
+    /// exactly this reason.
+    #[test]
+    fn r1840_an_empty_source_covers_nothing_rather_than_everything() {
+        let schema =
+            ConfigSchema::new(vec![SchemaLeaf::new("a", FieldType::Text)]).expect("a document");
+        let drift = schema.against(&[]);
+        assert_eq!(drift.covered(), (0, 0));
+        assert!(drift.sourced_only.is_empty());
+        assert_eq!(drift.declared_only, vec!["a"]);
+        assert!(
+            drift.sentence().contains("none missing"),
+            "and it says so in the words a reader would be misled by, which is \
+             why the total is the thing a caller must check: {}",
+            drift.sentence(),
+        );
     }
 
     /// A one-field document holding `value` at `path`.
@@ -1259,5 +1405,30 @@ mod tests {
             offered: FieldType::Text,
         };
         assert_speaks("Mistyped", 1, &[("Mistyped", one.sentence())], &[]);
+
+        // ★★★★★ R1840 — the drift report's two arms, driven one at a time.
+        // Both together would pass while the two read identically, which is
+        // the failure this gate exists for — and here it would be a real one,
+        // because "none missing" is the sentence a reader would take as a
+        // clean bill and the other arm is the whole finding.
+        let declared = ConfigSchema::new(vec![
+            SchemaLeaf::new("a.multicast", FieldType::Boolean),
+            SchemaLeaf::new("b.shared", FieldType::Text),
+        ])
+        .expect("a document");
+        let all = vec!["a.multicast".to_owned(), "b.shared".to_owned()];
+        let more = vec!["a.multicast.enabled".to_owned(), "b.shared".to_owned()];
+        assert_speaks(
+            "SurfaceDrift",
+            2,
+            &[
+                ("nothing missing", declared.against(&all).sentence()),
+                (
+                    "a path the target takes",
+                    declared.against(&more).sentence(),
+                ),
+            ],
+            &[],
+        );
     }
 }

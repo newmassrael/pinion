@@ -33,11 +33,43 @@
 //! example: the paths are the ones the tool class uses generally, and what is
 //! being reproduced is that a surface of this size exists and that a palette
 //! covers a knowable fraction of it.
+//!
+//! # ★★★★★ R1840 — and the third, which is about THIS FILE
+//!
+//! The two meters above divide by the table below, and the table below is
+//! written **by hand, in the same crate as the screen it types, by whoever
+//! last edited that screen**. R1690 built it that way and registered the
+//! defect in the same round: a declaration that falls behind its target loses
+//! leaves from the denominator, so the coverage figure RISES. Drift reads as
+//! progress, and nothing here could see it, because nothing outside this file
+//! had an opinion about what the target takes.
+//!
+//! [`sourced_paths`] is that opinion, and [`drift`] is the comparison. The
+//! source is `docs/analyzer-config-surface.json` — outside this crate, on the
+//! same footing as the specification pins the other screens are judged against
+//! (`ls docs/analyzer-*-spec.json` says how many; this line first said THREE
+//! and there were twelve, which is why it now names a command instead of a
+//! number), and for the same stated reason: a specification written by the
+//! same hand in the same edit as its subject means a check is asking the
+//! subject for the answer.
+//!
+//! ⚠ **What the first run of that comparison measured, so a reader is not
+//! surprised by it**: 9 of the 53 sourced paths are named here. Not because
+//! forty-four options are absent — several are here under a *different
+//! spelling* (`discovery.multicast` against the source's
+//! `discovery.multicast.enabled`, one TLS certificate against the source's
+//! separate listen and connect ones) — and that is the finding rather than an
+//! excuse. A configuration document is exported with these keys verbatim
+//! ([`crate::deploy`]), so a paraphrased path is one the target would not
+//! take, and until this comparison existed nothing could tell a rename from an
+//! absence.
 
 use std::sync::OnceLock;
 
 use pinion_core::widgets::config_form::FieldType;
-use pinion_core::widgets::config_schema::{ConfigSchema, Reach, SchemaLeaf, StringCensus};
+use pinion_core::widgets::config_schema::{
+    ConfigSchema, Reach, SchemaLeaf, StringCensus, SurfaceDrift,
+};
 use pinion_core::widgets::text_format::{CharClass, CharSet, Span, TextFormat};
 
 /// A host: a dotted quad, or a name.
@@ -252,6 +284,80 @@ pub fn strings() -> StringCensus {
     schema().strings()
 }
 
+// ── R1840: the surface, SOURCED ─────────────────────────────────────────────
+
+/// The sourced option surface, as text, compiled in.
+///
+/// `include_str!` rather than a read at run time, for the reason every other
+/// pin in this tree is compiled in: a source that goes missing must break the
+/// build, not silently stop being compared. A comparison that answers "nothing
+/// is missing" because it found no file is the failure mode this whole round
+/// is about.
+const SURFACE_JSON: &str = include_str!("../../../docs/analyzer-config-surface.json");
+
+/// ★★★★★ R1840 — **the paths the TARGET declares**, read from outside this
+/// crate.
+///
+/// [`schema`] above is written by hand, in this file, by whoever last edited
+/// the screen it types. R1690 built it that way and registered the defect in
+/// the same round: every meter over it divides by *what we wrote down*, and a
+/// declaration that falls behind its target loses leaves from the denominator,
+/// so the coverage figure RISES. Drift reads as progress.
+///
+/// This is the other side of that comparison. Its provenance is in the file —
+/// what it was extracted from, when, and the fact that the reference it came
+/// from itself cites the target's own default configuration document by line
+/// range, which is the derivation point R1690 said was missing.
+///
+/// # Panics
+///
+/// If the pin is not a surface — unreadable JSON, no `paths`, an entry with no
+/// `path`, or a duplicate. All are defects in the pin rather than states the
+/// running screen can reach, and all must stop the build rather than quietly
+/// weaken the comparison.
+pub fn sourced_paths() -> &'static [String] {
+    static PATHS: OnceLock<Vec<String>> = OnceLock::new();
+    PATHS.get_or_init(|| {
+        let doc: serde_json::Value =
+            serde_json::from_str(SURFACE_JSON).expect("docs/analyzer-config-surface.json parses");
+        let rows = doc["paths"]
+            .as_array()
+            .expect("the sourced surface has a `paths` array");
+        let mut out: Vec<String> = rows
+            .iter()
+            .map(|row| {
+                row["path"]
+                    .as_str()
+                    .expect("every sourced entry names a path")
+                    .to_owned()
+            })
+            .collect();
+        let before = out.len();
+        out.sort();
+        out.dedup();
+        assert_eq!(
+            before,
+            out.len(),
+            "the sourced surface names each path once"
+        );
+        assert!(
+            !out.is_empty(),
+            "a sourced surface of nothing compares nothing"
+        );
+        out
+    })
+}
+
+/// **What this screen's hand-written surface and the target's declaration
+/// disagree about.**
+///
+/// The number that matters is `sourced_only`: paths the target takes which
+/// this tool cannot say, each of which is missing from the denominator of
+/// every meter above and therefore inflating all of them.
+pub fn drift() -> SurfaceDrift<'static> {
+    schema().against(sourced_paths())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{address, endpoint, ident, plain_path, schema, shape_of, strings};
@@ -352,5 +458,149 @@ mod tests {
             "{:?}",
             census.formats,
         );
+    }
+
+    /// ★★★★★ R1840 — **the surface is sourced from outside this crate, and
+    /// the two ratchets are what the sourcing bought.**
+    ///
+    /// R1690 declared the surface here, by hand, and registered the defect in
+    /// the same round: every meter divides by it, so a declaration that falls
+    /// behind its target loses leaves from the denominator and the coverage
+    /// figure RISES. Nothing could see that, because nothing outside this file
+    /// had an opinion about what the target takes.
+    ///
+    /// [`sourced_paths`] is that opinion, extracted from the behaviour
+    /// reference's own field table — where the reference marks which of its
+    /// rows are configuration paths and which are not, so the split is read
+    /// rather than judged — and carrying the derivation point in the pin.
+    ///
+    /// # What the two numbers mean, and why they are pinned separately
+    ///
+    /// They are opposite claims and a single figure would average them:
+    ///
+    /// * `sourced_only` — the target declares it and this surface does not
+    ///   name it. **A ceiling that must fall.** Each one is missing from every
+    ///   meter's denominator.
+    /// * `declared_only` — this surface names it and the source does not.
+    ///   **Also a ceiling that must fall**, and for a reason the first
+    ///   measurement made plain: these are not inventions, they are
+    ///   PARAPHRASES. `discovery.multicast` against the source's
+    ///   `discovery.multicast.enabled`, `routing.mode` against
+    ///   `routing.peer.mode`, one `transport.link.tls.certificate` against the
+    ///   source's separate listen and connect certificates. The surface was
+    ///   written from a memory of the target rather than from it.
+    ///
+    /// ⚠ And that is why the drift was undetectable before this file existed:
+    /// nothing could tell *we renamed it* from *we do not have it*. It matters
+    /// because a configuration document is exported with these keys VERBATIM
+    /// (`crate::deploy`), so a paraphrased path is one the target would not
+    /// take.
+    ///
+    /// ⚠⚠ Both sides of the comparison are neutralised by the same
+    /// conventions, so a mismatch here is a STRUCTURAL difference and not an
+    /// artefact of the substitution. A gate that compared a neutral path with
+    /// a confidential one would report the substitution as a defect forever.
+    #[test]
+    fn r1840_the_option_surface_is_sourced_and_its_drift_is_ratcheted() {
+        let drift = super::drift();
+        let (hit, total) = drift.covered();
+
+        assert_eq!(
+            total,
+            super::sourced_paths().len(),
+            "the denominator is the SOURCED surface, not this crate's own",
+        );
+        assert!(
+            total > schema().leaves().len(),
+            "\u{2605} the source is larger than the declaration \u{2014} which is \
+             the whole finding: {total} sourced against {} declared",
+            schema().leaves().len(),
+        );
+
+        // ★ The ratchets. Measured at R1840 on the first run of this
+        // comparison; both may fall and neither may rise.
+        assert!(
+            drift.sourced_only.len() <= 44,
+            "\u{2605} paths the target takes and this surface cannot name: {} \
+             (ratchet 44) \u{2014} {:?}",
+            drift.sourced_only.len(),
+            drift.sourced_only,
+        );
+        assert!(
+            drift.declared_only.len() <= 27,
+            "\u{2605} paths this surface names and the source does not: {} \
+             (ratchet 27) \u{2014} {:?}",
+            drift.declared_only.len(),
+            drift.declared_only,
+        );
+        assert!(
+            hit > 0,
+            "the two surfaces overlap at all, or the comparison is between \
+             two vocabularies rather than two surfaces",
+        );
+
+        // ★★ The provenance, which is the half R1690 named as missing. A
+        // sourced surface with no recorded derivation point is a second
+        // hand-written list.
+        let doc: serde_json::Value =
+            serde_json::from_str(super::SURFACE_JSON).expect("the pin parses");
+        assert!(
+            doc["$extracted"]["on"].is_string() && doc["$extracted"]["from"].is_string(),
+            "the pin records WHEN it was extracted and FROM WHAT",
+        );
+        assert!(
+            doc["$extracted"]["cites_target_declaration"]
+                .as_u64()
+                .is_some_and(|n| n > 0),
+            "and that the reference it came from cites the target's own \
+             declaration \u{2014} the derivation point, recorded rather than assumed",
+        );
+        assert!(
+            doc["$substituted"]["fact"].as_bool() == Some(true),
+            "and that the vocabulary is substituted, which is the fact a \
+             reader needs to know a path here is not the target's spelling",
+        );
+
+        // ★★★ And the rows the reference declares are NOT configuration, kept
+        // rather than dropped: a path the target has no key for is a different
+        // fact from a path we are missing, and a census that could not tell
+        // them apart would report the first as a gap forever.
+        let not_config = doc["not_config"]["names"]
+            .as_array()
+            .expect("the pin keeps what is not configuration");
+        assert!(!not_config.is_empty());
+
+        // ⚠ The two lists are NOT disjoint, and the first draft of this
+        // assertion said they were. The reference's split is per ROW: a row is
+        // configuration or it is not, and one word can be both on two
+        // different rows — the target's own identity path on an
+        // infrastructure row, and the argument a traffic program takes. So
+        // what is asserted is that every overlap is DECLARED, which keeps the
+        // check while admitting the fact it found.
+        let overlap_declared: Vec<&str> = doc["not_config"]["$also_a_path"]["names"]
+            .as_array()
+            .expect("the pin declares which names are both")
+            .iter()
+            .map(|n| n.as_str().expect("a name"))
+            .collect();
+        for name in not_config {
+            let name = name.as_str().expect("a name");
+            if super::sourced_paths().iter().any(|p| p == name) {
+                assert!(
+                    overlap_declared.contains(&name),
+                    "{name} is both a path and declared not-configuration, and \
+                     the pin does not say so",
+                );
+            }
+        }
+        for name in &overlap_declared {
+            assert!(
+                super::sourced_paths().iter().any(|p| p == name)
+                    && not_config.iter().any(|n| n.as_str() == Some(*name)),
+                "{name} is declared to be both and is not \u{2014} a declared \
+                 overlap that stopped being one is how this admission would \
+                 rot into a licence",
+            );
+        }
     }
 }

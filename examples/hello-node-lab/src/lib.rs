@@ -8475,6 +8475,15 @@ const FIELDS: &[SchemaField] = &{
         // instead of two independent claims.
         SchemaField::new("reach", "string"),
         SchemaField::new("strings", "string"),
+        // ★★★★★ R1840 — and what those two are fractions OF. `reach` divides
+        // by the surface this crate DECLARES, so it answers "how much of what
+        // we wrote down", and a declaration that falls behind its target loses
+        // leaves from the denominator and makes the figure RISE. This slot is
+        // the other side: the paths the target itself declares, read from
+        // `docs/analyzer-config-surface.json`, and what the two disagree about.
+        // Beside `reach` rather than folded into it, because they are answers
+        // to different questions and one number would average them.
+        SchemaField::new("surface", "string"),
         SchemaField::action("select", "string"),
         SchemaField::action("select_link", "string"),
         SchemaField::action_with(
@@ -8912,6 +8921,18 @@ impl ExternalIntrospect for LabOracle {
                         .collect::<Vec<_>>(),
                     "unknown": reach.unknown,
                     "unauthorable": reach.unauthorable,
+                })
+                .to_string())
+            }
+            // ★★★★★ R1840 — the declared surface against the SOURCED one.
+            "surface" => {
+                let drift = settings::drift();
+                let (hit, total) = drift.covered();
+                text(serde_json::json!({
+                    "covered": format!("{hit}/{total}"),
+                    "sourced_only": drift.sourced_only,
+                    "declared_only": drift.declared_only,
+                    "sentence": drift.sentence(),
                 })
                 .to_string())
             }
