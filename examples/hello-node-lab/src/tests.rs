@@ -3142,6 +3142,139 @@ fn r1844_a_check_beside_a_command_is_not_a_conflict() {
     });
 }
 
+// ── R1848 — the traffic taxonomy ────────────────────────────────────────────
+
+/// ★★★★★ R1848 — **only a traffic role carries traffic, and that emptiness is
+/// the taxonomy's content.**
+///
+/// The census's `lab.t1.8` asks for traffic nodes carrying five named
+/// parameters. Its verdict is `app`, which means the framework owns what a node
+/// IS and this screen owns which parameters its domain's traffic has — so the
+/// assignment below is a domain decision, and this is where the decision is
+/// held to being one. An infrastructure role that declared a parameter would be
+/// making a claim about somebody else's messages.
+#[test]
+fn r1848_only_traffic_roles_carry_traffic() {
+    for role in spec::ROLES {
+        let carries = !role.carries.is_empty();
+        assert_eq!(
+            carries,
+            role.group == "traffic",
+            "{} is in the {} group and {} traffic parameters",
+            role.name,
+            role.group,
+            if carries { "carries" } else { "carries no" }
+        );
+    }
+    // And the vocabulary is CLOSED: a role cannot name a parameter that is not
+    // one, which is what makes this a taxonomy rather than a list of strings.
+    for role in spec::ROLES {
+        for parameter in role.carries {
+            assert!(
+                spec::TRAFFIC_PARAMETERS.contains(parameter),
+                "{} carries {:?}, which is not in the vocabulary",
+                role.name,
+                parameter
+            );
+        }
+    }
+}
+
+/// ★★★★★ R1848 — **the taxonomy DIVIDES the roles, rather than saying the same
+/// thing about all of them.**
+///
+/// The check the round above would pass while being useless: four roles each
+/// carrying all five parameters satisfies every assertion there and answers no
+/// question a reader would ask. So the fixture is held to distinguishing —
+/// somebody carries the whole vocabulary, somebody carries less, and no two
+/// roles are told apart by nothing.
+#[test]
+fn r1848_the_taxonomy_tells_the_traffic_roles_apart() {
+    let traffic: Vec<_> = spec::ROLES
+        .iter()
+        .filter(|r| r.group == "traffic")
+        .collect();
+    assert!(traffic.len() > 1, "a taxonomy over one role is a label");
+    let widest = traffic.iter().map(|r| r.carries.len()).max().unwrap_or(0);
+    assert_eq!(
+        widest,
+        spec::TRAFFIC_PARAMETERS.len(),
+        "something originates messages, and it decides every parameter"
+    );
+    // ★★★★★ R1848 — PAIRWISE, and this is a repair the counterfactuals forced.
+    // The first draft compared only the widest declaration with the narrowest,
+    // which is satisfied by any spread at all: widening ONE role until it was
+    // indistinguishable from another left this test green, and the
+    // counterfactual that did exactly that came back PASSED. A taxonomy tells
+    // its members apart when no two of them are told the same thing — that is
+    // what the name of this test claims, and now what it checks.
+    for (n, role) in traffic.iter().enumerate() {
+        for other in &traffic[n + 1..] {
+            assert_ne!(
+                role.carries, other.carries,
+                "{} and {} are told exactly the same thing, so the declaration \
+                 does not distinguish them",
+                role.name, other.name
+            );
+        }
+    }
+}
+
+/// ★★★★★ R1848 — **what a card STATES is derived from its role's declaration
+/// and its own rows, and the opening graph states less than it declares.**
+///
+/// This is the measurement the screen could not make about itself. A card's
+/// rows are free text keyed by whatever the row was written with; the role said
+/// nothing about which keys belong to it; so "does this node state its
+/// priority?" had nowhere to be asked. It does now, and the answer for the
+/// reference's own opening graph is that most of the vocabulary is unstated.
+///
+/// ⚠ NOT asserted as a defect. The opening graph is the reference's screen and
+/// this tree reproduces it — the number is recorded so that a later round
+/// changing it has to say so, which is the only thing a fixture measurement is
+/// good for.
+#[test]
+fn r1848_a_card_states_a_subset_of_what_its_role_carries() {
+    let mut stated_total = 0;
+    let mut declared_total = 0;
+    for node in spec::NODES {
+        let stated = spec::stated_traffic(node);
+        let unstated = spec::unstated_traffic(node);
+        let role = spec::role_of(node).unwrap_or_else(|| panic!("{} has no role", node.id));
+        assert_eq!(
+            stated.len() + unstated.len(),
+            role.carries.len(),
+            "{}: stated and unstated must partition what {} carries",
+            node.id,
+            role.name
+        );
+        for parameter in &stated {
+            assert!(
+                node.rows.iter().any(|(key, _)| *key == parameter.key()),
+                "{} is reported stating {} and has no such row",
+                node.id,
+                parameter.key()
+            );
+        }
+        stated_total += stated.len();
+        declared_total += role.carries.len();
+    }
+    assert!(
+        declared_total > 0,
+        "no node has a role that carries anything, so this measures nothing"
+    );
+    assert!(
+        stated_total < declared_total,
+        "the opening graph states every declared parameter, which is not what \
+         the reference's screen shows — if that changed, this fixture is stale"
+    );
+    assert!(
+        stated_total > 0,
+        "no card states any declared parameter, so the keys and the vocabulary \
+         do not meet and the join is decorative"
+    );
+}
+
 /// Every checkpoint's verdict, in the order they were raised.
 fn verdicts(state: &std::rc::Rc<LabState>) -> Vec<String> {
     state

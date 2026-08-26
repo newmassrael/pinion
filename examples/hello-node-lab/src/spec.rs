@@ -112,6 +112,62 @@ pub const APP_BAR_H: u32 = 54;
 /// The canvas toolbar's height.
 pub const TOOLBAR_H: u32 = 46;
 
+/// One traffic parameter a message carries, by the name the wire uses for it.
+///
+/// ★★★★★ R1848 — the census's `lab.t1.8` asks for *traffic nodes carrying rate,
+/// payload, priority, congestion and reliability*, and its verdict is `app`:
+/// the framework owns what a node IS ([`pinion_node_graph`]'s `NodeKind`) and
+/// declines to own which parameters a domain's traffic has, because every
+/// domain's are different. This is that taxonomy, declared where the domain
+/// lives.
+///
+/// ⚠ What made it worth declaring rather than assuming: the opening graph
+/// already PAINTS traffic parameters, as free-text key/value rows on a card
+/// ([`NodeSpec::rows`]) with nothing saying which keys a role may use. So
+/// nothing could ask whether a node states a parameter its role has, or states
+/// one its role does not — the class this tree keeps repairing, one screen at a
+/// time. A closed vocabulary is what turns that into a question with an answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrafficParameter {
+    /// How often it sends.
+    Rate,
+    /// How much each message carries.
+    Payload,
+    /// Which traffic it is served before.
+    Priority,
+    /// What it does when the path cannot keep up.
+    Congestion,
+    /// Whether delivery is guaranteed.
+    Reliability,
+}
+
+impl TrafficParameter {
+    /// The key a card's row uses for it, and the word the wire publishes.
+    #[must_use]
+    pub const fn key(self) -> &'static str {
+        match self {
+            TrafficParameter::Rate => "rate",
+            TrafficParameter::Payload => "payload",
+            TrafficParameter::Priority => "priority",
+            TrafficParameter::Congestion => "congestion",
+            TrafficParameter::Reliability => "reliability",
+        }
+    }
+}
+
+/// The whole vocabulary, in the order the capability names it.
+///
+/// Closed on purpose: a parameter that is not here cannot be declared by a
+/// role, which is what makes [`RoleSpec::carries`] a taxonomy rather than a
+/// list of whatever anyone typed.
+pub const TRAFFIC_PARAMETERS: &[TrafficParameter] = &[
+    TrafficParameter::Rate,
+    TrafficParameter::Payload,
+    TrafficParameter::Priority,
+    TrafficParameter::Congestion,
+    TrafficParameter::Reliability,
+];
+
 /// A palette entry: a role a node can be given.
 pub struct RoleSpec {
     /// The role's name.
@@ -122,6 +178,13 @@ pub struct RoleSpec {
     pub group: &'static str,
     /// Whether it can accept an inbound link at all.
     pub accepts: bool,
+    /// ★ R1848 — the traffic parameters a node in this role carries.
+    ///
+    /// Empty for every `infrastructure` role, and that emptiness is the
+    /// taxonomy's content rather than an omission: a router carries other
+    /// nodes' traffic and has none of its own, so a parameter here would be a
+    /// claim about somebody else's messages.
+    pub carries: &'static [TrafficParameter],
 }
 
 /// The palette, grouped by what a node is *for*. Two groups, because that is
@@ -133,50 +196,121 @@ pub const ROLES: &[RoleSpec] = &[
         gist: "listens, routes",
         group: "infrastructure",
         accepts: true,
+        carries: &[],
     },
     RoleSpec {
         name: "Peer",
         gist: "joins the mesh",
         group: "infrastructure",
         accepts: true,
+        carries: &[],
     },
     RoleSpec {
         name: "Client",
         gist: "one router only",
         group: "infrastructure",
         accepts: false,
+        carries: &[],
     },
     RoleSpec {
         name: "Store",
         gist: "volume, key range",
         group: "infrastructure",
         accepts: true,
+        carries: &[],
     },
+    // ★ R1848 — the four traffic roles, and the assignment is the DOMAIN's call,
+    // which is what the census's `app` verdict means: the framework owns what a
+    // node is and declines to own which parameters a domain's traffic has.
+    // Each line below says why this role has what it has.
     RoleSpec {
         name: "Publisher",
         gist: "sends, with a class",
         group: "traffic",
         accepts: false,
+        // It originates messages, so every parameter is its decision.
+        carries: TRAFFIC_PARAMETERS,
     },
     RoleSpec {
         name: "Subscriber",
         gist: "receives",
         group: "traffic",
         accepts: true,
+        // It chooses neither how often nor how large — those are the sender's.
+        // What it does declare is how it wants to be served and whether it will
+        // accept loss.
+        carries: &[TrafficParameter::Priority, TrafficParameter::Reliability],
     },
     RoleSpec {
         name: "Querier",
         gist: "asks, on a period",
         group: "traffic",
         accepts: false,
+        // A period IS a rate, and a query carries a payload; what it cannot
+        // decide is what a congested path does to somebody else's answer.
+        carries: &[
+            TrafficParameter::Rate,
+            TrafficParameter::Payload,
+            TrafficParameter::Priority,
+            TrafficParameter::Reliability,
+        ],
     },
     RoleSpec {
         name: "Responder",
         gist: "answers",
         group: "traffic",
         accepts: true,
+        // It answers when asked, so it has no rate of its own.
+        carries: &[
+            TrafficParameter::Payload,
+            TrafficParameter::Priority,
+            TrafficParameter::Reliability,
+        ],
     },
 ];
+
+/// The role a node has, if its name is one this palette offers.
+#[must_use]
+pub fn role_of(node: &NodeSpec) -> Option<&'static RoleSpec> {
+    ROLES.iter().find(|role| role.name == node.role)
+}
+
+/// The traffic parameters a node's card actually STATES, of the ones its role
+/// carries.
+///
+/// ★★★★★ R1848 — the join the screen did not have. A card's rows are free text
+/// keyed by whatever the row was written with, and the role said nothing about
+/// which keys belong to it, so "does this node state its priority?" had nowhere
+/// to be asked. It does now, and the answer is derived from the two rather than
+/// recorded a third time.
+#[must_use]
+pub fn stated_traffic(node: &NodeSpec) -> Vec<TrafficParameter> {
+    role_of(node).map_or_else(Vec::new, |role| {
+        role.carries
+            .iter()
+            .copied()
+            .filter(|p| node.rows.iter().any(|(key, _)| *key == p.key()))
+            .collect()
+    })
+}
+
+/// The parameters a node's role carries that its card does NOT state.
+///
+/// ⚠ Not a defect list. The opening graph is the reference's screen and this
+/// tree reproduces it; what this answers is how much of the declared taxonomy
+/// that screen puts in front of a reader, which is a measurement the screen
+/// could not previously produce about itself.
+#[must_use]
+pub fn unstated_traffic(node: &NodeSpec) -> Vec<TrafficParameter> {
+    let stated = stated_traffic(node);
+    role_of(node).map_or_else(Vec::new, |role| {
+        role.carries
+            .iter()
+            .copied()
+            .filter(|p| !stated.contains(p))
+            .collect()
+    })
+}
 
 /// The pin legend: three appearances, and what each one means.
 ///

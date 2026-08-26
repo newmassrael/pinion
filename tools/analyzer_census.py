@@ -430,7 +430,13 @@ UNASSEMBLED: frozenset[str] = frozenset(
         # directions: a row that gains an `assembled_by` while still listed
         # here fails by name, so the name and the field cannot drift apart.
         "dashboard.t1.9",
-        "lab.t1.8",
+        # `lab.t1.8` was here and is REPAID at R1848 — a traffic role declares
+        # which of a closed vocabulary its nodes carry, and a card's stated and
+        # unstated parameters are derived from that declaration and its own
+        # rows. ★ The taxonomy was worth declaring because the screen already
+        # PAINTED these parameters as free-text rows with nothing saying which
+        # keys belong to a role, so "does this node state its priority?" had
+        # nowhere to be asked.
         # `lab.t1.9` was here and is REPAID at R1844 — the scenario gained a
         # fifth act that ASKS rather than commands, with the timeout that makes
         # it an assertion about an interval instead of a sample of one instant.

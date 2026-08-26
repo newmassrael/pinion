@@ -9814,8 +9814,16 @@ fn spec_json() -> serde_json::Value {
             "reserved_for": reserved_for,
             "active": *name == spec::RAIL_ACTIVE,
         })).collect::<Vec<_>>(),
+        // ★★★★★ R1848 — a role publishes the traffic parameters it carries, and
+        // the vocabulary those come from is published beside it. A client is
+        // told what CAN be carried instead of inferring it from whichever roles
+        // this document happens to contain — the same reason `violation_kinds`
+        // sits beside the violations on the capture screen.
+        "traffic_parameters": spec::TRAFFIC_PARAMETERS
+            .iter().map(|p| p.key()).collect::<Vec<_>>(),
         "roles": spec::ROLES.iter().map(|r| serde_json::json!({
             "name": r.name, "gist": r.gist, "group": r.group, "accepts": r.accepts,
+            "carries": r.carries.iter().map(|p| p.key()).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
         "pin_legend": spec::PIN_LEGEND.iter().map(|(k, m)| serde_json::json!({
             "kind": k, "means": m,
@@ -9828,6 +9836,15 @@ fn spec_json() -> serde_json::Value {
             "id": n.id, "role": n.role, "badge": n.badge, "frame": n.frame,
             "rect": [n.rect.0, n.rect.1, n.rect.2],
             "rows": n.rows.iter().map(|(k, v)| serde_json::json!([k, v])).collect::<Vec<_>>(),
+            // ★★★★★ R1848 — DERIVED from the node's rows and its role's
+            // declaration, not recorded a third time. `stated` is what this
+            // card puts in front of a reader; `unstated` is what its role
+            // carries and the card leaves out, which is a measurement the
+            // screen could not make about itself before the taxonomy existed.
+            "traffic_stated": spec::stated_traffic(n)
+                .into_iter().map(spec::TrafficParameter::key).collect::<Vec<_>>(),
+            "traffic_unstated": spec::unstated_traffic(n)
+                .into_iter().map(spec::TrafficParameter::key).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
         "links": spec::LINKS.iter().map(|(a, b)| serde_json::json!([a, b])).collect::<Vec<_>>(),
         "selected_link": [spec::SELECTED_LINK.0, spec::SELECTED_LINK.1],
