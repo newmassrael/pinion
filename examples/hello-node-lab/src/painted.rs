@@ -6800,49 +6800,86 @@ fn r1859_the_rename_row_holds_its_text_and_centres_it() {
     let owner = Owner::new();
     owner.run(|| {
         let state = use_lab_state();
-        let (_, scene) = painted_and_scene(&state, (WIN_W, WIN_H));
-
         let seats = super::rename_row_seats();
         let mut judged = 0usize;
         let mut short: Vec<(String, u32, u32)> = Vec::new();
         let mut off_centre: Vec<(String, u32, u32)> = Vec::new();
-        scene.for_each_node(&mut |visit| {
-            let pinion_core::Scene::Text(t) = visit.node else {
-                return;
-            };
-            // The runs of THIS row, found by the seat that holds them rather
-            // than by a list of the words: a fourth control added to the row
-            // joins this gate without the gate being edited, and a word changed
-            // (`rename` becomes `apply` while the field is open) does not drop
-            // out of it.
-            let Some(seat) = seats.iter().find(|seat| {
-                t.rect.x >= seat.x
-                    && t.rect.y >= seat.y
-                    && t.rect.x + t.rect.w <= seat.x + seat.w
-                    && t.rect.y + t.rect.h <= seat.y + seat.h
-            }) else {
-                return;
-            };
-            judged += 1;
-            let owed = pinion_core::containment::short_by(t);
-            if owed > 0 {
-                short.push((t.content.clone(), t.rect.h, owed));
-            }
-            // Centred: the space above and below the run's box inside its seat
-            // differ by at most one pixel, which is what an odd remainder
-            // allows and nothing more.
-            let above = t.rect.y - seat.y;
-            let below = (seat.y + seat.h).saturating_sub(t.rect.y + t.rect.h);
-            if above.abs_diff(below) > 1 {
-                off_centre.push((t.content.clone(), above, below));
-            }
-        });
+        let mut spilled: Vec<(String, &str, u32, u32)> = Vec::new();
 
-        println!("{judged} run(s) of the rename row measured");
+        // ★★★★★ R1859.1 — **at EVERY size this screen declares**, which R1859
+        // did not do and R1742's rule says it must: *one size is not a
+        // measurement*. This round's own closing audit is what asked, and the
+        // question is not idle — a box derived from the FACE has a fixed
+        // height, so a seat that shrinks below `line_box` at some size would
+        // have the derivation centring a run that no longer fits inside it.
+        // Whether the seats can shrink is a fact about the layout, and asking
+        // one size cannot answer it.
+        for (how_big, size) in SIZES {
+            let (_, scene) = painted_and_scene(&state, *size);
+            scene.for_each_node(&mut |visit| {
+                let pinion_core::Scene::Text(t) = visit.node else {
+                    return;
+                };
+                // The runs of THIS row, found by the seat that holds them rather
+                // than by a list of the words: a fourth control added to the row
+                // joins this gate without the gate being edited, and a word changed
+                // (`rename` becomes `apply` while the field is open) does not drop
+                // out of it.
+                //
+                // 🟥★★★★★ R1859.1 — the run is selected by where it BEGINS, not by
+                // being wholly inside. The first draft demanded full containment,
+                // which made the `spilled` assertion below UNREACHABLE BY
+                // CONSTRUCTION: a run too tall for its seat was excluded from the
+                // population by the very predicate that was supposed to catch it,
+                // and shrinking the seat to prove the assertion fires instead made
+                // the gate report an empty population. ⇒ **a selection predicate
+                // that presumes the property being asserted cannot assert it** —
+                // R1856's lesson about a gate's own ordering, one level in.
+                let Some(seat) = seats.iter().find(|seat| {
+                    t.rect.x >= seat.x
+                        && t.rect.y >= seat.y
+                        && t.rect.x + t.rect.w <= seat.x + seat.w
+                        && t.rect.y < seat.y + seat.h
+                }) else {
+                    return;
+                };
+                judged += 1;
+                let owed = pinion_core::containment::short_by(t);
+                if owed > 0 {
+                    short.push((t.content.clone(), t.rect.h, owed));
+                }
+                // Centred: the space above and below the run's box inside its seat
+                // differ by at most one pixel, which is what an odd remainder
+                // allows and nothing more.
+                let above = t.rect.y - seat.y;
+                let below = (seat.y + seat.h).saturating_sub(t.rect.y + t.rect.h);
+                if above.abs_diff(below) > 1 {
+                    off_centre.push((t.content.clone(), above, below));
+                }
+                // ★ And the derived box must still FIT the seat it is centred in.
+                // A face-derived height is fixed; a seat's is not, so this is the
+                // failure the multi-size loop exists to be able to see.
+                if t.rect.h > seat.h {
+                    spilled.push((t.content.clone(), how_big, t.rect.h, seat.h));
+                }
+            });
+        }
+
+        println!(
+            "{judged} run(s) of the rename row measured over {} size(s)",
+            SIZES.len()
+        );
         assert!(
-            judged >= 3,
-            "★ the row paints a placeholder and two seats, so fewer than three \
-             runs means this gate is measuring nothing: {judged}",
+            judged >= 3 * SIZES.len(),
+            "★ the row paints a placeholder and two seats at each size, so \
+             fewer than three per size means this gate is measuring nothing: \
+             {judged} over {} size(s)",
+            SIZES.len(),
+        );
+        assert!(
+            spilled.is_empty(),
+            "★ a face-derived box no longer fits the seat centring it \
+             (content, size, box height, seat height): {spilled:?}",
         );
         assert!(
             short.is_empty(),
