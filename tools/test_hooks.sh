@@ -314,7 +314,10 @@ ok "and says which rule let it through" \
 with_stub_err() {
     local said="$1"
     shift
-    # shellcheck disable=SC2031
+    # SC2030/SC2031 are the POINT here as they are for `with_stub` above:
+    # scoping the export to this subshell is how one case's stubbed sentence is
+    # kept out of the next one's.
+    # shellcheck disable=SC2030,SC2031
     (
         unset PINION_PUSH_ON_RED
         export PINION_STUB_RUN_LIST_ERR="$said"
@@ -484,6 +487,10 @@ stub_radius_repo() {
     {
         echo '#!/usr/bin/env bash'
         if [[ "$radius" == "-" ]]; then
+            # R1857.3 — and it says WHY on stderr, the way a real failure does.
+            # A stub that dies mutely could not tell "the gate repeats what it
+            # was told" from "the gate prints an empty line".
+            echo 'echo "ModuleNotFoundError: No module named tomllib" >&2'
             echo 'exit 1'
         else
             printf 'cat <<%s\n%s\n%s\n' "EOF_R" "$radius" "EOF_R"
@@ -590,6 +597,15 @@ ok "a radius that cannot be computed continues" \
 
 ok "and says it could not compute it" \
    "$(msg_of "$(with_radius "-" 0 12 -)" | grep -c 'could not compute')" \
+   "1"
+
+# ★★★★★ R1857.3 — ...and says WHAT it was told, rather than asserting a cause.
+# This message used to name two (an absent python, a cargo that cannot read the
+# manifests) while measuring neither, and its comment cited `lib/ci-status.sh`'s
+# posture — which had the same defect, and which three rounds then misdiagnosed
+# off exactly such a sentence. An anti-pattern can travel by CITATION.
+ok "and repeats what the radius tool said" \
+   "$(msg_of "$(with_radius "-" 0 12 -)" | grep -c 'No module named tomllib')" \
    "1"
 
 # The escape hatch, and only for the exact value.

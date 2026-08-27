@@ -61,14 +61,34 @@ consumer_test_gate() {
     local args=(python3 "$repo_root/tools/blast_radius.py" --mode "$mode")
     [[ -n "$rev_range" ]] && args+=(--range "$rev_range")
 
-    local names
-    if ! names="$("${args[@]}" 2>/dev/null)"; then
-        # An absent python or a cargo that cannot read the manifests is
-        # infrastructure absence, not evidence of breakage — the posture
-        # `lib/ci-status.sh` takes, and for the same reason.
+    local names said_file said
+    # ★★★★★ R1857.3 — **stderr is KEPT, and the refusal repeats it.** Continuing
+    # is right: an absent python, or a cargo that cannot read the manifests, is
+    # infrastructure absence rather than evidence of breakage, and that is
+    # `lib/ci-status.sh`'s posture too.
+    #
+    # ⚠ But this comment used to STOP at that citation while ALSO naming two
+    # causes nothing had measured, and it inherited that shape from the very
+    # file it cites — which had the identical defect and was repaired in
+    # R1857.2, after its unmeasured sentence had sent three separate rounds to
+    # three separate wrong diagnoses of one debt. ⇒ **AN ANTI-PATTERN CAN
+    # TRAVEL BY CITATION RATHER THAN BY COPYING**: quoting another gate's
+    # posture as authority brought its defect along with it, and a census keyed
+    # on `2>/dev/null` would not have found this — 23 sites in this directory
+    # discard stderr and only this one then asserts WHY. The predicate that
+    # separates them is not the redirect, it is whether the next sentence names
+    # a cause. The two siblings that get it right (`ci_run_count_for_sha`,
+    # which answers `unknown`, and `target-budget.sh`, which says the cache is
+    # left unbounded) simply do not claim one.
+    said_file="$(mktemp)"
+    if ! names="$("${args[@]}" 2>"$said_file")"; then
+        said="$(head -n 1 "$said_file" | tr -d '\r')"
+        rm -f "$said_file"
         echo "$label: could not compute the blast radius — continuing" >&2
+        echo "$label:   it said: ${said:-(nothing on stderr)}" >&2
         return 0
     fi
+    rm -f "$said_file"
 
     local -a packages=()
     local name
