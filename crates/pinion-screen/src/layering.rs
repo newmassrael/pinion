@@ -151,6 +151,94 @@ pub fn region_of(scene: &Scene, guest_tag: &str) -> Option<Rect> {
     found
 }
 
+/// One host mark found lying over one of the guest's sentences.
+///
+/// Separate from [`Overlap`] because a text run carries no tag of its own — what
+/// a reader lost is the WORDS, and a report that named the box around them would
+/// be naming something the reader never saw.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Covered {
+    /// The host's mark — what is on top.
+    pub host: String,
+    /// What the guest was saying underneath it.
+    pub said: String,
+    /// Where the host's mark is, in window coordinates.
+    pub host_rect: Rect,
+    /// Where the sentence is, in the same coordinates.
+    pub said_rect: Rect,
+}
+
+/// ★★★★★ R1861 — **every sentence of the guest that a mark of the host lies
+/// over.**
+///
+/// # Why this is not [`host_marks_over_guest`] with a filter
+///
+/// That one is a RATCHET on which host marks reach the guest's region at all,
+/// and it has to be: measured against the behaviour reference, its status toast
+/// floats over the content too (`position: fixed; bottom: 22px`) and is
+/// tolerable because it *leaves* after 2.6 seconds. Forbidding the overlap
+/// outright would forbid what the reference does.
+///
+/// **Covering a sentence is a different claim, and it is one the reference never
+/// makes**: what its toast floats over is empty canvas. So this asks the sharper
+/// question, it can be zero, and a screen appearing here is a defect rather than
+/// a budget line. Measured on the analysis tool at its shipping size before the
+/// repair: the node lab lost the top 6 pixels of its gesture hint and the
+/// capture viewer lost two lane readouts entirely.
+///
+/// A run belongs to the guest when the guest's node is one of its ancestors —
+/// read from the tree, for the reason the module header gives.
+#[must_use]
+pub fn host_marks_over_guest_text(scene: &Scene, guest_tag: &str) -> Vec<Covered> {
+    let mut said: Vec<(String, Rect)> = Vec::new();
+    let mut host: Vec<(String, Rect)> = Vec::new();
+    scene.for_each_node(&mut |visit| {
+        let Some(rect) = visit.absolute_rect() else {
+            return;
+        };
+        // ⚠ The guest's own root counts as inside it. Read as ancestry alone
+        // this said `packet_view` was a HOST mark lying over every sentence of
+        // `packet_view` — a node is not its own ancestor, and the first run of
+        // this gate reported exactly that. Its sibling above has carried the
+        // `tag == guest_tag` clause since R1775; this one was written without
+        // it, which is the same predicate missing the same arm.
+        let inside_guest = visit.node.tag() == Some(guest_tag)
+            || visit
+                .ancestors
+                .iter()
+                .any(|a| a.tag().is_some_and(|t| t == guest_tag));
+        match (inside_guest, visit.node) {
+            (true, Scene::Text(text)) => said.push((text.content.clone(), rect)),
+            (false, _) => {
+                if let Some(tag) = visit.node.tag() {
+                    host.push((tag.to_owned(), rect));
+                }
+            }
+            _ => {}
+        }
+    });
+    // An ancestor of the guest holds it and does not cover it — the same
+    // structural reading its sibling above uses, and for the same measured
+    // reason.
+    let held_by = ancestors_of(scene, guest_tag);
+    host.retain(|(tag, _)| !held_by.contains(tag.as_str()));
+
+    let mut found = Vec::new();
+    for (host_tag, host_rect) in &host {
+        for (content, said_rect) in &said {
+            if meets(*host_rect, *said_rect) {
+                found.push(Covered {
+                    host: host_tag.clone(),
+                    said: content.clone(),
+                    host_rect: *host_rect,
+                    said_rect: *said_rect,
+                });
+            }
+        }
+    }
+    found
+}
+
 /// ★★★★★ The whole rule as one call: the guest is on this frame, it drew
 /// something, and nothing of the host's lies on top of any of it.
 ///
@@ -197,8 +285,17 @@ pub fn assert_host_clears_guest(scene: &Scene, guest_tag: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Overlap, meets};
+    use super::{Overlap, host_marks_over_guest_text, meets};
+    use pinion_core::Scene;
     use pinion_core::scene::Rect;
+
+    /// A scene through the layout pass, which is what makes a container answer
+    /// [`pinion_core::NodeVisit::absolute_rect`] at all.
+    fn laid_out(mut scene: Scene) -> Scene {
+        let mut cache = pinion_runtime::LayoutCache::new();
+        pinion_runtime::compute_layout(&mut scene, &mut cache, 400, 300);
+        scene
+    }
 
     #[test]
     fn two_rectangles_that_share_a_pixel_meet() {
@@ -250,5 +347,104 @@ mod tests {
         };
         assert_eq!(over.host, "shell.toast");
         assert!(meets(over.host_rect, over.guest_rect));
+    }
+
+    /// ★★★★★ R1861 — **a node is not its own ancestor, and the guest's ROOT is
+    /// inside the guest.**
+    ///
+    /// Read as ancestry alone, [`host_marks_over_guest_text`] called the guest's
+    /// own paint root a HOST mark lying over every sentence the guest painted —
+    /// which is every sentence, so the answer was "everything is covered". The
+    /// sibling predicate has carried the `tag == guest_tag` arm since R1775 and
+    /// this one was written without it.
+    ///
+    /// ⚠ **This test exists because a counterfactual found the arm unguarded.**
+    /// Removing it left every gate green: the assembled tool's own check walks
+    /// the scene itself, over a wider population, so this function had no
+    /// consumer holding it. A framework predicate whose only proof was a caller
+    /// that stopped calling it is a predicate nothing is checking.
+    #[test]
+    fn r1861_the_guests_own_root_is_not_a_host_mark_over_it() {
+        use pinion_core::scene::{ContainerNode, TextNode};
+        use pinion_core::style::{LayoutStyle, Size};
+
+        let seat = |rect: Rect| {
+            LayoutStyle::new()
+                .with_absolute_position(rect.x, rect.y)
+                .with_size(Size::px(rect.w, rect.h))
+        };
+        let words = Rect::new(10, 60, 200, 12);
+        let said = Scene::Text(
+            TextNode::new("a sentence the guest painted", words).with_layout(seat(words)),
+        );
+        let guest = Scene::Container(
+            ContainerNode::new(vec![said])
+                .with_tag("guest")
+                .with_layout(seat(Rect::new(0, 0, 400, 300))),
+        );
+        let scene = Scene::Container(ContainerNode::new(vec![guest]).with_tag("window"));
+
+        let scene = laid_out(scene);
+        // ⚠ The premise, asserted rather than assumed: a container answers
+        // `absolute_rect` only after a layout pass, and without one the guest's
+        // root is `None` and drops out of the population before the predicate
+        // sees it. The first draft of this test had no layout pass and passed
+        // with the arm it exists to hold DELETED — measured by hand, because a
+        // counterfactual said so and a green test would not have.
+        let mut root = None;
+        scene.for_each_node(&mut |visit| {
+            if visit.node.tag() == Some("guest") {
+                root = visit.absolute_rect();
+            }
+        });
+        assert!(
+            root.is_some(),
+            "the guest's root has no rectangle, so it is not in the population \
+             this test is about"
+        );
+
+        let covered = host_marks_over_guest_text(&scene, "guest");
+        assert!(
+            covered.is_empty(),
+            "the guest's own root, or a container holding it, was reported as \
+             covering the guest's words: {covered:#?}"
+        );
+    }
+
+    /// And the direction that must still fire, so the test above is not the
+    /// predicate being switched off.
+    #[test]
+    fn r1861_a_host_mark_over_a_sentence_is_reported_with_the_words() {
+        use pinion_core::scene::{BoxNode, ContainerNode, TextNode};
+        use pinion_core::style::{BoxStyle, Color, LayoutStyle, Size};
+
+        let seat = |rect: Rect| {
+            LayoutStyle::new()
+                .with_absolute_position(rect.x, rect.y)
+                .with_size(Size::px(rect.w, rect.h))
+        };
+        let words = Rect::new(10, 60, 200, 12);
+        let said = Scene::Text(
+            TextNode::new("a sentence the guest painted", words).with_layout(seat(words)),
+        );
+        let guest = Scene::Container(
+            ContainerNode::new(vec![said])
+                .with_tag("guest")
+                .with_layout(seat(Rect::new(0, 0, 400, 300))),
+        );
+        let box_seat = Rect::new(50, 55, 120, 30);
+        let overlay = Scene::Box(
+            BoxNode::new(box_seat, BoxStyle::filled(Color::rgb(1, 2, 3)))
+                .with_tag("host.toast")
+                .with_layout(seat(box_seat)),
+        );
+        let scene = laid_out(Scene::Container(
+            ContainerNode::new(vec![guest, overlay]).with_tag("window"),
+        ));
+
+        let covered = host_marks_over_guest_text(&scene, "guest");
+        assert_eq!(covered.len(), 1, "the overlay covers exactly one sentence");
+        assert_eq!(covered[0].host, "host.toast");
+        assert_eq!(covered[0].said, "a sentence the guest painted");
     }
 }

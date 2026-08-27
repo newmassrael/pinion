@@ -143,6 +143,10 @@ impl<V: WidgetView> Screen for Mount<V> {
         V::shrink_policy()
     }
 
+    fn keeps_clear(&self, region: Rect) -> Option<Rect> {
+        V::keeps_clear(region)
+    }
+
     fn view_for_window(&self, window_id: &str, frame: &Frame) -> Scene {
         V::view_for_window(window_id, self.state(), frame)
     }

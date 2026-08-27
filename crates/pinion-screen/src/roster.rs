@@ -825,6 +825,39 @@ impl ScreenRoster {
             .or_else(|| self.sizes.get(key).copied())
     }
 
+    /// ★ R1861 — the part of `region` the screen at `key` has content in that a
+    /// floating overlay must not cover.
+    ///
+    /// `None` for a page the host paints itself: a host has no screen to ask,
+    /// and a host that puts an overlay over its own page can see that without
+    /// being told. Asked of the roster for [`shrink_policy_of`](Self::shrink_policy_of)'s
+    /// reason — a host placing an overlay should not have to navigate to a
+    /// destination to learn what is under it.
+    ///
+    /// ★★★★★ **Asked inside the screen's own extent, and R1825's defect is why.**
+    /// A screen answers this from the same geometry it paints with, and that
+    /// geometry reads [`layout_size`](pinion_core::external::layout_size) — which
+    /// outside a grant falls back to the screen's DESIGN size. Measured on the
+    /// first run of this method without the grant: the capture viewer put its
+    /// strip 52 pixels below where it paints it and the node lab reported a hint
+    /// that cleared the overlay when it did not. So the same wrapper
+    /// [`with_current`](Self::with_current) uses for the paint is used here, and
+    /// the declaration and the painting read one rectangle.
+    #[must_use]
+    pub fn keeps_clear_of(
+        &self,
+        key: &str,
+        region: pinion_core::scene::Rect,
+    ) -> Option<pinion_core::scene::Rect> {
+        let screen = self.screens.get(key)?;
+        if region.w == 0 || region.h == 0 {
+            return screen.keeps_clear(region);
+        }
+        with_surface_extent(screen.tag(), (region.w, region.h), || {
+            screen.keeps_clear(region)
+        })
+    }
+
     /// The current screen's paint-root tag, when the journey is at a mounted
     /// destination.
     #[must_use]

@@ -13744,6 +13744,27 @@ impl WidgetView for NodeLabView {
         Some(SHRINK)
     }
 
+    /// ★★★★★ R1861 — the gesture hint, which is the one thing this screen puts
+    /// where a host's floating overlay lands.
+    ///
+    /// **Derived from `hint_rect` rather than written down**, so the strip
+    /// cannot move without this moving with it — the defect a declaration beside
+    /// a painter always eventually has. Offset into the region because the
+    /// strip's own rectangle is in this screen's coordinates and the host asks
+    /// in the window's.
+    ///
+    /// Measured before this existed: the host's toast covered the top 6 pixels
+    /// of the run inside this strip, and a reader reported it.
+    fn keeps_clear(region: Rect) -> Option<Rect> {
+        let hint = hint_rect();
+        Some(Rect::new(
+            region.x + hint.x,
+            region.y + hint.y,
+            hint.w,
+            hint.h,
+        ))
+    }
+
     /// ★★★★★ R1742 — the verdict this screen has always computed, answered
     /// where the application it is a page of can reach it.
     ///

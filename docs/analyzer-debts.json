@@ -289,17 +289,6 @@
       ]
     },
     {
-      "name": "debt-the-shipped-window-is-below-a-mounted-screens-minimum",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "person",
-      "closed_because": "rule:analyzer-debt-repayment-loop",
-      "why": [
-        "links debt-the-canon-is-one-app-and-we-are-many-binaries"
-      ]
-    },
-    {
       "name": "debt-two-deliberate-divergences-from-the-behaviour-canon",
       "substituted": false,
       "blocked_by": "spec-round",

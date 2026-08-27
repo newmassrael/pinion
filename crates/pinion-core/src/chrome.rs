@@ -89,6 +89,8 @@
 
 use std::cell::RefCell;
 
+use crate::scene::Rect;
+
 /// One part of the application frame a host can provide to the screens it
 /// shows.
 ///
@@ -343,12 +345,173 @@ pub fn host_chrome_for(tag: &str) -> HostChrome {
     })
 }
 
+/// ★★★★★ R1861 — **where to put a floating overlay so it covers nothing.**
+///
+/// `seat` moved the shortest distance that clears **every** band in `bands`
+/// while staying wholly inside `within`, or `None` when no such place exists.
+///
+/// # The defect this comes from
+///
+/// A host's status toast is positioned against the window — the reference's own
+/// `bottom: 22px`, centred — and a guest lays its own content out against the
+/// region it was given. Neither knows about the other, and measured on the
+/// analysis tool at its shipping size the toast covered **the top 6 pixels of
+/// the node lab's gesture hint** and **the whole of two reassembly lane
+/// readouts** on the capture viewer. A person reported the first of those as
+/// *"I cannot read it"*, and every gate was green: containment asks whether a
+/// mark is inside its own box, and an overlay is its own top-level box.
+///
+/// # Why moving the overlay and not the content
+///
+/// The guest's layout is its specification's; the overlay is the thing that
+/// floats. Tooltips and popups in every mature toolkit flip or slide to stay on
+/// screen for the same reason — what is displaced is what was placed *over*.
+/// What is new here is the thing avoided: those policies avoid the screen's
+/// EDGE, and this avoids the CONTENT, because a reader loses a sentence the
+/// same way whether it left the window or was painted on.
+///
+/// # The rule
+///
+/// The four ways out of each band are tried and the shortest that clears them
+/// **all** wins, with a fixed order — above, below, left, right — so a tie is
+/// resolved the same way on every frame. An overlay that jumped between two
+/// equally good places as a sentence changed length would be worse than one that
+/// covered something.
+///
+/// # ⚠ `bands` is a list because the first draft took one, and one was half
+///
+/// It took the band the *guest* declared, and the first pixel measurement of the
+/// repair found the overlay still on top of a sentence — **the host's own**. The
+/// reader had named runs from two different strips in one sentence and this had
+/// only asked about one of them. A seat has to clear everything under it, and
+/// "everything" is not a fact one declaration can carry.
+#[must_use]
+pub fn clear_of(seat: Rect, bands: &[Rect], within: Rect) -> Option<Rect> {
+    let meets = |a: Rect, b: Rect| {
+        !(a.x >= b.x + b.w || b.x >= a.x + a.w || a.y >= b.y + b.h || b.y >= a.y + a.h)
+    };
+    let inside = |r: Rect| {
+        r.x >= within.x
+            && r.y >= within.y
+            && r.x + r.w <= within.x + within.w
+            && r.y + r.h <= within.y + within.h
+    };
+    let clears = |r: Rect| bands.iter().all(|band| !meets(r, *band));
+    if clears(seat) {
+        // Already clear. Reported as `Some` rather than as a distinct arm: a
+        // caller wants the seat to use, and "it did not have to move" is a fact
+        // about the frame rather than a different kind of answer.
+        return Some(seat);
+    }
+    bands
+        .iter()
+        .flat_map(|band| {
+            [
+                Rect::new(seat.x, band.y.saturating_sub(seat.h), seat.w, seat.h),
+                Rect::new(seat.x, band.y + band.h, seat.w, seat.h),
+                Rect::new(band.x.saturating_sub(seat.w), seat.y, seat.w, seat.h),
+                Rect::new(band.x + band.w, seat.y, seat.w, seat.h),
+            ]
+        })
+        .filter(|candidate| inside(*candidate) && clears(*candidate))
+        .map(|candidate| {
+            let moved = candidate.x.abs_diff(seat.x) + candidate.y.abs_diff(seat.y);
+            (moved, candidate)
+        })
+        // `min_by_key` keeps the FIRST of equal keys, which is what makes the
+        // order above the tie-break rather than an accident of iteration.
+        .min_by_key(|(moved, _)| *moved)
+        .map(|(_, candidate)| candidate)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        HostChrome, Part, forget_host_chrome, host_chrome, host_chrome_for, with_host_chrome,
-        with_host_chrome_for,
+        HostChrome, Part, Rect, clear_of, forget_host_chrome, host_chrome, host_chrome_for,
+        with_host_chrome, with_host_chrome_for,
     };
+
+    /// The window the analysis tool ships in, and the region it hands a guest.
+    const WITHIN: Rect = Rect::new(52, 52, 1388, 848);
+    /// Where the host puts its toast before anything is avoided — the
+    /// reference's own placement, centred and 22 above the foot.
+    const SEAT: Rect = Rect::new(630, 844, 180, 34);
+
+    /// The host's own help strip, measured on the assembled tool.
+    const HELP: Rect = Rect::new(662, 853, 400, 14);
+    /// The node lab's gesture hint, measured on the assembled tool.
+    const HINT: Rect = Rect::new(294, 866, 560, 24);
+    /// The capture viewer's reassembly strip, which spans the whole region.
+    const STRIP: Rect = Rect::new(52, 804, 1388, 96);
+
+    #[test]
+    fn r1861_a_seat_that_covers_nothing_does_not_move() {
+        let elsewhere = Rect::new(294, 200, 560, 24);
+        assert_eq!(clear_of(SEAT, &[elsewhere], WITHIN), Some(SEAT));
+    }
+
+    #[test]
+    fn r1861_a_seat_over_a_band_rises_just_clear_of_it() {
+        let moved = clear_of(SEAT, &[HINT], WITHIN).expect("there is room above the hint");
+        assert_eq!(moved, Rect::new(630, 832, 180, 34));
+        assert!(
+            moved.y + moved.h <= HINT.y,
+            "the seat still reaches into the band it was moved off"
+        );
+    }
+
+    /// ★ The strip spans the whole region, so the two sideways ways out do not
+    /// fit and the answer has to be the one that does — which is what makes this
+    /// more than a repeat of the case above.
+    #[test]
+    fn r1861_a_band_spanning_the_region_leaves_only_one_way_out() {
+        let moved = clear_of(SEAT, &[STRIP], WITHIN).expect("there is room above the strip");
+        assert_eq!(moved, Rect::new(630, 770, 180, 34));
+    }
+
+    /// ★★★★★ The case the one-band draft got wrong: clearing the guest's strip
+    /// put the seat straight onto the HOST's, and only asking about both finds
+    /// the place that clears each.
+    #[test]
+    fn r1861_a_seat_clears_every_band_and_not_just_the_first() {
+        let one = clear_of(SEAT, &[HINT], WITHIN).expect("a place clear of the hint");
+        assert!(
+            one.y < HELP.y + HELP.h && HELP.y < one.y + one.h,
+            "the one-band answer must land on the host's own strip, or this \
+             test is not about the defect it was written for"
+        );
+        let both = clear_of(SEAT, &[HELP, HINT], WITHIN).expect("a place clear of both");
+        for band in [HELP, HINT] {
+            let meets = both.y < band.y + band.h
+                && band.y < both.y + both.h
+                && both.x < band.x + band.w
+                && band.x < both.x + both.w;
+            assert!(!meets, "the seat still meets {band:?}");
+        }
+        assert_eq!(both, Rect::new(630, 819, 180, 34));
+    }
+
+    #[test]
+    fn r1861_a_band_with_no_room_around_it_refuses() {
+        let everything = Rect::new(52, 52, 1388, 848);
+        assert_eq!(clear_of(SEAT, &[everything], WITHIN), None);
+    }
+
+    /// ★ Ties resolve the same way every frame, or an overlay would jump
+    /// between two equally good places as its sentence changed length.
+    #[test]
+    fn r1861_an_equal_choice_is_resolved_the_same_way_every_time() {
+        let within = Rect::new(0, 0, 400, 400);
+        let seat = Rect::new(150, 180, 100, 40);
+        let band = Rect::new(100, 180, 200, 40);
+        let up = clear_of(seat, &[band], within).expect("both ways fit");
+        assert_eq!(up, Rect::new(150, 140, 100, 40), "above wins a tie");
+        assert_eq!(
+            clear_of(seat, &[band], within),
+            Some(up),
+            "and it keeps winning"
+        );
+    }
 
     /// ★★★★★ R1825 — **the declaration survives the build it was made in**,
     /// which is the whole repair.

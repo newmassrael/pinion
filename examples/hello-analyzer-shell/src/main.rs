@@ -1479,6 +1479,22 @@ const TOAST_PAD_RIGHT: u32 = 12;
 /// and the sentence leaves the box, `slack` if it is too wide and the box holds
 /// room its words never use. An estimate nobody bracketed is what the constant
 /// 560 was.
+/// Where a toast `width` wide sits before anything is avoided — the behaviour
+/// reference's own placement, `bottom: 22px` and centred.
+///
+/// ★ R1861 — split out so a gate can ask what a screen would have under it if
+/// nothing moved, which is what makes `Screen::keeps_clear` checkable: a screen
+/// drawing words HERE and declaring nothing is the defect, and a declaration
+/// that is merely absent looks exactly like one that is not needed.
+fn toast_seat(width: u32) -> Rect {
+    Rect::new(
+        (win_w().saturating_sub(width)) / 2,
+        win_h().saturating_sub(22 + TOAST_H),
+        width,
+        TOAST_H,
+    )
+}
+
 fn toast_width(sentence: &str) -> u32 {
     let glyphs = u32::try_from(sentence.chars().count()).unwrap_or(u32::MAX);
     let run = glyphs.saturating_mul(FONT_BODY.saturating_sub(6));
@@ -10035,12 +10051,30 @@ fn toast_scene(state: &ShellState, palette: Palette) -> Option<Scene> {
     // `slack` reports the room. Between the two, an estimate cannot rot
     // silently in either direction.
     let width = toast_width(&said.sentence());
-    let rect = Rect::new(
-        (win_w().saturating_sub(width)) / 2,
-        win_h().saturating_sub(22 + TOAST_H),
-        width,
-        TOAST_H,
-    );
+    // The reference's own placement, and where this stops being one: centred,
+    // 22 above the foot — and then moved off whatever the screen showing has
+    // told this host it is using.
+    //
+    // ★★★★★ R1861 — **the overlay avoids the CONTENT, not just the edge.** A
+    // reader could not read the node lab's gesture hint because this box landed
+    // on its top 6 pixels; on the capture viewer the same box covered two lane
+    // readouts whole. Both screens declare what they occupy
+    // (`Screen::keeps_clear`) and `chrome::clear_of` moves the seat the shortest
+    // way that clears it. The declaration is DERIVED from each screen's own
+    // painter, so a strip that moves takes this with it.
+    //
+    // ⚠ Unmoved when the screen showing declares nothing, or when nothing is
+    // under the box — so the reference's placement is what a reader sees
+    // wherever it costs nothing.
+    let seat = toast_seat(width);
+    let region = page_rect(state.at().as_str());
+    // ★★★★★ BOTH strips, and the pixel measurement is why. Clearing only what
+    // the guest declared moved the box straight onto this host's OWN help
+    // strip — the reader had named a run from each in one sentence, and the
+    // first repair asked about one of them.
+    let mut bands = vec![help_strip_rect()];
+    bands.extend(screen_roster().keeps_clear_of(state.at().as_str(), region));
+    let rect = pinion_core::chrome::clear_of(seat, &bands, region).unwrap_or(seat);
     Some(Scene::Container(
         ContainerNode::new(vec![
             // ★★★★★ R1719 — the bullet was `accent_fg` whatever had been said.

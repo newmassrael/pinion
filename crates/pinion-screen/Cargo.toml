@@ -20,6 +20,11 @@ serde_json = { workspace = true }
 [dev-dependencies]
 pinion-core = { path = "../pinion-core", features = ["test-fixtures"] }
 serde_json = { workspace = true }
+# R1861 — `layering` reads `NodeVisit::absolute_rect`, which a container only
+# answers AFTER a layout pass. A fixture without one gives every container
+# `None`, and the first draft of the guest-root test silently asked its question
+# of a scene that could not answer it.
+pinion-runtime = { path = "../pinion-runtime", version = "0.0.1" }
 # The mounted-screen tests go through `Mount<V>` with REAL bindings, so they
 # need a `VelloRenderer` to name as `WidgetView::Renderer`.
 pinion-shell = { path = "../pinion-shell", features = ["test-fixtures"] }

@@ -243,6 +243,26 @@ pub trait Screen {
     /// declared, exactly as a window does.
     fn shrink_policy(&self) -> Option<ShrinkPolicy>;
 
+    /// ★★★★★ R1861 — **the part of `region` this screen has content in that a
+    /// host's floating overlay must not cover.**
+    ///
+    /// The mirror of [`HostChrome`](pinion_core::chrome::HostChrome): that says
+    /// what the place already provides, so the guest can leave it out; this says
+    /// what the guest already occupies, so the place can put its overlay
+    /// somewhere else. Both are facts about *the seam*, and until this existed
+    /// only one direction of it could be stated.
+    ///
+    /// `None` for a screen with nothing an overlay would spoil — which is a
+    /// declaration and not a default, exactly as `shrink_policy`'s `None` is.
+    /// A screen that answers wrongly is caught by the paint rather than trusted:
+    /// see `pinion_screen::layering::host_marks_over_guest_text`, which asks
+    /// the frame whether anything of the guest's is covered.
+    ///
+    /// Measured on the analysis tool before this existed, at its shipping size:
+    /// the host's toast covered the top 6 pixels of the node lab's gesture hint
+    /// and the whole of two of the capture viewer's lane readouts.
+    fn keeps_clear(&self, region: Rect) -> Option<Rect>;
+
     /// The screen's scene for a named window of its own.
     fn view_for_window(&self, window_id: &str, frame: &Frame) -> Scene;
 

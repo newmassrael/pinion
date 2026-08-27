@@ -5504,3 +5504,272 @@ fn r1860_the_walk_reaches_a_capture_viewer_inside_the_shipping_window() {
         );
     });
 }
+
+/// ★★★★★ R1861 §5.32 — **this host's floating overlay covers none of the
+/// letters of the screen it is showing.**
+///
+/// # What this is, and what it is NOT
+///
+/// It is not `r1775_the_host_does_not_paint_on_the_screen_it_is_showing`
+/// tightened. That one is a RATCHET on which host marks reach the guest's
+/// region at all, and it has to stay one: the behaviour reference's own toast
+/// floats over the content (`position: fixed; bottom: 22px`) and is tolerable
+/// because it leaves after 2.6 seconds, so a gate forbidding the overlap would
+/// forbid what the reference does.
+///
+/// **Covering a SENTENCE is a claim the reference never makes** — what its toast
+/// floats over is empty canvas — so this one can be zero, and a screen appearing
+/// here is a defect rather than a budget line. That is R1859's rule applied
+/// before a reader has to find it: a ratchet is the shape of a backlog, and this
+/// property is not a backlog.
+///
+/// # The population, and why it is not vacuous
+///
+/// Every mounted destination, derived from `mounted_keys` + `tag_of` so a screen
+/// mounted in a later round is asked without anyone remembering to add it. Each
+/// one is driven to, made to say something so the overlay is on the frame, and
+/// asserted to have painted sentences of its own — because a guest with no words
+/// satisfies the clause below by having nothing to cover.
+///
+/// Measured before the repair, at the shipping size: the node lab lost the top 6
+/// pixels of its gesture hint — which is what a reader reported — and the
+/// capture viewer lost two lane readouts ENTIRELY, which nobody had ever seen.
+#[test]
+fn r1861_the_hosts_overlay_covers_nobodys_letters() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let roster = super::screen_roster();
+        let mounted: Vec<(String, &'static str)> = roster
+            .mounted_keys()
+            .map(str::to_owned)
+            .filter_map(|key| roster.tag_of(&key).map(|tag| (key, tag)))
+            .collect();
+        assert!(
+            mounted.len() >= 4,
+            "the roster reports {} mounted screen(s); a population this small \
+             cannot be this tool's, and the clauses below would be vacuous",
+            mounted.len(),
+        );
+        for (key, tag) in &mounted {
+            state.go(key).unwrap_or_else(|why| panic!("{key}: {why:?}"));
+            // Say something, so the overlay is on the frame for a reason a
+            // person can cause rather than because the tool happens to open
+            // having spoken.
+            state.say(super::Utterance::done("a thing happened"));
+            let (painted, scene) = painted_at((WIN_W, WIN_H));
+            let toast = painted.rect("shell.toast").unwrap_or_else(|| {
+                panic!(
+                    "{key}: the host paints no toast, so nothing here is being \
+                     tested — a check that passed would be reporting on an \
+                     overlay that is not there"
+                )
+            });
+            // ★★★★★ THE POPULATION IS EVERY SENTENCE ON THE FRAME, and the
+            // first draft's was half of it. Asked only of the GUEST's runs
+            // (`layering::host_marks_over_guest_text`), this went green while
+            // the pixel demo one directory over found the overlay sitting on
+            // **this host's own** help strip — and the reader's report had
+            // named a run from each strip in one sentence. A host's overlay
+            // covering the host's own words is the same defect to a reader.
+            let mut covered: Vec<(String, Rect)> = Vec::new();
+            let mut sentences = 0usize;
+            scene.for_each_node(&mut |visit| {
+                let (Scene::Text(text), Some(rect)) = (visit.node, visit.absolute_rect()) else {
+                    return;
+                };
+                // The overlay's own sentence is inside it, not under it.
+                if visit
+                    .ancestors
+                    .iter()
+                    .any(|a| a.tag() == Some("shell.toast"))
+                {
+                    return;
+                }
+                sentences += 1;
+                if !(toast.x >= rect.x + rect.w
+                    || rect.x >= toast.x + toast.w
+                    || toast.y >= rect.y + rect.h
+                    || rect.y >= toast.y + toast.h)
+                {
+                    covered.push((text.content.clone(), rect));
+                }
+            });
+            let guest_letters = scene_text_of(&scene, tag);
+            assert!(
+                guest_letters >= 8 && sentences > guest_letters,
+                "{key}: {guest_letters} guest sentence(s) of {sentences} on the \
+                 frame — a population this shape cannot be this tool's, and the \
+                 clause below would pass by having nothing to cover. The strict \
+                 inequality is the half the first draft was missing: the host \
+                 says things too",
+            );
+            println!(
+                "{key}: toast {toast:?} over {sentences} sentence(s), \
+                 {guest_letters} of them the guest's"
+            );
+            assert!(
+                covered.is_empty(),
+                "★ {key}: the host's overlay is painted on top of {} \
+                 sentence(s), so a reader cannot read them. This is the defect \
+                 a person reported by looking at the window. Measured: \
+                 {covered:#?}",
+                covered.len(),
+            );
+        }
+    });
+}
+
+/// ★★★★★ R1861 — **a screen that draws words where the overlay lands DECLARES
+/// that it does.**
+///
+/// # Why this exists, and it is a counterfactual's finding
+///
+/// The gate above asks whether anything is covered, and it stayed green with
+/// the node lab's declaration deleted — because this host avoids its OWN help
+/// strip too, and the place that clears one happens to clear the other. So the
+/// declaration was load-bearing on the capture viewer and redundant on the node
+/// lab, and nothing could tell those two apart from a defect.
+///
+/// The contract is what distinguishes them: *if the reference placement would
+/// land on your words, say so*. That is true of a screen whether or not some
+/// other band happens to move the overlay clear, so a screen that stops
+/// declaring fails here even while the frame stays correct.
+///
+/// ⚠ The seat is asked at [`super::TOAST_W`], the widest a toast can be, so a
+/// screen is checked against the largest thing that could arrive rather than
+/// against whatever the current sentence happens to need.
+#[test]
+fn r1861_a_screen_with_words_under_the_overlay_says_so() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let roster = super::screen_roster();
+        let mounted: Vec<(String, &'static str)> = roster
+            .mounted_keys()
+            .map(str::to_owned)
+            .filter_map(|key| roster.tag_of(&key).map(|tag| (key, tag)))
+            .collect();
+        assert!(mounted.len() >= 4, "the population cannot be this tool's");
+        let mut owing = 0usize;
+        for (key, tag) in &mounted {
+            state.go(key).unwrap_or_else(|why| panic!("{key}: {why:?}"));
+            let (_, scene) = painted_at((WIN_W, WIN_H));
+            let seat = super::toast_seat(super::TOAST_W);
+            let mut under: Vec<String> = Vec::new();
+            scene.for_each_node(&mut |visit| {
+                let (Scene::Text(text), Some(rect)) = (visit.node, visit.absolute_rect()) else {
+                    return;
+                };
+                if !visit
+                    .ancestors
+                    .iter()
+                    .any(|a| a.tag().is_some_and(|it| it == *tag))
+                {
+                    return;
+                }
+                if !(seat.x >= rect.x + rect.w
+                    || rect.x >= seat.x + seat.w
+                    || seat.y >= rect.y + rect.h
+                    || rect.y >= seat.y + seat.h)
+                {
+                    under.push(text.content.clone());
+                }
+            });
+            let declared = roster.keeps_clear_of(key, super::page_rect(key)).is_some();
+            println!(
+                "{key}: {} sentence(s) under the reference placement, declared={declared}",
+                under.len()
+            );
+            if under.is_empty() {
+                continue;
+            }
+            owing += 1;
+            assert!(
+                declared,
+                "★ {key} paints {} sentence(s) where this host's overlay lands \
+                 and declares nothing through `Screen::keeps_clear`, so the \
+                 host has no way to avoid them: {under:#?}",
+                under.len(),
+            );
+        }
+        assert!(
+            owing >= 2,
+            "only {owing} screen(s) have words under the reference placement — \
+             a population this small makes the clause above nearly vacuous, and \
+             two is what was measured",
+        );
+    });
+}
+
+/// How many sentences the guest at `tag` painted on this frame.
+///
+/// Counted from the scene rather than asked of the screen: what a host's overlay
+/// can cover is what was PAINTED, and a screen that answered its own count
+/// would be answering about a different population.
+fn scene_text_of(scene: &Scene, guest_tag: &str) -> usize {
+    let mut n = 0usize;
+    scene.for_each_node(&mut |visit| {
+        if matches!(visit.node, Scene::Text(_))
+            && visit.absolute_rect().is_some()
+            && visit
+                .ancestors
+                .iter()
+                .any(|a| a.tag().is_some_and(|t| t == guest_tag))
+        {
+            n += 1;
+        }
+    });
+    n
+}
+
+/// ★★★★★ R1861 — **in the assembled tool, at the size a person runs, the
+/// sentence a reader named is whole.**
+///
+/// Rule (7)'s form for a defect somebody SAW. The report was about the shipped
+/// window — `target/release/hello-analyzer-shell`, 1440x900 — pressing the rail
+/// to reach the node lab, and it named the words: *"the toast floats over `drag
+/// a pin = author a link` and I cannot read it"*. So the run is found **by those
+/// words**, which is what the reader had, and the question asked of it is
+/// whether the host's overlay is on top of it.
+///
+/// ⚠ **The host reaches into nothing of the guest's.** It does not import the
+/// lab's geometry, its constants or its tags — R1852 established that a host
+/// reading a guest's internals can pass while the guest is broken.
+///
+/// ```text
+/// cargo test -p hello-analyzer-shell r1861_the_walk -- --nocapture
+/// ```
+#[test]
+fn r1861_the_walk_reaches_a_sentence_the_overlay_leaves_alone() {
+    const SAID: &str = "drag a pin = author a link";
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        state.go("lab").expect("the node lab section is open");
+        state.say(super::Utterance::done("a thing happened"));
+        let (painted, _) = painted_at((WIN_W, WIN_H));
+
+        let toast = painted
+            .rect("shell.toast")
+            .expect("the host is showing its overlay");
+        let (content, seat, _) = painted
+            .runs
+            .iter()
+            .find(|(content, ..)| content.contains(SAID))
+            .unwrap_or_else(|| {
+                panic!("no run in the assembled tool says {SAID:?} — the walk no longer reaches it")
+            });
+        println!("the sentence a reader named: {content:?} at {seat:?}, overlay at {toast:?}");
+        let meets = !(toast.x >= seat.x + seat.w
+            || seat.x >= toast.x + toast.w
+            || toast.y >= seat.y + seat.h
+            || seat.y >= toast.y + toast.h);
+        assert!(
+            !meets,
+            "★ the host's overlay ({toast:?}) is painted over the sentence a \
+             reader named ({seat:?}) — which is the report, reproduced",
+        );
+    });
+}

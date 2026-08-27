@@ -4712,6 +4712,24 @@ impl WidgetView for PacketView {
         Some(SHRINK)
     }
 
+    /// ★★★★★ R1861 — the reassembly strip, which is what a host's floating
+    /// overlay lands on here.
+    ///
+    /// **Derived from `reassembly_rect` rather than written down.** Measured
+    /// before this existed: the host's toast covered TWO of this strip's lane
+    /// readouts *entirely* — 12 pixels of a 12-pixel run each — and nobody had
+    /// ever seen it, because the person who reported the same defect on the
+    /// sibling screen was looking at the sibling screen.
+    fn keeps_clear(region: Rect) -> Option<Rect> {
+        let strip = reassembly_rect();
+        Some(Rect::new(
+            region.x + strip.x,
+            region.y + strip.y,
+            strip.w,
+            strip.h,
+        ))
+    }
+
     /// ★★★★★ R1747 — the verdict this screen has computed since R1663,
     /// answered where the application it is a page of can reach it.
     ///

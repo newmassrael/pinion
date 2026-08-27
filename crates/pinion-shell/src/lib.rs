@@ -1523,6 +1523,20 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
         None
     }
 
+    /// ★★★★★ R1861 — the part of `region` this screen has content in that a
+    /// host's floating overlay must not cover.
+    ///
+    /// `None` — nothing an overlay would spoil — and unlike most defaults this
+    /// one cannot be forgotten silently: the host asserts against the PAINT
+    /// (`pinion_screen::layering::host_marks_over_guest_text`), so a screen that
+    /// should have answered and did not fails there by name rather than passing
+    /// quietly. `pinion_screen::Screen::keeps_clear` is the seam this feeds —
+    /// named rather than linked, because that crate depends on this one.
+    #[must_use]
+    fn keeps_clear(_region: pinion_core::scene::Rect) -> Option<pinion_core::scene::Rect> {
+        None
+    }
+
     /// ★★★★★ R1738 §5.27 §2 #7 — the written specification this screen answers
     /// to, and how much of it the build reproduces. `None` when it answers to
     /// none.
