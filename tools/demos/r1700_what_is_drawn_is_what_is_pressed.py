@@ -30,8 +30,10 @@ drives it through real windows.
 # What it asserts
 
 * **A** — the specification each screen publishes is on screen at every size:
-  the panes, seats and rows it declares are painted, and a declared pane width
-  is the width it gets.
+  the panes, seats and rows it declares are painted, and a pane is painted
+  between the width it can draw in and the width it is drawn at (R1860 — it was
+  "a declared pane width is the width it gets", which is a claim about a
+  constant once panes can flex).
 * **B** — ★ the paint and the gesture agree, at every size. Every painted
   rectangle addressable by name is pressable at its own centre; every one that
   is not is honest decoration or honestly inert.

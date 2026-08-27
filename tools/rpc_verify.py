@@ -5692,12 +5692,33 @@ def assert_declared_panes_on_screen(
         made.append(f"{label}: {len(missing)} pane(s) off screen and reachable")
         panes = [p for p in panes if p["tag"] in painted]
     made.append(f"{label}: panes painted")
+    # ★★★★★ R1860 — a pane is painted BETWEEN the width below which it cannot
+    # draw what it holds and the width the design draws it at.
+    #
+    # This asserted equality with the declared width, and that was the right
+    # question only while a pane could not flex: a screen narrower than its
+    # design arrangement had no way to serve the shortfall except to lay out at
+    # the design arrangement anyway and let the window cut. The capture viewer's
+    # side panes now give width back down to a floor derived from what each one
+    # has to hold, so equality is a claim about a constant rather than about the
+    # screen — R1858's shape, one surface over.
+    #
+    # ⚠ A screen that publishes no `floor` is read at its declared width, so the
+    # default is the STRICTER reading and not a fail-open: a pane that concedes
+    # nothing says so by declaring no floor.
     wrong = [
-        f"{p['tag']} declares {p['width']} and is painted {painted[p['tag']][2]}"
+        f"{p['tag']} declares {p['width']} (floor {p.get('floor', p['width'])}) "
+        f"and is painted {painted[p['tag']][2]}"
         for p in panes
-        if p["width"] and painted[p["tag"]][2] != p["width"]
+        if p["width"]
+        and not p.get("floor", p["width"]) <= painted[p["tag"]][2] <= p["width"]
     ]
-    assert_eq(wrong, [], f"{label} {size}: a declared pane width is the width it gets")
+    assert_eq(
+        wrong,
+        [],
+        f"{label} {size}: a pane is painted between the width it can draw in "
+        f"and the width it is drawn at",
+    )
     made.append(f"{label}: declared widths held")
     row = sorted((painted[p["tag"]] for p in panes), key=lambda r: r[0])
     gaps = [

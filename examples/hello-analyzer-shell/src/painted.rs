@@ -4895,32 +4895,41 @@ fn r1781_the_shipping_window_cannot_give_every_screen_what_it_declares() {
             super::page_rect("dashboard").w,
         );
 
-        // ★★★★★ ONE — and it used to be two, which is the round.
+        // ★★★★★ NONE — and it was two, then one, and this is the round it
+        // reaches zero.
         //
-        // R1781 wrote this ratchet with `["packets", "lab"]` and said what a
-        // change in either direction would mean: *"growing the set means a
-        // screen was mounted that does not fit; shrinking it means somebody
-        // chose one of the three repairs and this ratchet is what they
-        // update"*. R1791 chose one of the three — the toolbar overflow
-        // affordance R1781 named as not existing — so the node lab now declares
-        // a width the shipping window can give it, and its inspector is whole.
+        // R1781 wrote this as a RATCHET on the set, with `["packets", "lab"]`,
+        // and said what a change in either direction would mean: *"growing the
+        // set means a screen was mounted that does not fit; shrinking it means
+        // somebody chose one of the three repairs and this ratchet is what they
+        // update"*. R1791 chose one of the three for the node lab. R1860 chose
+        // one for the capture viewer — its two side panes had no floor of their
+        // own, so the width the specification draws them at was standing in for
+        // one, and deriving the real floors took its declared minimum from 1425
+        // to 1352.
         //
-        // The capture viewer is still short by 37, and NOBODY HAS EVER SAID SO
-        // outside this check — not a demo, not a debt, not the reader, because
-        // 37px of a three-pane screen does not announce itself the way a
-        // missing inspector does. It was found on this check's first run by
-        // comparing two declarations rather than by looking at a window, and it
-        // is what is left.
+        // ★★★★★ AND THE SHAPE CHANGES WITH THE NUMBER, which is R1858's rule:
+        // **a ratchet is the shape of a backlog and the wrong shape for a
+        // property that now holds.** An equality pin on `["packets"]` said "one
+        // screen may be short"; there is nothing left to be permissive about, so
+        // this is an emptiness assertion and a screen that stops fitting fails
+        // here rather than being compared against a list somebody remembers to
+        // update.
+        //
+        // ⚠ It is not a claim that no window can ever be too small — it is about
+        // THE WINDOW THIS TOOL SHIPS IN, which R1791 also made the narrowest one
+        // it will open at, so there is no smaller case to reason about.
         let names: Vec<&str> = short.iter().map(|(k, ..)| k.as_str()).collect();
-        assert_eq!(
-            names,
-            ["packets"],
-            "★ the set of screens the shipping window cannot satisfy has \
-             changed. Measured: {short:?} — each is (screen, the width it \
-             declares it lays out at, the width {WIN_W} less the rail leaves \
-             it). Growing the set means a screen was mounted that does not fit; \
-             shrinking it means somebody chose one of the three repairs and \
-             this ratchet is what they update. See \
+        assert!(
+            names.is_empty(),
+            "★ {names:?} declare they lay out wider than the window this tool \
+             ships in gives them, so what they paint past that edge is CUT. \
+             Measured: {short:?} — each is (screen, the width it declares it \
+             lays out at, the width {WIN_W} less the rail leaves it). A screen \
+             appears here by declaring a minimum bigger than its grant; the \
+             repair is the one R1791 and R1860 each made, which is to find the \
+             term of that minimum that is a design width standing in for a \
+             floor. See \
              `debt-the-shipped-window-is-below-a-mounted-screens-minimum`",
         );
     });
@@ -5399,5 +5408,99 @@ fn r1839_the_outline_role_draws_boundaries_on_every_screen() {
                 Floor::Boundary.ratio(),
             );
         }
+    });
+}
+
+/// ★★★★★ R1860 — **in the assembled tool, at the size a person runs, nothing
+/// the capture viewer paints falls outside the window.**
+///
+/// Rule (7)'s form for a defect somebody SAW. The report was about the shipped
+/// window — `target/release/hello-analyzer-shell`, 1440x900 — and named the
+/// element: *"the right outline of the rectangle with `background best effort`
+/// in it is cut"*. That rectangle is the third reassembly lane, and it was
+/// painted at `x=998 w=457`, so its outline landed at **1455** on a window
+/// **1440** wide.
+///
+/// # Why the assembly is where this has to be asked
+///
+/// `hello-packet-view`'s own sweep runs the screen at three sizes it chooses,
+/// and every one of them is a size the screen fits in — a screen asked how it
+/// lays out in a window IT declared cannot report being given less. Only the
+/// host knows what it grants, so only here can the two be compared against the
+/// paint. The sibling check above
+/// (`r1781_the_shipping_window_cannot_give_every_screen_what_it_declares`)
+/// compares the two DECLARATIONS and needs no surface; this one asks the frame,
+/// and the pair is deliberate: a screen could declare a width it fits in and
+/// still paint past it.
+///
+/// ⚠ **By the window's edge, not by the seat's.** What a reader loses is what
+/// the *window* cuts. A mark may legitimately sit outside the seat — the host's
+/// own rail does — so the seat is the wrong boundary for this question even
+/// though it is the number the grant is about.
+///
+/// ```text
+/// cargo test -p hello-analyzer-shell r1860_the_walk -- --nocapture
+/// ```
+#[test]
+fn r1860_the_walk_reaches_a_capture_viewer_inside_the_shipping_window() {
+    const SAID: &str = "background";
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let painted = painted_at_destination("packets");
+
+        // Every mark the mounted screen paints, by its own address family.
+        let marks = painted.family("pv.");
+        assert!(
+            marks.len() > 40,
+            "only {} mark(s) under `pv.` — the walk did not reach the capture \
+             viewer, and every clause below would be vacuous over that",
+            marks.len(),
+        );
+
+        let escaping: Vec<(&str, u32, u32)> = marks
+            .iter()
+            .filter_map(|tag| painted.rect(tag).map(|r| (*tag, r.x, r.x + r.w)))
+            .filter(|(_, _, right)| *right > WIN_W)
+            .collect();
+        assert!(
+            escaping.is_empty(),
+            "★ the capture viewer paints past the right edge of the window this \
+             tool ships in ({WIN_W}), so what is there is CUT and a reader \
+             reaches it by resizing and by nothing else. Measured (mark, x, \
+             right): {escaping:?}",
+        );
+
+        // ★ AND THE RUN THE READER NAMED, found by the word they used rather
+        // than by any address or constant of the mounted screen — which is
+        // what they had. R1852: a host reading a guest's internals can pass
+        // while the guest is broken.
+        let (said, run, _) = painted
+            .runs
+            .iter()
+            .find(|(content, ..)| content.contains(SAID))
+            .unwrap_or_else(|| panic!("no run on this screen says {SAID:?}"));
+
+        // ⚠ The box is found by CONTAINMENT, not by the run's nearest tagged
+        // ancestor: a lane's words are painted beside its outline rather than
+        // inside it, so the ancestor is the whole strip and asking about that
+        // would be asking about a mark that reaches the window edge legitimately.
+        let (tag, seat) = painted
+            .family("pv.reassembly.lane.")
+            .into_iter()
+            .filter_map(|tag| painted.rect(tag).map(|r| (tag, r)))
+            .find(|(_, r)| run.x >= r.x && run.x < r.x + r.w)
+            .unwrap_or_else(|| panic!("no reassembly lane holds the run saying {SAID:?}"));
+        println!(
+            "the lane a reader named: {said:?} in {tag} x={} right={} (window {WIN_W})",
+            seat.x,
+            seat.x + seat.w,
+        );
+        assert!(
+            seat.x + seat.w <= WIN_W,
+            "★ {tag}, the box holding {SAID:?}, ends at {} on a window {WIN_W} \
+             wide — this is the outline a reader reported cut",
+            seat.x + seat.w,
+        );
     });
 }

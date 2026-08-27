@@ -93,10 +93,21 @@ const STATES: &[SweptState] = &[
 /// got out. The opening size is first because the specification describes it;
 /// the others are the two a person actually produces, a maximised window and a
 /// window dragged down to the floor the screen declares.
+///
+/// ★★★★★ R1860 — **and the fourth is the corner the first three left unswept.**
+/// The floor case pairs the narrowest width with the shortest height, so at the
+/// only size where a WIDTH floor binds, the window is also too short to paint
+/// anything below the fold — measured, 4 decode rows of 21. A counterfactual
+/// that took the badge out of the decode pane's floor and left a row's value one
+/// pixel wide went **uncaught** by that, because the rows carrying a badge are
+/// the ones the short window drops. Two axes swept only along their diagonal
+/// are two axes nobody crossed, and the corner is where a floor is tested
+/// against the content it is a floor for.
 const SIZES: &[(&str, (u32, u32))] = &[
     ("at the size it opens in", (WIN_W, WIN_H)),
     ("maximised", (2494, 1531)),
     ("at its declared floor", (MIN_W, MIN_H)),
+    ("at its narrowest, with room for every row", (MIN_W, WIN_H)),
 ];
 
 /// How many runs on this screen sit in a box too short for their own face.
@@ -2476,4 +2487,154 @@ fn r1852_the_capture_builds_a_topology_from_its_own_hops() {
         "a topology built from sightings can never be certain: {}",
         seen.standing()
     );
+}
+
+/// ★★★★★ R1860 — **the premise [`super::TREE_FLOOR`] is derived from.**
+///
+/// That floor charges one level of indent because `visible_fields` computes a
+/// row's depth as `usize::from(path.contains('.'))` and so cannot produce two.
+/// A derivation standing on a claim nobody checks is a number written down with
+/// extra steps (R1784), and this is the claim: a decode that nested one level
+/// deeper would push every value box left of its own floor and nothing else
+/// here would notice.
+#[test]
+fn r1860_no_decode_row_is_deeper_than_its_floor_assumes() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_view_state();
+        let mut asked = 0usize;
+        for (name, reach) in STATES {
+            reach(&state);
+            for (path, _, _, depth) in visible_fields(&state) {
+                asked += 1;
+                assert!(
+                    u32::try_from(depth).unwrap_or(u32::MAX) <= super::TREE_MAX_DEPTH,
+                    "{name}: `{path}` is {depth} deep and the decode pane's \
+                     floor is derived assuming at most {}",
+                    super::TREE_MAX_DEPTH,
+                );
+            }
+        }
+        assert!(
+            asked > 20,
+            "only {asked} decode row(s) over every state — a population this \
+             small cannot be this screen's, and the clause above would be \
+             nearly vacuous over it",
+        );
+    });
+}
+
+/// ★★★★★ R1860 — **each pane is at least its own floor, and at that floor it
+/// can still draw what the floor is a floor FOR.**
+///
+/// # The defect this is the repair for
+///
+/// `MIN_W` was `LIST_FLOOR + TREE_W + BYTES_W`: one derived floor plus two
+/// *design widths standing in for floors*. The side panes had no floor at all,
+/// so the only way to serve a window narrower than the design arrangement was to
+/// paint past its edge — and the application this screen is a page of grants it
+/// 37 pixels less than that, so it did, and a reader reported the third
+/// reassembly lane's right outline cut.
+///
+/// # What makes this more than arithmetic
+///
+/// Both floors are asserted **against the paint**, in the direction that fails
+/// if they are too small:
+///
+/// * the byte grid's last hex pair has to end inside the byte pane, so
+///   [`super::BYTES_FLOOR`] cannot be lowered without this going red;
+/// * every value box in the decode tree has to stay at least
+///   [`super::VALUE_RUN_FLOOR`] wide, so [`super::TREE_FLOOR`] cannot either.
+///
+/// A floor that only had to be *smaller than the design width* would pass while
+/// being any number at all — which is exactly the state the two panes were in.
+#[test]
+fn r1860_each_pane_can_draw_what_it_has_to_at_its_own_floor() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_view_state();
+        for (size_name, size) in SIZES {
+            let (painted, _) = painted_at(&state, *size);
+            let (list, tree, bytes) = (list_rect(), tree_rect(), bytes_rect());
+
+            assert!(
+                list.w >= super::LIST_FLOOR
+                    && tree.w >= super::TREE_FLOOR
+                    && bytes.w >= super::BYTES_FLOOR,
+                "{size_name}: a pane is below its own floor — list {} (floor \
+                 {}), decode {} (floor {}), bytes {} (floor {})",
+                list.w,
+                super::LIST_FLOOR,
+                tree.w,
+                super::TREE_FLOOR,
+                bytes.w,
+                super::BYTES_FLOOR,
+            );
+            assert_eq!(
+                list.w + tree.w + bytes.w,
+                size.0,
+                "{size_name}: the three panes do not tile the body — they \
+                 leave a gap or overlap, which is what a shortfall shared \
+                 wrongly looks like",
+            );
+
+            // The byte grid, which is what `BYTES_FLOOR` is a floor FOR.
+            let final_byte = spec::SOURCES[0].1 - 1;
+            let cell = super::byte_cell(final_byte).expect("the capture has bytes");
+            assert!(
+                cell.x + cell.w <= bytes.w,
+                "{size_name}: the last hex pair ends at {} in a byte pane {} \
+                 wide — the grid is a fixed lattice, so this is the floor \
+                 being wrong about what it is a floor for",
+                cell.x + cell.w,
+                bytes.w,
+            );
+
+            // And the decode values, which is what `TREE_FLOOR` is a floor FOR.
+            // A value carries no tag of its own, so a run whose nearest tagged
+            // ancestor is the pane itself IS one — the names, the chevrons and
+            // the badges are all tagged and answer for themselves.
+            let addressed: BTreeSet<(u32, u32, u32, u32)> = painted
+                .tags
+                .values()
+                .map(|r| (r.x, r.y, r.w, r.h))
+                .collect();
+            let values: Vec<&(String, Rect, Option<String>)> = painted
+                .runs
+                .iter()
+                .filter(|(.., owner)| owner.as_deref() == Some("pv.tree.body"))
+                .filter(|(_, r, _)| !addressed.contains(&(r.x, r.y, r.w, r.h)))
+                .collect();
+            // ⚠ Against the rows this size actually PAINTED, not against
+            // `visible_fields`: a short window leaves the rows below the fold
+            // unpainted, and at the declared floor that is 4 of 21. Comparing
+            // with the model's count would make this fail there for a reason
+            // that has nothing to do with width.
+            let rows_painted = painted.family("pv.tree.field.").len();
+            assert_eq!(
+                values.len(),
+                rows_painted,
+                "{size_name}: {} unaddressed run(s) in the decode pane against \
+                 {rows_painted} painted row(s). A row's name, chevron and badge \
+                 each carry a tag and its value does not, so exactly one run \
+                 per row should be left; a mismatch means something else is \
+                 being measured",
+                values.len(),
+            );
+            assert!(
+                rows_painted >= 4,
+                "{size_name}: only {rows_painted} decode row(s) painted — the \
+                 clause below would be nearly vacuous over that",
+            );
+            for (content, rect, _) in values {
+                assert!(
+                    rect.w >= super::VALUE_RUN_FLOOR,
+                    "{size_name}: the value {content:?} was given {} of the \
+                     {} its own floor says it needs",
+                    rect.w,
+                    super::VALUE_RUN_FLOOR,
+                );
+            }
+        }
+    });
 }

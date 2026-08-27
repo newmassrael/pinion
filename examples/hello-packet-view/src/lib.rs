@@ -60,6 +60,7 @@ use pinion_core::external::{
 };
 use pinion_core::focus_state;
 use pinion_core::input::PointerReading;
+use pinion_core::pane_row::{Pane, PaneRow};
 use pinion_core::reactive::Signal;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::shrink::ShrinkPolicy;
@@ -108,7 +109,13 @@ const APP_BAR_H: u32 = spec::APP_BAR_H;
 const FILTER_H: u32 = spec::FILTER_H;
 const CONTEXT_H: u32 = spec::CONTEXT_H;
 const REASSEMBLY_H: u32 = spec::REASSEMBLY_H;
+/// The decode pane's **design** width — what the specification draws it at, and
+/// what it keeps whenever the window has room for it.
+///
+/// ⚠ Not a floor. [`TREE_FLOOR`] is, and the two were the same number until
+/// R1860 measured what that cost.
 const TREE_W: u32 = spec::PANES[1].width;
+/// The byte pane's **design** width, on the same terms as [`TREE_W`].
 const BYTES_W: u32 = spec::PANES[2].width;
 
 const PAD: u32 = 12;
@@ -133,6 +140,10 @@ const FONT_MONO: u32 = 11;
 /// the painter and the hit test index the same lattice.
 const CELL_W: u32 = 8;
 const CELL_H: u32 = 18;
+
+/// The byte grid's column arithmetic. `const`, so [`BYTES_FLOOR`] is derived
+/// from the same lattice the painter and the hit test index.
+const HEX: HexLayout = HexLayout::new(spec::SOURCES[0].1).with_bytes_per_row(spec::BYTES_PER_ROW);
 
 /// The width the specification's fixed columns need, summed from the
 /// specification rather than copied out of it.
@@ -163,6 +174,21 @@ const fn char_count(text: &str) -> u32 {
         i += 1;
     }
     count
+}
+
+/// A grid column index as a `u32`, in a `const` context.
+///
+/// `u32::try_from` is not `const`, so the bound is *asserted* — and in the
+/// `const` context a floor is declared in, a failed assertion is a **compile
+/// error**, which is the same refusal `try_from` would give at run time. The
+/// cast below cannot truncate because the line above it says so.
+#[allow(clippy::cast_possible_truncation)]
+const fn columns(n: usize) -> u32 {
+    assert!(
+        n <= 0xffff_ffff,
+        "a byte grid with more columns than a u32 can index has no pixel width"
+    );
+    n as u32
 }
 
 /// The width a small run of `text` occupies. The `const` half of [`run_box`],
@@ -242,13 +268,83 @@ const NAME_FLOOR: u32 = widest_annotations() + NAME_RUN_FLOOR;
 /// down.
 const LIST_FLOOR: u32 = fixed_columns() + NAME_FLOOR + PAD * 2;
 
-/// The narrowest window this screen will lay out in.
+/// The narrowest a decode row's value may be painted and still be a value
+/// rather than an ellipsis — the decode pane's [`NAME_RUN_FLOOR`].
+const VALUE_RUN_FLOOR: u32 = 60;
+
+/// How far one level of the decode tree indents a row.
+const TREE_INDENT_STEP: u32 = 14;
+/// How deep a decode row can be indented.
 ///
-/// ★ R1662's lesson is why this is a sum of the *panes* and not a number
-/// somebody measured on a screen that happened to fit: a floor derived from
-/// "the size at which nothing overflows" makes the sweep's smallest case the
-/// case the defect chose.
-const MIN_W: u32 = LIST_FLOOR + TREE_W + BYTES_W;
+/// **Derived, not measured**: `visible_fields` computes a row's depth as
+/// `usize::from(path.contains('.'))`, so no row can be deeper than one however
+/// the capture is decoded. `r1860_no_decode_row_is_deeper_than_the_floor_
+/// assumes` is what holds that, because the premise of a derivation is a claim
+/// like any other.
+const TREE_MAX_DEPTH: u32 = 1;
+/// Where a decode row's value begins, measured from the row's indent.
+const TREE_VALUE_X: u32 = 140;
+/// The gap a decode row's value keeps between itself and whatever is placed
+/// from the right edge.
+const TREE_VALUE_TAIL: u32 = 8;
+
+/// The decode pane's floor, **derived** from the widest row it has to lay out:
+/// the deepest indent, the value's own floor, and the badge that is placed from
+/// the right edge before the value takes what is left.
+///
+/// ★ R1827's rule, applied one pane over: the badge is charged because a row
+/// that carries one is a row this pane lays out, not because some upper bound
+/// over the capture says it might be.
+const TREE_FLOOR: u32 = PAD
+    + TREE_INDENT_STEP * TREE_MAX_DEPTH
+    + TREE_VALUE_X
+    + TREE_VALUE_TAIL
+    + VALUE_RUN_FLOOR
+    + run_width("derived")
+    + PAD;
+
+/// The byte pane's floor, **derived** from the lattice it draws: the last hex
+/// pair of a row has to end inside the pane.
+///
+/// Everything else in the pane is elastic — the title, the offset headers and
+/// the span readout all sit left of this or take what is left — so the grid is
+/// what the floor is a floor FOR.
+const BYTES_FLOOR: u32 =
+    PAD + columns(HEX.hex_col(spec::BYTES_PER_ROW - 1)) * CELL_W + CELL_W * 2 + PAD;
+
+/// The two fixed panes, each declaring the width it is drawn at and the width
+/// below which it cannot draw what it holds.
+const SIDE_PANES: &[Pane] = &[
+    Pane::new(TREE_W, TREE_FLOOR),
+    Pane::new(BYTES_W, BYTES_FLOOR),
+];
+
+/// The three panes as a row: the message list is the flexible one and takes
+/// what is left.
+///
+/// Every width this screen has an opinion about comes out of here — the design
+/// arrangement, the declared minimum, and the widths of the panes themselves —
+/// so the width the screen tells the window it lays out in and the widths its
+/// panes can actually draw in cannot become two different claims.
+const PANES: PaneRow = PaneRow::new(LIST_FLOOR, SIDE_PANES);
+
+/// The narrowest window this screen will lay out in: **every pane at its own
+/// floor**.
+///
+/// ★★★★★ R1860 — this was `LIST_FLOOR + TREE_W + BYTES_W`, which is one derived
+/// floor plus two *design widths standing in for floors*. The two panes had no
+/// floor at all; the width the specification draws them at was doing that job,
+/// and a design width is not a floor for the same reason [`NAME_FLOOR`] and
+/// [`LIST_FLOOR`] each record one level down — **a floor somebody picks can be
+/// wrong about the thing it is a floor FOR**. Here it was wrong by 73 pixels,
+/// and 37 of them were the ones a reader saw: the application this screen is a
+/// page of grants it 1388, the screen declared it lays out at 1425, so it laid
+/// out at 1425 inside a window 1440 wide and the third reassembly lane's right
+/// outline was painted at 1455 and cut.
+///
+/// ★ R1662's lesson still holds and is why this is a sum of the *panes* rather
+/// than a number somebody measured on a screen that happened to fit.
+const MIN_W: u32 = PANES.floor();
 /// The shortest window this screen will lay out in — the chrome, plus room for
 /// four message rows, plus the reassembly strip.
 const MIN_H: u32 = APP_BAR_H + FILTER_H + CONTEXT_H + HEAD_H + ROW_H * 4 + REASSEMBLY_H;
@@ -286,24 +382,52 @@ fn body_rect() -> Rect {
     Rect::new(0, top, w, h.saturating_sub(top + REASSEMBLY_H))
 }
 
+/// How wide the three panes are in the window this screen was given: the list,
+/// the decode tree, the byte grid.
+///
+/// ★★★★★ R1860 — **the two side panes flex, and they did not before.** The list
+/// was the one flexible pane and the other two were their design widths at every
+/// size, so a window narrower than the design arrangement could only be served
+/// by painting past its edge.
+///
+/// The rule itself is the framework's ([`pinion_core::pane_row`]) rather than
+/// this screen's, because "a row of panes, each declaring the width below which
+/// it cannot draw what it holds" is not a fact about capture viewers — two more
+/// screens in this workspace put a fixed detail pane beside a flexible one and
+/// declare their minimum the same way.
+fn pane_widths() -> (u32, u32, u32) {
+    let (list, fixed) = PANES.share(body_rect().w);
+    (list, fixed[0], fixed[1])
+}
+
+/// The width below which the `n`-th pane of [`spec::PANES`] cannot draw what it
+/// holds.
+///
+/// The message list is the flexible pane and index 0 of both tables; the two
+/// after it are [`SIDE_PANES`] in the same order, so a consumer reads the number
+/// the layout itself uses rather than one written down beside it.
+fn pane_floor(n: usize) -> u32 {
+    match n.checked_sub(1) {
+        None => LIST_FLOOR,
+        Some(fixed) => SIDE_PANES[fixed].floor(),
+    }
+}
+
 fn list_rect() -> Rect {
     let body = body_rect();
-    Rect::new(
-        body.x,
-        body.y,
-        body.w.saturating_sub(TREE_W + BYTES_W),
-        body.h,
-    )
+    Rect::new(body.x, body.y, pane_widths().0, body.h)
 }
 
 fn tree_rect() -> Rect {
     let body = body_rect();
-    Rect::new(list_rect().w, body.y, TREE_W, body.h)
+    let (list, tree, _) = pane_widths();
+    Rect::new(list, body.y, tree, body.h)
 }
 
 fn bytes_rect() -> Rect {
     let body = body_rect();
-    Rect::new(list_rect().w + TREE_W, body.y, BYTES_W, body.h)
+    let (list, tree, bytes) = pane_widths();
+    Rect::new(list + tree, body.y, bytes, body.h)
 }
 
 fn filter_rect() -> Rect {
@@ -1096,11 +1220,15 @@ fn list_col(n: usize) -> Rect {
 }
 
 /// The n-th decode row, in the tree pane's own coordinates.
+///
+/// ★ R1860 — the row is as wide as the pane IS, not as wide as the
+/// specification draws it. The two were the same number while the pane could
+/// not flex.
 fn tree_row(n: usize) -> Rect {
     Rect::new(
         0,
         HEAD_H + u32::try_from(n).unwrap_or(0) * ROW_H,
-        TREE_W,
+        tree_rect().w,
         ROW_H,
     )
 }
@@ -1125,7 +1253,7 @@ fn tree_chevron(n: usize) -> Rect {
 /// The byte grid's column arithmetic — the crate's, so the painter and the hit
 /// test cannot each derive their own.
 fn hex_layout() -> HexLayout {
-    HexLayout::new(spec::SOURCES[0].1).with_bytes_per_row(spec::BYTES_PER_ROW)
+    HEX
 }
 
 /// The n-th byte's hex cell, in the byte pane's own coordinates.
@@ -2626,7 +2754,7 @@ fn tree_row_paint(
             ),
         );
     }
-    let indent = PAD + u32::try_from(*depth).unwrap_or(0) * 14;
+    let indent = PAD + u32::try_from(*depth).unwrap_or(0) * TREE_INDENT_STEP;
     if let Some(index) = layer {
         children.push(
             tagged_label(
@@ -2684,9 +2812,9 @@ fn tree_row_paint(
     children.push(label(
         value.clone(),
         Rect::new(
-            indent + 140,
+            indent + TREE_VALUE_X,
             row.y + 5,
-            right.saturating_sub(indent + 148),
+            right.saturating_sub(indent + TREE_VALUE_X + TREE_VALUE_TAIL),
             12,
         ),
         FONT_SMALL,
@@ -3706,8 +3834,17 @@ fn spec_json() -> serde_json::Value {
         // own `context` table would have collided at the top level — two
         // different documents answering to one word.
         "packets": spec::packets_document().to_json(),
-        "panes": spec::PANES.iter().map(|p| serde_json::json!({
+        // ★★★★★ R1860 — and each pane's FLOOR beside the width it is drawn at,
+        // because the two stopped being one number. A consumer that reads only
+        // `width` can ask "is this pane the width it declares?", which was the
+        // right question while the panes could not flex and is the wrong one
+        // now; with the floor published it can ask the question that is still
+        // true — a pane is painted somewhere between the width it can draw in
+        // and the width it is drawn at. Published rather than derived, because
+        // the shortfall a window is short by is not a fact a client can compute.
+        "panes": spec::PANES.iter().enumerate().map(|(n, p)| serde_json::json!({
             "tag": p.tag, "title": p.title, "width": p.width, "body": p.body,
+            "floor": pane_floor(n),
         })).collect::<Vec<_>>(),
         "columns": spec::COLUMNS.iter().map(|c| serde_json::json!({
             "title": c.title, "width": c.width,
