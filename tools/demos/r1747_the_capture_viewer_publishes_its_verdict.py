@@ -358,28 +358,55 @@ def section_c(app: RpcSubprocess) -> None:
         "declared remainder matched, nothing undeclared",
         all(s["standing"] and not s["unreconciled"] for s in surfaces_of(app).values()),
     )
-    # ★★★★★ R1845 — THIS CHECK USED TO DEMAND THAT `reassembly` DECLARE A
-    # NON-EMPTY REMAINDER, and R1845 emptied it. Not by paying the entry off:
-    # the divergence R1747 recorded there was a claim about the reference (it
-    # announces `4 of 8 channels` above three drawn lanes) that turned out to be
-    # a claim about our own missing join — the carrying count and the lane
-    # roster are two facts, and this build now reproduces the reference's
-    # arrangement exactly. The entry was RETIRED as wrong.
+    # ★★★★★ R1858 — **THIS ASSERTION HAS NOW PINNED A LEDGER'S SIZE TWICE, AND
+    # BOTH PINS WERE BROKEN BY AN IMPROVEMENT.** It is written as a RELATION now,
+    # and the size is reported instead.
     #
-    # So the assertion MOVES rather than dies. What it was protecting is that
-    # "every declared remainder matched" is not vacuous; with the ledger
-    # legitimately at zero that half has no live case here (the `owed`
-    # machinery is exercised by seven other surface documents), and the half
-    # that IS live is the other one — `unreconciled == []` means nothing only
-    # if a surface specifies nothing. Both conjuncts below bite.
+    # R1747 wrote it demanding that `reassembly` declare a NON-empty remainder.
+    # R1845 emptied that entry — not by paying it off but by retiring it as
+    # wrong, because the divergence it recorded turned out to be a claim about
+    # our own missing join rather than about the reference — and rewrote the
+    # assertion to demand the opposite, that the ledger be ZERO. R1852 then
+    # opened one remainder on `context`, legitimately and with a measurement
+    # behind it, and this went red in the sweep.
+    #
+    # ⛔ THE IMPROVEMENT IS NOT THE THING TO REVERT. A ledger is a BACKLOG, and
+    # a backlog legitimately grows and shrinks; pinning its census value is the
+    # mirror of the lesson R1851 recorded from the other side — a ratchet is the
+    # shape of a backlog and not the shape of a surface, and here a surface
+    # gate had been put on a backlog. Either pin fails the next time somebody
+    # does the right thing, and it fails as a RED rather than as a review.
+    #
+    # ⇒ What is asserted is the relation that holds in EVERY regime: a part a
+    # surface does not reproduce is a part its ledger DECLARES, exactly — no
+    # more (a stale entry for a part that reproduces fine) and no fewer (a
+    # silent shortfall). At zero remainders it reads `0 == 0` and stays true; at
+    # one it bites on both sides. The SIZE is printed, because which regime this
+    # screen is in is a fact a reader wants and not a fact a gate should demand.
+    #
+    # Measured at R1858, in this round: 12 pinned surface documents, 9 of which
+    # declare at least one remainder and 3 of which declare none — so the `owed`
+    # machinery is exercised whichever way this one screen happens to sit.
     said = surfaces_of(app)
+    accounted = {
+        name: (s["specified"] - s["reproduced"], len(s["owed"]))
+        for name, s in sorted(said.items())
+    }
     ok(
-        "C: ★★ this screen's ledger has reached ZERO — no surface declares a "
-        "remainder any more, which is a STRONGER state than the one this check "
-        "used to guard, and it says something only because every surface "
-        f"specifies parts: {sorted((n, s['specified']) for n, s in said.items())}",
-        all(not s["owed"] for s in said.values())
-        and all(s["specified"] > 0 for s in said.values()),
+        "C: ★★★★★ every part a surface does not reproduce is a part its ledger "
+        "DECLARES — exactly, so a stale entry fails as loudly as a silent "
+        f"shortfall — and every surface specifies parts: {accounted}",
+        all(s["specified"] > 0 for s in said.values())
+        and all(
+            s["specified"] - s["reproduced"] == len(s["owed"])
+            for s in said.values()
+        )
+        and all(not s["unreconciled"] for s in said.values()),
+    )
+    declaring = sorted(name for name, s in said.items() if s["owed"])
+    print(
+        f"  [ledger] {len(declaring)} of {len(said)} surface(s) declare a "
+        f"remainder ({', '.join(declaring) or 'none'}); the rest reproduce whole"
     )
     print(f"  [coverage] {PARTS_COMPARED} specified part(s) judged, {PRESSES} press(es)")
 

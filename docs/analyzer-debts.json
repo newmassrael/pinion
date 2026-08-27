@@ -143,17 +143,6 @@
       ]
     },
     {
-      "name": "debt-a-screen-ledger-check-pins-a-census-value",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links debt-canon-gui-surface-census"
-      ]
-    },
-    {
       "name": "debt-a-sub-pixel-face-is-drawn-but-never-looked-at",
       "substituted": false,
       "blocked_by": "unmeasured",

@@ -533,6 +533,31 @@ if [[ -n "$base_sha" && ! "$base_sha" =~ ^0+$ ]]; then
     if ! consumer_test_gate "pre-push" "$repo_root" range "$base_sha..HEAD"; then
         exit 1
     fi
+
+    # ★★★★★ R1858 — and the DEMOS that assert against tracked data this push
+    # edits, named. A pin (`docs/analyzer-*-spec.json`, a budget `.tsv`) reaches
+    # the package radius only through the crate that `include_str!`s it, so a
+    # round that ALSO touches `pinion-core` gets an answer of everything and
+    # narrows it by hand — and the pin's own consumers go with the narrowing.
+    # Measured on R1852, the round this repays: the package axis answered 639
+    # demos with `r1747` among them, the round ran a hand-picked few, and
+    # `r1747` published red and stayed red for six rounds while three separate
+    # sessions read its failure as something else.
+    #
+    # REPORTED, not enforced. This hook does not run demos at all (R835 policy —
+    # the full sweep is CI's), and running one takes a real window and seconds.
+    # What is closed here is the INVISIBILITY, which is what those six rounds
+    # were made of. It cannot fail the push: an answer this tool could not
+    # compute is not evidence of breakage, the same posture `check_last_ci_run`
+    # takes one gate up.
+    step "demo radius pins"
+    if pinned="$(python3 "$repo_root/tools/demo_radius.py" \
+                     --mode range --range "$base_sha..HEAD" --pins 2>/dev/null)" \
+       && [[ -n "$pinned" ]]; then
+        echo "pre-push: this push edits tracked data these demo(s) assert against:" >&2
+        printf '%s\n' "$pinned" | sed 's/^/pre-push:   /' >&2
+        echo "pre-push:   the sweep is what runs them — this is so they are not invisible" >&2
+    fi
 fi
 
 mnemosyne_resolve
