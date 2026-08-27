@@ -401,6 +401,15 @@ pub struct ShellCore<V: WidgetView> {
     #[cfg(debug_assertions)]
     warned_escapes: HashSet<String>,
 
+    /// R1863 §5.32 — runs already reported by
+    /// [`Self::warn_about_short_boxes`], on the same terms as
+    /// [`Self::warned_escapes`] and for a much larger population: 822 runs of
+    /// this tree's five analysis screens are in a box too short for their face,
+    /// so a path that spoke every frame would be unusable and one that spoke
+    /// once per run still owes the reader a bound.
+    #[cfg(debug_assertions)]
+    warned_short_boxes: HashSet<String>,
+
     /// R1656 §5.15 — per-window, per-`External` last announced size, so
     /// [`Self::announce_surface_sizes`] speaks only on a change.
     external_sizes: HashMap<String, pinion_runtime::ExternalSizes>,
@@ -915,6 +924,8 @@ impl<V: WidgetView> ShellCore<V> {
             text_cache,
             #[cfg(debug_assertions)]
             warned_escapes: HashSet::new(),
+            #[cfg(debug_assertions)]
+            warned_short_boxes: HashSet::new(),
             external_sizes: HashMap::new(),
             produce_work: ProduceWork::default(),
             mirror_work: MirrorWork::default(),
@@ -1709,6 +1720,81 @@ impl WindowOverlayInputs {
             return scene;
         };
         pinion_overlay::inject_drag_image(scene, label, *cursor, style, Some((w, h)))
+    }
+}
+
+/// How many short boxes a single frame spells out before it starts counting.
+///
+/// ★ R1863 — a bound on the LINES, never on the FACT: everything past this is
+/// reported as a number in the same breath, so no run is silently dropped. Ten
+/// is what a reader can act on at once; the count is what tells them the list
+/// is longer.
+#[cfg(debug_assertions)]
+pub(crate) const SHORT_BOX_WARNING_LINES: usize = 10;
+
+/// The body of the shell's `warn_about_short_boxes`, as a free function so a
+/// test can drive it without standing up a shell.
+///
+/// ★ R1863 — and that is the point rather than a convenience:
+/// `debt-the-paint-time-warning-has-no-test` has been open since R1656 saying
+/// that the sibling warning fires nowhere anybody checks, so this one is shaped
+/// to be checkable from the first line it emits.
+#[cfg(debug_assertions)]
+pub fn warn_about_short_boxes_in<S: std::hash::BuildHasher>(
+    scene: &Scene,
+    seen: &mut HashSet<String, S>,
+) {
+    let short = pinion_core::containment::short_boxes(scene);
+    if short.is_empty() {
+        return;
+    }
+    // Runs whose cut a reader could see are said first. This is an ORDERING:
+    // the ones after it are still counted, and the count goes out with the
+    // warnings rather than instead of them.
+    let (visible, rest): (Vec<_>, Vec<_>) = short
+        .into_iter()
+        .partition(|row| pinion_core::containment::cut_would_show(&row.content));
+    let mut spelled = 0usize;
+    let mut fresh = 0usize;
+    for row in visible.iter().chain(rest.iter()) {
+        let owner = row.tag.as_deref().unwrap_or_else(|| {
+            row.path
+                .last()
+                .map_or("<an untagged box>", std::string::String::as_str)
+        });
+        let key = format!("{}|{}|{}", owner, row.content, row.short_by);
+        if !seen.insert(key) {
+            continue;
+        }
+        fresh += 1;
+        if spelled >= SHORT_BOX_WARNING_LINES {
+            continue;
+        }
+        spelled += 1;
+        tracing::warn!(
+            target: "pinion::containment",
+            owner = %owner,
+            content = %row.content,
+            px = row.px,
+            box_height = row.rect.h,
+            needs = row.needs,
+            short_by = row.short_by,
+            visible = pinion_core::containment::cut_would_show(&row.content),
+            "a box is {}px too short for the {}px face it holds — \
+             `containment::line_rect_in` is a box that cannot be",
+            row.short_by,
+            row.px,
+        );
+    }
+    if fresh > spelled {
+        tracing::warn!(
+            target: "pinion::containment",
+            spelled = spelled,
+            counted = fresh,
+            "and {} more box(es) on this frame are too short for their own \
+             face — ask `scene/text_painted` for `short_by` on every run",
+            fresh - spelled,
+        );
     }
 }
 
@@ -5587,6 +5673,7 @@ impl<V: WidgetView> ShellCore<V> {
         self.core.root_owner().clear_dirty();
         let dressed = overlays.apply::<V>(paint_scene, w, h, self.core.root_owner());
         self.warn_about_escaped_marks(&dressed);
+        self.warn_about_short_boxes(&dressed);
         self.announce_surface_sizes(window_key, &dressed);
         dressed
     }
@@ -5676,6 +5763,55 @@ impl<V: WidgetView> ShellCore<V> {
         reason = "mirrors the debug arm's signature so the call site is one line in both"
     )]
     fn warn_about_escaped_marks(&self, _scene: &Scene) {}
+
+    /// ★★★★★ R1863 §5.32 §2 #7 — say so, on the frame it happens, when this
+    /// paint put a run in a box too short for the face it is set in.
+    ///
+    /// # Why this did not exist, which is the finding
+    ///
+    /// A reader reported a clipped descender three times over fourteen days —
+    /// a button's `g`, a title's `p`, a placeholder's `y` — and each time the
+    /// framework already knew: [`pinion_core::containment::short_by`] is a
+    /// `const fn` of the scene alone, the wire has published it since R1800,
+    /// five screens carry a boot gate for it, and `line_rect_in` is a box that
+    /// cannot fail the rule. **Everything except the moment.** The reader's own
+    /// question was whether the absence of an immediate signal is an
+    /// architecture problem, and measured, it was the one piece missing.
+    ///
+    /// ⚠ And it was missing beside a cheaper thing that ships:
+    /// [`Self::warn_about_escaped_marks`] runs on every debug paint and needs
+    /// the FONT — it shapes each run to ask whether ink left its box. This needs
+    /// nothing but the scene. A more expensive check was on and a free one was
+    /// off.
+    ///
+    /// # The bound, and why it is not a budget
+    ///
+    /// The population is 822 runs across this tree's five analysis screens, so
+    /// "once per run" is still eight hundred lines on the first frame. Two
+    /// things bound it and neither is a budget:
+    ///
+    /// * runs whose cut a reader could SEE are said first
+    ///   ([`pinion_core::containment::cut_would_show`]) — an ordering, not a
+    ///   permission;
+    /// * at most [`SHORT_BOX_WARNING_LINES`] of them are spelled out, and the
+    ///   rest are **counted in the same breath**, so nothing is silently
+    ///   dropped. A budget would let a defect inside it go unmentioned, which
+    ///   is exactly how a reader came to find three of these by eye.
+    ///
+    /// Once per distinct run afterwards, keyed by owner + content + shortfall,
+    /// so a screen that repaints sixty times a second says it once.
+    #[cfg(debug_assertions)]
+    fn warn_about_short_boxes(&mut self, scene: &Scene) {
+        warn_about_short_boxes_in(scene, &mut self.warned_short_boxes);
+    }
+
+    /// Release builds do not walk the scene for this; see the debug arm.
+    #[cfg(not(debug_assertions))]
+    #[allow(
+        clippy::unused_self,
+        reason = "mirrors the debug arm's signature so the call site is one line in both"
+    )]
+    fn warn_about_short_boxes(&self, _scene: &Scene) {}
 
     /// (R1467 §5.16 §5.39 §2 #7) Sample the shell-owned state the window-overlay
     /// chain reads, so one [`WindowOverlayInputs::apply`] dresses this window on

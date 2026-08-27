@@ -307,6 +307,42 @@ pub fn short_boxes(scene: &Scene) -> Vec<ShortBox> {
     found
 }
 
+/// Whether a cut at the bottom of this text's box would **show**.
+///
+/// ★★★★★ R1863 — the difference between *a box is short* and *a reader can see
+/// that it is*, which R1798 measured on one screen as **270 runs against 51**.
+/// A box one pixel short of a line of capitals looks exactly like a box that
+/// fits; the same box under a `g` loses the tail, and that is what three
+/// separate reports from the same person were about.
+///
+/// # ⚠ An approximation, and it is named as one
+///
+/// Without the font there is no exact answer — a face can put a descender on a
+/// glyph this list does not know, and a face can have none at all. So this
+/// errs toward **saying yes**: the letters below are the ones that descend in
+/// every Latin face this tree ships, the punctuation is the marks that hang,
+/// and anything non-ASCII is unknown and therefore counted. What it must never
+/// do is answer *no* for a run whose cut a reader would see, because that is
+/// the direction that loses a defect silently.
+///
+/// # This is a PRIORITY, never a permission
+///
+/// A warning path may say these first. It may not use this to fall silent about
+/// the rest: a run whose box is short is short whatever letters are in it, and
+/// the count of the others belongs in the same breath. Ordering what a reader
+/// hears is not the same act as deciding what they are told.
+#[must_use]
+pub fn cut_would_show(content: &str) -> bool {
+    /// Latin letters whose ink goes below the baseline, and the marks that hang
+    /// below it. `Q` is here for its tail.
+    const BELOW_THE_BASELINE: &str = "gjpqyQ,;()[]{}/\\@$_";
+    content
+        .chars()
+        // Anything non-ASCII is a script this list does not speak for, and the
+        // safe answer there is "a reader might see it".
+        .any(|c| !c.is_ascii() || BELOW_THE_BASELINE.contains(c))
+}
+
 /// How far a mark reached past the box that owns it, per edge, in pixels.
 ///
 /// Four numbers rather than one boolean because the boolean was measured

@@ -97,6 +97,10 @@ pub use executor::{
 };
 pub use headless_screenshot::{HeadlessScreenshot, HeadlessScreenshotError};
 pub use pinion_rpc::{ConnId, RpcFrame, RpcIngress, RpcReply, WaiterRegistry};
+/// R1863 — the paint-time short-box warning's body, exported so a test can
+/// drive it. Debug builds only, like the warning itself.
+#[cfg(debug_assertions)]
+pub use substrate::warn_about_short_boxes_in;
 pub use substrate::{AccessEmitDecision, FragmentCacheStats, ShellCore};
 pub use waiter::use_scene_revision;
 // R1362 PR-65 §5.16 §5.49 §2 #2 — the binding-facing "request a window control
