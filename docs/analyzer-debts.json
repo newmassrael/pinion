@@ -211,6 +211,17 @@
       ]
     },
     {
+      "name": "debt-five-screens-hand-roll-one-voice-gate",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links debt-canon-gui-surface-census, debt-the-canon-is-one-app-and-we-are-many-binaries"
+      ]
+    },
+    {
       "name": "debt-node-system-coverage-campaign",
       "substituted": true,
       "blocked_by": "campaign",
@@ -230,17 +241,6 @@
       "closed_because": "",
       "why": [
         "names dashboard.t0.6"
-      ]
-    },
-    {
-      "name": "debt-only-one-screen-is-asked-whether-it-forgot-a-region",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links debt-canon-gui-surface-census, debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
     },
     {
