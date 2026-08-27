@@ -215,7 +215,11 @@ const SIZES: &[(&str, (u32, u32))] = &[
 /// face. The gesture sentence moved into the status band, and the palette's two
 /// counts moved into the panel's footer band; every one of them had been
 /// authored `16` or `14` tall for an 11-pixel face needing 18.
-const SHORT_BOX_BUDGET: usize = 208;
+///
+/// ★ R1865 — 208 -> 207: the toast's own sentence, for the same reason one more
+/// time. It was a 16-pixel box set in a 12-pixel face; in the band it is the
+/// slot's height, taken from `line_box(STATUS_FACE)`.
+const SHORT_BOX_BUDGET: usize = 207;
 
 /// Where every tag in the painted scene ended up, and every text run with it.
 struct Painted {
@@ -4824,29 +4828,32 @@ fn r1775_the_host_does_not_paint_on_the_screen_it_is_showing() {
                 over.insert(found.host);
             }
         }
-        // ★★★★★ A RATCHET, not a target, and the reason is the reference.
+        // ★★★★★ R1865 — **ZERO, and the shape changed with the number.**
         //
-        // The obvious rule — a host paints nothing inside the region it gave
-        // away — is WRONG here, and measured so: the reference's own status
-        // toast is `position: fixed; bottom: 22px; left: 50%`, floating over
-        // whatever content is beneath it. What makes that acceptable there is
-        // that it LEAVES: `setTimeout(.., 2600)`. Ours does not, which is why a
-        // reader saw two of them stacked over a mounted screen's palette.
+        // This was a RATCHET pinning the set at exactly `{shell.toast}`, and
+        // the comment under it explained why the obvious rule was wrong: the
+        // behaviour reference's own toast is `position: fixed; bottom: 22px;
+        // left: 50%` and floats over whatever is beneath it, so *nothing
+        // overlaps* looked like a demand the reference itself does not meet.
         //
-        // So the honest gate is not "nothing overlaps" but "what overlaps is
-        // transient", and transience cannot be asserted from one frame. It also
-        // cannot be repaired inside `view`, which is SYNC AND PURE by §6.3 so
-        // that `dry_run` holds — where a lifetime accumulates is a seam
-        // decision, not a line to slip into this round. Until it is made, this
-        // pins the population: exactly one host mark reaches a guest, it is the
-        // toast, and a second one fails here on the round it appears.
-        let expected: BTreeSet<String> = ["shell.toast".to_owned()].into_iter().collect();
-        assert_eq!(
-            over, expected,
-            "the set of host marks that reach a mounted screen has changed. \
-             Growing it means new chrome was drawn into a region the host gave \
-             away; shrinking it means the toast stopped being painted at all, \
-             which is not the repair — see the transience gate below",
+        // That reasoning had a hole, and a reader found it twice: the reference
+        // is an EXAMPLE and not a ceiling (the standing correction of
+        // 2026-08-27), and what the reference does with a floating box is not
+        // the only way to say a sentence. R1865 put the toast in the host's own
+        // status band — outside every `page_rect`, one rectangle at every
+        // destination — so the set is empty by construction rather than by
+        // discipline, and the rule the comment called wrong is simply true now.
+        //
+        // ⚠ An equality pin on an EMPTY set is the wrong shape (R1858, R1860):
+        // it reads as a backlog of size zero when what is meant is a property.
+        // This is an emptiness assertion, and the sibling gate below is what
+        // stops it being satisfied by a shell that paints no toast at all.
+        assert!(
+            over.is_empty(),
+            "a host mark reaches a mounted screen's region. Everything this \
+             shell says about itself belongs in `shell.status`, which is \
+             outside every page rectangle — so this is new chrome drawn into a \
+             region the host gave away: {over:#?}",
         );
     });
 }
@@ -5142,6 +5149,14 @@ fn r1784_the_boards_floor_is_derived_from_the_layout_it_opens_with() {
 /// The clock is the framework's — [`Owner::tick_animations`], which backends
 /// call once per paint with the frame's `dt`. Driving it here is what makes
 /// this a test of the shipped mechanism rather than of a number in a field.
+///
+/// ★★★★★ R1865 — **and the first clause got STRONGER by ceasing to be about
+/// overlap at all.** It used to require the live toast to be over the guest,
+/// because that was the only way to know a toast had been painted. The toast
+/// lives in the host's status band now, which is outside every `page_rect`, so
+/// the honest pair is *it is on the frame* and *it is not over the guest* —
+/// asserted together, because either one alone is satisfied by a shell that
+/// paints no toast.
 #[test]
 fn r1776_the_hosts_toast_leaves_the_screen_it_is_showing() {
     let owner = Owner::new();
@@ -5163,11 +5178,18 @@ fn r1776_the_hosts_toast_leaves_the_screen_it_is_showing() {
         state.say(super::Utterance::done("a thing happened"));
 
         let before = painted_at((WIN_W, WIN_H)).1;
+        assert!(
+            pinion_runtime::rect_for_tag(&before, "shell.toast").is_some(),
+            "the toast must be ON THE FRAME before the clock runs, or this \
+             gate would pass on a shell that never paints one",
+        );
         let over_before = pinion_screen::layering::host_marks_over_guest(&before, tag);
         assert!(
-            over_before.iter().any(|found| found.host == "shell.toast"),
-            "the toast must be over the guest BEFORE the clock runs, or this \
-             gate would pass on a shell that never paints one: {over_before:#?}",
+            over_before.is_empty(),
+            "★ R1865 — a LIVE toast reaches the guest's region: it is supposed \
+             to be in the host's status band, which is outside every page \
+             rectangle, so this is the covering defect back rather than the \
+             lifetime one: {over_before:#?}",
         );
 
         // Past its life, in the steps a paint loop actually takes rather than
@@ -5278,7 +5300,7 @@ fn r1811_a_longer_toast_gets_a_wider_box() {
 /// Not zero, and the residue is a DECIDED one rather than an unmeasured one:
 /// a short sentence hits the toast's deliberate minimum width, so the room left
 /// over is the floor's, not a constant nobody had checked. Measured on the
-/// assembled screen it is 61 for the shortest sentence a gate says.
+/// assembled screen it was 61 for the shortest sentence a gate says.
 ///
 /// ⚠ The pre-R1811 figure is ARITHMETIC, not a measurement, and is written that
 /// way deliberately: the old box was 560 wide whatever it said, and the same
@@ -5286,7 +5308,33 @@ fn r1811_a_longer_toast_gets_a_wider_box() {
 /// it held on the order of four hundred pixels it never used. The gate could
 /// not have measured that box — it was not the shape the first derivation
 /// looked for, which is the finding `slack`'s own documentation records.
-const TOAST_SLACK: u32 = 64;
+///
+/// ★★★★★ R1865 — **64 -> 33, and BOTH halves of that move are findings.**
+///
+/// *Down*, because R1811's own note names the reason the residue was not zero:
+/// the room left over was the deliberate MINIMUM WIDTH's, and that minimum
+/// existed so a floating pill's bullet and rounded corners read as a strip. In
+/// the band there is no pill — no fill, no border, no corner — so the minimum
+/// went with it. ⇒ **a residue explained by a constant disappears when the
+/// constant's reason does.**
+///
+/// *Up*, from the 16 that alone would have left, because removing the floor
+/// exposed something the floor had been hiding for 54 rounds: the per-glyph
+/// estimate was NARROW, and the whole sentence was being elided in the running
+/// window. Widening it to two thirds of the face (`glyph_run`) fixed that and
+/// put the room back — and the room is now a **structural** residue rather than
+/// a floor's, because of what the repair measured:
+///
+/// ⚠⚠ ★★★★★ **The two ends of this estimate are checked against two different
+/// fonts.** The lower end — *is the sentence elided* — is a fact about the
+/// RENDERER's font, and this crate's tests shape with `pinion_text::
+/// LayoutCache::new()`, which is not it: measured at R1865, the same 16-glyph
+/// sentence inks to about 79px here and about 96px in the running window,
+/// roughly 4.9 against 6.0 pixels a glyph. So an estimate wide enough to stop
+/// the renderer eliding is necessarily wider than what this gate measures, and
+/// the difference between the two fonts IS this number. It is a ratchet on that
+/// difference, not on carelessness.
+const TOAST_SLACK: u32 = 33;
 
 // --- R1838: the arrangement, across a gesture rather than inside a frame -----
 //
@@ -5765,8 +5813,8 @@ fn r1861_the_hosts_overlay_covers_nobodys_letters() {
     });
 }
 
-/// ★★★★★ R1861 — **a screen that draws words where the overlay lands DECLARES
-/// that it does.**
+/// ★★★★★ R1861/R1865 — **what a screen DECLARES it occupies is where that
+/// screen actually has words.**
 ///
 /// # Why this exists, and it is a counterfactual's finding
 ///
@@ -5774,16 +5822,28 @@ fn r1861_the_hosts_overlay_covers_nobodys_letters() {
 /// the node lab's declaration deleted — because this host avoids its OWN help
 /// strip too, and the place that clears one happens to clear the other. So the
 /// declaration was load-bearing on the capture viewer and redundant on the node
-/// lab, and nothing could tell those two apart from a defect.
+/// lab, and nothing could tell those two apart from a defect. The repair was to
+/// assert the CONTRACT rather than the outcome.
 ///
-/// The contract is what distinguishes them: *if the reference placement would
-/// land on your words, say so*. That is true of a screen whether or not some
-/// other band happens to move the overlay clear, so a screen that stops
-/// declaring fails here even while the frame stays correct.
+/// # ★★★★★ R1865 — and the contract it asserts had to change, because the
+/// consumer went away
 ///
-/// ⚠ The seat is asked at [`super::TOAST_W`], the widest a toast can be, so a
-/// screen is checked against the largest thing that could arrive rather than
-/// against whatever the current sentence happens to need.
+/// R1861's contract was *if the host's floating placement would land on your
+/// words, say so*, and it was checked by intersecting each guest's runs with
+/// the toast's seat. R1865 moved the toast into the host's status band, so
+/// there is no floating placement to intersect with — the shell is not a
+/// consumer of `Screen::keeps_clear` any more.
+///
+/// ⚠ **A declaration nobody reads is a declaration nobody checks**, and this
+/// tree has met that twice (R1856's optional declaration, R1861's own CF-5,
+/// where a new framework predicate had no consumer at all). Deleting the axis
+/// was refused for the reason its debt gives: the vocabulary is right and the
+/// next floating overlay — a popover over a mounted screen, a drag preview —
+/// needs it. So the contract asserted here is the one that stays true with no
+/// overlay in sight, and it is a STRONGER one: **what a screen declares it
+/// occupies is DERIVED from what it paints there.** A declaration is a claim
+/// about the frame, so it is checked against the frame: the band a screen
+/// names must be a band that screen has words in.
 #[test]
 fn r1861_a_screen_with_words_under_the_overlay_says_so() {
     let owner = Owner::new();
@@ -5800,7 +5860,11 @@ fn r1861_a_screen_with_words_under_the_overlay_says_so() {
         for (key, tag) in &mounted {
             state.go(key).unwrap_or_else(|why| panic!("{key}: {why:?}"));
             let (_, scene) = painted_at((WIN_W, WIN_H));
-            let seat = super::toast_seat(super::TOAST_W);
+            let bands = roster.keeps_clear_of(key, super::page_rect(key));
+            let Some(seat) = bands else {
+                println!("{key}: declares no band");
+                continue;
+            };
             let mut under: Vec<String> = Vec::new();
             scene.for_each_node(&mut |visit| {
                 let (Scene::Text(text), Some(rect)) = (visit.node, visit.absolute_rect()) else {
@@ -5821,28 +5885,26 @@ fn r1861_a_screen_with_words_under_the_overlay_says_so() {
                     under.push(text.content.clone());
                 }
             });
-            let declared = roster.keeps_clear_of(key, super::page_rect(key)).is_some();
             println!(
-                "{key}: {} sentence(s) under the reference placement, declared={declared}",
+                "{key}: declares {seat:?} and has {} sentence(s) in it",
                 under.len()
             );
-            if under.is_empty() {
-                continue;
-            }
             owing += 1;
             assert!(
-                declared,
-                "★ {key} paints {} sentence(s) where this host's overlay lands \
-                 and declares nothing through `Screen::keeps_clear`, so the \
-                 host has no way to avoid them: {under:#?}",
-                under.len(),
+                !under.is_empty(),
+                "★ {key} declares it occupies {seat:?} through \
+                 `Screen::keeps_clear` and paints NO sentence there. A \
+                 declaration is a claim about the frame: either the screen's \
+                 painter moved and the declaration did not follow it — the \
+                 derivation broke — or it is reserving space nothing needs, \
+                 which is a host overlay pushed aside for no reader's benefit",
             );
         }
         assert!(
             owing >= 2,
-            "only {owing} screen(s) have words under the reference placement — \
-             a population this small makes the clause above nearly vacuous, and \
-             two is what was measured",
+            "only {owing} screen(s) declare a band — a population this small \
+             makes the clause above nearly vacuous, and two is what was \
+             measured",
         );
     });
 }
@@ -6033,7 +6095,15 @@ fn r1864_the_status_band_is_the_hosts_at_every_destination() {
                 continue;
             }
             let key = destination.key.as_ref();
-            let shot = painted_at_destination(key);
+            let state = use_shell_state();
+            if key != state.at() {
+                state.go(key).unwrap_or_else(|why| panic!("{key}: {why:?}"));
+            }
+            // ★ R1865 — a toast is ALIVE for this, so the band is asked in the
+            // state it is hardest to be right in: the slot holding a sentence
+            // that is not the one this file can name.
+            state.say(super::Utterance::done("a layout was loaded"));
+            let (shot, scene) = painted_at((WIN_W, WIN_H));
             destinations += 1;
             let band = super::status_band_rect();
             let region = super::page_rect(key);
@@ -6043,32 +6113,42 @@ fn r1864_the_status_band_is_the_hosts_at_every_destination() {
                  {region:?} share pixels, so the host's own furniture is drawn \
                  inside what the destination was given",
             );
-            // And the sentence is IN the band, which is what makes the clause
+            // And the slot is IN the band, which is what makes the clause
             // above a statement about the sentence too.
-            let seat = super::help_strip_rect();
+            let seat = super::status_slot_rect();
             assert!(
                 seat.x >= band.x
                     && seat.y >= band.y
                     && seat.x + seat.w <= band.x + band.w
                     && seat.y + seat.h <= band.y + band.h,
-                "at {key} the gesture sentence sits at {seat:?}, outside the \
+                "at {key} the band's message slot sits at {seat:?}, outside the \
                  band {band:?} the region was shrunk to make room for",
             );
 
-            let intruders: Vec<&str> = shot
-                .runs
-                .iter()
-                .filter(|(content, rect, _)| {
-                    content.as_str() != super::HELP_STRIP && overlaps(*rect, band)
-                })
-                .map(|(content, ..)| content.as_str())
-                .collect();
+            // ★★★★★ R1865 — what may be in the band is what the BAND PAINTED,
+            // asked by ANCESTRY and not by matching a sentence.
+            //
+            // This used to exclude one run by comparing its text with
+            // `HELP_STRIP`, which was exact while the band held exactly one
+            // known sentence and stopped being so the moment the toast moved in
+            // — a toast says whatever just happened, so no literal can name it.
+            // Ancestry is the question that was always meant: a mark in the
+            // band is the band's if the band drew it.
+            let intruders: Vec<String> = runs_over(&scene, band, super::STATUS_BAND);
             assert!(
                 intruders.is_empty(),
-                "at {key} the status band {band:?} has {} other run(s) in it: \
-                 {intruders:?} — which is the report this check was written \
-                 from, reproduced",
+                "at {key} the status band {band:?} has {} run(s) in it that the \
+                 band did not draw: {intruders:?} — which is the report this \
+                 check was written from, reproduced",
                 intruders.len(),
+            );
+            // ⚠ And the band DID draw something, or the clause above is
+            // satisfied by a band nobody filled.
+            assert!(
+                shot.rect(super::STATUS_SLOT)
+                    .is_some_and(|r| overlaps(r, band)),
+                "at {key} the band's message slot is not painted inside it, so \
+                 the emptiness above is about a band that says nothing",
             );
         }
         assert!(
@@ -6080,38 +6160,90 @@ fn r1864_the_status_band_is_the_hosts_at_every_destination() {
     });
 }
 
-/// ★★★★★ R1864 — **and the sentence's own box holds its own face.**
+/// Every text run that meets `area` and was NOT painted inside `owner_tag`.
 ///
-/// The other half of the same report, and the one R1863's runtime warning
-/// named on the first frame it was ever run against: `box_height=14 needs=18
+/// ★★★★★ R1865 — ancestry, not a text match. A gate that excluded the host's
+/// own sentence by comparing it with a literal was exact while the band held
+/// exactly one known sentence, and stopped being so the moment a toast — which
+/// says whatever just happened — moved into the same slot. Whose mark this is
+/// is a question about who drew it, and the scene knows; this is
+/// `record_painted_marks`' rule (R1758) applied one gate over.
+fn runs_over(scene: &Scene, area: Rect, owner_tag: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    scene.for_each_node(&mut |visit| {
+        let (Scene::Text(text), Some(rect)) = (visit.node, visit.absolute_rect()) else {
+            return;
+        };
+        if !overlaps(rect, area) {
+            return;
+        }
+        if visit
+            .ancestors
+            .iter()
+            .any(|a| a.tag().is_some_and(|t| t == owner_tag))
+        {
+            return;
+        }
+        out.push(text.content.clone());
+    });
+    out
+}
+
+/// ★★★★★ R1864 — **and no sentence the band can say is short of its own
+/// face.**
+///
+/// The other half of R1864's report, and the one R1863's runtime warning named
+/// on the first frame it was ever run against: `box_height=14 needs=18
 /// short_by=4`. A band whose height is `line_box` plus its padding cannot be
 /// short — but nothing said so, and "cannot be short by construction" is a
 /// claim that wants a test for exactly the reason the constant `14` did not.
+///
+/// ★ R1865 — asked of BOTH sentences the slot can hold, not only the gesture
+/// strip. One face ([`super::STATUS_FACE`]) is what makes that one question
+/// rather than two: a band whose messages were set in two faces would have to
+/// be checked against every message it can ever hold.
 #[test]
 fn r1864_the_gesture_sentence_is_not_short_of_its_own_face() {
     let owner = Owner::new();
     owner.run(|| {
-        let (_, scene) = painted_at((WIN_W, WIN_H));
-        let short = pinion_core::containment::short_boxes(&scene);
-        let mine: Vec<_> = short
-            .iter()
-            .filter(|s| s.content == super::HELP_STRIP)
-            .collect();
-        assert!(
-            mine.is_empty(),
-            "the gesture sentence is {:?} short of the face it is set in",
-            mine.iter().map(|s| s.short_by).collect::<Vec<_>>(),
-        );
+        let state = use_shell_state();
+        for pose in ["the gesture strip", "a toast"] {
+            if pose == "a toast" {
+                state.say(super::Utterance::done("a layout was loaded"));
+            } else {
+                // Past the sentence's life, so the slot is back to the strip.
+                for _ in 0..200 {
+                    owner.tick_animations(1.0 / 60.0);
+                }
+            }
+            let (painted, scene) = painted_at((WIN_W, WIN_H));
+            let message = super::status_slot_rect();
+            let mine: Vec<_> = pinion_core::containment::short_boxes(&scene)
+                .iter()
+                .filter(|s| overlaps(s.rect, message))
+                .map(|s| (s.content.clone(), s.short_by))
+                .collect();
+            assert!(
+                mine.is_empty(),
+                "with {pose} in the slot, {mine:?} is short of the face it is \
+                 set in",
+            );
+            // ⚠ The premise: something IS in the slot, or the clause above
+            // passes by asking about nothing.
+            assert!(
+                painted.rect(super::STATUS_SLOT).is_some(),
+                "with {pose} in the slot, the slot is not painted at all",
+            );
+        }
         // The band is what guarantees it, so say so where a reader will look:
-        // the seat is exactly one line box tall.
-        let seat = super::help_strip_rect();
+        // the slot is exactly one line box of the band's own face.
+        let seat = super::status_slot_rect();
         assert_eq!(
             seat.h,
-            pinion_core::containment::line_box(super::FONT_SMALL),
-            "the sentence's seat is {} tall and the face it is set in reserves \
-             {}",
+            pinion_core::containment::line_box(super::STATUS_FACE),
+            "the slot is {} tall and the face it is set in reserves {}",
             seat.h,
-            pinion_core::containment::line_box(super::FONT_SMALL),
+            pinion_core::containment::line_box(super::STATUS_FACE),
         );
     });
 }
@@ -6169,5 +6301,158 @@ fn r1864_the_palette_catalogue_clears_its_own_footer() {
                  passed by asking about nothing",
             );
         }
+    });
+}
+
+/// ★★★★★ R1865 — **no sentence the status band says is elided.**
+///
+/// # The half R1811 believed was covered, and was not
+///
+/// `toast_width` is an estimate, because `view` is sync and pure by §6.3 and
+/// cannot shape. R1811's note says two gates bracket it in opposite directions:
+/// *too narrow and `escapes` reports the sentence leaving its box, too wide and
+/// `slack` reports the room.* The second half holds. The first does not, and
+/// the reason is one word in the paint: these runs are drawn with
+/// `TextOverflow::Ellipsis`, so a box too narrow for its sentence does not
+/// overflow — **the renderer shortens the sentence instead**. `escapes` is
+/// silent by construction, and the estimate had no lower bracket at all.
+///
+/// Found by looking at a photograph rather than at a check: R1865's pixel demo
+/// printed `painted: 'Node Lab sec…'` beside `overflows: False`. The estimate
+/// was `px - 6`, which is 5 at an 11-pixel face against a measured ~6 a glyph.
+/// It had been narrow at 12 pixels too and `TOAST_MIN_W` was hiding it.
+///
+/// ⚠ Measured with the SAME cache the layout shaped with, for R1811's reason: a
+/// stand-in measure answers about a font nobody painted.
+///
+/// ⚠⚠ **And this gate's font is not the RENDERER's**, which is the limit worth
+/// stating rather than discovering: `pinion_text::LayoutCache::new()` inks the
+/// same 16-glyph sentence to about 79px where the running window inks it to
+/// about 96px. So a pass here is *this estimate is not narrow for the font this
+/// crate's tests shape with* — the narrower of the two — and the running
+/// window's half is what `tools/demos/r1861_a_hosts_overlay_becomes_ink.py`
+/// reads, off a photograph, in the `painted` field of the run. The defect that
+/// forced this gate was found there and not here, and that is the honest
+/// division: this one catches the class cheaply on every `cargo test`, the demo
+/// catches the instance a reader would actually see.
+#[test]
+fn r1865_the_bands_sentences_are_not_elided() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        for sentence in [
+            "Node Lab section",
+            "a saved layout was loaded",
+            "you are in Packets",
+        ] {
+            state.say(super::Utterance::done(sentence));
+            let mut scene = super::view(ScreenState::default(), pinion_core::Frame::default());
+            let mut cache = pinion_text::LayoutCache::new();
+            pinion_runtime::layout::compute_layout(&mut scene, &mut cache, WIN_W, WIN_H);
+            let slot = super::status_slot_rect();
+            let mut checked = 0usize;
+            scene.for_each_node(&mut |visit| {
+                let (Scene::Text(text), Some(rect)) = (visit.node, visit.absolute_rect()) else {
+                    return;
+                };
+                if !overlaps(rect, slot) {
+                    return;
+                }
+                // What the WHOLE sentence needs, unbounded — the width the
+                // renderer would have had to elide down to `rect.w`.
+                let (wide, _) = cache.ink_size(&text.content, &text.style, &text.runs, None);
+                assert!(
+                    wide <= rect.w,
+                    "★ the band says {:?}, which shapes to {wide}px, in a box \
+                     {}px wide — the renderer elides it, and `escapes` cannot \
+                     see that because eliding is how it makes it fit",
+                    text.content,
+                    rect.w,
+                );
+                checked += 1;
+            });
+            assert!(
+                checked > 0,
+                "nothing is in the band's slot while it says {sentence:?}, so \
+                 this passed by measuring nothing",
+            );
+        }
+    });
+}
+
+/// ★★★★★ R1865 — **a toast is in the same place at every destination, and it
+/// is the place the application always speaks from.**
+///
+/// # The report, and the measurement that answered it
+///
+/// R1861 stopped the floating toast covering a guest's words by MOVING it off
+/// them, and a reader saw the bill before anybody asked: *"it isn't covering
+/// anything, but the toast is in a different place on the packet view."*
+/// Measured at R1865 before this round's code existed — one sentence, one
+/// window, the six open destinations — the box landed at **three different
+/// heights, 96 pixels apart**: 838 at the dashboard, keys, logs and settings,
+/// 804 at the node lab, 742 on the capture viewer. A toast lives 2.6 seconds,
+/// and the property that makes one findable in that time is being where it was
+/// last time.
+///
+/// # What it asserts, and why the second clause is not redundant
+///
+/// One rectangle across the whole rail, AND that rectangle is the band's
+/// message slot. The first alone is satisfied by a toast pinned anywhere at
+/// all — including back over a guest, as long as it is consistently over one.
+/// The second is what says *the same place* is *the host's place*.
+#[test]
+fn r1865_a_toast_lands_in_one_place_at_every_destination() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let roster = spec::destinations();
+        // Keyed by the rectangle's four numbers, because `Rect` is not `Ord`
+        // and the grouping is what the report needs: which destinations agreed.
+        let mut seen: BTreeMap<(u32, u32, u32, u32), Vec<String>> = BTreeMap::new();
+        let mut destinations = 0;
+        for destination in roster.open() {
+            let key = destination.key.as_ref();
+            if key != state.at() {
+                state.go(key).unwrap_or_else(|why| panic!("{key}: {why:?}"));
+            }
+            state.say(super::Utterance::done("a saved layout was loaded"));
+            let shot = painted_at((WIN_W, WIN_H)).0;
+            let got = shot
+                .rect("shell.toast")
+                .unwrap_or_else(|| panic!("at {key} a toast was just said and nothing painted it"));
+            seen.entry((got.x, got.y, got.w, got.h))
+                .or_default()
+                .push(key.to_owned());
+            destinations += 1;
+        }
+        assert!(
+            destinations >= 6,
+            "the rail declares {destinations} open destination(s); this was \
+             measured against six and a population that shrank silently is how \
+             a green sweep comes to mean nothing",
+        );
+        assert_eq!(
+            seen.len(),
+            1,
+            "★ the toast lands in {} different places across the rail, which is \
+             the report this check was written from, reproduced: {seen:#?}",
+            seen.len(),
+        );
+        let ((x, y, w, h), _) = seen.into_iter().next().expect("one place");
+        let slot = super::status_slot_rect();
+        assert_eq!(
+            (x, y, h),
+            (slot.x, slot.y, slot.h),
+            "★ the toast is consistent and it is not the band's message slot \
+             {slot:?} — one place is only the right property if it is the place \
+             this application speaks from",
+        );
+        assert!(
+            w <= slot.w,
+            "the toast is {w}px wide in a {}px slot, so it runs off the end of \
+             the band",
+            slot.w,
+        );
     });
 }

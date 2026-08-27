@@ -325,18 +325,30 @@ const STATUS_PAD_Y: u32 = 5;
 /// The clearance the status band keeps at each end.
 const STATUS_PAD_X: u32 = 16;
 
+/// ★★★★★ R1865 — **the face EVERY sentence in the status band is set in.**
+///
+/// One face, and it is what makes "the band can hold what the band says" a
+/// sentence rather than a hope: the height comes from this face
+/// ([`status_band_h`]), the slot comes from this face
+/// ([`status_slot_rect`]), and both the gesture strip and the toast are set in
+/// it. A band whose messages were set in two faces would need the taller one to
+/// size it and would then have to be checked against every message it can ever
+/// hold — the shape R1864 spent its round removing from this strip's height,
+/// one axis over.
+const STATUS_FACE: u32 = FONT_SMALL;
+
 /// ★★★★★ R1864 — **the host's status band, and the mirror of the application
 /// bar.**
 ///
 /// The window's chrome is now symmetric: a full-width bar at the top, a
 /// full-width band at the bottom, the rail between them on the left, and the
 /// page in what is left. Everything this host says *about* the screen — the
-/// gesture sentence today, the toast next — is said here, in host space, so it
-/// can never be said on top of a guest.
+/// gesture sentence and, since R1865, the toast — is said here, in host space,
+/// so it can never be said on top of a guest.
 ///
 /// # The defect it comes from
 ///
-/// [`help_strip_rect`] had no band to sit in and was placed by three numbers
+/// The gesture strip had no band to sit in and was placed by three numbers
 /// that answered about a different screen: a hand-picked `+610`, the
 /// **dashboard's** palette, and the window's bottom edge. Measured at R1864 by
 /// painting all six open destinations and counting what the strip's rectangle
@@ -355,13 +367,62 @@ const STATUS_PAD_X: u32 = 16;
 /// short: the number the reservation needs is the number the band is built
 /// from.
 fn status_band_h() -> u32 {
-    pinion_core::containment::line_box(FONT_SMALL) + STATUS_PAD_Y * 2
+    pinion_core::containment::line_box(STATUS_FACE) + STATUS_PAD_Y * 2
 }
 
 /// Where that band sits: the full width of the window, along its bottom edge.
 fn status_band_rect() -> Rect {
     let h = status_band_h();
     Rect::new(0, win_h().saturating_sub(h), win_w(), h)
+}
+
+/// ★★★★★ R1865 — **the band's one message slot**, seated on its centre line.
+///
+/// One slot and not two, because that is what a status band IS: the reader
+/// looks in one place, and what is there is whatever the application most
+/// recently had to say. The gesture sentence lives here when nothing else does;
+/// a toast takes it over for as long as it lives and hands it straight back.
+///
+/// # Why one place beats the previous arrangement, measured
+///
+/// R1861 made the floating toast AVOID what a screen had under it, which fixed
+/// the covering and bought it with unpredictability — and a reader saw the bill
+/// before anybody asked: *"it isn't covering anything, but the toast is in a
+/// different place on the packet view."* Measured at R1865 across the six open
+/// destinations, one sentence, one window size: the box landed at **three
+/// different heights, 96 pixels apart** (838 / 804 / 742), and at NONE of them
+/// was it where the behaviour reference puts it. A toast lives 2.6 seconds; the
+/// property that makes one findable in that time is being in the same place
+/// every time.
+///
+/// # What this rectangle inherited, and what each term of it cost
+///
+/// It was the gesture strip's, and every one of them has been paid for:
+///
+/// * ★★ R1701 — its WIDTH was a flat `470` at a flat offset, and adding one
+///   gesture to the sentence pushed it past that number: the strip read
+///   "… Esc restor…" in a window with room to spare. Third time this project met
+///   a width chosen at the design size and required to keep a relation to
+///   something that moves (R1687's launch floor, R1700's node-lab hint, this).
+/// * ★★★★★ R1864 — **its PLACE was not derived, for 163 rounds.** The three
+///   terms that put it on the window were `canvas_rect().x + 610`, the
+///   **dashboard's** palette, and `win_h() - 47`: a hand-picked constant, a
+///   panel five of the six destinations do not have, and the window's bottom
+///   edge — which a mounted guest fills. R1861 registered this strip as a band
+///   the toast must avoid and never asked whether the band was itself in the
+///   right place; measuring that gave seven runs of other people's text under
+///   it.
+/// * ★ R1865 — and then the gesture strip stopped having a rectangle of its
+///   own. A second name for one place is a second thing that can disagree about
+///   where the application speaks.
+fn status_slot_rect() -> Rect {
+    let band = status_band_rect();
+    pinion_core::containment::line_rect_in(
+        band,
+        band.x + STATUS_PAD_X,
+        band.w.saturating_sub(STATUS_PAD_X * 2),
+        STATUS_FACE,
+    )
 }
 
 /// The canvas rectangle: everything between the rail and the palette, under
@@ -1555,17 +1616,15 @@ impl ShellState {
 /// was the defect.
 const TOAST_SECONDS: f32 = 2.6;
 
-/// The toast's box. The width is a constant and the reference sizes to content
-/// — see [`toast_scene`] for why that half is deliberately still open.
 /// The widest a toast may be, whatever it says — a long sentence elides rather
 /// than growing a strip across the window.
 const TOAST_W: u32 = 560;
 
 /// Where the toast's sentence starts, past its tone bullet.
-const TOAST_TEXT_X: u32 = 32;
+const TOAST_TEXT_X: u32 = 24;
 
-/// The room kept to the right of the sentence, so the border does not sit on
-/// the last glyph.
+/// The room kept to the right of the sentence, so the next thing in the band
+/// does not sit on the last glyph.
 const TOAST_PAD_RIGHT: u32 = 12;
 
 /// ★★★★★ R1811 — the box a sentence needs, bounded.
@@ -1578,33 +1637,55 @@ const TOAST_PAD_RIGHT: u32 = 12;
 /// and the sentence leaves the box, `slack` if it is too wide and the box holds
 /// room its words never use. An estimate nobody bracketed is what the constant
 /// 560 was.
-/// Where a toast `width` wide sits before anything is avoided — the behaviour
-/// reference's own placement, `bottom: 22px` and centred.
 ///
-/// ★ R1861 — split out so a gate can ask what a screen would have under it if
-/// nothing moved, which is what makes `Screen::keeps_clear` checkable: a screen
-/// drawing words HERE and declaring nothing is the defect, and a declaration
-/// that is merely absent looks exactly like one that is not needed.
-fn toast_seat(width: u32) -> Rect {
-    Rect::new(
-        (win_w().saturating_sub(width)) / 2,
-        win_h().saturating_sub(22 + TOAST_H),
-        width,
-        TOAST_H,
-    )
+/// ★ R1865 — measured in [`STATUS_FACE`], because that is the face every
+/// sentence in the status band is set in. It used to say `FONT_BODY`, which was
+/// the face the floating box used; a width estimated for one face and painted
+/// in another is the two-accounts defect, one axis over from the one R1864
+/// removed from this strip's height.
+///
+/// ★★★★★ R1865 — **and the MINIMUM went, because its reason went.** A
+/// `TOAST_MIN_W` of 180 was there so that "the bullet and the rounded corners
+/// still read as a strip rather than a pill" — a statement about a filled,
+/// bordered, floating box. In the status band there is no fill, no border and
+/// no corner: the sentence sits on the band's own ground beside its bullet, and
+/// a box wider than its words is just room nothing uses. R1811's slack ratchet
+/// named this floor as the whole reason its residue was not zero, and with the
+/// floor gone the residue is gone with it.
+/// ★★★★★ R1865 — **and the per-glyph figure is a FRACTION of the face, not the
+/// face less six.**
+///
+/// `px - 6` gave 6 at a 12-pixel face and 5 at an 11-pixel one, which is not a
+/// relation to the face at all — it is a subtraction that happens to land near
+/// one at exactly the size it was written at. Measured on the assembled screen
+/// at R1865: an 11-pixel face runs about **6 pixels a glyph**, so the estimate
+/// was a fifth narrow and the sentence was ELIDED — `Node Lab section` painted
+/// as `Node Lab sec…`, which is R1701's defect, in the same strip, twelve
+/// rounds later.
+///
+/// ⚠ **And it had been narrow all along.** At 12 pixels the same subtraction
+/// gives 6 against a real ~6.5, and nothing showed because `TOAST_MIN_W`
+/// floored every short sentence at 180 — the constant R1865 removed. That is
+/// the round's third *a constant's reason went away and something it was
+/// hiding appeared*.
+///
+/// ⚠⚠ **The two gates R1811 says bracket this estimate do not both reach it.**
+/// Its note reads: *too narrow and `escapes` reports the sentence leaving its
+/// box, too wide and `slack` reports the room.* The first half is FALSE for a
+/// run drawn with `TextOverflow::Ellipsis`, which is what this is: eliding is
+/// how the renderer makes a too-narrow box fit, so nothing escapes and
+/// `escapes` is silent by construction. `r1865_the_bands_sentences_are_not_
+/// elided` is the gate that half was supposed to be.
+const fn glyph_run(px: u32, glyphs: u32) -> u32 {
+    // Two thirds of the face, which is above the widest per-glyph average this
+    // screen's faces measure and below the width at which `slack` complains.
+    glyphs.saturating_mul(px * 2 / 3)
 }
 
 fn toast_width(sentence: &str) -> u32 {
     let glyphs = u32::try_from(sentence.chars().count()).unwrap_or(u32::MAX);
-    let run = glyphs.saturating_mul(FONT_BODY.saturating_sub(6));
-    (TOAST_TEXT_X + run + TOAST_PAD_RIGHT).clamp(TOAST_MIN_W, TOAST_W)
+    (TOAST_TEXT_X + glyph_run(STATUS_FACE, glyphs) + TOAST_PAD_RIGHT).min(TOAST_W)
 }
-
-/// Narrow enough for a two-word sentence, wide enough that the bullet and the
-/// rounded corners still read as a strip rather than a pill.
-const TOAST_MIN_W: u32 = 180;
-/// The toast's height.
-const TOAST_H: u32 = 34;
 
 // ★★★★★ R1778 — the clock and the holder that were HERE are gone, into
 // `pinion_core::utterance::Saying`. R1776 built them for this screen and the round
@@ -2273,39 +2354,6 @@ fn palette_rect() -> Rect {
         win_h()
             .saturating_sub(APP_BAR_H)
             .saturating_sub(status_band_h()),
-    )
-}
-
-/// Where the strip that names this screen's gestures sits: inside the host's
-/// [`status_band_rect`], the sentence seated on the band's own centre line.
-///
-/// ★★ R1701 — its WIDTH was a flat `470` at a flat offset, and adding one
-/// gesture to the sentence pushed it past that number: the strip read
-/// "… Esc restor…" in a window with room to spare. That is the third time this
-/// project met a width chosen at the design size and required to keep a
-/// relation to something that moves (R1687's launch floor, R1700's node-lab
-/// hint, this), so the width has been derived since.
-///
-/// ★★★★★ R1864 — **and its PLACE was not, for 163 rounds.** The three terms
-/// that put it on the window were `canvas_rect().x + 610`, the **dashboard's**
-/// palette, and `win_h() - 47`: a hand-picked constant, a panel five of the six
-/// destinations do not have, and the window's bottom edge — which the mounted
-/// guest now fills. R1861 registered this strip as a band the toast must avoid
-/// and never asked whether the band itself was in the right place; measuring
-/// that is what R1864 did, and the answer was seven runs of other people's text
-/// under it. See [`status_band_rect`] for the census.
-///
-/// Derived from the band, all three terms are gone: it starts where the host's
-/// own space starts, it ends where that space ends, and its height comes from
-/// the face it is set in rather than from a number that was four pixels short
-/// of holding it.
-fn help_strip_rect() -> Rect {
-    let band = status_band_rect();
-    pinion_core::containment::line_rect_in(
-        band,
-        band.x + STATUS_PAD_X,
-        band.w.saturating_sub(STATUS_PAD_X * 2),
-        FONT_SMALL,
     )
 }
 
@@ -10234,8 +10282,16 @@ fn palette_scene(state: &ShellState, palette: Palette) -> Scene {
 /// whether there is a toast. The call site used to hold that condition too, and
 /// two places knowing when a thing is drawn is how one of them comes to be
 /// wrong.
-fn toast_scene(state: &ShellState, palette: Palette) -> Option<Scene> {
+/// ★★★★★ R1865 — **what the band's one slot is saying**, in the band's own
+/// space.
+///
+/// `None` once the sentence's time is up, so ONE place knows whether there is a
+/// toast (R1778's rule, kept). The gesture strip is what the slot holds
+/// otherwise, and it is the CALLER that says so — this returns the toast's
+/// occupancy or nothing, and the two possibilities meet in exactly one place.
+fn toast_in_slot(state: &ShellState, palette: Palette, slot: Rect) -> Option<Scene> {
     let said = state.toast.showing()?;
+    let sentence = said.sentence();
     // ★★★★★ R1811 — **the box is a claim about its sentence, so it is measured
     // from it.**
     //
@@ -10250,89 +10306,102 @@ fn toast_scene(state: &ShellState, palette: Palette) -> Option<Scene> {
     // `Owner::register_animation`. So this is the estimate the containment gate
     // is judged against, and the gate is what keeps the estimate honest: too
     // narrow and `escapes` reports the sentence leaving its box, too wide and
-    // `slack` reports the room. Between the two, an estimate cannot rot
-    // silently in either direction.
-    let width = toast_width(&said.sentence());
-    // The reference's own placement, and where this stops being one: centred,
-    // 22 above the foot — and then moved off whatever the screen showing has
-    // told this host it is using.
+    // `slack` reports the room.
     //
-    // ★★★★★ R1861 — **the overlay avoids the CONTENT, not just the edge.** A
-    // reader could not read the node lab's gesture hint because this box landed
-    // on its top 6 pixels; on the capture viewer the same box covered two lane
-    // readouts whole. Both screens declare what they occupy
-    // (`Screen::keeps_clear`) and `chrome::clear_of` moves the seat the shortest
-    // way that clears it. The declaration is DERIVED from each screen's own
-    // painter, so a strip that moves takes this with it.
-    //
-    // ⚠ Unmoved when the screen showing declares nothing, or when nothing is
-    // under the box — so the reference's placement is what a reader sees
-    // wherever it costs nothing.
-    let seat = toast_seat(width);
-    let region = page_rect(state.at().as_str());
-    // ★★★★★ BOTH strips, and the pixel measurement is why. Clearing only what
-    // the guest declared moved the box straight onto this host's OWN help
-    // strip — the reader had named a run from each in one sentence, and the
-    // first repair asked about one of them.
-    //
-    // ★ R1864 — the whole STATUS BAND, not just the sentence in it. The band is
-    // host furniture and the host does not cover its own furniture; the strip's
-    // rectangle is a run inside it, so avoiding only that left the box free to
-    // land on the band's other half.
-    let mut bands = vec![status_band_rect()];
-    bands.extend(screen_roster().keeps_clear_of(state.at().as_str(), region));
-    let rect = pinion_core::chrome::clear_of(seat, &bands, region).unwrap_or(seat);
+    // ★ R1865 — and it is bounded by the SLOT now, not only by `TOAST_W`: the
+    // band is a fixed width and a sentence longer than it elides rather than
+    // running off the end of the window.
+    let width = toast_width(&sentence).min(slot.w);
+    debug_assert!(width > 0, "a sentence with a zero-width box is not said");
     Some(Scene::Container(
         ContainerNode::new(vec![
             // ★★★★★ R1719 — the bullet was `accent_fg` whatever had been said.
             // A refusal and a confirmation were one picture, on the screen and
             // in a reader's ear both.
-            dot(14, 13, 8, toast_dot(said.tone(), palette)),
+            //
+            // ★ R1865 — and it is the ONLY thing that distinguishes a toast
+            // from the gesture strip now, so it is centred on the slot's line
+            // rather than placed at a hand-picked offset into a box that no
+            // longer exists.
+            dot(
+                0,
+                slot.h.saturating_sub(TOAST_DOT) / 2,
+                TOAST_DOT,
+                toast_dot(said.tone(), palette),
+            ),
             label(
-                &said.sentence(),
+                &sentence,
                 Rect::new(
                     TOAST_TEXT_X,
-                    9,
-                    rect.w.saturating_sub(TOAST_TEXT_X + TOAST_PAD_RIGHT),
-                    16,
+                    0,
+                    width.saturating_sub(TOAST_TEXT_X + TOAST_PAD_RIGHT),
+                    slot.h,
                 ),
-                FONT_BODY,
+                STATUS_FACE,
                 palette.ink,
             ),
         ])
         .with_tag("shell.toast")
-        .with_style(
-            BoxStyle::filled(palette.raised)
-                .with_corner_radius(10)
-                .with_border(Border::new(palette.outline, 1)),
-        )
-        .with_layout(absolute(rect)),
+        .with_layout(absolute(Rect::new(0, 0, width, slot.h))),
     ))
 }
 
-/// ★★★★★ R1864 — **the host's status band, drawn.**
+/// The tone bullet's size.
+const TOAST_DOT: u32 = 8;
+
+/// ★★★★★ R1864/R1865 — **the host's status band, drawn, and everything this
+/// application says about itself is in it.**
 ///
-/// A filled strip in [`status_band_rect`] carrying the gesture sentence. It is
+/// A filled strip in [`status_band_rect`] carrying ONE message slot. It is
 /// painted rather than merely reserved for two reasons a reader can see: a band
-/// nobody fills reads as the page running off the bottom of the window, and the
-/// sentence needs a ground of its own — until this round it was set in whatever
-/// the guest happened to have painted underneath it.
+/// nobody fills reads as the page running off the bottom of the window, and a
+/// sentence needs a ground of its own — before R1864 the gesture strip was set
+/// in whatever the guest happened to have painted underneath it.
 ///
-/// The sentence is placed in the band's own space, from
-/// [`pinion_core::containment::line_rect_in`], so it is seated on the band's
-/// centre line and its box holds its face. Nothing else is placed here yet; the
-/// toast moves in next, which is what makes this a band rather than a strip.
-fn status_band_scene(palette: Palette) -> Scene {
+/// # The slot holds the toast when there is one, and the gesture strip when
+/// there is not
+///
+/// That is the status-bar pattern, and R1865 is the round that finished it. The
+/// floating box this replaces was moved out of the way of whatever the screen
+/// had under it (R1861), which fixed the covering and bought it with
+/// unpredictability — measured across the six open destinations, one sentence,
+/// one window: **three different heights, 96 pixels apart**, and never the one
+/// the behaviour reference specifies. A reader reported that cost without being
+/// asked. Here the answer to *where does it appear* is one rectangle for every
+/// destination, every sentence and every screen, and the answer to *what does it
+/// cover* is **nothing**, structurally: the band is outside every
+/// [`page_rect`].
+///
+/// # ⚠ What is spent, stated rather than hidden
+///
+/// The gesture sentence is not readable while a toast is up. That is the trade a
+/// one-slot band makes and it is the right way round — the strip is a reminder a
+/// reader can wait 2.6 seconds for, and a toast is the answer to something they
+/// just did. The alternative, two slots side by side, halves the room for both
+/// and makes the toast's position depend on the length of a sentence beside it,
+/// which is the property this round exists to remove.
+fn status_band_scene(state: &ShellState, palette: Palette) -> Scene {
     let band = status_band_rect();
-    let seat = help_strip_rect();
+    let slot = status_slot_rect();
+    // The slot in the BAND's space, which is what the band's own node is laid
+    // out in.
+    let local = Rect::new(slot.x - band.x, slot.y - band.y, slot.w, slot.h);
+    let saying = toast_in_slot(state, palette, slot).map_or_else(
+        || {
+            label(
+                HELP_STRIP,
+                Rect::new(0, 0, local.w, local.h),
+                STATUS_FACE,
+                palette.muted,
+            )
+        },
+        |toast| toast,
+    );
     Scene::Container(
-        ContainerNode::new(vec![label(
-            HELP_STRIP,
-            // The sentence in the BAND's space, which is what the band's own
-            // node is laid out in.
-            Rect::new(seat.x - band.x, seat.y - band.y, seat.w, seat.h),
-            FONT_SMALL,
-            palette.muted,
+        ContainerNode::new(vec![Scene::Container(
+            ContainerNode::new(vec![saying])
+                .with_tag(STATUS_SLOT)
+                .with_layout(absolute(local)),
         )])
         .with_tag(STATUS_BAND)
         // Exactly the application bar's own style, and deliberately: the two are
@@ -10345,6 +10414,16 @@ fn status_band_scene(palette: Palette) -> Scene {
 
 /// The status band's tag.
 const STATUS_BAND: &str = "shell.status";
+
+/// ★ R1865 — the band's one message slot, addressable.
+///
+/// A tag rather than an untagged container, because *where the application
+/// speaks* is a fact a specification should be able to name and a gate should be
+/// able to ask about — and because R1864 measured what an untagged mark costs:
+/// the gesture strip reached four mounted screens for 163 rounds without ever
+/// entering the ratchet that counts host marks over a guest, since that
+/// predicate counts TAGGED nodes.
+const STATUS_SLOT: &str = "shell.status.slot";
 
 /// Every colour the painters here read, resolved from one theme.
 ///
@@ -10471,7 +10550,12 @@ fn view(_state: ScreenState, frame: Frame) -> Scene {
         // still in the scene, still in the accessibility tree, and still over
         // the guest as far as `pinion_screen::layering` is concerned — and the
         // reader who reported this saw exactly what a permanent one does.
-        .chain(toast_scene(&state, palette))
+        //
+        // ★★★★★ R1865 — and it is not a sibling here any more: it is painted by
+        // `status_band_scene`, in the band's one message slot, below. A floating
+        // box that had to be MOVED off whatever was under it is a box whose
+        // position depends on the screen; a slot in host furniture is one
+        // rectangle for every destination.
         // ★ R1695 — the layout bar and the palette are the DASHBOARD's. They sit
         // outside the region because they sit outside its rectangle, so the
         // substrate's guarantee does not reach them; the specification's
@@ -10501,7 +10585,7 @@ fn view(_state: ScreenState, frame: Frame) -> Scene {
             // page it must not leave. Painted after the page so a press on it
             // resolves to the roster rather than to whatever row it covers.
             settings_roster_scene(&state, here.key.as_ref()),
-            status_band_scene(palette),
+            status_band_scene(&state, palette),
         ])
         .collect::<Vec<_>>();
 
