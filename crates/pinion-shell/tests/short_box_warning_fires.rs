@@ -659,3 +659,64 @@ fn r1863_a_clean_frame_says_nothing() {
     let said = heard(|| pinion_shell::warn_about_short_boxes_in(&scene, &mut seen));
     assert!(said.is_empty(), "a frame with nothing wrong said {said:#?}");
 }
+
+/// ★★★★★ R1871 — **the report is a function of the frame, not of the order the
+/// walk met it.**
+///
+/// R1863 spelled the ten runs it met FIRST: `visible.chain(rest).take(10)` over
+/// a scene walk, so which ten a reader was shown depended on where in the tree
+/// somebody had declared them. R1870 replaced that with a comparator ending in
+/// the site's own name, which is total across distinct sites — so the SET of
+/// sites stopped depending on walk order. Nothing asserted it, and the half one
+/// level in was left: inside a site the rows sort on visibility then shortfall,
+/// a stable sort, so two rows tied on both fall back to the order they were
+/// met, and **which run speaks for the site** flips with the declaration order.
+///
+/// A report two runs of one screen can disagree about is one nobody can quote,
+/// and the disagreement is invisible precisely because both runs are correct.
+/// So this asserts the whole report — message and every field — is identical
+/// when the same frame is built in the opposite order.
+#[test]
+fn r1871_the_same_frame_reports_the_same_thing_in_any_declaration_order() {
+    // Two rows of one site, tied on everything the ordering looks at: same
+    // site, same visibility, same shortfall. Only their addresses differ.
+    let rows = || {
+        vec![
+            run_at("row.0.name", "paging", 10, 4),
+            run_at("row.1.name", "paging", 10, 4),
+            // And a second site, so the BETWEEN-site order is exercised too.
+            run_at("card.aa.total", "SIZE", 10, 4),
+            run_at("card.bb.total", "SIZE", 10, 4),
+        ]
+    };
+    let forward = screen(rows());
+    let mut backward_rows = rows();
+    backward_rows.reverse();
+    let backward = screen(backward_rows);
+
+    // A fresh `seen` for each, or the second frame is deduped into silence.
+    let mut heard_once = std::collections::HashSet::new();
+    let mut heard_twice = std::collections::HashSet::new();
+    let as_declared = heard(|| pinion_shell::warn_about_short_boxes_in(&forward, &mut heard_once));
+    let reversed = heard(|| pinion_shell::warn_about_short_boxes_in(&backward, &mut heard_twice));
+
+    assert!(
+        !as_declared.is_empty(),
+        "the fixture must actually produce a report, or this asserts nothing",
+    );
+    let render = |said: &[Said]| -> Vec<(String, Vec<(String, String)>)> {
+        said.iter()
+            .map(|s| {
+                let mut fields = s.fields.clone();
+                fields.sort();
+                (s.message.clone(), fields)
+            })
+            .collect()
+    };
+    assert_eq!(
+        render(&as_declared),
+        render(&reversed),
+        "the same frame reported differently depending on the order its runs \
+         were declared in\nforward: {as_declared:#?}\nbackward: {reversed:#?}",
+    );
+}

@@ -104,8 +104,13 @@ pub use substrate::{AccessEmitDecision, FragmentCacheStats, ShellCore};
 /// ★ R1870 — and beside it the list the warning is a *view of*: a scene's short
 /// runs grouped into repeating sites, in the order a reader should hear them.
 /// A repair campaign wants that list too, and it must be the same one.
+///
+/// ★ R1871 — and `group_short_boxes`, the same ordering over rows a caller
+/// already holds. It is the form the order's own property can be checked in.
 #[cfg(debug_assertions)]
-pub use substrate::{short_box_sites, warn_about_short_boxes_in};
+pub use substrate::{
+    SHORT_BOX_WARNING_LINES, group_short_boxes, short_box_sites, warn_about_short_boxes_in,
+};
 pub use waiter::use_scene_revision;
 // R1362 PR-65 §5.16 §5.49 §2 #2 — the binding-facing "request a window control
 // from my own code" seam: a binding names the sink + the Null default without a

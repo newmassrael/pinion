@@ -1733,8 +1733,13 @@ impl WindowOverlayInputs {
 /// ★★ R1870 — and ten *sites*, not ten runs, which is what makes the number
 /// worth having. Measured on a real boot it bounded ten lines onto one card;
 /// ten sites is ten kinds of mistake.
+///
+/// ★ R1871 — **public**, because a caller that reads the census reads it *at
+/// this budget*, and one that writes `10` of its own is a second definition
+/// that drifts the moment this one moves. The analysis-tool shell's census had
+/// exactly that copy, found by this round's closing audit.
 #[cfg(debug_assertions)]
-pub(crate) const SHORT_BOX_WARNING_LINES: usize = 10;
+pub const SHORT_BOX_WARNING_LINES: usize = 10;
 
 /// The frame's short runs, gathered into [repeating
 /// sites](pinion_core::containment::repeating_site) and put in the order a
@@ -1761,10 +1766,21 @@ pub(crate) const SHORT_BOX_WARNING_LINES: usize = 10;
 /// * **Inside** a site, the run a reader could actually SEE cut comes first,
 ///   and the worst of them when none is visible. This is the R1863 ordering,
 ///   one level in: still a priority and still never a permission, because the
-///   runs it does not pick are counted on the site's own line.
+///   runs it does not pick are counted on the site's own line. ★ R1871 — then
+///   the run's address and its content, which is what makes this order TOTAL.
 /// * **Between** sites, one whose cut shows goes first, then the one repeated
 ///   most — repairing that retires the most runs — and the site's own name
 ///   last, so the order is total and a frame says the same thing twice running.
+///
+/// # Both orders are total, and that is the property
+///
+/// A stable sort leaves ties in the order the walk met them, so any tie that
+/// survives the keys above is a report that changes with where in the tree
+/// somebody declared a run. R1863 spelled `visible.chain(rest).take(10)` — the
+/// ten met first — and both halves of that are gone now: R1870's site name
+/// ended the outer comparator, R1871's address and content end the inner one.
+/// `r1871_the_same_frame_reports_the_same_thing_in_any_declaration_order`
+/// builds one frame twice, in opposite orders, and compares every field.
 ///
 /// # Why this is public
 ///
@@ -1777,9 +1793,30 @@ pub(crate) const SHORT_BOX_WARNING_LINES: usize = 10;
 #[cfg(debug_assertions)]
 #[must_use]
 pub fn short_box_sites(scene: &Scene) -> Vec<(String, Vec<pinion_core::containment::ShortBox>)> {
+    group_short_boxes(pinion_core::containment::short_boxes(scene))
+}
+
+/// [`short_box_sites`] over a population somebody already has.
+///
+/// ★★★★★ R1871 — the split is what makes the round's property checkable on a
+/// REAL screen. *Obtaining* the population is a walk of a scene; *ordering* it
+/// is an algebra over the rows, and the claim — that the report does not depend
+/// on the order the walk met things — is a claim about the algebra. With only
+/// the scene-taking form, the claim can be exercised on a fixture somebody
+/// wrote and never on the six destinations this application actually opens,
+/// because permuting a real scene needs a general scene walk this tree does not
+/// have. Permuting a `Vec` needs nothing.
+///
+/// The repair campaign is the other caller: it holds rows it filtered itself
+/// and wants them in the order that retires the most per repair.
+#[cfg(debug_assertions)]
+#[must_use]
+pub fn group_short_boxes(
+    rows: Vec<pinion_core::containment::ShortBox>,
+) -> Vec<(String, Vec<pinion_core::containment::ShortBox>)> {
     let mut sites: Vec<(String, Vec<pinion_core::containment::ShortBox>)> = Vec::new();
     let mut at: HashMap<String, usize> = HashMap::new();
-    for row in pinion_core::containment::short_boxes(scene) {
+    for row in rows {
         let site = row.site();
         if let Some(&i) = at.get(&site) {
             sites[i].1.push(row);
@@ -1789,10 +1826,32 @@ pub fn short_box_sites(scene: &Scene) -> Vec<(String, Vec<pinion_core::containme
         }
     }
     for (_, rows) in &mut sites {
-        rows.sort_by_key(|row| {
+        // ★★★★★ R1871 — the last two keys are what make this order TOTAL, and
+        // totality is the whole property: a stable sort falls back to the order
+        // the walk met things, so without them two rows tied on visibility and
+        // shortfall let the run that SPEAKS for the site flip with the order
+        // somebody happened to declare it in. Measured: the same frame built
+        // backwards reported `row.1.name` where it had reported `row.0.name`,
+        // while the sites and their order were identical — R1863's
+        // `visible.chain(rest).take(10)` was the same defect one level out, and
+        // R1870 closed that half by ending the site comparator in the site's
+        // own name.
+        //
+        // ⚠ `address` and `content` are chosen rather than any two
+        // distinguishing fields, because with `short_by` they are exactly the
+        // dedup key's components (see the emitter). That gives the invariant
+        // this rests on: **two rows that sort equal here are two rows the dedup
+        // treats as one**, so a residual tie cannot produce two different
+        // reports — only one of them is ever fresh.
+        //
+        // `sort_by_cached_key` and not `sort_by`: the key allocates, and a
+        // comparator would rebuild it O(n log n) times.
+        rows.sort_by_cached_key(|row| {
             (
                 !pinion_core::containment::cut_would_show(&row.content),
                 std::cmp::Reverse(row.short_by),
+                row.address(),
+                row.content.clone(),
             )
         });
     }

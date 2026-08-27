@@ -6562,7 +6562,6 @@ fn r1870_the_short_box_census_of_every_destination() {
     owner.run(|| {
         let state = use_shell_state();
         let roster = spec::destinations();
-        let bound = 10usize;
         let mut walked = 0usize;
         for destination in roster.open() {
             let key = destination.key.as_ref();
@@ -6571,74 +6570,7 @@ fn r1870_the_short_box_census_of_every_destination() {
             }
             walked += 1;
             let (_, scene) = painted_at((WIN_W, WIN_H));
-            let short = pinion_core::containment::short_boxes(&scene);
-            let sites = pinion_shell::short_box_sites(&scene);
-
-            // ★ The partition. `short_boxes` is the population; `short_box_sites`
-            // is meant to be exactly that population re-shelved.
-            let shelved: usize = sites.iter().map(|(_, rows)| rows.len()).sum();
-            assert_eq!(
-                shelved,
-                short.len(),
-                "at {key} the grouping holds {shelved} run(s) where the frame \
-                 has {} — a site algebra that loses or duplicates runs makes \
-                 every count on the warning's lines a fiction",
-                short.len(),
-            );
-            let named: BTreeSet<&String> = sites.iter().map(|(site, _)| site).collect();
-            assert_eq!(
-                named.len(),
-                sites.len(),
-                "at {key} one site appears twice in the grouping",
-            );
-
-            // The budget, spent the way the emitter spends it.
-            let lines: Vec<&String> = sites.iter().take(bound).map(|(site, _)| site).collect();
-            assert_eq!(
-                lines.len(),
-                bound.min(sites.len()),
-                "at {key} the budget went unspent while sites went unsaid",
-            );
-
-            // The contrast this round was written for, REPORTED rather than
-            // pinned: how much of the same budget the replaced ordering — runs
-            // whose cut shows first, then walk order, one line per RUN — would
-            // have spent restating a single site.
-            let (visible, rest): (Vec<_>, Vec<_>) = short
-                .iter()
-                .partition(|row| pinion_core::containment::cut_would_show(&row.content));
-            let replaced: Vec<String> = visible
-                .iter()
-                .chain(rest.iter())
-                .take(bound)
-                .map(|row| row.site())
-                .collect();
-            let (worst, worst_site) = replaced
-                .iter()
-                .map(|site| {
-                    (
-                        replaced.iter().filter(|s| *s == site).count(),
-                        site.as_str(),
-                    )
-                })
-                .max()
-                .unwrap_or((0, "<none>"));
-
-            println!(
-                "R1870 census {key}: {} short run(s) at {} site(s); the \
-                 replaced ordering would spend {worst} of its {bound} line(s) \
-                 on ONE site ({worst_site}), the installed one spells {} at {} \
-                 distinct site(s). First reported: {:?}",
-                short.len(),
-                sites.len(),
-                lines.len(),
-                lines.len(),
-                sites
-                    .iter()
-                    .take(3)
-                    .map(|(site, rows)| (site.as_str(), rows.len()))
-                    .collect::<Vec<_>>(),
-            );
+            short_box_census_of(key, &scene);
         }
         assert!(
             walked >= 6,
@@ -6647,4 +6579,184 @@ fn r1870_the_short_box_census_of_every_destination() {
              green sweep comes to mean nothing",
         );
     });
+}
+
+/// The warning's own budget, ASKED OF the crate that spends it.
+///
+/// ⚠ R1871's closing audit — this was a local `10`, which is a second
+/// definition of one number and drifts silently the moment the emitter's moves.
+/// A census read at a budget the emitter no longer uses describes a report
+/// nobody gets.
+const SHORT_BOX_BOUND: usize = pinion_shell::SHORT_BOX_WARNING_LINES;
+
+/// One destination's short-box census: what
+/// [`r1870_the_short_box_census_of_every_destination`] asserts and reports
+/// about a single painted frame.
+///
+/// Three functions rather than one because they are three jobs: the walk
+/// decides *which* frames, [`short_box_truths_of`] decides what must be TRUE of
+/// one, and [`short_box_report_of`] says what is merely SO. Only the middle one
+/// can turn a screen red, and keeping the reporting out of it is what stops a
+/// measurement from quietly becoming a pin.
+fn short_box_census_of(key: &str, scene: &Scene) {
+    let short = pinion_core::containment::short_boxes(scene);
+    let sites = pinion_shell::short_box_sites(scene);
+    short_box_truths_of(key, &short, &sites);
+    short_box_report_of(key, &short, &sites);
+}
+
+/// What must be true of one frame's short boxes, whatever their number.
+fn short_box_truths_of(
+    key: &str,
+    short: &[pinion_core::containment::ShortBox],
+    sites: &[(String, Vec<pinion_core::containment::ShortBox>)],
+) {
+    const BOUND: usize = SHORT_BOX_BOUND;
+
+    // ★ The partition. `short_boxes` is the population; `short_box_sites` is
+    // meant to be exactly that population re-shelved.
+    let shelved: usize = sites.iter().map(|(_, rows)| rows.len()).sum();
+    assert_eq!(
+        shelved,
+        short.len(),
+        "at {key} the grouping holds {shelved} run(s) where the frame has {} — \
+         a site algebra that loses or duplicates runs makes every count on the \
+         warning's lines a fiction",
+        short.len(),
+    );
+    let named: BTreeSet<&String> = sites.iter().map(|(site, _)| site).collect();
+    assert_eq!(
+        named.len(),
+        sites.len(),
+        "at {key} one site appears twice in the grouping",
+    );
+
+    // The budget, spent the way the emitter spends it.
+    let lines: Vec<&String> = sites.iter().take(BOUND).map(|(site, _)| site).collect();
+    assert_eq!(
+        lines.len(),
+        BOUND.min(sites.len()),
+        "at {key} the budget went unspent while sites went unsaid",
+    );
+
+    // ★★★★★ R1871 — **the report is a function of the frame, not of the order
+    // the walk met it**, asserted on THIS SCREEN'S population rather than on a
+    // fixture. R1863 spelled the ten runs it met first; R1870 ended the site
+    // comparator in the site's name and R1871 the row comparator in the row's
+    // address, and neither half is worth anything unless a real screen's rows
+    // have ties for those keys to break. These do — see `ties` below.
+    let render = |grouped: &[(String, Vec<pinion_core::containment::ShortBox>)]| {
+        grouped
+            .iter()
+            .map(|(site, rows)| {
+                (
+                    site.clone(),
+                    rows.iter()
+                        .map(|r| (r.address(), r.content.clone(), r.short_by))
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut backwards = short.to_vec();
+    backwards.reverse();
+    assert_eq!(
+        render(sites),
+        render(&pinion_shell::group_short_boxes(backwards)),
+        "at {key} the same population reported differently when it was met in \
+         the opposite order — which run speaks for a site is then whichever one \
+         somebody happened to declare first",
+    );
+}
+
+/// What is merely SO about one frame's short boxes — every number here is a
+/// defect population the queued repair campaign exists to drive to zero, so
+/// none of it is asserted.
+fn short_box_report_of(
+    key: &str,
+    short: &[pinion_core::containment::ShortBox],
+    sites: &[(String, Vec<pinion_core::containment::ShortBox>)],
+) {
+    const BOUND: usize = SHORT_BOX_BOUND;
+
+    let lines = BOUND.min(sites.len());
+
+    // The contrast R1870 was written for: how much of the same budget the
+    // replaced ordering — runs whose cut shows first, then walk order, one line
+    // per RUN — would have spent restating one site.
+    let (visible, rest): (Vec<_>, Vec<_>) = short
+        .iter()
+        .partition(|row| pinion_core::containment::cut_would_show(&row.content));
+    let replaced: Vec<String> = visible
+        .iter()
+        .chain(rest.iter())
+        .take(BOUND)
+        .map(|row| row.site())
+        .collect();
+    let (worst, worst_site) = replaced
+        .iter()
+        .map(|site| {
+            (
+                replaced.iter().filter(|s| *s == site).count(),
+                site.as_str(),
+            )
+        })
+        .max()
+        .unwrap_or((0, "<none>"));
+
+    // ★ R1871's entry measurement, kept because it is the reason this round did
+    // NOT build a severity ordering: `cut_would_show` reads the CONTENT alone,
+    // so a box short by more than its own slack over the em — where no glyph
+    // body fits at all — would be judged by which letters it holds. Measured,
+    // that population is empty on every screen here, so the defect is real in
+    // the predicate and absent from the tree.
+    let deepest = short.iter().map(|row| row.short_by).max().unwrap_or(0);
+    let body_clipped: Vec<_> = short
+        .iter()
+        .filter(|row| row.short_by > pinion_core::containment::line_box(row.px) - row.px)
+        .collect();
+    let mute_yet_gutted = body_clipped
+        .iter()
+        .filter(|row| !pinion_core::containment::cut_would_show(&row.content))
+        .count();
+    // How often the R1871 keys actually DECIDE: adjacent rows at one site tied
+    // on everything the two older keys look at. Reported and not pinned — a
+    // screen with no ties is one where the property above holds vacuously, and
+    // a reader is owed that distinction.
+    let ties: usize = sites
+        .iter()
+        .map(|(_, rows)| {
+            rows.windows(2)
+                .filter(|w| {
+                    let vis = |r: &pinion_core::containment::ShortBox| {
+                        pinion_core::containment::cut_would_show(&r.content)
+                    };
+                    vis(&w[0]) == vis(&w[1]) && w[0].short_by == w[1].short_by
+                })
+                .count()
+        })
+        .sum();
+    println!(
+        "R1871 shortfall {key}: deepest {deepest}px; {} run(s) short by more \
+         than their slack over the em (no glyph body fits), of which \
+         {mute_yet_gutted} are called invisible by a predicate that reads only \
+         the letters; {ties} adjacent pair(s) are decided by the address key \
+         rather than by visibility or depth",
+        body_clipped.len(),
+    );
+    println!(
+        "R1870 census {key}: {} short run(s) at {} site(s); the replaced \
+         ordering would spend {worst} of its {BOUND} line(s) on ONE site \
+         ({worst_site}), the installed one spells {} at {} distinct site(s). \
+         First reported: {:?}",
+        short.len(),
+        sites.len(),
+        lines,
+        lines,
+        sites
+            .iter()
+            .take(3)
+            .map(|(site, rows)| (site.as_str(), rows.len()))
+            .collect::<Vec<_>>(),
+    );
 }
