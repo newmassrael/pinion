@@ -3142,6 +3142,28 @@ pub const VOICES: &[VoiceSpec] = &[
         population: Population::Themes,
         at: Where::At("settings"),
     },
+    // ★★★★★ R1868 — the settings page's two SPEAKING regions, which the table
+    // had never named either. Both are `status`, and both were found the same
+    // way as the twelve silences beside them: by a reconciliation that finally
+    // ran somewhere other than the destination the application opens at.
+    //
+    // The build strip is the one place either screen says which build a reader
+    // is looking at — the fact a person filing a defect is asked for first — and
+    // the plugin row's seat carries the formats this build can take apart. A
+    // region that speaks and is published nowhere is a client reading the
+    // specification and being told the window is quieter than it is.
+    VoiceSpec {
+        tag: "shell.settings.build",
+        role: "status",
+        population: Population::One,
+        at: Where::At("settings"),
+    },
+    VoiceSpec {
+        tag: "shell.settings.row.plugins.chips",
+        role: "status",
+        population: Population::One,
+        at: Where::At("settings"),
+    },
     // --- what just happened ---------------------------------------------
     VoiceSpec {
         tag: "shell.toast",
@@ -3411,6 +3433,66 @@ pub const SILENCES: &[(&str, Population, &str, Where)] = &[
     ),
     (
         "shell.settings.row.theme",
+        Population::One,
+        "part_of",
+        Where::At("settings"),
+    ),
+    // ★★★★★ R1868 — the settings page's other twelve quiet regions, and the
+    // reason they were missing for so long is the finding rather than the rows:
+    // the reconciliation that holds this table to what the screen paints ran
+    // ONLY at the destination the application opens at. `r1694` compares both
+    // records at the dashboard; `r1695` visits every destination and asks only
+    // whether anything is *undecided*. So a page that is not the opening one
+    // could paint whatever it liked and publish none of it, and this page did —
+    // fourteen regions, twelve quiet and two speaking.
+    //
+    // Each word here is the PAINTER's, read off the census rather than chosen:
+    // a row published with a different reason than the scene declares is the
+    // `KindDiffers` arm, which is the half a comparison over tags cannot see.
+    (
+        "shell.settings.body",
+        Population::One,
+        "layout",
+        Where::At("settings"),
+    ),
+    (
+        "shell.settings.head.title",
+        Population::One,
+        "name_of",
+        Where::At("settings"),
+    ),
+    (
+        "shell.settings.head.gist",
+        Population::One,
+        "part_of",
+        Where::At("settings"),
+    ),
+    (
+        "shell.settings.head.{}",
+        Population::OptionGroups,
+        "name_of",
+        Where::At("settings"),
+    ),
+    (
+        "shell.settings.plugin.records",
+        Population::One,
+        "part_of",
+        Where::At("settings"),
+    ),
+    (
+        "shell.settings.plugin.schema",
+        Population::One,
+        "part_of",
+        Where::At("settings"),
+    ),
+    (
+        "shell.settings.row.{}",
+        Population::ValueRows,
+        "part_of",
+        Where::At("settings"),
+    ),
+    (
+        "shell.settings.row.plugins",
         Population::One,
         "part_of",
         Where::At("settings"),

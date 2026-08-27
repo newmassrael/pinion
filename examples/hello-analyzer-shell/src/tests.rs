@@ -1161,27 +1161,7 @@ fn r1867_no_destination_paints_a_region_with_no_declared_voice() {
             for destination in roster.open() {
                 let key = destination.key.as_ref();
                 assert!(state.go(key).is_ok(), "the rail must reach {key}");
-                let mut scene = super::view(ScreenState::default(), pinion_core::Frame::default());
-                let mut cache = pinion_runtime::LayoutCache::new();
-                pinion_runtime::compute_layout(&mut scene, &mut cache, super::WIN_W, super::WIN_H);
-                let mut nodes = AnalyzerShellView::access_node(&ScreenState::default(), None);
-                // ★★★★★ The step this gate would have been WRONG without, and
-                // it is the difference between a tree and the tree a reader
-                // gets: a widget's `access_node` returns role, state and value
-                // and deliberately NOT the name for anything named from its
-                // paint (`grid_table_nodes` says so at the site: *"NO
-                // `with_name`: the name is derived from the painted header"*).
-                // The runtime fills those in after layout. Skipping it here
-                // reported **90 `mumbled` regions across four destinations**
-                // (dashboard, packets, keys, logs) that a running window does
-                // not have — a gate accusing the screen of a defect the gate had
-                // created. Every sibling screen's own census carries this line
-                // with the same warning beside it, which is the third reason the
-                // recipe wants lifting rather than copying.
-                pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
-                let announced = pinion_a11y::announcements(&nodes);
-                let referenced = pinion_a11y::referenced_tags(&nodes);
-                let census = pinion_core::voice::voice_census(&scene, &announced, &referenced);
+                let census = census_of_the_open_destination();
                 judged += census.nodes.len();
                 for row in &census.nodes {
                     if row.voice.is_defect() {
@@ -1215,6 +1195,163 @@ fn r1867_no_destination_paints_a_region_with_no_declared_voice() {
         assert!(
             judged > 0,
             "the census judged no region at all, so its verdict is vacuous",
+        );
+    });
+}
+
+/// The four-step recipe that turns whatever destination the rail is standing at
+/// into a census of what it says.
+///
+/// ★★★★★ The third step is the one this gate would have been WRONG without, and
+/// it is the difference between a tree and the tree a reader gets: a widget's
+/// `access_node` returns role, state and value and deliberately NOT the name for
+/// anything named from its paint (`grid_table_nodes` says so at the site: *"NO
+/// `with_name`: the name is derived from the painted header"*). The runtime
+/// fills those in after layout. Skipping it reported **90 `mumbled` regions
+/// across four destinations** that a running window does not have — a gate
+/// accusing the screen of a defect the gate had created.
+///
+/// ⚠ Written once here because this screen now has TWO gates over it (R1868),
+/// and a recipe copied twice in one file is the copy that drifts. The
+/// cross-screen lift — four sibling screens carry this by hand — stays
+/// registered as `debt-five-screens-hand-roll-one-voice-gate`, because each
+/// screen's SECOND axis differs and only the construction is common.
+fn census_of_the_open_destination() -> pinion_core::voice::VoiceCensus {
+    let mut scene = super::view(ScreenState::default(), pinion_core::Frame::default());
+    let mut cache = pinion_runtime::LayoutCache::new();
+    pinion_runtime::compute_layout(&mut scene, &mut cache, super::WIN_W, super::WIN_H);
+    let mut nodes = AnalyzerShellView::access_node(&ScreenState::default(), None);
+    pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
+    let announced = pinion_a11y::announcements(&nodes);
+    let referenced = pinion_a11y::referenced_tags(&nodes);
+    pinion_core::voice::voice_census(&scene, &announced, &referenced)
+}
+
+/// Every region this screen PAINTS is one it PUBLISHES, and the other way round.
+///
+/// ★★★★★ R1868 — the half of R1867's rule that was still guarded only by a
+/// demo, measured by counterfactual before a line of this was written: deleting
+/// `shell.status`'s row from [`spec::SILENCES`] left `cargo test -p
+/// hello-analyzer-shell` **green** and was caught by
+/// `tools/demos/r1694_a_locked_seat_is_heard.py` alone. Demos run in CI's sweep,
+/// *after* the push — the wrong side of publishing for a rule about what may be
+/// published, and the reason R1864's band and R1865's slot each reached a
+/// release with no published declaration.
+///
+/// A screen's voice is written down twice: by the painter, as the silence a
+/// scene node carries, and by the specification the screen publishes. R1867's
+/// gate judges the first alone. This one judges that the two records are the
+/// same record.
+///
+/// # The population, stated rather than assumed
+///
+/// The census is the UNION over the status slot's two occupancies, because a
+/// region painted in one of them is one this screen has; and the declarations
+/// are filtered to the destination walked, because the table describes an
+/// application of many pages and comparing all of it against one page would
+/// demand every other page's regions here. Both obligations are
+/// [`pinion_core::voice::reconcile`]'s, stated in its own documentation, and
+/// this is where they are met.
+#[test]
+fn r1868_what_a_destination_paints_is_what_it_publishes_about_itself() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let roster = spec::destinations();
+        let screens = super::screen_roster();
+        let mut wrong: Vec<String> = Vec::new();
+        let mut compared = 0_usize;
+        let mut destinations = 0_usize;
+        for destination in roster.open() {
+            let key = destination.key.as_ref();
+            // ⚠ A destination whose page is a MOUNTED SCREEN is not this
+            // screen's to reconcile, and the first draft of this gate did not
+            // know that: it reported **728 disagreements**, every one of them a
+            // guest's own region (`pv.*` at `packets`), because the host's table
+            // names none of them and must not —
+            // `r1695_every_open_destination_owns_at_least_one_declared_region`
+            // states that partition and asserts it. What this gate judges is the
+            // host: its chrome, and the pages it paints itself.
+            //
+            // ★ The residue that leaves, stated rather than hidden: a mounted
+            // destination's regions are reconciled against the GUEST's table by
+            // the guest's own tests, and nothing reconciles the two tables
+            // TOGETHER — the composed screen has no single published
+            // description. That is a spec question, not a gate one, and it is
+            // registered rather than papered over here.
+            if screens.is_mounted(key) {
+                continue;
+            }
+            destinations += 1;
+            assert!(state.go(key).is_ok(), "the rail must reach {key}");
+            let mut nodes = Vec::new();
+            for holding in [true, false] {
+                if holding {
+                    state.say(pinion_core::utterance::Utterance::done(
+                        "a sentence the slot is holding",
+                    ));
+                } else {
+                    owner.tick_animations(state.toast.life() + 1.0);
+                }
+                assert_eq!(
+                    state.toast.showing().is_some(),
+                    holding,
+                    "the slot's occupancy is what this loop varies",
+                );
+                nodes.extend(census_of_the_open_destination().nodes);
+            }
+            let census = pinion_core::voice::VoiceCensus { nodes };
+            let declared_voices: std::collections::BTreeSet<String> = spec::VOICES
+                .iter()
+                .filter(|voice| voice.at.shows_at(key))
+                .flat_map(|voice| {
+                    voice
+                        .population
+                        .members()
+                        .into_iter()
+                        .map(|member| voice.tag.replace("{}", &member))
+                })
+                .collect();
+            let declared_silences: std::collections::BTreeMap<String, String> = spec::SILENCES
+                .iter()
+                .filter(|(_, _, _, at)| at.shows_at(key))
+                .flat_map(|(tag, population, kind, _)| {
+                    population
+                        .members()
+                        .into_iter()
+                        .map(move |member| (tag.replace("{}", &member), (*kind).to_owned()))
+                })
+                .collect();
+            compared += declared_voices.len() + declared_silences.len();
+            for disagreement in
+                pinion_core::voice::reconcile(&census, &declared_voices, &declared_silences)
+            {
+                wrong.push(format!(
+                    "{key}: {} {}",
+                    disagreement.tag,
+                    disagreement.mismatch.sentence(),
+                ));
+            }
+        }
+        assert!(
+            wrong.is_empty(),
+            "{} region(s) where what this screen paints and what it publishes \
+             disagree — a client reading the specification is told something the \
+             window does not do:\n  {}",
+            wrong.len(),
+            wrong.join("\n  "),
+        );
+        // ★ The premise, both halves: a reconciliation over two empty tables
+        // agrees with everything, and a loop that skipped every destination
+        // compares nothing at all. Either is the shape a vacuous green takes.
+        assert!(
+            destinations > 0,
+            "every open destination was skipped as mounted, so this gate judged \
+             no page of this screen's own",
+        );
+        assert!(
+            compared > 0,
+            "no declaration was compared at all, so the verdict is vacuous",
         );
     });
 }

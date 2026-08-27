@@ -75,6 +75,17 @@
       ]
     },
     {
+      "name": "debt-a-composed-destination-has-no-single-published-description",
+      "substituted": false,
+      "blocked_by": "campaign",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links debt-the-canon-is-one-app-and-we-are-many-binaries"
+      ]
+    },
+    {
       "name": "debt-a-fragment-run-arrives-backwards-in-the-capture",
       "substituted": false,
       "blocked_by": "buildable",

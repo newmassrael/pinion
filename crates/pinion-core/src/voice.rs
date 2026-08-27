@@ -842,6 +842,194 @@ pub fn voice_census(
     VoiceCensus { nodes }
 }
 
+/// How a screen and the declaration published beside it disagree about one
+/// region.
+///
+/// ★★★★★ R1868 — the arms are named for **which record is wrong**, not for
+/// which set an element fell out of. A region that speaks with nothing naming
+/// it and a declaration naming a region that never speaks are the same set
+/// difference in opposite directions, and the repair is different for each: one
+/// asks the author to declare, the other to delete or paint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Mismatch {
+    /// The screen announces this region and no declaration named it.
+    SpeaksUndeclared,
+    /// A declaration promises this region a voice and the screen gives it none.
+    DeclaredVoiceUnspoken,
+    /// The screen is quiet here and no declaration allowed the quiet.
+    ///
+    /// ★ Carries the reason the PAINTER gave, because that is the word the
+    /// missing row has to be written with — a diagnosis that named the gap and
+    /// left the author to go and look it up would be sending them to the record
+    /// this one already read.
+    QuietUndeclared {
+        /// The kind the scene declared, its own or the one it inherited.
+        painted: SilenceKind,
+    },
+    /// A declaration promises quiet here and the screen is not quiet.
+    DeclaredQuietUnkept,
+    /// Both records name this region and give a different reason for its quiet.
+    ///
+    /// The comparison the other arms cannot make: they are over TAGS, so a
+    /// region the painter declares one way and the published table another read
+    /// as agreeing. Two records of one promise with nothing holding them
+    /// together is the defect this reconciliation exists for.
+    KindDiffers {
+        /// What the painter declared, read at the node that declares itself.
+        painted: SilenceKind,
+        /// What the published table spells. A spelling no kind parses is a
+        /// disagreement like any other, which is why this is the raw word.
+        declared: String,
+    },
+}
+
+impl Mismatch {
+    /// What a reader has to do about it.
+    #[must_use]
+    pub fn sentence(&self) -> String {
+        match self {
+            Mismatch::SpeaksUndeclared => {
+                "speaks, and no declaration named it — declare it or silence it".to_owned()
+            }
+            Mismatch::DeclaredVoiceUnspoken => {
+                "is declared to speak and has no voice — give it one or drop the row".to_owned()
+            }
+            Mismatch::QuietUndeclared { painted } => format!(
+                "is quiet by `{}`, and no declaration allowed the quiet — publish \
+                 its row with that word",
+                painted.name(),
+            ),
+            Mismatch::DeclaredQuietUnkept => {
+                "is declared quiet and is not — drop the row or quiet the region".to_owned()
+            }
+            Mismatch::KindDiffers { painted, declared } => format!(
+                "is painted `{}` and published `{declared}` — one promise, two answers",
+                painted.name(),
+            ),
+        }
+    }
+}
+
+/// One region on which the two records do not agree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Disagreement {
+    /// The region, spelled as every other surface spells it.
+    pub tag: String,
+    /// Which record is wrong, and how.
+    pub mismatch: Mismatch,
+}
+
+/// Reconcile what a screen PAINTS with what it PUBLISHES about its own regions.
+///
+/// ★★★★★ R1868 — a screen's voice is written down **twice**: once by the
+/// painter, as the silence a scene node carries, and once by the specification
+/// the screen publishes for a client to read. [`voice_census`] judges the first
+/// record alone, so a region declared in the scene and absent from the table is
+/// a screen whose published description is wrong while every in-process check
+/// is green. Measured at R1868 by counterfactual: deleting a published row left
+/// `cargo test` on the assembled shell GREEN and was caught only by a demo —
+/// and demos run after the push, in the sweep, which is the wrong side of
+/// publishing for a rule about what may be published.
+///
+/// # The population is the caller's claim, and it is not checkable from here
+///
+/// This function compares three sets and cannot know whether they describe the
+/// same thing. The caller owes it:
+///
+/// * a `census` covering **every state that changes what is painted** — a
+///   region shown in one of a slot's two occupancies is one the screen has, and
+///   a census of a single moment reports the other occupant as undeclared;
+/// * `declared_voices` and `declared_silences` filtered to **exactly the
+///   destination that census walked**, because a table describing an
+///   application of many pages compared against one page demands every other
+///   page's regions here.
+///
+/// Getting either wrong yields disagreements that are artefacts of the
+/// comparison rather than facts about the screen — which is why they are stated
+/// as an obligation rather than defended by a guess.
+///
+/// # What it deliberately does not judge
+///
+/// The defect arms of [`Voice`] — unvoiced, mumbled, ghost, dangling, hollow —
+/// are [`voice_census`]'s to report, and a region in one of them is neither
+/// announced nor quiet. It therefore surfaces here too, but as the *declaration
+/// side* of the question: a row promising it a voice reports
+/// [`Mismatch::DeclaredVoiceUnspoken`]. One defect, two readings, and the
+/// reader is sent to whichever record they can act on.
+///
+/// Rows are returned sorted by tag, so a failure message is the same twice.
+#[must_use]
+pub fn reconcile(
+    census: &VoiceCensus,
+    declared_voices: &BTreeSet<String>,
+    declared_silences: &BTreeMap<String, String>,
+) -> Vec<Disagreement> {
+    let mut announced = BTreeSet::new();
+    // The reason travels with the tag, because the row a missing declaration
+    // needs is written in the painter's own word and this is where that word is.
+    let mut quiet: BTreeMap<String, SilenceKind> = BTreeMap::new();
+    for row in &census.nodes {
+        match row.voice {
+            Voice::Announced => {
+                announced.insert(row.tag.clone());
+            }
+            Voice::Silent => {
+                if let Some(silence) = &row.silence {
+                    quiet.insert(row.tag.clone(), silence.kind());
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    let mut push = |tag: &String, mismatch: Mismatch| {
+        out.push(Disagreement {
+            tag: tag.clone(),
+            mismatch,
+        });
+    };
+    for tag in announced.difference(declared_voices) {
+        push(tag, Mismatch::SpeaksUndeclared);
+    }
+    for tag in declared_voices.difference(&announced) {
+        push(tag, Mismatch::DeclaredVoiceUnspoken);
+    }
+    for (tag, painted) in &quiet {
+        if !declared_silences.contains_key(tag) {
+            push(tag, Mismatch::QuietUndeclared { painted: *painted });
+        }
+    }
+    for tag in declared_silences.keys() {
+        if !quiet.contains_key(tag) {
+            push(tag, Mismatch::DeclaredQuietUnkept);
+        }
+    }
+    // The kind, asked only where the region declares ITSELF. A row whose reason
+    // came from an ancestor is reporting that ancestor's word, and demanding the
+    // table's own there would be demanding the wrong one.
+    for row in &census.nodes {
+        if !row.self_declared {
+            continue;
+        }
+        let (Some(silence), Some(declared)) = (&row.silence, declared_silences.get(&row.tag))
+        else {
+            continue;
+        };
+        if silence.kind().name() != declared {
+            push(
+                &row.tag,
+                Mismatch::KindDiffers {
+                    painted: silence.kind(),
+                    declared: declared.clone(),
+                },
+            );
+        }
+    }
+    out.sort_by(|a, b| a.tag.cmp(&b.tag));
+    out.dedup();
+    out
+}
+
 /// Depth-first walk carrying the nearest covering declaration and the tag that
 /// made it, mirroring
 /// [`disabled_census`](crate::scene_disabled::disabled_census)'s cascade.
@@ -1494,5 +1682,181 @@ mod tests {
         assert_eq!(Silence::layout("x").relay_target(), None);
         assert_eq!(Silence::name_of("t").relay_target(), Some("t"));
         assert_eq!(Silence::part_of("t").relay_target(), Some("t"));
+    }
+
+    /// The published record for a screen whose two records agree: `a` speaks,
+    /// `box` is quiet by its own `layout` declaration.
+    fn published() -> (BTreeSet<String>, BTreeMap<String, String>) {
+        (
+            refs(&["a"]),
+            [("box".to_owned(), "layout".to_owned())]
+                .into_iter()
+                .collect(),
+        )
+    }
+
+    /// A scene whose census is exactly what [`published`] describes.
+    fn agreeing() -> VoiceCensus {
+        let scene = quiet("box", Silence::layout("arranges"), vec![text("a")]);
+        voice_census(&scene, &tags(&["a"]), &BTreeSet::new())
+    }
+
+    #[test]
+    fn r1868_two_records_that_agree_report_nothing() {
+        let (voices, silences) = published();
+        // ★ The premise first: a comparison over an empty census agrees with
+        // everything, which is the shape every vacuous green takes here.
+        let census = agreeing();
+        assert!(census.nodes.len() >= 2, "the census must have judged both");
+        assert_eq!(reconcile(&census, &voices, &silences), Vec::new());
+    }
+
+    #[test]
+    fn r1868_a_region_the_table_never_named_is_reported_by_which_record_is_wrong() {
+        let census = agreeing();
+        // The published row is deleted — R1864's and R1865's defect exactly, and
+        // the edit whose counterfactual left `cargo test` green at R1868.
+        let (voices, mut silences) = published();
+        silences.remove("box");
+        assert_eq!(
+            reconcile(&census, &voices, &silences),
+            vec![Disagreement {
+                tag: "box".to_owned(),
+                // ★ And the diagnosis carries the word the missing row needs.
+                mismatch: Mismatch::QuietUndeclared {
+                    painted: SilenceKind::Layout,
+                },
+            }],
+        );
+        // The other direction is a DIFFERENT repair, so it is a different arm.
+        let (voices, mut silences) = published();
+        silences.insert("gone".to_owned(), "layout".to_owned());
+        assert_eq!(
+            reconcile(&census, &voices, &silences),
+            vec![Disagreement {
+                tag: "gone".to_owned(),
+                mismatch: Mismatch::DeclaredQuietUnkept,
+            }],
+        );
+    }
+
+    #[test]
+    fn r1868_a_voice_and_its_declaration_are_compared_both_ways() {
+        let census = agreeing();
+        let (mut voices, silences) = published();
+        voices.remove("a");
+        assert_eq!(
+            reconcile(&census, &voices, &silences),
+            vec![Disagreement {
+                tag: "a".to_owned(),
+                mismatch: Mismatch::SpeaksUndeclared,
+            }],
+        );
+        let (mut voices, silences) = published();
+        voices.insert("unspoken".to_owned());
+        assert_eq!(
+            reconcile(&census, &voices, &silences),
+            vec![Disagreement {
+                tag: "unspoken".to_owned(),
+                mismatch: Mismatch::DeclaredVoiceUnspoken,
+            }],
+        );
+    }
+
+    #[test]
+    fn r1868_one_promise_with_two_answers_is_a_disagreement_the_tags_cannot_show() {
+        // ★★★★★ The arm the set differences are blind to: both records name
+        // `box`, so every comparison over tags passes while a reader is
+        // promised two different things.
+        let census = agreeing();
+        let (voices, mut silences) = published();
+        silences.insert("box".to_owned(), "part_of".to_owned());
+        assert_eq!(
+            reconcile(&census, &voices, &silences),
+            vec![Disagreement {
+                tag: "box".to_owned(),
+                mismatch: Mismatch::KindDiffers {
+                    painted: SilenceKind::Layout,
+                    declared: "part_of".to_owned(),
+                },
+            }],
+        );
+    }
+
+    /// ★ Demanded by the speech gate the moment [`Mismatch`] grew a
+    /// `sentence`, and it is the right demand: five arms a reader cannot tell
+    /// apart are one arm, and the other four are then free to be about
+    /// anything.
+    ///
+    /// Driven as a CLAUSE — the caller puts the region's tag in front, once —
+    /// so no arm may name its own subject. ⚠ That check is structural here
+    /// rather than discriminating, because no arm carries a tag at all; it is
+    /// still the honest classification, and it is what would catch an arm that
+    /// later grew one and spelled it into its own words.
+    #[test]
+    fn r1868_every_way_two_records_disagree_says_something_a_reader_can_act_on() {
+        use crate::test_fixtures::speech::assert_speaks_of;
+        let said: Vec<(&str, String)> = [
+            ("SpeaksUndeclared", Mismatch::SpeaksUndeclared),
+            ("DeclaredVoiceUnspoken", Mismatch::DeclaredVoiceUnspoken),
+            (
+                "QuietUndeclared",
+                Mismatch::QuietUndeclared {
+                    painted: SilenceKind::Layout,
+                },
+            ),
+            ("DeclaredQuietUnkept", Mismatch::DeclaredQuietUnkept),
+            (
+                "KindDiffers",
+                Mismatch::KindDiffers {
+                    painted: SilenceKind::Layout,
+                    declared: "part_of".to_owned(),
+                },
+            ),
+        ]
+        .into_iter()
+        .map(|(arm, mismatch)| (arm, mismatch.sentence()))
+        .collect();
+        assert_speaks_of("Mismatch", "shell.settings.body", 5, &said, &[]);
+    }
+
+    #[test]
+    fn r1868_an_inherited_reason_is_not_asked_for_the_tables_word() {
+        // A child covered by an ancestor's declaration reports the ANCESTOR's
+        // kind, so demanding the table's own word there would demand the wrong
+        // one. The child is still compared by TAG — it is quiet, so it owes a
+        // row — and that is the whole of what it owes.
+        // ⚠ The kind here is load-bearing twice over, and the first draft got it
+        // wrong: it must COVER THE SUBTREE (or the child inherits nothing) and it
+        // must not REDIRECT (a `part_of` whose target is not announced is
+        // dangling, not quiet — so the fixture reported both rows as declared
+        // quiet and unkept). Ornament is the arm that covers and never redirects.
+        let scene = quiet(
+            "box",
+            Silence::decorative("ornament"),
+            vec![Scene::Text(
+                TextNode::new("inner", Rect::default()).with_tag("inner"),
+            )],
+        );
+        let census = voice_census(&scene, &BTreeMap::new(), &BTreeSet::new());
+        assert_eq!(
+            row(&census, "box").voice,
+            Voice::Silent,
+            "the premise: quiet"
+        );
+        assert_eq!(row(&census, "inner").voice, Voice::Silent);
+        assert!(
+            !row(&census, "inner").self_declared,
+            "the premise: inherited"
+        );
+        let silences: BTreeMap<String, String> = [
+            ("box".to_owned(), "decorative".to_owned()),
+            // Deliberately a DIFFERENT word for the inherited child. It must not
+            // be reported, because the child never made this promise.
+            ("inner".to_owned(), "layout".to_owned()),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(reconcile(&census, &BTreeSet::new(), &silences), Vec::new());
     }
 }
