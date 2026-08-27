@@ -68,6 +68,7 @@ pub mod print;
 pub mod reach;
 pub mod reactive;
 pub mod region;
+pub mod regression;
 pub mod renderer;
 pub mod resize_batch;
 pub mod resume;

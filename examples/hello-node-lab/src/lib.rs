@@ -1127,6 +1127,27 @@ struct LabState {
     /// playhead restarts, because a verdict from the previous run of a plan is
     /// the most misleading thing this screen could show.
     checks: RefCell<Vec<scenario::Checkpoint>>,
+    /// ★★★★★ R1866 — **what THIS run of the scenario has done so far**, as the
+    /// timeline a regression is computed from.
+    ///
+    /// One mark per act the playhead crossed, at the act's own moment. Kept
+    /// beside `checks` and cleared with it for the same reason: a mark from the
+    /// previous run of a plan would make the comparison below answer about two
+    /// runs that were never separate.
+    ///
+    /// ⚠ Seconds and not steps. The census row asks for two runs compared "on
+    /// order and latency distribution", and this screen has a real clock
+    /// (`advance` takes the seconds), so the order is recoverable from the
+    /// times and the latency is not recoverable from an order. Recording the
+    /// coarser scale would have thrown away the half that cannot be rebuilt.
+    tape: RefCell<pinion_core::regression::Timeline>,
+    /// ★★★★★ R1866 — the run this screen compares against: a tape somebody
+    /// deliberately kept.
+    ///
+    /// `None` until a reader records one, and that is the honest opening state
+    /// rather than seeding it with the first run: a regression against a
+    /// baseline nobody chose is a comparison with an accident.
+    baseline: RefCell<Option<pinion_core::regression::Timeline>>,
     /// The master auto-discovery switch: off by default, because a graph whose
     /// links are all authored is the one whose behaviour is a function of what
     /// is on the canvas.
@@ -1420,6 +1441,10 @@ impl LabState {
             inspector_at: Signal::new(INSPECTOR_OPENS_AT),
             playhead: Signal::new(0.0),
             checks: RefCell::new(Vec::new()),
+            tape: RefCell::new(pinion_core::regression::Timeline::new(
+                pinion_core::regression::Scale::Seconds,
+            )),
+            baseline: RefCell::new(None),
             discovery: Signal::new(false),
             cursor: Signal::new((0, 0)),
             drag: Signal::new(None),
@@ -8953,6 +8978,12 @@ const FIELDS: &[SchemaField] = &{
             },
         ),
         SchemaField::action("advance", "json"),
+        // ★★★★★ R1866 — the regression pair: a fact and the act that makes it
+        // possible. `record` takes no argument, because what it keeps is the
+        // run that has happened — a verb that let a caller name a different one
+        // would be inventing a history this screen does not have.
+        SchemaField::new("regression", "json"),
+        SchemaField::action("record", "json"),
         // ★★ R1687 — what leaves the screen. Neither takes an argument: the
         // plan is a function of the graph, and a verb that let a caller name a
         // subset would be inventing a scope the screen has no affordance for.
@@ -9344,6 +9375,12 @@ impl ExternalIntrospect for LabOracle {
             // read rather than five, because a lane and its entries are not
             // separately meaningful.
             "scenario" => Ok(IntrospectValue::Json(scenario::wire(state))),
+            // ★★★★★ R1866 — what THIS run did differently from the one a reader
+            // kept. A slot and not part of `scenario`, because a regression is
+            // a fact about two runs and the scenario is one of them: folding it
+            // in would make "the plan" and "the comparison" one read that
+            // changes when either changes.
+            "regression" => Ok(IntrospectValue::Json(scenario::regression_wire(state))),
             // ★★ R1689 — what a save would write, and what one did.
             "archive" => text(persist::graph_text(state)),
             "stored" => text(persist::stored(state)),
@@ -10077,6 +10114,11 @@ impl ExternalIntrospect for LabOracle {
                     seconds(by),
                 )?))
             }
+            // ★★★★★ R1866 — keep this run as the one to measure against. A
+            // verb and not a slot, for the rule this screen already follows
+            // (R1829): a fact is a slot, an act is a verb, and choosing a
+            // baseline is something a reader DOES.
+            "record" => Ok(IntrospectValue::Json(scenario::record(&state)?)),
             "run" => {
                 let verdict = state.verdict();
                 let want = match args {

@@ -3284,3 +3284,57 @@ fn verdicts(state: &std::rc::Rc<LabState>) -> Vec<String> {
         .map(|check| check.verdict().to_owned())
         .collect()
 }
+
+/// ★★★★★ R1866 — **a rewind is a restart**, asserted where `cargo test` can
+/// see it.
+///
+/// The rule `advance` keeps is a PROPERTY — *a playhead at the start means this
+/// run has not happened* — and it was first written as a CONDITION, *at the
+/// beginning and going forward*. Those are different sentences: the condition
+/// does not cover a reader who scrubs BACK to zero, who was therefore left
+/// holding the previous run's checkpoint verdicts and the previous run's tape.
+/// `record` would then keep a baseline for a run that, as far as the playhead
+/// is concerned, never happened.
+///
+/// 🟥 This is asserted HERE as well as in the round's demo because **the demo
+/// is not the population of `cargo test`**: the counterfactual that put the
+/// condition back walked through three crates of green, so the only thing
+/// standing between that rule and a silent regression was a script nothing in
+/// the build runs. The demo proves it of the RUNNING binary; this proves it of
+/// the rule.
+///
+/// Both halves are asserted because they are two stores cleared by one
+/// sentence, and a repair that remembered one of them would pass a test that
+/// only asked about the other.
+#[test]
+fn r1866_a_rewind_is_a_restart_for_both_the_tape_and_the_checks() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let (state, card) = scenario_state();
+        scenario::schedule(&state, "main", 0.0, "stop", &card, None).expect("stop places");
+        scenario::schedule(&state, "main", 1.0, "check", &card, Some(2.0)).expect("check places");
+
+        // The run has to have happened before its restart means anything.
+        scenario::advance(&state, 2.0).expect("the clock moves");
+        assert!(
+            !verdicts(&state).is_empty(),
+            "the fixture crossed no checkpoint, so the assertion below would \
+             hold for a reason that has nothing to do with the rewind",
+        );
+        scenario::record(&state).expect("a run with marks on it can be kept");
+
+        // Back to the start, and NOTHING forward: the rewind alone is the act
+        // whose consequence this is about.
+        scenario::advance(&state, -1000.0).expect("the clock rewinds");
+        assert!(
+            verdicts(&state).is_empty(),
+            "a rewound playhead left the previous run's verdicts standing: {:?}",
+            verdicts(&state),
+        );
+        assert!(
+            scenario::record(&state).is_err(),
+            "a rewound playhead left the previous run's marks on the tape, so a \
+             baseline could be kept for a run that never happened",
+        );
+    });
+}

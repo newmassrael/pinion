@@ -4824,3 +4824,149 @@ fn r1859_the_walk_reaches_a_placeholder_that_holds_its_own_letters() {
         );
     });
 }
+
+/// ★★★★★ R1866 — **the walk reaches a node lab that compares two of its own
+/// runs**, which is the assembly `lab.t2.17` was resting on and did not have.
+///
+/// # Why it is asserted HERE and through the SHELL's own external set
+///
+/// Rule (7): the round's deliverable is the assembly, in the integrated
+/// application, driven over one walk — not a screen built beside it. The lab is
+/// a mounted guest, so the honest question is whether the tool a reader runs
+/// can be walked to that section and asked, and `ScreenRoster::externals` is
+/// exactly the door a press or an agent goes through. A test that reached into
+/// `hello_node_lab`'s own state would be asking the guest directly and would
+/// pass on an application that never mounted it.
+///
+/// # What it drives
+///
+/// The scenario is played, kept, played again with one act moved, and the
+/// comparison read — the four steps a person takes to answer *did this change
+/// anything*. The amount is asserted, not merely the existence of a difference:
+/// a comparison that reported *something moved* for any edit would be a
+/// comparison nobody can act on.
+/// A guest's answer as json, whichever shape the slot hands it over in.
+///
+/// ⚠ Two slots of one surface answer in two shapes — `spec` is text holding
+/// json and `regression` is a json value — so a reader of that surface has to
+/// know which is which. That is a fact about the screen rather than about this
+/// test, and it is written here because this is where it was met.
+fn as_json(v: pinion_core::external::IntrospectValue) -> serde_json::Value {
+    use pinion_core::external::IntrospectValue;
+    match v {
+        IntrospectValue::Json(j) => j,
+        IntrospectValue::Text(t) => serde_json::from_str(&t).expect("a text slot holding json"),
+        other => panic!("expected json, got {other:?}"),
+    }
+}
+
+#[test]
+fn r1866_the_walk_reaches_a_lab_that_compares_two_of_its_own_runs() {
+    use pinion_core::external::IntrospectValue;
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        // The walk first: the claim is about a section of an application.
+        let report = walk_the_application(&state);
+        assert!(
+            report.conforms(),
+            "the application did not reproduce its specification over the walk: {}",
+            report.why().unwrap_or_default()
+        );
+        assert!(
+            report.itinerary().iter().any(|key| key == "lab"),
+            "the walk must stand in the node lab: {:?}",
+            report.itinerary()
+        );
+
+        state.go("lab").expect("the node lab section is open");
+        let mut externals = state.screens.externals(&state.journey.get());
+        let tags: Vec<String> = externals.iter().map(|e| e.tag.to_string()).collect();
+        println!("the lab section publishes: {tags:?}");
+        let lab = externals
+            .iter_mut()
+            .filter_map(|e| e.handle.introspect_mut())
+            .find(|it| it.query("regression").is_ok())
+            .unwrap_or_else(|| {
+                panic!(
+                    "no external of the lab section answers `regression`, so the \
+                     assembly this row rests on is not reachable from the \
+                     assembled tool: {tags:?}"
+                )
+            });
+
+        macro_rules! call {
+            ($name:expr, $args:expr) => {
+                lab.invoke($name, $args)
+                    .unwrap_or_else(|why| panic!("{} refused: {why:?}", $name))
+            };
+        }
+
+        // Nothing kept yet: the screen says so rather than reporting a clean
+        // comparison, which is the difference a client has to be able to see.
+        let opening = as_json(lab.query("regression").expect("a slot"));
+        assert!(
+            opening["baseline"].is_null(),
+            "the lab opens with a baseline: {opening}",
+        );
+
+        // A run, kept, then the same plan with one act four seconds later.
+        // ⚠ The card is READ, not written down: `schedule` refuses a target the
+        // graph does not have, so naming one here would make this a claim about
+        // the opening graph as well as about the comparison.
+        //
+        let spec = as_json(lab.query("spec").expect("a slot"));
+        let card = spec["nodes"][0]["id"]
+            .as_str()
+            .expect("the opening graph has a card")
+            .to_owned();
+        call!("advance", IntrospectValue::Float(-1000.0));
+        call!(
+            "schedule",
+            IntrospectValue::Json(serde_json::json!({
+                "act": "stop", "target": card, "at": 5.0
+            }))
+        );
+        call!("advance", IntrospectValue::Float(9.0));
+        call!("record", IntrospectValue::Null);
+        call!(
+            "unschedule",
+            IntrospectValue::Json(serde_json::json!({ "lane": "main", "at": 5.0 }))
+        );
+        call!(
+            "schedule",
+            IntrospectValue::Json(serde_json::json!({
+                "act": "stop", "target": card, "at": 9.0
+            }))
+        );
+        call!("advance", IntrospectValue::Float(-1000.0));
+        call!("advance", IntrospectValue::Float(12.0));
+
+        let said = as_json(lab.query("regression").expect("a slot"));
+        println!("the lab's own comparison: {said}");
+        assert_eq!(
+            said["clean"], false,
+            "the act moved four seconds and the comparison calls the run clean",
+        );
+        let shifted = said["shifted"].as_array().expect("an array");
+        assert_eq!(shifted.len(), 1, "exactly one act moved: {said}");
+        assert_eq!(
+            shifted[0]["name"].as_str(),
+            Some(format!("stop {card}").as_str()),
+            "and it is the act that was moved",
+        );
+        let by = shifted[0]["by"].as_f64().expect("a number");
+        assert!(
+            (by - 4.0).abs() < 1e-6,
+            "★ by exactly what it was moved — the amount is the point, because a \
+             comparison that says `something moved` for any edit is one nobody \
+             can act on: {by}",
+        );
+        // ★ And the LATENCY half of the row's sentence: the shifts summarised.
+        assert!(
+            said["distribution"]["samples"].as_u64() == Some(1),
+            "the shift was not summarised into a distribution: {said}",
+        );
+    });
+}

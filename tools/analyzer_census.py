@@ -465,7 +465,15 @@ UNASSEMBLED: frozenset[str] = frozenset(
         # `ConfigForm::adopt` reports an undeclared leaf as unplaceable, so *a
         # key the target does not know* is a fault a form cannot reach. That is
         # why `Scope` has three arms instead of two.
-        "lab.t2.17",
+        # `lab.t2.17` was here and is REPAID at R1866 — two runs of one graph
+        # compared on order and latency, and the entry re-measurement found the
+        # MIDDLE of its sentence missing rather than either end: a run's step
+        # says which node ran and not when, so there were no amounts for the
+        # chart crate's distributions to summarise. `pinion_core::regression`
+        # is that join, and its shape is the finding — an order and a latency
+        # profile are one axis at two scales, so one comparison answers both,
+        # and two timelines at different scales are refused because a shift of
+        # two is two steps or two seconds and the number does not say which.
         "lab.t2.19",
     }
 )

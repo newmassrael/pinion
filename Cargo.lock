@@ -3499,6 +3499,7 @@ name = "hello-node-lab"
 version = "0.0.1"
 dependencies = [
  "pinion-a11y",
+ "pinion-chart",
  "pinion-core",
  "pinion-derive",
  "pinion-forge",

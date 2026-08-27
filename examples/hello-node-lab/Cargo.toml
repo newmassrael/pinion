@@ -25,6 +25,12 @@ path = "src/main.rs"
 
 [dependencies]
 pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# ★★★★★ R1866 — the census row this screen owes asks for two runs compared on
+# order and LATENCY DISTRIBUTION. `pinion_core::regression` answers what moved
+# and by how much; summarising those amounts into five landmarks is this
+# crate's, and re-deriving quartiles here would be the copy the whole tree
+# exists to avoid.
+pinion-chart = { path = "../../crates/pinion-chart", version = "0.0.1" }
 # R1718 — `VariantCensus` on the launch gate's finding vocabulary, so the gate
 # over what it SAYS is told the type's own arm count rather than the length of
 # whatever list the test happened to build.

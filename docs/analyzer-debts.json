@@ -323,6 +323,17 @@
       ]
     },
     {
+      "name": "debt-two-shell-demos-are-red-and-the-count-is-growing",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links debt-canon-gui-surface-census, debt-the-canon-is-one-app-and-we-are-many-binaries"
+      ]
+    },
+    {
       "name": "debt-windows-platform-surface-absent",
       "substituted": false,
       "blocked_by": "gated-axis",

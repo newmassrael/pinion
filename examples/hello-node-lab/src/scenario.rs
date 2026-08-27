@@ -34,6 +34,7 @@
 use std::rc::Rc;
 
 use pinion_core::external::{ArgCase, InvokeError, SchemaArg};
+use pinion_core::regression::{Mark, Regression, Timeline};
 use pinion_core::widgets::track::{Misplaced, Schedule, Seconds};
 use serde_json::Value;
 
@@ -354,8 +355,22 @@ pub fn advance(state: &Rc<LabState>, by: f32) -> Result<Value, InvokeError> {
     // ★ R1844 — a restart forgets the previous run's verdicts. The window
     // above already treats `from <= 0` as the beginning; a checkpoint that
     // survived it would report on a graph state that no longer exists.
-    if from <= 0.0 && by > 0.0 {
+    //
+    // ★★★★★ R1866 — **and REWINDING is a restart too, which it was not.** The
+    // condition was *at the beginning and going forward*, so a rewind landed
+    // the playhead at zero and left the previous run's verdicts standing: a
+    // reader who scrubbed back to the start was shown checkpoints decided about
+    // a run that, as far as the playhead was concerned, had not happened. Found
+    // by R1866's demo, which rewound and then asked whether there was a run to
+    // keep — and there was one, from before the rewind.
+    //
+    // The rule is one sentence and it covers both: **a playhead at the start
+    // means this run has not happened.**
+    if to <= 0.0 || (from <= 0.0 && by > 0.0) {
         state.checks.borrow_mut().clear();
+        // The tape goes with them: a mark from the previous run of a plan would
+        // make the regression below compare two runs that were never separate.
+        *state.tape.borrow_mut() = Timeline::new(pinion_core::regression::Scale::Seconds);
     }
     state.playhead.set(to);
 
@@ -379,8 +394,27 @@ pub fn advance(state: &Rc<LabState>, by: f32) -> Result<Value, InvokeError> {
             });
         }
         let outcome = apply(state, entry.act, &entry.target);
+        // ★★★★★ R1866 — the crossing goes on the tape, named by WHAT it did to
+        // WHICH card and placed at its own moment.
+        //
+        // The name is the identity a regression pairs on, so it has to name the
+        // thing rather than the occurrence: `stop router` is the same event in
+        // both runs whether it happened at 8 seconds or at 12, and that is
+        // exactly the difference a regression exists to report. The lane is not
+        // in it — a lane is where an author put an entry, and moving an entry
+        // between lanes does not change what happened to the graph.
+        if let Some(mark) = Mark::new(
+            format!("{} {}", entry.act.as_wire_name(), entry.target),
+            f64::from(at),
+        ) {
+            state.tape.borrow_mut().place(mark);
+        }
         done.push(serde_json::json!({
             "lane": lane,
+            // ★ R1866 — the MOMENT, which was missing. `crossed` said what
+            // happened and to what and left out when, so a reader of the wire
+            // could not rebuild the run it had just watched.
+            "at": at,
             "act": entry.act.as_wire_name(),
             "target": entry.target,
             "done": outcome,
@@ -616,6 +650,108 @@ pub fn wire(state: &LabState) -> Value {
         "conflicts": conflicts(&plan),
         "checks": checks_wire(state),
     })
+}
+
+/// ★★★★★ R1866 — **keep this run, so the next one can be compared with it.**
+///
+/// The act that makes a regression possible at all. It takes what the playhead
+/// has crossed so far and puts it aside as the run to measure against — a
+/// deliberate choice rather than an automatic one, because a baseline nobody
+/// picked is a comparison with an accident.
+///
+/// # Errors
+///
+/// Refuses an empty tape: a baseline of nothing would report every later run as
+/// pure gain, which reads like a finding and is an artefact of when somebody
+/// pressed this.
+pub fn record(state: &Rc<LabState>) -> Result<Value, InvokeError> {
+    let tape = state.tape.borrow().clone();
+    if tape.is_empty() {
+        return Err(InvokeError::rejected(
+            "nothing has been crossed yet, so there is no run to keep — advance \
+             the playhead first"
+                .to_owned(),
+        ));
+    }
+    let kept = tape.len();
+    *state.baseline.borrow_mut() = Some(tape);
+    Ok(serde_json::json!({ "kept": kept }))
+}
+
+/// ★★★★★ R1866 — **what this run did differently from the one that was kept.**
+///
+/// The census asks for *two runs of one graph compared on order and latency
+/// distribution*, and this is that comparison published. Both halves come out
+/// of one mechanism, because they are one axis at two scales: the marks carry
+/// seconds, so `shifted` is the latency half and the ORDER is recoverable from
+/// the same numbers. See [`pinion_core::regression`] for why writing two
+/// comparators would have been writing one rule twice.
+///
+/// `baseline: null` until a reader records one — stated rather than empty, so a
+/// client can tell *nothing to compare with* from *nothing changed*, which are
+/// the two answers a summary of zero shifts could otherwise mean.
+pub fn regression_wire(state: &LabState) -> Value {
+    let tape = state.tape.borrow();
+    let Some(baseline) = state.baseline.borrow().clone() else {
+        return serde_json::json!({
+            "baseline": Value::Null,
+            "now": tape.len(),
+            "why": "no run has been kept to compare with",
+        });
+    };
+    match Regression::between(&baseline, &tape) {
+        Ok(diff) => {
+            let mut out = diff.to_json();
+            out["baseline"] = serde_json::json!(baseline.len());
+            out["now"] = serde_json::json!(tape.len());
+            // ★★★★★ R1866 — the LATENCY DISTRIBUTION half of the row, as five
+            // landmarks over the shifts.
+            //
+            // `null` when nothing moved, and that is the chart crate's refusal
+            // carried through rather than papered over: a summary of no samples
+            // is a picture of nothing, and *nothing moved* is already said by
+            // `clean`. A reader who gets a null here and `clean: false` is
+            // looking at a run that only gained or lost marks — which is a
+            // different finding from one that slipped.
+            out["distribution"] = distribution_wire(&diff.shifts());
+            out
+        }
+        // Unreachable while both timelines are this screen's, and answered
+        // rather than unwrapped: the refusal is a fact the wire can carry, and
+        // a panic here would take the whole screen down for a comparison.
+        Err(why) => serde_json::json!({
+            "baseline": baseline.len(),
+            "now": tape.len(),
+            "why": why.to_string(),
+        }),
+    }
+}
+
+/// ★★★★★ R1866 — the five landmarks of a set of shifts, or why there are none.
+///
+/// The join the census row names: `pinion_core::regression` says what moved and
+/// by how much, `pinion_chart::Distribution` turns amounts into a summary, and
+/// this is the one place that puts them together. Published as the numbers
+/// rather than as a drawing — a client that wants a box plot has the five, and
+/// one that wants the sentence has `sentence`.
+fn distribution_wire(shifts: &[f64]) -> Value {
+    use pinion_chart::{Distribution, QuantileMethod};
+
+    match Distribution::from_samples("shift", shifts, QuantileMethod::Linear) {
+        Ok(summary) => serde_json::json!({
+            "lower": summary.lower_whisker(),
+            "q1": summary.q1(),
+            "median": summary.median(),
+            "q3": summary.q3(),
+            "upper": summary.upper_whisker(),
+            "outliers": summary.outliers(),
+            "samples": shifts.len(),
+        }),
+        // The refusal is a fact, and the reason is carried rather than
+        // flattened to null: "no samples" and "no finite samples" are different
+        // things to have found.
+        Err(why) => serde_json::json!({ "why": why.to_string() }),
+    }
 }
 
 /// A track's refusal, as a sentence on the invoke channel.
