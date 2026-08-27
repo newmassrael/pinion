@@ -21,7 +21,7 @@ use pinion_core::{Frame, Scene};
 
 use crate::Screen;
 use crate::conformance::{
-    ApplicationConformance, SectionJudge, SectionRow, SectionStanding, Showing,
+    ApplicationConformance, SectionJudge, SectionPoser, SectionRow, SectionStanding, Showing,
 };
 use crate::journey::{JourneyConformance, JourneySection, JourneyStanding, Walk};
 
@@ -85,6 +85,11 @@ pub enum RosterDefect {
         /// The key both claim.
         key: String,
     },
+    /// ★ R1864 — two posers were registered for one key.
+    DuplicatePoser {
+        /// The key both claim.
+        key: String,
+    },
     /// ★★★★★ R1761 — a judge was registered for a destination that already has
     /// a screen, so two things claim to answer for one section.
     ///
@@ -138,6 +143,9 @@ impl core::fmt::Display for RosterDefect {
             }
             RosterDefect::DuplicateJudge { key } => {
                 write!(f, "two judges registered for destination `{key}`")
+            }
+            RosterDefect::DuplicatePoser { key } => {
+                write!(f, "two posers registered for destination `{key}`")
             }
             RosterDefect::SectionAlreadyAnswers { key } => write!(
                 f,
@@ -219,6 +227,15 @@ pub struct ScreenRoster {
     /// unrepresentable, and the one [`laying_out`](Self::laying_out)'s own
     /// documentation warns about.
     grants: BTreeMap<String, u32>,
+    /// ★★★★★ R1864 — how many frames a page the host paints itself needs, and
+    /// how to put it in each.
+    ///
+    /// A fifth map, for the reason `grants` is a fourth one. See
+    /// [`SectionPoser`] for the measurement that forced it: a scrolling host
+    /// page whose content is taller than its region has parts a walk of one
+    /// frame per section cannot see, and reporting those as unreproduced is a
+    /// verdict about the frame rather than about the section.
+    posers: BTreeMap<String, Box<dyn SectionPoser>>,
     /// ★★★★★ R1725 — what this host already provides, which every screen it
     /// shows is told before it builds anything.
     ///
@@ -271,6 +288,7 @@ impl ScreenRoster {
             judges: BTreeMap::new(),
             sizes: BTreeMap::new(),
             grants: BTreeMap::new(),
+            posers: BTreeMap::new(),
             chrome: HostChrome::NONE,
             placed_extent: Cell::new((0, 0)),
             walk: RefCell::new(Walk::default()),
@@ -340,6 +358,40 @@ impl ScreenRoster {
         }
         if self.judges.insert(key.to_owned(), judge).is_some() {
             return Err(RosterDefect::DuplicateJudge {
+                key: key.to_owned(),
+            });
+        }
+        Ok(self)
+    }
+
+    /// ★★★★★ R1864 — **declare how many frames a page this host paints itself
+    /// needs to show all of its specification, and how to put it in each.**
+    ///
+    /// [`Screen::poses`] is this for a mounted screen.
+    /// Without it a host page answered `1` whatever it was, so a scrolling page
+    /// taller than its region reported the parts below its fold as
+    /// unreproduced — a verdict true of the frame and false of the section. See
+    /// [`SectionPoser`] for the measurement.
+    ///
+    /// Like [`judging`](Self::judging), it grants nothing else: a poser has no
+    /// paint, no hit test and no verdict, and a page that wants to *be* a
+    /// screen still has to become one.
+    ///
+    /// # Errors
+    ///
+    /// [`RosterDefect`] — a poser at a key the roster does not hold, at a key it
+    /// declares closed, at a key that already has a screen (a screen answers
+    /// `poses` itself, and two accounts of one fact is what this crate is
+    /// shaped to make unrepresentable), or two posers at one key.
+    pub fn posing(mut self, key: &str, poser: Box<dyn SectionPoser>) -> Result<Self, RosterDefect> {
+        Self::placeable(&self.destinations, key)?;
+        if self.screens.contains_key(key) {
+            return Err(RosterDefect::SectionAlreadyAnswers {
+                key: key.to_owned(),
+            });
+        }
+        if self.posers.insert(key.to_owned(), poser).is_some() {
+            return Err(RosterDefect::DuplicatePoser {
                 key: key.to_owned(),
             });
         }
@@ -784,18 +836,38 @@ impl ScreenRoster {
     /// ★ R1808 — how many frames the section at `key` needs to show all of what
     /// its specification describes.
     ///
-    /// `1` for a page the host paints itself: a host page has no screen to ask,
-    /// and a host that knows its own page needs two frames can drive them.
+    /// ★★★★★ R1864 — a page the host paints itself answers here too, through
+    /// [`posing`](Self::posing). It used to answer `1` unconditionally, under a
+    /// doc line that named the gap and left it open: *a host that knows its own
+    /// page needs two frames can drive them.* It could not — the pose loop is
+    /// inside [`Tour::walk`](crate::Tour::walk), between the latch that reads a
+    /// departing frame and the paint that makes the next one, so frames a host
+    /// drove itself would be frames no latch ever read.
+    ///
+    /// `1` for a section with neither a screen nor a poser, which is what a
+    /// page that shows everything at once means.
     #[must_use]
     pub fn poses_of(&self, key: &str) -> usize {
-        self.screens.get(key).map_or(1, |s| s.poses().max(1))
+        self.screens.get(key).map_or_else(
+            || self.posers.get(key).map_or(1, |p| p.poses().max(1)),
+            |s| s.poses().max(1),
+        )
     }
 
-    /// Put the section at `key` into pose `nth`. A page with no mounted screen
-    /// has nothing to pose and this does nothing.
+    /// Put the section at `key` into pose `nth`.
+    ///
+    /// A section with neither a screen nor a poser has nothing to pose and this
+    /// does nothing. The two sources cannot both hold one key: [`posing`]
+    /// refuses a destination with a screen, so this lookup has no precedence to
+    /// get wrong — the property [`shrink_policy_of`](Self::shrink_policy_of)
+    /// records for the same reason.
+    ///
+    /// [`posing`]: Self::posing
     pub fn pose(&self, key: &str, nth: usize) {
         if let Some(screen) = self.screens.get(key) {
             screen.pose(nth);
+        } else if let Some(poser) = self.posers.get(key) {
+            poser.pose(nth);
         }
     }
 

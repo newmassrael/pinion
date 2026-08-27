@@ -255,6 +255,53 @@ pub trait SectionJudge {
     fn conformance(&self, showing: Showing) -> DocumentReport;
 }
 
+/// ★★★★★ R1864 — **how many frames a page the HOST paints itself needs to show
+/// all of what its specification describes, and how to put it in each.**
+///
+/// [`Screen::poses`](crate::Screen::poses) is this for a mounted screen, and
+/// [`ScreenRoster::poses_of`](crate::ScreenRoster::poses_of) answered `1` for
+/// every host page — with a doc line that named the gap outright: *a host that
+/// knows its own page needs two frames can drive them*. It could not. The pose
+/// loop lives inside [`Tour::walk`](crate::Tour::walk), between the latch that
+/// takes a departing frame's verdict and the paint that makes the next one, so
+/// a host driving its own poses from the paint closure would produce frames
+/// **no latch ever read**.
+///
+/// # What forced it, measured
+///
+/// The analysis tool's preferences page is one the host paints itself, it
+/// scrolls, and its content is taller than the region it is given — measured at
+/// R1864, 946 pixels of page in an 820-pixel viewport. Its last group is below
+/// the fold, so a walk that paints one frame per section reports that group
+/// unreproduced, and reports it for a page a reader can read in full by
+/// scrolling. The verdict was true of the frame and false of the section.
+///
+/// ⚠ It had been passing on a technicality: the same group straddled the fold
+/// before the host reserved a status band, and a node that is partly outside a
+/// viewport is still painted. Nothing had changed about what a reader could
+/// see; 28 pixels moved a node from *partly visible* to *outside*, and a
+/// question that should never have been about one frame started answering
+/// differently.
+///
+/// # A fourth map, for the reason the third one is separate
+///
+/// A pose count is not a screen with most of it missing, and a screen that
+/// exists only to carry one would judge a section it does not paint — the route
+/// R1761 measured and refused. See
+/// [`ScreenRoster::posing`](crate::ScreenRoster::posing).
+pub trait SectionPoser {
+    /// How many frames this page needs. `1` means it shows everything at once,
+    /// which is what a page with no poser is taken to mean.
+    fn poses(&self) -> usize;
+
+    /// Put the page into pose `nth`, counted from zero.
+    ///
+    /// Called before the frame is painted, once per pose, in order. Pose `0` is
+    /// the state a reader arrives in: a page whose first pose were anything
+    /// else would be reporting a frame nobody opens.
+    fn pose(&self, nth: usize);
+}
+
 /// ★★★★★ R1761 — whether the section a [`SectionJudge`] answers for is the one
 /// on screen.
 ///

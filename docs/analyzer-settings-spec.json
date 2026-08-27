@@ -81,9 +81,9 @@
     "owed": [
       {
         "key": "theme",
-        "sentence": "`theme` is specified as \"Theme Both themes are first-class\" and reads \"Theme\"",
+        "sentence": "part 9 `theme` (Theme Both themes are first-class) is specified and the surface has no such part",
         "since": "R1762",
-        "why": "The last row of ten, and the page scrolls — exactly as the reference's does. Measured at the opening scroll position: the appearance group is painted at y=872 in a region ending at y=900, so the row's own title is on the frame and the sentence under it is 34 pixels lower, which is below the fold. A verdict read from the paint is about the frame, so it reports what the frame has; scrolling to the foot puts the sentence back and this entry is what says that is the reason rather than a row this build draws short. The alternative was an away-condition of `the page can not show all ten rows at once`, refused for R1742's reason: it would swallow a page that had genuinely stopped drawing a row. R1770 — a fold is a function of how tall the surface is, so this entry now names the extent it was read at. Measured that round by walking one binary twice: at 1440x900 the sentence is below the fold exactly as described; at 2494x1531 the whole row fits, the difference is gone, and the ledger — which had no way to know the size — reported this entry PAID and demanded it be deleted. Deleting it would have broken the same tool at the smaller size.",
+        "why": "The last row of ten, and the page scrolls — exactly as the reference's does. The page's content is 946 pixels tall in a region of 820, so at the OPENING scroll position the appearance group is not on the frame; scrolling to the foot puts it there, and this entry is what says that is the reason rather than a row this build does not draw. The alternative was an away-condition of `the page can not show all ten rows at once`, refused for R1742's reason: it would swallow a page that had genuinely stopped drawing a row. R1770 — a fold is a function of how tall the surface is, so this entry names the extent it was read at; at 2494x1531 the whole page fits, the difference is gone, and the ledger reports this entry PAID, which is why the extent list is not a band. ★★★★★ R1864 REWROTE THE SENTENCE AND NEARLY DELETED THE ENTRY, AND THE SECOND WOULD HAVE BEEN WRONG. The sentence changed because the host reserved a status band: the group used to STRADDLE the fold, so the row's title painted and the line under it did not (`reads \"Theme\"`); with 28 pixels less region it is wholly below the fold and the part is absent. The deletion was proposed because the walk's FOLDED verdict — R1864 taught the preferences page to declare two frames and taught `SurfaceStanding::folded_with` to credit a part either frame had — reported this entry PAID on the second frame. It is not paid: `tools/demos/r1762_the_last_unjudged_section_answers.py` drives the RUNNING binary at its opening frame and failed the moment the entry was removed, exactly as the sentence this note replaces had predicted in as many words. ⇒ A LEDGER ENTRY IS A CLAIM ABOUT A FRAME AND A WALK'S VERDICT IS A CLAIM ABOUT A SECTION, and a folded verdict must never be used to retire a per-frame entry. What keeps the two from contradicting each other is that the fold INTERSECTS unreconciled claims: this entry is matched at the first frame and unpaid at the second, so it survives in neither the walk's verdict nor a single frame's — and it is a demo driving the real binary that says which of those is the one a reader meets.",
         "at": [{ "width": 1440, "height": 900 }]
       }
     ]
@@ -116,7 +116,22 @@
       { "key": "0", "title": "Dark" },
       { "key": "1", "title": "Light" }
     ],
-    "owed": []
+    "owed": [
+      {
+        "key": "0",
+        "sentence": "part 0 `0` (Dark) is specified and the surface has no such part",
+        "since": "R1864",
+        "why": "The appearance group is the last of four on a page whose content is 946 pixels tall in a region of 820, so at the OPENING scroll position it is not on the frame at all — and these two controls are inside it. ★★★★★ THIS ENTRY IS THE PRICE OF THE STATUS BAND, STATED RATHER THAN HIDDEN. Before R1864 the page had 848 pixels of region and the same group STRADDLED the fold: a node partly outside a viewport is still painted, so these two controls were on the frame and this surface owed nothing. Reserving 28 pixels of host furniture along the window's bottom moved the group from partly visible to outside, and a reader arriving at the preferences page now sees the `Appearance` heading with nothing under it until they scroll. That is a real cost and it belongs in the ledger, not in a gap tuned until the number came out right — tuning a layout constant to hide a shortfall is the defect R1864 spent its round removing from two other places on this screen. The page is REACHABLE in full: `pinion_screen::SectionPoser` gives it a second frame, `SurfaceStanding::folded_with` credits a part either frame had, and the walk this application publishes at `/external/journey` reports the section reproduced. `tools/demos/r1762_the_last_unjudged_section_answers.py` asserts both halves — this entry against the frame a reader arrives on, and the walk against the page.",
+        "at": [{ "width": 1440, "height": 900 }]
+      },
+      {
+        "key": "1",
+        "sentence": "part 1 `1` (Light) is specified and the surface has no such part",
+        "since": "R1864",
+        "why": "The other of the two, below the same fold and for the same reason. See the `0` entry beside this one for the measurement and for why this is declared rather than tuned away.",
+        "at": [{ "width": 1440, "height": 900 }]
+      }
+    ]
   },
   "plugins": {
     "canon": [

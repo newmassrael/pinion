@@ -1739,6 +1739,117 @@ impl SurfaceStanding {
         self.away.is_none()
     }
 
+    /// ★★★★★ R1864 — **what two frames of one surface say together.**
+    ///
+    /// `self` is the verdict already credited and `later` the frame just read.
+    /// The result credits a part that either frame found: a part that was on a
+    /// frame does not stop having been on one because the reader scrolled past
+    /// it.
+    ///
+    /// # Why this is the same rule one level down
+    ///
+    /// `SurfaceVisit` has always said that *a standing frame replaces the
+    /// credited verdict and an away frame replaces only the latest*, on the
+    /// principle that a surface that has been on a frame does not stop having
+    /// been on it. That principle was applied to whole surfaces because, until
+    /// a host page could declare poses, a section's frames differed by which
+    /// surfaces they held. A **scrolling** page's frames differ by which PARTS
+    /// of one surface they hold, and there the surface-granular rule gives the
+    /// wrong answer in both directions at once: measured at R1864 on the
+    /// analysis tool's preferences page — 946 pixels of page in an 820-pixel
+    /// region — the top frame reproduced its heading block and missed the last
+    /// group, the scrolled frame reproduced the last group and missed the
+    /// heading block, and whichever came last replaced the other outright.
+    /// **No ordering of the two frames reports a page a reader can read in
+    /// full.**
+    ///
+    /// # Which side of each list wins
+    ///
+    /// - **Divergences** are intersected by part. A part that read correctly on
+    ///   *some* frame is reproduced; a part that was wrong on *every* frame is
+    ///   wrong. Where a key diverges in both, the later frame's sentence is
+    ///   kept, because it is the more recent reading of the same fact.
+    /// - **`Unspecified`** divergences are unioned instead: they are not about
+    ///   a specified part failing to appear but about the surface painting
+    ///   something the specification does not name, and a mark drawn on any
+    ///   frame was drawn.
+    /// - **Unreconciled** entries are intersected the same way and for the same
+    ///   reason — each is a *specified* part's ledger claim failing.
+    /// - **`owed` and `canon`** come from the specification and are identical in
+    ///   both, so `self`'s are kept.
+    ///
+    /// # ⚠ Callers must fold only frames read at ONE extent
+    ///
+    /// A verdict is a claim about a size (R1770), so folding across extents
+    /// would manufacture a page that exists at no size. The caller in
+    /// `pinion-screen` drops the credited verdict when the extent moves, before
+    /// this is reached, which is where that rule already lived.
+    ///
+    /// An away verdict folds to the standing one: nothing was compared on a
+    /// frame the surface was not on, so it has nothing to contribute and
+    /// nothing to take away.
+    ///
+    /// # ⚠ It credits presence, not an ordering no frame showed
+    ///
+    /// A part's ordinal is its position among the parts *found*, so a part seen
+    /// only on a frame where the parts before it were culled is seen **out of
+    /// place** — a divergence of its own. Folding two strictly partial views of
+    /// an ordered surface therefore does not always reach full credit, and that
+    /// is the honest answer rather than a shortfall: no frame showed that part
+    /// where the specification puts it. The real case does not meet this,
+    /// because a page scrolled to its foot shows its last rows *and* the ones
+    /// above them; the limit is asserted in this module's tests so it is a
+    /// known boundary rather than a surprise.
+    #[must_use]
+    pub fn folded_with(&self, later: &Self) -> Self {
+        if self.away.is_some() {
+            return later.clone();
+        }
+        if later.away.is_some() {
+            return self.clone();
+        }
+        let named = |from: &[PartDivergence], key: &str| {
+            from.iter()
+                .any(|d| !matches!(d, PartDivergence::Unspecified { .. }) && d.key() == key)
+        };
+        let mut divergences: Vec<PartDivergence> = later
+            .divergences
+            .iter()
+            .filter(|d| match d {
+                // A mark the specification does not name was drawn on this
+                // frame, whatever the other one held — unioned, not
+                // intersected.
+                PartDivergence::Unspecified { .. } => true,
+                other => named(&self.divergences, other.key()),
+            })
+            .cloned()
+            .collect();
+        for mine in &self.divergences {
+            if matches!(mine, PartDivergence::Unspecified { .. })
+                && !divergences.iter().any(|d| {
+                    matches!(d, PartDivergence::Unspecified { .. }) && d.key() == mine.key()
+                })
+            {
+                divergences.push(mine.clone());
+            }
+        }
+        let unreconciled: Vec<Unreconciled> = later
+            .unreconciled
+            .iter()
+            .filter(|u| self.unreconciled.iter().any(|mine| mine.key() == u.key()))
+            .cloned()
+            .collect();
+        Self {
+            surface: self.surface.clone(),
+            canon: self.canon.clone(),
+            away: None,
+            divergences,
+            unreconciled,
+            owed: self.owed.clone(),
+            at: self.at.or(later.at),
+        }
+    }
+
     /// Why the surface was not on screen, in the screen's own words, or `None`
     /// when it was.
     #[must_use]
@@ -3290,5 +3401,132 @@ mod tests {
         root.layout = LayoutStyle::new().with_size(Size::px(640, 480));
         let regions = PaintedRegions::of_scene(&Scene::Container(root));
         assert_eq!(regions.extent(), Some(Extent::new(640, 480)));
+    }
+
+    /// ★★★★★ R1864 — **two frames of one surface credit the parts either of
+    /// them had.**
+    ///
+    /// The case that forced it, reduced to a fixture: a page taller than the
+    /// region it is given shows its head at the top of its scroll and its last
+    /// row at the foot, and neither frame has both. Before this, the later
+    /// standing frame replaced the credited verdict outright, so **no ordering
+    /// of the two describes the page** — which is what running the analysis
+    /// tool's preferences page over its own two frames reported, in both
+    /// directions, one after the other.
+    #[test]
+    fn r1864_two_frames_of_one_surface_credit_what_either_had() {
+        let one = |report: &super::DocumentReport, surface: &str| {
+            report
+                .surfaces()
+                .iter()
+                .find(|s| s.surface() == surface)
+                .expect("the fixture names this surface")
+                .clone()
+        };
+        let frame = |detail: Vec<Part>| {
+            one(
+                &document().report(&|surface| match surface {
+                    "detail" => Built::Standing(detail.clone()),
+                    _ => Built::Standing(vec![Part::new("id", "ID"), Part::new("name", "Name")]),
+                }),
+                "detail",
+            )
+        };
+        // The top of the scroll: the head is whole and the second part is below
+        // the fold.
+        let top = frame(vec![Part::new("subject", "Subject")]);
+        // The foot: both are on the frame, which is the real shape — a page
+        // scrolled to its end shows its last rows AND the ones above them.
+        let foot = frame(vec![
+            Part::new("subject", "Subject"),
+            Part::new("bytes", "Wire bytes"),
+        ]);
+        assert_eq!(top.reproduced(), 1, "the top frame is missing `bytes`");
+        assert_eq!(foot.reproduced(), 2, "the foot frame has both");
+
+        let folded = top.folded_with(&foot);
+        assert_eq!(
+            folded.reproduced(),
+            2,
+            "the page HAS both parts — each was on a frame — and the fold is \
+             what says so: {:?}",
+            folded
+                .divergences()
+                .iter()
+                .map(PartDivergence::sentence)
+                .collect::<Vec<_>>(),
+        );
+        // ★ And it is symmetric, which is the property that makes the pose
+        // ORDER not matter: a walk that happened to scroll first must reach the
+        // same verdict.
+        assert_eq!(
+            foot.folded_with(&top).reproduced(),
+            2,
+            "the fold is symmetric",
+        );
+        // ★★ And the ledger entry that only the top frame's difference matched
+        // is reconciled by the fold, because the fold keeps only a claim BOTH
+        // frames failed. This is the shape the analysis tool's preferences page
+        // reported the round this was written: `theme` mismatched at the top of
+        // the scroll and read PAID at the foot, and neither frame alone could
+        // say the entry was owed to nothing.
+        assert!(
+            folded.reconciles(),
+            "the folded verdict still carries a ledger claim: {:?}",
+            folded
+                .unreconciled()
+                .iter()
+                .map(Unreconciled::sentence)
+                .collect::<Vec<_>>(),
+        );
+
+        // ★★★ ⚠ **The boundary, asserted so it is a known limit and not a
+        // surprise.** A part seen only on a frame where the parts before it
+        // were culled is seen OUT OF PLACE — ordinals are positions among the
+        // parts found — so folding two strictly partial views of an ordered
+        // surface does not always reach full credit. The fold credits what a
+        // frame HAD; it does not invent an ordering no frame showed.
+        let only_last = frame(vec![Part::new("bytes", "Wire bytes")]);
+        assert_eq!(
+            only_last.reproduced(),
+            0,
+            "`bytes` is specified second and sits first here, which is a \
+             divergence of its own",
+        );
+        assert_eq!(
+            top.folded_with(&only_last).reproduced(),
+            1,
+            "`subject` is credited from the top frame; `bytes` diverged on \
+             both — absent on one and out of place on the other",
+        );
+
+        // ★★ A part wrong on EVERY frame stays wrong — the fold credits what a
+        // frame had, not what a frame could have had.
+        let never = document().report(&|_| Built::Standing(vec![Part::new("id", "ID")]));
+        let twice = one(&never, "detail").folded_with(&one(&never, "detail"));
+        assert_eq!(
+            twice.reproduced(),
+            0,
+            "neither frame had either part of `detail`",
+        );
+
+        // ★★ An away frame contributes nothing and takes nothing away: a
+        // surface that was not on the frame was not compared.
+        let away = one(
+            &document().report(&|surface| match surface {
+                "detail" => Built::away("the pane holding it is collapsed"),
+                _ => Built::Standing(vec![Part::new("id", "ID"), Part::new("name", "Name")]),
+            }),
+            "detail",
+        );
+        assert_eq!(
+            top.folded_with(&away).reproduced(),
+            top.reproduced(),
+            "an away frame erased a verdict read from one that was standing",
+        );
+        assert!(
+            away.folded_with(&top).is_standing(),
+            "a standing frame after an away one is what the surface stands on",
+        );
     }
 }

@@ -209,7 +209,13 @@ const SIZES: &[(&str, (u32, u32))] = &[
 /// ⇒ **A ratchet is the right shape for a backlog and the wrong shape for a
 /// surface being written now.** The per-card zero gate is what a new card should
 /// carry, and this pin is what the backlog is measured by.
-const SHORT_BOX_BUDGET: usize = 211;
+///
+/// ★ R1864 — 211 -> 208, and all three left for one reason: a box whose height
+/// comes from `pinion_core::containment::line_box` cannot be short of its own
+/// face. The gesture sentence moved into the status band, and the palette's two
+/// counts moved into the panel's footer band; every one of them had been
+/// authored `16` or `14` tall for an 11-pixel face needing 18.
+const SHORT_BOX_BUDGET: usize = 208;
 
 /// Where every tag in the painted scene ended up, and every text run with it.
 struct Painted {
@@ -960,11 +966,17 @@ fn r1671_the_screen_fills_the_window_it_was_given() {
         // defect.
         let mut right = 0;
         let mut bottom = 0;
+        // ★ R1864 — `shell.status` joined them, and it is the pane that reaches
+        // the window's bottom edge now: the rail and the palette stop at the
+        // band. A list that had not learned the new pane would have read as the
+        // screen failing to fill its window by exactly the band's height, which
+        // is what its first run said.
         for pane in [
             "shell.appbar",
             "shell.rail",
             "shell.palette",
             "shell.subbar",
+            super::STATUS_BAND,
         ] {
             if let Some(r) = shot.rect(pane) {
                 right = right.max(r.x + r.w);
@@ -2109,6 +2121,67 @@ fn painted_at_destination(destination: &str) -> Painted {
     painted_at((WIN_W, WIN_H)).0
 }
 
+/// ★★★★★ R1864 — paint `destination` in **each frame its section declares**,
+/// in order.
+///
+/// A section is not always one frame. A page taller than the region it is given
+/// shows part of itself at a time, and what the section *has* is what its
+/// frames have together — which is why `ScreenRoster::poses_of` exists and why
+/// R1864 taught it to answer for a page the host paints itself as well as for a
+/// mounted screen. The population is the roster's; a list written here would be
+/// this file's opinion about another module's fact.
+///
+/// ⚠ **The order is load-bearing.** A pose that scrolls asks the pane for its
+/// range, and the range is derived by the layout pass — so pose 0 has to have
+/// been painted before pose 1 can ask. Painting them in declaration order is
+/// what makes that true rather than a coincidence.
+///
+/// Leaves the section in pose 0, the state a reader arrives in, so a later
+/// check in the same scope is not silently asked about a pose this one chose.
+fn poses_at_destination(destination: &str) -> Vec<Painted> {
+    let state = use_shell_state();
+    if destination != state.at() {
+        state
+            .go(destination)
+            .unwrap_or_else(|why| panic!("{destination} is open and refused: {why:?}"));
+    }
+    let poses = state.screens.poses_of(destination);
+    assert!(
+        poses >= 1,
+        "the roster says {destination} needs {poses} frame(s), and a section \
+         with no frames is one nothing below can ask about",
+    );
+    let mut out = Vec::with_capacity(poses);
+    for nth in 0..poses {
+        state.screens.pose(destination, nth);
+        out.push(painted_at((WIN_W, WIN_H)).0);
+    }
+    state.screens.pose(destination, 0);
+    out
+}
+
+/// The same frames, folded into one index: what the section shows across all of
+/// them.
+///
+/// ⚠ Only for questions about what a section HAS. A question about where
+/// something is — a press at a painted rectangle, say — is about one frame, and
+/// folding two would compare a rectangle from one with a hit test run in the
+/// other.
+fn painted_over_poses(destination: &str) -> Painted {
+    let mut frames = poses_at_destination(destination);
+    let mut folded = frames.remove(0);
+    for frame in frames {
+        for (tag, rect) in frame.tags {
+            folded.tags.entry(tag).or_insert(rect);
+        }
+        folded.runs.extend(frame.runs);
+        for (tag, row) in frame.inert {
+            folded.inert.entry(tag).or_insert(row);
+        }
+    }
+    folded
+}
+
 /// ★★★★★ R1846 — **the health strip draws exactly what the census declares.**
 ///
 /// The gate that makes [`spec::HEALTH_TILES_SHOWN`] safe to be a written
@@ -2635,6 +2708,14 @@ fn r1728_no_two_seats_are_drawn_the_same() {
 /// `debt-the-voice-gate-judges-only-the-opening-screen` that lives here: the
 /// census used to describe one screen because the application had one, and the
 /// rail's roster is the enumeration that was missing.
+///
+/// ★★★★★ R1864 — over the section's **frames**, not over one of them. The
+/// preferences page is taller than the region it is given, so its last group is
+/// below the fold and a one-frame reading called it unpainted — of a page a
+/// reader scrolls to in one gesture. The backward direction is unaffected by
+/// the fold and gains from it: a region another destination owns must be absent
+/// from *every* frame this one has, which is a stronger sentence than the one
+/// this gate used to make.
 #[test]
 fn r1695_each_destination_paints_the_regions_the_specification_gives_it() {
     let owner = Owner::new();
@@ -2642,7 +2723,7 @@ fn r1695_each_destination_paints_the_regions_the_specification_gives_it() {
         let roster = spec::destinations();
         for destination in roster.open() {
             let key = destination.key.as_ref();
-            let shot = painted_at_destination(key);
+            let shot = painted_over_poses(key);
             // Forward: a region this destination owns is painted here.
             for voice in spec::VOICES {
                 if !voice.at.shows_at(key) {
@@ -2907,28 +2988,46 @@ fn r1695_every_settings_control_is_pressable_where_it_is_painted() {
     let owner = Owner::new();
     owner.run(|| {
         let state = use_shell_state();
-        let shot = painted_at_destination("settings");
-        let mut checked = 0;
-        for (tag, rect) in &shot.tags {
-            if !tag.starts_with("shell.settings.option.")
-                && !tag.starts_with("shell.settings.key.")
-                && !tag.starts_with("shell.settings.theme.")
-            {
-                continue;
-            }
-            let (px, py) = (rect.x + rect.w / 2, rect.y + rect.h / 2);
-            let hit = Hit::at(&state, px, py);
-            assert_eq!(
-                &super::hit_word(&hit),
-                tag,
-                "a press at the centre of {tag} ({px},{py}) answered {hit:?}",
-            );
-            checked += 1;
+        // ★★★★★ R1864 — **frame by frame, and folded only at the end.** A press
+        // is about ONE frame: the rectangle a control was painted in and the
+        // scroll the hit test runs at have to be the same frame's, or this
+        // would be comparing a position from one with an answer from another.
+        // What folds across frames is only which controls were REACHED, which
+        // is the population question and not the geometry one.
+        if state.at() != "settings" {
+            state
+                .go("settings")
+                .expect("`settings` is an open destination");
         }
+        let poses = state.screens.poses_of("settings");
+        let mut reached: BTreeSet<String> = BTreeSet::new();
+        for nth in 0..poses {
+            state.screens.pose("settings", nth);
+            let shot = painted_at((WIN_W, WIN_H)).0;
+            for (tag, rect) in &shot.tags {
+                if !tag.starts_with("shell.settings.option.")
+                    && !tag.starts_with("shell.settings.key.")
+                    && !tag.starts_with("shell.settings.theme.")
+                {
+                    continue;
+                }
+                let (px, py) = (rect.x + rect.w / 2, rect.y + rect.h / 2);
+                let hit = Hit::at(&state, px, py);
+                assert_eq!(
+                    &super::hit_word(&hit),
+                    tag,
+                    "in frame {nth} of {poses}, a press at the centre of {tag} \
+                     ({px},{py}) answered {hit:?}",
+                );
+                reached.insert(tag.clone());
+            }
+        }
+        state.screens.pose("settings", 0);
         assert_eq!(
-            checked,
+            reached.len(),
             spec::OPTIONS.len() + spec::KEY_ROWS.len() + spec::THEMES.len(),
-            "the sweep reached a different number of controls than the page has",
+            "the sweep reached a different number of controls than the page \
+             has, over {poses} frame(s): {reached:?}",
         );
     });
 }
@@ -4561,39 +4660,85 @@ fn r1762_the_preferences_page_reproduces_its_specification_or_says_why_not() {
 
     let owner = Owner::new();
     owner.run(|| {
-        let _ = painted_at_destination("settings");
-        let regions =
-            pinion_core::painted::painted_regions(super::VIEW_TAG).expect("the sweep just painted");
+        // ★★★★★ R1864 — **over the page's frames.** The page scrolls and its
+        // content is taller than the region it is given, so no single frame
+        // holds all of it: the last group is below the fold at the top and the
+        // page's own heading is above it at the end. A surface reconciles when
+        // SOME frame of the page reproduces it, which is the claim the
+        // specification makes — the parts are the page's, and a reader reaches
+        // them all in one gesture.
+        //
+        // ⚠ Not a weakening of the per-surface rule: every surface still has to
+        // reconcile ENTIRELY in one frame. What is folded is which frame that
+        // is, not which parts were found.
+        let state = use_shell_state();
+        if state.at() != "settings" {
+            state
+                .go("settings")
+                .expect("`settings` is an open destination");
+        }
+        let poses = state.screens.poses_of("settings");
         let doc = spec::settings_document();
         let mut judged = 0usize;
+        let mut extent = None;
         for surface in doc.surfaces() {
-            let Built::Standing(parts) =
-                super::judge::settings_built(&regions, surface, Showing::OnScreen)
-            else {
-                panic!(
-                    "{surface}: away while this page is the one painted — the only away this \
-                     section has is the reader being somewhere else"
-                );
-            };
+            let mut worst: Option<Vec<String>> = None;
+            let mut reconciled = false;
+            for nth in 0..poses {
+                state.screens.pose("settings", nth);
+                let _ = painted_at((WIN_W, WIN_H));
+                let regions = pinion_core::painted::painted_regions(super::VIEW_TAG)
+                    .expect("the sweep just painted");
+                extent = Some(regions.extent());
+                let Built::Standing(parts) =
+                    super::judge::settings_built(&regions, surface, Showing::OnScreen)
+                else {
+                    panic!(
+                        "{surface}: away while this page is the one painted — the only away this \
+                         section has is the reader being somewhere else"
+                    );
+                };
+                // ★★★★★ R1770 — judged AT the extent this frame was painted
+                // into, because one entry of this page's ledger is a fold and a
+                // fold is a function of how tall the surface is. A gate that
+                // passed no extent would be refused by that entry rather than
+                // excused by it, which is the point: this page's verdict is a
+                // claim about a size.
+                let said: Vec<String> = doc
+                    .unreconciled_at(surface, regions.extent(), &parts)
+                    .iter()
+                    .map(Unreconciled::sentence)
+                    .collect();
+                if said.is_empty() {
+                    reconciled = true;
+                    break;
+                }
+                // EVERY frame's sentences, not the first frame's. A page whose
+                // frames fail differently is the case this loop exists for, and
+                // a report naming one of them would send a reader to look at
+                // the wrong one.
+                worst
+                    .get_or_insert_with(Vec::new)
+                    .extend(said.into_iter().map(|s| format!("frame {nth}: {s}")));
+            }
             judged += 1;
-            // ★★★★★ R1770 — judged AT the extent this frame was painted into,
-            // because one entry of this page's ledger is a fold and a fold is a
-            // function of how tall the surface is. A gate that passed no extent
-            // would be refused by that entry rather than excused by it, which
-            // is the point: this page's verdict is a claim about a size.
-            let said: Vec<String> = doc
-                .unreconciled_at(surface, regions.extent(), &parts)
-                .iter()
-                .map(Unreconciled::sentence)
-                .collect();
             assert!(
-                said.is_empty(),
+                reconciled,
                 "`{surface}` is not what docs/analyzer-settings-spec.json declares \
-                 at {:?}:\n  {}",
-                regions.extent(),
-                said.join("\n  "),
+                 in any of the page's {poses} frame(s):\n  {}",
+                worst.unwrap_or_default().join("\n  "),
             );
         }
+        state.screens.pose("settings", 0);
+        let _ = painted_at((WIN_W, WIN_H));
+        let regions =
+            pinion_core::painted::painted_regions(super::VIEW_TAG).expect("the sweep just painted");
+        assert_eq!(
+            Some(regions.extent()),
+            extent,
+            "the frames this gate judged were painted at more than one extent, \
+             so the size clause below is about only the last of them",
+        );
         assert_eq!(
             regions.extent(),
             doc.written_at(),
@@ -5839,5 +5984,190 @@ fn r1862_the_walk_reaches_a_legend_row_that_lines_up() {
             "★ the words are centred at {run_mid} and the box beside them at \
              {pin_mid} — which is the report, reproduced",
         );
+    });
+}
+
+/// Do two rectangles share a pixel?
+fn overlaps(a: Rect, b: Rect) -> bool {
+    a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+}
+
+/// ★★★★★ R1864 — **the host's status band is the host's, at every
+/// destination.**
+///
+/// # The report, and the measurement that answered it
+///
+/// A reader said the gesture sentence "keeps overlapping other UI elements",
+/// three times. Nobody had counted. This check is the counting, kept: painting
+/// all six open destinations and intersecting `help_strip_rect()` with every
+/// text run on the frame reported **seven runs across three destinations** —
+/// four in the capture view's reassembly lanes, two in the node lab's
+/// validation panel, one on the settings page — and at all six the strip lay
+/// *inside* `page_rect`, which is the guest's rectangle.
+///
+/// # Why it asks about the BAND and not about the sentence
+///
+/// A sentence that happens to miss whatever is under it today is one scroll
+/// position away from not missing it: `keys` and `logs` reported zero runs
+/// while the strip sat squarely inside a scrolling list body. The property
+/// worth having is structural — **the band the host draws in is disjoint from
+/// the region the destination receives** — and it holds at every scroll
+/// position and every window size because neither rectangle is free to reach
+/// the other.
+///
+/// The run census stays as the second half, because "disjoint from the region"
+/// is a claim about two rectangles and a reader complained about ink. Asserting
+/// both is what makes this fail if a later round paints host chrome into the
+/// band from somewhere else.
+#[test]
+fn r1864_the_status_band_is_the_hosts_at_every_destination() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let roster = spec::destinations();
+        let mut destinations = 0;
+        for destination in roster.all() {
+            if !matches!(
+                destination.standing,
+                pinion_core::widgets::destination::Standing::Open
+            ) {
+                continue;
+            }
+            let key = destination.key.as_ref();
+            let shot = painted_at_destination(key);
+            destinations += 1;
+            let band = super::status_band_rect();
+            let region = super::page_rect(key);
+            assert!(
+                !overlaps(band, region),
+                "at {key} the status band {band:?} and the page region \
+                 {region:?} share pixels, so the host's own furniture is drawn \
+                 inside what the destination was given",
+            );
+            // And the sentence is IN the band, which is what makes the clause
+            // above a statement about the sentence too.
+            let seat = super::help_strip_rect();
+            assert!(
+                seat.x >= band.x
+                    && seat.y >= band.y
+                    && seat.x + seat.w <= band.x + band.w
+                    && seat.y + seat.h <= band.y + band.h,
+                "at {key} the gesture sentence sits at {seat:?}, outside the \
+                 band {band:?} the region was shrunk to make room for",
+            );
+
+            let intruders: Vec<&str> = shot
+                .runs
+                .iter()
+                .filter(|(content, rect, _)| {
+                    content.as_str() != super::HELP_STRIP && overlaps(*rect, band)
+                })
+                .map(|(content, ..)| content.as_str())
+                .collect();
+            assert!(
+                intruders.is_empty(),
+                "at {key} the status band {band:?} has {} other run(s) in it: \
+                 {intruders:?} — which is the report this check was written \
+                 from, reproduced",
+                intruders.len(),
+            );
+        }
+        assert!(
+            destinations >= 6,
+            "the rail declares {destinations} open destination(s) and this \
+             check was measured against six; a population that shrank silently \
+             is how a green sweep comes to mean nothing",
+        );
+    });
+}
+
+/// ★★★★★ R1864 — **and the sentence's own box holds its own face.**
+///
+/// The other half of the same report, and the one R1863's runtime warning
+/// named on the first frame it was ever run against: `box_height=14 needs=18
+/// short_by=4`. A band whose height is `line_box` plus its padding cannot be
+/// short — but nothing said so, and "cannot be short by construction" is a
+/// claim that wants a test for exactly the reason the constant `14` did not.
+#[test]
+fn r1864_the_gesture_sentence_is_not_short_of_its_own_face() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let (_, scene) = painted_at((WIN_W, WIN_H));
+        let short = pinion_core::containment::short_boxes(&scene);
+        let mine: Vec<_> = short
+            .iter()
+            .filter(|s| s.content == super::HELP_STRIP)
+            .collect();
+        assert!(
+            mine.is_empty(),
+            "the gesture sentence is {:?} short of the face it is set in",
+            mine.iter().map(|s| s.short_by).collect::<Vec<_>>(),
+        );
+        // The band is what guarantees it, so say so where a reader will look:
+        // the seat is exactly one line box tall.
+        let seat = super::help_strip_rect();
+        assert_eq!(
+            seat.h,
+            pinion_core::containment::line_box(super::FONT_SMALL),
+            "the sentence's seat is {} tall and the face it is set in reserves \
+             {}",
+            seat.h,
+            pinion_core::containment::line_box(super::FONT_SMALL),
+        );
+    });
+}
+
+/// ★★★★★ R1864 — **the palette's catalogue clears its own footer, at every
+/// height it is asked to work at.**
+///
+/// # The defect, measured
+///
+/// `PALETTE_ROW_H` was documented as "sized so the whole catalogue FITS the
+/// panel" — an act somebody performed once, by hand, at one window height, and
+/// then nothing re-performed. Measured when the status band took 28 pixels off
+/// the panel: at the design height the last entry's bottom was **816** and the
+/// footer's top **818**, a clearance of two pixels; with the panel 28 shorter
+/// the counts were drawn straight through the last widget kind, and it was the
+/// caption gate that noticed, by way of a run escaping the row it had landed
+/// in.
+///
+/// # Why it sweeps heights
+///
+/// The pin was correct at exactly one of them. Asking at one height would
+/// reproduce the defect it exists to prevent, so this asks at the height the
+/// panel opens at and at heights around it — including ones where the ceiling
+/// binds and ones where the room does.
+#[test]
+fn r1864_the_palette_catalogue_clears_its_own_footer() {
+    let owner = Owner::new();
+    owner.run(|| {
+        for h in [560_u32, 700, 800, WIN_H, 1000, 1400] {
+            let (shot, _) = painted_at((WIN_W, h));
+            let rows = super::palette_rows();
+            let last = rows.last().expect("the catalogue has entries").rect;
+            let foot = super::palette_foot_rect();
+            assert!(
+                last.y + last.h <= foot.y,
+                "at a {h}px window the catalogue's last entry ends at {} and \
+                 the panel's footer band begins at {} — the counts are drawn \
+                 through the last widget kind",
+                last.y + last.h,
+                foot.y,
+            );
+            // And the derivation never stretches the rhythm past the height
+            // the reference's own rows have.
+            assert!(
+                super::palette_row_h() <= super::PALETTE_ROW_H,
+                "at a {h}px window an entry is {} tall, past the comfortable {}",
+                super::palette_row_h(),
+                super::PALETTE_ROW_H,
+            );
+            // The panel really is on the frame at this height, so the two
+            // clauses above are about something a reader can see.
+            assert!(
+                shot.rect("shell.palette").is_some(),
+                "at a {h}px window the palette is not painted, so this check \
+                 passed by asking about nothing",
+            );
+        }
     });
 }

@@ -897,6 +897,94 @@ fn r1761_a_roster_refuses_a_judge_it_cannot_honour() {
     );
 }
 
+/// ★★★★★ R1864 — **a page the host paints itself can say how many frames it
+/// needs, and the roster refuses a poser it cannot honour.**
+///
+/// `poses_of` answered `1` for every host page, under a doc line that named the
+/// gap and left it open: *a host that knows its own page needs two frames can
+/// drive them*. It could not — the pose loop is inside `Tour::walk`, between
+/// the latch that reads a departing frame and the paint that makes the next, so
+/// frames a host drove itself would be frames no latch ever read.
+///
+/// The refusals are `judging`'s, for `judging`'s reasons, and the last one is
+/// the one that matters: a screen answers `poses` itself.
+#[test]
+fn r1864_a_roster_refuses_a_poser_it_cannot_honour() {
+    use pinion_screen::{RosterDefect, SectionPoser};
+
+    struct TwoFrames;
+    impl SectionPoser for TwoFrames {
+        fn poses(&self) -> usize {
+            2
+        }
+        fn pose(&self, _nth: usize) {}
+    }
+
+    let empty = || {
+        ScreenRoster::new(destinations(), Vec::new())
+            .expect("nothing is mounted, so nothing can be mounted wrongly")
+    };
+
+    // Without a poser a host page is one frame, which is what a page that shows
+    // everything at once means — asserted first, so the clause below is a
+    // change rather than a coincidence.
+    assert_eq!(empty().poses_of("dashboard"), 1);
+
+    let posed = empty()
+        .posing("dashboard", Box::new(TwoFrames))
+        .expect("`dashboard` is an open destination with no screen at it");
+    assert_eq!(
+        posed.poses_of("dashboard"),
+        2,
+        "the roster answers what the page declared, which is the whole point"
+    );
+    // And posing it is a call that reaches the poser rather than a no-op: a
+    // destination with neither a screen nor a poser must stay silent.
+    posed.pose("dashboard", 1);
+    posed.pose("catalog", 1);
+
+    assert_eq!(
+        empty().posing("sessions", Box::new(TwoFrames)).err(),
+        Some(RosterDefect::NoSuchDestination {
+            key: "sessions".to_owned()
+        }),
+    );
+    assert_eq!(
+        empty().posing("topology", Box::new(TwoFrames)).err(),
+        Some(RosterDefect::DestinationIsClosed {
+            key: "topology".to_owned()
+        }),
+    );
+    assert_eq!(
+        empty()
+            .posing("dashboard", Box::new(TwoFrames))
+            .expect("`dashboard` is open")
+            .posing("dashboard", Box::new(TwoFrames))
+            .err(),
+        Some(RosterDefect::DuplicatePoser {
+            key: "dashboard".to_owned()
+        })
+    );
+
+    let mounted = ScreenRoster::new(
+        destinations(),
+        vec![(
+            "catalog",
+            Box::new(Mount::<LabFixture>::new()) as Box<dyn Screen>,
+        )],
+    )
+    .expect("the fixture screen is mounted at an open destination");
+    assert_eq!(
+        mounted.posing("catalog", Box::new(TwoFrames)).err(),
+        Some(RosterDefect::SectionAlreadyAnswers {
+            key: "catalog".to_owned()
+        }),
+        "★★★★★ a screen states its own pose count through `Screen::poses`; a \
+         second one from the host would make how many frames a section needs \
+         depend on which registration a lookup reached first"
+    );
+}
+
 /// The hooks a binding overrode are the hooks the mounted screen answers. The
 /// census in `coverage` proves every hook is *mirrored*; these prove the
 /// mirroring *dispatches*, on the hooks whose default is a different answer.

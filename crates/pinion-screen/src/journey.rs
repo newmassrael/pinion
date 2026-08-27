@@ -168,6 +168,23 @@ impl SurfaceVisit {
     /// that leaves takes its verdict with it — applied to the other way a frame
     /// can stop being the frame it was. It could not be written before this
     /// round because a verdict did not carry the size it was read at.
+    ///
+    /// ★★★★★ R1864 — **a standing frame no longer REPLACES the credited
+    /// verdict; it folds into it, part by part**
+    /// ([`SurfaceStanding::folded_with`]). The sentence at the top of this
+    /// comment — *a surface that has been on a frame does not stop having been
+    /// on it* — was applied to whole surfaces because a section's frames used
+    /// to differ by which surfaces they held. A scrolling page's frames differ
+    /// by which PARTS of one surface they hold, and replacement gives the wrong
+    /// answer in both directions at once: measured on the analysis tool's
+    /// preferences page, the top frame reproduced the heading block and missed
+    /// the last group, the scrolled frame the reverse, and whichever came last
+    /// won. **No ordering of those two frames describes the page a reader
+    /// reads.**
+    ///
+    /// The extent rule above is what keeps the fold honest, and it is
+    /// deliberately evaluated FIRST: a frame at a new size clears the credit,
+    /// so the fold only ever joins frames read at one size.
     fn record(&mut self, step: u32, standing: SurfaceStanding) {
         if self
             .stood
@@ -177,7 +194,10 @@ impl SurfaceVisit {
             self.stood = None;
         }
         if standing.is_standing() {
-            self.stood = Some((step, standing.clone()));
+            self.stood = Some(match self.stood.take() {
+                Some((_, credited)) => (step, credited.folded_with(&standing)),
+                None => (step, standing.clone()),
+            });
         }
         self.latest = standing;
     }

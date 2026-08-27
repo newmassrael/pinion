@@ -95,7 +95,9 @@ use pinion_core::widget_core::ExtraExternal;
 use pinion_core::{Frame, Scene};
 use pinion_shell::{WindowPolicy, WindowSpec};
 
-pub use conformance::{ApplicationConformance, SectionJudge, SectionRow, SectionStanding, Showing};
+pub use conformance::{
+    ApplicationConformance, SectionJudge, SectionPoser, SectionRow, SectionStanding, Showing,
+};
 pub use journey::{JourneyConformance, JourneySection, JourneyStanding, SurfaceVisit};
 pub use mount::Mount;
 pub use roster::{RosterDefect, ScreenRoster, ScreenState};

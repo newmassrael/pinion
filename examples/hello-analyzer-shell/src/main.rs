@@ -320,14 +320,60 @@ const FONT_BODY: u32 = 12;
 const FONT_SMALL: u32 = 11;
 const FONT_TINY: u32 = 10;
 
+/// The clearance the status band keeps above and below its sentence.
+const STATUS_PAD_Y: u32 = 5;
+/// The clearance the status band keeps at each end.
+const STATUS_PAD_X: u32 = 16;
+
+/// ★★★★★ R1864 — **the host's status band, and the mirror of the application
+/// bar.**
+///
+/// The window's chrome is now symmetric: a full-width bar at the top, a
+/// full-width band at the bottom, the rail between them on the left, and the
+/// page in what is left. Everything this host says *about* the screen — the
+/// gesture sentence today, the toast next — is said here, in host space, so it
+/// can never be said on top of a guest.
+///
+/// # The defect it comes from
+///
+/// [`help_strip_rect`] had no band to sit in and was placed by three numbers
+/// that answered about a different screen: a hand-picked `+610`, the
+/// **dashboard's** palette, and the window's bottom edge. Measured at R1864 by
+/// painting all six open destinations and counting what the strip's rectangle
+/// intersected: **seven text runs across three of them** — four in the capture
+/// view's reassembly lanes, two in the node lab's validation panel, one in the
+/// settings page — and at all six it lay *inside* [`page_rect`], which is the
+/// guest's rectangle and not the host's to draw in. A reader reported it as
+/// "that text keeps overlapping other UI elements", three times.
+///
+/// # Its height is derived, and that is the second half of the same report
+///
+/// The strip's own box was authored 14 pixels tall for an 11-pixel face, which
+/// `pinion_core::containment::line_box` says needs 18 — so the sentence was
+/// four pixels short of holding itself, and R1863's runtime warning named it on
+/// the first frame anybody ran it against. A band sized from the face cannot be
+/// short: the number the reservation needs is the number the band is built
+/// from.
+fn status_band_h() -> u32 {
+    pinion_core::containment::line_box(FONT_SMALL) + STATUS_PAD_Y * 2
+}
+
+/// Where that band sits: the full width of the window, along its bottom edge.
+fn status_band_rect() -> Rect {
+    let h = status_band_h();
+    Rect::new(0, win_h().saturating_sub(h), win_w(), h)
+}
+
 /// The canvas rectangle: everything between the rail and the palette, under
-/// both bars.
+/// both bars and above the status band.
 fn canvas_rect() -> Rect {
     Rect::new(
         RAIL_W,
         APP_BAR_H + SUB_BAR_H,
         win_w() - RAIL_W - PALETTE_W,
-        win_h() - APP_BAR_H - SUB_BAR_H,
+        win_h()
+            .saturating_sub(APP_BAR_H + SUB_BAR_H)
+            .saturating_sub(status_band_h()),
     )
 }
 
@@ -338,11 +384,23 @@ fn canvas_rect() -> Rect {
 /// are not there and the page gets the whole area the rail and application bar
 /// leave. A destination-dependent rectangle is what a region is: the page is
 /// what the window gives that destination, not a fixed hole in the chrome.
+///
+/// ★ R1864 — and what the **status band** leaves, at every destination. A band
+/// the host draws in and the region also covers is not reserved space, it is a
+/// collision waiting for the guest to paint something there — which is exactly
+/// what three of the six destinations were doing.
 fn page_rect(at: &str) -> Rect {
     if at == "dashboard" {
         return canvas_rect();
     }
-    Rect::new(RAIL_W, APP_BAR_H, win_w() - RAIL_W, win_h() - APP_BAR_H)
+    Rect::new(
+        RAIL_W,
+        APP_BAR_H,
+        win_w() - RAIL_W,
+        win_h()
+            .saturating_sub(APP_BAR_H)
+            .saturating_sub(status_band_h()),
+    )
 }
 
 /// The opening value of each Settings switch, from the specification.
@@ -888,6 +946,32 @@ struct ShellState {
 ///
 /// If a screen is mounted at a key the rail does not hold or has closed — a
 /// defect in this pairing rather than a state the running screen can reach.
+/// ★★★★★ R1864 — the preferences page's two frames.
+///
+/// Pose 0 is the state a reader arrives in — the top of the page. Pose 1 is the
+/// end of its scroll, which is where the last group lives. The offsets are the
+/// pane's own: `scroll_to` clamps against the range the layout pass derived
+/// from the content, so this asks for the end rather than naming a number that
+/// would go stale the first time the page grows a row.
+struct SettingsPoses;
+
+impl pinion_screen::SectionPoser for SettingsPoses {
+    fn poses(&self) -> usize {
+        2
+    }
+
+    fn pose(&self, nth: usize) {
+        let state = use_shell_state();
+        let (_, max) = state.settings_scroll.max();
+        // Clamped, so `max` is the end whatever the content is — and pose 0 is
+        // the top for the same reason: a walk that left the page where the last
+        // one put it would report a frame nobody opens.
+        state
+            .settings_scroll
+            .scroll_to(0, if nth == 0 { 0 } else { max });
+    }
+}
+
 #[must_use]
 fn screen_roster() -> ScreenRoster {
     let mut roster = ScreenRoster::new(
@@ -975,6 +1059,21 @@ fn screen_roster() -> ScreenRoster {
             (SETTINGS_MIN_W, SETTINGS_MIN_H),
         ),
     )
+    .expect("`settings` is an open destination this host paints itself")
+    // ★★★★★ R1864 — **and how many frames that page needs to show all of it.**
+    //
+    // The preferences page scrolls and its content is taller than the region it
+    // is given: measured at R1864, 946 pixels of page in an 820-pixel viewport,
+    // so its last group is below the fold. A walk of one frame per section
+    // reported that group unreproduced — a verdict true of the frame and false
+    // of the section, since a reader scrolls to it in one gesture.
+    //
+    // ⚠ It had been passing on a technicality. The same group STRADDLED the
+    // fold before this host reserved its status band, and a node partly outside
+    // a viewport is still painted; 28 pixels moved it from *partly visible* to
+    // *outside* and a question that was never about one frame started answering
+    // differently. Nothing changed about what a reader could see.
+    .posing("settings", Box::new(SettingsPoses))
     .expect("`settings` is an open destination this host paints itself")
     // ★★★★★ R1725 — **this application has a navigation, so its pages must not
     // each bring one.** Declared here, beside the roster it is a fact about:
@@ -2074,14 +2173,96 @@ const fn rail_rect(n: u32) -> Rect {
     Rect::new(8, 14 + n * 44, RAIL_W - 16, 36)
 }
 
-/// One palette entry's height.
+/// The rail PANEL: the strip between the application bar and the status band.
+///
+/// ★ R1864 — a rectangle rather than four numbers at the one site that built
+/// it, because a second site now needs its height (the account chip is anchored
+/// to the panel's bottom) and a chrome edge that two places compute is a chrome
+/// edge two places can disagree about.
+fn rail_panel_rect() -> Rect {
+    Rect::new(
+        0,
+        APP_BAR_H,
+        RAIL_W,
+        win_h()
+            .saturating_sub(APP_BAR_H)
+            .saturating_sub(status_band_h()),
+    )
+}
+
+/// One palette entry's height, at its most comfortable.
 ///
 /// Sized so that the whole catalogue FITS the panel: the reference scrolls its
 /// palette and this shell does not, so a row height that overflowed would put
 /// the last widget kinds under the footer where nothing can reach them. That is
 /// a real difference from the reference and it is spent here rather than
 /// hidden — see the module docs' list of what is not matched.
+///
+/// ★★★★★ R1864 — **and "sized so that it fits" was an act somebody performed
+/// once, by hand, at one window height.** Measured when the status band took 28
+/// pixels off the panel: the last entry's bottom was at 816 and the footer's
+/// top at 818, so the catalogue had cleared the counts by **two pixels** — and
+/// with the panel shorter the two counts were drawn straight through the last
+/// widget kind, which the caption gate reported as a run escaping its holder.
+///
+/// A number tuned to a layout is right until the layout moves, and it moves
+/// silently. So this is the CEILING now and [`palette_row_h`] is what the panel
+/// can actually afford; the fit is a derivation, and
+/// `r1864_the_palette_catalogue_clears_its_own_footer` is what says so.
 const PALETTE_ROW_H: u32 = 46;
+
+/// Where the palette's rows begin, under its heading block.
+const PALETTE_ROWS_TOP: u32 = 76;
+/// The band at the panel's foot that its two counts sit in.
+const PALETTE_FOOT_H: u32 = 30;
+/// A section heading's own height, and the gap under it.
+const PALETTE_SECTION_H: u32 = 20;
+const PALETTE_SECTION_GAP: u32 = 6;
+/// The gap under one entry, and the extra gap that closes a section.
+const PALETTE_ENTRY_GAP: u32 = 4;
+const PALETTE_SECTION_TAIL: u32 = 8;
+
+/// The panel's body: everything between its heading block and its footer band.
+fn palette_body_rect() -> Rect {
+    let panel = palette_rect();
+    Rect::new(
+        0,
+        PALETTE_ROWS_TOP,
+        panel.w,
+        panel
+            .h
+            .saturating_sub(PALETTE_ROWS_TOP)
+            .saturating_sub(PALETTE_FOOT_H),
+    )
+}
+
+/// The footer band the two counts are placed in.
+fn palette_foot_rect() -> Rect {
+    let panel = palette_rect();
+    Rect::new(
+        0,
+        panel.h.saturating_sub(PALETTE_FOOT_H),
+        panel.w,
+        PALETTE_FOOT_H,
+    )
+}
+
+/// ★★★★★ R1864 — what an entry can afford, which is what [`PALETTE_ROW_H`] was
+/// asserting by hand.
+///
+/// The headings and their gaps are fixed per section; what is left divides
+/// among the entries. Never taller than the comfortable height — a panel with
+/// room to spare gets the reference's rhythm rather than rows stretched to fill
+/// it — and never so tall that the catalogue runs into the counts below it.
+fn palette_row_h() -> u32 {
+    let sections = u(spec::SECTIONS.len());
+    let entries = u(spec::CATALOGUE.len()).max(1);
+    let fixed = sections * (PALETTE_SECTION_H + PALETTE_SECTION_GAP + PALETTE_SECTION_TAIL);
+    let room = palette_body_rect().h.saturating_sub(fixed);
+    (room / entries)
+        .saturating_sub(PALETTE_ENTRY_GAP)
+        .min(PALETTE_ROW_H)
+}
 
 /// The palette panel's rectangle.
 fn palette_rect() -> Rect {
@@ -2089,29 +2270,43 @@ fn palette_rect() -> Rect {
         win_w() - PALETTE_W,
         APP_BAR_H,
         PALETTE_W,
-        win_h() - APP_BAR_H,
+        win_h()
+            .saturating_sub(APP_BAR_H)
+            .saturating_sub(status_band_h()),
     )
 }
 
-/// Where the strip that names this screen's gestures sits — the band between
-/// the toast and the palette.
+/// Where the strip that names this screen's gestures sits: inside the host's
+/// [`status_band_rect`], the sentence seated on the band's own centre line.
 ///
-/// ★★ R1701 — it was a flat `470` at a flat offset, and adding one gesture to
-/// the sentence pushed it past that number: the strip read "… Esc restor…" in a
-/// window with room to spare. That is the third time this project has met a
-/// width chosen at the design size and required to keep a relation to something
-/// that moves (R1687's launch floor, R1700's node-lab hint, this), so it is
-/// derived: the room is what lies between where the strip starts and the panel
-/// on the right, less the gap that keeps them from touching.
+/// ★★ R1701 — its WIDTH was a flat `470` at a flat offset, and adding one
+/// gesture to the sentence pushed it past that number: the strip read
+/// "… Esc restor…" in a window with room to spare. That is the third time this
+/// project met a width chosen at the design size and required to keep a
+/// relation to something that moves (R1687's launch floor, R1700's node-lab
+/// hint, this), so the width has been derived since.
 ///
-/// Deriving it rather than widening the number is also what keeps the text-smear
-/// gate satisfied — a strip that simply took the whole window would paint over
-/// the palette, which is the failure R1701's node-lab sibling walked into on its
-/// first attempt.
+/// ★★★★★ R1864 — **and its PLACE was not, for 163 rounds.** The three terms
+/// that put it on the window were `canvas_rect().x + 610`, the **dashboard's**
+/// palette, and `win_h() - 47`: a hand-picked constant, a panel five of the six
+/// destinations do not have, and the window's bottom edge — which the mounted
+/// guest now fills. R1861 registered this strip as a band the toast must avoid
+/// and never asked whether the band itself was in the right place; measuring
+/// that is what R1864 did, and the answer was seven runs of other people's text
+/// under it. See [`status_band_rect`] for the census.
+///
+/// Derived from the band, all three terms are gone: it starts where the host's
+/// own space starts, it ends where that space ends, and its height comes from
+/// the face it is set in rather than from a number that was four pixels short
+/// of holding it.
 fn help_strip_rect() -> Rect {
-    let x = canvas_rect().x + 610;
-    let room = palette_rect().x.saturating_sub(x + 16);
-    Rect::new(x, win_h() - 47, room, 14)
+    let band = status_band_rect();
+    pinion_core::containment::line_rect_in(
+        band,
+        band.x + STATUS_PAD_X,
+        band.w.saturating_sub(STATUS_PAD_X * 2),
+        FONT_SMALL,
+    )
 }
 
 /// The palette's rows — section headers interleaved with entries, in the
@@ -2122,7 +2317,8 @@ fn help_strip_rect() -> Rect {
 /// rectangles follow.
 fn palette_rows() -> Vec<PaletteRow> {
     let mut out = Vec::new();
-    let mut y = 76_u32;
+    let row_h = palette_row_h();
+    let mut y = PALETTE_ROWS_TOP;
     for (key, title) in spec::SECTIONS {
         out.push(PaletteRow {
             def: None,
@@ -2132,19 +2328,19 @@ fn palette_rows() -> Vec<PaletteRow> {
             // group's own ENTRIES rather than from a tier column beside it, so
             // promoting one widget cannot leave the heading behind.
             title: spec::section_heading(key, title),
-            rect: Rect::new(16, y, PALETTE_W - 32, 20),
+            rect: Rect::new(16, y, PALETTE_W - 32, PALETTE_SECTION_H),
         });
-        y += 26;
+        y += PALETTE_SECTION_H + PALETTE_SECTION_GAP;
         for def in spec::CATALOGUE.iter().filter(|w| w.section == *key) {
             out.push(PaletteRow {
                 def: Some(def),
                 section: key,
                 title: def.label.to_owned(),
-                rect: Rect::new(10, y, PALETTE_W - 30, PALETTE_ROW_H),
+                rect: Rect::new(10, y, PALETTE_W - 30, row_h),
             });
-            y += PALETTE_ROW_H + 4;
+            y += row_h + PALETTE_ENTRY_GAP;
         }
-        y += 8;
+        y += PALETTE_SECTION_TAIL;
     }
     out
 }
@@ -6289,19 +6485,23 @@ fn rail_scene(state: &ShellState, palette: Palette) -> Scene {
         )])
         .with_tag("shell.rail.account")
         .with_style(BoxStyle::filled(palette.accent).with_corner_radius(16))
-        .with_layout(absolute(Rect::new(10, win_h() - APP_BAR_H - 46, 32, 32))),
+        // ★ R1864 — anchored to the RAIL's own bottom rather than to the
+        // window's. The two were the same number until the status band took a
+        // strip of the window away from the rail; a chip placed from the window
+        // would now hang below the panel that holds it.
+        .with_layout(absolute(Rect::new(
+            10,
+            rail_panel_rect().h.saturating_sub(46),
+            32,
+            32,
+        ))),
     ));
     keyboard_stop(
         Scene::Container(
             ContainerNode::new(entries)
                 .with_tag("shell.rail")
                 .with_style(BoxStyle::filled(palette.panel))
-                .with_layout(absolute(Rect::new(
-                    0,
-                    APP_BAR_H,
-                    RAIL_W,
-                    win_h().saturating_sub(APP_BAR_H),
-                ))),
+                .with_layout(absolute(rail_panel_rect())),
         ),
         "shell.rail",
         &nav,
@@ -9975,6 +10175,13 @@ fn palette_scene(state: &ShellState, palette: Palette) -> Scene {
     }
     // Both counts, because the screen's whole claim is the relation between
     // them: this release places four, and holds nine seats open.
+    //
+    // ★ R1864 — seated in the panel's own FOOTER BAND rather than at a hand
+    // offset from its bottom edge. The band is what `palette_row_h` divides the
+    // rest of the panel around, so the counts and the catalogue cannot disagree
+    // about where one ends and the other begins — which they had, by two pixels
+    // at the design height and by a whole row once the panel moved.
+    let foot = palette_foot_rect();
     children.push(cell(
         "shell.palette.placed".to_owned(),
         &format!(
@@ -9982,7 +10189,7 @@ fn palette_scene(state: &ShellState, palette: Palette) -> Scene {
             state.placed().len(),
             spec::placeable_count()
         ),
-        Rect::new(16, panel.h.saturating_sub(30), 130, 16),
+        pinion_core::containment::line_rect_in(foot, 16, 130, FONT_SMALL),
         FONT_SMALL,
         palette.muted,
         TextOverflow::Ellipsis,
@@ -9990,12 +10197,7 @@ fn palette_scene(state: &ShellState, palette: Palette) -> Scene {
     children.push(cell(
         "shell.palette.reserved".to_owned(),
         &format!("{} reserved", spec::reserved_count()),
-        Rect::new(
-            panel.w.saturating_sub(110),
-            panel.h.saturating_sub(30),
-            94,
-            16,
-        ),
+        pinion_core::containment::line_rect_in(foot, panel.w.saturating_sub(110), 94, FONT_SMALL),
         FONT_SMALL,
         palette.muted,
         TextOverflow::Ellipsis,
@@ -10072,7 +10274,12 @@ fn toast_scene(state: &ShellState, palette: Palette) -> Option<Scene> {
     // the guest declared moved the box straight onto this host's OWN help
     // strip — the reader had named a run from each in one sentence, and the
     // first repair asked about one of them.
-    let mut bands = vec![help_strip_rect()];
+    //
+    // ★ R1864 — the whole STATUS BAND, not just the sentence in it. The band is
+    // host furniture and the host does not cover its own furniture; the strip's
+    // rectangle is a run inside it, so avoiding only that left the box free to
+    // land on the band's other half.
+    let mut bands = vec![status_band_rect()];
     bands.extend(screen_roster().keeps_clear_of(state.at().as_str(), region));
     let rect = pinion_core::chrome::clear_of(seat, &bands, region).unwrap_or(seat);
     Some(Scene::Container(
@@ -10102,6 +10309,42 @@ fn toast_scene(state: &ShellState, palette: Palette) -> Option<Scene> {
         .with_layout(absolute(rect)),
     ))
 }
+
+/// ★★★★★ R1864 — **the host's status band, drawn.**
+///
+/// A filled strip in [`status_band_rect`] carrying the gesture sentence. It is
+/// painted rather than merely reserved for two reasons a reader can see: a band
+/// nobody fills reads as the page running off the bottom of the window, and the
+/// sentence needs a ground of its own — until this round it was set in whatever
+/// the guest happened to have painted underneath it.
+///
+/// The sentence is placed in the band's own space, from
+/// [`pinion_core::containment::line_rect_in`], so it is seated on the band's
+/// centre line and its box holds its face. Nothing else is placed here yet; the
+/// toast moves in next, which is what makes this a band rather than a strip.
+fn status_band_scene(palette: Palette) -> Scene {
+    let band = status_band_rect();
+    let seat = help_strip_rect();
+    Scene::Container(
+        ContainerNode::new(vec![label(
+            HELP_STRIP,
+            // The sentence in the BAND's space, which is what the band's own
+            // node is laid out in.
+            Rect::new(seat.x - band.x, seat.y - band.y, seat.w, seat.h),
+            FONT_SMALL,
+            palette.muted,
+        )])
+        .with_tag(STATUS_BAND)
+        // Exactly the application bar's own style, and deliberately: the two are
+        // the same piece of furniture at opposite edges, and a band that painted
+        // itself differently would read as a panel that had slipped down there.
+        .with_style(BoxStyle::filled(palette.panel))
+        .with_layout(absolute(band)),
+    )
+}
+
+/// The status band's tag.
+const STATUS_BAND: &str = "shell.status";
 
 /// Every colour the painters here read, resolved from one theme.
 ///
@@ -10258,7 +10501,7 @@ fn view(_state: ScreenState, frame: Frame) -> Scene {
             // page it must not leave. Painted after the page so a press on it
             // resolves to the roster rather than to whatever row it covers.
             settings_roster_scene(&state, here.key.as_ref()),
-            label(HELP_STRIP, help_strip_rect(), FONT_SMALL, palette.muted),
+            status_band_scene(palette),
         ])
         .collect::<Vec<_>>();
 

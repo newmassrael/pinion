@@ -67,6 +67,9 @@ SHELL = "hello-analyzer-shell"
 EXT = "/external"
 SEAT = "settings"
 PIN = "analyzer-settings-spec.json"
+#: The preferences page's scrolling viewport, which R1864 needs a second frame
+#: of. The shell tags the pane with the page's own body tag.
+SETTINGS_BODY = "shell.settings.body"
 
 CHECKS: list[str] = []
 PARTS_COMPARED = 0
@@ -165,15 +168,28 @@ def section_b(app: RpcSubprocess) -> None:
         "reader is standing here",
         verdict["away"] == 0 and verdict["standing"] == len(verdict["surfaces"]),
     )
+    # Named rather than counted: a check that fails with `False` sends a reader
+    # to find the surface by hand, and this one has seven to choose from.
+    def unreconciled(said: dict) -> list[str]:
+        return [
+            f"{name}: {u['says']}"
+            for name, surface in sorted(said["surfaces"].items())
+            for u in surface["unreconciled"]
+        ]
+
+    left = unreconciled(verdict)
     ok(
         "B: ★★★ the differences this build has are exactly the ones somebody "
-        "wrote down",
-        all(not s["unreconciled"] for s in verdict["surfaces"].values()),
+        f"wrote down -- {left}",
+        not left,
     )
     for name, surface in sorted(verdict["surfaces"].items()):
         for d in surface["divergences"]:
             print(f"  [declared] {name}: {d['says']}")
     print(f"  [compared] {PARTS_COMPARED} part(s) against docs/{PIN}")
+
+    # ⚠ Everything above this line is about the frame a reader ARRIVES on, which
+    # is what `/external/sections` answers. Section D asks the other question.
 
 
 def section_c(app: RpcSubprocess) -> None:
@@ -225,35 +241,70 @@ def section_c(app: RpcSubprocess) -> None:
 
 def section_d(app: RpcSubprocess) -> None:
     banner("D — the page scrolls, which is what puts the last group in reach")
-    # The pair that says it: what the group was PAINTED at, and how much of that
-    # a reader can reach. A viewport cuts the second and leaves the first, so
-    # `bbox != window` is the page being taller than the region it is in.
+    # ★★★★★ R1864 — this used to read the group's bbox and assert the viewport
+    # CUT it: the page was 946 pixels tall in a region of 848, so the last group
+    # straddled the fold and was painted-but-clipped. The host reserved a
+    # 28-pixel status band along the window's bottom (a strip of chrome that had
+    # been drawn inside the region it gives away, which a reader reported three
+    # times), the region became 820, and the group stopped being on the frame at
+    # all — `scene/bbox` answers null for a tag nothing painted, which is how
+    # this section found out. The claim is SHARPER now and it is asserted in the
+    # honest direction: absent where a reader arrives, present after one scroll.
     said = app.request(
         "scene/bbox", {"tag": "shell.settings.group.appearance", "from": "paint"}
     ).result
+    # ⚠ Both `None`s are real answers and they are different ones: a null
+    # RESULT is *nothing painted this tag*, and a null `window` inside a result
+    # is *painted, and no part of it survives the viewport it is in*. The second
+    # is what a fully scrolled-past node looks like, and reading it as the first
+    # is what a bare `is None` here did.
+    box = said.get("bbox") if said else None
+    win = said.get("window") if said else None
+    reach = 0 if win is None else win["h"]
+    drawn = 0 if box is None else box["h"]
     ok(
-        "D: ★★★★★ the last group is cut by the page's viewport, so the page is "
-        f"taller than its region (painted {said['bbox']['h']}px, reachable "
-        f"{said['window']['h']}px)",
-        said["window"]["h"] < said["bbox"]["h"],
+        "D: ★★★★★ NONE of the last group is reachable on the frame a reader "
+        f"arrives on (painted {drawn}px, reachable {reach}px) -- the page is "
+        "taller than the region it is given, which is what the `theme` ledger "
+        "entries declare",
+        reach == 0,
     )
-    group = rects(app)["shell.settings.group.appearance"]
     before = app.frame_count()
-    app.scroll("shell.settings.body", by=(0, 400))
+    app.scroll(SETTINGS_BODY, by=(0, 400))
     app.tick(16)
     app.await_paint(before)
-    moved = rects(app)["shell.settings.group.appearance"]
+    moved = rects(app).get("shell.settings.group.appearance")
     ok(
-        "D: ★★ scrolling moves it up, so a reader can reach it -- the "
-        f"reference's own page scrolls too ({group[1]} -> {moved[1]})",
-        moved[1] < group[1],
+        "D: ★★ and ONE SCROLL puts it there, so a reader reaches it -- the "
+        f"reference's own page scrolls too ({moved})",
+        moved is not None,
+    )
+    # ★★★★★ R1864 — AND THE WALK SAYS SO, which is the half no frame can.
+    #
+    # `/external/sections` is about the frame in front of the reader and has
+    # just declared two parts of this page missing, truthfully. `/external/
+    # journey` folds a section's frames PART BY PART since R1864
+    # (`SurfaceStanding::folded_with`), so with both of this page's frames seen
+    # it reports the section whole. Two questions, two answers, and reading
+    # either as the other is the mistake both slots exist to prevent.
+    walked = row_of(app.query(f"{EXT}/journey"), SEAT)
+    absent = [
+        f"{name}: {d['says']}"
+        for name, surface in sorted(walked["surfaces"].items())
+        for d in surface["divergences"]
+        if "no such part" in d["says"]
+    ]
+    ok(
+        "D: ★★★★★ over the frames the page HAS, nothing of it is missing -- a "
+        f"fold is a property of a frame and not of a section {absent}",
+        not absent,
     )
     # And the control down there answers a press where it is now painted.
     press(app, "shell.settings.theme.1")
     assert_eq(app.query(f"{EXT}/theme"), "light", "D: ★★★ the appearance choice took")
     press(app, "shell.settings.theme.0")
     before = app.frame_count()
-    app.scroll("shell.settings.body", to=(0, 0))
+    app.scroll(SETTINGS_BODY, to=(0, 0))
     app.tick(16)
     app.await_paint(before)
 

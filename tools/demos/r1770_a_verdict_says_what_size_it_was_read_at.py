@@ -54,9 +54,14 @@ What this drives:
   function of how tall the surface is, and a ledger that could not say so
   demanded the entry be deleted at the size where it does not apply, which would
   have broken the tool at the size where it does.
-* **G** — the two sizes stay two claims: judged at 2442x1479 against a canon
-  written at 2494x1531 is a sentence this report can now say, and a reader can
-  tell it from a verdict read where its specification was written.
+* **G** — the two sizes stay two claims: *judged at one extent against a canon
+  written at another* is a sentence this report can now say, and a reader can
+  tell it from a verdict read where its specification was written. ★ R1864 —
+  the extent this section is judged at used to be written down here and in the
+  check below; it moved the first time any chrome did (a host status band took
+  28 pixels of the window), so it is READ from the report now and what is
+  asserted is the property: one extent across every credited verdict, and not
+  the canon's.
 
 # Floor
 
@@ -500,11 +505,27 @@ def section_g(app: RpcSubprocess) -> None:
         "somewhere else' is a qualifier and never an excuse -- they are judged "
         "exactly as hard here as in their own window",
     )
+    # ★★★★★ R1864 — the EXTENT is read, not pinned, and that is a repair.
+    #
+    # This asserted `["2442x1479"]`, a number measured once by hand, and R1864
+    # moved it to 1451 by reserving 28 pixels of the window for a host status
+    # band. The number was never the claim: the claim is that every credited
+    # verdict of this section names ONE extent (so the report is not a mixture
+    # of frames read at different sizes) and that it is not the one its canon
+    # was written at (which is what `read_where_written` says above, from the
+    # other direction). A pin here rots the first time any chrome moves, and it
+    # rotted.
+    at = {v["at"] for v in lab_surfaces.values()}
     eq(
-        sorted({v["at"] for v in lab_surfaces.values()}),
-        ["2442x1479"],
-        "G: ★ and each credited verdict names the same extent, which is not the "
-        "one its canon was written at",
+        len(at),
+        1,
+        f"G: ★ each credited verdict names the SAME extent, or the report is a "
+        f"mixture of sizes: {sorted(at)}",
+    )
+    ok(
+        f"G: ★ and it is not the extent its canon was written at "
+        f"({sorted(at)} vs {lab['written_at']})",
+        at != {lab["written_at"]},
     )
     print(f"  [lab] read at {lab['at']} against a canon written at {lab['written_at']}")
 
