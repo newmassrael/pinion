@@ -481,6 +481,26 @@ fn overlaps(a: Rect, b: Rect) -> bool {
 ///
 /// Derived from [`crate::spec`], so a row added to the specification is a row
 /// this demands on screen without anybody editing this function.
+/// ★★★★★ R1857 — the fault-injection panel, element by element rather than as a
+/// family with an open count.
+///
+/// R1853 painted 28 of these and the specification knew about none, which is
+/// what the backward check reported the first time anything asked it about the
+/// whole screen rather than the part above the fold.
+///
+/// The two numbers the roster needs are asked of the LIVE screen — how many
+/// offers this card's declaration admits, and which scopes the framework cannot
+/// reach — because both are derivations and a copy of a derivation is the class
+/// R1853 removed. The SHAPE around them is the specification's, and
+/// [`spec::FaultPanelSpec::roster`] is the one place it is composed.
+fn declared_fault_panel(state: &LabState) -> Vec<String> {
+    let out_of_reach: Vec<&str> = super::fault_scope_notes()
+        .into_iter()
+        .map(|(wire, _)| wire)
+        .collect();
+    spec::FAULT_PANEL.roster(super::fault_rows(state).len(), &out_of_reach)
+}
+
 fn declared_tags(state: &LabState) -> Vec<String> {
     let mut want: Vec<String> = vec![
         super::VIEW_TAG.to_owned(),
@@ -553,6 +573,7 @@ fn declared_tags(state: &LabState) -> Vec<String> {
         want.push("lab.toast.dot".to_owned());
         want.push("lab.toast.text".to_owned());
     }
+    want.extend(declared_fault_panel(state));
     // The cards are the ones the model holds, not the ones the specification
     // opened with — R1651's real-mouse defect was a canvas that drew the
     // specification's list and therefore could never show an added node.
@@ -786,7 +807,7 @@ fn owning_pane(tag: &str) -> Option<Rect> {
     }
     if tag.starts_with("lab.inspector")
         || tag.starts_with("lab.form")
-        || tag.starts_with("lab.faults")
+        || tag.starts_with(spec::FAULT_PANEL.tag)
     {
         return Some(inspector_rect());
     }
@@ -1424,12 +1445,49 @@ fn r1653_the_painted_screen_is_the_specification_in_every_state() {
 /// size. A forward-only check cannot see chrome nobody declared, and a check
 /// whose families are open-ended cannot see a family that lost half its
 /// members.
+///
+/// ★★★★★ R1857 — **and the population is the screen, not the part of it that
+/// happens to be above the fold.** This check read `shot.tags` and nothing
+/// else, so an element the screen paints inside a pane that has scrolled past
+/// it was outside the question it was asking. Measured on the opening state at
+/// the design size: 185 tags recorded, **34 more reachable** — 28 of them
+/// R1853's fault panel, which no table declared and which therefore reached
+/// publication and failed in the sweep, where a snapshot walks the scene rather
+/// than the last frame. `assert_forward` had read `reachable` since R1662 to
+/// excuse an element that scrolled away; the two directions were asking about
+/// two different screens, and only the lenient one had the bigger population.
+///
+/// ⇒ **a check's population is a claim, and this one had never been stated.**
 #[test]
 fn r1653_the_painted_screen_invented_nothing() {
     let owner = Owner::new();
     owner.run(|| {
         let state = use_lab_state();
         let shot = painted(&state);
+        // The whole roster: what the frame drew, plus what the panes hold one
+        // scroll away. `reachable` is the framework's own answer to "the reader
+        // gets to it", which is exactly the population an invented element can
+        // hide in.
+        let roster: BTreeSet<&String> = shot.tags.keys().chain(shot.reachable.keys()).collect();
+        // ★ No silent emptying: the widened half has to be carrying something,
+        // or this is the old check under a new name. Measured at R1857 on this
+        // very state — 185 painted, 34 more past the fold, 28 of them a panel
+        // no table had heard of.
+        let past_the_fold: Vec<&&String> = roster
+            .iter()
+            .filter(|tag| !shot.tags.contains_key(**tag))
+            .collect();
+        println!(
+            "{} painted + {} past the fold",
+            shot.tags.len(),
+            past_the_fold.len()
+        );
+        assert!(
+            !past_the_fold.is_empty(),
+            "★ the opening screen at the design size paints content the panes \
+             have scrolled past, and reaching it is what this check is for — \
+             nothing past the fold means the widened population is inert",
+        );
         let declared: BTreeSet<String> = declared_tags(&state).into_iter().collect();
 
         // family prefix -> how many members the specification fixes it at, or
@@ -1455,7 +1513,7 @@ fn r1653_the_painted_screen_invented_nothing() {
         ];
         let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
         let mut unaccounted = Vec::new();
-        for tag in shot.tags.keys() {
+        for tag in roster {
             // ★★★★★ R1792 — a caption is PART OF its box, not a second member of
             // the box's family. `captioned` gives a caption its box's tag plus
             // one suffix, so a family counted by prefix doubles the moment a
@@ -6598,6 +6656,110 @@ fn r1853_no_fault_run_sits_in_a_box_too_short_for_its_own_face() {
             clipped.is_empty(),
             "★ run(s) of the fault panel are in a box too short for their own \
              face: {clipped:?}",
+        );
+    });
+}
+
+/// (6) R1857 ZERO — **the panel paints exactly the elements the specification
+/// says it is made of**, at the design size and at the conformance size.
+///
+/// ★★★★★ The gate R1853 did not write, and this is the shape of what that cost.
+/// That round gave the panel five gates and every one of them is about its
+/// CONTENTS — which offers, which badge, which sentence. Nothing asked whether
+/// the panel is a thing the screen's specification has heard of, so the answer
+/// was *no* for four rounds and only the sweep could see it: the sweep walks
+/// the scene and the crate walks the last frame, and at the design size the
+/// whole panel is below the inspector's fold.
+///
+/// The equality is in **both directions** and over the whole roster, so a part
+/// that stops being painted fails here as loudly as a part nobody declared. And
+/// it is asked at two sizes for the reason R1742 recorded one screen over: at
+/// the design size the panel is reachable and not painted, at the conformance
+/// size it is painted outright, and a gate that only ever saw one of those
+/// would be measuring the fold rather than the panel.
+#[test]
+fn r1857_the_fault_panel_paints_exactly_what_the_specification_declares() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        let node = state.node_of("P-01").expect("the opening graph has it");
+        state.selection.set(Selection::one(node));
+
+        let want: BTreeSet<String> = declared_fault_panel(&state).into_iter().collect();
+        assert!(
+            want.len() >= 2 + 4 * 4 + 2,
+            "★ the roster must be big enough for an equality over it to say \
+             something: {want:?}",
+        );
+
+        for size in [(WIN_W, WIN_H), conformance_size()] {
+            let shot = painted_at(&state, size).0;
+            // The whole screen, not the part of it above the fold — the
+            // population R1653 was missing, stated here too because this gate
+            // is the one that would have caught R1853 and it must not inherit
+            // the blindness that let it through.
+            let got: BTreeSet<String> = shot
+                .tags
+                .keys()
+                .chain(shot.reachable.keys())
+                .filter(|tag| tag.starts_with(spec::FAULT_PANEL.tag))
+                .cloned()
+                .collect();
+            println!("at {size:?} the panel occupies {} address(es)", got.len());
+            assert_eq!(
+                got, want,
+                "★ at {size:?} the fault panel and its specification disagree \
+                 about what the panel is made of",
+            );
+        }
+    });
+}
+
+/// (7) R1857 — **and the wire says the same thing the paint does.**
+///
+/// `faults_roster` is what a client is told the panel occupies — the capability
+/// R1853's own carry names as missing, that an agent could read the offers and
+/// had to work out from the pixels where they were. It is composed by a
+/// different code path from the painter, so the two CAN disagree, and a client
+/// driving the panel from an address nothing drew gets silence and no reason.
+///
+/// Asked of the published read itself rather than of a helper beside it: the
+/// thing a client gets is the answer this arm returns.
+#[test]
+fn r1857_the_published_roster_is_the_one_the_screen_paints() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        let node = state.node_of("P-01").expect("the opening graph has it");
+        state.selection.set(Selection::one(node));
+        let shot = painted_at(&state, conformance_size()).0;
+
+        let mut oracle = super::LabOracle::new();
+        oracle.attach(std::rc::Rc::clone(&state));
+        let answered = pinion_core::external::ExternalIntrospect::query(&oracle, "faults_roster")
+            .expect("`faults_roster` is a published read");
+        let published: BTreeSet<String> = match answered {
+            pinion_core::external::IntrospectValue::Json(serde_json::Value::Array(rows)) => rows
+                .iter()
+                .map(|row| row.as_str().expect("an address is a string").to_owned())
+                .collect(),
+            other => panic!("`faults_roster` answers an array of addresses: {other:?}"),
+        };
+        let drawn: BTreeSet<String> = shot
+            .tags
+            .keys()
+            .filter(|tag| tag.starts_with(spec::FAULT_PANEL.tag))
+            .cloned()
+            .collect();
+        println!("the wire publishes {} address(es)", published.len());
+        assert!(
+            published.len() >= 2 + 4 * 4 + 2,
+            "★ and enough of them for the equality to say something: {published:?}",
+        );
+        assert_eq!(
+            published, drawn,
+            "★ the addresses the wire publishes and the addresses the screen \
+             paints must be one list",
         );
     });
 }

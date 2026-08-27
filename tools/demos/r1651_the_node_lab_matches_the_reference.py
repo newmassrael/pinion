@@ -429,6 +429,32 @@ def body() -> None:
         # this demo drives has just opened.
         for reset in spec["resets"]:
             declared.add(f"lab.reset.{reset['scope']}")
+        # ★★★★★ R1857 — the fault-injection panel, composed from the SHAPE the
+        # specification publishes and the two derivations the panel's own slots
+        # answer. Neither half alone is a declaration: R1853 published the
+        # offers and the scopes and never said the screen has a panel, so this
+        # check accepted none of the twenty-eight elements it paints and the
+        # sweep is where that was found — four rounds later, because the crate's
+        # own backward check reads the last FRAME and the panel is below the
+        # inspector's fold at the design size.
+        #
+        # Composed rather than read whole on purpose: `faults_roster` answers
+        # the same list, and section (D2) below compares the two. A check that
+        # took the application's word for what it paints would agree with it by
+        # construction.
+        panel = spec["faults_panel"]
+        offers = q(tf, "faults")
+        out_of_reach = [
+            scope["scope"] for scope in q(tf, "fault_scopes") if not scope["injectable"]
+        ]
+        fault_roster = [panel["tag"], panel["head"]]
+        for n in range(len(offers)):
+            fault_roster.append(f"{panel['row_stem']}{n}")
+            fault_roster.extend(
+                f"{panel['row_stem']}{n}.{part}" for part in panel["row_parts"]
+            )
+        fault_roster.extend(f"{panel['scope_stem']}{wire}" for wire in out_of_reach)
+        declared.update(fault_roster)
         # The families the specification names as a WHOLE rather than per item,
         # because the reference describes those regions as a block ("title,
         # meta, chip, zoom, config, Run") and a table written at element
@@ -574,6 +600,31 @@ def body() -> None:
         assert not undeclared, (
             f"the screen paints {len(undeclared)} element(s) the specification does "
             f"not declare: {undeclared}"
+        )
+        # ── (D2) R1857: the panel's addresses, published and painted ────────
+        #
+        # ★★★★★ Three readings of one thing, and they have to be one list: what
+        # the specification's shape composes to (above), what the application
+        # publishes as the addresses the panel occupies, and what the frame
+        # actually drew. The middle one is the new capability — R1853's own
+        # carry names the gap it fills, that an agent could read the offers and
+        # had to guess where they were — and it is answered by a different code
+        # path from the painter, so the equality can fail.
+        published = q(tf, "faults_roster")
+        assert published == fault_roster, (
+            "[D2] the addresses the application publishes are not the ones its "
+            f"own specification composes to: {published} vs {fault_roster}"
+        )
+        drawn = sorted(t for t in painted if t.startswith(panel["tag"]))
+        assert drawn == sorted(fault_roster), (
+            f"[D2] the frame drew {len(drawn)} of the panel's addresses and the "
+            f"specification names {len(fault_roster)}: "
+            f"{sorted(set(drawn) ^ set(fault_roster))}"
+        )
+        print(
+            f"[D2] the fault panel occupies {len(drawn)} address(es) — "
+            f"{len(offers)} offer(s), {len(out_of_reach)} scope(s) out of reach — "
+            "published, composed and painted alike"
         )
         # ★★★★★ R1791 — the pin is the family's WHOLE roster, and what is painted
         # is that minus what the toolbar's overflow control is holding. A count

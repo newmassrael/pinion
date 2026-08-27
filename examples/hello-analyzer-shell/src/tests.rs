@@ -4637,3 +4637,123 @@ fn r1853_the_walk_reaches_a_fault_panel_derived_from_the_targets_own_settings() 
         }
     });
 }
+
+/// ★★★★★ R1857 — **in the assembled tool, every fault row is WHOLE**: the panel
+/// occupies one contiguous block of addresses, every row carries the same parts
+/// as its siblings, and the boundary runs are the framework's non-injectable
+/// scopes and nothing else.
+///
+/// Rule (7)'s form. R1853's sibling above asks what the panel SAYS; this asks
+/// what it is MADE OF, which is the half that was missing — the section painted
+/// twenty-eight addresses and its own specification named none of them, and
+/// nothing in this application could tell.
+///
+/// ⚠ **Nothing here is a second copy of the section's table.** The host learns
+/// the panel's stem from the paint (an address is what a section publishes to
+/// every client, unlike the state and specification modules R1852 established a
+/// host must not reach into), the row count from the addresses themselves, the
+/// PART names from row 0 — so a renamed part moves this with it — and the
+/// scopes from the framework's own `Scope`. The literal below is the stem and
+/// that is all.
+///
+/// ```text
+/// cargo test -p hello-analyzer-shell r1857_the_walk -- --nocapture
+/// ```
+#[test]
+fn r1857_the_walk_reaches_a_fault_panel_whose_every_row_is_whole() {
+    use pinion_core::widgets::fault_injection::Scope;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    const STEM: &str = "lab.faults";
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let report = walk_the_application(&state);
+        assert!(
+            report.conforms(),
+            "the application did not reproduce its specification over the walk: {}",
+            report.why().unwrap_or_default()
+        );
+        state.go("lab").expect("the node lab section is open");
+        let mut scene = super::view(ScreenState::default(), pinion_core::Frame::default());
+        let mut cache = pinion_runtime::LayoutCache::new();
+        pinion_runtime::compute_layout(&mut scene, &mut cache, super::WIN_W, super::WIN_H);
+
+        let mut addresses: BTreeSet<String> = BTreeSet::new();
+        scene.for_each_node(&mut |visit| {
+            if let Some(tag) = visit.node.tag()
+                && tag.starts_with(STEM)
+            {
+                addresses.insert(tag.to_owned());
+            }
+        });
+        println!("{} address(es) under {STEM}", addresses.len());
+        assert!(
+            addresses.contains(STEM),
+            "★ the assembled tool paints no fault panel at all: {addresses:?}",
+        );
+
+        // The rows, and the parts each one carries — both read off the
+        // addresses rather than written down.
+        let row_stem = format!("{STEM}.row.");
+        let mut parts: BTreeMap<usize, BTreeSet<String>> = BTreeMap::new();
+        for tag in &addresses {
+            let Some(rest) = tag.strip_prefix(&row_stem) else {
+                continue;
+            };
+            let (index, part) = rest.split_once('.').unwrap_or((rest, ""));
+            let index: usize = index
+                .parse()
+                .unwrap_or_else(|_| panic!("a row is addressed by its position: {tag}"));
+            let seat = parts.entry(index).or_default();
+            if !part.is_empty() {
+                seat.insert(part.to_owned());
+            }
+        }
+        assert!(
+            parts.len() >= 4,
+            "★ the assembled tool must be offering something for this to mean \
+             anything: {parts:?}",
+        );
+        assert!(
+            parts.keys().copied().eq(0..parts.len()),
+            "★ the rows are addressed by POSITION, so a gap is a row that was \
+             painted and then was not: {:?}",
+            parts.keys().collect::<Vec<_>>(),
+        );
+        let first = parts[&0].clone();
+        assert!(
+            first.len() >= 3,
+            "★ a row carries several parts, or an equality over them says \
+             nothing: {first:?}",
+        );
+        for (index, seat) in &parts {
+            assert_eq!(
+                *seat, first,
+                "★ row {index} does not carry the parts its siblings do — one \
+                 row short of a part is exactly what a count of rows cannot see",
+            );
+        }
+
+        // ★ And nothing else lives under the stem: panel, heading, the rows and
+        // their parts, and one run per scope the framework cannot reach.
+        let mut want: BTreeSet<String> = BTreeSet::new();
+        want.insert(STEM.to_owned());
+        want.insert(format!("{STEM}.head"));
+        for index in parts.keys() {
+            want.insert(format!("{row_stem}{index}"));
+            for part in &first {
+                want.insert(format!("{row_stem}{index}.{part}"));
+            }
+        }
+        for scope in Scope::ALL.iter().filter(|scope| !scope.injectable()) {
+            want.insert(format!("{STEM}.scope.{}", scope.wire()));
+        }
+        assert_eq!(
+            addresses, want,
+            "★ the assembled panel occupies addresses its own structure does \
+             not account for",
+        );
+    });
+}

@@ -449,10 +449,33 @@ fn r1663_every_painted_tag_belongs_to_a_declared_family() {
         "pv.bytes",
         "pv.reassembly",
     ];
+    // ★★★★★ R1857 — the population is the SCREEN, not the part of it above the
+    // fold. This read `shot.tags` alone, so an element painted inside a pane
+    // that has scrolled past it was outside the question being asked — the same
+    // blindness measured on screen A that round, where it let a whole
+    // undeclared panel reach publication and only the demo sweep could see it.
+    // `present` is this file's own name for the union and it has existed since
+    // R1714; until now only the FORWARD direction used it.
+    //
+    // Measured here on the first run of the widened form: at this screen's
+    // declared floor, 128 tags are painted and **164 more are one scroll
+    // away** — more of screen B was outside this check than inside it. Nothing
+    // stray was hiding there, which is the good outcome and not the reason to
+    // stop asking.
+    let widened = std::cell::Cell::new(0usize);
     sweep(|_, shot, _, _, case| {
+        widened.set(
+            widened.get()
+                + shot
+                    .reachable
+                    .iter()
+                    .filter(|t| !shot.tags.contains_key(*t))
+                    .count(),
+        );
         let stray: Vec<&String> = shot
             .tags
             .keys()
+            .chain(shot.reachable.iter())
             .filter(|t| {
                 !stems
                     .iter()
@@ -464,6 +487,15 @@ fn r1663_every_painted_tag_belongs_to_a_declared_family() {
             "{case}: the screen paints tag(s) no family declares: {stray:?}"
         );
     });
+    // No silent emptying: the half this round added has to be carrying
+    // something, or the check is the old one under a new name.
+    println!("{} element(s) past the fold were judged", widened.get());
+    assert!(
+        widened.get() > 0,
+        "★ this screen has panes that scroll, and judging what they hold is \
+         what the widened population is for — nothing past the fold means it \
+         is inert",
+    );
 }
 
 /// The families whose size the specification fixes are that size — an extra

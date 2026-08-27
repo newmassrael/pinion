@@ -7877,9 +7877,15 @@ fn fault_panel(state: &LabState, top: u32, ink: Ink) -> Vec<Scene> {
     let scope_top = top + 10 + head_h + 8;
     let rows_top = scope_top + u32::try_from(notes.len()).unwrap_or(0) * line + 8;
     let height = rows_top - top + u32::try_from(rows.len()).unwrap_or(0) * FAULT_LINE_H + 8;
+    // ★★★★★ R1857 — every tag below comes from `spec::FAULT_PANEL`, which is
+    // where the screen's other elements are declared. R1853 spelled them here
+    // and nowhere else, so the specification did not know the panel existed and
+    // the backward gate reported twenty-eight invented elements the first time
+    // anything asked about the whole screen.
+    let panel = &spec::FAULT_PANEL;
     let mut out = vec![
         box_at(
-            "lab.faults",
+            panel.tag,
             Rect::new(PAD, top, width, height),
             ink.raised,
             Some(ink.outline_2),
@@ -7887,13 +7893,13 @@ fn fault_panel(state: &LabState, top: u32, ink: Ink) -> Vec<Scene> {
         ),
         quiet(
             tagged_label(
-                "lab.faults.head",
+                panel.head,
                 format!("fault injection — {} from this node's settings", rows.len()),
                 Rect::new(PAD + 10, top + 10, width - 20, head_h),
                 FONT_SMALL,
                 ink.text,
             ),
-            Silence::name_of("lab.faults"),
+            Silence::name_of(panel.tag),
         ),
     ];
     for (n, row) in rows.iter().enumerate() {
@@ -7903,7 +7909,7 @@ fn fault_panel(state: &LabState, top: u32, ink: Ink) -> Vec<Scene> {
         // that only warns cannot be painted as one that stops a launch.
         let ink_for = if row.blocks() { ink.err } else { ink.warn };
         out.push(box_at(
-            &format!("lab.faults.row.{n}"),
+            &panel.row(n),
             Rect::new(PAD + 8, y, width - 16, FAULT_LINE_H - 4),
             ink.surface,
             Some(ink_for),
@@ -7911,17 +7917,17 @@ fn fault_panel(state: &LabState, top: u32, ink: Ink) -> Vec<Scene> {
         ));
         out.push(quiet(
             tagged_label(
-                &format!("lab.faults.row.{n}.what"),
+                &panel.what(n),
                 format!("{} · {}", row.key, row.kind.wire()),
                 Rect::new(PAD + 16, y + 2, width - 32, line),
                 FAULT_PX,
                 ink_for,
             ),
-            Silence::name_of(format!("lab.faults.row.{n}")),
+            Silence::name_of(panel.row(n)),
         ));
         out.push(quiet(
             tagged_label(
-                &format!("lab.faults.row.{n}.badge"),
+                &panel.badge(n),
                 // ★ HOT/RESTART comes from the FIELD. Every offer has one, since
                 // the settings' third fault — a key the declaration lacks — is
                 // not offered at all; `None` here would be a badge about a row
@@ -7932,17 +7938,17 @@ fn fault_panel(state: &LabState, top: u32, ink: Ink) -> Vec<Scene> {
                 FAULT_PX,
                 ink.text_3,
             ),
-            Silence::part_of(format!("lab.faults.row.{n}")),
+            Silence::part_of(panel.row(n)),
         ));
         out.push(quiet(
             tagged_label(
-                &format!("lab.faults.row.{n}.why"),
+                &panel.why(n),
                 row.admitted_by.clone(),
                 Rect::new(PAD + 80, y + 2 + line, width - 96, line),
                 FAULT_PX,
                 ink.text_3,
             ),
-            Silence::part_of(format!("lab.faults.row.{n}")),
+            Silence::part_of(panel.row(n)),
         ));
     }
     // ★★★★★ One run per scope the panel does NOT offer, derived from
@@ -7953,7 +7959,7 @@ fn fault_panel(state: &LabState, top: u32, ink: Ink) -> Vec<Scene> {
     for (n, (wire, sentence)) in notes.iter().enumerate() {
         out.push(quiet(
             tagged_label(
-                &format!("lab.faults.scope.{wire}"),
+                &panel.scope(wire),
                 sentence.clone(),
                 Rect::new(
                     PAD + 10,
@@ -7964,7 +7970,7 @@ fn fault_panel(state: &LabState, top: u32, ink: Ink) -> Vec<Scene> {
                 FAULT_PX,
                 ink.text_3,
             ),
-            Silence::part_of("lab.faults"),
+            Silence::part_of(panel.tag),
         ));
     }
     out
@@ -8691,6 +8697,18 @@ const FIELDS: &[SchemaField] = &{
         // rather than inferred from a list that simply lacks them.
         SchemaField::new("faults", "json"),
         SchemaField::new("fault_scopes", "json"),
+        // ★★★★★ R1857 — and WHERE the panel is, by name: every address it
+        // occupies right now, derived from `spec::FAULT_PANEL` and the two
+        // slots above.
+        //
+        // Three slots and not two, because "what the offers are" and "where
+        // they are on screen" are different questions and R1853 answered only
+        // the first. A client that wanted to press an offer — the gap that
+        // round's own carry names — had to guess the addresses from the paint,
+        // and a checker that wanted to know the panel had painted the whole of
+        // itself had to spell the shape a second time. That second copy is what
+        // this round is repaying one level up.
+        SchemaField::new("faults_roster", "json"),
         // ★★★★★ R1850 — and what the form is WILLING to hold, which `form`
         // cannot say. `form` lists the rows that are there; a reader deciding
         // whether to take one off needs to know whether it comes back, and a
@@ -9103,6 +9121,23 @@ impl ExternalIntrospect for LabOracle {
                             "because": scope.because(),
                         })
                     })
+                    .collect(),
+            ))),
+            // ★★★★★ R1857 — the addresses the panel occupies, in painted order.
+            // Composed from the SPECIFICATION's shape and the two derivations
+            // above, so it cannot say the panel is made of something other than
+            // what the painter draws without one of them being edited.
+            "faults_roster" => Ok(IntrospectValue::Json(serde_json::Value::Array(
+                spec::FAULT_PANEL
+                    .roster(
+                        fault_rows(state).len(),
+                        &fault_scope_notes()
+                            .iter()
+                            .map(|(wire, _)| *wire)
+                            .collect::<Vec<_>>(),
+                    )
+                    .into_iter()
+                    .map(serde_json::Value::String)
                     .collect(),
             ))),
             "verdict" => {
@@ -10348,6 +10383,23 @@ fn spec_json() -> serde_json::Value {
         // there and here is why" is exactly the thing a reader cannot get any
         // other way.
         "inspector": spec::inspector_document().to_json(),
+        // ★★★★★ R1857 — **the fault-injection panel's shape**, published for the
+        // reason every table above it is: a demo that wrote down what the panel
+        // is made of would be checking its own copy. R1853 published the panel's
+        // CONTENTS (`faults`, `fault_scopes`) and never its shape, so the wire
+        // said what the offers are and nothing said the screen has a panel at
+        // all — and the backward check, which builds what it will accept out of
+        // exactly this value, accepted none of it.
+        //
+        // The counts stay out on purpose: how many rows there are is a fact
+        // about the selected card's declaration, and it is read from `faults`.
+        "faults_panel": {
+            "tag": spec::FAULT_PANEL.tag,
+            "head": spec::FAULT_PANEL.head,
+            "row_stem": spec::FAULT_PANEL.row_stem,
+            "row_parts": spec::FAULT_PANEL.row_parts,
+            "scope_stem": spec::FAULT_PANEL.scope_stem,
+        },
         "enum_key": spec::ENUM_KEY,
     })
 }
@@ -13320,19 +13372,20 @@ fn wire_access(state: &LabState) -> Vec<AccessNode> {
 /// voice at the same moment it gains a row, without this function being edited.
 fn fault_access(state: &LabState) -> Vec<AccessNode> {
     let rows = fault_rows(state);
-    let mut panel = AccessNode::new("lab.faults", AriaRole::List)
+    let names = &spec::FAULT_PANEL;
+    let mut panel = AccessNode::new(names.tag, AriaRole::List)
         .with_name(format!(
             "fault injection - {} from this node's settings",
             rows.len()
         ))
         .with_value(AccessValue::Text(fault_scope_note()));
     for n in 0..rows.len() {
-        panel = panel.with_child(format!("lab.faults.row.{n}"));
+        panel = panel.with_child(names.row(n));
     }
     let mut nodes = vec![panel];
     for (n, row) in rows.iter().enumerate() {
         nodes.push(
-            AccessNode::new(format!("lab.faults.row.{n}"), AriaRole::ListItem)
+            AccessNode::new(names.row(n), AriaRole::ListItem)
                 .with_name(format!(
                     "{} {}: {} - {}, admitted by {}",
                     row.key,

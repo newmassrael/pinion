@@ -1633,3 +1633,116 @@ pub const REFERENCE_COLLAPSES_CARD_DETAIL_AT_LOW_ZOOM: bool = false;
 /// The face a digest row is authored at, so a gate can ask what it scales to
 /// without reaching for a private constant of the screen.
 pub const FONT_TINY_PX: u32 = 9;
+
+// ── The fault-injection panel (R1857) ───────────────────────────────────────
+
+/// ★★★★★ R1857 — **the fault-injection panel, declared where this screen is
+/// declared.**
+///
+/// R1853 built the panel and gave it five gates of its own, and every one of
+/// them asks about the panel's *contents*. Nothing said the panel EXISTS. So
+/// the screen painted twenty-eight elements this table did not name, and the
+/// backward check — the one whose whole job is *the screen invented nothing* —
+/// reported them the first time anything looked at the whole screen.
+///
+/// **What is declared here is the SHAPE, and deliberately not the contents.**
+/// A row is one fault the selected card's own declaration admits, derived by
+/// `pinion_core::widgets::fault_injection::injectable`; writing those out here
+/// would be a hand-maintained copy of a derivation, which is exactly what R1853
+/// removed and what would rot the next time a field is added. The shape is the
+/// half that is a fact about the SCREEN: a headed box, one row per offer, three
+/// parts to a row, and one run per scope the panel cannot reach.
+///
+/// ⚠ **This panel is a second-pass addition.** The reference screen carries a
+/// pre-launch verdict and no fault injection at all, so nothing about it can be
+/// read off the reference — which is precisely why it has to be written down
+/// somewhere, and why "the reference does not have it" is not a reason to leave
+/// it undeclared.
+pub struct FaultPanelSpec {
+    /// The panel's own box.
+    pub tag: &'static str,
+    /// Its heading, which states how many offers the derivation produced.
+    pub head: &'static str,
+    /// One box per offer, addressed `<row_stem><n>` in painted order.
+    pub row_stem: &'static str,
+    /// The parts every row paints, in the order the row lays them out.
+    pub row_parts: &'static [&'static str],
+    /// One run per scope the panel cannot offer, addressed `<scope_stem><wire>`.
+    pub scope_stem: &'static str,
+}
+
+/// The panel, as this screen paints it.
+pub const FAULT_PANEL: FaultPanelSpec = FaultPanelSpec {
+    tag: "lab.faults",
+    head: "lab.faults.head",
+    row_stem: "lab.faults.row.",
+    row_parts: &["what", "badge", "why"],
+    scope_stem: "lab.faults.scope.",
+};
+
+impl FaultPanelSpec {
+    /// The box for the `n`th offer.
+    #[must_use]
+    pub fn row(&self, n: usize) -> String {
+        format!("{}{n}", self.row_stem)
+    }
+
+    /// One part of the `n`th offer's row.
+    #[must_use]
+    pub fn part(&self, n: usize, part: &str) -> String {
+        format!("{}{n}.{part}", self.row_stem)
+    }
+
+    /// The run naming the offer's key and arm.
+    ///
+    /// The three parts are addressed by their DECLARED POSITION rather than by
+    /// a literal spelled again at the painter, so renaming one in
+    /// [`Self::row_parts`] moves the paint with it instead of leaving the
+    /// declaration and the screen to drift.
+    #[must_use]
+    pub fn what(&self, n: usize) -> String {
+        self.part(n, self.row_parts[0])
+    }
+
+    /// The run carrying the applies-scope badge the field declares.
+    #[must_use]
+    pub fn badge(&self, n: usize) -> String {
+        self.part(n, self.row_parts[1])
+    }
+
+    /// The run carrying the clause that admits the offer.
+    #[must_use]
+    pub fn why(&self, n: usize) -> String {
+        self.part(n, self.row_parts[2])
+    }
+
+    /// The run that says why `wire`'s faults are out of reach.
+    #[must_use]
+    pub fn scope(&self, wire: &str) -> String {
+        format!("{}{wire}", self.scope_stem)
+    }
+
+    /// **Every element the panel paints**, given how many offers the
+    /// declaration admits and which scopes it cannot reach.
+    ///
+    /// The one derivation, so the screen's painter, the crate's gates and the
+    /// wire demo cannot come to disagree about what the panel is made of. The
+    /// two arguments are the parts that are *not* facts about the screen: the
+    /// offers come from the selected card's declaration and the scopes from
+    /// [`pinion_core::widgets::fault_injection::Scope`], and both are asked of
+    /// the running application rather than pinned here.
+    #[must_use]
+    pub fn roster(&self, offers: usize, out_of_reach: &[&str]) -> Vec<String> {
+        let mut out = vec![self.tag.to_owned(), self.head.to_owned()];
+        for n in 0..offers {
+            out.push(self.row(n));
+            for part in self.row_parts {
+                out.push(self.part(n, part));
+            }
+        }
+        for wire in out_of_reach {
+            out.push(self.scope(wire));
+        }
+        out
+    }
+}
