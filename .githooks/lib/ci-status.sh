@@ -54,14 +54,22 @@
 # `completed`: an in-progress run has not judged anything yet, and the last
 # run that DID judge is the one whose verdict the base inherits.
 #
-# The branch is filtered HERE rather than by `gh run list --branch`, because
-# that flag does not exist in gh 2.4.0 (the version on this machine, and the
-# one Ubuntu ships). Passing it makes `gh` print usage and exit 0 with no
-# rows, which the caller cannot distinguish from "no runs yet" — so the gate
-# would have fail-opened on every push, forever, on the machine it was written
-# on. The first draft did exactly that; the unit tests did not catch it,
-# because the `gh` stub they use accepted any arguments and so was more
-# permissive than the real thing.
+# The branch is filtered HERE rather than by `gh run list --branch`. R1495
+# wrote that the flag does not exist in the `gh` on this machine, and passing
+# it makes `gh` print usage and exit 0 with no rows — indistinguishable from
+# "no runs yet", so the gate would have fail-opened on every push forever. The
+# first draft did exactly that, and the unit tests did not catch it because the
+# `gh` stub accepted any argument and was more permissive than the real thing.
+#
+# ⚠ R1857 — **the version in that sentence had rotted.** Measured here:
+# `gh version` answers 2.45.0 and `gh run list --help` DOES list
+# `-b, --branch string`. So the flag exists now and the original reason is no
+# longer the reason. The parse-side filter STAYS, and on a better one: it does
+# not depend on a flag existing, so it cannot regress on an older `gh` in a
+# fresh clone or a CI image, and the rows it drops are rows this function
+# already has to walk. What is corrected is the CLAIM, because a comment
+# asserting a version nobody re-measures is how the sibling defect below went
+# three misdiagnoses deep.
 ci_verdict_from_listing() {
     local listing="$1" want_branch="$2"
     local status conclusion rest id branch
@@ -193,15 +201,35 @@ check_last_ci_run() {
         return 0
     fi
 
-    local listing
+    local listing said_file said
     # No `--branch`: see ci_verdict_from_listing. The limit is generous
     # because the branch filter happens after the fetch, so other branches'
     # runs consume rows.
-    if ! listing="$(gh run list --limit 30 2>/dev/null)"; then
-        echo "$label: gh run list failed (no network or no auth) — last CI" \
-             "verdict unknown, continuing" >&2
+    #
+    # ★★★★★ R1857 — **stderr is KEPT, and the refusal repeats it.** This line
+    # was `2>/dev/null` and the message beside it named two causes — "no
+    # network or no auth" — that nothing had measured. Fail-open is the right
+    # posture (infrastructure absence is not evidence of breakage), but a gate
+    # that opens without saying WHY sends every later reader to guess, and this
+    # one was misdiagnosed three times running: as a host with no `gh` account
+    # (R1851), as a daemon that had moved `XDG_CONFIG_HOME` (R1856), and as a
+    # hook that could not see where the credential lives (R1857.1). Measured
+    # while R1857 was open, by running this exact command and KEEPING stderr:
+    # `failed to get runs: HTTP 502: Server Error`. A server error is a third
+    # cause the sentence could not express, and the one piece of evidence that
+    # named it was being thrown away one character at a time.
+    #
+    # ⇒ **a fail-open must name what it could not do, not guess why.**
+    said_file="$(mktemp)"
+    if ! listing="$(gh run list --limit 30 2>"$said_file")"; then
+        said="$(head -n 1 "$said_file" | tr -d '\r')"
+        rm -f "$said_file"
+        echo "$label: gh run list failed — last CI verdict unknown," \
+             "continuing" >&2
+        echo "$label:   gh said: ${said:-(nothing on stderr)}" >&2
         return 0
     fi
+    rm -f "$said_file"
 
     local verdict id
     read -r verdict id <<<"$(ci_verdict_from_listing "$listing" "$branch")"

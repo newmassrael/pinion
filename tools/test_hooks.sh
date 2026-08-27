@@ -199,6 +199,17 @@ while (( $# )); do
         *) echo "unknown flag: $1" >&2; exit 0 ;;
     esac
 done
+# R1857 — a listing that FAILS, saying why on stderr. `gh` has three ways to
+# fail here (no network, no auth, a server error) and the gate used to discard
+# the only thing that tells them apart, which is how it was misdiagnosed three
+# times. A case sets PINION_STUB_RUN_LIST_ERR to the sentence it is asserting
+# the gate repeats. SET-ness is the trigger and not emptiness: "gh failed and
+# said nothing" is one of the cases this exists for, and keying on a non-empty
+# value would make that case indistinguishable from a gh that succeeded.
+if [[ -n "${PINION_STUB_RUN_LIST_ERR+set}" ]]; then
+    [[ -n "$PINION_STUB_RUN_LIST_ERR" ]] && echo "$PINION_STUB_RUN_LIST_ERR" >&2
+    exit 1
+fi
 STUB_HEAD
         printf 'cat <<%s\n%s\n%s\n' "EOF_STUB" "$listing" "EOF_STUB"
     } >"$_stub_dir/gh"
@@ -289,6 +300,55 @@ ok "an armed override still reports the base as red" \
 ok "and says which rule let it through" \
    "$(with_stub_stderr 1 "$(row completed failure 222)" check_last_ci_run main test \
         | grep -c 'PINION_PUSH_ON_RED=1')" \
+   "1"
+
+# ---------------------------------------------------------------------------
+# R1857 — a fail-open must NAME what it could not do, not guess why.
+#
+# The gate used to run `gh run list … 2>/dev/null` and print "no network or no
+# auth", two causes nothing had measured. Measured while R1857 was open, the
+# real one was a third: `failed to get runs: HTTP 502: Server Error`. Three
+# rounds had diagnosed this debt three different wrong ways off that sentence.
+# ---------------------------------------------------------------------------
+
+with_stub_err() {
+    local said="$1"
+    shift
+    # shellcheck disable=SC2031
+    (
+        unset PINION_PUSH_ON_RED
+        export PINION_STUB_RUN_LIST_ERR="$said"
+        stub_gh ""
+        { "$@" >/dev/null; } 2>&1
+    )
+}
+
+ok "a gh that fails still publishes — absence is not breakage" \
+   "$( (unset PINION_PUSH_ON_RED; export PINION_STUB_RUN_LIST_ERR='HTTP 502: Server Error'; \
+        stub_gh ""; check_last_ci_run main test >/dev/null 2>&1; echo $?) )" \
+   "0"
+
+ok "and repeats what gh said, verbatim" \
+   "$(with_stub_err 'failed to get runs: HTTP 502: Server Error' \
+        check_last_ci_run main test | grep -c 'HTTP 502: Server Error')" \
+   "1"
+
+# The two causes the old sentence asserted are DIFFERENT sentences from gh, and
+# the gate must carry whichever one it got rather than a disjunction of both.
+ok "an authentication failure reads as one, not as a disjunction" \
+   "$(with_stub_err 'gh: To use GitHub CLI in a GitHub Actions workflow, set the GH_TOKEN environment variable' \
+        check_last_ci_run main test | grep -c 'GH_TOKEN')" \
+   "1"
+
+ok "and the refusal no longer guesses between network and auth" \
+   "$(with_stub_err 'HTTP 502: Server Error' \
+        check_last_ci_run main test | grep -c 'no network or no auth')" \
+   "0"
+
+# A `gh` that fails SILENTLY is the case that would otherwise print an empty
+# line and say nothing at all — worse than the sentence it replaced.
+ok "a silent failure says it was silent" \
+   "$(with_stub_err '' check_last_ci_run main test | grep -c 'nothing on stderr')" \
    "1"
 
 # Fail-open on infrastructure absence: no `gh`, no verdict, but publishing is
