@@ -4757,3 +4757,70 @@ fn r1857_the_walk_reaches_a_fault_panel_whose_every_row_is_whole() {
         );
     });
 }
+
+/// ★★★★★ R1859 — **in the assembled tool, at the size a person runs, the run a
+/// reader named holds its own text.**
+///
+/// Rule (7)'s form for a defect somebody SAW. The report was about the shipped
+/// window — `target/release/hello-analyzer-shell`, 1440x900 — and about a run
+/// inside a screen this application MOUNTS, so a check that only ever ran the
+/// section standalone would be checking a different thing from the one that was
+/// looked at. The section's own zero gate is next door in `hello-node-lab`;
+/// this is the same property asked of the assembly.
+///
+/// ⚠ **Asserted from the paint, by the words, with no reach into the mounted
+/// screen.** The host does not import the lab's geometry or its constants — it
+/// finds the run by what it says, which is what the reader had, and asks the
+/// FRAMEWORK's predicate about it. R1852 established that a host reading a
+/// guest's internals can pass while the guest is broken.
+///
+/// ```text
+/// cargo test -p hello-analyzer-shell r1859_the_walk -- --nocapture
+/// ```
+#[test]
+fn r1859_the_walk_reaches_a_placeholder_that_holds_its_own_letters() {
+    const SAID: &str = "type a name or a key";
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let report = walk_the_application(&state);
+        assert!(
+            report.conforms(),
+            "the application did not reproduce its specification over the walk: {}",
+            report.why().unwrap_or_default()
+        );
+        state.go("lab").expect("the node lab section is open");
+        let mut scene = super::view(ScreenState::default(), pinion_core::Frame::default());
+        let mut cache = pinion_runtime::LayoutCache::new();
+        pinion_runtime::compute_layout(&mut scene, &mut cache, super::WIN_W, super::WIN_H);
+
+        let mut found = 0usize;
+        let mut short: Vec<(String, u32, u32, u32)> = Vec::new();
+        scene.for_each_node(&mut |visit| {
+            let pinion_core::Scene::Text(t) = visit.node else {
+                return;
+            };
+            if t.content != SAID {
+                return;
+            }
+            found += 1;
+            let owed = pinion_core::containment::short_by(t);
+            if owed > 0 {
+                short.push((t.content.clone(), t.style.font_size_px, t.rect.h, owed));
+            }
+        });
+
+        println!("the assembled tool paints {found} run(s) saying {SAID:?}");
+        assert_eq!(
+            found, 1,
+            "★ the reader saw exactly one of these; none means the walk no \
+             longer reaches the row and two means the row is painted twice",
+        );
+        assert!(
+            short.is_empty(),
+            "★ the run a reader reported is STILL in a box too short for its \
+             own face (content, face, box height, short by): {short:?}",
+        );
+    });
+}

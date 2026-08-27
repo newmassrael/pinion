@@ -1320,7 +1320,19 @@ use pinion_core::test_fixtures::screen_ink::{
 ///
 /// Raising a pin is not a repair and this one is still owed downward; what
 /// would move it is `containment::line_rect` at the sites that reserve a line.
-const SHORT_BOX_BUDGET: usize = 166;
+///
+/// ★ R1859 — **166 → 163, and the three are the ones a reader pointed at**: the
+/// rename row's placeholder and its two seats now take `line_rect_in`, so they
+/// hold their face and sit centred. The pin is an equality precisely so an
+/// improvement cannot go unrecorded, and it refused this round's commit until
+/// this number moved — which is the gate working, not the gate complaining.
+///
+/// ⚠ 163 is still a BACKLOG, and the reader found their run inside it: a
+/// budget cannot see a defect it is already paying for. That is why the row has
+/// its own ZERO gate next door
+/// (`r1859_the_rename_row_holds_its_text_and_centres_it`) rather than a smaller
+/// share of this one.
+const SHORT_BOX_BUDGET: usize = 163;
 
 /// The one sweep, over every state.
 #[test]
@@ -6760,6 +6772,87 @@ fn r1857_the_published_roster_is_the_one_the_screen_paints() {
             published, drawn,
             "★ the addresses the wire publishes and the addresses the screen \
              paints must be one list",
+        );
+    });
+}
+
+/// ★★★★★ R1859 ZERO — **the rename row's every run holds its own text and sits
+/// centred in its seat**, budget ZERO, for the surface a reader named.
+///
+/// A person looking at the shipped 1440x900 window reported two things about
+/// this one row: that `type a name or a key` had its lower letters cut off, and
+/// that `rename` and `+ key` were stuck to the bottom. Both were true and both
+/// were the same authoring shape — a hand-written box height of 13 for an
+/// 11-pixel face (`line_box(11)` is 18) placed at a hand-written `+6` into a
+/// 20-pixel seat.
+///
+/// ⚠ **The screen ALREADY had a gate for the first half and it was green**,
+/// which is why this test exists as its own zero rather than as a smaller pin.
+/// `SHORT_BOX_BUDGET` is a ratchet over everything this screen owed before this
+/// row was looked at, so a run inside the budget is invisible to it — the shape
+/// R1851 recorded and this file's fault-panel gates were written for. A budget
+/// is the shape of a BACKLOG; a surface a reader just pointed at gets a zero.
+///
+/// Both halves are asserted, because fixing one and leaving the other is
+/// exactly what the reader saw: a box can be tall enough and still sit low.
+#[test]
+fn r1859_the_rename_row_holds_its_text_and_centres_it() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        let (_, scene) = painted_and_scene(&state, (WIN_W, WIN_H));
+
+        let seats = super::rename_row_seats();
+        let mut judged = 0usize;
+        let mut short: Vec<(String, u32, u32)> = Vec::new();
+        let mut off_centre: Vec<(String, u32, u32)> = Vec::new();
+        scene.for_each_node(&mut |visit| {
+            let pinion_core::Scene::Text(t) = visit.node else {
+                return;
+            };
+            // The runs of THIS row, found by the seat that holds them rather
+            // than by a list of the words: a fourth control added to the row
+            // joins this gate without the gate being edited, and a word changed
+            // (`rename` becomes `apply` while the field is open) does not drop
+            // out of it.
+            let Some(seat) = seats.iter().find(|seat| {
+                t.rect.x >= seat.x
+                    && t.rect.y >= seat.y
+                    && t.rect.x + t.rect.w <= seat.x + seat.w
+                    && t.rect.y + t.rect.h <= seat.y + seat.h
+            }) else {
+                return;
+            };
+            judged += 1;
+            let owed = pinion_core::containment::short_by(t);
+            if owed > 0 {
+                short.push((t.content.clone(), t.rect.h, owed));
+            }
+            // Centred: the space above and below the run's box inside its seat
+            // differ by at most one pixel, which is what an odd remainder
+            // allows and nothing more.
+            let above = t.rect.y - seat.y;
+            let below = (seat.y + seat.h).saturating_sub(t.rect.y + t.rect.h);
+            if above.abs_diff(below) > 1 {
+                off_centre.push((t.content.clone(), above, below));
+            }
+        });
+
+        println!("{judged} run(s) of the rename row measured");
+        assert!(
+            judged >= 3,
+            "★ the row paints a placeholder and two seats, so fewer than three \
+             runs means this gate is measuring nothing: {judged}",
+        );
+        assert!(
+            short.is_empty(),
+            "★ run(s) of the rename row are in a box too short for their own \
+             face (content, box height, short by): {short:?}",
+        );
+        assert!(
+            off_centre.is_empty(),
+            "★ run(s) of the rename row are not centred in their seat \
+             (content, space above, space below): {off_centre:?}",
         );
     });
 }

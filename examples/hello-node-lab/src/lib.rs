@@ -8193,13 +8193,21 @@ fn inspector_edit(state: &LabState, ink: Ink) -> Vec<Scene> {
             Some(ink.outline),
             6,
         ));
+        // ★★★★★ R1859 — DERIVED from the face, not written down. A reader
+        // reported this run by name: *"'type a name or a key' 는 아예 아래
+        // 글씨가 일부 잘려서 보여"*. Measured through the wire the debt asked
+        // for: `h=13 px=11 ink_h=15 over_h=2 short_by=5` — the box was five
+        // pixels short of `line_box(11)`, so the descenders of `y`, `p` and `y`
+        // had nowhere to go. `line_rect_in` gives a box that holds one line of
+        // this face AND centres it in the seat, which closes the reader's other
+        // sentence about this same row in the same call.
         parts.push(label(
             "type a name or a key",
-            Rect::new(
+            pinion_core::containment::line_rect_in(
+                box_rect,
                 box_rect.x + 8,
-                box_rect.y + 6,
                 box_rect.w.saturating_sub(12),
-                13,
+                FONT_SMALL,
             ),
             FONT_SMALL,
             ink.text_3,
@@ -8213,9 +8221,18 @@ fn inspector_edit(state: &LabState, ink: Ink) -> Vec<Scene> {
         Some(ink.accent_line),
         6,
     ));
+    // ★ R1859 — the same derivation, and the same reader's other sentence:
+    // *"'rename','+key' 같은 버튼은 여전히 바닥에 붙어있어"*. A hand-picked
+    // `+6` into a 20-pixel seat put an 13-pixel box 6 from the top and 1 from
+    // the bottom; centring a box that holds the face puts it 1 from each.
     parts.push(label(
         word,
-        Rect::new(seat.x + 8, seat.y + 6, seat.w.saturating_sub(12), 13),
+        pinion_core::containment::line_rect_in(
+            seat,
+            seat.x + 8,
+            seat.w.saturating_sub(12),
+            FONT_SMALL,
+        ),
         FONT_SMALL,
         ink.accent,
     ));
@@ -8232,16 +8249,29 @@ fn inspector_edit(state: &LabState, ink: Ink) -> Vec<Scene> {
     ));
     parts.push(label(
         "+ key",
-        Rect::new(
+        pinion_core::containment::line_rect_in(
+            key_seat,
             key_seat.x + 8,
-            key_seat.y + 6,
             key_seat.w.saturating_sub(12),
-            13,
+            FONT_SMALL,
         ),
         FONT_SMALL,
         ink.text_2,
     ));
     parts
+}
+
+/// The three seats [`inspector_edit`] paints, for the gate that holds them to
+/// the rule.
+///
+/// ★★★★★ R1859 — named here rather than re-derived in the test, because the
+/// surface being gated has to be the surface being painted. A gate that listed
+/// these by tag would pass the day one of them was renamed, which is the shape
+/// `debt-a-published-wire-name-is-checked-only-by-a-demo` records one level up.
+#[cfg(test)]
+pub(crate) fn rename_row_seats() -> [Rect; 3] {
+    let (box_rect, seat, key_seat) = rename_row();
+    [box_rect, seat, key_seat]
 }
 
 /// ★★★ R1684 — the live field itself, painted **last** so it stands over
