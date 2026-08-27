@@ -120,6 +120,17 @@
       ]
     },
     {
+      "name": "debt-a-host-strip-is-anchored-to-rectangles-its-guest-replaced",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "person",
+      "closed_because": "rule:analyzer-debt-repayment-loop",
+      "why": [
+        "links debt-canon-gui-surface-census"
+      ]
+    },
+    {
       "name": "debt-a-link-address-is-printed-wider-than-its-extent",
       "substituted": false,
       "blocked_by": "buildable",
