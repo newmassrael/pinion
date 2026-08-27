@@ -71448,6 +71448,80 @@
         "NEXT: the queue's remaining items are the short-box repair campaign — whose worklist is derived, `cargo test -p hello-analyzer-shell r1870_the_short_box_census -- --nocapture`, with `pv.list.cell.*` (112 runs) and `card.packet#*.cell.*` (32) at its head — and `lab.t2.19`, the last name on the `debt-eleven-app-verdicts-name-no-assembly` ratchet."
       ]
     },
+    "R1872": {
+      "decision_summary": "One table's boxes, derived from their seats.\n\nSubject: the short-box repair campaign's first round, aimed at the head the integrated shell's census named rather than at a site chosen by eye.\n\n★ MEASURED FIRST, and this time the entry figures HELD: `pv.list.cell.*` is **112 runs at one site**, the largest single site in the whole application, on a `packets` destination carrying 299 short runs at 61 sites with a deepest shortfall of 6px.\n\n★★★★★ THE CAUSE IS ONE CONVENTION, NOT 128 MISTAKES. `FONT_SMALL` is 11 and `containment::line_box(11)` is **18**, and every box in this table was authored `Rect::new(x, seat.y + 5, w, 12)`. Six pixels short, so every descender in the message list was cut — which is the class a reader reported by eye, twice, eleven days apart.\n\n⇒ `cell_band(seat, x, w)`: a run's box in the message list is a band tall enough for the face, centred in the seat that holds it.\n\n🟥🟥 ★★★★★ **THE REPAIR IS NOT `18` IN PLACE OF `12`.** That fixes 128 runs and leaves the height a number somebody types, which is exactly how it became 12. The seat's own centre and the face are what the band is made of now, so a face change moves every box in this table and a `ROW_H` change moves them too — neither can be forgotten, and neither is a thing anybody has to remember.\n\n⚠ And `name_column_paint` took `y: u32`. A band needs the seat's HEIGHT as well as its top, so the **parameter** was wrong rather than the arithmetic; it takes the row's `Rect`.\n\n★★★★★ THE PRESCRIPTION EXECUTED HERE WAS ALREADY WRITTEN DOWN. R1827's comment on this screen's ratchet pin says, of the two runs it had just added: *the repair is one decision applied to all of them at once, which is why these two are left uniform with their siblings rather than fixed alone.* This round is that sentence carried out, 45 rounds later — the shape R1791 recorded as **a prescription nobody executes is not a repair**, met from the other side for once.",
+      "changes_bullets": [
+        "`examples/hello-packet-view/src/lib.rs`",
+        "* `cell_band(seat, x, w)` — the one decision, and `list_head_seat()` beside it so the column headings have a seat to be centred in.",
+        "* three call sites re-seated: the cell closure in `list_row_paint`, the annotation closure and the name run in `name_column_paint`, and the column headings in `list_pane`.",
+        "* `name_column_paint` takes the row's `Rect` where it took `y: u32`.",
+        "`examples/hello-packet-view/src/painted.rs`",
+        "* `SHORT_BOX_BUDGET` 290 -> **162**, with the arithmetic argued at the constant: the drop is 128 = 7 headings + 112 cells + 9 annotations, the population is unchanged, and this is therefore the improvement direction of the ambiguity that pin's own comment warns it cannot tell apart.",
+        "`examples/hello-analyzer-shell/src/painted.rs`",
+        "* `r1872_no_run_in_the_message_list_sits_in_a_box_too_short_for_its_face` — a **zero** gate, asserted from the shell over one walk. The screen keeps its ratchet, because its population is hundreds of runs authored over many rounds; the surface this round built gets zero, because every run in that family now comes from `cell_band`. The family is checked for non-emptiness first.",
+        "* the census printout widened from three sites to the emitter's own ten, so the campaign's worklist is the list the warning would actually spell."
+      ],
+      "verification_bullets": [
+        "All of the following were run in the closing turn.",
+        "* `cargo test -p hello-packet-view` — 86 passed / 0 failed.",
+        "* `cargo test -p hello-analyzer-shell` — 162 passed / 0 failed.",
+        "* `cargo clippy --workspace --all-targets --features pinion-runtime/vello` — exit 0, zero warnings.",
+        "* `cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items` — run LOCALLY, clean.",
+        "* `cargo fmt --all --check` — clean.",
+        "* Five of the 41 demos `demo_radius.py --mode staged` computes for this change — r1693, r1707, r1699, r1694, r1698 — all rc=0 under the shared headless display.",
+        "★★★★★ TWO INSTRUMENTS AGREE, WHICH IS WHAT MAKES THE NUMBER A MEASUREMENT RATHER THAN A CLAIM: the screen's own ratchet pin fell 290 -> **162**, and the integrated shell's census fell `packets` 299 -> **171** at 61 -> 56 sites. Both are a drop of exactly **128**, and 128 decomposes as 7 + 112 + 9 — each of the three counted off the census rather than recalled. `pv.list.cell.*` is gone from the ten sites the warning spells; the head there is now a decode tree at 21.",
+        "★ THE GATE WAS PROVEN ABLE TO FAIL. Counterfactual, one variable: `cell_band` put back to the hand-picked band. The zero gate goes red naming exactly **128** runs, and the packet view's pin goes red at 290. A zero gate that has never been seen to fail is a gate that may be describing nothing.",
+        "🟥 ★★★★★ AND THAT COUNTERFACTUAL CAUGHT THIS ROUND'S OWN DEFECT — the failure text read *\"128 of the message list's 5 painted run(s)\"*. `Painted::rows` counts the distinct segment after the stem, so it answers how many SUB-FAMILIES the table paints, not how many runs. The non-emptiness check was fine; the denominator in the message was nonsense. Renamed for what it is, with the reason recorded at the site. ⇒ **a denominator nobody checked is the shape a wrong claim hides in**, and running the counterfactual is what read it aloud.",
+        "⚠ `clippy::pedantic`'s `similar_names` fired once and was repaid by renaming, never by suppressing.",
+        "⚠ NOT CLAIMED: the other 36 demos in the computed radius. This host cannot judge a full sweep — a majority exit 2 on a harness RPC timeout (`debt-a-deterministic-demo-has-a-wall-clock-bound`), so the sweep's verdict comes from CI after publishing."
+      ],
+      "impact_refs": [
+        "5.32",
+        "5.11"
+      ],
+      "carry_forward_bullets": [
+        "`debt-a-box-height-in-this-tree-never-consults-the-face` STAYS OPEN and is repaid in part: 162 runs remain on this screen, and the other four screens the debt's R1800 table names are untouched. Its numbers were updated with this round's, and the entry it gained says to ask the census rather than read the table — those figures are R1800's.",
+        "★ THE NEXT HEAD IS DERIVED, NOT CHOSEN: `cargo test -p hello-analyzer-shell r1870_the_short_box_census -- --nocapture`. Measured after this round, the largest single site in the application is the dashboard's `card.packet#*.cell.*` at **32** — the same class of authoring mistake in a different screen's table, and the same repair shape should reach it. Then a decode tree at 21 and a node palette at 22.",
+        "⚠ WHAT THIS ROUND DELIBERATELY DID NOT DO: fix the sibling tables. The dashboard's packet card and the node lab's palette have the same convention, and touching them here would have made one round's blast radius three screens and its counterfactual unreadable. The census names them and will keep naming them.",
+        "⚠ AND A LIMIT OF THE INSTRUMENT, restated because this round is the first to move it: the screen ratchet is a NUMERATOR over a population a round can change, so \"the screen got worse\" and \"the screen got bigger\" reach that constant as the same number. This round argued the direction in prose at the constant, which is the only thing available until the pin becomes a (numerator, denominator) pair — item 5 on the debt's own list, still unbuilt."
+      ],
+      "publishable_decision_summary": "One table's boxes, derived from their seats.\n\nSubject: the short-box repair campaign's first round, aimed at the head the integrated shell's census named rather than at a site chosen by eye.\n\n★ MEASURED FIRST, and this time the entry figures HELD: `pv.list.cell.*` is **112 runs at one site**, the largest single site in the whole application, on a `packets` destination carrying 299 short runs at 61 sites with a deepest shortfall of 6px.\n\n★★★★★ THE CAUSE IS ONE CONVENTION, NOT 128 MISTAKES. `FONT_SMALL` is 11 and `containment::line_box(11)` is **18**, and every box in this table was authored `Rect::new(x, seat.y + 5, w, 12)`. Six pixels short, so every descender in the message list was cut — which is the class a reader reported by eye, twice, eleven days apart.\n\n⇒ `cell_band(seat, x, w)`: a run's box in the message list is a band tall enough for the face, centred in the seat that holds it.\n\n🟥🟥 ★★★★★ **THE REPAIR IS NOT `18` IN PLACE OF `12`.** That fixes 128 runs and leaves the height a number somebody types, which is exactly how it became 12. The seat's own centre and the face are what the band is made of now, so a face change moves every box in this table and a `ROW_H` change moves them too — neither can be forgotten, and neither is a thing anybody has to remember.\n\n⚠ And `name_column_paint` took `y: u32`. A band needs the seat's HEIGHT as well as its top, so the **parameter** was wrong rather than the arithmetic; it takes the row's `Rect`.\n\n★★★★★ THE PRESCRIPTION EXECUTED HERE WAS ALREADY WRITTEN DOWN. R1827's comment on this screen's ratchet pin says, of the two runs it had just added: *the repair is one decision applied to all of them at once, which is why these two are left uniform with their siblings rather than fixed alone.* This round is that sentence carried out, 45 rounds later — the shape R1791 recorded as **a prescription nobody executes is not a repair**, met from the other side for once.",
+      "publishable_changes_bullets": [
+        "`examples/hello-packet-view/src/lib.rs`",
+        "* `cell_band(seat, x, w)` — the one decision, and `list_head_seat()` beside it so the column headings have a seat to be centred in.",
+        "* three call sites re-seated: the cell closure in `list_row_paint`, the annotation closure and the name run in `name_column_paint`, and the column headings in `list_pane`.",
+        "* `name_column_paint` takes the row's `Rect` where it took `y: u32`.",
+        "`examples/hello-packet-view/src/painted.rs`",
+        "* `SHORT_BOX_BUDGET` 290 -> **162**, with the arithmetic argued at the constant: the drop is 128 = 7 headings + 112 cells + 9 annotations, the population is unchanged, and this is therefore the improvement direction of the ambiguity that pin's own comment warns it cannot tell apart.",
+        "`examples/hello-analyzer-shell/src/painted.rs`",
+        "* `r1872_no_run_in_the_message_list_sits_in_a_box_too_short_for_its_face` — a **zero** gate, asserted from the shell over one walk. The screen keeps its ratchet, because its population is hundreds of runs authored over many rounds; the surface this round built gets zero, because every run in that family now comes from `cell_band`. The family is checked for non-emptiness first.",
+        "* the census printout widened from three sites to the emitter's own ten, so the campaign's worklist is the list the warning would actually spell."
+      ],
+      "publishable_verification_bullets": [
+        "All of the following were run in the closing turn.",
+        "* `cargo test -p hello-packet-view` — 86 passed / 0 failed.",
+        "* `cargo test -p hello-analyzer-shell` — 162 passed / 0 failed.",
+        "* `cargo clippy --workspace --all-targets --features pinion-runtime/vello` — exit 0, zero warnings.",
+        "* `cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items` — run LOCALLY, clean.",
+        "* `cargo fmt --all --check` — clean.",
+        "* Five of the 41 demos `demo_radius.py --mode staged` computes for this change — r1693, r1707, r1699, r1694, r1698 — all rc=0 under the shared headless display.",
+        "★★★★★ TWO INSTRUMENTS AGREE, WHICH IS WHAT MAKES THE NUMBER A MEASUREMENT RATHER THAN A CLAIM: the screen's own ratchet pin fell 290 -> **162**, and the integrated shell's census fell `packets` 299 -> **171** at 61 -> 56 sites. Both are a drop of exactly **128**, and 128 decomposes as 7 + 112 + 9 — each of the three counted off the census rather than recalled. `pv.list.cell.*` is gone from the ten sites the warning spells; the head there is now a decode tree at 21.",
+        "★ THE GATE WAS PROVEN ABLE TO FAIL. Counterfactual, one variable: `cell_band` put back to the hand-picked band. The zero gate goes red naming exactly **128** runs, and the packet view's pin goes red at 290. A zero gate that has never been seen to fail is a gate that may be describing nothing.",
+        "🟥 ★★★★★ AND THAT COUNTERFACTUAL CAUGHT THIS ROUND'S OWN DEFECT — the failure text read *\"128 of the message list's 5 painted run(s)\"*. `Painted::rows` counts the distinct segment after the stem, so it answers how many SUB-FAMILIES the table paints, not how many runs. The non-emptiness check was fine; the denominator in the message was nonsense. Renamed for what it is, with the reason recorded at the site. ⇒ **a denominator nobody checked is the shape a wrong claim hides in**, and running the counterfactual is what read it aloud.",
+        "⚠ `clippy::pedantic`'s `similar_names` fired once and was repaid by renaming, never by suppressing.",
+        "⚠ NOT CLAIMED: the other 36 demos in the computed radius. This host cannot judge a full sweep — a majority exit 2 on a harness RPC timeout (`debt-a-deterministic-demo-has-a-wall-clock-bound`), so the sweep's verdict comes from CI after publishing."
+      ],
+      "publishable_impact_refs": [
+        "5.32",
+        "5.11"
+      ],
+      "publishable_carry_forward_bullets": [
+        "`debt-a-box-height-in-this-tree-never-consults-the-face` STAYS OPEN and is repaid in part: 162 runs remain on this screen, and the other four screens the debt's R1800 table names are untouched. Its numbers were updated with this round's, and the entry it gained says to ask the census rather than read the table — those figures are R1800's.",
+        "★ THE NEXT HEAD IS DERIVED, NOT CHOSEN: `cargo test -p hello-analyzer-shell r1870_the_short_box_census -- --nocapture`. Measured after this round, the largest single site in the application is the dashboard's `card.packet#*.cell.*` at **32** — the same class of authoring mistake in a different screen's table, and the same repair shape should reach it. Then a decode tree at 21 and a node palette at 22.",
+        "⚠ WHAT THIS ROUND DELIBERATELY DID NOT DO: fix the sibling tables. The dashboard's packet card and the node lab's palette have the same convention, and touching them here would have made one round's blast radius three screens and its counterfactual unreadable. The census names them and will keep naming them.",
+        "⚠ AND A LIMIT OF THE INSTRUMENT, restated because this round is the first to move it: the screen ratchet is a NUMERATOR over a population a round can change, so \"the screen got worse\" and \"the screen got bigger\" reach that constant as the same number. This round argued the direction in prose at the constant, which is the only thing available until the pin becomes a (numerator, denominator) pair — item 5 on the debt's own list, still unbuilt."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
