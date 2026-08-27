@@ -148,7 +148,23 @@ const SIZES: &[(&str, (u32, u32))] = &[
 /// denominator in its failure and pins only the numerator, so "the screen got
 /// worse" and "the screen got bigger" reach this constant as the same number.
 /// Which of the two it was has to be argued in prose — as it is above.
-const SHORT_BOX_BUDGET: usize = 290;
+///
+/// ★★★★★ R1872 LOWERED IT, 290 -> 162, and **that is the prescription two
+/// paragraphs up being executed rather than a new decision**: *the repair is one
+/// decision applied to all of them at once, which is why these two are left
+/// uniform with their siblings rather than fixed alone.* The one decision is
+/// [`crate::cell_band`] — a run's box in the message list is a band tall enough
+/// for the face, centred in the seat that holds it — and it reaches the seven
+/// column headings, the 112 cells and the nine row annotations together.
+///
+/// **128 runs, and the arithmetic is checkable in both directions**: 290 - 162 =
+/// 128 = 7 + 112 + 9, and the census the integrated shell takes named
+/// `pv.list.cell.*` at 112 as the largest single site in the whole application
+/// before this round. The population is unchanged — no run was added or removed,
+/// only re-seated — so this is the improvement direction of the very ambiguity
+/// the paragraph above warns the pin cannot tell apart, and it is argued here
+/// for that reason.
+const SHORT_BOX_BUDGET: usize = 162;
 
 /// Where every tag in the painted scene ended up, and every text run with it.
 struct Painted {

@@ -2479,7 +2479,7 @@ fn list_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
         children.push(tagged_label(
             &format!("pv.list.head.{n}"),
             column.title,
-            Rect::new(col.x, 6, col.w.saturating_sub(8), 12),
+            cell_band(list_head_seat(), col.x, col.w.saturating_sub(8)),
             FONT_SMALL,
             ink.text_3,
         ));
@@ -2543,7 +2543,7 @@ fn list_row_paint(n: usize, visual: usize, selected: usize, ink: Ink) -> Vec<Sce
         ));
         let cell = |i: usize| {
             let c = list_col(i);
-            Rect::new(c.x, row.y + 5, c.w.saturating_sub(8), 12)
+            cell_band(row, c.x, c.w.saturating_sub(8))
         };
         // ★★★★★ R1693 — every cell carries its own tag, which is what makes the
         // list a grid a reader can traverse rather than sixteen paragraphs. The
@@ -2572,7 +2572,7 @@ fn list_row_paint(n: usize, visual: usize, selected: usize, ink: Ink) -> Vec<Sce
         children.extend(name_column_paint(
             n,
             cell(NAME_COLUMN),
-            row.y,
+            row,
             &texts[NAME_COLUMN],
             ink,
         ));
@@ -2597,7 +2597,7 @@ fn list_row_paint(n: usize, visual: usize, selected: usize, ink: Ink) -> Vec<Sce
 /// on its own terms: "what shares the name column, and in what order" is one
 /// decision, and it was the only part of the row's paint that had to be read as
 /// a sequence rather than as a list.
-fn name_column_paint(n: usize, name_col: Rect, y: u32, name: &str, ink: Ink) -> Vec<Scene> {
+fn name_column_paint(n: usize, name_col: Rect, row: Rect, name: &str, ink: Ink) -> Vec<Scene> {
     let message = &spec::ROWS[n];
     let mut runs = Vec::new();
     let mut right = name_col.x + name_col.w;
@@ -2608,7 +2608,11 @@ fn name_column_paint(n: usize, name_col: Rect, y: u32, name: &str, ink: Ink) -> 
             tagged_label(
                 &format!("pv.list.row.{n}.{suffix}"),
                 text,
-                Rect::new(right, y + 5, width, 12),
+                // ★ R1872 — the ROW is the seat, not one of its edges. This took
+                // `y: u32` and could only add a hand-picked offset to it; a band
+                // needs the seat's height as well, which is why the parameter
+                // changed rather than the arithmetic.
+                cell_band(row, right, width),
                 FONT_SMALL,
                 fg,
             )
@@ -2665,7 +2669,7 @@ fn name_column_paint(n: usize, name_col: Rect, y: u32, name: &str, ink: Ink) -> 
         n,
         NAME_COLUMN,
         name.to_owned(),
-        Rect::new(name_col.x, y + 5, right.saturating_sub(name_col.x + 8), 12),
+        cell_band(row, name_col.x, right.saturating_sub(name_col.x + 8)),
         ink.text,
     ));
     runs
@@ -2708,6 +2712,38 @@ fn correlation_json() -> serde_json::Value {
             })
             .collect(),
     )
+}
+
+/// One run's box in the message list: a band tall enough for the list's face,
+/// centred in the seat that holds it.
+///
+/// ★★★★★ R1872 — **derived, never hand-picked, and that is the repair rather
+/// than a bigger number.** Every box in this table was authored
+/// `Rect::new(x, seat.y + 5, w, 12)`, and [`pinion_core::containment::line_box`]
+/// of `FONT_SMALL` is **18**: the face needs six pixels the box never had, so
+/// every descender in the message list was cut. Measured through the integrated
+/// shell, that one mistake is 128 runs — the seven column headings, the 112
+/// cells, and the nine row annotations — and it was the largest single site in
+/// the whole application.
+///
+/// Writing `18` in place of `12` would have repaired 128 runs and left the
+/// height a number somebody types, which is how it became 12 in the first
+/// place. The seat's own centre and the face are what the band is now made of,
+/// so a face change moves every box in this table and a row-height change moves
+/// them too — neither can be forgotten.
+///
+/// ⚠ The centre is preserved exactly: `seat.y + 5` with height 12 centres at
+/// `seat.y + 11`, and `ROW_H` is 22, so this is the same centre with the right
+/// height. The header's old `y = 6, h = 12` centres at 12 in a 24-pixel head,
+/// likewise.
+fn cell_band(seat: Rect, x: u32, w: u32) -> Rect {
+    pinion_core::containment::line_rect_in(seat, x, w, FONT_SMALL)
+}
+
+/// The seat the list's column headings sit in — the head strip, in the list
+/// pane's own coordinates.
+fn list_head_seat() -> Rect {
+    Rect::new(0, 0, list_rect().w, HEAD_H)
 }
 
 /// The tag one message cell is addressed by: the row and the column it is in.

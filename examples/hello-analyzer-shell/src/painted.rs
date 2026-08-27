@@ -6753,10 +6753,75 @@ fn short_box_report_of(
         sites.len(),
         lines,
         lines,
+        // ★ R1872 — the SAME ten the warning spells, not a sample of three. The
+        // repair campaign works from this list, and a census that shows fewer
+        // sites than the emitter says makes a reader guess at the rest.
         sites
             .iter()
-            .take(3)
+            .take(BOUND)
             .map(|(site, rows)| (site.as_str(), rows.len()))
             .collect::<Vec<_>>(),
     );
+}
+
+/// ★★★★★ R1872 — **the message list has NO box too short for its face, and the
+/// gate is zero rather than a ratchet.**
+///
+/// The screen this table lives on carries a ratchet pin, and it has to: its
+/// population is hundreds of runs authored over many rounds, and a gate
+/// demanding zero on a tree that cannot give it is a gate somebody turns off.
+/// But a ratchet is the shape of a BACKLOG, not the shape of a surface somebody
+/// just built. What this round built is `cell_band` — a run's box in the message
+/// list is a band tall enough for the face, centred in the seat that holds it —
+/// and every run in that table now comes from it, so for this family the honest
+/// number is **zero**, permanently, by construction.
+///
+/// Asserted from the SHELL rather than from the screen's own file, because the
+/// message list reaches a reader as a page of this application and that is the
+/// composition rule (7) asks for; and because the shell's frame is the one the
+/// census walks, so the two readings cannot drift.
+///
+/// ⚠ The family is checked for non-emptiness first. An address prefix that
+/// stopped matching would make this pass by describing nothing, which is the
+/// failure mode every zero gate has.
+#[test]
+fn r1872_no_run_in_the_message_list_sits_in_a_box_too_short_for_its_face() {
+    /// Every run of the message list's table: its column headings, its cells,
+    /// and the annotations that share the name column.
+    const FAMILY: &str = "pv.list.";
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        state
+            .go("packets")
+            .unwrap_or_else(|why| panic!("the capture section is open and refused: {why:?}"));
+        let (shot, scene) = painted_at((WIN_W, WIN_H));
+
+        // ⚠ `rows` counts the distinct segment after the stem, so this is how
+        // many sub-families the table paints (`head`, `cell`, `row`, …) and NOT
+        // how many runs. Named for what it is: the first draft called it
+        // "painted runs" and the counterfactual printed "128 of 5", which is
+        // the shape of a denominator nobody checked.
+        let families = shot.rows(FAMILY);
+        assert!(
+            families > 0,
+            "nothing is painted under `{FAMILY}` — the address family this gate \
+             names has moved, and a zero that describes nothing is not a zero",
+        );
+
+        let cut: Vec<_> = pinion_core::containment::short_boxes(&scene)
+            .into_iter()
+            .filter(|row| row.address().starts_with(FAMILY))
+            .map(|row| (row.address(), row.content.clone(), row.px, row.short_by))
+            .collect();
+        assert!(
+            cut.is_empty(),
+            "{} run(s) of the message list ({families} sub-famil(ies) under \
+             `{FAMILY}`) sit in a box too short for their own face; every one \
+             of them is authored by `cell_band`, so this is that derivation \
+             being bypassed rather than a number to raise: {cut:#?}",
+            cut.len(),
+        );
+    });
 }
