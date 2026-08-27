@@ -2164,6 +2164,41 @@ fn poses_at_destination(destination: &str) -> Vec<Painted> {
     out
 }
 
+/// ★★★★★ R1867 — **the host's status slot has two occupants, and a census of
+/// what a destination shows has to see both.**
+///
+/// Navigating says a sentence, so every frame these gates take is a frame with
+/// a toast in the band — which is why `shell.toast` has always satisfied a
+/// `Where::Chrome` row and why the gesture sentence beside it could not. The
+/// slot is one place with two things in it, exactly as a section is one place
+/// with several poses, and this is that second axis made explicit rather than
+/// left to whichever state the test happened to be in.
+///
+/// Runs `f` with a toast up (the state navigation leaves behind) and again with
+/// the toast's whole life spent. ⚠ Seconds, not milliseconds (R1783), and taken
+/// from [`Saying::life`](pinion_core::utterance::Saying::life) rather than
+/// written here — a test that pins that number pins a fact the type owns.
+fn over_slot_occupancies<T>(
+    state: &std::rc::Rc<super::ShellState>,
+    mut f: impl FnMut() -> T,
+) -> Vec<T> {
+    let owner = Owner::current().expect("a pose is taken inside an Owner scope");
+    let mut out = Vec::with_capacity(2);
+    assert!(
+        state.toast.showing().is_some(),
+        "navigation says a sentence, so a frame taken right after it must have \
+         one — if this fails the two occupancies below are one",
+    );
+    out.push(f());
+    owner.tick_animations(state.toast.life() + 1.0);
+    assert!(
+        state.toast.showing().is_none(),
+        "the toast outlived its own declared life",
+    );
+    out.push(f());
+    out
+}
+
 /// The same frames, folded into one index: what the section shows across all of
 /// them.
 ///
@@ -2171,8 +2206,21 @@ fn poses_at_destination(destination: &str) -> Vec<Painted> {
 /// something is — a press at a painted rectangle, say — is about one frame, and
 /// folding two would compare a rectangle from one with a hit test run in the
 /// other.
+///
+/// ★ R1867 — folded over the status slot's occupancies too, for the reason
+/// [`over_slot_occupancies`] gives.
 fn painted_over_poses(destination: &str) -> Painted {
-    let mut frames = poses_at_destination(destination);
+    let state = use_shell_state();
+    if destination != state.at() {
+        state
+            .go(destination)
+            .unwrap_or_else(|why| panic!("{destination} is open and refused: {why:?}"));
+    }
+    let mut frames: Vec<Painted> =
+        over_slot_occupancies(&state, || poses_at_destination(destination))
+            .into_iter()
+            .flatten()
+            .collect();
     let mut folded = frames.remove(0);
     for frame in frames {
         for (tag, rect) in frame.tags {
@@ -2916,11 +2964,19 @@ fn r1695_each_destination_announces_only_its_own_regions() {
             if key != state.at() {
                 state.go(key).expect("an open destination is reachable");
             }
-            let announced: BTreeSet<String> =
+            // ★ R1867 — over the status slot's two occupancies, for the reason
+            // `over_slot_occupancies` gives: the tree carries whichever of the
+            // slot's occupants is painted, so a reading taken in one state
+            // reports the other's region as unannounced.
+            let announced: BTreeSet<String> = over_slot_occupancies(&state, || {
                 super::AnalyzerShellView::access_node(&ScreenState::default(), None)
                     .into_iter()
                     .map(|node| node.tag)
-                    .collect();
+                    .collect::<BTreeSet<String>>()
+            })
+            .into_iter()
+            .flatten()
+            .collect();
             for voice in spec::VOICES {
                 for member in voice.population.members() {
                     let tag = voice.tag.replace("{}", &member);

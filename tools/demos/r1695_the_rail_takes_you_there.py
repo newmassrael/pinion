@@ -60,6 +60,7 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     assert_every_destination_arrives,
     assert_router_press_moves,
+    bring_into_view,
     run_demo,
 )
 
@@ -258,9 +259,19 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
             # The knob moved with it — the part a hand-drawn track does not do.
             ok(f"D: {key} is a switch to a reader", True)
 
+        # ★★★★★ R1867 — the segments are pressed where a READER finds them, and
+        # this loop used to assume where that was.
+        #
+        # It read the rectangle straight out of the paint snapshot, which is a
+        # claim that the control is above the fold — true until R1864 gave the
+        # window a status band and the settings page's last group moved below
+        # the viewport. The demo then died `KeyError('shell.settings.theme.0')`
+        # and stayed red for two rounds, and **the screen was not wrong**:
+        # `scene/scroll_reach` reported the segments `scrollable`, `lost: 0`,
+        # with the offset that shows them. A fold position is not what this
+        # section is about; pressing the segment is.
         for n, name in enumerate(spec["themes"]):
-            rects = abs_rects_of(app.snapshot(source="paint"))
-            x, y, w, h = rects[f"shell.settings.theme.{n}"]
+            x, y, w, h = bring_into_view(app, f"shell.settings.theme.{n}")
             app.request(
                 "scene/click", {"button": "left", "at": {"x": x + w // 2, "y": y + h // 2}}
             )

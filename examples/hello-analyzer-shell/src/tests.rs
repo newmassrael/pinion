@@ -1100,6 +1100,125 @@ fn a_locked_seat_is_announced_named_and_keeps_its_place_in_the_set() {
     );
 }
 
+/// ★★★★★ R1867 — **no destination paints a region nobody decided about**, and
+/// this asks it where a round can hear the answer.
+///
+/// # The hole this closes, measured — and it is the HOST's, not the census's
+///
+/// A region that entered this screen with no declaration was published first
+/// and reported later, by the demo sweep, which runs after a push. It happened
+/// **twice, three rounds apart, neither round aware of the other**:
+/// `shell.status` at R1864 and `shell.status.slot` at R1865. Two rounds finding
+/// the same hole independently is a structure, not a slip, and the repair for a
+/// structure is a gate rather than a note.
+///
+/// ⚠ **The obvious reading of that is wrong, and measuring said so.** A comment
+/// left at R1846 gives the reason as *"a voice census needs a running screen and
+/// a demo is not run by `cargo test`"*. Counted here: **four sibling screens
+/// already run this census in `cargo test`** — `hello-packet-view`,
+/// `hello-node-lab`, `hello-key-patterns` and `hello-log-view` each build their
+/// scene, enrich the names from it and assert the defect arms are empty; the
+/// node lab does it at two window sizes and over four states. So the census
+/// never needed a running screen. What had no such gate was the **assembled
+/// shell** — the host that composes those four — which is exactly where the two
+/// undeclared regions went in.
+///
+/// ⇒ the recipe below is a fifth hand-rolled copy of one mechanism, and that is
+/// registered rather than hidden: `debt-five-screens-hand-roll-one-voice-gate`.
+///
+/// # Both occupancies, because the slot has two
+///
+/// A `layout` silence promises that the subtree speaks, and the status band's
+/// slot holds a toast for 2.6 seconds and the gesture sentence the rest of the
+/// time. Checking one state would leave the other free to be `hollow`, which is
+/// precisely how the gesture sentence came to be inaudible: it was the state
+/// nobody looked at.
+#[test]
+fn r1867_no_destination_paints_a_region_with_no_declared_voice() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let roster = spec::destinations();
+        let mut wrong: Vec<String> = Vec::new();
+        let mut judged = 0_usize;
+        for holding in [true, false] {
+            if holding {
+                state.say(pinion_core::utterance::Utterance::done(
+                    "a sentence the slot is holding",
+                ));
+            } else {
+                // Drive the toast's whole life forward rather than clearing it
+                // by hand: what this gate is judging is the state the screen
+                // actually reaches, and `Saying::life` is the number that says
+                // when it reaches it. ⚠ Seconds, not milliseconds (R1783).
+                owner.tick_animations(state.toast.life() + 1.0);
+            }
+            assert_eq!(
+                state.toast.showing().is_some(),
+                holding,
+                "the slot's occupancy is what this loop varies",
+            );
+            for destination in roster.open() {
+                let key = destination.key.as_ref();
+                assert!(state.go(key).is_ok(), "the rail must reach {key}");
+                let mut scene = super::view(ScreenState::default(), pinion_core::Frame::default());
+                let mut cache = pinion_runtime::LayoutCache::new();
+                pinion_runtime::compute_layout(&mut scene, &mut cache, super::WIN_W, super::WIN_H);
+                let mut nodes = AnalyzerShellView::access_node(&ScreenState::default(), None);
+                // ★★★★★ The step this gate would have been WRONG without, and
+                // it is the difference between a tree and the tree a reader
+                // gets: a widget's `access_node` returns role, state and value
+                // and deliberately NOT the name for anything named from its
+                // paint (`grid_table_nodes` says so at the site: *"NO
+                // `with_name`: the name is derived from the painted header"*).
+                // The runtime fills those in after layout. Skipping it here
+                // reported **90 `mumbled` regions across four destinations**
+                // (dashboard, packets, keys, logs) that a running window does
+                // not have — a gate accusing the screen of a defect the gate had
+                // created. Every sibling screen's own census carries this line
+                // with the same warning beside it, which is the third reason the
+                // recipe wants lifting rather than copying.
+                pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
+                let announced = pinion_a11y::announcements(&nodes);
+                let referenced = pinion_a11y::referenced_tags(&nodes);
+                let census = pinion_core::voice::voice_census(&scene, &announced, &referenced);
+                judged += census.nodes.len();
+                for row in &census.nodes {
+                    if row.voice.is_defect() {
+                        wrong.push(format!(
+                            "{key} ({}): {} is {} (name {:?}, fault {:?})",
+                            if holding {
+                                "a toast in the slot"
+                            } else {
+                                "the gesture sentence in the slot"
+                            },
+                            row.tag,
+                            row.voice.name(),
+                            row.name,
+                            row.fault,
+                        ));
+                    }
+                }
+            }
+        }
+        assert!(
+            wrong.is_empty(),
+            "{} region(s) of {judged} judged are not classified — every one is a \
+             reader who is not told something the screen paints, and the repair \
+             is a row in `spec::VOICES` or `spec::SILENCES` rather than a wider \
+             budget here:\n  {}",
+            wrong.len(),
+            wrong.join("\n  "),
+        );
+        // ★ And the gate has to be able to FAIL: a census over nothing reports
+        // nothing wrong, which is the shape every vacuous green takes.
+        assert!(
+            judged > 0,
+            "the census judged no region at all, so its verdict is vacuous",
+        );
+    });
+}
+
 #[test]
 fn a_value_that_is_not_knowable_is_announced_as_its_meaning() {
     // The map's unresolved row paints an em dash, which is the typographic

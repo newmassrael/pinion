@@ -5332,6 +5332,113 @@ def declared_and_painted(
     )
 
 
+def settle_saying(app: "RpcSubprocess", external: str = "/external") -> str:
+    """★★★★★ R1867 — advance until the screen's transient sentence has EXPIRED,
+    and answer what it had been saying.
+
+    ## Why a helper and not a `tick`
+
+    A screen that says something on arrival has two resting states, not one: the
+    band holds a toast for as long as it lives and the permanent sentence the
+    rest of the time. A census taken in one of them reports the other's region
+    as missing — measured: `r1694` demanded `shell.status.gesture` while the
+    boot toast was up and failed. Which is why the caller UNIONS the two
+    readings rather than moving to the later one: `shell.toast` is painted only
+    while a toast shows, so a census taken solely after the settle would lose
+    that region for the same reason, the other way round.
+
+    The duration is **asked for, never written down**. `Saying::to_wire` (R1790)
+    publishes `left` for this reason in as many words — *"a test that guesses
+    the duration is a test that pins a number this type owns"* — and R1787's CI
+    red was a demo doing the guessing. ⚠ `left` is SECONDS and so is `tick`
+    (R1783); the epsilon is one frame's worth, because the tick that reaches
+    exactly zero is the one that clears it.
+
+    Returns the sentence that was cleared, or `""` when nothing was being said,
+    so a caller can assert it settled something rather than assume it did.
+    """
+    said = app.query(f"{external}/saying")
+    if not isinstance(said, dict) or said.get("said") is None:
+        return ""
+    sentence = said["said"].get("sentence", "") if isinstance(said["said"], dict) else ""
+    app.tick(float(said["left"]) + 0.05)
+    after = app.query(f"{external}/saying")
+    assert isinstance(after, dict) and after.get("said") is None, (
+        f"the sentence outlived the {said['left']}s the screen said it had "
+        f"left: {after!r}"
+    )
+    return sentence
+
+
+def bring_into_view(
+    app: "RpcSubprocess", tag: str, *, source: str = "paint"
+) -> tuple[int, int, int, int]:
+    """★★★★★ R1867 — scroll whatever holds `tag` until a reader can see it, and
+    answer its rectangle in WINDOW space.
+
+    ## What this is the repair of, measured
+
+    `r1695_the_rail_takes_you_there` pressed the settings page's theme segments
+    by reading their rectangle straight out of the paint snapshot. That worked
+    while the page's last group happened to be above the fold, and stopped the
+    moment R1864 gave the window a status band: the segment moved below the
+    viewport, `abs_rects_of` had no key for it, and the demo died
+    `KeyError('shell.settings.theme.0')` — a red that was **not** a defect in
+    the screen. Measured here at R1867: `scene/scroll_reach` reports the theme
+    segments `scrollable`, `lost: 0`, with the offset that shows them.
+
+    So the demo was asserting a **fold position** while claiming to assert a
+    **press**. A reader who cannot see a control scrolls to it; this is the
+    harness doing what the reader does, and it takes the offset from the
+    framework's own answer rather than from a number somebody picked — which is
+    the property that stops the next round moving the fold from breaking it
+    again.
+
+    ## Why it is here rather than in one demo
+
+    Every screen this project builds now has panes whose content outruns them,
+    so "press a control that may be below the fold" is a harness capability, not
+    one demo's paragraph. The floor's own test harness offers a scroll-to-item
+    only for its model-driven item views; anything hand-painted is the author's
+    problem there.
+
+    Raises `AssertionError` when the tag is neither painted nor reachable, and
+    says which of the two — a control nothing brings into view is a real defect
+    and this must not paper over it.
+    """
+    rects = abs_rects_of(app.snapshot(source=source))
+    if tag in rects:
+        return rects[tag]
+    resp = app.request("scene/scroll_reach")
+    assert resp is not None and isinstance(resp.result, dict)
+    rows = [row for row in resp.result.get("out_of_sight", []) if row.get("tag") == tag]
+    if not rows:
+        raise AssertionError(
+            f"{tag} is not painted and `scene/scroll_reach` does not know it "
+            f"either, so nothing on this screen can bring it into view"
+        )
+    row = rows[0]
+    if row["reach"] != "scrollable":
+        raise AssertionError(
+            f"{tag} is {row['reach']} in viewport {row['viewport']['name']!r} "
+            f"(short by {row.get('short_by')}), so no offset shows it whole"
+        )
+    # Outermost first, which is the order the report publishes and the order a
+    # chain has to move in: an inner viewport's offset is meaningless until the
+    # one above it has put the inner viewport on screen.
+    for move in row["moves"]:
+        app.scroll(move["viewport"], to=(move["to_x"], move["to_y"]))
+        app.tick_ms(16)
+    rects = abs_rects_of(app.snapshot(source=source))
+    if tag not in rects:
+        raise AssertionError(
+            f"{tag} was reported reachable by {row['moves']} and is still not "
+            f"painted after performing exactly that — the report and the scroll "
+            f"disagree, which is a defect in one of them"
+        )
+    return rects[tag]
+
+
 def declared_but_unreachable(
     app: "RpcSubprocess", declared: "Iterable[str]", size: tuple[int, int]
 ) -> "list[str]":

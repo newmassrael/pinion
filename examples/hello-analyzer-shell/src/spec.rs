@@ -3149,6 +3149,23 @@ pub const VOICES: &[VoiceSpec] = &[
         population: Population::One,
         at: Where::Chrome,
     },
+    // ★★★★★ R1867 — and what is always true: the gesture sentence, which the
+    // status band's slot shows whenever no toast has taken it. Announced for
+    // the reason the slot's silence is a `layout` — the promise that the slot's
+    // occupant speaks has to hold in BOTH of its states, and this is the state
+    // nothing was speaking in.
+    //
+    // ⚠ It is `Where::Chrome` and it is nonetheless absent while a toast is up,
+    // which is not a contradiction: `Where` says which DESTINATIONS paint a
+    // region, and this one is painted at all six. The other axis — the slot's
+    // occupancy — is the toast's lifetime, and the accessibility tree follows
+    // it so the region is announced exactly when it is painted.
+    VoiceSpec {
+        tag: "shell.status.gesture",
+        role: "status",
+        population: Population::One,
+        at: Where::Chrome,
+    },
 ];
 
 /// Every region of the opening screen that owes a reader **silence**, and why.
@@ -3397,5 +3414,25 @@ pub const SILENCES: &[(&str, Population, &str, Where)] = &[
         Population::One,
         "part_of",
         Where::At("settings"),
+    ),
+    // ★★★★★ R1867 — the host's status band and its one message slot. Both are
+    // furniture: the band is the slot's ground and the slot arranges whichever
+    // occupant is there, so `layout` is the only honest kind for either — and
+    // `layout` is the one kind the census will not let a screen hide behind,
+    // because it promises the subtree speaks and reports `hollow` when it does
+    // not.
+    //
+    // ⚠ These two rows are the reason this round exists. `shell.status` entered
+    // at R1864 and `shell.status.slot` at R1865, both without a declaration and
+    // neither round aware of the other — which is a structure and not a slip.
+    // What caught them was the demo sweep, which runs AFTER a push; what stops
+    // the next one is `r1867_no_destination_paints_a_region_with_no_declared_
+    // voice` in this crate's own tests, which runs before one.
+    ("shell.status", Population::One, "layout", Where::Chrome),
+    (
+        "shell.status.slot",
+        Population::One,
+        "layout",
+        Where::Chrome,
     ),
 ];

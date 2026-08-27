@@ -10386,30 +10386,57 @@ fn status_band_scene(state: &ShellState, palette: Palette) -> Scene {
     // The slot in the BAND's space, which is what the band's own node is laid
     // out in.
     let local = Rect::new(slot.x - band.x, slot.y - band.y, slot.w, slot.h);
-    let saying = toast_in_slot(state, palette, slot).map_or_else(
-        || {
-            label(
+    let saying = toast_in_slot(state, palette, slot).unwrap_or_else(|| {
+        // ★★★★★ R1867 — the idle occupant is a REGION now, not a bare run.
+        //
+        // The slot below declares that whatever is in it speaks, and that
+        // promise has to be kept in both of its states. A toast keeps it
+        // (`shell.toast` is announced); this sentence did not, because a run
+        // with no address is invisible to the accessibility tree and to the
+        // census both. So the host's gesture help — the one line telling a
+        // reader what the pointer does here — reached nobody who does not see
+        // the drawing, for the 163 rounds it was a floating strip and the three
+        // it has been in this band.
+        Scene::Container(
+            ContainerNode::new(vec![label(
                 HELP_STRIP,
                 Rect::new(0, 0, local.w, local.h),
                 STATUS_FACE,
                 palette.muted,
-            )
-        },
-        |toast| toast,
-    );
-    Scene::Container(
-        ContainerNode::new(vec![Scene::Container(
-            ContainerNode::new(vec![saying])
-                .with_tag(STATUS_SLOT)
-                .with_layout(absolute(local)),
-        )])
-        .with_tag(STATUS_BAND)
-        // Exactly the application bar's own style, and deliberately: the two are
-        // the same piece of furniture at opposite edges, and a band that painted
-        // itself differently would read as a panel that had slipped down there.
-        .with_style(BoxStyle::filled(palette.panel))
-        .with_layout(absolute(band)),
+            )])
+            .with_tag(STATUS_GESTURE)
+            .with_layout(absolute(Rect::new(0, 0, local.w, local.h))),
+        )
+    });
+    // ★★★★★ R1867 — **one slot, and its occupant is what speaks.**
+    //
+    // `layout` rather than `part_of(X)`: the slot has two possible occupants
+    // and neither is the other's part, so naming one of them would be a
+    // declaration that is true half the time. What is true in both states is
+    // that this box arranges and does not announce — and the census checks
+    // exactly that, by refusing a `layout` whose subtree nobody speaks for
+    // (`Voice::Hollow`). That refusal is what forced the gesture sentence above
+    // to become a region; a weaker declaration would have bought this gate's
+    // silence with a reader's.
+    let slot_node = Scene::Container(
+        ContainerNode::new(vec![saying])
+            .with_tag(STATUS_SLOT)
+            .with_layout(absolute(local)),
     )
+    .silenced(Silence::layout("the status band's one message slot"));
+    Scene::Container(
+        ContainerNode::new(vec![slot_node])
+            .with_tag(STATUS_BAND)
+            // Exactly the application bar's own style, and deliberately: the two
+            // are the same piece of furniture at opposite edges, and a band that
+            // painted itself differently would read as a panel that had slipped
+            // down there.
+            .with_style(BoxStyle::filled(palette.panel))
+            .with_layout(absolute(band)),
+    )
+    // ★ R1867 — the band is the slot's ground and nothing else. Its own words
+    // are the slot's, so it arranges and stays quiet.
+    .silenced(Silence::layout("the status band's ground"))
 }
 
 /// The status band's tag.
@@ -10424,6 +10451,16 @@ const STATUS_BAND: &str = "shell.status";
 /// entering the ratchet that counts host marks over a guest, since that
 /// predicate counts TAGGED nodes.
 const STATUS_SLOT: &str = "shell.status.slot";
+
+/// ★★★★★ R1867 — the slot's IDLE occupant: the host's gesture sentence.
+///
+/// It has an address because it has a voice, and it has a voice because the
+/// slot's declaration promises one. Before this round the sentence was an
+/// untagged text run inside a tagged box, which is the one shape the voice
+/// census cannot see: a run with no address is not an addressable region, so
+/// the box read as a container over nothing and the words reached no reader who
+/// does not see them.
+const STATUS_GESTURE: &str = "shell.status.gesture";
 
 /// Every colour the painters here read, resolved from one theme.
 ///
@@ -11013,7 +11050,18 @@ impl WidgetA11y for AnalyzerShellView {
         if dashboard {
             root = root.with_child("shell.palette");
         }
-        let mut nodes = vec![root.with_child("shell.toast")];
+        // ★ R1867 — the status band's slot has two occupants and the tree
+        // carries whichever is PAINTED. `shell.toast` is a live region and
+        // stays whether or not it holds a sentence (R1778); the gesture
+        // sentence is not live and is only there when no toast has taken its
+        // place, so announcing it unconditionally would be a name with no
+        // region behind it — `Voice::Ghost`, which is a defect the census
+        // reports and this round has no reason to author.
+        let mut root = root.with_child("shell.toast");
+        if state.toast.showing().is_none() {
+            root = root.with_child(STATUS_GESTURE);
+        }
+        let mut nodes = vec![root];
         nodes.extend(app_bar_nodes(&state));
         nodes.extend(rail_nodes(&state));
         // The region says which destination arrived — the fact the reference
@@ -11077,6 +11125,20 @@ impl WidgetA11y for AnalyzerShellView {
                         .urgency(),
                 )),
         );
+        if state.toast.showing().is_none() {
+            // ★★★★★ R1867 — the host's gesture help, heard.
+            //
+            // `Status` because that is what this shell already calls a strip
+            // that states a fact rather than takes a press — `shell.settings
+            // .build` is the same shape and the same role — and NOT live: a
+            // sentence that has been there since the window opened has nothing
+            // to interrupt a reader about.
+            nodes.push(
+                AccessNode::new(STATUS_GESTURE, AriaRole::Status)
+                    .with_name("Gestures")
+                    .with_value(AccessValue::Text(HELP_STRIP.to_owned())),
+            );
+        }
         nodes
     }
 }

@@ -120,17 +120,6 @@
       ]
     },
     {
-      "name": "debt-a-host-strip-is-anchored-to-rectangles-its-guest-replaced",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "person",
-      "closed_because": "rule:analyzer-debt-repayment-loop",
-      "why": [
-        "links debt-canon-gui-surface-census"
-      ]
-    },
-    {
       "name": "debt-a-link-address-is-printed-wider-than-its-extent",
       "substituted": false,
       "blocked_by": "buildable",
@@ -151,6 +140,17 @@
       "why": [
         "links analyzer-tool-capability-spec",
         "names lab.t2.15, lab.t2.16, lab.t2.17"
+      ]
+    },
+    {
+      "name": "debt-a-status-slot-shows-one-sentence-and-hides-the-other",
+      "substituted": false,
+      "blocked_by": "unmeasured",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
     },
     {
@@ -233,6 +233,17 @@
       ]
     },
     {
+      "name": "debt-only-one-screen-is-asked-whether-it-forgot-a-region",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links debt-canon-gui-surface-census, debt-the-canon-is-one-app-and-we-are-many-binaries"
+      ]
+    },
+    {
       "name": "debt-text-is-not-centred-in-the-box-that-holds-it",
       "substituted": false,
       "blocked_by": "buildable",
@@ -277,17 +288,6 @@
       ]
     },
     {
-      "name": "debt-the-host-paints-a-toast-onto-the-guests-content",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "person",
-      "closed_because": "rule:analyzer-debt-repayment-loop",
-      "why": [
-        "links debt-the-canon-is-one-app-and-we-are-many-binaries"
-      ]
-    },
-    {
       "name": "debt-the-reference-palette-fails-the-boundary-floor",
       "substituted": false,
       "blocked_by": "buildable",
@@ -320,17 +320,6 @@
       "why": [
         "links analyzer-behaviour-canon-is-the-standalone-prototype, debt-canon-gui-surface-census",
         "names dashboard.t2.9"
-      ]
-    },
-    {
-      "name": "debt-two-shell-demos-are-red-and-the-count-is-growing",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links debt-canon-gui-surface-census, debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
     },
     {

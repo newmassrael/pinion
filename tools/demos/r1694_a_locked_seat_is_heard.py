@@ -76,6 +76,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     assert_eq,
     run_demo,
+    settle_saying,
 )
 
 EXAMPLE = "hello-analyzer-shell"
@@ -247,6 +248,28 @@ def body() -> None:
             f"[demo] {voice['total']} region(s) — {counts['announced']} announced, "
             f"{counts['silent']} declared quiet"
         )
+        # ★★★★★ R1867 — **and again with the status band's slot IDLE**, because
+        # the screen has two resting states and this reading only ever saw one.
+        #
+        # Arriving says a sentence, so every census this demo has ever taken was
+        # taken with a toast in the band. That is why `shell.toast` satisfied a
+        # `Chrome` row for 173 rounds and why the sentence beside it could not:
+        # exactly one of the slot's two occupants is painted at a time. Settling
+        # the toast and asking again is what makes the comparison below a claim
+        # about the SCREEN rather than about the moment it was asked.
+        cleared = settle_saying(app)
+        ok(f"C: the boot sentence settles, and it was {cleared!r}", bool(cleared))
+        idle = app.request("scene/voice").result
+        idle_counts = idle["counts"]
+        assert_eq(idle_counts["unvoiced"], 0, "C: nothing is undecided when idle either")
+        for fault in ("mumbled", "hollow", "dangling", "ghost"):
+            assert_eq(idle_counts[fault], 0, f"C: no {fault} region when idle")
+        idle_rows = voice_by_tag(app)
+        ok(
+            "C: ★ and the two states are not the same reading — the slot's "
+            "occupant changed",
+            set(rows) != set(idle_rows),
+        )
 
         # BOTH ways, which is the whole point of holding a specification: a
         # region the table has and the screen does not is as much a failure as
@@ -260,8 +283,13 @@ def body() -> None:
         shown = ("*", here)
         declared_voices = {v["tag"] for v in voices if v["at"] in shown}
         declared_silences = {s["tag"] for s in silences if s["at"] in shown}
-        announced = {t for t, r in rows.items() if r["voice"] == "announced"}
-        quiet = {t for t, r in rows.items() if r["voice"] == "silent"}
+        # ★ R1867 — the UNION over the slot's two occupancies. A region painted
+        # in one state and not the other is still one this screen has, and the
+        # specification's `at` column says which DESTINATION shows a region, not
+        # which moment.
+        both = list(rows.items()) + list(idle_rows.items())
+        announced = {t for t, r in both if r["voice"] == "announced"}
+        quiet = {t for t, r in both if r["voice"] == "silent"}
         assert_eq(
             sorted(announced - declared_voices),
             [],
@@ -277,6 +305,27 @@ def body() -> None:
             [],
             "C: the declared silences are exactly the quiet regions",
         )
+        # ★★★★★ R1867 — and a quiet region's REASON is the specification's too.
+        #
+        # The comparison above is over TAGS, so a region declared `layout` in
+        # the painter and `part_of` in the published table read as agreeing —
+        # two records of one fact with nothing holding them together, which is
+        # the defect this project keeps repairing. It was found by a
+        # counterfactual: swapping the status slot's kind changed what a reader
+        # is promised and every gate stayed green.
+        #
+        # ⚠ Compared where the region declares itself. A row whose reason came
+        # from an ANCESTOR is reporting that ancestor's kind, and demanding the
+        # table's own word there would be demanding the wrong one.
+        kinds = 0
+        for entry in (s for s in silences if s["at"] in shown):
+            row = idle_rows.get(entry["tag"]) or rows.get(entry["tag"])
+            ok(f"C: {entry['tag']} is a region the census knows", row is not None)
+            if row["self_declared"]:
+                assert_eq(row["reason"], entry["kind"], f"C: {entry['tag']} kind")
+                kinds += 1
+        ok(f"C: ★ {kinds} declared silence(s) carry the specified kind", kinds > 0)
+
         # And the ROLE each one announces is the specification's too — a name is
         # not evidence of the right kind (the R1691 lesson, twice over).
         access = nodes_by_tag(app)
