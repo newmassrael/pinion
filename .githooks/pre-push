@@ -436,6 +436,11 @@ step_at_exit 'rm -f "$tmp_msg" "$tmp_paths"'
 # git feeds pre-push the ref updates on stdin:
 #   <local ref> <local sha> <remote ref> <remote sha>
 base_sha=""
+# R1869 — what this push would make the remote point at. `local_sha` and not
+# `HEAD`: they are the same when the branch being pushed is the checked-out
+# one and differ when it is not, and the question the CI gate asks is about
+# the ref being published, never about whatever happens to be checked out.
+tip_sha=""
 while read -r _local_ref local_sha _remote_ref remote_sha; do
     # Branch deletion (local sha all-zero) — nothing to validate.
     [[ "$local_sha" =~ ^0+$ ]] && continue
@@ -443,6 +448,7 @@ while read -r _local_ref local_sha _remote_ref remote_sha; do
     # The commit the remote is on right now: the one the CI verdict below is
     # supposed to be about. R1579 checks that it actually has a run.
     base_sha="$remote_sha"
+    tip_sha="$local_sha"
 
     if [[ "$remote_sha" =~ ^0+$ ]]; then
         # New ref on the remote — validate only commits not already on any
@@ -504,8 +510,13 @@ fi
 # the build gates because it costs one `gh` call and refusing here saves the
 # two minutes of clippy and rustdoc below. See lib/ci-status.sh for why it
 # fails open on a missing `gh`, and for the override.
+#
+# R1869 — `tip_sha` is passed so a red verdict can say WHICH COMMIT it judged.
+# The gate reads the last COMPLETED run, which on a busy branch is routinely
+# several commits old, and naming only the run left a reader unable to tell a
+# red they must fix from one they already fixed. See lib/ci-status.sh.
 push_branch="$(git rev-parse --abbrev-ref HEAD)"
-if ! check_last_ci_run "$push_branch" "pre-push"; then
+if ! check_last_ci_run "$push_branch" "pre-push" "$tip_sha"; then
     exit 1
 fi
 

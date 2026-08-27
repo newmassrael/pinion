@@ -185,10 +185,46 @@ if [[ "$1" == "api" ]]; then
     # case states the fact it is asserting about; `-` means "gh failed".
     shift
     [[ "$1" == repos/:owner/:repo/actions/runs\?head_sha=* ]] || exit 1
+    # R1869 — the SAME probe asks two different questions, and the query string
+    # is the only thing that tells them apart. A stub blind to `status=` would
+    # answer both with one number, which is precisely the conflation the gate
+    # was repaired for.
+    _stub_completed_only=""
+    case "$1" in *"&status=completed"*) _stub_completed_only=1 ;; esac
     shift
     [[ "$1" == "--jq" && "$2" == ".total_count" ]] || exit 1
+    if [[ -n "$_stub_completed_only" ]]; then
+        # Defaults to the total, so a case that says nothing about completion
+        # states "every run has finished" — the ordinary situation. A case
+        # asserting a PENDING run sets it to 0 explicitly.
+        _stub_judged="${PINION_STUB_COMPLETED_COUNT:-${PINION_STUB_RUN_COUNT:-0}}"
+        [[ "$_stub_judged" == "-" ]] && exit 1
+        echo "$_stub_judged"
+        exit 0
+    fi
     [[ "${PINION_STUB_RUN_COUNT:-0}" == "-" ]] && exit 1
     echo "${PINION_STUB_RUN_COUNT:-0}"
+    exit 0
+fi
+if [[ "$1" == "run" && "$2" == "view" ]]; then
+    # R1869 — which commit a run judged. Answers from PINION_STUB_HEAD_SHA so a
+    # case states the fact it asserts about; `-` means "gh failed", and any
+    # other value is echoed VERBATIM so a case can assert that a non-sha answer
+    # (usage text, an error object, nothing at all) is refused by the caller
+    # rather than passed on as a commit.
+    #
+    # Every argument is checked, for the R1495 reason: a stub more permissive
+    # than the real `gh` is how the branch-flag defect survived its own tests.
+    shift 2
+    [[ "$1" =~ ^[0-9]+$ ]] || { echo "unknown run id: $1" >&2; exit 1; }
+    shift
+    [[ "$1" == "--json" && "$2" == "headSha" ]] || { echo "unknown flag: $1" >&2; exit 1; }
+    shift 2
+    [[ "$1" == "--jq" && "$2" == ".headSha" ]] || { echo "unknown flag: $1" >&2; exit 1; }
+    shift 2
+    (( $# == 0 )) || { echo "unexpected argument: $1" >&2; exit 1; }
+    [[ "${PINION_STUB_HEAD_SHA:-}" == "-" ]] && exit 1
+    echo "${PINION_STUB_HEAD_SHA:-}"
     exit 0
 fi
 [[ "$1" == "run" && "$2" == "list" ]] || exit 1
@@ -303,6 +339,179 @@ ok "and says which rule let it through" \
    "1"
 
 # ---------------------------------------------------------------------------
+# R1869 — a verdict belongs to the commit it JUDGED, not to the one in front
+# of the reader.
+#
+# The gate reads the branch's last COMPLETED run, and on a busy branch the
+# newest run is routinely still going, so the verdict on offer is several
+# commits old. Naming only the RUN left a reader unable to tell a red they
+# must fix from a red they already fixed. Measured on this repository: R1869
+# entered on a handover asserting "CI is red, that is this round"; the red had
+# judged R1866, R1867 repaired both of its failures one commit later, and R1868
+# spent `PINION_PUSH_ON_RED=1` on a red that no longer existed.
+# ---------------------------------------------------------------------------
+
+# A REAL repository rather than a stubbed git. The whole question is what git
+# answers about ancestry, and stubbing git would assert this file's idea of
+# ancestry against itself — the shape R1845 named, where the fixture rather
+# than the code is what makes an assertion pass.
+_pos_repo="$(mktemp_tracked)"
+(
+    cd "$_pos_repo" || exit 1
+    git -c init.defaultBranch=main init -q .
+    git config user.email tester@example.invalid
+    git config user.name tester
+    git commit -q --allow-empty -m "c1 the judged one"
+    git commit -q --allow-empty -m "c2 the repair"
+    git commit -q --allow-empty -m "c3 the tip"
+    git checkout -q -b sidetrack main~2
+    git commit -q --allow-empty -m "s1 another line of history"
+) >/dev/null 2>&1
+
+_pos_c1="$(git -C "$_pos_repo" rev-parse main~2 2>/dev/null)"
+_pos_c3="$(git -C "$_pos_repo" rev-parse main 2>/dev/null)"
+_pos_side="$(git -C "$_pos_repo" rev-parse sidetrack 2>/dev/null)"
+
+# The fixture states its own premise. Without this a fixture that silently
+# built nothing reads as a predicate that answers correctly — R1863 met a
+# fixture that came back empty and had to be told apart from a predicate that
+# simply found nothing, and the only thing that separates those two is an
+# assertion that the population is non-empty and distinct.
+ok "the ancestry fixture built three distinct commits" \
+   "$(printf '%s\n' "$_pos_c1" "$_pos_c3" "$_pos_side" \
+        | sort -u | grep -c '^[0-9a-f]\{40\}$')" \
+   "3"
+
+pos() { ( cd "$_pos_repo" && ci_red_position "$1" "$2" ); }
+
+ok "a red that judged this very tip is not behind it" \
+   "$(pos "$_pos_c3" "$_pos_c3")" "same"
+
+ok "a red two commits back says how far back" \
+   "$(pos "$_pos_c1" "$_pos_c3")" "behind 2"
+
+# Direction matters: a tip BEHIND the judged commit is not "behind" it, and
+# reporting a distance there would invite exactly the wrong reading.
+ok "a tip behind the judged commit is not a distance" \
+   "$(pos "$_pos_c3" "$_pos_c1")" "unrelated"
+
+ok "a red on another line of history is unrelated" \
+   "$(pos "$_pos_side" "$_pos_c3")" "unrelated"
+
+# Everything the local repository cannot answer is `unknown` and never a
+# position, because a guessed position is worse than an absent one.
+ok "an absent sha is unknown" \
+   "$(pos "" "$_pos_c3")" "unknown"
+ok "the literal 'unknown' is unknown" \
+   "$(pos unknown "$_pos_c3")" "unknown"
+ok "an all-zero sha is unknown" \
+   "$(pos 0000000000000000000000000000000000000000 "$_pos_c3")" "unknown"
+ok "a commit this clone does not have is unknown" \
+   "$(pos deadbeefdeadbeefdeadbeefdeadbeefdeadbeef "$_pos_c3")" "unknown"
+ok "an absent tip is unknown" \
+   "$(pos "$_pos_c1" "")" "unknown"
+
+# --- reading the sha off a run ---------------------------------------------
+
+head_sha() {  # <what gh answers, or `-` for a gh that fails> <run id>
+    # shellcheck disable=SC2030,SC2031
+    (
+        export PINION_STUB_HEAD_SHA="$1"
+        stub_gh ""
+        ci_head_sha_for_run "$2"
+    )
+}
+
+ok "a run's head sha is read back" \
+   "$(head_sha "$_pos_c1" 222)" "$_pos_c1"
+ok "usage text is not a sha" \
+   "$(head_sha 'Usage: gh run view' 222)" "unknown"
+ok "an empty answer is not a sha" \
+   "$(head_sha '' 222)" "unknown"
+ok "a short hex string is not a sha" \
+   "$(head_sha 'abc123' 222)" "unknown"
+ok "a gh that fails yields unknown" \
+   "$(head_sha '-' 222)" "unknown"
+ok "a non-numeric run id is refused before gh is asked" \
+   "$(head_sha "$_pos_c1" 'not-an-id')" "unknown"
+
+# --- what a red verdict now SAYS -------------------------------------------
+
+red_says() {  # <override|-> <run id> <stubbed head sha> <tip>
+    local override="$1" id="$2" head="$3" tip="$4"
+    # shellcheck disable=SC2030,SC2031
+    (
+        cd "$_pos_repo" || exit 1
+        if [[ "$override" == "-" ]]; then
+            unset PINION_PUSH_ON_RED
+        else
+            export PINION_PUSH_ON_RED="$override"
+        fi
+        export PINION_STUB_HEAD_SHA="$head"
+        stub_gh "$(row completed failure "$id")"
+        { check_last_ci_run main test "$tip" >/dev/null; } 2>&1
+    )
+}
+
+ok "a red names the commit it judged" \
+   "$(red_says - 222 "$_pos_c1" "$_pos_c3" | grep -c "it judged ${_pos_c1:0:8}")" \
+   "1"
+
+ok "and how far the push is past it" \
+   "$(red_says - 222 "$_pos_c1" "$_pos_c3" | grep -c 'publishes 2 commit(s) past it')" \
+   "1"
+
+ok "and hands over the commits that may already carry the repair" \
+   "$(red_says - 222 "$_pos_c1" "$_pos_c3" | grep -c 'c2 the repair')" \
+   "1"
+
+# ★ The discriminating half. A red that judged the tip ITSELF must get the
+# OPPOSITE sentence, or the two situations collapse into one reading and the
+# gate has bought nothing.
+ok "a red that judged the tip says nothing since could have repaired it" \
+   "$(red_says - 222 "$_pos_c3" "$_pos_c3" \
+        | grep -c 'nothing since it could have repaired it')" \
+   "1"
+
+ok "and that red offers no range at all" \
+   "$(red_says - 222 "$_pos_c3" "$_pos_c3" | grep -c 'may already carry its repair')" \
+   "0"
+
+# The reader who most needs the position is the one publishing anyway: R1868
+# armed the override against a repaired red and was shown nothing that could
+# have told it so.
+ok "an armed override is told the position too" \
+   "$(red_says 1 222 "$_pos_c1" "$_pos_c3" | grep -c 'publishes 2 commit(s) past it')" \
+   "1"
+
+# Compatibility is a PROPERTY here, not an accident of argument order: a caller
+# that cannot say where the tip is gets the verdict and no invented position.
+ok "no tip means no position is claimed" \
+   "$(red_says - 222 "$_pos_c1" "" | grep -c 'it judged')" \
+   "0"
+
+ok "but the verdict itself still arrives" \
+   "$(red_says - 222 "$_pos_c1" "" | grep -c 'FAILED (run 222)')" \
+   "1"
+
+ok "a sha gh could not give reads as could-not-determine, not as a position" \
+   "$(red_says - 222 '-' "$_pos_c3" | grep -c 'could not be determined')" \
+   "1"
+
+# ★★ And the position REPORTS; it does not decide. A red two commits back is
+# still a red, and still refuses without the override — the gate hands the
+# reader the evidence to judge, and never judges for them.
+ok "the position does not soften the refusal" \
+   "$( ( cd "$_pos_repo" || exit 1
+         unset PINION_PUSH_ON_RED
+         # shellcheck disable=SC2030,SC2031
+         export PINION_STUB_HEAD_SHA="$_pos_c1"
+         stub_gh "$(row completed failure 222)"
+         check_last_ci_run main test "$_pos_c3" >/dev/null 2>&1
+         echo $? ) )" \
+   "1"
+
+# ---------------------------------------------------------------------------
 # R1857 — a fail-open must NAME what it could not do, not guess why.
 #
 # The gate used to run `gh run list … 2>/dev/null` and print "no network or no
@@ -394,6 +603,87 @@ ok "a base with a run of its own says so" \
    "$(with_run_count 2 check_base_ci_coverage abcdef1234 main test 9999 \
         | grep -c 'has 2 CI run(s) of its own')" \
    "1"
+
+# --- R1869: a run's EXISTENCE is not a run's verdict ------------------------
+#
+# R1579 separated a run's absence from a run's success. One distinction was
+# left inside "a run exists": a run that is still going has judged nothing, so
+# it is no more evidence about this commit than no run at all. Measured on the
+# R1868 push — `base 1ea649f1 has 1 CI run(s) of its own`, printed one line
+# under a red verdict belonging to a commit four back, while that one run was
+# `in_progress`. Both lines were true and together they read as a lie.
+
+with_run_counts() {  # <total> <completed> <cmd...>
+    local total="$1" judged="$2"
+    shift 2
+    # shellcheck disable=SC2030,SC2031
+    (
+        export PINION_STUB_RUN_COUNT="$total"
+        export PINION_STUB_COMPLETED_COUNT="$judged"
+        stub_gh ""
+        { "$@" >/dev/null; } 2>&1
+    )
+}
+
+ok "a base whose runs have all finished says how many judged" \
+   "$(with_run_counts 2 2 check_base_ci_coverage abcdef1234 main test 9999 \
+        | grep -c 'of its own, 2 completed')" \
+   "1"
+
+ok "a base whose only run is still going says none completed" \
+   "$(with_run_counts 1 0 check_base_ci_coverage abcdef1234 main test 9999 \
+        | grep -c 'none COMPLETED')" \
+   "1"
+
+# ★ The same sentence R1579 wrote for absence, because it is the same fact:
+# what the reader must not do is inherit the verdict above as this commit's.
+ok "and it says the verdict above is about an earlier commit" \
+   "$(with_run_counts 1 0 check_base_ci_coverage abcdef1234 main test 9999 \
+        | grep -c 'EARLIER commit')" \
+   "1"
+
+# ★★ The discriminating half: a finished run must NOT get that warning, or the
+# line becomes noise printed under every push and stops being read.
+ok "a base with a finished run is not told its verdict is stale" \
+   "$(with_run_counts 2 2 check_base_ci_coverage abcdef1234 main test 9999 \
+        | grep -c 'EARLIER commit')" \
+   "0"
+
+# A count this probe could not obtain must not be reported as zero: "we could
+# not ask" and "none have finished" carry opposite instructions.
+ok "a completion count gh could not give is not read as none" \
+   "$(with_run_counts 2 - check_base_ci_coverage abcdef1234 main test 9999 \
+        | grep -c 'could not be asked')" \
+   "1"
+
+ok "and that case is not told its verdict is stale either" \
+   "$(with_run_counts 2 - check_base_ci_coverage abcdef1234 main test 9999 \
+        | grep -c 'EARLIER commit')" \
+   "0"
+
+# The probe is one function asking two questions, and only the query string
+# separates them. Asserted directly so a refactor cannot merge them silently.
+both_counts() {  # <total> <completed> -> "<total>/<completed>"
+    # shellcheck disable=SC2030,SC2031
+    (
+        export PINION_STUB_RUN_COUNT="$1"
+        export PINION_STUB_COMPLETED_COUNT="$2"
+        stub_gh ""
+        printf '%s/%s' \
+            "$(ci_run_count_for_sha abcdef1234)" \
+            "$(ci_run_count_for_sha abcdef1234 completed)"
+    )
+}
+
+ok "the completed probe and the total probe are different questions" \
+   "$(both_counts 7 3)" \
+   "7/3"
+
+# And a caller that asks neither question gets the total, unchanged — the
+# argument is an addition, not a change of default.
+ok "asking without the restriction still counts every run" \
+   "$(both_counts 4 4)" \
+   "4/4"
 
 ok "a base with no run of its own is called out" \
    "$(with_run_count 0 check_base_ci_coverage abcdef1234 main test 9999 \

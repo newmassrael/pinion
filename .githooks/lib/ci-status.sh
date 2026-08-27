@@ -104,11 +104,21 @@ CI_SCHEDULING_GRACE_SECONDS=180
 #
 # Anything that is not a run of digits becomes `unknown`, so a gh that answers
 # with usage text, an error object or nothing at all cannot be read as a count.
+#
+# R1869 — a non-empty second argument restricts the count to runs that have
+# FINISHED. **A run's existence is not a run's verdict**, and this function
+# could not tell the two apart: measured on the R1868 push, the base had one
+# run of its own and that run was still going, so the gate said the base was
+# covered while the verdict it printed one line above belonged to a commit four
+# back. That is R1579's own distinction — absence versus success — one step
+# further along, and the same sentence covers it: a run that has judged nothing
+# is not evidence about this commit either way.
 ci_run_count_for_sha() {
-    local sha="$1" out
+    local sha="$1" only_completed="${2:-}" query out
     command -v gh >/dev/null 2>&1 || { printf 'unknown\n'; return 0; }
-    if ! out="$(gh api "repos/:owner/:repo/actions/runs?head_sha=$sha&per_page=1" \
-                    --jq '.total_count' 2>/dev/null)"; then
+    query="repos/:owner/:repo/actions/runs?head_sha=$sha&per_page=1"
+    [[ -n "$only_completed" ]] && query="$query&status=completed"
+    if ! out="$(gh api "$query" --jq '.total_count' 2>/dev/null)"; then
         printf 'unknown\n'
         return 0
     fi
@@ -118,6 +128,168 @@ ci_run_count_for_sha() {
     else
         printf 'unknown\n'
     fi
+}
+
+# Echo the commit a run judged, or `unknown`.
+#
+# `gh run view --json headSha` rather than the plain-text listing, for the
+# reason stated on `ci_run_count_for_sha`: that listing has no SHA column at
+# all (STATUS, CONCLUSION, TITLE, WORKFLOW, BRANCH, EVENT, ID, ELAPSED, AGE),
+# so the verdict parse upstream can name a run and cannot name a commit.
+# `--jq` is gh's own embedded filter, not the external `jq` this host lacks.
+#
+# Anything that is not 40 hex characters becomes `unknown`, so a gh that
+# answers with usage text, an error object or nothing cannot be read as a sha.
+ci_head_sha_for_run() {
+    local id="$1" out
+    [[ "$id" =~ ^[0-9]+$ ]] || { printf 'unknown\n'; return 0; }
+    command -v gh >/dev/null 2>&1 || { printf 'unknown\n'; return 0; }
+    if ! out="$(gh run view "$id" --json headSha --jq '.headSha' 2>/dev/null)"; then
+        printf 'unknown\n'
+        return 0
+    fi
+    out="${out//[$'\t\r\n ']/}"
+    if [[ "$out" =~ ^[0-9a-f]{40}$ ]]; then
+        printf '%s\n' "$out"
+    else
+        printf 'unknown\n'
+    fi
+}
+
+# Echo where the commit a run judged sits relative to the tip being published.
+#
+# ## The property this exists to state
+#
+# **A verdict belongs to the commit it judged, never to the commit in front of
+# you.** `check_last_ci_run` reads the branch's last COMPLETED run, and the
+# newest run is frequently not completed — so on a busy branch the verdict on
+# offer is routinely several commits old, and the commits since it may already
+# contain its repair. Saying only "the last completed run FAILED" leaves a
+# reader unable to tell a red they must fix from a red they already fixed.
+#
+# ## The case that demanded it, measured rather than supposed
+#
+# R1869 entered on a handover that said "CI is red (two demo sweeps) — that is
+# this round". Re-measured, the red was run 33075355005, and it judged
+# `3ca5414b` (R1866). Its two failing demos — `r1694_a_locked_seat_is_heard`
+# and `r1695_the_rail_takes_you_there` — both PASS on the tip, run locally at
+# R1869; the commit that touched both of them is `3c7afb10` (R1867), one
+# commit after the one the run judged. So the handover was describing a red
+# four commits behind the tree, and it was able to because the gate that
+# produced it named a RUN and no commit: that a red can be inherited from an
+# ancestor lived only in a prose note in a memory file, which is the shape
+# this project has repeatedly paid for. R1868 then armed `PINION_PUSH_ON_RED`
+# against it with nothing in front of it that could have said so.
+#
+# ⚠ What is NOT claimed: that CI now agrees. The runs for R1867 and R1868 were
+# both still in progress when this was written, so the evidence here is a local
+# reproduction of the two failures, not a green run. That is exactly the
+# distinction this function exists to keep visible.
+#
+# ## What it deliberately does not decide
+#
+# Whether the intervening commits actually repaired it. Only CI knows that.
+# This answers WHERE, exactly, and hands the reader the range to look at; a
+# gate that guessed "probably fixed" would be inventing the very verdict it is
+# supposed to be reading.
+#
+# Echoes `same`, `behind <n>`, `unrelated`, or `unknown`, and returns 0 always.
+# `unknown` covers every case the local repository cannot answer — an absent
+# sha, an object this clone does not have (a fresh clone, a shallow one, a
+# force-pushed branch), or a git that failed — because a position that cannot
+# be computed must not be reported as a position.
+#
+# ★ `tip` has NO default, and the first draft's `${2:-HEAD}` is why this
+# paragraph exists: the test written against it caught the default answering
+# `behind 1` for a caller that had passed no tip at all. A position is a
+# relation and needs BOTH of its ends; substituting "whatever is checked out"
+# for the missing one contradicts the very property the caller in `pre-push`
+# is built on — the question is about the ref being PUBLISHED, never about the
+# working tree — and it does so silently, which is the direction that invents
+# a fact rather than declining to state one.
+ci_red_position() {
+    local red="$1" tip="${2:-}" r b n
+    [[ -n "$red" && "$red" != "unknown" && ! "$red" =~ ^0+$ ]] ||
+        { printf 'unknown\n'; return 0; }
+    [[ -n "$tip" && ! "$tip" =~ ^0+$ ]] || { printf 'unknown\n'; return 0; }
+    r="$(git rev-parse --verify --quiet "${red}^{commit}" 2>/dev/null)" || r=""
+    b="$(git rev-parse --verify --quiet "${tip}^{commit}" 2>/dev/null)" || b=""
+    [[ -n "$r" && -n "$b" ]] || { printf 'unknown\n'; return 0; }
+    if [[ "$r" == "$b" ]]; then
+        printf 'same\n'
+        return 0
+    fi
+    if git merge-base --is-ancestor "$r" "$b" 2>/dev/null; then
+        n="$(git rev-list --count "$r..$b" 2>/dev/null)"
+        [[ "$n" =~ ^[0-9]+$ ]] || { printf 'unknown\n'; return 0; }
+        printf 'behind %s\n' "$n"
+        return 0
+    fi
+    printf 'unrelated\n'
+}
+
+# How many commits of the repairing range to spell out before counting the rest.
+#
+# A bound on LINES and never on FACTS, the rule R1863 wrote for the short-box
+# warning: the count is always stated, so a range too long to print cannot be
+# mistaken for a range that was short.
+CI_RED_RANGE_LINES=5
+
+# Say, on stderr, which commit a red verdict actually judged and where it sits.
+#
+# Printed on BOTH sides of the override, because the reader who most needs it
+# is the one publishing anyway: R1868 armed `PINION_PUSH_ON_RED=1` against a
+# red that had already been repaired, and nothing it was shown could have told
+# it so. Returns 0 always; this reports and never decides.
+ci_report_red_position() {
+    local id="$1" label="$2" tip="${3:-}"
+    [[ -n "$tip" ]] || return 0
+
+    local red position kind distance
+    red="$(ci_head_sha_for_run "$id")"
+    if [[ "$red" == "unknown" ]]; then
+        echo "$label:   which commit it judged could not be determined" >&2
+        return 0
+    fi
+
+    position="$(ci_red_position "$red" "$tip")"
+    read -r kind distance <<<"$position"
+    local short="${red:0:8}"
+
+    case "$kind" in
+        same)
+            echo "$label:   it judged $short, which is exactly what is being" \
+                 "published — nothing since it could have repaired it" >&2
+            ;;
+        behind)
+            echo "$label:   it judged $short, and this push publishes" \
+                 "$distance commit(s) past it" >&2
+            echo "$label:   a verdict belongs to the commit it judged, so the" \
+                 "commits since may already carry its repair:" >&2
+            local shown=0 line
+            while IFS= read -r line; do
+                [[ -n "$line" ]] || continue
+                if (( shown < CI_RED_RANGE_LINES )); then
+                    echo "$label:     $line" >&2
+                    shown=$((shown + 1))
+                fi
+            done < <(git log --oneline --no-decorate "$red..$tip" 2>/dev/null)
+            if (( distance > shown )); then
+                echo "$label:     ... and $((distance - shown)) more" >&2
+            fi
+            echo "$label:   verify against the run itself; do not assume" \
+                 "either way" >&2
+            ;;
+        unrelated)
+            echo "$label:   it judged $short, which is not an ancestor of" \
+                 "what is being published" >&2
+            ;;
+        *)
+            echo "$label:   where $short sits relative to this push could not" \
+                 "be computed here" >&2
+            ;;
+    esac
+    return 0
 }
 
 # Report whether the commit being pushed ONTO has any CI run of its own.
@@ -171,7 +343,23 @@ check_base_ci_coverage() {
         return 0
     fi
     if [[ "$count" -gt 0 ]]; then
-        echo "$label: base $short has $count CI run(s) of its own" >&2
+        # R1869 — and whether any of them has actually JUDGED anything. A
+        # pending run is the normal state seconds after a push, so "has a run"
+        # was silently answering a question the reader was not asking.
+        local judged
+        judged="$(ci_run_count_for_sha "$sha" completed)"
+        if [[ "$judged" == "unknown" ]]; then
+            echo "$label: base $short has $count CI run(s) of its own" >&2
+            echo "$label:   how many of them have finished could not be asked" >&2
+        elif [[ "$judged" -gt 0 ]]; then
+            echo "$label: base $short has $count CI run(s) of its own," \
+                 "$judged completed" >&2
+        else
+            echo "$label: base $short has $count CI run(s) of its own, none" \
+                 "COMPLETED" >&2
+            echo "$label:   a run that has not finished has judged nothing," \
+                 "so any verdict above is about an EARLIER commit" >&2
+        fi
         return 0
     fi
 
@@ -192,9 +380,16 @@ check_base_ci_coverage() {
 
 # Gate the push on the last completed run for `branch`.
 #
+# `tip` is optional and is what this push would make the branch point at. When
+# given, a red verdict additionally says WHICH COMMIT it judged and where that
+# sits relative to `tip` (`ci_report_red_position`). It is optional rather than
+# required because the position is a second, git-local question: a caller that
+# cannot answer it must still get the verdict, and every case that stated only
+# the verdict before this change still states exactly that.
+#
 # Returns 0 when publishing may proceed, 1 when it must not.
 check_last_ci_run() {
-    local branch="$1" label="$2"
+    local branch="$1" label="$2" tip="${3:-}"
 
     if ! command -v gh >/dev/null 2>&1; then
         echo "$label: gh not on PATH — last CI verdict unknown, continuing" >&2
@@ -248,9 +443,11 @@ check_last_ci_run() {
             if [[ "${PINION_PUSH_ON_RED:-}" == "1" ]]; then
                 echo "$label: last completed CI run on $branch FAILED (run" \
                      "$id) — publishing anyway, PINION_PUSH_ON_RED=1" >&2
+                ci_report_red_position "$id" "$label" "$tip"
                 return 0
             fi
             echo "$label: last completed CI run on $branch FAILED (run $id)" >&2
+            ci_report_red_position "$id" "$label" "$tip"
             echo "$label: stop-the-line — fix the red before publishing more" \
                  "on top of it" >&2
             echo "$label:   gh run view $id" >&2
