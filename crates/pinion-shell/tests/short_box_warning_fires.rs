@@ -113,6 +113,34 @@ fn run(content: &str, px: u32, short: u32) -> Scene {
     )
 }
 
+/// The same run, at an address — which is what decides its **site**.
+///
+/// ★★★★★ R1870 — and the absence of this is why the fixtures below could not
+/// see the defect that round repaid. An untagged run is addressed by its path,
+/// whose segments are positions, so forty of them fold to ONE site: the file's
+/// bound test was building forty runs at one site and reading them as forty
+/// distinct defects. That is exactly the shape a real screen has — a table's
+/// cells — and asserting against the disguise is how a population hides.
+fn run_at(tag: &str, content: &str, px: u32, short: u32) -> Scene {
+    let needs = pinion_core::containment::line_box(px);
+    let rect = Rect::new(0, 0, 200, needs.saturating_sub(short));
+    Scene::Text(
+        TextNode::styled(content, rect, face(px))
+            .with_tag(tag.to_string())
+            .with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(rect.x, rect.y)
+                    .with_size(Size::px(rect.w, rect.h)),
+            ),
+    )
+}
+
+/// A distinct NAME per index — never a number, which would fold to one site.
+fn distinct_name(n: usize) -> String {
+    let letter = |v: usize| char::from(b'a' + u8::try_from(v).expect("a value below 26"));
+    format!("{}{}", letter(n / 26), letter(n % 26))
+}
+
 fn screen(runs: Vec<Scene>) -> Scene {
     Scene::Container(ContainerNode::new(runs).with_tag("a.box"))
 }
@@ -179,8 +207,20 @@ fn r1863_a_run_that_gets_worse_is_said_again() {
 #[test]
 fn r1863_more_short_boxes_than_it_spells_out_are_still_counted() {
     let mut seen = std::collections::HashSet::new();
+    // ⚠ R1870 — forty SITES, and the names have to be NAMES. Written as forty
+    // untagged runs this asserted nothing about the bound (they were one site,
+    // and the emitter says one correct line about that); written as `row.{n}`
+    // it would assert nothing either, because a numbered segment is a position
+    // and folds the same way.
     let many: Vec<Scene> = (0..40)
-        .map(|n| run(&format!("paging {n}"), 10, 5))
+        .map(|n| {
+            run_at(
+                &format!("field.{}", distinct_name(n)),
+                &format!("paging {n}"),
+                10,
+                5,
+            )
+        })
         .collect();
     let scene = screen(many);
     let said = heard(|| pinion_shell::warn_about_short_boxes_in(&scene, &mut seen));
@@ -227,8 +267,20 @@ fn r1863_a_cut_a_reader_could_not_see_is_reported_too() {
 #[test]
 fn r1863_the_runs_a_reader_can_see_are_said_first() {
     let mut seen = std::collections::HashSet::new();
-    let mut runs: Vec<Scene> = (0..12).map(|n| run(&format!("SIZE {n}"), 10, 5)).collect();
-    runs.push(run("paging", 10, 5));
+    // ⚠ R1870 — twelve SITES declared before it, so this holds the ordering
+    // BETWEEN sites. At one site the same property is a different mechanism
+    // (which run speaks for the site) and has its own test below.
+    let mut runs: Vec<Scene> = (0..12)
+        .map(|n| {
+            run_at(
+                &format!("field.{}", distinct_name(n)),
+                &format!("SIZE {n}"),
+                10,
+                5,
+            )
+        })
+        .collect();
+    runs.push(run_at("field.zz", "paging", 10, 5));
     let scene = screen(runs);
     let said = heard(|| pinion_shell::warn_about_short_boxes_in(&scene, &mut seen));
 
@@ -243,6 +295,275 @@ fn r1863_the_runs_a_reader_can_see_are_said_first() {
          though twelve without one were declared before it"
     );
     assert_eq!(visible[0].field("content"), Some("paging"));
+    assert_eq!(
+        said[0].field("content"),
+        Some("paging"),
+        "and it is FIRST, not merely present"
+    );
+}
+
+/// ★★★★★ R1870 — the budget buys KINDS of mistake, not repetitions of one.
+///
+/// Measured R1870 on the analysis-tool shell's dashboard, eight of the ten
+/// lines went to one table's cells, so every other kind of short box on that
+/// frame reached the reader only inside a count. This fixture is that shape, in
+/// the small.
+///
+/// ⚠ The quantities are a command — `cargo test -p hello-analyzer-shell
+/// r1870_the_short_box_census -- --nocapture` — and the reason they are is that
+/// R1870's first draft wrote hand-read log figures into this comment and the
+/// same round's re-measurement found every one of them wrong.
+#[test]
+fn r1870_one_repeated_site_cannot_spend_the_whole_budget() {
+    let mut seen = std::collections::HashSet::new();
+    // A table's cells: twenty runs, one authoring mistake.
+    let mut runs: Vec<Scene> = (0..20)
+        .map(|n| {
+            run_at(
+                &format!("card.packet#0.cell.{n}_1"),
+                &format!("store/{n}"),
+                10,
+                4,
+            )
+        })
+        .collect();
+    // And three other kinds, declared after them — which is where walk order
+    // put them out of reach.
+    for (i, tag) in ["shell.status", "rail.item.label", "chart.axis.tick"]
+        .into_iter()
+        .enumerate()
+    {
+        runs.push(run_at(tag, &format!("SIZE {i}"), 10, 4));
+    }
+    let scene = screen(runs);
+    let said = heard(|| pinion_shell::warn_about_short_boxes_in(&scene, &mut seen));
+
+    let spelled: Vec<&Said> = said
+        .iter()
+        .filter(|s| s.field("content").is_some())
+        .collect();
+    assert_eq!(
+        spelled.len(),
+        4,
+        "twenty-three runs at four sites is four lines, not twenty-three: {said:#?}"
+    );
+    let sites: std::collections::HashSet<&str> =
+        spelled.iter().filter_map(|s| s.field("site")).collect();
+    assert_eq!(sites.len(), 4, "each line speaks for a different site");
+    for tag in ["shell.status", "rail.item.label", "chart.axis.tick"] {
+        assert!(
+            spelled.iter().any(|s| s.field("at") == Some(tag)),
+            "{tag} was declared after twenty cells and must still be heard"
+        );
+    }
+    // ★ And the line for the repeated site says what repairing it retires.
+    let cells = spelled
+        .iter()
+        .find(|s| s.field("site") == Some("card.packet#*.cell.*"))
+        .expect("the table's cells are one site");
+    assert_eq!(
+        cells.field("at_this_site"),
+        Some("20"),
+        "a reader cannot act on a site without knowing how much sits there"
+    );
+    assert!(
+        said.iter().all(|s| s.field("counted").is_none()),
+        "nothing was past the bound here, so nothing should be counted: {said:#?}"
+    );
+}
+
+/// ★ Inside one site, the run a reader could SEE cut is the one that speaks.
+#[test]
+fn r1870_the_run_that_speaks_for_a_site_is_the_one_a_reader_can_see() {
+    let mut seen = std::collections::HashSet::new();
+    let mut runs: Vec<Scene> = (0..6)
+        .map(|n| run_at(&format!("row.{n}.name"), &format!("SIZE {n}"), 10, 4))
+        .collect();
+    runs.push(run_at("row.9.name", "paging", 10, 4));
+    let scene = screen(runs);
+    let said = heard(|| pinion_shell::warn_about_short_boxes_in(&scene, &mut seen));
+
+    let spelled: Vec<&Said> = said
+        .iter()
+        .filter(|s| s.field("content").is_some())
+        .collect();
+    assert_eq!(spelled.len(), 1, "seven runs at one site is one line");
+    assert_eq!(spelled[0].field("site"), Some("row.*.name"));
+    assert_eq!(
+        spelled[0].field("content"),
+        Some("paging"),
+        "six runs with no descender were declared before the one with it"
+    );
+    assert_eq!(spelled[0].field("at_this_site"), Some("7"));
+}
+
+/// ★★★★★ R1870 — the summary counts SITES it did not spell, not only runs.
+///
+/// A count of runs past the bound cannot tell a reader whether the tail is one
+/// more mistake repeated a hundred times or a hundred more mistakes.
+#[test]
+fn r1870_the_summary_says_how_many_kinds_it_did_not_spell() {
+    let mut seen = std::collections::HashSet::new();
+    let runs: Vec<Scene> = (0..14)
+        .map(|n| {
+            run_at(
+                &format!("field.{}", distinct_name(n)),
+                &format!("paging {n}"),
+                10,
+                4,
+            )
+        })
+        .collect();
+    let scene = screen(runs);
+    let said = heard(|| pinion_shell::warn_about_short_boxes_in(&scene, &mut seen));
+
+    let tail = said.last().expect("fourteen sites overrun a bound of ten");
+    assert_eq!(tail.field("spelled"), Some("10"));
+    assert_eq!(tail.field("counted"), Some("14"));
+    assert_eq!(tail.field("sites"), Some("14"));
+    assert_eq!(
+        tail.field("sites_unspelled"),
+        Some("4"),
+        "the tail must say how many KINDS went unsaid: {tail:#?}"
+    );
+}
+
+/// ★★★★★ R1870 — the tail counts **the lines it did not print**, and every
+/// other fixture in this file is blind to whether it does.
+///
+/// The first draft of this round subtracted a count of LINES from a count of
+/// RUNS (`fresh - spelled`) and fired whenever a frame held more runs than
+/// lines. Both are inherited from before grouping, when a line *was* a run, and
+/// both agree with the truth while every site holds exactly one run — which
+/// every fixture above happens to arrange. So this one does not: thirty-five
+/// runs at ten spelled sites and three unspelled ones holding two runs each.
+/// The honest answer is **6 at 3**; the old arithmetic says 25.
+#[test]
+fn r1870_the_tail_counts_the_runs_at_the_sites_it_did_not_spell() {
+    let mut seen = std::collections::HashSet::new();
+    // One table, twenty runs, one site — and visible, so it is spelled.
+    let mut runs: Vec<Scene> = (0..20)
+        .map(|n| {
+            run_at(
+                &format!("card.packet#0.cell.{n}_1"),
+                &format!("paging {n}"),
+                10,
+                4,
+            )
+        })
+        .collect();
+    // Nine more visible sites, one run each: ten spelled in all.
+    for n in 0..9 {
+        runs.push(run_at(
+            &format!("field.{}", distinct_name(n)),
+            "paging",
+            10,
+            4,
+        ));
+    }
+    // And three sites of two runs each, whose cut a reader could not see, so
+    // they sort last and fall past the bound.
+    for n in 0..3 {
+        for i in 0..2 {
+            runs.push(run_at(
+                &format!("tail.{}.row.{i}", distinct_name(n)),
+                "SIZE",
+                10,
+                4,
+            ));
+        }
+    }
+    let scene = screen(runs);
+    let said = heard(|| pinion_shell::warn_about_short_boxes_in(&scene, &mut seen));
+
+    let spelled = said.iter().filter(|s| s.field("content").is_some()).count();
+    assert_eq!(spelled, 10, "the bound is a bound: {said:#?}");
+    let tail = said.last().expect("three sites went unspelled");
+    assert_eq!(tail.field("sites_unspelled"), Some("3"));
+    assert_eq!(
+        tail.field("runs_unspelled"),
+        Some("6"),
+        "the tail must count the runs at the sites it did not spell, not \
+         subtract a line count from a run count: {tail:#?}"
+    );
+    assert!(
+        tail.message.contains("6 more box(es)"),
+        "and the sentence a reader reads must carry that number: {:?}",
+        tail.message
+    );
+    // The identity the line can be checked on by itself.
+    assert_eq!(tail.field("sites"), Some("13"));
+    assert_eq!(tail.field("spelled"), Some("10"));
+    assert_eq!(
+        tail.field("counted"),
+        Some("35"),
+        "`counted` stays every fresh run on the frame — the R1863 contract"
+    );
+}
+
+/// ★★★★★ R1870 — the prescription is a whole sentence, and it is actionable.
+///
+/// The sentence shipped from R1863 to R1869 reading `` `containment::line_rect_in`
+/// is a box that cannot be`` — it stopped mid-clause, so the one line telling a
+/// reader what to DO about a short box never said it. A person reading a real
+/// boot log found it; nothing in the tree could, because every assertion about
+/// this message asked whether a substring was present.
+#[test]
+fn r1870_the_line_finishes_the_sentence_it_starts() {
+    let mut seen = std::collections::HashSet::new();
+    let scene = screen(vec![run_at("shell.status", "paging", 10, 5)]);
+    let said = heard(|| pinion_shell::warn_about_short_boxes_in(&scene, &mut seen));
+    let one = &said[0];
+
+    assert!(
+        !one.message.trim_end().ends_with("cannot be"),
+        "the prescription is cut off mid-clause: {:?}",
+        one.message
+    );
+    // What a reader must be able to act on WITHOUT another tool: the height to
+    // give the box, and the constructor that cannot get it wrong.
+    assert!(
+        one.message.contains("give it 17px"),
+        "the line does not say what height would hold it: {:?}",
+        one.message
+    );
+    assert!(
+        one.message.contains("line_rect_in"),
+        "the line does not name the constructor: {:?}",
+        one.message
+    );
+    // ★ And the address must RESOLVE. The real boot's first line named its
+    // subject `2` — the run's position among its siblings.
+    assert_eq!(one.field("at"), Some("shell.status"));
+}
+
+/// ★ R1870 — a site speaks for a run that is NEW, never for one already said.
+#[test]
+fn r1870_a_site_speaks_for_a_run_the_reader_has_not_heard() {
+    let mut seen = std::collections::HashSet::new();
+    let first = screen(vec![run_at("row.0.name", "paging", 10, 4)]);
+    let heard_first = heard(|| pinion_shell::warn_about_short_boxes_in(&first, &mut seen));
+    assert_eq!(heard_first[0].field("content"), Some("paging"));
+
+    // The same site, with the run already said still present and a new one
+    // beside it. The old run sorts FIRST (it has the descender), so a site that
+    // spoke through its best run rather than its best NEW run would repeat
+    // itself and never mention the arrival.
+    let then = screen(vec![
+        run_at("row.0.name", "paging", 10, 4),
+        run_at("row.1.name", "SIZE", 10, 4),
+    ]);
+    let heard_then = heard(|| pinion_shell::warn_about_short_boxes_in(&then, &mut seen));
+    assert_eq!(
+        heard_then.len(),
+        1,
+        "one new run, one line: {heard_then:#?}"
+    );
+    assert_eq!(
+        heard_then[0].field("content"),
+        Some("SIZE"),
+        "the site repeated the run it had already said instead of the new one"
+    );
 }
 
 /// ★★★★★ R1863 — **and the SIBLING warning fires too**, which is the half of

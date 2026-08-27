@@ -97,11 +97,15 @@ pub use executor::{
 };
 pub use headless_screenshot::{HeadlessScreenshot, HeadlessScreenshotError};
 pub use pinion_rpc::{ConnId, RpcFrame, RpcIngress, RpcReply, WaiterRegistry};
+pub use substrate::{AccessEmitDecision, FragmentCacheStats, ShellCore};
 /// R1863 — the paint-time short-box warning's body, exported so a test can
 /// drive it. Debug builds only, like the warning itself.
+///
+/// ★ R1870 — and beside it the list the warning is a *view of*: a scene's short
+/// runs grouped into repeating sites, in the order a reader should hear them.
+/// A repair campaign wants that list too, and it must be the same one.
 #[cfg(debug_assertions)]
-pub use substrate::warn_about_short_boxes_in;
-pub use substrate::{AccessEmitDecision, FragmentCacheStats, ShellCore};
+pub use substrate::{short_box_sites, warn_about_short_boxes_in};
 pub use waiter::use_scene_revision;
 // R1362 PR-65 §5.16 §5.49 §2 #2 — the binding-facing "request a window control
 // from my own code" seam: a binding names the sink + the Null default without a

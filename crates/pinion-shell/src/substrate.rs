@@ -1723,14 +1723,91 @@ impl WindowOverlayInputs {
     }
 }
 
-/// How many short boxes a single frame spells out before it starts counting.
+/// How many **sites** a single frame spells out before it starts counting.
 ///
 /// ★ R1863 — a bound on the LINES, never on the FACT: everything past this is
 /// reported as a number in the same breath, so no run is silently dropped. Ten
 /// is what a reader can act on at once; the count is what tells them the list
 /// is longer.
+///
+/// ★★ R1870 — and ten *sites*, not ten runs, which is what makes the number
+/// worth having. Measured on a real boot it bounded ten lines onto one card;
+/// ten sites is ten kinds of mistake.
 #[cfg(debug_assertions)]
 pub(crate) const SHORT_BOX_WARNING_LINES: usize = 10;
+
+/// The frame's short runs, gathered into [repeating
+/// sites](pinion_core::containment::repeating_site) and put in the order a
+/// reader should hear them — **what** to say, with no view on how much of it
+/// fits or on what was already said.
+///
+/// ★★★★★ R1870 — the budget is spent on SITES, one line each, never on runs.
+///
+/// Walk order put a repeated defect in front of every other kind: measured
+/// R1870 on the analysis-tool shell's dashboard, eight of the ten lines went to
+/// one table's cells, so the lines a reader can act on restated one mistake and
+/// every other kind reached them only inside a count. Grouping first is what
+/// makes the bound a bound on how much is SAID rather than on how many kinds are
+/// heard.
+///
+/// ⚠ The quantities are a command — `cargo test -p hello-analyzer-shell
+/// r1870_the_short_box_census -- --nocapture` — because they differ per
+/// destination, the repair campaign exists to change them, and R1870's own
+/// hand-read figures were **wrong in every quantity** when the same round
+/// re-measured them.
+///
+/// # The two orders
+///
+/// * **Inside** a site, the run a reader could actually SEE cut comes first,
+///   and the worst of them when none is visible. This is the R1863 ordering,
+///   one level in: still a priority and still never a permission, because the
+///   runs it does not pick are counted on the site's own line.
+/// * **Between** sites, one whose cut shows goes first, then the one repeated
+///   most — repairing that retires the most runs — and the site's own name
+///   last, so the order is total and a frame says the same thing twice running.
+///
+/// # Why this is public
+///
+/// The warning is one consumer; **repairing** the population is the other, and
+/// it wants the same list. A campaign that walks a screen's short boxes has to
+/// work through them in the order that retires the most per repair, which is
+/// exactly this order — and a second implementation of it would be a second
+/// definition of what a site is. A caller that re-derived the grouping in order
+/// to check the warning would also be asserting against its own copy.
+#[cfg(debug_assertions)]
+#[must_use]
+pub fn short_box_sites(scene: &Scene) -> Vec<(String, Vec<pinion_core::containment::ShortBox>)> {
+    let mut sites: Vec<(String, Vec<pinion_core::containment::ShortBox>)> = Vec::new();
+    let mut at: HashMap<String, usize> = HashMap::new();
+    for row in pinion_core::containment::short_boxes(scene) {
+        let site = row.site();
+        if let Some(&i) = at.get(&site) {
+            sites[i].1.push(row);
+        } else {
+            at.insert(site.clone(), sites.len());
+            sites.push((site, vec![row]));
+        }
+    }
+    for (_, rows) in &mut sites {
+        rows.sort_by_key(|row| {
+            (
+                !pinion_core::containment::cut_would_show(&row.content),
+                std::cmp::Reverse(row.short_by),
+            )
+        });
+    }
+    sites.sort_by(|a, b| {
+        let seen_by_reader = |rows: &[pinion_core::containment::ShortBox]| {
+            rows.first()
+                .is_some_and(|r| pinion_core::containment::cut_would_show(&r.content))
+        };
+        seen_by_reader(&b.1)
+            .cmp(&seen_by_reader(&a.1))
+            .then_with(|| b.1.len().cmp(&a.1.len()))
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    sites
+}
 
 /// The body of the shell's `warn_about_short_boxes`, as a free function so a
 /// test can drive it without standing up a shell.
@@ -1739,61 +1816,127 @@ pub(crate) const SHORT_BOX_WARNING_LINES: usize = 10;
 /// `debt-the-paint-time-warning-has-no-test` has been open since R1656 saying
 /// that the sibling warning fires nowhere anybody checks, so this one is shaped
 /// to be checkable from the first line it emits.
+///
+/// [`short_box_sites`] decides **what** there is to say; this decides how much
+/// of it is said and what was already heard.
 #[cfg(debug_assertions)]
 pub fn warn_about_short_boxes_in<S: std::hash::BuildHasher>(
     scene: &Scene,
     seen: &mut HashSet<String, S>,
 ) {
-    let short = pinion_core::containment::short_boxes(scene);
-    if short.is_empty() {
+    let sites = short_box_sites(scene);
+    if sites.is_empty() {
         return;
     }
-    // Runs whose cut a reader could see are said first. This is an ORDERING:
-    // the ones after it are still counted, and the count goes out with the
-    // warnings rather than instead of them.
-    let (visible, rest): (Vec<_>, Vec<_>) = short
-        .into_iter()
-        .partition(|row| pinion_core::containment::cut_would_show(&row.content));
+
     let mut spelled = 0usize;
     let mut fresh = 0usize;
-    for row in visible.iter().chain(rest.iter()) {
-        let owner = row.tag.as_deref().unwrap_or_else(|| {
-            row.path
-                .last()
-                .map_or("<an untagged box>", std::string::String::as_str)
-        });
-        let key = format!("{}|{}|{}", owner, row.content, row.short_by);
-        if !seen.insert(key) {
-            continue;
+    let mut sites_fresh = 0usize;
+    let mut sites_unspelled = 0usize;
+    let mut runs_unspelled = 0usize;
+    for (site, rows) in &sites {
+        // Every run at the site is marked seen, spelled or not: a frame that
+        // counted a run has reported it, and saying it again next frame would
+        // be the repetition this grouping exists to stop.
+        let mut fresh_here = 0usize;
+        let mut speaks_for: Option<usize> = None;
+        for (i, row) in rows.iter().enumerate() {
+            if seen.insert(format!(
+                "{}|{}|{}",
+                row.address(),
+                row.content,
+                row.short_by
+            )) {
+                fresh_here += 1;
+                // The site is represented by the best of the runs that are NEW,
+                // not by the best of all of them: a line whose subject was
+                // already said last frame spends the budget on old news.
+                if speaks_for.is_none() {
+                    speaks_for = Some(i);
+                }
+            }
         }
-        fresh += 1;
+        let Some(speaks_for) = speaks_for else {
+            continue;
+        };
+        debug_assert!(fresh_here > 0, "a site speaks only when something is new");
+        fresh += fresh_here;
+        sites_fresh += 1;
         if spelled >= SHORT_BOX_WARNING_LINES {
+            sites_unspelled += 1;
+            // What the line this site did NOT get would have carried as
+            // `at_this_site` — see the tail below for why that is the number.
+            runs_unspelled += rows.len();
             continue;
         }
         spelled += 1;
+        let row = &rows[speaks_for];
         tracing::warn!(
             target: "pinion::containment",
-            owner = %owner,
+            at = %row.address(),
+            site = %site,
+            at_this_site = rows.len(),
             content = %row.content,
             px = row.px,
             box_height = row.rect.h,
             needs = row.needs,
             short_by = row.short_by,
             visible = pinion_core::containment::cut_would_show(&row.content),
-            "a box is {}px too short for the {}px face it holds — \
-             `containment::line_rect_in` is a box that cannot be",
+            "a box is {}px too short for the {}px face it holds — give it {}px, \
+             or build it with `containment::line_rect_in`, which is a box that \
+             cannot be too short",
             row.short_by,
             row.px,
+            row.needs,
         );
     }
-    if fresh > spelled {
+    // ★★★★★ R1870 — the tail is **the sum of the lines it did not print**: for
+    // each site past the bound, the `at_this_site` figure that site's own line
+    // would have carried, and how many such sites there were.
+    //
+    // ⚠ The two obvious spellings are both wrong, and one of them shipped for
+    // the length of this round's first draft:
+    //
+    // * `if fresh > spelled` fires whenever a frame holds more runs than lines,
+    //   which after grouping is *the normal case* — twenty-three runs at four
+    //   sites, all four spelled, announced "19 more box(es) … at 0 site(s) not
+    //   spelled out". Nothing was unsaid; the nineteen were on the card's own
+    //   line, inside `at_this_site`.
+    // * `fresh - spelled` subtracts a count of LINES from a count of RUNS. It
+    //   was correct before R1870 because a line was a run, and it agrees with
+    //   the truth *only* while every site holds exactly one — which is the
+    //   shape every fixture in this file had, and is why the arithmetic
+    //   survived a passing suite.
+    //
+    // A site that got a line has reported every run at it, so the tail speaks
+    // for the sites that got none, and says what their lines would have said.
+    //
+    // `sites` counts the sites that had something NEW this frame, so that
+    // `sites == spelled + sites_unspelled` is an identity a reader can check on
+    // the line itself. A site whose every run was said on an earlier frame is
+    // silent and is in neither term.
+    //
+    // ⚠ What this costs, stated rather than hidden: on a frame where every site
+    // IS spelled there is now no line carrying the frame's total, where the old
+    // condition always emitted one. The total is still recoverable — it is the
+    // sum of the lines' `at_this_site` — but a reader who used to read it off
+    // one field now adds. That is the price of a summary that means "here is
+    // what I did not say" rather than "here is arithmetic", and the whole-tree
+    // figure is a command now anyway (`cargo test -p hello-analyzer-shell
+    // r1870_the_short_box_census -- --nocapture`).
+    if sites_unspelled > 0 {
         tracing::warn!(
             target: "pinion::containment",
             spelled = spelled,
             counted = fresh,
+            sites = sites_fresh,
+            sites_unspelled = sites_unspelled,
+            runs_unspelled = runs_unspelled,
             "and {} more box(es) on this frame are too short for their own \
-             face — ask `scene/text_painted` for `short_by` on every run",
-            fresh - spelled,
+             face, at {} site(s) not spelled out — ask `scene/text_painted` \
+             for `short_by` on every run",
+            runs_unspelled,
+            sites_unspelled,
         );
     }
 }
@@ -5787,19 +5930,36 @@ impl<V: WidgetView> ShellCore<V> {
     /// # The bound, and why it is not a budget
     ///
     /// The population is 822 runs across this tree's five analysis screens, so
-    /// "once per run" is still eight hundred lines on the first frame. Two
-    /// things bound it and neither is a budget:
+    /// "once per run" is still eight hundred lines on the first frame. Three
+    /// things bound it and none is a budget:
     ///
-    /// * runs whose cut a reader could SEE are said first
-    ///   ([`pinion_core::containment::cut_would_show`]) — an ordering, not a
-    ///   permission;
-    /// * at most [`SHORT_BOX_WARNING_LINES`] of them are spelled out, and the
-    ///   rest are **counted in the same breath**, so nothing is silently
-    ///   dropped. A budget would let a defect inside it go unmentioned, which
-    ///   is exactly how a reader came to find three of these by eye.
+    /// * runs are grouped by [repeating
+    ///   site](pinion_core::containment::repeating_site) and a site gets **one
+    ///   line**, carrying how many runs sit there — so a table's forty cells
+    ///   are the one authoring mistake they are, and the line tells a reader
+    ///   what repairing it retires;
+    /// * a site whose cut a reader could SEE goes first, then the site repeated
+    ///   most ([`pinion_core::containment::cut_would_show`]) — an ordering, not
+    ///   a permission;
+    /// * at most [`SHORT_BOX_WARNING_LINES`] sites are spelled out, and the
+    ///   rest are **counted in the same breath**, runs and sites both, so
+    ///   nothing is silently dropped. A budget would let a defect inside it go
+    ///   unmentioned, which is exactly how a reader came to find three of these
+    ///   by eye.
     ///
-    /// Once per distinct run afterwards, keyed by owner + content + shortfall,
-    /// so a screen that repaints sixty times a second says it once.
+    /// ★ R1870 added the first of those, and it is what makes the other two
+    /// mean anything: measured R1870 on the analysis-tool shell's dashboard,
+    /// eight of the ten lines went to **one table's cells**, so everything else
+    /// on that frame was bounded correctly and heard by nobody.
+    ///
+    /// ⚠ Ask for the quantities rather than reading them here — `cargo test -p
+    /// hello-analyzer-shell r1870_the_short_box_census -- --nocapture` reports
+    /// them per destination. The `822` above is inherited from R1863 and has
+    /// **not** been re-derived since; that census answers for the integrated
+    /// shell's destinations, which is a different population.
+    ///
+    /// Once per distinct run afterwards, keyed by address + content +
+    /// shortfall, so a screen that repaints sixty times a second says it once.
     #[cfg(debug_assertions)]
     fn warn_about_short_boxes(&mut self, scene: &Scene) {
         warn_about_short_boxes_in(scene, &mut self.warned_short_boxes);

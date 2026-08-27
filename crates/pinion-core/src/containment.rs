@@ -263,6 +263,118 @@ pub struct ShortBox {
     pub short_by: u32,
 }
 
+impl ShortBox {
+    /// The address a reader follows to reach this run.
+    ///
+    /// ★ R1870 — the tag when it carries one, and otherwise the **whole path**
+    /// rather than its last segment. Measured on a real boot, the last segment
+    /// of an untagged run's path is the run's *position among its siblings*, so
+    /// the first line of the warning this feeds named its subject `2`. A
+    /// position is not an address: `2` is unreachable, `packets/1/2` resolves.
+    ///
+    /// The empty string is possible in principle and only at a scene whose root
+    /// is itself a text run — the walk gives the root an empty path, and a
+    /// caller with nowhere to send a reader is told so in words.
+    #[must_use]
+    pub fn address(&self) -> String {
+        match self.tag.as_deref() {
+            Some(tag) => tag.to_owned(),
+            None if self.path.is_empty() => "<an untagged box>".to_owned(),
+            None => self.path.join("/"),
+        }
+    }
+
+    /// The [repeating site](repeating_site) this run sits at.
+    #[must_use]
+    pub fn site(&self) -> String {
+        repeating_site(&self.address())
+    }
+}
+
+/// One address with its **positions** folded away, so the runs that are one
+/// authoring mistake repeated read as one site.
+///
+/// ★★★★★ R1870 — this exists because a bound on lines is only half of what a
+/// reader needs. Measured R1870 on the analysis-tool shell's dashboard: **eight
+/// of the warning's ten lines went to one table's cells**, so the lines a reader
+/// can act on restated a single authoring mistake and every other kind of short
+/// box on that frame reached them only inside a count. Folding positions is what
+/// lets the budget be spent on *kinds*.
+///
+/// ⚠ **Ask for the quantities; do not read them here.** They differ per
+/// destination and the queued repair campaign exists to change them:
+///
+/// ```text
+/// cargo test -p hello-analyzer-shell r1870_the_short_box_census -- --nocapture
+/// ```
+///
+/// That census is here because the rule caught this very paragraph: R1870's
+/// first draft wrote figures read off a log by hand, and re-measuring them in
+/// the same round found **every quantity wrong** while the shape held.
+///
+/// ★ It also records something the hand reading could not see: **the pile-up is
+/// not proportional to size.** The largest single site in the whole application
+/// is a packet list's cells, at more than a hundred runs — and on that
+/// destination the replaced ordering's worst concentration was three lines,
+/// falling on a *different* site entirely. Its pile-up was an artefact of walk
+/// order, which is precisely what grouping removes.
+///
+/// # What counts as a position
+///
+/// A segment made of nothing but digits and the punctuation an index is spelled
+/// with (`_`, `-`) is a position, and so is a `#<digits>` suffix inside a named
+/// segment. Both are *which one*, never *what*. Everything else survives
+/// verbatim — `ipv4` keeps its `4`, because the digit there is part of a name
+/// and folding it would put `ipv4` and `ipv6` at one site.
+///
+/// Both separators this tree spells an address with (`.` in a tag, `/` in a
+/// path) are segment boundaries, and the separator itself is preserved, so a
+/// site reads back as the address family it stands for:
+/// `card.packet#0.cell.0_2` → `card.packet#*.cell.*`.
+///
+/// # ⚠ Which way it errs
+///
+/// Folding too eagerly merges two genuinely different sites and hides one of
+/// them; folding too little is exactly the defect above. The rule above is the
+/// narrow one on purpose: it folds only what is syntactically a position, so a
+/// name that merely contains a digit is never merged with another name.
+#[must_use]
+pub fn repeating_site(address: &str) -> String {
+    let mut out = String::with_capacity(address.len());
+    let mut start = 0usize;
+    for (i, ch) in address.char_indices() {
+        if ch == '.' || ch == '/' {
+            push_site_segment(&mut out, &address[start..i]);
+            out.push(ch);
+            start = i + ch.len_utf8();
+        }
+    }
+    push_site_segment(&mut out, &address[start..]);
+    out
+}
+
+/// One segment of [`repeating_site`], with a position folded to `*`.
+fn push_site_segment(out: &mut String, seg: &str) {
+    let is_position = !seg.is_empty()
+        && seg
+            .chars()
+            .all(|c| c.is_ascii_digit() || c == '_' || c == '-')
+        && seg.chars().any(|c| c.is_ascii_digit());
+    if is_position {
+        out.push('*');
+        return;
+    }
+    if let Some(hash) = seg.rfind('#') {
+        let digits = &seg[hash + 1..];
+        if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
+            out.push_str(&seg[..hash]);
+            out.push_str("#*");
+            return;
+        }
+    }
+    out.push_str(seg);
+}
+
 /// Every run in the scene whose own box is too short for the face it is set in.
 ///
 /// Reports the *amount* per run rather than a count, for the reason
@@ -1072,7 +1184,74 @@ fn translate(rect: Rect, offset: (i64, i64)) -> Rect {
 mod tests {
     use super::*;
     use crate::scene::{BoxNode, ContainerNode, Rect, Scene, TextNode};
-    use crate::style::BoxStyle;
+    use crate::style::{BoxStyle, TextStyle};
+
+    /// ★★★★★ R1870 — a position is *which one*, and folding it is what lets a
+    /// table's cells read as the one mistake they are.
+    #[test]
+    fn r1870_a_repeating_site_folds_the_positions_and_keeps_the_names() {
+        // The address the real boot printed, and the eight cells that shared it.
+        assert_eq!(
+            repeating_site("card.packet#0.cell.0_2"),
+            "card.packet#*.cell.*"
+        );
+        assert_eq!(
+            repeating_site("card.packet#0.cell.1_1"),
+            repeating_site("card.packet#0.cell.4_3"),
+            "two cells of one table are one site"
+        );
+        assert_eq!(
+            repeating_site("card.packet#0.cell.1_1"),
+            repeating_site("card.packet#7.cell.1_1"),
+            "and so are the same cell of two cards — the card number is a position too"
+        );
+        // A path, whose separator differs and whose segments are positions.
+        assert_eq!(repeating_site("packets/1/2"), "packets/*/*");
+        // ⚠ The direction this must NOT fold: a digit inside a name.
+        assert_eq!(repeating_site("proto.ipv4.head"), "proto.ipv4.head");
+        assert_ne!(
+            repeating_site("proto.ipv4"),
+            repeating_site("proto.ipv6"),
+            "folding a digit that is part of a name would merge two real sites"
+        );
+        // A `#` with no digits after it is punctuation in a name, not a position.
+        assert_eq!(repeating_site("card.a#b"), "card.a#b");
+        // Nothing to fold, and nothing lost.
+        assert_eq!(repeating_site(""), "");
+        assert_eq!(repeating_site("shell.status"), "shell.status");
+    }
+
+    /// ★ R1870 — an untagged run's address is the whole path, because its last
+    /// segment is a POSITION: the real boot's first warning line named its
+    /// subject `2`, which no reader can follow.
+    #[test]
+    fn r1870_an_untagged_run_is_addressed_by_its_whole_path() {
+        let scene = Scene::Container(ContainerNode::new(vec![Scene::Container(
+            ContainerNode::new(vec![text(
+                "Message Stream",
+                // The fixture's face is the default one, so the box is authored
+                // four pixels short of the line that face needs.
+                Rect::new(0, 0, 200, line_box(TextStyle::default().font_size_px) - 4),
+                None,
+            )])
+            .with_tag("shell"),
+        )]));
+        let short = short_boxes(&scene);
+        assert_eq!(short.len(), 1, "the fixture holds exactly one short run");
+        let row = &short[0];
+        assert!(row.tag.is_none(), "the fixture's run carries no tag");
+        assert!(
+            row.path.len() > 1,
+            "a path with one segment could not tell the two addressings apart: {:?}",
+            row.path
+        );
+        assert_eq!(row.address(), row.path.join("/"));
+        assert_ne!(
+            row.address(),
+            row.path.last().expect("a non-empty path").clone(),
+            "the last segment is where the run sits among its siblings, not where it is"
+        );
+    }
 
     /// A text run whose ink the fixture decides, so these tests are about the
     /// POLICY and never about a shaper.

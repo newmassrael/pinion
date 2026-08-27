@@ -6512,3 +6512,139 @@ fn r1865_a_toast_lands_in_one_place_at_every_destination() {
         );
     });
 }
+
+/// ★★★★★ R1870 — **this application's short boxes, as a census a command can
+/// ask for, at every destination it opens.**
+///
+/// R1870 re-spent the paint-time warning's ten-line budget on *repeating sites*
+/// instead of runs, and its whole justification was a measurement of one real
+/// boot read off a log by hand. This project has watched that kind of number rot
+/// in prose often enough to have a rule about it, and the rule caught this one:
+/// re-measured in the round that wrote it, the hand figures were **wrong** —
+/// right about the shape, wrong about every quantity. So the measurement lives
+/// here instead, taken by the same pipeline every other check in this file
+/// uses, and the round's prose cites this test rather than a number.
+///
+/// ```text
+/// cargo test -p hello-analyzer-shell r1870_the_short_box_census -- --nocapture
+/// ```
+///
+/// # It walks the whole application, because the repair does
+///
+/// The queued campaign is a sweep of *this tool's screens*, not of one frame,
+/// and the order it should work in is [`pinion_shell::short_box_sites`]' own —
+/// a site whose cut a reader can SEE first, then the most repeated, because
+/// repairing that retires the most runs. Printing the census per destination is
+/// what turns the campaign's worklist into something derived rather than
+/// written down.
+///
+/// # What it asserts, and what it deliberately does not
+///
+/// Every quantity below is a defect population the campaign exists to drive to
+/// zero, so **nothing here asserts a magnitude** — a test that pinned one would
+/// make finishing the repair a red, which is the exact inversion of what a
+/// ratchet is for. What is asserted is what must be true of
+/// [`pinion_shell::short_box_sites`] on a real screen and holds equally on a
+/// clean one:
+///
+/// * the grouping is a **partition** — every short run lands at exactly one
+///   site, none invented and none lost. The unit fixtures next to the emitter
+///   check the folding rule on addresses somebody wrote out; only a real screen
+///   can say the rule survives contact with the addresses this tree generates;
+/// * a site is never spelled twice inside the budget;
+/// * the budget is spent to the last line while sites go unsaid.
+///
+/// ⚠ The ordering is *asked of* the crate under test, never re-derived here. A
+/// test that rebuilt the grouping would be asserting against its own copy.
+#[test]
+fn r1870_the_short_box_census_of_every_destination() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let roster = spec::destinations();
+        let bound = 10usize;
+        let mut walked = 0usize;
+        for destination in roster.open() {
+            let key = destination.key.as_ref();
+            if key != state.at() {
+                state.go(key).unwrap_or_else(|why| panic!("{key}: {why:?}"));
+            }
+            walked += 1;
+            let (_, scene) = painted_at((WIN_W, WIN_H));
+            let short = pinion_core::containment::short_boxes(&scene);
+            let sites = pinion_shell::short_box_sites(&scene);
+
+            // ★ The partition. `short_boxes` is the population; `short_box_sites`
+            // is meant to be exactly that population re-shelved.
+            let shelved: usize = sites.iter().map(|(_, rows)| rows.len()).sum();
+            assert_eq!(
+                shelved,
+                short.len(),
+                "at {key} the grouping holds {shelved} run(s) where the frame \
+                 has {} — a site algebra that loses or duplicates runs makes \
+                 every count on the warning's lines a fiction",
+                short.len(),
+            );
+            let named: BTreeSet<&String> = sites.iter().map(|(site, _)| site).collect();
+            assert_eq!(
+                named.len(),
+                sites.len(),
+                "at {key} one site appears twice in the grouping",
+            );
+
+            // The budget, spent the way the emitter spends it.
+            let lines: Vec<&String> = sites.iter().take(bound).map(|(site, _)| site).collect();
+            assert_eq!(
+                lines.len(),
+                bound.min(sites.len()),
+                "at {key} the budget went unspent while sites went unsaid",
+            );
+
+            // The contrast this round was written for, REPORTED rather than
+            // pinned: how much of the same budget the replaced ordering — runs
+            // whose cut shows first, then walk order, one line per RUN — would
+            // have spent restating a single site.
+            let (visible, rest): (Vec<_>, Vec<_>) = short
+                .iter()
+                .partition(|row| pinion_core::containment::cut_would_show(&row.content));
+            let replaced: Vec<String> = visible
+                .iter()
+                .chain(rest.iter())
+                .take(bound)
+                .map(|row| row.site())
+                .collect();
+            let (worst, worst_site) = replaced
+                .iter()
+                .map(|site| {
+                    (
+                        replaced.iter().filter(|s| *s == site).count(),
+                        site.as_str(),
+                    )
+                })
+                .max()
+                .unwrap_or((0, "<none>"));
+
+            println!(
+                "R1870 census {key}: {} short run(s) at {} site(s); the \
+                 replaced ordering would spend {worst} of its {bound} line(s) \
+                 on ONE site ({worst_site}), the installed one spells {} at {} \
+                 distinct site(s). First reported: {:?}",
+                short.len(),
+                sites.len(),
+                lines.len(),
+                lines.len(),
+                sites
+                    .iter()
+                    .take(3)
+                    .map(|(site, rows)| (site.as_str(), rows.len()))
+                    .collect::<Vec<_>>(),
+            );
+        }
+        assert!(
+            walked >= 6,
+            "the rail declares {walked} open destination(s); this census was \
+             taken against six, and a population that shrank silently is how a \
+             green sweep comes to mean nothing",
+        );
+    });
+}
