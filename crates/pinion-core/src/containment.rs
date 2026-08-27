@@ -189,8 +189,55 @@ pub const fn line_rect(x: u32, y: u32, w: u32, px: u32) -> Rect {
 /// thing by transposing two arguments.
 #[must_use]
 pub const fn line_rect_in(outer: Rect, x: u32, w: u32, px: u32) -> Rect {
-    let h = line_box(px);
-    Rect::new(x, outer.y + (outer.h.saturating_sub(h)) / 2, w, h)
+    band_in(outer, x, w, line_box(px))
+}
+
+/// ★★★★★ R1862 — a band of height `h`, centred vertically inside `outer`.
+///
+/// [`line_rect_in`] is this with the height taken from the face, and splitting
+/// them is what lets **a run and something that is not a run share a centre**.
+///
+/// # The defect this comes from
+///
+/// A legend row 18 pixels tall placed an 11-pixel pin sample and a 12-pixel
+/// label with the *same hand-picked* `+3`. Two heights, one offset: the pin's
+/// centre landed at `+8.5` and the label's at `+9`, and a reader reported the
+/// words as not lining up with the box beside them. The offsets were not wrong
+/// by inspection — each is what somebody would pick — they were **unrelated**,
+/// and nothing that is unrelated can be relied on to agree.
+///
+/// Derived from the seat, two elements of a row centre on the same line by
+/// construction, whatever their heights are. That is the property; the numbers
+/// are a consequence of it, which is the direction that survives an edit.
+///
+/// # ⚠ Placed from the seat's CENTRE, not from its remaining space
+///
+/// The obvious spelling — `outer.y + (outer.h - h) / 2`, equal margins above
+/// and below — **does not have the property this exists for**, and a
+/// counterfactual is what said so: on an 18-pixel row it puts an 11-pixel band
+/// at centre 8 and a 12-pixel one at centre 9, because two integer divisions
+/// round independently. That one pixel is exactly the defect the pin legend was
+/// reported for, so a derivation with it in would have been the bug with extra
+/// steps, and the gate written against it had to allow a pixel and could then
+/// no longer see the thing it was for.
+///
+/// Centring on `outer.y + outer.h / 2` rounds **once**, so every band of a seat
+/// shares one centre exactly and the gates can demand equality.
+///
+/// ⚠ The cost, stated: the margins above and below can differ by one where the
+/// parities differ. Equal margins and a shared centre are different properties
+/// on an integer grid and only one of them is what alignment means.
+///
+/// The mature toolkits this project is judged against reach it with a
+/// horizontal layout whose alignment is a per-child flag. What differs here is
+/// that the answer is a **rectangle the caller receives**, so a painter that
+/// draws by rectangle — which is what an introspectable scene needs — can hold
+/// the property without a layout pass to consult, and a gate can read the
+/// result out of the paint rather than out of the flag that asked for it.
+#[must_use]
+pub const fn band_in(outer: Rect, x: u32, w: u32, h: u32) -> Rect {
+    let mid = outer.y + outer.h / 2;
+    Rect::new(x, mid.saturating_sub(h / 2), w, h)
 }
 
 /// One run whose own box cannot hold it, as [`short_boxes`] reports it.
@@ -1620,5 +1667,64 @@ mod tests {
         }
         assert_eq!(Trespass::Outside.wire_word(), "outside");
         assert_eq!(Trespass::Border.wire_word(), "border");
+    }
+
+    /// ★★★★★ R1862 — **two elements of one row share a centre by construction,
+    /// whatever their heights are.**
+    ///
+    /// The property, not the numbers: the pin legend that prompted this placed
+    /// an 11-pixel sample and a 12-pixel label with the same hand-picked `+3`
+    /// in an 18-pixel row, and the centres came out one apart.
+    #[test]
+    fn r1862_two_bands_of_a_row_share_a_centre_whatever_their_heights() {
+        // ★★★★★ EQUALITY, not "within a pixel". A counterfactual moved the
+        // legend's sample by one and this gate — written with a one-pixel
+        // tolerance because the obvious derivation needed one — did not see it.
+        // The defect being repaired was itself one pixel, so a tolerance the
+        // size of the defect is a gate that cannot report it.
+        let row = Rect::new(67, 522, 210, 18);
+        for outer_h in 1..40u32 {
+            let row = Rect::new(row.x, row.y, row.w, outer_h);
+            for a in 1..=outer_h {
+                for b in 1..=outer_h {
+                    let one = super::band_in(row, row.x, 11, a);
+                    let two = super::band_in(row, row.x + 20, 190, b);
+                    let mid = |r: Rect| r.y + r.h / 2;
+                    assert_eq!(
+                        mid(one),
+                        mid(two),
+                        "in a {outer_h}-tall row, heights {a} and {b} do not share a centre"
+                    );
+                }
+            }
+        }
+    }
+
+    /// And the derivation the face-sized one is: same seat, same centre.
+    #[test]
+    fn r1862_a_line_rect_is_a_band_of_the_faces_height() {
+        let row = Rect::new(67, 522, 210, 18);
+        for px in 8..=14 {
+            assert_eq!(
+                super::line_rect_in(row, row.x, 190, px),
+                super::band_in(row, row.x, 190, super::line_box(px)),
+                "the face-sized band and the explicit one disagree at {px}px"
+            );
+        }
+    }
+
+    /// ⚠ A band taller than its seat still starts at the seat, rather than
+    /// wrapping around: the caller is told nothing here, and the screen gates
+    /// are what report a box that does not fit the row centring it.
+    /// ⚠ A band taller than its seat is still centred on the seat's middle and
+    /// simply overhangs it, except where that would put it above the window,
+    /// which `saturating_sub` clamps. The caller is told nothing here; the
+    /// screen gates are what report a box that does not fit the row centring it.
+    #[test]
+    fn r1862_a_band_taller_than_its_seat_still_shares_the_seats_centre() {
+        let row = Rect::new(0, 100, 50, 10);
+        let over = super::band_in(row, 0, 50, 30);
+        assert_eq!(over.y + over.h / 2, row.y + row.h / 2);
+        assert_eq!(over, Rect::new(0, 90, 50, 30));
     }
 }

@@ -67,7 +67,7 @@ use pinion_a11y::{
     navigation_link_nodes,
 };
 use pinion_core::availability::Unavailable;
-use pinion_core::containment::line_box;
+use pinion_core::containment::{band_in, line_box, line_rect_in};
 use pinion_core::edge_panel::EdgePlacement;
 use pinion_core::external::{
     ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
@@ -6109,16 +6109,25 @@ fn palette_legend(rect: Rect, ink: Ink) -> Vec<Scene> {
             "accept" => transport_ink(Transport::Tcp),
             _ => ink.text_3,
         };
+        // ★★★★★ R1862 — **the sample and the words share a centre because both
+        // are derived from the row**, not because two hand-picked offsets
+        // happened to agree. They did not: this was `row.y + 3` for BOTH, on an
+        // 11-pixel pin and a 12-pixel label in an 18-pixel row, so the pin's
+        // centre sat at +8 and the label's at +9 — and a reader said the words
+        // did not line up with the box beside them. The label's box was five
+        // pixels short of `line_box(10)` as well, which is the same authoring
+        // habit and the same repair: one call answers the height AND the
+        // position, exactly as R1859 found on the inspector's rename row.
         children.push(box_at(
             &format!("lab.palette.pin.{kind}"),
-            Rect::new(row.x, row.y + 3, PIN, PIN),
+            band_in(row, row.x, PIN, PIN),
             if *kind == "dial" { colour } else { ink.surface },
             Some(colour),
             PIN / 2,
         ));
         children.push(label(
             *meaning,
-            Rect::new(row.x + 20, row.y + 3, 190, 12),
+            line_rect_in(row, row.x + 20, 190, 10),
             10,
             if *kind == "closed" {
                 ink.err

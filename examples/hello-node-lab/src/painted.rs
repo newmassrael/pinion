@@ -1327,12 +1327,18 @@ use pinion_core::test_fixtures::screen_ink::{
 /// improvement cannot go unrecorded, and it refused this round's commit until
 /// this number moved — which is the gate working, not the gate complaining.
 ///
-/// ⚠ 163 is still a BACKLOG, and the reader found their run inside it: a
-/// budget cannot see a defect it is already paying for. That is why the row has
-/// its own ZERO gate next door
-/// (`r1859_the_rename_row_holds_its_text_and_centres_it`) rather than a smaller
-/// share of this one.
-const SHORT_BOX_BUDGET: usize = 163;
+/// ★ R1862 — **163 → 160, and the three are the pin legend's**: the same reader
+/// pointed at that row too, and its label boxes were 12 pixels for a face whose
+/// `line_box` is 17. `line_rect_in` again, and again one call answered both the
+/// height and the position.
+///
+/// ⚠ 160 is still a BACKLOG, and both readers found their runs inside it: a
+/// budget cannot see a defect it is already paying for. That is why each row
+/// gets its own ZERO gate next door
+/// (`r1859_the_rename_row_holds_its_text_and_centres_it`,
+/// `r1862_a_legend_row_shares_one_centre_and_holds_its_text`) rather than a
+/// smaller share of this one.
+const SHORT_BOX_BUDGET: usize = 160;
 
 /// The one sweep, over every state.
 #[test]
@@ -6890,6 +6896,140 @@ fn r1859_the_rename_row_holds_its_text_and_centres_it() {
             off_centre.is_empty(),
             "★ run(s) of the rename row are not centred in their seat \
              (content, space above, space below): {off_centre:?}",
+        );
+    });
+}
+
+/// ★★★★★ R1862 — **the pin legend's sample and its words share one centre, and
+/// the words are in a box tall enough for their face.**
+///
+/// # The report, and why it is two properties and one repair
+///
+/// A reader looking at the shipped window said `a pin that can call out` was not
+/// in the middle of the box to its left. Measured through the paint before a
+/// line was written: the pin sample sat at `y 522..533` (centre 527) and the run
+/// at `y 522..534` (centre 528), and the run's box was **12 pixels for a face
+/// whose `line_box` is 17** — five short.
+///
+/// Both come from the same line: the sample and the label were placed with the
+/// *same hand-picked* `+3` inside an 18-pixel row, on an 11-pixel box and a
+/// 12-pixel one. Two heights, one offset. Nothing that is unrelated can be
+/// relied on to agree, and R1859 found the identical shape on the inspector's
+/// rename row — one derivation answers the height AND the position.
+///
+/// # The population
+///
+/// Every legend row the specification declares, at every size this screen
+/// declares, with the run found by the SEAT it sits in rather than by its words
+/// — so a legend entry added later joins this gate without the gate being
+/// edited.
+#[test]
+fn r1862_a_legend_row_shares_one_centre_and_holds_its_text() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        let mut judged = 0usize;
+        let mut samples = 0usize;
+        let mut sizes_with_legend = 0usize;
+        let mut short: Vec<(String, u32, u32)> = Vec::new();
+        let mut apart: Vec<(String, &str, u32, u32)> = Vec::new();
+
+        for (how_big, size) in SIZES {
+            let (frame, scene) = painted_and_scene(&state, *size);
+            let before = samples;
+            for (kind, meaning) in spec::PIN_LEGEND {
+                let Some(pin) = frame.tags.get(&format!("lab.palette.pin.{kind}")).copied() else {
+                    continue;
+                };
+                samples += 1;
+                scene.for_each_node(&mut |visit| {
+                    let Scene::Text(t) = visit.node else {
+                        return;
+                    };
+                    // ★ The run of THIS row, named by the SPECIFICATION rather
+                    // than by a band of pixels. The first draft selected on the
+                    // row's rectangle and swept up five runs from other parts of
+                    // the screen — the protocol chips below it and two inspector
+                    // labels — because a geometric band is a claim about where
+                    // things are and this is a claim about what they ARE.
+                    //
+                    // ⚠ Derived, so a legend entry whose wording changes stays in
+                    // this gate; and the predicate says nothing about height or
+                    // position, so it cannot presume either property it asserts
+                    // (R1859.1).
+                    if t.content != *meaning {
+                        return;
+                    }
+                    judged += 1;
+                    let owed = pinion_core::containment::short_by(t);
+                    if owed > 0 {
+                        short.push((t.content.clone(), t.rect.h, owed));
+                    }
+                    // ★★★★★ One centre, EXACTLY. This allowed a pixel at first,
+                    // on the belief that an odd remainder makes one unavoidable
+                    // — and a counterfactual walked straight through it by
+                    // moving the sample one pixel, which is the size of the
+                    // defect a reader reported. **A tolerance the size of the
+                    // defect is a gate that cannot report it.** What made the
+                    // equality reachable is `band_in` rounding once, from the
+                    // seat's centre, instead of twice.
+                    //
+                    // ⚠⚠ **In WINDOW coordinates on both sides.** `t.rect` is
+                    // the run's box in its SCROLL FRAME and `shot.tags` is
+                    // window-absolute, and the first draft compared one with the
+                    // other: it reported the two centres 55 pixels apart on a
+                    // row this round had already measured as agreeing to the
+                    // pixel. Two coordinate systems that both spell `y` is the
+                    // shape a gate cannot see it is in.
+                    let Some(run) = visit.absolute_rect() else {
+                        return;
+                    };
+                    let run_mid = run.y + run.h / 2;
+                    let pin_mid = pin.y + pin.h / 2;
+                    if run_mid != pin_mid {
+                        apart.push((t.content.clone(), how_big, run_mid, pin_mid));
+                    }
+                });
+            }
+            if samples > before {
+                sizes_with_legend += 1;
+            }
+        }
+
+        println!(
+            "{judged} legend run(s) beside {samples} sample(s), at \
+             {sizes_with_legend} of {} size(s)",
+            SIZES.len(),
+        );
+        // ★★★★★ THE POPULATION IS WHERE THE SAMPLE IS, and it is smaller than
+        // "every row at every size" — measured, 6 of 9, because the palette
+        // scrolls and one of the declared sizes puts the legend below its fold.
+        // Demanding the product would have been a claim about the screen that
+        // is false, and the honest one is the RELATION: wherever this screen
+        // paints a sample, it paints that row's words beside it.
+        assert_eq!(
+            judged, samples,
+            "★ {samples} legend sample(s) are painted and {judged} of the \
+             rows' words are — a sample without its sentence is a legend row \
+             that says nothing, and a sentence without its sample is one this \
+             gate cannot judge",
+        );
+        assert!(
+            sizes_with_legend >= 2 && samples >= spec::PIN_LEGEND.len(),
+            "★ the legend was reached at {sizes_with_legend} of {} size(s) \
+             with {samples} sample(s) — a population this small cannot be this \
+             screen's, and the clauses below would be nearly vacuous over it",
+            SIZES.len(),
+        );
+        assert!(
+            short.is_empty(),
+            "★ legend run(s) are in a box too short for their own face \
+             (content, box height, short by): {short:?}",
+        );
+        assert!(
+            apart.is_empty(),
+            "★ legend run(s) do not share a centre with the sample beside them \
+             (content, size, run centre, sample centre): {apart:?}",
         );
     });
 }

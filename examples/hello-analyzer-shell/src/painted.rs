@@ -5773,3 +5773,71 @@ fn r1861_the_walk_reaches_a_sentence_the_overlay_leaves_alone() {
         );
     });
 }
+
+/// ★★★★★ R1862 — **in the assembled tool, at the size a person runs, the
+/// sentence a reader named lines up with the box beside it.**
+///
+/// Rule (7)'s form for a defect somebody SAW. The report was about the shipped
+/// window — `target/release/hello-analyzer-shell`, 1440x900 — and named the
+/// words and the thing they should line up with: *"`a pin that can call out`
+/// should be in the middle of the box on its left and it is not"*. So the run
+/// is found **by those words**, the box by the address family the samples
+/// occupy, and the question asked of the pair is whether they share a centre.
+///
+/// ⚠ **Both read in window coordinates, from the paint.** A run's own `rect` is
+/// in its scroll frame and a tag's is window-absolute; the sibling gate in
+/// `hello-node-lab` reported these two centres 55 pixels apart on its first run
+/// for exactly that reason, on a row already measured as agreeing to the pixel.
+///
+/// ```text
+/// cargo test -p hello-analyzer-shell r1862_the_walk -- --nocapture
+/// ```
+#[test]
+fn r1862_the_walk_reaches_a_legend_row_that_lines_up() {
+    const SAID: &str = "a pin that can call out";
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        state.go("lab").expect("the node lab section is open");
+        let (painted, _) = painted_at((WIN_W, WIN_H));
+
+        let (content, run, _) = painted
+            .runs
+            .iter()
+            .find(|(content, ..)| content.contains(SAID))
+            .unwrap_or_else(|| {
+                panic!("no run in the assembled tool says {SAID:?} — the walk no longer reaches it")
+            });
+
+        // The box a reader means by "the one on its left": the nearest painted
+        // sample, found by containment in the run's own band rather than by an
+        // address this host would have to know.
+        let samples = painted.family("lab.palette.pin.");
+        assert!(
+            samples.len() >= 3,
+            "the legend paints {} sample(s); the specification declares three \
+             appearances and the clause below needs the one beside this run",
+            samples.len(),
+        );
+        let (tag, pin) = samples
+            .into_iter()
+            .filter_map(|tag| painted.rect(tag).map(|r| (tag, r)))
+            .filter(|(_, r)| r.x + r.w <= run.x && r.y < run.y + run.h && run.y < r.y + r.h)
+            .min_by_key(|(_, r)| run.x - (r.x + r.w))
+            .unwrap_or_else(|| panic!("no legend sample lies beside {SAID:?}"));
+
+        let run_mid = run.y + run.h / 2;
+        let pin_mid = pin.y + pin.h / 2;
+        println!("the row a reader named: {content:?} centre {run_mid} · {tag} centre {pin_mid}");
+        // ★ EXACTLY, and the reason is worth the line: this allowed a pixel
+        // until a counterfactual moved the sample by one — the size of the
+        // defect the reader reported — and walked through. `band_in` rounds
+        // once from the seat's centre, which is what makes equality reachable.
+        assert_eq!(
+            run_mid, pin_mid,
+            "★ the words are centred at {run_mid} and the box beside them at \
+             {pin_mid} — which is the report, reproduced",
+        );
+    });
+}

@@ -925,14 +925,65 @@ mod tests {
         });
     }
 
+    /// ★★★★★ R1862 — **the guard is asserted in BOTH profiles, because it does
+    /// two different things and only one of them was ever checked.**
+    ///
+    /// R906 chose *loud in dev, a no-op in release* on purpose. The test that
+    /// held it was `#[should_panic]` unconditionally, so under `--release` the
+    /// panic is compiled out, nothing panics, and the test FAILS — a red that
+    /// CI cannot see because it runs the suite in debug, and that surfaced only
+    /// when a round widened a counterfactual gate to `-p pinion-core --release`
+    /// and the baseline came back red.
+    ///
+    /// Hiding it behind `#[cfg(debug_assertions)]` would have left the release
+    /// behaviour — the half a shipped binary actually runs — asserted by
+    /// nothing. So the profile decides which claim is made, and both are made:
+    /// dev panics, release steps nothing and says so.
     #[test]
-    #[should_panic(expected = "macro transaction is open")]
-    fn r906_undo_during_open_macro_panics_in_debug() {
+    #[cfg_attr(debug_assertions, should_panic(expected = "macro transaction is open"))]
+    fn r906_undo_during_open_macro_is_loud_in_dev_and_a_noop_in_release() {
         // R906 guard: stepping the cursor mid-macro would truncate live history.
         Owner::new().run(|| {
-            let (_counter, stack) = fixture();
+            let (counter, stack) = fixture();
+            stack.record(SignalEdit::to(&counter, 1, "a"));
             stack.begin_macro("open");
-            stack.undo(); // debug_assert fires (loud in dev)
+            let stepped = stack.undo(); // debug_assert fires (loud in dev)
+            // Release only — the line above ends the test in debug.
+            assert!(
+                !stepped,
+                "release: undo() reported that it stepped the cursor while a \
+                 macro was open, which is the truncation the guard exists to \
+                 prevent"
+            );
+            assert_eq!(
+                counter.get(),
+                1,
+                "release: undo() reversed an edit while a macro was open"
+            );
+        });
+    }
+
+    /// The peer guard, in both profiles for the same reason. R906 put the same
+    /// `debug_assert` on `redo` and nothing had ever asserted either half of it.
+    #[test]
+    #[cfg_attr(debug_assertions, should_panic(expected = "macro transaction is open"))]
+    fn r906_redo_during_open_macro_is_loud_in_dev_and_a_noop_in_release() {
+        Owner::new().run(|| {
+            let (counter, stack) = fixture();
+            stack.record(SignalEdit::to(&counter, 1, "a"));
+            stack.undo();
+            stack.begin_macro("open");
+            let stepped = stack.redo();
+            assert!(
+                !stepped,
+                "release: redo() reported that it stepped the cursor while a \
+                 macro was open"
+            );
+            assert_eq!(
+                counter.get(),
+                0,
+                "release: redo() re-applied an edit while a macro was open"
+            );
         });
     }
 
