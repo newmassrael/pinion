@@ -5226,3 +5226,154 @@ fn r1866_the_walk_reaches_a_lab_that_compares_two_of_its_own_runs() {
         );
     });
 }
+
+/// ★★★★★ R1885 — **the assembled tool holds a compatibility test graph**: its
+/// peers run different builds, every drawn wire negotiates, and putting one peer
+/// on a build the other cannot talk to makes the launch gate say so — naming
+/// both builds, both spans, and which card to change.
+///
+/// This is `lab.t2.19`'s assembly, and with it the `UNASSEMBLED` ratchet empties.
+///
+/// # Why it is asserted HERE and through the SHELL's own external set
+///
+/// Rule (7), and the same argument `r1866_the_walk_reaches_a_lab_that_compares_
+/// two_of_its_own_runs` makes one screen up: the lab is a mounted guest, so the
+/// honest question is whether the tool a reader runs can be walked to that
+/// section and asked. A test reaching into `hello_node_lab`'s own state would be
+/// asking the guest directly and would pass on an application that never
+/// mounted it.
+///
+/// # What it drives, and why in this order
+///
+/// The gate is read BEFORE the edit as well as after. A test that only read it
+/// afterwards could not tell "the edit caused this" from "the opening graph was
+/// already broken" — and an opening graph that was already broken would be
+/// asserting a defect rather than offering a test. So the first assertion is
+/// that a heterogeneous graph is CLEAN, which is the claim that makes it a
+/// compatibility test rather than a picture of one deployment.
+#[test]
+fn r1885_the_walk_reaches_a_lab_whose_peers_run_different_builds() {
+    use pinion_core::external::IntrospectValue;
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        // The walk first: the claim is about a section of an application.
+        let report = walk_the_application(&state);
+        assert!(
+            report.conforms(),
+            "the application did not reproduce its specification over the walk: {}",
+            report.why().unwrap_or_default()
+        );
+        assert!(
+            report.itinerary().iter().any(|key| key == "lab"),
+            "the walk must stand in the node lab: {:?}",
+            report.itinerary()
+        );
+
+        state.go("lab").expect("the node lab section is open");
+        let mut externals = state.screens.externals(&state.journey.get());
+        let tags: Vec<String> = externals.iter().map(|e| e.tag.to_string()).collect();
+        let lab = externals
+            .iter_mut()
+            .filter_map(|e| e.handle.introspect_mut())
+            .find(|it| it.query("gate").is_ok())
+            .unwrap_or_else(|| {
+                panic!(
+                    "no external of the lab section answers `gate`, so the launch \
+                     gate this row rests on is not reachable from the assembled \
+                     tool: {tags:?}"
+                )
+            });
+
+        /// Whether any line is about two builds that cannot negotiate.
+        fn incompatible(gate: &serde_json::Value) -> Vec<String> {
+            gate.as_array()
+                .expect("the gate is a list")
+                .iter()
+                .filter_map(|line| line["sentence"].as_str())
+                .filter(|s| s.contains("share no wire revision"))
+                .map(ToOwned::to_owned)
+                .collect()
+        }
+
+        // ★ THE OPENING CLAIM: heterogeneous AND clean.
+        let opening = as_json(lab.query("gate").expect("the gate slot"));
+        assert_eq!(
+            incompatible(&opening),
+            Vec::<String>::new(),
+            "the opening graph must be a compatibility test that PASSES, or the \
+             screen ships an assertion of a defect: {opening}"
+        );
+        let spec = as_json(lab.query("spec").expect("a slot"));
+        let builds: Vec<&str> = spec["nodes"]
+            .as_array()
+            .expect("the opening graph has cards")
+            .iter()
+            .filter_map(|n| n["build"].as_str())
+            .collect();
+        let distinct: std::collections::BTreeSet<&&str> = builds.iter().collect();
+        assert!(
+            distinct.len() >= 2,
+            "★ the graph is not heterogeneous, so it cannot be a compatibility \
+             test at all — every card publishes the same build: {builds:?}"
+        );
+
+        // ★ THE EDIT: put one peer on a build the graph has moved past.
+        const CARD: &str = "P-01";
+        let said = lab
+            .invoke("build", IntrospectValue::Text(format!("{CARD},legacy")))
+            .expect("`build` is a declared action of this screen");
+        println!("the screen said: {said:?}");
+
+        // ★ How many refusals to expect is DERIVED from the published graph —
+        // every wire this card is on — and not written down. A number written
+        // here would still pass if the rule fired on one wire of three, which is
+        // the shape of a rule that silently stopped covering its population.
+        let wires = spec["links"]
+            .as_array()
+            .expect("the opening graph publishes its links")
+            .iter()
+            .filter(|pair| {
+                pair.as_array()
+                    .is_some_and(|ends| ends.iter().any(|e| e.as_str() == Some(CARD)))
+            })
+            .count();
+        assert!(
+            wires > 0,
+            "★ the card the edit targets is on no wire at all, so this walk \
+             could not have found a refusal however the rule behaved"
+        );
+
+        // ★ AND THE GATE NOW SAYS SO.
+        let after = as_json(lab.query("gate").expect("the gate slot"));
+        let refused = incompatible(&after);
+        assert_eq!(
+            refused.len(),
+            wires,
+            "every wire {CARD} is on ({wires}) should now fail to negotiate: {after}"
+        );
+        for sentence in &refused {
+            for word in ["legacy", "v2-v4"] {
+                assert!(
+                    sentence.contains(word),
+                    "★ the refusal must name the builds and their spans — a \
+                     sentence that only says `incompatible` leaves the author \
+                     guessing which card to change: {sentence:?} lacks {word:?}"
+                );
+            }
+        }
+        assert!(
+            after
+                .as_array()
+                .expect("a list")
+                .iter()
+                .any(|line| line["blocks"] == serde_json::Value::Bool(true)
+                    && line["sentence"]
+                        .as_str()
+                        .is_some_and(|s| s.contains("share no wire revision"))),
+            "a graph asserting a session that cannot be established must not \
+             launch: {after}"
+        );
+    });
+}

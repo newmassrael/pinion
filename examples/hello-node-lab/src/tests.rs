@@ -777,6 +777,19 @@ fn r1718_every_gate_finding_is_said_distinctly_and_never_names_its_card() {
             }
             .sentence(),
         ),
+        // ★★★★★ R1885 — the sixth situation, and this gate caught its absence
+        // on the first run after the arm was added, exactly as it caught the
+        // fifth. An arm nobody drives is an arm that can say anything.
+        (
+            "Incompatible",
+            super::Finding::Incompatible {
+                peer: "P-02".to_owned(),
+                because: "legacy speaks v4-v5 and reference speaks v6-v8, so \
+                          they share no wire revision"
+                    .to_owned(),
+            }
+            .sentence(),
+        ),
     ];
     assert_speaks_of("Finding", CARD, super::Finding::ARMS, &said, &[]);
 }

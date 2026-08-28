@@ -11,7 +11,7 @@
 //! an **accept** pin of the same transport. That single rule is what makes the
 //! canvas's three pin appearances mean something rather than decorate.
 
-use pinion_node_graph::{Conversion, NodeKind, Port, Side, Variadic};
+use pinion_node_graph::{Admission, Conversion, NodeKind, Port, Refusal, Side, Variadic};
 use serde::{Deserialize, Serialize};
 
 /// A transport a link can be carried over.
@@ -213,6 +213,121 @@ pub struct LabNode {
     /// Whether *this* node has somewhere to listen. A role that accepts and a
     /// node with no endpoint is the closed pin.
     pub listening: bool,
+    /// Which codebase this node runs, and the wire revisions it speaks (R1885).
+    ///
+    /// ★★★★★ The axis that makes this a **compatibility test graph** rather
+    /// than a drawing of one deployment. Every node here used to be implicitly
+    /// the same implementation, so "will these two actually talk?" had nowhere
+    /// to be asked — and the question is the whole reason an analyst builds a
+    /// graph of peers in the first place.
+    ///
+    /// It is a field of the node and not a row of its configuration form,
+    /// because the form's rows are paths of the thing being *configured* and
+    /// this is a fact about which program is running at all. A person does not
+    /// set it by editing a config file; they set it by deploying a different
+    /// build.
+    #[serde(default)]
+    pub implementation: Implementation,
+}
+
+/// Which codebase a node runs, and what it can speak to (R1885).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Implementation {
+    /// The codebase.
+    pub stack: Stack,
+    /// The wire revisions it can negotiate, inclusive at both ends.
+    pub speaks: Revisions,
+}
+
+impl Default for Implementation {
+    /// The reference build at the revisions this lab's opening graph negotiates.
+    ///
+    /// A default exists so that a node authored without thinking about this
+    /// axis is the ordinary case rather than an incompatible one — the axis
+    /// must not make a graph harder to draw until somebody uses it.
+    fn default() -> Self {
+        Self {
+            stack: Stack::Reference,
+            speaks: Revisions::new(6, 8),
+        }
+    }
+}
+
+impl Implementation {
+    /// Whether these two can negotiate a revision they both speak.
+    ///
+    /// Overlap of the inclusive ranges — the honest model, because a peer
+    /// announces a span and the pair settles on one they share. A single
+    /// version number would make every unequal pair incompatible, which is not
+    /// how a protocol that ships more than once behaves.
+    #[must_use]
+    pub const fn negotiates_with(self, other: Self) -> bool {
+        self.speaks.first <= other.speaks.last && other.speaks.first <= self.speaks.last
+    }
+}
+
+/// A codebase a node can be running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum Stack {
+    /// The protocol's own reference build.
+    Reference,
+    /// An independent re-implementation.
+    Independent,
+    /// An older release still deployed in the field.
+    Legacy,
+}
+
+impl Stack {
+    /// Every stack, in the order the inspector lists them.
+    pub const ALL: [Self; 3] = [Self::Reference, Self::Independent, Self::Legacy];
+
+    /// The word the inspector spells it with.
+    #[must_use]
+    pub const fn word(self) -> &'static str {
+        match self {
+            Self::Reference => "reference",
+            Self::Independent => "independent",
+            Self::Legacy => "legacy",
+        }
+    }
+
+    /// The stack by name.
+    #[must_use]
+    pub fn from_word(word: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|s| s.word() == word)
+    }
+}
+
+/// An inclusive span of wire revisions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Revisions {
+    /// The oldest it speaks.
+    pub first: u32,
+    /// The newest it speaks.
+    pub last: u32,
+}
+
+impl Revisions {
+    /// A span. `last` is raised to `first` if it was given below it, so a span
+    /// is never empty — an empty one would refuse every wire including a node's
+    /// own kind, which [`NodeKind::admits`] requires to be admitted.
+    #[must_use]
+    pub const fn new(first: u32, last: u32) -> Self {
+        Self {
+            first,
+            last: if last < first { first } else { last },
+        }
+    }
+
+    /// The span as the inspector writes it.
+    #[must_use]
+    pub fn word(self) -> String {
+        if self.first == self.last {
+            format!("v{}", self.first)
+        } else {
+            format!("v{}-v{}", self.first, self.last)
+        }
+    }
 }
 
 impl NodeKind for LabNode {
@@ -278,12 +393,47 @@ impl NodeKind for LabNode {
             Conversion::Refused
         }
     }
+
+    /// Two peers may be wired when they can negotiate a wire revision (R1885).
+    ///
+    /// ★★★★★ The rule this screen could not state before, and the reason is
+    /// worth keeping: [`NodeKind::conversion`] is handed two port *types* and no
+    /// nodes, so a rule written there is blind to which peers the wire runs
+    /// between. The transport a pin speaks and the protocol revision a build
+    /// speaks are different facts — two nodes can agree on `tcp` and still have
+    /// nothing to say to each other — and until this hook existed the second
+    /// one had nowhere to live.
+    ///
+    /// The refusal blames the **older** end, because that is the one a person
+    /// upgrades; when neither is older than the other the ranges overlap and
+    /// there is no refusal to blame anybody for.
+    fn admits(source: &Self, sink: &Self) -> Admission {
+        if source.implementation.negotiates_with(sink.implementation) {
+            return Admission::Allowed;
+        }
+        let (out, into) = (source.implementation, sink.implementation);
+        let end = if out.speaks.last < into.speaks.first {
+            Side::Output
+        } else {
+            Side::Input
+        };
+        Admission::Refused(Refusal {
+            end,
+            because: format!(
+                "{} speaks {} and {} speaks {}, so they share no wire revision",
+                out.stack.word(),
+                out.speaks.word(),
+                into.stack.word(),
+                into.speaks.word(),
+            ),
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{LabNode, Role, Transport};
-    use pinion_node_graph::NodeKind;
+    use super::{Implementation, LabNode, Revisions, Role, Stack, Transport};
+    use pinion_node_graph::{Admission, NodeKind, Side};
 
     #[test]
     fn r1651_a_role_that_never_listens_has_no_accept_pin_at_all() {
@@ -292,6 +442,7 @@ mod tests {
                 role,
                 transport: Transport::Tcp,
                 listening: true,
+                implementation: Implementation::default(),
             };
             assert_eq!(
                 node.variadic(pinion_node_graph::Side::Input).is_some(),
@@ -357,5 +508,108 @@ mod tests {
             "a scheme the legend does not list is not silently a default"
         );
         assert_eq!(Transport::of_locator("0.0.0.0:7447"), None);
+    }
+
+    /// A node with the given build, for the compatibility rule's cases.
+    fn peer(stack: Stack, first: u32, last: u32) -> LabNode {
+        LabNode {
+            role: Role::Peer,
+            transport: Transport::Tcp,
+            listening: true,
+            implementation: Implementation {
+                stack,
+                speaks: Revisions::new(first, last),
+            },
+        }
+    }
+
+    /// ★★★★★ **A node is always compatible with another of its own kind** — the
+    /// reflexivity [`NodeKind::admits`] requires, over every build and every
+    /// span this lab can express.
+    ///
+    /// Written as a property rather than as one case because the rule is a
+    /// range overlap, and the one way to get an overlap rule wrong that a
+    /// hand-picked pair will not show is an empty span: `first > last` makes a
+    /// range that intersects nothing, *including itself*, so a node would
+    /// refuse a wire to its own twin. [`Revisions::new`] is what forbids that,
+    /// and this is what says so.
+    #[test]
+    fn r1885_a_build_always_negotiates_with_itself_at_every_span() {
+        for stack in Stack::ALL {
+            for first in 0..12u32 {
+                for last in 0..12u32 {
+                    let node = peer(stack, first, last);
+                    assert_eq!(
+                        LabNode::admits(&node, &node),
+                        Admission::Allowed,
+                        "{} {:?} refuses its own twin",
+                        stack.word(),
+                        node.implementation.speaks,
+                    );
+                }
+            }
+        }
+    }
+
+    /// Two builds are wireable exactly when their spans overlap, at every pair
+    /// of spans — and the refusal blames the **older** end.
+    ///
+    /// ⚠ The two halves are asserted together on purpose. A rule that refused
+    /// the right pairs while always blaming the same end would pass a check of
+    /// either half alone, and "which node do I change?" is the only part of a
+    /// refusal an author can act on.
+    #[test]
+    fn r1885_two_builds_are_wireable_exactly_when_their_revisions_overlap() {
+        for a in 0..8u32 {
+            for b in a..8u32 {
+                for c in 0..8u32 {
+                    for d in c..8u32 {
+                        let out = peer(Stack::Reference, a, b);
+                        let into = peer(Stack::Independent, c, d);
+                        let overlap = a <= d && c <= b;
+                        match LabNode::admits(&out, &into) {
+                            Admission::Allowed => assert!(
+                                overlap,
+                                "v{a}-v{b} and v{c}-v{d} share no revision and were admitted"
+                            ),
+                            Admission::Refused(why) => {
+                                assert!(
+                                    !overlap,
+                                    "v{a}-v{b} and v{c}-v{d} overlap and were refused"
+                                );
+                                assert_eq!(
+                                    why.end,
+                                    if b < c { Side::Output } else { Side::Input },
+                                    "v{a}-v{b} -> v{c}-v{d} blames the wrong end",
+                                );
+                                assert!(
+                                    why.because.contains("reference")
+                                        && why.because.contains("independent"),
+                                    "the sentence names both builds: {:?}",
+                                    why.because,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// ★ A span given backwards is not an empty span.
+    #[test]
+    fn r1885_a_span_written_backwards_is_the_single_revision_it_starts_at() {
+        assert_eq!(Revisions::new(7, 3), Revisions::new(7, 7));
+        assert_eq!(Revisions::new(7, 3).word(), "v7");
+        assert_eq!(Revisions::new(4, 8).word(), "v4-v8");
+    }
+
+    /// Every build's word round-trips, so the inspector can offer them.
+    #[test]
+    fn r1885_a_build_is_named_by_a_word_that_round_trips() {
+        for stack in Stack::ALL {
+            assert_eq!(Stack::from_word(stack.word()), Some(stack));
+        }
+        assert_eq!(Stack::from_word("no such build"), None);
     }
 }

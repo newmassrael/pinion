@@ -17,8 +17,8 @@ use std::fmt;
 
 use crate::frame::{Orphaned, parents_of};
 use crate::model::{
-    Document, InterfaceSide, KindPort, Link, LinkId, Multiplicity, Node, NodeBody, NodeId,
-    NodeKind, PortRef, ROOT, Side, Socket, Tree, TreeId, centroid, crossing,
+    Admission, Document, InterfaceSide, KindPort, Link, LinkId, Multiplicity, Node, NodeBody,
+    NodeId, NodeKind, PortRef, ROOT, Refusal, Side, Socket, Tree, TreeId, centroid, crossing,
 };
 use crate::numbering::Numbering;
 
@@ -898,6 +898,20 @@ pub enum Violation {
         /// The link.
         link: LinkId,
     },
+    /// A link joins two nodes that may not be wired, whatever their ports
+    /// carry (R1885).
+    ///
+    /// Its own arm rather than a [`Self::TypeMismatch`] for the reason
+    /// [`ConnectError::Incompatible`](crate::ConnectError::Incompatible) is:
+    /// the types match, and an author repairs the two differently.
+    Incompatible {
+        /// The tree it is in.
+        tree: TreeId,
+        /// The link.
+        link: LinkId,
+        /// Which end to change, and the application's sentence saying why.
+        refusal: Refusal,
+    },
     /// A tree's links form a dependency cycle.
     Cycle {
         /// The tree it is in.
@@ -1052,6 +1066,21 @@ impl fmt::Display for Violation {
             Self::TypeMismatch { tree, link } => write!(
                 f,
                 "link {link} in tree {tree} joins two ports whose types cannot cross"
+            ),
+            // R1885 — the application's sentence, verbatim, for the reason
+            // `Refusal` carries one: only the application knows what makes two
+            // of its nodes incompatible, so a paraphrase here would be this
+            // crate inventing the fact it was told.
+            Self::Incompatible {
+                tree,
+                link,
+                refusal,
+            } => write!(
+                f,
+                "link {link} in tree {tree} joins two nodes that may not be wired: {} \
+                 (change its {})",
+                refusal.because,
+                side(refusal.end)
             ),
             Self::Cycle { tree, nodes } => write!(
                 f,
@@ -1268,6 +1297,21 @@ impl<K: NodeKind> Document<K> {
                     found.push(Violation::TypeMismatch {
                         tree: tree.id,
                         link: link.id,
+                    });
+                }
+                // ★★★★★ R1885 — and the pair question, for a link that is
+                // ALREADY there. `connect` refuses an inadmissible wire, so the
+                // only way to hold one is to have made it legal and then broken
+                // it — by re-authoring a node's kind, or by loading a document
+                // written against a different rule. Both are exactly what a
+                // validation pass exists to catch, and neither is reachable
+                // through `connect`, so leaving this out would have made the
+                // refusal enforceable only at the moment of drawing.
+                if let Some(Admission::Refused(why)) = self.admission(tree.id, link.from, link.to) {
+                    found.push(Violation::Incompatible {
+                        tree: tree.id,
+                        link: link.id,
+                        refusal: why,
                     });
                 }
                 *fed.entry((link.to, Side::Input)).or_default() += 1;

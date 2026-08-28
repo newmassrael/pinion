@@ -324,8 +324,8 @@
     "tier": "t2",
     "capability": "heterogeneous implementation node types, as a compatibility test graph",
     "verdict": "app",
-    "covered_by": "a taxonomy",
-    "rests_on": "crates/pinion-node-graph/src/model.rs#NodeKind - the same seam `lab.t1.8` rests on, and R1847 states the duplication rather than hiding it: two rows resting on one thing is a fact about the substrate, not a smell in the census"
+    "covered_by": "a taxonomy that classifies a node's BUILD, not only its role: `Implementation` carries which codebase a peer runs and the wire revisions it speaks, and `NodeKind::admits` is the seam R1885 added so a rule can see both ends of a wire",
+    "assembled_by": "examples/hello-analyzer-shell examples/hello-node-lab crates/pinion-node-graph/src/model.rs - R1885. The opening graph is heterogeneous and every drawn wire negotiates; putting one peer on a build the others have moved past makes the launch gate say so, naming both builds, both spans and which card to change. Driven through the assembled tool's own external set over one walk"
   },
   {
     "id": "dashboard.t0.1",

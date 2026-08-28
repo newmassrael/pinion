@@ -222,18 +222,6 @@
       ]
     },
     {
-      "name": "debt-eleven-app-verdicts-name-no-assembly",
-      "substituted": false,
-      "blocked_by": "campaign",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links analyzer-tool-capability-spec",
-        "names capture.t1.11, capture.t1.9, capture.t2.14, capture.t2.18, dashboard.t1.8, dashboard.t1.9, lab.t1.11, lab.t1.8, lab.t1.9, lab.t2.17, lab.t2.19"
-      ]
-    },
-    {
       "name": "debt-five-screens-hand-roll-one-voice-gate",
       "substituted": false,
       "blocked_by": "buildable",

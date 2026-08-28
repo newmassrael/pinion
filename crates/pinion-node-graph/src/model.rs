@@ -484,6 +484,59 @@ pub enum Conversion<V> {
     Converted(fn(V) -> Option<V>),
 }
 
+/// Whether two **nodes** may be wired, and — when they may not — why (R1885).
+///
+/// The answer [`NodeKind::admits`] gives. Distinct from [`Conversion`] because
+/// the two refuse for unrelated reasons and an author repairs them differently:
+/// a refused conversion means *no value of that type may enter this port*, and
+/// a refused admission means *these two nodes cannot talk to each other*, which
+/// is fixed by changing one of the ends rather than by finding a map.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Admission {
+    /// The two nodes may be wired.
+    Allowed,
+    /// They may not, and this says which end to change and why.
+    Refused(Refusal),
+}
+
+impl Admission {
+    /// Whether this refuses the wire.
+    #[must_use]
+    pub fn is_refused(&self) -> bool {
+        matches!(self, Self::Refused(_))
+    }
+
+    /// The refusal, when there is one.
+    #[must_use]
+    pub fn refusal(&self) -> Option<&Refusal> {
+        match self {
+            Self::Refused(why) => Some(why),
+            Self::Allowed => None,
+        }
+    }
+}
+
+/// Why two nodes may not be wired, in the application's own words (R1885).
+///
+/// ★ **A refusal that cannot be read is a refusal nobody can act on**, which is
+/// why this carries a sentence rather than a code. Only the application knows
+/// what makes two of *its* nodes incompatible, so only the application can say
+/// it; the crate's contribution is to insist that something is said, and to
+/// carry the one fact a screen needs beyond the words — which end is at fault.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Refusal {
+    /// Which end the author must change.
+    ///
+    /// [`Side::Output`] blames the producing node, [`Side::Input`] the consuming
+    /// one. A rule that genuinely cannot choose should blame the producer, since
+    /// that is the end a drag starts from.
+    pub end: Side,
+    /// The sentence a screen shows. Names both ends' relevant facts, because a
+    /// refusal that only names the rule leaves the author guessing which of the
+    /// two nodes to change.
+    pub because: String,
+}
+
 // Derived by hand: `#[derive(Clone, Copy)]` would bound `V`, and a crossing is
 // a decision about types that holds no value at all.
 impl<V> Clone for Conversion<V> {
@@ -679,6 +732,39 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
         } else {
             Conversion::Refused
         }
+    }
+
+    /// Whether these two **nodes** may be wired at all, and why not (R1885).
+    ///
+    /// ★★★★★ **The question [`NodeKind::conversion`] cannot be asked.** That one
+    /// takes two port *types* and no `self`, so a rule written there is blind to
+    /// which nodes the wire runs between — and a graph whose whole subject is
+    /// whether two *implementations* interoperate has nothing else to say. The
+    /// information was never missing: [`Document::vet`] resolves both nodes'
+    /// signatures and throws the node identities away one line before the rule
+    /// is consulted. This hook is that line put back.
+    ///
+    /// # Why a separate judgement and not a wider `conversion`
+    ///
+    /// A conversion answers *what happens to a value* and is keyed to types, so
+    /// widening it would make every taxonomy's type rule carry an argument it
+    /// does not use, and would put two unrelated refusals — "no value of this
+    /// type may enter" and "these two peers cannot talk" — behind one word an
+    /// author cannot act on differently. They are fixed differently: the first
+    /// by finding a conversion, the second by changing one of the two ENDS,
+    /// which is why [`Refusal`] names which end.
+    ///
+    /// # The default admits everything, deliberately
+    ///
+    /// A taxonomy that classifies only its values has no opinion about node
+    /// pairs, and must not be made to acquire one to keep compiling. Every
+    /// implementor that existed when this landed is unchanged by it.
+    ///
+    /// Implementations must be **reflexive**: a node is always compatible with
+    /// another of its own kind, or a graph cannot be wired to itself.
+    fn admits(source: &Self, sink: &Self) -> Admission {
+        let (_, _) = (source, sink);
+        Admission::Allowed
     }
 
     /// Where this kind hands control on, given its resolved inputs (R1599).
@@ -1988,6 +2074,28 @@ impl<K: NodeKind> Document<K> {
         Some(crossing::<K>(out, input))
     }
 
+    /// Whether the two **nodes** these sockets belong to may be wired (R1885).
+    ///
+    /// The peer of [`Self::conversion`], and the question an editor asks with
+    /// it while a wire is being dragged: that one answers *what happens to the
+    /// value*, this one answers *may these two talk at all*. `None` when either
+    /// node is not there — which, as with `conversion`, is a different fact
+    /// from a refusal.
+    ///
+    /// ⚠ Answered from the nodes' **bodies**, so a node whose body is not a
+    /// plain kind — a group instance, an interface node — is admitted: it has
+    /// no kind of its own to judge, and refusing it would refuse every wire
+    /// into a subtree.
+    #[must_use]
+    pub fn admission(&self, tree: TreeId, from: Socket, to: Socket) -> Option<Admission> {
+        let source = self.tree(tree)?.node(from.node)?;
+        let sink = self.tree(tree)?.node(to.node)?;
+        match (&source.body, &sink.body) {
+            (NodeBody::Kind(out), NodeBody::Kind(into)) => Some(K::admits(out, into)),
+            _ => Some(Admission::Allowed),
+        }
+    }
+
     /// The crossing along an existing link, which is what its value went
     /// through (R1593).
     ///
@@ -2211,6 +2319,20 @@ impl<K: NodeKind> Document<K> {
         }
         if from.node == to.node {
             return Err(ConnectError::SelfLink(from.node));
+        }
+        // ★★★★★ R1885 — and now the question the two lines above could not ask.
+        // This function had ALREADY resolved both nodes, twice, and handed the
+        // rule two ports; the node identities were discarded one line before
+        // `crossing` was consulted, so no rule could be written about the PAIR.
+        // Asked after the self-link check on purpose: a node is required to
+        // admit its own kind, so asking first would make a self-link's refusal
+        // depend on the taxonomy rather than on the graph.
+        if let Some(Admission::Refused(why)) = self.admission(tree, from, to) {
+            return Err(ConnectError::Incompatible {
+                from,
+                to,
+                refusal: why,
+            });
         }
         // R1599 — **only a value link may not close a cycle.** A cycle through
         // control links is not a contradiction, it is a LOOP: the thing every
@@ -3312,6 +3434,20 @@ pub enum ConnectError<T> {
         /// Which end carries control — the other carries a value.
         control_end: Side,
     },
+    /// The two NODES may not be wired, whatever their ports carry (R1885).
+    ///
+    /// Its own arm rather than a [`Self::TypeMismatch`], because the types
+    /// match — that is what makes this refusal worth having. An author fixes a
+    /// type mismatch by finding a conversion and fixes this by changing one of
+    /// the two ends, and [`Refusal::end`] says which.
+    Incompatible {
+        /// The producing socket.
+        from: Socket,
+        /// The consuming socket.
+        to: Socket,
+        /// Which end to change, and the application's sentence saying why.
+        refusal: Refusal,
+    },
     /// Both ends are on one node.
     SelfLink(NodeId),
     /// The link would close a dependency cycle; the existing path that would
@@ -3345,6 +3481,19 @@ impl<T: fmt::Debug> fmt::Display for ConnectError<T> {
                     Side::Input => (to, from),
                 };
                 write!(f, "{control} carries control and {value} carries a value")
+            }
+            // R1885 — the application's own sentence, verbatim. A refusal this
+            // crate cannot phrase is one it must not paraphrase.
+            Self::Incompatible { from, to, refusal } => {
+                let end = match refusal.end {
+                    Side::Output => from,
+                    Side::Input => to,
+                };
+                write!(
+                    f,
+                    "{from} may not reach {to}: {} (change {end})",
+                    refusal.because
+                )
             }
             Self::SelfLink(node) => write!(f, "node {} cannot feed itself", node.0),
             Self::WouldCycle { path } => {

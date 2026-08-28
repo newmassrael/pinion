@@ -597,13 +597,36 @@ UNASSEMBLED: frozenset[str] = frozenset(
         # profile are one axis at two scales, so one comparison answers both,
         # and two timelines at different scales are refused because a shift of
         # two is two steps or two seconds and the number does not say which.
-        "lab.t2.19",
+        # `lab.t2.19` was here and is REPAID at R1885 — **the ratchet is now
+        # EMPTY**, which is what closes the campaign it was the meter for.
+        # Every `app` verdict in the pin names the assembly that composes it.
+        # ★ The entry re-measurement disproved the debt's own name before the
+        # work started: the file said eleven and the tool said one.
+        # ★★★★★ What was missing was two layers deep, and the compiler said so
+        # rather than a grep: a node had no build to be, AND
+        # `NodeKind::conversion` takes two port TYPES and no `self`, so a rule
+        # about which peers may talk had nowhere to live. `NodeKind::admits` is
+        # that place; the taxonomy answers with a sentence, and `vet` consults
+        # it at the one site that had already resolved both nodes and thrown
+        # their identities away.
     }
 )
 
 
-def check_evidence(rows: list[dict]) -> list[str]:
+def check_evidence(
+    rows: list[dict], unassembled: frozenset[str] = UNASSEMBLED
+) -> list[str]:
     """Every row whose verdict PROMISES evidence and carries none.
+
+    ★★★★★ R1885 — the ratchet is an ARGUMENT now, and the round that emptied it
+    is the round that had to make it one. `UNASSEMBLED` reached zero when
+    `lab.t2.19` gained its assembly, and three selftest cases had been reaching
+    into the live set for a member to build a fixture from — so the rule that
+    says *what the ratchet excuses* became untestable at the exact moment the
+    backlog it tracked was paid off. A rule whose only test data is a backlog
+    stops being tested when the backlog empties, which is the shape of a check
+    that quietly stops happening. Defaulted, so every caller is unchanged.
+
 
     ★★★★★ R1807 — the hole under both evidence checks. `check_proofs` iterates
     the citations a `proven_by` makes, and `check_assemblies` the paths an
@@ -630,7 +653,7 @@ def check_evidence(rows: list[dict]) -> list[str]:
                 f"{ident}: a `have` must name a test that exercises it "
                 "(proven_by is empty)"
             )
-        if verdict == "app" and not assembly_paths(row) and ident not in UNASSEMBLED:
+        if verdict == "app" and not assembly_paths(row) and ident not in unassembled:
             out.append(
                 f"{ident}: an `app` must name the assembly that composes it "
                 "(assembled_by is empty)"
@@ -642,7 +665,7 @@ def check_evidence(rows: list[dict]) -> list[str]:
         # where the assembly is absent, because a row that IS composed has an
         # example driving the substrate, which is the stronger evidence of the
         # two — demanding both there would be ceremony rather than a check.
-        if verdict == "app" and ident in UNASSEMBLED and not rests_on_citations(row):
+        if verdict == "app" and ident in unassembled and not rests_on_citations(row):
             out.append(
                 f"{ident}: an `app` with no assembly must name the substrate it "
                 "rests on, or it is a `gap` (rests_on is empty)"
@@ -935,19 +958,37 @@ def selftest() -> int:
     # ASSEMBLY, and until this round a row with neither an assembly nor a named
     # substrate was an `app` verdict resting on a sentence. The exemption is
     # narrowed to what it was for, and the case now says which half it excuses.
-    on_ratchet = {**bare_app[0], "id": next(iter(UNASSEMBLED))}
+    # ★★★★★ R1885 — a ratchet of this selftest's OWN, because the live one is
+    # empty and these three cases used to take a member from it. See
+    # `check_evidence`: a rule whose only test data is a backlog stops being
+    # tested the moment the backlog is paid off.
+    held = frozenset({"lab.t9.99"})
+    on_ratchet = {**bare_app[0], "id": "lab.t9.99"}
     check(
         "the ratchet excuses the assembly and not the substrate",
-        [f for f in check_evidence([on_ratchet]) if "assembled_by is empty" in f] == []
-        and [f for f in check_evidence([on_ratchet]) if "rests_on is empty" in f] != [],
+        [
+            f
+            for f in check_evidence([on_ratchet], held)
+            if "assembled_by is empty" in f
+        ]
+        == []
+        and [f for f in check_evidence([on_ratchet], held) if "rests_on is empty" in f]
+        != [],
     )
     check(
         "and a row on it that names its substrate is not refused at all",
-        check_evidence([{**on_ratchet, "rests_on": "crates/x/src/y.rs#Thing"}]) == [],
+        check_evidence([{**on_ratchet, "rests_on": "crates/x/src/y.rs#Thing"}], held)
+        == [],
     )
     check(
         "the ratchet holds only app rows, so it cannot excuse a have",
-        check_evidence([{**bare_have[0], "id": next(iter(UNASSEMBLED))}]) != [],
+        check_evidence([{**bare_have[0], "id": "lab.t9.99"}], held) != [],
+    )
+    # ★ And the live ratchet being EMPTY is itself asserted, so its emptying is
+    # a fact a reader can see rather than an absence they have to notice.
+    check(
+        "the shipped ratchet is empty — every `app` row names its assembly",
+        UNASSEMBLED == frozenset(),
     )
 
     # ★★★★★ R1847 — `rests_on`, the substrate half of an `app` claim.

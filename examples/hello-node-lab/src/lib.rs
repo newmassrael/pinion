@@ -102,7 +102,7 @@ use pinion_core::widgets::wheel::WheelDirection;
 use pinion_core::{CellKind, Frame, Modifiers, Scene, WidgetCore, edit_field_keymap};
 use pinion_node_graph::{
     Camera, Document, Extent, Fit, Item, LinkId, LinkLayer, Margin, Node, NodeBody, NodeId, ROOT,
-    Relinked, Side, Socket, ZoomRange,
+    Relinked, Side, Socket, Violation, ZoomRange,
 };
 use pinion_platform_storage::AppStorage;
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
@@ -117,7 +117,7 @@ use pinion_widget_paint::text_field as tf_paint;
 use serde::{Deserialize, Serialize};
 
 use deploy::Produced;
-use graph::{LabNode, Role, Transport};
+use graph::{Implementation, LabNode, Revisions, Role, Stack, Transport};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 
@@ -1804,6 +1804,42 @@ impl LabState {
                 ));
             }
         }
+        // ★★★★★ R1885 — **a wire between two builds that cannot negotiate.**
+        //
+        // A property of a PAIR, so the per-card loop above cannot reach it for
+        // the same structural reason the collision check cannot — and one step
+        // further out, because a collision is a property of a set of cards and
+        // this is a property of a set of cards AND the wires between them.
+        //
+        // The verdict is the crate's (`Document::validate`) rather than a walk
+        // written here. `Document::connect` already refuses such a wire, so the
+        // only way to be holding one is to have made it legal and then changed
+        // a node's build — which is exactly what a person does on this screen,
+        // and exactly what a validation pass is for.
+        {
+            let doc = self.doc.borrow();
+            for violation in doc.validate() {
+                let Violation::Incompatible { link, refusal, .. } = violation else {
+                    continue;
+                };
+                let Some(link) = doc.tree(ROOT).and_then(|t| t.link(link)) else {
+                    continue;
+                };
+                // Named on the end the refusal blames, because that is the card
+                // a person has to change; the sentence names the other.
+                let (blamed, peer) = match refusal.end {
+                    Side::Output => (link.from.node, link.to.node),
+                    Side::Input => (link.to.node, link.from.node),
+                };
+                found.push((
+                    self.name_of(blamed),
+                    Finding::Incompatible {
+                        peer: self.name_of(peer),
+                        because: refusal.because.clone(),
+                    },
+                ));
+            }
+        }
         found
     }
 
@@ -1956,6 +1992,23 @@ enum Finding {
         /// not actionable without saying *of what*.
         others: Vec<String>,
     },
+    /// ★★★★★ R1885 — **a wire between two builds that share no wire revision.**
+    ///
+    /// The first finding on this screen that is a property of a LINK. Every
+    /// other arm is decided from one card or from the set of cards; this one
+    /// needs the wire as well, which is why it could not exist until
+    /// `NodeKind::admits` gave the crate somewhere to ask about a pair.
+    ///
+    /// It BLOCKS. Two peers that cannot negotiate are not a partial picture the
+    /// way a dialled-outside address is — the drawing asserts a session that
+    /// cannot be established, so anything launched from it fails at the wire.
+    Incompatible {
+        /// The card at the other end, named: "this one is incompatible" is not
+        /// actionable without saying *with what*.
+        peer: String,
+        /// The taxonomy's own sentence, which names both builds and both spans.
+        because: String,
+    },
 }
 
 impl Finding {
@@ -1973,6 +2026,9 @@ impl Finding {
             // reached first. That is not a partial picture, it is an ambiguous
             // one.
             Self::Collision { .. } => true,
+            // See the arm's own note: the drawing asserts a session that cannot
+            // be established, so what is launched from it fails at the wire.
+            Self::Incompatible { .. } => true,
         }
     }
 
@@ -1997,6 +2053,12 @@ impl Finding {
                 "{path} is {value}, which {} already holds — it must be unique",
                 others.join(" and ")
             ),
+            // The taxonomy's own words, verbatim: the rule that refused the
+            // wire is the only thing that knows why, and paraphrasing it here
+            // would put a second author on one sentence.
+            Self::Incompatible { peer, because } => {
+                format!("cannot reach {peer}: {because}")
+            }
         }
     }
 }
@@ -2036,6 +2098,7 @@ fn seed_nodes(
                     role,
                     transport,
                     listening: !listen.is_empty(),
+                    implementation: opening_implementation(node.id),
                 }),
                 i32::try_from(x).unwrap_or(0),
                 i32::try_from(y).unwrap_or(0),
@@ -2616,6 +2679,42 @@ fn palette_reach() -> pinion_core::widgets::config_schema::Reach {
         .map(|field| (field.key(), field.shape()))
         .collect();
     settings::reach(&catalogue)
+}
+
+/// Which build each node of the opening graph is running (R1885).
+///
+/// ★★★★★ **The opening graph is HETEROGENEOUS and valid**, which is what makes
+/// it a compatibility test graph rather than a picture of one deployment: two
+/// of its peers run builds that are not the reference one, and every drawn wire
+/// still negotiates. A graph where everything is the same build could never
+/// answer the question the axis exists for, and a graph that opened broken
+/// would be asserting a defect rather than offering a test.
+///
+/// The spans are chosen so the two non-reference builds are compatible with the
+/// reference and — measured by
+/// `r1885_the_opening_graph_is_heterogeneous_and_still_negotiates` — with each
+/// other, so no wire a person can draw between the opening nodes is refused.
+/// Making one of them incompatible is the edit the assembly walk performs.
+fn opening_implementation(id: &str) -> Implementation {
+    let stack = match id {
+        // An independent re-implementation that has not caught up to the newest
+        // revision, and does not need to: it overlaps the reference, so every
+        // wire it is on still negotiates.
+        //
+        // ⚠ The legacy build is deliberately NOT in the opening graph. It
+        // shares no revision with the reference, so a node running it would
+        // open the screen already blocked — a graph asserting a defect rather
+        // than a compatibility test that passes. It is the build an edit
+        // introduces, which is the act this graph exists to support.
+        "P-03" | "S-01" => Stack::Independent,
+        _ => Stack::Reference,
+    };
+    // The span comes from [`spec_revisions`] and not from here, so the opening
+    // graph, the palette and an edit cannot disagree about what a build is.
+    Implementation {
+        stack,
+        speaks: spec_revisions(stack),
+    }
 }
 
 /// The identifier a node opens holding.
@@ -3370,6 +3469,14 @@ enum Hit {
     Nothing,
     Rail(&'static str),
     Role(Role),
+    /// ★★★★★ R1885 — set which build the SELECTED node runs.
+    ///
+    /// Its own hit rather than a row of the configuration form, because the
+    /// form's rows are paths of the thing being configured and this is a fact
+    /// about which program is running at all. It is the act a compatibility
+    /// test graph is built to perform: change one peer's build and read what
+    /// the launch gate then says about the wires it is on.
+    Build(Stack),
     DiscoveryToggle,
     Zoom(bool),
     /// ★★ R1688 — point the canvas at the whole graph.
@@ -3773,6 +3880,15 @@ impl Hit {
         {
             return Self::Role(role);
         }
+        // R1885 — read BEFORE the `lab.node.` prefix below, which would
+        // otherwise swallow `lab.node.build.reference` and look for a card of
+        // that name. The longer prefix wins, which is the rule this router
+        // already follows for `lab.pin.` and `lab.link.endpoint.`.
+        if let Some(word) = tag.strip_prefix("lab.node.build.")
+            && let Some(stack) = Stack::from_word(word)
+        {
+            return Self::Build(stack);
+        }
         if tag == "lab.palette.discovery" {
             return Self::DiscoveryToggle;
         }
@@ -3849,6 +3965,7 @@ impl Hit {
             Self::Nothing => "nothing".into(),
             Self::Rail(name) => format!("rail:{name}"),
             Self::Role(role) => format!("role:{}", role.name()),
+            Self::Build(stack) => format!("build:{}", stack.word()),
             Self::DiscoveryToggle => "discovery".into(),
             Self::Zoom(up) => format!("zoom:{}", if *up { "in" } else { "out" }),
             Self::Fit => "fit".into(),
@@ -8812,6 +8929,20 @@ const HOST_NAMES: [&str; spec::FRAMES.len()] = {
     out
 };
 
+/// ★★★★★ R1885 — the builds the `build` action offers, derived from
+/// [`Stack::ALL`] for the reason [`HOST_NAMES`] is derived from the frame table:
+/// a hand-written copy of a closed vocabulary still compiles when the thing it
+/// copies gains an entry, and then the wire offers a set the screen cannot set.
+const BUILD_WORDS: [&str; Stack::ALL.len()] = {
+    let mut out = [""; Stack::ALL.len()];
+    let mut n = 0;
+    while n < Stack::ALL.len() {
+        out[n] = Stack::ALL[n].word();
+        n += 1;
+    }
+    out
+};
+
 const FIELDS: &[SchemaField] = &{
     [
         SchemaField::new("spec", "string"),
@@ -9112,6 +9243,22 @@ const FIELDS: &[SchemaField] = &{
         ),
         SchemaField::action("collapse", "string"),
         SchemaField::action("disable", "string"),
+        // ★★★★★ R1885 — put a card on another build. The build comes from a
+        // CLOSED vocabulary and it is built from `Stack::ALL` rather than
+        // spelled here, so the words an agent is offered cannot drift from the
+        // builds the screen can actually set — the same rule `move_frame`'s
+        // hosts follow, and the reason a declaration is worth having at all.
+        SchemaField::action_with(
+            "build",
+            "string",
+            ArgForm::Delimited(','),
+            const {
+                &[
+                    SchemaArg::key("node", "string", "nodes"),
+                    SchemaArg::one_of("build", "string", &BUILD_WORDS),
+                ]
+            },
+        ),
         // ★★★ R1706 — the frame gesture's agent half. The host comes from a
         // closed vocabulary because this screen's hosts ARE closed — the
         // specification names them and no operation makes another — and it is
@@ -9812,6 +9959,34 @@ impl ExternalIntrospect for LabOracle {
                 let node = Self::card(&state, which.trim())?;
                 rename_card(&state, node, to.trim()).map(IntrospectValue::Text)
             }
+            // ★★★★★ R1885 — **put a card on another build.** The agent half of
+            // the act a compatibility test graph is built to perform, and the
+            // reason it is a verb rather than only a press: an agent asking
+            // "would these two peers still talk if this one were the older
+            // release?" has to be able to make the change and then read the
+            // launch gate, and a press it cannot name is a question it cannot
+            // ask. The refusal names the builds this screen offers, because a
+            // rejection that does not say what WAS acceptable makes the caller
+            // guess.
+            "build" => {
+                let raw = Self::text(&args)?;
+                let (which, word) = raw.split_once(',').ok_or_else(|| {
+                    InvokeError::rejected(format!("{raw:?} is not <node>,<build>"))
+                })?;
+                let node = Self::card(&state, which.trim())?;
+                let stack = Stack::from_word(word.trim()).ok_or_else(|| {
+                    InvokeError::rejected(format!(
+                        "{:?} is not a build this screen offers — {}",
+                        word.trim(),
+                        Stack::ALL
+                            .iter()
+                            .map(|s| s.word())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ))
+                })?;
+                set_build_on(&state, node, stack).map(IntrospectValue::Text)
+            }
             // ★★★ R1706 — the frame gesture's agent half, and it is ONE verb
             // because the gesture is one act: the reference's frame-drag
             // handler selects the host's cards on its first line and then
@@ -10445,6 +10620,14 @@ fn spec_json() -> serde_json::Value {
                 .into_iter().map(spec::TrafficParameter::key).collect::<Vec<_>>(),
             "traffic_unstated": spec::unstated_traffic(n)
                 .into_iter().map(spec::TrafficParameter::key).collect::<Vec<_>>(),
+            // ★★★★★ R1885 — which build this card opens on, and the revisions
+            // it speaks. Published because "is this graph heterogeneous?" is
+            // the question that makes it a compatibility test, and before this
+            // a reader could not ask it: the axis existed in the model and
+            // nowhere a client could see. DERIVED from `opening_implementation`
+            // and `spec_revisions`, so the wire cannot disagree with the canvas.
+            "build": opening_implementation(n.id).stack.word(),
+            "speaks": opening_implementation(n.id).speaks.word(),
         })).collect::<Vec<_>>(),
         "links": spec::LINKS.iter().map(|(a, b)| serde_json::json!([a, b])).collect::<Vec<_>>(),
         "selected_link": [spec::SELECTED_LINK.0, spec::SELECTED_LINK.1],
@@ -11901,6 +12084,7 @@ fn release(state: &Rc<LabState>) {
     }
     match now {
         Hit::Role(role) => add_node(state, role),
+        Hit::Build(stack) => set_build(state, stack),
         Hit::DiscoveryToggle => {
             let next = !state.discovery.get();
             state.discovery.set(next);
@@ -12798,6 +12982,92 @@ fn drawn_box_of(state: &LabState, node: NodeId) -> Option<((i32, i32), Extent)> 
     ))
 }
 
+/// Put the selected card on another build (R1885).
+///
+/// ★★★★★ **The act a compatibility test graph exists to perform.** Every other
+/// edit on this screen changes what a node is *configured* to do; this changes
+/// which program it is, and the launch gate then says whether the wires it is
+/// on can still negotiate. The span comes with the build rather than being
+/// chosen separately, because a person deploying an older release does not pick
+/// which revisions it speaks — the release does.
+///
+/// Says what happened either way: a refusal a person cannot hear is a control
+/// that looks broken, and "nothing is selected" is a different fact from "that
+/// card already runs this build".
+fn set_build(state: &Rc<LabState>, stack: Stack) {
+    let Some(node) = state.active_card() else {
+        state.say(Utterance::refused(&"select a card first"));
+        return;
+    };
+    let _ = set_build_on(state, node, stack);
+}
+
+/// The one implementation the press and the wire verb share.
+///
+/// ★ Returning the sentence rather than only saying it is what lets the agent's
+/// channel and the person's toast come off ONE value — the rule this screen
+/// already follows for its refusals, so the two cannot drift.
+fn set_build_on(state: &Rc<LabState>, node: NodeId, stack: Stack) -> Result<String, InvokeError> {
+    let name = state.name_of(node);
+    let want = Implementation {
+        stack,
+        speaks: spec_revisions(stack),
+    };
+    let changed = {
+        let mut doc = state.doc.borrow_mut();
+        match doc.tree_mut(ROOT).and_then(|t| t.node_mut(node)) {
+            Some(slot) => match &mut slot.body {
+                NodeBody::Kind(kind) if kind.implementation != want => {
+                    kind.implementation = want;
+                    true
+                }
+                _ => false,
+            },
+            None => false,
+        }
+    };
+    let said = if changed {
+        Utterance::done(format!(
+            "{name} runs the {} build, {}",
+            stack.word(),
+            want.speaks.word()
+        ))
+    } else {
+        Utterance::unchanged(format!("{name} already runs the {} build", stack.word()))
+    };
+    state.say(said.clone());
+    Ok(said.into_clause())
+}
+
+/// Which revisions each build speaks (R1885).
+///
+/// One place, so the palette, the opening graph and the inspector cannot
+/// disagree about what a build is.
+///
+/// 🟥🟥🟥 ★★★★★ **The first draft of these three spans made a refusal
+/// UNREACHABLE, and the walk is what found it.** Every build started at `v4`,
+/// so every pair overlapped and no edit a person could perform could ever
+/// produce an incompatibility — the screen carried a rule, a violation, a
+/// finding and a gate line for a situation that could not arise. The test drove
+/// the edit, read the gate and got an empty list.
+///
+/// ⇒ **ask of a refusal what this project asks of a completion: is there a path
+/// to it?** A vocabulary whose every member is compatible with every other is
+/// not a compatibility model, it is decoration.
+///
+/// So the spans are chosen to make all three answers reachable: the reference
+/// and the independent re-implementation OVERLAP (which is what lets the
+/// opening graph be heterogeneous and still valid), and the legacy release
+/// shares nothing with either (which is what makes it the build an edit can
+/// introduce to break a wire).
+fn spec_revisions(stack: Stack) -> Revisions {
+    match stack {
+        Stack::Reference => Revisions::new(6, 8),
+        Stack::Independent => Revisions::new(5, 7),
+        Stack::Legacy => Revisions::new(2, 4),
+    }
+}
+
 fn add_node(state: &Rc<LabState>, role: Role) {
     let canvas = canvas_rect();
     let want = to_canvas(state, canvas.x + canvas.w / 2, canvas.y + canvas.h / 2);
@@ -12816,6 +13086,10 @@ fn add_node(state: &Rc<LabState>, role: Role) {
                 role,
                 transport: Transport::Tcp,
                 listening: false,
+                // R1885 — a node the palette adds runs the reference build, so
+                // adding one never introduces an incompatibility a person did
+                // not ask for. Choosing another build is an edit, not a default.
+                implementation: Implementation::default(),
             }),
             want.0,
             want.1,

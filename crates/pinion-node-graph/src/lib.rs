@@ -261,10 +261,10 @@ pub use items::{Item, ItemChange, ItemEdit, ItemEditTail, ItemError, Items, Vari
 pub use layout::{Extent, Layered, Organic, Placement, Quality};
 pub use machine::{Committed, ForceError, Machine, Tick};
 pub use model::{
-    ConnectError, Connected, Control, Conversion, Document, DroppedLink, EditError, Flow, Instance,
-    Interface, InterfaceSide, KindPort, Link, LinkId, Multiplicity, Node, NodeBody, NodeId,
-    NodeKind, Port, PortRef, PortValueError, ROOT, Relabelled, Removed, Side, Signature, Socket,
-    Tree, TreeId, crossing,
+    Admission, ConnectError, Connected, Control, Conversion, Document, DroppedLink, EditError,
+    Flow, Instance, Interface, InterfaceSide, KindPort, Link, LinkId, Multiplicity, Node, NodeBody,
+    NodeId, NodeKind, Port, PortRef, PortValueError, ROOT, Refusal, Relabelled, Removed, Side,
+    Signature, Socket, Tree, TreeId, crossing,
 };
 pub use observed::{
     AdoptError, Discovery, Judgement, Layers, LinkLayer, Observation, ObserveError, Reachability,

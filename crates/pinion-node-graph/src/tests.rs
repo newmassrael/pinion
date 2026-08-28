@@ -9,8 +9,8 @@ use pinion_graph::Sugiyama;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AdoptError, Align, Appearance, Archive, Axis, BreakError, Breakpoints, Bringup, Camera,
-    Carried, Command, ConnectError, Control, Conversion, Crossings, Definitions, Direction,
+    Admission, AdoptError, Align, Appearance, Archive, Axis, BreakError, Breakpoints, Bringup,
+    Camera, Carried, Command, ConnectError, Control, Conversion, Crossings, Definitions, Direction,
     Discovery, Distribute, Document, Dropped, DuplicateError, Edge, EditError, EditPath, Extent,
     ExtractError, Fit, ForceError, Fragment, GroupError, Grow, Halt, InsertError, Instance,
     InterfaceSide, Item, ItemError, Layered, LinkId, LinkLayer, Machine, Margin, Multiplicity,
@@ -13732,4 +13732,167 @@ fn r1689_every_violation_says_what_it_is() {
         sentences.iter().all(|s| !s.contains('{') && s.len() > 20),
         "and none of them is a debug rendering"
     );
+}
+
+/// A taxonomy whose nodes refuse each other — the case R1885's hook exists for.
+///
+/// One socket type, so a crossing is never refused and the ONLY thing that can
+/// refuse a wire here is the pair rule. That isolation is the point: a test over
+/// a taxonomy that could also refuse on type would not say which rule answered.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+struct Peer(u32);
+
+impl NodeKind for Peer {
+    type Type = ();
+    type Value = u32;
+
+    fn name(&self) -> String {
+        format!("peer{}", self.0)
+    }
+
+    fn inputs(&self) -> Vec<Port<(), u32>> {
+        vec![Port::new("in", ())]
+    }
+
+    fn outputs(&self) -> Vec<Port<(), u32>> {
+        vec![Port::new("out", ())]
+    }
+
+    fn evaluate(&self, inputs: &[Option<Self::Value>]) -> Vec<Option<Self::Value>> {
+        vec![inputs.first().copied().flatten().or(Some(self.0))]
+    }
+
+    fn admits(source: &Self, sink: &Self) -> Admission {
+        if source.0.abs_diff(sink.0) <= 1 {
+            return Admission::Allowed;
+        }
+        Admission::Refused(crate::Refusal {
+            end: if source.0 < sink.0 {
+                Side::Output
+            } else {
+                Side::Input
+            },
+            because: format!("peer{} and peer{} are too far apart", source.0, sink.0),
+        })
+    }
+}
+
+/// Two `Peer` nodes wired output-to-input, and the document holding them.
+fn two_peers(out: u32, into: u32) -> (Document<Peer>, Socket, Socket) {
+    let mut doc = Document::<Peer>::new("root");
+    let a = doc
+        .add_node(ROOT, NodeBody::Kind(Peer(out)), 0, 0)
+        .expect("root");
+    let b = doc
+        .add_node(ROOT, NodeBody::Kind(Peer(into)), 100, 0)
+        .expect("root");
+    (
+        doc,
+        Socket { node: a, port: 0 },
+        Socket { node: b, port: 0 },
+    )
+}
+
+/// ★★★★★ R1885 — **`connect` refuses a wire between two nodes that may not be
+/// wired, and the refusal is its own arm carrying the application's words.**
+///
+/// The types match — there is only one type — so a `TypeMismatch` here would be
+/// a lie, and that is exactly why the arm is separate: an author fixes a type
+/// mismatch by finding a conversion and fixes this by changing an end.
+#[test]
+fn r1885_connect_refuses_a_pair_the_taxonomy_will_not_admit() {
+    let (mut doc, from, to) = two_peers(1, 9);
+    let refused = doc.connect(ROOT, from, to).expect_err("9 is far from 1");
+    let said = refused.to_string();
+    match &refused {
+        ConnectError::Incompatible {
+            from: at,
+            to: into,
+            refusal,
+        } => {
+            assert_eq!((*at, *into), (from, to));
+            assert_eq!(refusal.end, Side::Output, "the lower peer is blamed");
+            assert!(
+                refusal.because.contains("peer1") && refusal.because.contains("peer9"),
+                "the sentence names both ends: {:?}",
+                refusal.because
+            );
+        }
+        other => panic!("expected an incompatibility, got {other:?}"),
+    }
+    assert!(
+        said.contains("too far apart") && !said.contains('{'),
+        "and it renders as a sentence, not a debug spelling: {said}"
+    );
+    assert_eq!(
+        doc.tree(ROOT).expect("root").links().len(),
+        0,
+        "a refused wire is not half-made"
+    );
+}
+
+/// And the pair it WILL admit connects, so the rule is not simply always-refuse.
+#[test]
+fn r1885_connect_admits_a_pair_the_taxonomy_allows() {
+    let (mut doc, from, to) = two_peers(4, 5);
+    doc.connect(ROOT, from, to).expect("4 and 5 are adjacent");
+    assert_eq!(doc.tree(ROOT).expect("root").links().len(), 1);
+    assert_eq!(doc.admission(ROOT, from, to), Some(Admission::Allowed));
+    assert!(doc.validate().is_empty(), "and nothing is wrong with it");
+}
+
+/// ★★★★★ R1885 — **a link that was legal and then stopped being legal is
+/// reported by `validate`.**
+///
+/// `connect` refuses an inadmissible wire, so the only way to hold one is to
+/// have made it legal and then changed a node — which is what a person does on
+/// a screen and what a document loaded from a file may already be. Without this
+/// the rule would be enforceable only at the moment of drawing, which is the
+/// half of a validation pass that is easy to forget.
+#[test]
+fn r1885_a_link_that_stops_being_admissible_is_reported_by_validate() {
+    let (mut doc, from, to) = two_peers(4, 5);
+    doc.connect(ROOT, from, to).expect("adjacent when drawn");
+    assert!(doc.validate().is_empty(), "clean before the change");
+
+    // Move the sink far away — the edit `connect` cannot police.
+    if let Some(NodeBody::Kind(kind)) = doc
+        .tree_mut(ROOT)
+        .and_then(|t| t.node_mut(to.node))
+        .map(|n| &mut n.body)
+    {
+        *kind = Peer(20);
+    }
+
+    let found = doc.validate();
+    let names: Vec<String> = found.iter().map(ToString::to_string).collect();
+    assert_eq!(
+        found
+            .iter()
+            .filter(|v| matches!(v, Violation::Incompatible { .. }))
+            .count(),
+        1,
+        "the link is now between two peers that may not be wired: {names:?}"
+    );
+    assert!(
+        names.iter().any(|s| s.contains("too far apart")),
+        "and it says why, in the taxonomy's words: {names:?}"
+    );
+}
+
+/// ★ A taxonomy that says nothing about pairs admits every pair.
+///
+/// The default has to hold, or landing this hook would have changed the meaning
+/// of every graph in every consumer that never asked for it.
+#[test]
+fn r1885_a_taxonomy_with_no_opinion_about_pairs_admits_them_all() {
+    for a in [Op::Add, Op::Shout, Op::Sink] {
+        for b in [Op::Add, Op::Shout, Op::Sink] {
+            assert_eq!(
+                Op::admits(&a, &b),
+                Admission::Allowed,
+                "the default refused {a:?} -> {b:?}"
+            );
+        }
+    }
 }
