@@ -7426,14 +7426,77 @@ fn cell(tag: String, text: &str, rect: Rect, px: u32, fg: Color, overflow: TextO
     )
 }
 
+/// The stem every cell of table card `id` is addressed under.
+///
+/// ★ R1873 — a stem rather than a `format!` inside the builder, because the
+/// gate that judges this family has to name it too, and a family named twice is
+/// a family that drifts. The builder below and
+/// `painted::r1873_no_grid_run_of_a_table_card_sits_in_a_box_too_short_for_its_face`
+/// now share one definition, and a test asserts each builder still starts with
+/// its stem.
+fn cell_stem(id: &str) -> String {
+    format!("card.{id}.cell.")
+}
+
+/// The stem every column heading of table card `id` is addressed under.
+fn head_cell_stem(id: &str) -> String {
+    format!("card.{id}.head.")
+}
+
 /// The tag a table card's cell is addressed by.
 fn cell_tag(id: &str, row: usize, column: usize) -> String {
-    format!("card.{id}.cell.{row}_{column}")
+    format!("{}{row}_{column}", cell_stem(id))
 }
 
 /// The tag a table card's column header is addressed by.
 fn head_cell_tag(id: &str, column: usize) -> String {
-    format!("card.{id}.head.{column}")
+    format!("{}{column}", head_cell_stem(id))
+}
+
+/// One run of a table card's grid: a column heading or a cell, in a box that is
+/// a band tall enough for the face it is set in, centred in the **seat** the
+/// run owns.
+///
+/// ★★★★★ R1873 — **the height and the vertical placement are not parameters,
+/// and that is the repair rather than a bigger number.** Every grid run on this
+/// screen was authored `Rect::new(x, <y>, w, 13)` beside `FONT_TINY`, with a
+/// hand-picked `y` that was **2 at three sites, 3 at one and 4 at one** — five
+/// sites, three offsets, one height, and nothing relating any of them to the
+/// face. [`pinion_core::containment::line_box`] of 10 is **17**, so the box was
+/// four pixels short of the reservation everywhere.
+///
+/// ⚠ Short of the *reservation*, which is deliberately conservative: this is
+/// not a claim that a descender was destroyed in every one of them. What the
+/// screen-wide shortfall gate reported for this destination alongside the
+/// count is that no run was short by more than its slack over the em — the
+/// glyph bodies fit and the descenders were the part at risk. The defect being
+/// repaired is that **nothing here consulted the face at all**, which is the
+/// condition under which the next face change decides it silently.
+///
+/// Writing `17` at each site would repair the runs and leave the height a
+/// number somebody types, which is exactly how it became 13.
+///
+/// The caller hands the seat — the whole rectangle the run owns in its strip —
+/// and gets the band inside it. So a face change moves every grid box on this
+/// screen, a row-height change moves them too, and neither can be forgotten;
+/// and `px` is named ONCE, where before a box's height and its run's face were
+/// two independent arguments that nothing related.
+fn grid_cell(
+    tag: String,
+    text: &str,
+    seat: Rect,
+    px: u32,
+    fg: Color,
+    overflow: TextOverflow,
+) -> Scene {
+    cell(
+        tag,
+        text,
+        pinion_core::containment::line_rect_in(seat, seat.x, seat.w, px),
+        px,
+        fg,
+        overflow,
+    )
 }
 
 /// The message stream: a header row of columns over the opening rows.
@@ -7466,10 +7529,10 @@ fn stream_body(state: &ShellState, id: &str, rect: Rect, palette: Palette) -> Ve
                 .iter()
                 .enumerate()
                 .map(|(c, (name, x, w))| {
-                    cell(
+                    grid_cell(
                         head_cell_tag(id, c),
                         name,
-                        Rect::new(*x, 4, *w, 13),
+                        Rect::new(*x, 0, *w, HEAD_H),
                         FONT_TINY,
                         palette.muted,
                         TextOverflow::Ellipsis,
@@ -7519,10 +7582,10 @@ fn stream_body(state: &ShellState, id: &str, rect: Rect, palette: Palette) -> Ve
                 } else {
                     TextOverflow::Ellipsis
                 };
-                cell(
+                grid_cell(
                     cell_tag(id, n, c),
                     value,
-                    Rect::new(*x, 3, *w, 13),
+                    Rect::new(*x, 0, *w, ROW_H),
                     FONT_TINY,
                     ink,
                     overflow,
@@ -7687,29 +7750,35 @@ fn map_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
             None => head_cell_tag(id, column),
             Some(r) => cell_tag(id, r, column),
         };
-        let mut out = vec![cell(
+        // ★ R1873 — the strip the run sits in, named where it is used rather
+        // than assumed: the heading strip and a data row are different seats
+        // even where they happen to be the same height, and a band derived from
+        // the wrong one would be centred in a strip the run is not in.
+        let seat_h = if row.is_none() { HEAD_H } else { ROW_H };
+        let seat = |x: u32, w: u32| Rect::new(x, 0, w, seat_h);
+        let mut out = vec![grid_cell(
             tag(0),
             cols[0],
-            Rect::new(12, 2, ID_W, 13),
+            seat(12, ID_W),
             FONT_TINY,
             if warn { palette.warn } else { ink },
             TextOverflow::Ellipsis,
         )];
         if path_w > 0 {
-            out.push(cell(
+            out.push(grid_cell(
                 tag(1),
                 cols[1],
-                Rect::new(12 + ID_W + 6, 2, path_w, 13),
+                seat(12 + ID_W + 6, path_w),
                 FONT_TINY,
                 ink,
                 TextOverflow::EllipsisStart,
             ));
         }
         if with_seen {
-            out.push(cell(
+            out.push(grid_cell(
                 tag(2),
                 cols[2],
-                Rect::new(12 + ID_W + 6 + path_w, 2, SEEN_W, 13),
+                seat(12 + ID_W + 6 + path_w, SEEN_W),
                 FONT_TINY,
                 palette.muted,
                 TextOverflow::Ellipsis,

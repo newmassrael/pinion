@@ -219,7 +219,30 @@ const SIZES: &[(&str, (u32, u32))] = &[
 /// ★ R1865 — 208 -> 207: the toast's own sentence, for the same reason one more
 /// time. It was a 16-pixel box set in a 12-pixel face; in the band it is the
 /// slot's height, taken from `line_box(STATUS_FACE)`.
-const SHORT_BOX_BUDGET: usize = 207;
+///
+/// ★★★★★ R1873 — **207 -> 147, the largest single fall this pin has taken**,
+/// and the whole 60 came from FIVE authoring sites: the two table cards'
+/// column headings and cells, which are painted once per column per row and so
+/// multiply. Every one of them was `Rect::new(x, <y>, w, 13)` beside a 10px
+/// face wanting 17, with `y` hand-picked as 2, 3 or 4. They are now
+/// [`super::grid_cell`]'s, which centres a
+/// [`line_rect_in`](pinion_core::containment::line_rect_in) band in the seat
+/// the run owns, and `r1873_no_grid_run_of_a_table_card_sits_in_a_box_too_
+/// short_for_its_face` asks that family for ZERO.
+///
+/// ⇒ **The lesson R1851 wrote down held, and this is its second payment: the
+/// backlog's mass is not in a long tail of one-off labels, it is in a handful
+/// of sites a loop repeats.** Seven runs of one band hid under a population of
+/// 248 there; sixty runs of five sites hid under 207 here. A ratchet cannot
+/// tell those apart — only asking a *family* for zero can, which is why each
+/// repaid family leaves a per-family gate behind rather than just a smaller
+/// number.
+///
+/// ⚠ This pin is the WORST SINGLE CASE of the sweep, not a total. The
+/// destination-wide census (`r1870_the_short_box_census_of_every_destination`)
+/// counts short runs per destination across its whole frame and answers a
+/// different, larger number; do not compare the two.
+const SHORT_BOX_BUDGET: usize = 147;
 
 /// Where every tag in the painted scene ended up, and every text run with it.
 struct Painted {
@@ -1796,6 +1819,360 @@ fn r1851_no_alarm_run_sits_in_a_box_too_short_for_its_own_face() {
         "{} alarm run(s) are in a box too short for their own face",
         worst.len()
     );
+}
+
+/// ★★★★★ R1873 — **no column heading and no cell of a table card sits in a box
+/// too short for its face**, over every state and every size the sweep covers.
+///
+/// ZERO, for [`r1851_no_alarm_run_sits_in_a_box_too_short_for_its_own_face`]'s
+/// reason one card family further on: the screen-wide pin is a ratchet over a
+/// backlog, and this family is not a backlog any more, because
+/// [`super::grid_cell`] derives every one of these boxes from the face the run
+/// is set in. So zero here is a *property*, not a budget that happens to be
+/// spent — and this gate is what says so, since a run painted under these
+/// stems by some other route would be judged the same and would fail.
+///
+/// ⚠ **The population is computed from the paint, not listed.** A card is a
+/// table card here iff the frame holds a run under its
+/// [`head_cell_stem`](super::head_cell_stem) or its
+/// [`cell_stem`](super::cell_stem) — so a third table card added later is
+/// judged the day it is painted, and no reader has to remember to add it.
+///
+/// ⚠ Non-emptiness is asserted FIRST, and on the number of distinct CARDS as
+/// well as runs: a stem that stopped matching would make a zero gate pass by
+/// describing nothing, and a stem that matched only one card would silently
+/// stop judging the other table.
+///
+/// 🟥 **And the failure says `N of M`, not `N`.** The first draft said only
+/// how many runs were cut, and the mutation this round ran to prove the gate
+/// can fail is what showed the cost: it printed `1068 grid run(s)` with no
+/// population beside it, so a reader could not tell whether that was the whole
+/// family or a third of it — while the screen-wide pin two functions up was
+/// saying `204 of 248` for the same tree. The population is the number this
+/// gate already computes for its own non-emptiness check; not printing it was
+/// pure loss. ⇒ R1872's lesson, met from the other side: **a count with no
+/// denominator is the shape a wrong claim hides in**, and running the
+/// counterfactual is again what read it aloud.
+///
+/// ```text
+/// cargo test -p hello-analyzer-shell r1873_no_grid_run -- --nocapture
+/// ```
+#[test]
+fn r1873_no_grid_run_of_a_table_card_sits_in_a_box_too_short_for_its_face() {
+    let mut cut: Vec<String> = Vec::new();
+    let mut runs = 0usize;
+    let mut carded: BTreeSet<String> = BTreeSet::new();
+    let mut looked: BTreeSet<String> = BTreeSet::new();
+    sweep(|state, _, scene, case| {
+        // The stems of every card that is on the board right now, paired with
+        // the card they belong to so a failure names it.
+        let stems: Vec<(String, String)> = shown_cards(state)
+            .iter()
+            .flat_map(|id| {
+                [super::head_cell_stem(id), super::cell_stem(id)].map(|stem| (id.clone(), stem))
+            })
+            .collect();
+        for short in pinion_core::containment::short_boxes(scene) {
+            let Some(tag) = short.tag.as_deref() else {
+                continue;
+            };
+            let Some((id, _)) = stems.iter().find(|(_, stem)| tag.starts_with(stem)) else {
+                continue;
+            };
+            cut.push(format!(
+                "{case}: {tag} {:?} at {}px in a {}px box needs {} (short by {})",
+                short.content, short.px, short.rect.h, short.needs, short.short_by,
+            ));
+            carded.insert(id.clone());
+        }
+        // What the gate looked AT, which is what makes a zero mean something.
+        for (id, stem) in &stems {
+            let seen = scene_runs_under(scene, stem);
+            if seen > 0 {
+                runs += seen;
+                looked.insert(id.clone());
+            }
+        }
+    });
+    assert!(
+        looked.len() >= 2,
+        "the grid stems reached {} table card(s); this screen paints two, and \
+         a gate that stopped seeing one of them would report zero for it",
+        looked.len(),
+    );
+    assert!(
+        runs > 0,
+        "no run at all is addressed under a table card's grid stems — the \
+         family this gate names has moved, and a zero that describes nothing \
+         is not a zero",
+    );
+    for line in &cut {
+        println!("{line}");
+    }
+    assert!(
+        cut.is_empty(),
+        "{} of the {runs} grid run(s) this gate looked at, across {} of the {} \
+         table card(s) it reached, sit in a box too short for their own face; \
+         every one of them is authored by `grid_cell`, so this is that \
+         derivation being bypassed rather than a number to raise",
+        cut.len(),
+        carded.len(),
+        looked.len(),
+    );
+}
+
+/// ★★★★★ R1873 — **the stems the gate above filters on are the stems the
+/// painter builds tags from**, asserted rather than assumed.
+///
+/// The gate is only as good as its family, and a family is exactly the kind of
+/// thing that is written down twice and then drifts — this tree has the shape on
+/// record from R1871's own closing audit, where a census read the warning's
+/// budget as a local `10`. Here the risk is sharper: a stem that stops matching
+/// turns the gate GREEN, so the drift would be silent in the direction that
+/// hides work.
+///
+/// Both directions are checked. The builders must start with their stem, and
+/// the stems must NOT swallow the neighbouring families this screen paints
+/// under the same card — a row container, a decode tree, a byte strip — because
+/// a stem that did would make this gate quietly a screen-wide one and the zero
+/// it asserts unreachable for a reason nobody could see.
+#[test]
+fn r1873_the_grid_stems_are_the_ones_the_painter_builds_tags_from() {
+    let id = "packet#0";
+    let cells = super::cell_stem(id);
+    let heads = super::head_cell_stem(id);
+    for (row, column) in [(0, 0), (3, 2), (11, 7)] {
+        let tag = super::cell_tag(id, row, column);
+        assert!(
+            tag.starts_with(&cells),
+            "the cell builder makes {tag} which is not under {cells}",
+        );
+        assert!(
+            !tag.starts_with(&heads),
+            "{tag} is a cell and the heading stem claims it",
+        );
+    }
+    for column in [0, 2, 7] {
+        let tag = super::head_cell_tag(id, column);
+        assert!(
+            tag.starts_with(&heads),
+            "the heading builder makes {tag} which is not under {heads}",
+        );
+        assert!(
+            !tag.starts_with(&cells),
+            "{tag} is a heading and the cell stem claims it",
+        );
+    }
+    // The families painted under the same card that this gate must NOT reach.
+    // Each is a real tag shape from this screen, not an invented one.
+    for other in [
+        format!("card.{id}.row.3"),
+        format!("card.{id}.map.3"),
+        format!("card.{id}.head"),
+        format!("card.{id}.tree.2"),
+        format!("card.{id}.bytes.1"),
+        format!("card.{id}.stat.0"),
+        format!("card.{id}.row.3.cell.1"),
+    ] {
+        assert!(
+            !other.starts_with(&cells) && !other.starts_with(&heads),
+            "{other} is not a table card's grid run and a grid stem claims it",
+        );
+    }
+}
+
+/// ★★★★★ R1873 — **a table card's column heading sits on the same line rhythm
+/// as the values under it**, and the box it sits in is the face's, not a
+/// number.
+///
+/// # What the closing audit found, which is why this exists
+///
+/// The round's repair was written as *the boxes are four pixels short*. Working
+/// out what [`super::grid_cell`] would produce at each site turned up a second
+/// defect the shortfall gate cannot see, because it is not a shortfall: in the
+/// message-stream card the heading was authored at `y = 4` and every value
+/// under it at `y = 3`, both 13 tall in 20-tall strips. **The column heading of
+/// that table sat one pixel lower than every cell in its own column** — a
+/// misalignment no gate here asked about, and one that a bigger height would
+/// not have fixed. The identifier-map card did not have it (`y = 2` on both),
+/// which is exactly the shape of a rule kept by hand at five sites.
+///
+/// # The two things asserted, and why the second is not redundant
+///
+/// 1. every grid run's box **is the rectangle
+///    [`line_rect_in`](pinion_core::containment::line_rect_in) derives** from
+///    the strip that holds it and the face it is set in — so the height comes
+///    from the face and the position from the seat, and the paint is checked
+///    against the derivation rather than against a re-spelling of it;
+/// 2. within one card, a heading and a cell whose strips are the same height
+///    get the same box, in the same place.
+///
+/// (2) follows from (1) and is asserted anyway because **it is the reader's
+/// property and (1) is the mechanism**. A later round that gives headings their
+/// own derivation would keep (1) and could still break (2); this is the
+/// assertion that would notice.
+///
+/// ⚠ (2) says nothing unless some card actually pairs a heading strip with a
+/// row strip of equal height, so the number of pairs it compared is asserted to
+/// be non-zero rather than assumed.
+///
+/// # 🟥 Why (1) asks the framework instead of spelling "centred"
+///
+/// The first draft spelled it, as `y == (strip.h - box.h) / 2`, and **the test
+/// went red against correct paint**. That is not what this framework means by
+/// centred: [`band_in`](pinion_core::containment::band_in) places from the
+/// seat's own centre — `outer.y + outer.h / 2`, rounded **once** — precisely so
+/// that two bands of different heights in one seat share a centre exactly. The
+/// equal-margins spelling rounds twice and puts an 11px and a 12px band one
+/// pixel apart, which is the defect that derivation was built for; its doc
+/// comment says so in as many words, and this draft had to be told by a
+/// failing test anyway.
+///
+/// ⇒ **a gate that re-spells the rule it is checking is a second author of
+/// that rule.** Comparing against `line_rect_in`'s own output cannot drift from
+/// it, and could not have made this mistake.
+/// Where one of a table card's grid runs sits, as the paint produced it.
+///
+/// ★ R1873 — named rather than a tuple because `clippy::pedantic` refused the
+/// tuple, and it was right to: three numbers whose meanings live only in the
+/// order they were written are read back out by index at the comparison, which
+/// is exactly where a transposition would be invisible.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct GridBand {
+    /// How far down its own strip the run's box starts.
+    offset: i64,
+    /// The height of the run's box.
+    box_h: u32,
+    /// The height of the strip that holds it.
+    strip_h: u32,
+}
+
+/// One table card's grid runs, kept apart by the two roles the reader sees.
+#[derive(Debug, Default)]
+struct CardRhythm {
+    /// The distinct bands the card's column headings were painted in.
+    heads: BTreeSet<GridBand>,
+    /// The distinct bands its cells were painted in.
+    cells: BTreeSet<GridBand>,
+}
+
+#[test]
+fn r1873_a_table_cards_heading_and_its_cells_share_one_rhythm() {
+    use pinion_core::containment::line_rect_in;
+
+    // ⚠ `GridBand::offset` is a SUBTRACTION, and the first draft of this test
+    // did not do it: the rects the sweep hands back are already in the frame's
+    // own coordinates, not the strip-local ones `grid_cell` was handed, so a
+    // heading read `y = 52` in a 20px strip. The draft was written expecting
+    // local rects, and the failure it produced is what said so.
+    let mut rhythm: BTreeMap<String, CardRhythm> = BTreeMap::new();
+    let mut undesigned: Vec<String> = Vec::new();
+    sweep(|state, _, scene, case| {
+        let stems: Vec<(String, String, bool)> = shown_cards(state)
+            .iter()
+            .flat_map(|id| {
+                [
+                    (id.clone(), super::head_cell_stem(id), true),
+                    (id.clone(), super::cell_stem(id), false),
+                ]
+            })
+            .collect();
+        scene.for_each_node(&mut |visit| {
+            let Scene::Text(run) = visit.node else {
+                return;
+            };
+            let Some(tag) = run.tag.as_deref() else {
+                return;
+            };
+            let Some((id, _, heading)) = stems.iter().find(|(_, stem, _)| tag.starts_with(stem))
+            else {
+                return;
+            };
+            // The strip is the run's own parent: `grid_cell`'s seat is the
+            // container's rect, so this reads back what the caller handed it.
+            let Some(strip) = visit.ancestors.last().map(|node| node.rect()) else {
+                return;
+            };
+            // What the derivation would give for this run in this strip. The
+            // strip is already in the frame's coordinates and `band_in` places
+            // from `outer.y`, so this is directly comparable with the paint.
+            let want = line_rect_in(strip, run.rect.x, run.rect.w, run.style.font_size_px);
+            if run.rect != want {
+                undesigned.push(format!(
+                    "{case}: {tag} is painted {:?} where a {}px face in the \
+                     {}px strip {:?} derives {want:?}",
+                    run.rect, run.style.font_size_px, strip.h, strip,
+                ));
+            }
+            let band = GridBand {
+                offset: i64::from(run.rect.y) - i64::from(strip.y),
+                box_h: run.rect.h,
+                strip_h: strip.h,
+            };
+            let card = rhythm.entry(id.clone()).or_default();
+            if *heading {
+                card.heads.insert(band);
+            } else {
+                card.cells.insert(band);
+            }
+        });
+    });
+
+    assert!(
+        undesigned.is_empty(),
+        "{} grid run box(es) are not the one `line_rect_in` derives from their \
+         strip and their face — the height, the position or both are still a \
+         number somebody typed: {undesigned:#?}",
+        undesigned.len(),
+    );
+
+    // (2). Compared only where the two strips agree in height, because a
+    // heading strip is allowed to be a different size from a data row and the
+    // band would then legitimately sit somewhere else.
+    let mut compared = 0usize;
+    for (id, card) in &rhythm {
+        for head in &card.heads {
+            for cell in card
+                .cells
+                .iter()
+                .filter(|cell| cell.strip_h == head.strip_h)
+            {
+                compared += 1;
+                assert_eq!(
+                    (head.offset, head.box_h),
+                    (cell.offset, cell.box_h),
+                    "in {id} a column heading and a value under it share a \
+                     {}px strip and do not share a box: the heading is {}px \
+                     tall {}px down its strip and the value {}px tall {}px down \
+                     its own",
+                    head.strip_h,
+                    head.box_h,
+                    head.offset,
+                    cell.box_h,
+                    cell.offset,
+                );
+            }
+        }
+    }
+    assert!(
+        compared > 0,
+        "no heading was compared with a value under it — every table card's \
+         heading strip differs in height from its rows, so the rhythm check \
+         asserted nothing",
+    );
+}
+
+/// How many text runs of `scene` are tagged under `stem`.
+fn scene_runs_under(scene: &Scene, stem: &str) -> usize {
+    let mut n = 0;
+    scene.for_each_node(&mut |visit| {
+        if matches!(visit.node, Scene::Text(_))
+            && visit.node.tag().is_some_and(|t| t.starts_with(stem))
+        {
+            n += 1;
+        }
+    });
+    n
 }
 
 // -- 5. Disjoint: nothing is painted on top of anything ----------------------
