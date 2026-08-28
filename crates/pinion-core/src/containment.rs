@@ -418,6 +418,26 @@ pub fn repeating_site(address: &str) -> String {
 }
 
 /// One segment of [`repeating_site`], with a position folded to `*`.
+///
+/// # ★★★★★ R1879 — a segment has THREE shapes, and this used to know two
+///
+/// 1. **a pure position** (`3_2`) — all digits and separators. Folds whole.
+/// 2. **an index glued to a name** (`0_direction`) — folds its INDEX only, to
+///    `*_direction`. A table's rows collapse and its columns stay apart, which
+///    is *more* information than shape 1 yields, not less.
+/// 3. **a digit inside a name** (`ipv4`, `l0`, `v0x09`) — folds NOTHING.
+///
+/// Shape 2 had no arm here, so `kp.list.cell.0_direction` was its own site and
+/// two whole tables — 107 runs, measured at R1878 — reached the census as 107
+/// separate one-run sites, unspellable by a warning that ranks sites by how
+/// many runs they hold.
+///
+/// ⚠ **The rule is not "fold anything containing a digit."** That merges
+/// `proto.ipv4` with `proto.ipv6`, which is this defect's mirror image: an
+/// over-fold hides two real sites inside one line, and a reader cannot tell
+/// that from a correct fold. The index therefore has to be *delimited* — a run
+/// of leading digits followed by `_` and then a name — so a name that merely
+/// starts with a digit (`0direction`) stays a name.
 fn push_site_segment(out: &mut String, seg: &str) {
     let is_position = !seg.is_empty()
         && seg
@@ -427,6 +447,20 @@ fn push_site_segment(out: &mut String, seg: &str) {
     if is_position {
         out.push('*');
         return;
+    }
+    // Shape 2. The leading digits are the index; everything from the `_` on is
+    // the name and is kept, so the column survives the fold that retires the
+    // row. Only ONE run of digits is folded: `1_2_name` becomes `*_2_name`,
+    // which collapses the row without guessing that the next number is a
+    // position too.
+    let index = seg.len() - seg.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+    if index > 0 {
+        let name = &seg[index..];
+        if name.len() > 1 && name.starts_with('_') {
+            out.push('*');
+            out.push_str(name);
+            return;
+        }
     }
     if let Some(hash) = seg.rfind('#') {
         let digits = &seg[hash + 1..];
@@ -1283,6 +1317,80 @@ mod tests {
         // Nothing to fold, and nothing lost.
         assert_eq!(repeating_site(""), "");
         assert_eq!(repeating_site("shell.status"), "shell.status");
+    }
+
+    /// ★★★★★ R1879 — **an index GLUED TO A NAME folds its index and keeps the
+    /// name**, which is the third shape a segment can have and the one this
+    /// function could not see.
+    ///
+    /// # The three shapes, tested together on purpose
+    ///
+    /// R1870 built the fold for two of them and the third had no case here, so
+    /// nothing said what should happen to it:
+    ///
+    /// 1. **a pure position** — `3_2`, all digits and separators. Folds whole.
+    /// 2. **an index glued to a name** — `0_direction`. Folds its INDEX only,
+    ///    to `*_direction`, so a table's ROWS collapse and its COLUMNS stay
+    ///    apart. That is more information than shape 1 gets, not less.
+    /// 3. **a digit inside a name** — `ipv4`, `l0`, `v0x09`. Folds NOTHING.
+    ///
+    /// ⚠ Shape 3 is why the rule is not "fold anything containing a digit":
+    /// that would merge `proto.ipv4` with `proto.ipv6`, which is this defect's
+    /// mirror image — an over-fold that hides two real sites inside one line.
+    ///
+    /// # What it cost to leave shape 2 out
+    ///
+    /// Measured at R1878 through the census's second axis: `kp.list.cell.*` is
+    /// **57 runs the census reported as 57 separate one-run sites**, and
+    /// `lv.list.cell.*` is **50 more** — two tables of the same shape as the
+    /// one R1872 repaired, 107 runs between them, invisible to every line the
+    /// warning spells because none of their sites ever held more than one run.
+    #[test]
+    fn r1879_a_position_glued_to_a_name_folds_only_its_index() {
+        // 1. A pure position still folds whole — R1870's case, kept.
+        assert_eq!(repeating_site("pv.list.cell.3_2"), "pv.list.cell.*");
+
+        // 2. The shape that had no case. The index goes, the column stays.
+        assert_eq!(
+            repeating_site("kp.list.cell.0_direction"),
+            "kp.list.cell.*_direction",
+        );
+        assert_eq!(
+            repeating_site("kp.list.cell.0_direction"),
+            repeating_site("kp.list.cell.9_direction"),
+            "two rows of one column are one site",
+        );
+        assert_ne!(
+            repeating_site("kp.list.cell.0_direction"),
+            repeating_site("kp.list.cell.0_pattern"),
+            "two COLUMNS are not — folding them together would lose which \
+             column a repair belongs to",
+        );
+        assert_eq!(
+            repeating_site("lv.list.cell.12_message"),
+            "lv.list.cell.*_message",
+            "the index is a run of digits, not a single one",
+        );
+
+        // 3. A digit inside a name folds nothing — the over-fold this must not
+        //    become.
+        assert_eq!(repeating_site("proto.ipv4.head"), "proto.ipv4.head");
+        assert_eq!(repeating_site("lab.gate.l0"), "lab.gate.l0");
+        assert_eq!(repeating_site("pv.tree.v0x09"), "pv.tree.v0x09");
+        assert_ne!(
+            repeating_site("proto.ipv4"),
+            repeating_site("proto.ipv6"),
+            "still two sites",
+        );
+
+        // ⚠ The boundary between 2 and 3: an index needs its `_`. A name that
+        // merely STARTS with a digit is a name.
+        assert_eq!(repeating_site("kp.0direction"), "kp.0direction");
+        // And a card's `#index` is unchanged by all of this.
+        assert_eq!(
+            repeating_site("card.decode#1.tree.0"),
+            "card.decode#*.tree.*"
+        );
     }
 
     /// ★ R1870 — an untagged run's address is the whole path, because its last
