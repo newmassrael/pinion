@@ -1338,7 +1338,23 @@ use pinion_core::test_fixtures::screen_ink::{
 /// (`r1859_the_rename_row_holds_its_text_and_centres_it`,
 /// `r1862_a_legend_row_shares_one_centre_and_holds_its_text`) rather than a
 /// smaller share of this one.
-const SHORT_BOX_BUDGET: usize = 160;
+///
+/// ★★★★★ R1874 — **160 → 125**, this pin's largest fall, and the whole 35 came
+/// from the palette body: the census named `lab.palette.body/*` as the largest
+/// single site in the entire application once R1873 had repaid the dashboard's
+/// tables. Two title lines, three headings, eight names over eight gists, and
+/// six captions the FRAMEWORK was sizing at exactly the face.
+///
+/// ⇒ The family gets its own ZERO gate, in the integrated shell where a reader
+/// meets it: `r1874_no_run_in_the_node_palettes_body_sits_in_a_box_too_short_
+/// for_its_face`. This number stays a backlog for everything else.
+///
+/// ★★★★★ And the fall is not the interesting part. Making the boxes consult
+/// their faces made `PAL_ROW_H` and `protocol_chip`'s height IMPOSSIBLE as
+/// numbers — the containment gate reported the words 1px past their cards the
+/// moment the boxes grew — so both are derived from `line_box` now. **A box
+/// that respects its face forces the row that holds it to.**
+const SHORT_BOX_BUDGET: usize = 125;
 
 /// The one sweep, over every state.
 #[test]

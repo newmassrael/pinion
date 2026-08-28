@@ -7211,3 +7211,72 @@ fn r1872_no_run_in_the_message_list_sits_in_a_box_too_short_for_its_face() {
         );
     });
 }
+
+/// ★★★★★ R1874 — **the node palette's body has NO box too short for its face**,
+/// and the gate is zero rather than a share of the lab screen's ratchet.
+///
+/// [`r1872_no_run_in_the_message_list_sits_in_a_box_too_short_for_its_face`]'s
+/// reason, one destination further on and on the site the census DERIVED:
+/// `lab.palette.body/*` was the largest single site in the whole application
+/// after R1873 repaid the dashboard's tables. A ratchet is the shape of a
+/// backlog; a family whose every run comes from one derivation is owed a zero.
+///
+/// ⚠ **The family is a PATH, not a tag.** Every run in this pane is untagged —
+/// the census address for all of them is the path
+/// `…/lab.palette/lab.palette.body/*`, which is exactly why they fold into one
+/// site. A gate written against a tag prefix here would match nothing and pass
+/// by describing nothing, so it is written against the path and the population
+/// is asserted non-empty first.
+///
+/// ⚠ The count says `N of M`: R1873's lesson, that a count with no denominator
+/// is the shape a wrong claim hides in.
+#[test]
+fn r1874_no_run_in_the_node_palettes_body_sits_in_a_box_too_short_for_its_face() {
+    /// The pane whose content this gate judges, as it appears in a run's path.
+    const PANE: &str = "lab.palette.body";
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        state
+            .go("lab")
+            .unwrap_or_else(|why| panic!("the lab section is open and refused: {why:?}"));
+        let (_, scene) = painted_at((WIN_W, WIN_H));
+
+        let mut seen = 0usize;
+        scene.for_each_node(&mut |visit| {
+            if matches!(visit.node, Scene::Text(_)) && visit.path.iter().any(|seg| seg == PANE) {
+                seen += 1;
+            }
+        });
+        assert!(
+            seen > 0,
+            "no run at all is painted inside `{PANE}` — the pane this gate \
+             names has moved, and a zero that describes nothing is not a zero",
+        );
+
+        let cut: Vec<_> = pinion_core::containment::short_boxes(&scene)
+            .into_iter()
+            .filter(|row| row.path.iter().any(|seg| seg == PANE))
+            .map(|row| {
+                format!(
+                    "{} {:?} at {}px in a {}px box needs {} (short by {})",
+                    row.address(),
+                    row.content,
+                    row.px,
+                    row.rect.h,
+                    row.needs,
+                    row.short_by,
+                )
+            })
+            .collect();
+        assert!(
+            cut.is_empty(),
+            "{} of the {seen} run(s) inside `{PANE}` sit in a box too short for \
+             their own face; every one of them should come from a derivation \
+             that reads the face, so this is that derivation being bypassed \
+             rather than a number to raise: {cut:#?}",
+            cut.len(),
+        );
+    });
+}

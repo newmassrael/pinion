@@ -373,19 +373,46 @@ impl Caption {
     /// — headless, before any provider has measured anything — the answer says
     /// **`Sized::Guessed`** rather than quietly returning a number that looks
     /// like a measurement. A silent estimate is how the defect got in.
+    ///
+    /// # ★★★★★ R1874 — the WIDTH and the HEIGHT are different questions
+    ///
+    /// The width is the **ink**, because centring a run rectangle only centres
+    /// the glyphs when the rectangle *is* the glyphs — R1794 measured 8.5px of
+    /// error the other way and that is why `stating` a box here is a defect.
+    ///
+    /// The height is the **line box**, and it is not the same answer. Ink
+    /// height is a property of the letters a caption happens to hold, so two
+    /// captions on one row get two heights and a vertical centring puts them in
+    /// two places — R1862's defect, one layer down. Worse, an ink box is by
+    /// construction too short to reserve a descender: measured at R1874 on the
+    /// integrated shell, six captions of the node palette were painted in boxes
+    /// of **exactly their face size** (10px in 10px, 11px in 11px), which
+    /// `containment::short_by` reports as 7px short and which the fallback
+    /// below was returning literally.
+    ///
+    /// ⇒ [`line_box`](pinion_core::containment::line_box) is the floor on the
+    /// height in both branches. A measured extent taller than it — a caption
+    /// that wrapped — keeps its own number, because that is a real demand and
+    /// not an estimate.
+    ///
+    /// ⚠ A caller's `stated` size is still honoured verbatim. It is documented
+    /// as the escape for someone who knows better than the shaper, and
+    /// silently enlarging it would make the escape a lie; the gate that reports
+    /// a short box will name such a caller, which is the honest order.
     fn wants(&self) -> (u32, u32, Sized) {
         if let Some((w, h)) = self.stated {
             return (w, h, Sized::Stated);
         }
+        let px = self.style.font_size_px.max(1);
+        let line = pinion_core::containment::line_box(px);
         if let Some(extent) = measured_text_extent(&self.text, &self.style, None) {
-            return (extent.width(), extent.height(), Sized::Measured);
+            return (extent.width(), extent.height().max(line), Sized::Measured);
         }
         // The deterministic fallback the framework's own doc prescribes for a
         // headless caller, and it is REPORTED as a guess so a gate can refuse
         // to draw a conclusion from it.
-        let px = self.style.font_size_px.max(1);
         let width = u32::try_from(self.text.chars().count()).unwrap_or(u32::MAX);
-        (width.saturating_mul(px) / 2, px, Sized::Guessed)
+        (width.saturating_mul(px) / 2, line, Sized::Guessed)
     }
 }
 
@@ -1548,6 +1575,66 @@ mod tests {
         assert!(
             measured.run().w > 0,
             "the fallback is still deterministic and drawable"
+        );
+    }
+
+    /// ★★★★★ R1874 — **a caption this module sizes is never painted in a box
+    /// too short for its own face**, which is the property
+    /// [`pinion_core::containment::short_by`] asks of every run in this tree.
+    ///
+    /// Asserted through `short_by` itself rather than against a number spelled
+    /// here: R1873 measured what re-spelling a rule costs — the gate becomes a
+    /// second author of it and can disagree with the first. If `line_box` ever
+    /// changes, this test moves with it and does not have to be found.
+    ///
+    /// ⚠ Both branches, and the population is the point. The **guessed** branch
+    /// is what shipped the defect (it returned the face size as the height, so
+    /// a 10px word got a 10px box); the **measured** branch is checked too
+    /// because a shaper that answers an ink height smaller than the line box
+    /// would reintroduce it silently on the one machine that has a font.
+    ///
+    /// ⚠ A `stated` size is deliberately NOT covered: it is documented as the
+    /// caller's escape and enlarging it silently would make the escape a lie.
+    /// The assertion below says so by checking that it still comes back
+    /// verbatim — a promise this test would notice being broken.
+    #[test]
+    fn r1874_a_caption_is_never_placed_in_a_box_shorter_than_its_line() {
+        use pinion_core::containment::{line_box, short_by};
+
+        // A box tall enough for any of these, so the clamp in `place` is not
+        // what is being measured — the SIZE ASKED FOR is.
+        let roomy = Rect::new(0, 0, 200, 60);
+
+        for px in [8_u32, 10, 11, 12, 13, 16, 24] {
+            let style = TextStyle::new()
+                .with_size_px(px)
+                .with_fg(Color::rgb(1, 2, 3));
+            // "quic" rather than a descenderless word on purpose: the box has
+            // to hold the tail of the `q`, which is the mark a reader reported
+            // being cut and the reason `line_box` reserves what it does.
+            let caption = Caption::new("quic", style.clone()).centred();
+            let placed = place(roomy, &caption);
+            let node = TextNode::styled("quic".to_owned(), placed.run(), style.clone());
+            assert_eq!(
+                short_by(&node),
+                0,
+                "a {px}px caption was placed in a {}px box where its line box \
+                 is {} — this is the framework handing a consumer a box that \
+                 cannot hold the face it just chose",
+                placed.run().h,
+                line_box(px),
+            );
+        }
+
+        // The escape is still an escape: a stated size comes back as stated,
+        // exactly as given, and is the caller's to answer for.
+        let stated = place(roomy, &Caption::new("quic", style()).stating((32, 4)));
+        assert_eq!(stated.sized(), Sized::Stated);
+        assert_eq!(
+            stated.run().h,
+            4,
+            "a stated size is honoured verbatim; enlarging it would make the \
+             documented escape a lie"
         );
     }
 

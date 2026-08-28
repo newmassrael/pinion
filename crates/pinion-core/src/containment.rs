@@ -192,6 +192,70 @@ pub const fn line_rect_in(outer: Rect, x: u32, w: u32, px: u32) -> Rect {
     band_in(outer, x, w, line_box(px))
 }
 
+/// ★★★★★ R1874 — **several lines stacked in ONE seat**, each tall enough for
+/// its own face, the stack centred in the seat as a single block.
+///
+/// # The gap this fills, and how it was found
+///
+/// [`line_rect_in`] answers *one line in a seat*, and the thing this tree
+/// actually paints over and over is *two* — a name over its gist, a title over
+/// its subtitle, a heading over the row it heads. There was no element for
+/// that, so every such pair is two hand-picked offsets, and **two offsets that
+/// nothing relates cannot be relied on to agree**: R1873 measured a column
+/// heading sitting one pixel below the cells of its own column for exactly that
+/// reason, and the node palette's eight role rows carry the same shape with a
+/// `+6` and a `+20` in a 40-pixel row.
+///
+/// Reaching for this is easier than writing two numbers, which is the only
+/// reliable way a rule gets kept — the argument [`line_rect`] already makes,
+/// one line count further on.
+///
+/// # Centred as a BLOCK, and rounded once
+///
+/// The stack's own height is `line_box` of each face summed, and the block is
+/// centred with [`band_in`]'s rule — from the seat's centre, rounding **once**
+/// — so a seat holding one line through this function and a seat holding one
+/// line through [`line_rect_in`] get the same rectangle. That equality is
+/// asserted rather than assumed; it is what makes this a generalisation of
+/// `line_rect_in` instead of a second, subtly different, answer to the same
+/// question. R1873's lesson: a second author of a rule is how the rule breaks.
+///
+/// # ⚠ A stack taller than its seat
+///
+/// The lines are laid out from the top of the seat and are allowed to run past
+/// its bottom, rather than being squeezed. A caller whose seat is too small has
+/// a layout defect, and the containment gates in this module are what report
+/// it — silently shrinking the lines would make the boxes short of their faces
+/// again, which is the whole class this module exists to remove.
+///
+/// ```
+/// use pinion_core::containment::{line_box, line_rect_in, stacked_line_rects};
+/// use pinion_core::scene::Rect;
+///
+/// let row = Rect::new(10, 100, 160, 40);
+/// let [name, gist] = stacked_line_rects(row, row.x + 20, 140, [12, 10]);
+/// assert_eq!(name.h, line_box(12));
+/// assert_eq!(gist.h, line_box(10));
+/// assert_eq!(gist.y, name.y + name.h);
+/// // One line is exactly `line_rect_in`.
+/// let [only] = stacked_line_rects(row, row.x, 140, [12]);
+/// assert_eq!(only, line_rect_in(row, row.x, 140, 12));
+/// ```
+#[must_use]
+pub fn stacked_line_rects<const N: usize>(outer: Rect, x: u32, w: u32, px: [u32; N]) -> [Rect; N] {
+    let heights = px.map(line_box);
+    let total: u32 = heights.iter().copied().fold(0, u32::saturating_add);
+    // `band_in`'s rule, applied to the block: the seat's own centre, rounded
+    // once, so a one-line stack lands exactly where `line_rect_in` puts it.
+    let mut y = (outer.y + outer.h / 2).saturating_sub(total / 2);
+    let mut out = [Rect::new(x, 0, w, 0); N];
+    for (slot, h) in out.iter_mut().zip(heights) {
+        *slot = Rect::new(x, y, w, h);
+        y = y.saturating_add(h);
+    }
+    out
+}
+
 /// ★★★★★ R1862 — a band of height `h`, centred vertically inside `outer`.
 ///
 /// [`line_rect_in`] is this with the height taken from the face, and splitting
@@ -1941,5 +2005,68 @@ mod tests {
         let over = super::band_in(row, 0, 50, 30);
         assert_eq!(over.y + over.h / 2, row.y + row.h / 2);
         assert_eq!(over, Rect::new(0, 90, 50, 30));
+    }
+
+    /// ★★★★★ R1874 — **a one-line stack IS `line_rect_in`**, over every seat
+    /// and face this tree plausibly uses.
+    ///
+    /// The generalisation has to agree with the element it generalises or it is
+    /// a second answer to the same question, which is R1873's lesson about a
+    /// gate that re-spells a rule. Asserted across a grid rather than at one
+    /// point, because the two expressions round — and two roundings that agree
+    /// on one sample are exactly the situation R1862 measured going wrong.
+    #[test]
+    fn r1874_a_stack_of_one_line_is_the_single_line_band() {
+        for (h, y) in [(18_u32, 522_u32), (20, 100), (40, 0), (17, 3), (7, 41)] {
+            let seat = Rect::new(67, y, 210, h);
+            for px in 8..=24 {
+                let [only] = super::stacked_line_rects(seat, seat.x, 190, [px]);
+                assert_eq!(
+                    only,
+                    super::line_rect_in(seat, seat.x, 190, px),
+                    "a one-line stack and the single-line band disagree at \
+                     {px}px in a {h}px seat at y={y}"
+                );
+            }
+        }
+    }
+
+    /// ★★★★★ R1874 — every line of a stack holds its own face, the lines abut
+    /// exactly, and the block shares the seat's centre.
+    ///
+    /// The three properties the palette's role rows needed and did not have:
+    /// the `+6` and `+20` they were authored with related the two lines to
+    /// nothing, so any one of the three could break without the other two
+    /// noticing.
+    #[test]
+    fn r1874_a_stack_holds_each_face_abuts_and_is_centred_as_a_block() {
+        let row = Rect::new(10, 100, 160, 40);
+        let faces = [12_u32, 10];
+        let [name, gist] = super::stacked_line_rects(row, row.x + 20, 140, faces);
+
+        // 1. each line is its own face's line box, so `short_by` is 0 for a run
+        //    placed in it — asserted through the predicate, not a number here.
+        for (rect, px) in [(name, faces[0]), (gist, faces[1])] {
+            let mut node = TextNode::new("gjpqy", rect);
+            node.style.font_size_px = px;
+            assert_eq!(
+                super::short_by(&node),
+                0,
+                "a {px}px line of the stack is {}px tall",
+                rect.h,
+            );
+        }
+        // 2. they abut: no gap a reader sees as a stray band, no overlap.
+        assert_eq!(gist.y, name.y + name.h, "the two lines do not abut");
+        // 3. the BLOCK shares the seat's centre, by `band_in`'s rule.
+        let total = name.h + gist.h;
+        assert_eq!(name.y, (row.y + row.h / 2) - total / 2);
+
+        // A stack taller than its seat overhangs rather than being squeezed:
+        // the lines keep their faces and the screen gates report the seat.
+        let tight = Rect::new(0, 100, 50, 10);
+        let [a, b] = super::stacked_line_rects(tight, 0, 50, [16, 16]);
+        assert_eq!((a.h, b.h), (super::line_box(16), super::line_box(16)));
+        assert_eq!(b.y, a.y + a.h);
     }
 }

@@ -782,8 +782,30 @@ fn toolbar_rect() -> Rect {
     )
 }
 
+/// The clearance a palette row keeps between its card and the words inside it.
+///
+/// ★ R1874 — named because three things spend it: the colour swatch, the two
+/// stacked text lines, and [`PAL_ROW_H`] itself. It was the literal `6` in each
+/// of them, so the swatch and the words agreed by coincidence.
+const PAL_ROW_INSET: u32 = 6;
+
 /// The height of one palette row, and the gap under a group heading.
-const PAL_ROW_H: u32 = 40;
+///
+/// ★★★★★ R1874 — **DERIVED, and deriving it is what the repair cost.** A row
+/// holds two lines — a role's name over its gist — inside a card that keeps
+/// [`PAL_ROW_INSET`] above and below them. Authored `40`, it held neither: the
+/// two boxes were 14 and 12 tall for faces wanting 20 and 17, which is the only
+/// reason 40 was ever enough, and the containment gate said so the moment the
+/// boxes started consulting their faces — the words ran 1px past the card at
+/// top and bottom, in every state, on all eight rows.
+///
+/// ⇒ **A box that respects its face forces the row that holds it to.** The
+/// alternative — keeping 40 and shrinking the boxes back — is the defect this
+/// campaign exists to remove, and it would have been invisible again.
+///
+/// The palette scrolls (R1662), so a taller row costs scroll extent and no
+/// content: `legend_top` is derived from this constant and follows it.
+const PAL_ROW_H: u32 = line_box(FONT_SMALL + 1) + line_box(10) + PAL_ROW_INSET * 2;
 const PAL_HEAD_H: u32 = 22;
 /// A pin's diameter.
 const PIN: u32 = 11;
@@ -4031,12 +4053,23 @@ fn legend_row(n: usize) -> Rect {
     )
 }
 
+/// ★ R1874 — the border a transport chip draws around its word, above and
+/// below it. Named because the chip's HEIGHT is derived from it and the caption
+/// has to clear it: a caption is placed inside the box's rectangle, and the box
+/// paints a 1px stroke on that rectangle's own edge.
+const CHIP_BORDER: u32 = 1;
+
 fn protocol_chip(n: usize) -> Rect {
     Rect::new(
         rail_w() + PAD + u32::try_from(n).unwrap_or(0) * 40,
         legend_top() + PAL_HEAD_H + 3 * 20 + 6,
         36,
-        18,
+        // ★★★★★ R1874 — DERIVED. Authored `18`, which held a 10px word only
+        // because the caption was being given a box of exactly its face size;
+        // once `caption` started asking for a line box (17) the word cleared
+        // the chip's own border by nothing and the containment gate reported
+        // all five chips 1px past their box, in every state.
+        line_box(10) + CHIP_BORDER * 2,
     )
 }
 
@@ -6029,29 +6062,39 @@ fn rail_icon(name: &str, seat: Rect, ink: Color) -> Vec<Scene> {
 
 fn palette(state: &LabState, ink: Ink) -> Scene {
     let rect = palette_rect();
-    let mut children = vec![
-        label(
-            spec::PANES[1].title,
-            Rect::new(PAD, 14, 180, 16),
-            FONT_BODY + 1,
-            ink.text,
-        ),
-        label(
-            "click to add one at the centre",
-            Rect::new(PAD, 34, 200, 12),
-            10,
-            ink.text_3,
-        ),
-    ];
     let local = |r: Rect| Rect::new(r.x - rect.x, r.y - rect.y, r.w, r.h);
+
+    // ★ R1874 — the pane's usable width, named once. The three headings and the
+    // two header lines each carried their own hand-picked clipping width (180,
+    // 200, 120, 140, 160) and none of them was related to the pane; every one
+    // is now the room the pane actually has, which only ever delays a clip.
+    let body_w = PALETTE_W - PAD * 2;
+    // ★★★★★ R1874 — the title and its subtitle are TWO LINES IN ONE SEAT, and
+    // the seat is the room above the first group heading rather than a number.
+    // They were `Rect::new(PAD, 14, 180, 16)` and `Rect::new(PAD, 34, 200, 12)`
+    // beside 13px and 10px faces wanting 21 and 17 — both short, and their
+    // relation (a `+20` between two hand-picked tops) was exactly the shape
+    // R1873 measured putting a column heading one pixel below its own cells.
+    let header = Rect::new(
+        PAD,
+        0,
+        body_w,
+        (palette_row(0).y - rect.y).saturating_sub(PAL_HEAD_H),
+    );
+    let [title_band, blurb_band] =
+        pinion_core::containment::stacked_line_rects(header, PAD, body_w, [FONT_BODY + 1, 10]);
+    let mut children = vec![
+        label(spec::PANES[1].title, title_band, FONT_BODY + 1, ink.text),
+        label("click to add one at the centre", blurb_band, 10, ink.text_3),
+    ];
 
     for (group_n, group) in ["infrastructure", "traffic"].into_iter().enumerate() {
         let head = palette_row(group_n * 4);
-        children.push(label(
+        children.push(palette_heading(
             group,
-            Rect::new(head.x - rect.x, head.y - rect.y - PAL_HEAD_H, 180, 12),
-            10,
-            ink.text_3,
+            head.y - rect.y - PAL_HEAD_H,
+            body_w,
+            ink,
         ));
     }
     for (n, role) in Role::ALL.into_iter().enumerate() {
@@ -6063,28 +6106,44 @@ fn palette(state: &LabState, ink: Ink) -> Scene {
             Some(ink.outline),
             8,
         ));
+        // ★ R1874 — the card's inside, which is what the swatch and the words
+        // both sit in. It was the literal `6`/`-12` here and nothing said it was
+        // the same clearance the row's height is built from.
+        let inside = Rect::new(
+            row.x,
+            row.y + PAL_ROW_INSET,
+            row.w,
+            row.h.saturating_sub(PAL_ROW_INSET * 2),
+        );
         children.push(quiet(
             box_at(
                 &format!("lab.palette.swatch.{}", role.name()),
-                Rect::new(row.x + 9, row.y + 6, 3, row.h - 12),
+                Rect::new(row.x + 9, inside.y, 3, inside.h),
                 role_ink(role),
                 None,
                 2,
             ),
             Silence::decorative("a colour band keying this role to its wires"),
         ));
-        children.push(label(
-            role.name(),
-            Rect::new(row.x + 20, row.y + 6, 140, 14),
-            FONT_SMALL + 1,
-            ink.text,
-        ));
-        children.push(label(
-            role.gist(),
-            Rect::new(row.x + 20, row.y + 20, 160, 12),
-            10,
-            ink.text_3,
-        ));
+        // ★★★★★ R1874 — the role's name over its gist, stacked in the card's
+        // INSIDE rather than in the card. `+6` with a 14px box and `+20` with a
+        // 12px box was two offsets and two heights that nothing related to the
+        // faces (12px wants 20, 10px wants 17) or to each other; a `PAL_ROW_H`
+        // change moved neither and a face change moved neither.
+        //
+        // ⚠ The seat is the inside and NOT the row, which the containment gate
+        // is what taught: stacked in the row, the two lines cleared the card's
+        // own border by nothing and were reported 1px past it at top and bottom
+        // on all eight rows in every state. A card with a border and a corner
+        // radius is not the same rectangle as the space inside it.
+        let [name_band, gist_band] = pinion_core::containment::stacked_line_rects(
+            inside,
+            inside.x + 20,
+            inside.w.saturating_sub(20 + PAL_ROW_INSET),
+            [FONT_SMALL + 1, 10],
+        );
+        children.push(label(role.name(), name_band, FONT_SMALL + 1, ink.text));
+        children.push(label(role.gist(), gist_band, 10, ink.text_3));
     }
 
     children.extend(palette_legend(rect, ink));
@@ -6117,15 +6176,38 @@ fn palette(state: &LabState, ink: Ink) -> Scene {
     )
 }
 
+/// ★★★★★ R1874 — one heading of the palette: a line set in the `PAL_HEAD_H`
+/// strip that sits above whatever it heads, centred in that strip.
+///
+/// Lifted because there are THREE authoring sites, which is this project's
+/// threshold: the two group headings, the pin legend's `pins`, and the
+/// determinism switch's caption. All three were `Rect::new(x, top, <a width>,
+/// 12)` beside a 10px face wanting 17 — the same mistake written out three
+/// times, so a single repair would have had to be remembered three times.
+///
+/// The strip is the seat, and the seat is `PAL_HEAD_H` because that is the
+/// space `palette_row` and `legend_row` actually leave above themselves. So the
+/// heading follows a change to that constant, which is what it could not do
+/// while its box was a number.
+fn palette_heading(text: &str, strip_top: u32, w: u32, ink: Ink) -> Scene {
+    let strip = Rect::new(PAD, strip_top, w, PAL_HEAD_H);
+    label(
+        text,
+        pinion_core::containment::line_rect_in(strip, strip.x, w, 10),
+        10,
+        ink.text_3,
+    )
+}
+
 /// The pin legend and the transport chips: three appearances and what each one
 /// means, next to the colours an accept pin is drawn in.
 fn palette_legend(rect: Rect, ink: Ink) -> Vec<Scene> {
     let local = |r: Rect| Rect::new(r.x - rect.x, r.y - rect.y, r.w, r.h);
-    let mut children = vec![label(
+    let mut children = vec![palette_heading(
         "pins",
-        Rect::new(PAD, legend_top() - rect.y, 120, 12),
-        10,
-        ink.text_3,
+        legend_top() - rect.y,
+        PALETTE_W - PAD * 2,
+        ink,
     )];
     for (n, (kind, meaning)) in spec::PIN_LEGEND.iter().enumerate() {
         let row = local(legend_row(n));
@@ -6258,11 +6340,11 @@ fn palette_determinism(state: &LabState, rect: Rect, ink: Ink) -> Vec<Scene> {
     let mut children: Vec<Scene> = Vec::new();
     let toggle = local(discovery_rect());
     let on = state.discovery.get();
-    children.push(label(
+    children.push(palette_heading(
         "graph determinism",
-        Rect::new(toggle.x, toggle.y - PAL_HEAD_H, 180, 12),
-        10,
-        ink.text_3,
+        toggle.y - PAL_HEAD_H,
+        PALETTE_W - PAD * 2,
+        ink,
     ));
     // ★ The caption IS the switch's description — the switch points at it with
     // `described_by`, so it is announced when a reader lands on the control
