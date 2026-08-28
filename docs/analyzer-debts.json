@@ -158,7 +158,7 @@
       "substituted": false,
       "blocked_by": "buildable",
       "blocked_because": "",
-      "closed_by": "loop",
+      "closed_by": "",
       "closed_because": "",
       "why": [
         "links analyzer-debt-repayment-loop"
