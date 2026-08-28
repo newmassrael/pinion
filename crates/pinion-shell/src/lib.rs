@@ -107,9 +107,14 @@ pub use substrate::{AccessEmitDecision, FragmentCacheStats, ShellCore};
 ///
 /// ★ R1871 — and `group_short_boxes`, the same ordering over rows a caller
 /// already holds. It is the form the order's own property can be checked in.
+/// ★ R1878 — and `group_short_boxes_by_convention`, the census's SECOND
+/// question: the same population folded by the `(face, box height)` pair an
+/// author chose rather than by where in the tree they wrote it, so a convention
+/// applied two runs at a time across many places stops being invisible.
 #[cfg(debug_assertions)]
 pub use substrate::{
-    SHORT_BOX_WARNING_LINES, group_short_boxes, short_box_sites, warn_about_short_boxes_in,
+    BoxConvention, SHORT_BOX_WARNING_LINES, group_short_boxes, group_short_boxes_by_convention,
+    scattered_over, short_box_sites, warn_about_short_boxes_in,
 };
 pub use waiter::use_scene_revision;
 // R1362 PR-65 §5.16 §5.49 §2 #2 — the binding-facing "request a window control

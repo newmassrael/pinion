@@ -1796,6 +1796,93 @@ pub fn short_box_sites(scene: &Scene) -> Vec<(String, Vec<pinion_core::containme
     group_short_boxes(pinion_core::containment::short_boxes(scene))
 }
 
+/// The authoring convention one short run came from: the face somebody chose,
+/// and the box height they wrote down beside it.
+///
+/// ★★★★★ R1878 — **the census's second question, and it exists because the
+/// first one cannot ask it.** [`short_box_sites`] folds by ADDRESS, so it can
+/// only see a convention that a loop repeated at one place in the tree. A
+/// convention applied two runs at a time across many places is invisible to
+/// every line it prints — measured on this application: the dashboard's card
+/// chrome is a `(12, 16)` title and a `(10, 14)` badge on EVERY card kind, and
+/// with the site axis alone not one of the ten spelled lines names it.
+///
+/// ⇒ The pair is what an author actually chose. `short_by` is not in the
+/// signature because it is derived from the two (`line_box(px) * lines -
+/// box_h`), so including it would split one convention into as many rows as
+/// there are line counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BoxConvention {
+    /// The face the run is set in.
+    pub px: u32,
+    /// The height of the box the author wrote for it.
+    pub box_h: u32,
+}
+
+/// Every short run grouped by the CONVENTION it came from, most scattered
+/// first.
+///
+/// ★★★★★ R1878 — the ordering is the point and it is deliberately NOT the site
+/// axis's. `short_box_sites` sorts by how many runs one site holds, which is
+/// the right order for repairing a pile-up; this sorts by **how many distinct
+/// sites a convention reaches**, which is the right order for finding what the
+/// other axis structurally cannot show. A convention confined to one site is
+/// already the first axis's business and sinks to the bottom here.
+///
+/// Total order, for [`group_short_boxes`]'s reason: scatter, then run count,
+/// then the signature itself. The rows inside a group keep that function's
+/// order, so the two axes agree about which run speaks for a group.
+#[cfg(debug_assertions)]
+#[must_use]
+pub fn group_short_boxes_by_convention(
+    rows: Vec<pinion_core::containment::ShortBox>,
+) -> Vec<(BoxConvention, Vec<pinion_core::containment::ShortBox>)> {
+    let mut out: Vec<(BoxConvention, Vec<pinion_core::containment::ShortBox>)> = Vec::new();
+    let mut at: HashMap<BoxConvention, usize> = HashMap::new();
+    for row in rows {
+        let key = BoxConvention {
+            px: row.px,
+            box_h: row.rect.h,
+        };
+        if let Some(&i) = at.get(&key) {
+            out[i].1.push(row);
+        } else {
+            at.insert(key, out.len());
+            out.push((key, vec![row]));
+        }
+    }
+    for (_, rows) in &mut out {
+        rows.sort_by_cached_key(|row| {
+            (
+                !pinion_core::containment::cut_would_show(&row.content),
+                std::cmp::Reverse(row.short_by),
+                row.address(),
+                row.content.clone(),
+            )
+        });
+    }
+    out.sort_by(|a, b| {
+        scattered_over(&b.1)
+            .cmp(&scattered_over(&a.1))
+            .then_with(|| b.1.len().cmp(&a.1.len()))
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    out
+}
+
+/// How many distinct sites a group of short runs reaches.
+///
+/// ★ R1878 — the measure the convention axis is ordered by, named because the
+/// gate asserts on it too and two spellings of it could disagree.
+#[cfg(debug_assertions)]
+#[must_use]
+pub fn scattered_over(rows: &[pinion_core::containment::ShortBox]) -> usize {
+    rows.iter()
+        .map(pinion_core::containment::ShortBox::site)
+        .collect::<HashSet<_>>()
+        .len()
+}
+
 /// [`short_box_sites`] over a population somebody already has.
 ///
 /// ★★★★★ R1871 — the split is what makes the round's property checkable on a

@@ -7070,6 +7070,68 @@ fn short_box_truths_of(
          the opposite order — which run speaks for a site is then whichever one \
          somebody happened to declare first",
     );
+
+    // ★★★★★ R1878 — the SECOND axis owes the same three truths, and it is the
+    // same three deliberately: a partition, no key twice, and a report that is
+    // a function of the frame rather than of the walk order. An axis added to
+    // see what the first one misses is worth nothing if it can lose a run.
+    let by_convention = pinion_shell::group_short_boxes_by_convention(short.to_vec());
+    let folded: usize = by_convention.iter().map(|(_, rows)| rows.len()).sum();
+    assert_eq!(
+        folded,
+        short.len(),
+        "at {key} the convention grouping holds {folded} run(s) where the frame \
+         has {}",
+        short.len(),
+    );
+    let signatures: BTreeSet<_> = by_convention.iter().map(|(sig, _)| *sig).collect();
+    assert_eq!(
+        signatures.len(),
+        by_convention.len(),
+        "at {key} one convention appears twice in the grouping",
+    );
+    let render_conventions = |grouped: &[(
+        pinion_shell::BoxConvention,
+        Vec<pinion_core::containment::ShortBox>,
+    )]| {
+        grouped
+            .iter()
+            .map(|(sig, rows)| {
+                (
+                    *sig,
+                    rows.iter()
+                        .map(|r| (r.address(), r.content.clone(), r.short_by))
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut backwards = short.to_vec();
+    backwards.reverse();
+    assert_eq!(
+        render_conventions(&by_convention),
+        render_conventions(&pinion_shell::group_short_boxes_by_convention(backwards)),
+        "at {key} the convention axis reported differently when the population \
+         was met in the opposite order",
+    );
+
+    // ★★★★★ R1878 — **and the axis must actually be a DIFFERENT question.**
+    // Its ordering is by scatter, so its first row has to reach at least as
+    // many sites as any other; if that is not so the comparator is not doing
+    // what the doc says and the axis is a second, worse copy of the first.
+    if let Some((_, first)) = by_convention.first() {
+        let widest = by_convention
+            .iter()
+            .map(|(_, rows)| pinion_shell::scattered_over(rows))
+            .max()
+            .unwrap_or(0);
+        assert_eq!(
+            pinion_shell::scattered_over(first),
+            widest,
+            "at {key} the convention axis does not lead with its most scattered \
+             convention, so its order is not the one its doc claims",
+        );
+    }
 }
 
 /// What is merely SO about one frame's short boxes — every number here is a
@@ -7165,6 +7227,70 @@ fn short_box_report_of(
             .map(|(site, rows)| (site.as_str(), rows.len()))
             .collect::<Vec<_>>(),
     );
+
+    short_box_convention_report_of(key, short);
+}
+
+/// ★★★★★ R1878 — the SECOND axis's report, printed beside the first so a
+/// reader can see what folding by address hides.
+///
+/// Each row is `(face, box height) -> runs, across sites`. A convention that
+/// reaches many sites is one the site axis can NEVER spell, because it never
+/// holds enough runs at any one address to earn a line.
+///
+/// ⚠ A function of its own, and the split is `clippy::pedantic`'s doing rather
+/// than a preference: `short_box_report_of` went to 102 lines and the lint is
+/// repaid by DECOMPOSITION here as it was at R1870 and R1871. The seam is the
+/// honest one — one axis per function — so a reader who only wants the new
+/// question does not have to read the old one first.
+///
+/// Nothing here is asserted: every number is a defect population the campaign
+/// exists to drive to zero, which is `short_box_report_of`'s rule and this
+/// inherits it.
+fn short_box_convention_report_of(key: &str, short: &[pinion_core::containment::ShortBox]) {
+    const BOUND: usize = SHORT_BOX_BOUND;
+
+    let by_convention = pinion_shell::group_short_boxes_by_convention(short.to_vec());
+    let scattered = by_convention
+        .iter()
+        .filter(|(_, rows)| pinion_shell::scattered_over(rows) > 1)
+        .count();
+    println!(
+        "R1878 conventions {key}: {} distinct (face, box) pair(s), of which {} \
+         reach more than one site — those are the ones the site axis cannot \
+         spell. Most scattered first: {:?}",
+        by_convention.len(),
+        scattered,
+        by_convention
+            .iter()
+            .take(BOUND)
+            .map(|(sig, rows)| (
+                sig.px,
+                sig.box_h,
+                rows.len(),
+                pinion_shell::scattered_over(rows)
+            ))
+            .collect::<Vec<_>>(),
+    );
+    // ★ Three addresses from the widest convention, because the count alone
+    // cannot say whether a scattered signature is ONE authoring habit or
+    // several that happen to have chosen the same pair. A reader deciding what
+    // to repair needs to see where the runs actually are; the gate next door
+    // only says the axis is honest about its own ordering.
+    if let Some((sig, rows)) = by_convention.first() {
+        println!(
+            "R1878 widest {key}: ({}, {}) is {} run(s) over {} site(s), for \
+             example {:?}",
+            sig.px,
+            sig.box_h,
+            rows.len(),
+            pinion_shell::scattered_over(rows),
+            rows.iter()
+                .take(3)
+                .map(|row| (row.address(), row.content.clone()))
+                .collect::<Vec<_>>(),
+        );
+    }
 }
 
 /// ★★★★★ R1872 — **the message list has NO box too short for its face, and the
