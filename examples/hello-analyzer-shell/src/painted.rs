@@ -1832,11 +1832,20 @@ fn r1851_no_alarm_run_sits_in_a_box_too_short_for_its_own_face() {
 /// spent — and this gate is what says so, since a run painted under these
 /// stems by some other route would be judged the same and would fail.
 ///
-/// ⚠ **The population is computed from the paint, not listed.** A card is a
-/// table card here iff the frame holds a run under its
-/// [`head_cell_stem`](super::head_cell_stem) or its
-/// [`cell_stem`](super::cell_stem) — so a third table card added later is
-/// judged the day it is painted, and no reader has to remember to add it.
+/// ⚠ **The population is not listed, and its two halves come from different
+/// places on purpose.** WHICH CARDS are on the board comes from
+/// [`shown_cards`] — the shell's own state — so a card that went missing from
+/// the paint is a failure elsewhere rather than a question this gate quietly
+/// narrowed. WHETHER A CARD IS A TABLE comes from the paint: it is one iff the
+/// frame holds a run under its [`head_cell_stem`](super::head_cell_stem) or its
+/// [`cell_stem`](super::cell_stem). So a third table card added later is judged
+/// the day it is painted, and no reader has to remember to add it.
+///
+/// ⚠ The first draft of this comment credited both halves to the paint. It was
+/// caught in the closing audit by reading `shown_cards`, and the correction is
+/// recorded rather than quietly made because **a check's population is a claim**
+/// (R1857) and a claim about it that is half right reads exactly like one that
+/// is right.
 ///
 /// ⚠ Non-emptiness is asserted FIRST, and on the number of distinct CARDS as
 /// well as runs: a stem that stopped matching would make a zero gate pass by
