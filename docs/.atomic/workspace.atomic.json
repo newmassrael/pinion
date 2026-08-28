@@ -72292,6 +72292,90 @@
         "`memory/sce-upstream-debts.md`, with the handoff still unwritten."
       ]
     },
+    "R1882": {
+      "decision_summary": "A layout that could not see its faces, repaired in the crate that publishes it.\n\nThe head was DERIVED, not chosen: the census's application-wide line names `(12, 16)` — 33 runs over 33 sites on three destinations — and the debt that convention pointed at is `debt-a-card-header-lays-text-out-without-knowing-its-face`, opened at R1880 after three rounds of being carried in prose.\n\n## ★★★★★ The gate came first, and the denominator it split is the round's first finding\n\nThe convention axis says 33. **The card chrome's own population is not 33.** Four of the sites that axis prints are `kp.detail.*` — another screen, another author — so a repair aimed at 33 would have been aimed at a population nobody had measured.\n\n`r1882_no_run_of_a_cards_own_chrome_sits_in_a_box_too_short_for_its_face` names only the chrome (a path holding a `card.<kind>#<n>` segment and **no** part segment after it) and, run BEFORE the repair, reported:\n\n```\n246 of the 246 run(s) in a card's own chrome sit in a box too short for\ntheir own face, across 8 card(s)\n```\n\n`\"Message Stream\"` at 12px in a 16px box needing 20; `\"LIVE\"` at 10px in 14 needing 17 — **every card, every state, every size**. Two instruments, two units (the census folds one frame; this walks the sweep), and neither number is the other's.\n\n## The cause, as a capability sentence\n\n`card_header::lay_out` wrote `16` and `14` as literals **because it could not see the faces at all**: `title_px` and `badge_px` lived on `HeaderSpec`, which only `header_scene` receives. ⇒ **a layout cannot honour a floor on a value it never receives.**\n\n★ So the repair is not a better constant. The two faces MOVE to `CardMetrics` — where the other measurements live, and which `lay_out` already takes — and both boxes become `containment::line_rect_in` of the nominal band. A face size is a measurement: it fixes the line box a run needs. The module's stated exclusions are theme, colour and glyph, and a size in pixels is none of the three.\n\n⚠ **The debt's premise was too narrow, which re-measuring is expected to find.** It named `lay_out`. The badge's height was written TWICE — once there for the slot and once in `header_scene` for the word (`Rect::new(badge.x + 10, header.y + 10, 40, 14)`). The word now takes the slot's own height, so the second number is gone rather than corrected.\n\n## Why this repair belongs to the crate\n\nThe module's own doctrine already says *a part that does not fit is not painted, rather than painted smaller* — and a box shorter than the line it holds **is** a part painted smaller. This is that doctrine on the other axis. Repairing the consumer would have left the crate still publishing a layout that cannot see its faces, for the next consumer to meet.",
+      "changes_bullets": [
+        "`crates/pinion-widget-paint/src/card_header.rs`",
+        "* `CardMetrics` gains `title_px` and `badge_px`; `HeaderSpec` loses them. One home for a face, and it is the one the layout can reach.",
+        "* `lay_out` derives both text boxes with `containment::line_rect_in` on the NOMINAL band, so they share a centre line exactly (`band_in` rounds once) and neither can be written short.",
+        "* `header_scene` takes the faces from the metrics, and the badge's word takes the badge slot's own height instead of a second stated `14`; the dot is centred in that slot rather than pinned to its top. `BADGE_DOT` / `BADGE_GAP` name what were bare numbers.",
+        "* `r1882_no_header_text_sits_in_a_box_shorter_than_its_face` — a property over 7x4 face pairs and every width 0..400, compared against `containment::line_box`'s output rather than a re-spelling of its rule.",
+        "* `r1882_title_and_badge_share_a_centre_line_at_every_face_pair` — 5x5 face pairs; the property that a per-part check cannot see.",
+        "* `r1816_the_default_metrics_reproduce_the_consumers_own_rectangles` keeps the title's X and its right edge and now asserts its HEIGHT against the derivation, saying in its own text that preserving `16` would have been preserving a defect, and that the centre line did not move.",
+        "`examples/hello-analyzer-shell/src/painted.rs`",
+        "* the chrome gate above; `SHORT_BOX_BUDGET` 93 -> 79 with the two units restated.",
+        "`examples/hello-analyzer-shell/src/main.rs`",
+        "* `CARD_METRICS` carries the two faces this screen always passed; the `HeaderSpec` literal drops them.",
+        "`docs/phase-b-rounds.tsv`",
+        "* row 1882."
+      ],
+      "verification_bullets": [
+        "★★★★★ **THE GATE WAS WRITTEN AND RUN BEFORE THE REPAIR**, and what it reported is the round's own denominator rather than the census's: `246 of the 246 run(s) in a card's own chrome sit in a box too short for their own face, across 8 card(s)`. After the repair it is green. Non-emptiness is asserted first, so a family that had moved would turn it RED rather than green.",
+        "★★★★★ **COUNTERFACTUAL, one variable, on a verified-green baseline.** The faces stay on `CardMetrics`; only the derivation reverts to the hand-picked `16` and `14`. `pinion-widget-paint` goes **8 passed / 3 failed** — the line-box property, the shared-centre property and the literal-rectangles test all red together, one of them naming `w=238 badge_px=10: … h: 14 holds a 10px face needing 17`. ⇒ the cause is *the height being derived from the face*, not *the face reaching the layout*. Restored and re-verified.",
+        "Suites and gates, all in the closing turn:",
+        "* `cargo test -p pinion-widget-paint -p hello-analyzer-shell` in ONE run — **968 passed / 0 failed** and **171 passed / 0 failed**, remote exit 0.",
+        "* `cargo test -p pinion-widget-paint card_header` — 11 passed, 0 failed, including both new properties.",
+        "* `cargo clippy --workspace --all-targets --features pinion-runtime/vello` — CI's flags, **zero warnings**, exit 0.",
+        "* `cargo fmt --all --check` — clean.",
+        "★ THE RATCHET NAMED ITS OWN NEW VALUE: after the repair the shell suite's only failure was `r1800` saying `the budget is a PIN, not a ceiling: 79 run(s) are short, so lower it`. **93 -> 79.**",
+        "★ THE CENSUS ANSWERED THE DEBT'S FOURTH CONDITION: the convention axis's head is now `(11, 14)` at 39 runs over 32 sites, and `(12, 16)` fell 33 -> **26** into second place. Application total 451 -> **437** short runs at 191 -> **184** distinct sites.",
+        "⚠ **A `clippy::needless_borrow` survived three green `cargo test` runs** — the crate's, the consumer's, and the restore's — and only the CI-flag clippy caught it. Repaid by fixing the borrow, never by `#[allow]`. That is the measured case for running clippy locally with CI's exact flags rather than trusting a green test run."
+      ],
+      "impact_refs": [
+        "5.32",
+        "5.11"
+      ],
+      "carry_forward_bullets": [
+        "**The debt is CLOSED**, and it is closed with **both of its own errors written into it** rather than quietly satisfied:",
+        "* its diagnosis named ONE site (`lay_out`) and the badge's height was written **twice** — the second copy lived in `header_scene` as the word's own rectangle. That one is gone rather than corrected, because the word now takes the badge slot's height.",
+        "* its fourth close condition was stated over a population that was never this family's: `(12, 16)`'s 33 runs include four `kp.detail.*` sites, which no card header paints. The condition came true — but by leaving 26 while another convention overtook it, not by driving 33 to zero. ⇒ **ask of a close condition whether a path to zero exists at all; if it does not, the population has a role mixed into it that could never have been zero.**",
+        "⚠ **The campaign's next head is derived, not chosen, and it has already changed hands twice in three rounds**: `(11, 14)` at 39 runs over 32 sites across dashboard, packets and settings. Its site list is dominated by the capture viewer's context pane (`pv.context/*` at 8, plus `pv.context.batch_size`, `.compression`, `.delivery`, `.id_width`, `.low_latency`, `.revision` and the two appbar readouts). Whoever takes it should do what this round did: **write the family's own gate first**, because the census's 39 is one frame's fold and a pane's own count is a different number.",
+        "* `debt-text-is-not-centred-in-the-box-that-holds-it` stays open — `closed_by: person`.",
+        "* `debt-doc-links-inside-a-test-module-have-no-gate` stays open, `blocked_by: unmeasured`.",
+        "* The north star is NOT reached: `tools/analyzer_debts.py` reports the loop's cohort at **6**. This debt was opened after the cohort's pin (R1809), so closing it moves the family (28 -> 27 open) and not that six."
+      ],
+      "publishable_decision_summary": "A layout that could not see its faces, repaired in the crate that publishes it.\n\nThe head was DERIVED, not chosen: the census's application-wide line names `(12, 16)` — 33 runs over 33 sites on three destinations — and the debt that convention pointed at is `debt-a-card-header-lays-text-out-without-knowing-its-face`, opened at R1880 after three rounds of being carried in prose.\n\n## ★★★★★ The gate came first, and the denominator it split is the round's first finding\n\nThe convention axis says 33. **The card chrome's own population is not 33.** Four of the sites that axis prints are `kp.detail.*` — another screen, another author — so a repair aimed at 33 would have been aimed at a population nobody had measured.\n\n`r1882_no_run_of_a_cards_own_chrome_sits_in_a_box_too_short_for_its_face` names only the chrome (a path holding a `card.<kind>#<n>` segment and **no** part segment after it) and, run BEFORE the repair, reported:\n\n```\n246 of the 246 run(s) in a card's own chrome sit in a box too short for\ntheir own face, across 8 card(s)\n```\n\n`\"Message Stream\"` at 12px in a 16px box needing 20; `\"LIVE\"` at 10px in 14 needing 17 — **every card, every state, every size**. Two instruments, two units (the census folds one frame; this walks the sweep), and neither number is the other's.\n\n## The cause, as a capability sentence\n\n`card_header::lay_out` wrote `16` and `14` as literals **because it could not see the faces at all**: `title_px` and `badge_px` lived on `HeaderSpec`, which only `header_scene` receives. ⇒ **a layout cannot honour a floor on a value it never receives.**\n\n★ So the repair is not a better constant. The two faces MOVE to `CardMetrics` — where the other measurements live, and which `lay_out` already takes — and both boxes become `containment::line_rect_in` of the nominal band. A face size is a measurement: it fixes the line box a run needs. The module's stated exclusions are theme, colour and glyph, and a size in pixels is none of the three.\n\n⚠ **The debt's premise was too narrow, which re-measuring is expected to find.** It named `lay_out`. The badge's height was written TWICE — once there for the slot and once in `header_scene` for the word (`Rect::new(badge.x + 10, header.y + 10, 40, 14)`). The word now takes the slot's own height, so the second number is gone rather than corrected.\n\n## Why this repair belongs to the crate\n\nThe module's own doctrine already says *a part that does not fit is not painted, rather than painted smaller* — and a box shorter than the line it holds **is** a part painted smaller. This is that doctrine on the other axis. Repairing the consumer would have left the crate still publishing a layout that cannot see its faces, for the next consumer to meet.",
+      "publishable_changes_bullets": [
+        "`crates/pinion-widget-paint/src/card_header.rs`",
+        "* `CardMetrics` gains `title_px` and `badge_px`; `HeaderSpec` loses them. One home for a face, and it is the one the layout can reach.",
+        "* `lay_out` derives both text boxes with `containment::line_rect_in` on the NOMINAL band, so they share a centre line exactly (`band_in` rounds once) and neither can be written short.",
+        "* `header_scene` takes the faces from the metrics, and the badge's word takes the badge slot's own height instead of a second stated `14`; the dot is centred in that slot rather than pinned to its top. `BADGE_DOT` / `BADGE_GAP` name what were bare numbers.",
+        "* `r1882_no_header_text_sits_in_a_box_shorter_than_its_face` — a property over 7x4 face pairs and every width 0..400, compared against `containment::line_box`'s output rather than a re-spelling of its rule.",
+        "* `r1882_title_and_badge_share_a_centre_line_at_every_face_pair` — 5x5 face pairs; the property that a per-part check cannot see.",
+        "* `r1816_the_default_metrics_reproduce_the_consumers_own_rectangles` keeps the title's X and its right edge and now asserts its HEIGHT against the derivation, saying in its own text that preserving `16` would have been preserving a defect, and that the centre line did not move.",
+        "`examples/hello-analyzer-shell/src/painted.rs`",
+        "* the chrome gate above; `SHORT_BOX_BUDGET` 93 -> 79 with the two units restated.",
+        "`examples/hello-analyzer-shell/src/main.rs`",
+        "* `CARD_METRICS` carries the two faces this screen always passed; the `HeaderSpec` literal drops them.",
+        "`docs/phase-b-rounds.tsv`",
+        "* row 1882."
+      ],
+      "publishable_verification_bullets": [
+        "★★★★★ **THE GATE WAS WRITTEN AND RUN BEFORE THE REPAIR**, and what it reported is the round's own denominator rather than the census's: `246 of the 246 run(s) in a card's own chrome sit in a box too short for their own face, across 8 card(s)`. After the repair it is green. Non-emptiness is asserted first, so a family that had moved would turn it RED rather than green.",
+        "★★★★★ **COUNTERFACTUAL, one variable, on a verified-green baseline.** The faces stay on `CardMetrics`; only the derivation reverts to the hand-picked `16` and `14`. `pinion-widget-paint` goes **8 passed / 3 failed** — the line-box property, the shared-centre property and the literal-rectangles test all red together, one of them naming `w=238 badge_px=10: … h: 14 holds a 10px face needing 17`. ⇒ the cause is *the height being derived from the face*, not *the face reaching the layout*. Restored and re-verified.",
+        "Suites and gates, all in the closing turn:",
+        "* `cargo test -p pinion-widget-paint -p hello-analyzer-shell` in ONE run — **968 passed / 0 failed** and **171 passed / 0 failed**, remote exit 0.",
+        "* `cargo test -p pinion-widget-paint card_header` — 11 passed, 0 failed, including both new properties.",
+        "* `cargo clippy --workspace --all-targets --features pinion-runtime/vello` — CI's flags, **zero warnings**, exit 0.",
+        "* `cargo fmt --all --check` — clean.",
+        "★ THE RATCHET NAMED ITS OWN NEW VALUE: after the repair the shell suite's only failure was `r1800` saying `the budget is a PIN, not a ceiling: 79 run(s) are short, so lower it`. **93 -> 79.**",
+        "★ THE CENSUS ANSWERED THE DEBT'S FOURTH CONDITION: the convention axis's head is now `(11, 14)` at 39 runs over 32 sites, and `(12, 16)` fell 33 -> **26** into second place. Application total 451 -> **437** short runs at 191 -> **184** distinct sites.",
+        "⚠ **A `clippy::needless_borrow` survived three green `cargo test` runs** — the crate's, the consumer's, and the restore's — and only the CI-flag clippy caught it. Repaid by fixing the borrow, never by `#[allow]`. That is the measured case for running clippy locally with CI's exact flags rather than trusting a green test run."
+      ],
+      "publishable_impact_refs": [
+        "5.32",
+        "5.11"
+      ],
+      "publishable_carry_forward_bullets": [
+        "**The debt is CLOSED**, and it is closed with **both of its own errors written into it** rather than quietly satisfied:",
+        "* its diagnosis named ONE site (`lay_out`) and the badge's height was written **twice** — the second copy lived in `header_scene` as the word's own rectangle. That one is gone rather than corrected, because the word now takes the badge slot's height.",
+        "* its fourth close condition was stated over a population that was never this family's: `(12, 16)`'s 33 runs include four `kp.detail.*` sites, which no card header paints. The condition came true — but by leaving 26 while another convention overtook it, not by driving 33 to zero. ⇒ **ask of a close condition whether a path to zero exists at all; if it does not, the population has a role mixed into it that could never have been zero.**",
+        "⚠ **The campaign's next head is derived, not chosen, and it has already changed hands twice in three rounds**: `(11, 14)` at 39 runs over 32 sites across dashboard, packets and settings. Its site list is dominated by the capture viewer's context pane (`pv.context/*` at 8, plus `pv.context.batch_size`, `.compression`, `.delivery`, `.id_width`, `.low_latency`, `.revision` and the two appbar readouts). Whoever takes it should do what this round did: **write the family's own gate first**, because the census's 39 is one frame's fold and a pane's own count is a different number.",
+        "* `debt-text-is-not-centred-in-the-box-that-holds-it` stays open — `closed_by: person`.",
+        "* `debt-doc-links-inside-a-test-module-have-no-gate` stays open, `blocked_by: unmeasured`.",
+        "* The north star is NOT reached: `tools/analyzer_debts.py` reports the loop's cohort at **6**. This debt was opened after the cohort's pin (R1809), so closing it moves the family (28 -> 27 open) and not that six."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
