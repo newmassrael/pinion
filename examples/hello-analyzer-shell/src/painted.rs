@@ -259,7 +259,25 @@ const SIZES: &[(&str, (u32, u32))] = &[
 /// own chrome. `"Decode Inspector"` and `"LIVE"` are still short, and they are
 /// short on **every card on this screen** because the header is shared — a
 /// different cause with a different blast radius, carried forward by name.
-const SHORT_BOX_BUDGET: usize = 103;
+///
+/// ★★★★★ R1880 — **103 -> 93**, and the ten are the **application bar**, which
+/// is the first family in this campaign that is not a screen's at all. Every
+/// one of its runs was short: measured before the repair,
+/// `r1880_no_run_of_the_app_bar_sits_in_a_box_too_short_for_its_face` reported
+/// **48 of 48**, eight runs on each of the six destinations the bar is painted
+/// on, from six separately written seats — `16` for a 12px face wanting 20,
+/// `18` for a 13px face wanting 21, `16` again for an 11px face wanting 18.
+///
+/// ⇒ **not one judgement made six times, but one rule nobody had written.**
+/// `super::chrome_label` is that rule at the call site: it takes the CHROME and
+/// derives the seat, so a height it cannot state is a height it cannot get
+/// wrong.
+///
+/// ⚠ **This pin fell by ten while the whole application fell by fifty**, and
+/// the gap is the two units this doc already warns about — the pin is one
+/// frame's worst case, the census counts every destination's whole frame. Do
+/// not reconcile them; read each from its own instrument.
+const SHORT_BOX_BUDGET: usize = 93;
 
 /// Where every tag in the painted scene ended up, and every text run with it.
 struct Painted {
@@ -6965,22 +6983,24 @@ fn r1870_the_short_box_census_of_every_destination() {
     owner.run(|| {
         let state = use_shell_state();
         let roster = spec::destinations();
-        let mut walked = 0usize;
+        let mut per_destination: Vec<(String, Vec<pinion_core::containment::ShortBox>)> =
+            Vec::new();
         for destination in roster.open() {
             let key = destination.key.as_ref();
             if key != state.at() {
                 state.go(key).unwrap_or_else(|why| panic!("{key}: {why:?}"));
             }
-            walked += 1;
             let (_, scene) = painted_at((WIN_W, WIN_H));
-            short_box_census_of(key, &scene);
+            per_destination.push((key.to_owned(), short_box_census_of(key, &scene)));
         }
+        let walked = per_destination.len();
         assert!(
             walked >= 6,
             "the rail declares {walked} open destination(s); this census was \
              taken against six, and a population that shrank silently is how a \
              green sweep comes to mean nothing",
         );
+        short_box_application_report(&per_destination);
     });
 }
 
@@ -7001,11 +7021,138 @@ const SHORT_BOX_BOUND: usize = pinion_shell::SHORT_BOX_WARNING_LINES;
 /// one, and [`short_box_report_of`] says what is merely SO. Only the middle one
 /// can turn a screen red, and keeping the reporting out of it is what stops a
 /// measurement from quietly becoming a pin.
-fn short_box_census_of(key: &str, scene: &Scene) {
+fn short_box_census_of(key: &str, scene: &Scene) -> Vec<pinion_core::containment::ShortBox> {
     let short = pinion_core::containment::short_boxes(scene);
     let sites = pinion_shell::short_box_sites(scene);
     short_box_truths_of(key, &short, &sites);
     short_box_report_of(key, &short, &sites);
+    short
+}
+
+/// ★★★★★ R1880 — **the convention axis asked of the APPLICATION, not of one
+/// destination.**
+///
+/// R1878 built the `(face, box)` axis and printed it per destination, which is
+/// the unit every other line of this census uses. Reading those six lines at
+/// R1880's entry, one pair — a 12px face in a 16px box — appeared in **all six**,
+/// and nothing in the census said so: the reader had to fold six lines by hand
+/// and then believe the fold. This project has a rule about exactly that shape,
+/// and it is the rule R1879 was spent on — **a fold nobody can ask for is a
+/// claim, not a measurement.**
+///
+/// So the same crate function is asked once more over the UNION of every
+/// destination's rows. Nothing is re-derived here: the grouping and its
+/// ordering are [`pinion_shell::group_short_boxes_by_convention`]'s, exactly as
+/// the per-destination reading asks for them.
+///
+/// # What the union changes, and what it does not
+///
+/// A site is an address, and an address the shell paints on every screen — the
+/// app bar's — is ONE site in the union and six rows in the six per-destination
+/// readings. So the union's scatter is **not** the sum of the six scatters, and
+/// that difference is the whole point: it separates *a habit repeated across
+/// this application* from *a habit repeated inside one screen*, which the
+/// per-destination axis structurally cannot do.
+///
+/// ⚠ Nothing here asserts a magnitude, for [`short_box_report_of`]'s reason:
+/// every number is a defect population the campaign exists to drive to zero.
+/// The truth it does assert is structural — that this reading is a REFINEMENT
+/// rather than a sixth copy of the same one, i.e. that some convention's runs
+/// genuinely come from more than one destination. If that ever stops holding,
+/// the union has nothing to say and the line should go rather than mislead.
+fn short_box_application_report(
+    per_destination: &[(String, Vec<pinion_core::containment::ShortBox>)],
+) {
+    const BOUND: usize = SHORT_BOX_BOUND;
+
+    let union: Vec<pinion_core::containment::ShortBox> = per_destination
+        .iter()
+        .flat_map(|(_, rows)| rows.iter().cloned())
+        .collect();
+    let by_convention = pinion_shell::group_short_boxes_by_convention(union);
+
+    // Which destinations each convention was authored on. Taken from the SAME
+    // crate call, once per destination, so the two readings cannot disagree
+    // about what a convention is.
+    let mut lands: BTreeMap<(u32, u32), BTreeSet<String>> = BTreeMap::new();
+    for (key, rows) in per_destination {
+        for (sig, _) in pinion_shell::group_short_boxes_by_convention(rows.clone()) {
+            lands
+                .entry((sig.px, sig.box_h))
+                .or_default()
+                .insert(key.clone());
+        }
+    }
+
+    let crossing = lands.values().filter(|where_| where_.len() > 1).count();
+    assert!(
+        crossing > 0,
+        "★ no (face, box) convention reaches more than one destination, so this \
+         union says nothing the six per-destination lines did not already say — \
+         the reading is a sixth copy rather than a refinement, and a line that \
+         adds nothing is worse than no line",
+    );
+
+    // ⚠ R1880's own closing audit — the DISTINCT sites of the union, and not
+    // the sum of the conventions' scatters. Those are different numbers: a site
+    // that hosts two faces is one place and two rows, so summing the scatters
+    // counts it twice. The first draft of this line printed the sum and called
+    // it `site(s)`, which is this tree's most-repeated defect class — a count is
+    // only as good as the noun beside it (R1872, R1873, R1876) — and it was
+    // caught by reading the line's own output rather than by any gate.
+    let places = by_convention
+        .iter()
+        .flat_map(|(_, rows)| rows.iter().map(pinion_core::containment::ShortBox::site))
+        .collect::<BTreeSet<_>>()
+        .len();
+    println!(
+        "R1880 application: {} short run(s) at {places} distinct site(s) over {} \
+         destination(s); {} of {} (face, box) convention(s) reach more than one \
+         destination. Most scattered first: {:?}",
+        by_convention
+            .iter()
+            .map(|(_, rows)| rows.len())
+            .sum::<usize>(),
+        per_destination.len(),
+        crossing,
+        lands.len(),
+        by_convention
+            .iter()
+            .take(BOUND)
+            .map(|(sig, rows)| (
+                sig.px,
+                sig.box_h,
+                rows.len(),
+                pinion_shell::scattered_over(rows),
+                lands
+                    .get(&(sig.px, sig.box_h))
+                    .map_or(0, std::collections::BTreeSet::len),
+            ))
+            .collect::<Vec<_>>(),
+    );
+
+    // ★ The head, spelled by SITE rather than by three example rows. R1880's
+    // entry is why: read off the per-destination line, the widest convention's
+    // three examples were all `shell.appbar/*`, and the obvious reading — that
+    // the head IS the app bar — is one a site list refutes or confirms in a
+    // glance where three rows can only suggest.
+    if let Some((sig, rows)) = by_convention.first() {
+        let sites: BTreeMap<String, usize> = rows.iter().fold(BTreeMap::new(), |mut acc, row| {
+            *acc.entry(row.site()).or_default() += 1;
+            acc
+        });
+        let mut ranked: Vec<(String, usize)> = sites.into_iter().collect();
+        ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        println!(
+            "R1880 head: ({}, {}) is {} run(s) over {} site(s) on {:?}; sites: {:?}",
+            sig.px,
+            sig.box_h,
+            rows.len(),
+            pinion_shell::scattered_over(rows),
+            lands.get(&(sig.px, sig.box_h)),
+            ranked.into_iter().take(BOUND).collect::<Vec<_>>(),
+        );
+    }
 }
 
 /// What must be true of one frame's short boxes, whatever their number.
@@ -7629,6 +7776,105 @@ fn r1876_no_run_of_a_decode_card_sits_in_a_box_too_short_for_its_face() {
         parts.len(),
         cards.len(),
     );
+}
+
+/// ★★★★★ R1880 — **the application bar has NO box too short for its face**, on
+/// every destination it is painted on.
+///
+/// The seventh family of the short-box campaign and the **first that is not a
+/// screen's**. It is the shell's own chrome, and that is exactly why the six
+/// rounds before this one could not see it.
+///
+/// # ★★★★★ Why only the application-wide reading could name it
+///
+/// The bar contributes **five** short runs to any one destination. Read per
+/// destination — the unit every earlier round of this campaign used — it never
+/// rose above fourth place on any screen, and on the dashboard it sits behind
+/// three card sites. Folded across the six destinations it is painted on, those
+/// same five sites are **thirty runs**, the largest single thing in the
+/// application, and its convention `(12, 16)` is the only one of twenty-four
+/// that reaches **all six**.
+///
+/// ⇒ **a defect that repeats across screens is invisible to a per-screen
+/// census, however carefully that census is read.** R1878 built the convention
+/// axis to see what the site axis structurally could not; this round's addition
+/// to [`r1870_the_short_box_census_of_every_destination`] does the same thing to
+/// the convention axis's own unit.
+///
+/// # The gate walks every destination, and that is the point
+///
+/// A version of this written against one screen would ask a sixth of the
+/// question and go green at a cost of five runs. What is wrong here is not that
+/// a box is short once; it is that the shell paints the same short box on every
+/// screen a person can open. So the family is *destination x bar* and the count
+/// says both.
+///
+/// ⚠ Non-emptiness is asserted first, and against the roster's own count: a bar
+/// that stopped being painted, or a roster that shrank, must turn this red
+/// rather than green.
+#[test]
+fn r1880_no_run_of_the_app_bar_sits_in_a_box_too_short_for_its_face() {
+    /// The bar whose content this gate judges, as a run's path spells it.
+    const BAR: &str = "shell.appbar";
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let roster = spec::destinations();
+        let mut seen = 0usize;
+        let mut walked = 0usize;
+        let mut cut: Vec<String> = Vec::new();
+        for destination in roster.open() {
+            let key = destination.key.as_ref();
+            if key != state.at() {
+                state.go(key).unwrap_or_else(|why| panic!("{key}: {why:?}"));
+            }
+            walked += 1;
+            let (_, scene) = painted_at((WIN_W, WIN_H));
+            scene.for_each_node(&mut |visit| {
+                if matches!(visit.node, Scene::Text(_)) && visit.path.iter().any(|seg| seg == BAR) {
+                    seen += 1;
+                }
+            });
+            cut.extend(
+                pinion_core::containment::short_boxes(&scene)
+                    .into_iter()
+                    .filter(|row| row.path.iter().any(|seg| seg == BAR))
+                    .map(|row| {
+                        format!(
+                            "{key}: {} {:?} at {}px in a {}px box needs {} (short by {})",
+                            row.address(),
+                            row.content,
+                            row.px,
+                            row.rect.h,
+                            row.needs,
+                            row.short_by,
+                        )
+                    }),
+            );
+        }
+        assert!(
+            walked >= 6,
+            "the rail declares {walked} open destination(s); this gate was \
+             written against six, and a bar judged on fewer screens than it is \
+             painted on is the exact blindness it exists to remove",
+        );
+        assert!(
+            seen > 0,
+            "no run at all is painted inside `{BAR}` on any of the {walked} \
+             destination(s) — the bar this gate names has moved, and a zero \
+             that describes nothing is not a zero",
+        );
+        assert!(
+            cut.is_empty(),
+            "{} of the {seen} run(s) inside `{BAR}`, across {walked} \
+             destination(s), sit in a box too short for their own face; every \
+             one of them should come from a derivation that reads the face, so \
+             this is that derivation being bypassed rather than a number to \
+             raise: {cut:#?}",
+            cut.len(),
+        );
+    });
 }
 
 /// ★★★★★ R1875 — **the capture viewer's decode tree has NO box too short for

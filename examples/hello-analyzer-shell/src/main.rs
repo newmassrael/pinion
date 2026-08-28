@@ -5745,6 +5745,36 @@ fn label(text: &str, rect: Rect, px: u32, fg: Color) -> Scene {
     clipped(text, rect, px, fg, TextOverflow::Ellipsis)
 }
 
+/// A label seated in the chrome box that holds it — centred on that box's line,
+/// at the height its own face needs.
+///
+/// ★★★★★ R1880 — the caller passes the **chrome**, not a rectangle for the
+/// text, and that is the whole point: a height it cannot state is a height it
+/// cannot get wrong. Measured at this round's entry, every one of the
+/// application bar's forty-eight runs — eight of them, on each of the six
+/// destinations the bar is painted on — sat in a box too short for its own
+/// face, from six separately written seats that had each picked a plausible
+/// number: `16` for a 12px face wanting 20, `18` for a 13px face wanting 21,
+/// `16` again for an 11px face wanting 18.
+///
+/// ⇒ **not one judgement made six times, but one rule nobody had written**,
+/// which is the mechanical-duplication case `code_chip` next door records.
+/// [`pinion_core::containment::line_rect_in`] is that rule, and this helper is
+/// how a call site reaches it without also re-deriving where the box goes.
+///
+/// `chrome` is the box the label sits in, as its own container was laid out —
+/// so the rectangle comes back in the child coordinates the container's
+/// children use, and a caller does not convert anything.
+fn chrome_label(chrome: Rect, x: u32, w: u32, text: &str, px: u32, fg: Color) -> Scene {
+    let seat = Rect::new(0, 0, chrome.w, chrome.h);
+    label(
+        text,
+        pinion_core::containment::line_rect_in(seat, x, w, px),
+        px,
+        fg,
+    )
+}
+
 /// A kind's three-letter code in its coloured chip, the word seated by the
 /// chip.
 ///
@@ -6202,9 +6232,11 @@ fn pill(rect: Rect, tag: &str, light: Color, text: &str, palette: Palette) -> Sc
     Scene::Container(
         ContainerNode::new(vec![
             dot(12, rect.h / 2 - 3, 7, light),
-            label(
+            chrome_label(
+                rect,
+                28,
+                rect.w.saturating_sub(38),
                 text,
-                Rect::new(28, rect.h / 2 - 8, rect.w.saturating_sub(38), 16),
                 FONT_BODY,
                 palette.ink,
             ),
@@ -6227,9 +6259,11 @@ fn button(rect: Rect, tag: &str, text: &str, filled: bool, palette: Palette) -> 
         (palette.panel, palette.ink, palette.outline)
     };
     Scene::Container(
-        ContainerNode::new(vec![label(
+        ContainerNode::new(vec![chrome_label(
+            rect,
+            14,
+            rect.w.saturating_sub(24),
             text,
-            Rect::new(14, rect.h / 2 - 8, rect.w.saturating_sub(24), 16),
             FONT_BODY,
             ink,
         )])
@@ -6244,22 +6278,20 @@ fn button(rect: Rect, tag: &str, text: &str, filled: bool, palette: Palette) -> 
 }
 
 fn app_bar_scene(state: &ShellState, palette: Palette) -> Scene {
+    let bar = Rect::new(0, 0, win_w(), APP_BAR_H);
     let mut children = vec![
         dot(16, 18, 16, palette.accent),
-        label(
-            "Analyzer",
-            Rect::new(42, 17, 118, 18),
-            FONT_TITLE,
-            palette.ink,
-        ),
+        chrome_label(bar, 42, 118, "Analyzer", FONT_TITLE, palette.ink),
     ];
     for (n, name) in TABS.iter().enumerate() {
         let chip = if n == 0 { BarChip::Tab0 } else { BarChip::Tab1 };
         let on = state.tab.get() == *name;
         children.push(Scene::Container(
-            ContainerNode::new(vec![label(
+            ContainerNode::new(vec![chrome_label(
+                chip.rect(),
+                14,
+                chip.rect().w.saturating_sub(20),
                 name,
-                Rect::new(14, 8, chip.rect().w.saturating_sub(20), 16),
                 FONT_BODY,
                 if on { palette.ink } else { palette.muted },
             )])
@@ -6290,16 +6322,20 @@ fn app_bar_scene(state: &ShellState, palette: Palette) -> Scene {
         if capturing { spec::TRANSPORT } else { "Paused" },
         palette,
     ));
-    children.push(label(
+    children.push(chrome_label(
+        bar,
+        842,
+        92,
         &transport_word(state.clock.status(), capturing),
-        Rect::new(842, 19, 92, 16),
         FONT_SMALL,
         palette.muted,
     ));
     // The rate readout: what a capture tool is counting while it runs.
-    children.push(label(
+    children.push(chrome_label(
+        bar,
+        938,
+        96,
         spec::RATE,
-        Rect::new(938, 19, 96, 16),
         FONT_SMALL,
         palette.muted,
     ));
@@ -6328,7 +6364,10 @@ fn app_bar_scene(state: &ShellState, palette: Palette) -> Scene {
 fn search_chip(state: &ShellState, palette: Palette, searching: bool) -> Scene {
     let search = state.search.get();
     Scene::Container(
-        ContainerNode::new(vec![label(
+        ContainerNode::new(vec![chrome_label(
+            BarChip::Search.rect(),
+            12,
+            BarChip::Search.rect().w.saturating_sub(20),
             &if searching {
                 format!("{search}|")
             } else if search.is_empty() {
@@ -6336,7 +6375,6 @@ fn search_chip(state: &ShellState, palette: Palette, searching: bool) -> Scene {
             } else {
                 search
             },
-            Rect::new(12, 8, BarChip::Search.rect().w.saturating_sub(20), 16),
             FONT_BODY,
             if searching {
                 palette.ink
