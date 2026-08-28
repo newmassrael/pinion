@@ -8002,6 +8002,372 @@ fn r1880_no_run_of_the_app_bar_sits_in_a_box_too_short_for_its_face() {
 ///
 /// ⚠ The count says `N of M`: R1873's lesson, that a count with no denominator
 /// is the shape a wrong claim hides in.
+// --- R1886: the behaviour canon's interaction surface, on the assembled tool -
+/// The census this walk takes its population from.
+///
+/// `include_str!` rather than a read at run time, the rule every other pinned
+/// specification in this crate follows: the gate reads the artifact a reviewer
+/// reads, and cannot pass because a file was missing.
+const CANON_SURFACE_CENSUS: &str = include_str!("../../../docs/canon-surface-census.json");
+
+/// How this application performs one canon gesture, or `false` if it cannot.
+type CanonDrive = fn(&std::rc::Rc<ShellState>) -> bool;
+
+/// ★★★★★ R1886 — one canon gesture kind, and the way the ASSEMBLED tool
+/// performs it.
+///
+/// The ids are `docs/canon-surface-census.json`'s, and the test below asserts
+/// this list and that census's `have` gestures are the same set — the rule
+/// R1697 wrote for the operation table, for the reason it wrote it: a row
+/// claimed with nothing behind it is how a wheel came to be advertised for the
+/// whole life of a screen without answering.
+///
+/// ⚠ Each driver performs the gesture the way a person performs it — through
+/// the painted surface, the router, or the widget hook a mouse reaches — never
+/// by assignment. A driver that wrote the state directly would prove the state
+/// is writable, which nobody doubted.
+const CANON_GESTURES: &[(&str, CanonDrive)] = &[
+    // A press on an element causes that element's operation.
+    ("gesture.press", |state| {
+        let shot = painted();
+        press_tag(state, &shot, "card.packet#0.tear_off");
+        true
+    }),
+    // A press, a move and a release move the thing under the cursor. The canon
+    // spells this with three event families; here it is one gesture.
+    ("gesture.drag", |state| {
+        let shot = painted();
+        drag_tag(state, &shot, "card.packet#0.grip", (CELL_STEP, 0));
+        true
+    }),
+    // Picked up on one surface, let go on another — through the ROUTER, which
+    // is what performs a release, so this is the path real input takes.
+    ("gesture.carry", |state| {
+        let kind = first_placeable();
+        let shot = painted();
+        let row = aim(&shot, &format!("shell.palette.{kind}"));
+        let mut drag = RouterDrag::over(state, painted_at((WIN_W, WIN_H)).1);
+        drag.cursor(row);
+        drag.press();
+        drag.cursor(board_middle());
+        drag.release();
+        true
+    }),
+    // Typing into a field changes what the field holds as each character
+    // arrives — the application bar's search, opened the way a person opens it.
+    ("gesture.type", |state| {
+        ShellOracle::key(state, "/") && ShellOracle::key(state, "z")
+    }),
+    // Opening a roster on a value control and pressing an option writes it.
+    ("gesture.choose", |state| {
+        let row = spec::VALUE_ROWS[0].key;
+        let shot = painted_at_destination("settings");
+        press_tag(state, &shot, &format!("shell.settings.choose.{row}"));
+        let shot = painted();
+        let stem = format!("shell.settings.option.{row}.");
+        let Some(option) = shot.family(&stem).first().map(|tag| (*tag).to_owned()) else {
+            return false;
+        };
+        press_tag(state, &shot, &option);
+        true
+    }),
+    // A wheel over the graph canvas zooms it. The canvas is a MOUNTED section,
+    // so the honest question is whether the tool a reader runs can be walked to
+    // it and turned — not whether the guest answers a wheel in its own binary.
+    ("gesture.wheel", |state| {
+        let shot = painted_at_destination("lab");
+        let Some(canvas) = shot.rect("lab.canvas") else {
+            return false; // no graph canvas is on screen to turn a wheel over
+        };
+        let mut externals = state.screens.externals(&state.journey.get());
+        for entry in &mut externals {
+            // ★ The runtime announces every painted surface's size before it
+            // delivers input to it (`announce_external_sizes`), and this harness
+            // paints without that pass — so it does what that pass does, from
+            // the same scene and the same rectangle. Without it the surface is
+            // one pixel wide to the framework and every fraction lands at its
+            // origin, which is not the tool declining a wheel.
+            let Some(surface) = shot.rect(&entry.tag) else {
+                continue;
+            };
+            pinion_core::external::record_surface_size(&entry.tag, surface.w, surface.h);
+            let at = centre(canvas);
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "a window pixel over a surface size is a fraction in [0, 1]"
+            )]
+            let at_rel = (
+                (at.0.saturating_sub(surface.x)) as f32 / surface.w as f32,
+                (at.1.saturating_sub(surface.y)) as f32 / surface.h as f32,
+            );
+            // The router's own precondition, repeated rather than skipped: it
+            // offers `wheel` only where `wheel_intent` answers, so a driver that
+            // called `wheel` regardless would exercise a path no mouse takes.
+            if pinion_core::external::External::wheel_intent(&*entry.handle, at_rel).is_none() {
+                continue;
+            }
+            let reading = pinion_core::widgets::wheel::WheelReading::new(
+                at_rel,
+                (0.0, -pinion_core::event::LINE_HEIGHT_PX),
+                pinion_core::GesturePhase::Update,
+                pinion_core::input::Modifiers::empty(),
+            );
+            if pinion_core::external::External::wheel(&mut *entry.handle, &reading) {
+                return true;
+            }
+        }
+        false
+    }),
+];
+
+/// Everything a client can read about the assembled application, right now.
+///
+/// The whole published surface rather than a slot chosen per gesture — the rule
+/// R1819 states: an advertised effect is prose, and picking the slot to watch
+/// would be this test deciding what the prose meant. It reaches the host's own
+/// schema **and** the schema of every external the current section mounts,
+/// because a gesture that acts on a guest acts on the application.
+fn assembled_witness(state: &std::rc::Rc<ShellState>) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::new();
+    let mut host = ShellOracle::new();
+    host.attach_state(std::rc::Rc::clone(state));
+    for field in ExternalIntrospect::schema(&host).fields {
+        if !field.args.is_empty() {
+            continue; // an action, not a slot
+        }
+        if let Ok(value) = ExternalIntrospect::query(&host, field.path) {
+            let _ = write!(out, "{}={value:?};", field.path);
+        }
+    }
+    for entry in state.screens.externals(&state.journey.get()) {
+        let Some(guest) = entry.handle.introspect() else {
+            continue;
+        };
+        for field in guest.schema().fields {
+            if !field.args.is_empty() {
+                continue;
+            }
+            if let Ok(value) = guest.query(field.path) {
+                let _ = write!(out, "{}/{}={value:?};", entry.tag, field.path);
+            }
+        }
+    }
+    out
+}
+
+/// ★★★★★ R1886 — **every interaction surface the canon census claims this tool
+/// answers is one the ASSEMBLED tool actually answers.**
+///
+/// # What the census is, and why this test is the half that makes it a census
+///
+/// `docs/canon-surface-census.json` records what the behaviour canon can be
+/// operated by, against what this tool answers. Its counts are re-derivable
+/// from the canon by `tools/canon_surface_census.py --extract`; its verdicts
+/// are derivable from nothing, which is exactly why each `have` owes a
+/// `proven_by`, and this is what most of them name.
+///
+/// It replaces a hand-counted table that lived in a session note for 164
+/// rounds. Two of that table's ticks were wrong in the direction that hides
+/// work — tooltips and hover were marked present because the *framework* has
+/// those widgets, and no section of this tool mounts either. That is the whole
+/// argument for driving the gesture on the application instead of reading a
+/// crate: a capability the framework has and the tool does not use is not a
+/// surface anybody can operate.
+///
+/// # The negative control comes first
+///
+/// The witness is a long string built out of every published slot of the host
+/// and of every external the section mounts, and a witness that changed on its
+/// own would make every driver below pass without doing anything. So the first
+/// thing asserted is that reading it twice, with nothing done in between, gives
+/// the same answer. Without that this test's shape is `assert_ne!` over a value
+/// nobody established was stable.
+#[test]
+fn r1886_every_canon_gesture_kind_the_census_claims_is_answered() {
+    let census: serde_json::Value =
+        serde_json::from_str(CANON_SURFACE_CENSUS).expect("the canon surface census parses");
+    let rows = census["rows"].as_array().expect("the census declares rows");
+    let claimed: BTreeSet<&str> = rows
+        .iter()
+        .filter(|row| row["class"] == "gesture" && row["verdict"] == "have")
+        .filter_map(|row| row["id"].as_str())
+        .collect();
+    let driven: BTreeSet<&str> = CANON_GESTURES.iter().map(|(id, _)| *id).collect();
+    assert_eq!(
+        claimed, driven,
+        "★ the census and the drivers name different gestures — a `have` with \
+         no driver is a mark, which is what two rows of the prose table this \
+         census replaces turned out to be"
+    );
+
+    // ★ The negative control, before anything is driven.
+    {
+        let owner = Owner::new();
+        owner.run(|| {
+            let state = use_shell_state();
+            let once = assembled_witness(&state);
+            let twice = assembled_witness(&state);
+            assert_eq!(
+                once, twice,
+                "the witness changes with nothing done to it, so every driver \
+                 below would pass by standing still"
+            );
+            assert!(
+                once.len() > 200,
+                "the witness reads almost nothing, so a gesture could change \
+                 the application without moving it: {once:?}"
+            );
+        });
+    }
+
+    let mut inert = Vec::new();
+    for (id, drive) in CANON_GESTURES {
+        let owner = Owner::new();
+        owner.run(|| {
+            let state = use_shell_state();
+            let before = assembled_witness(&state);
+            if !drive(&state) {
+                inert.push(format!(
+                    "{id}: the assembled tool offers no way to perform this \
+                     gesture at all"
+                ));
+                return;
+            }
+            let after = assembled_witness(&state);
+            if before == after {
+                inert.push(format!(
+                    "{id}: the gesture was performed and nothing a client can \
+                     read about the application changed"
+                ));
+            }
+        });
+    }
+    assert!(
+        inert.is_empty(),
+        "{} of the {} canon gesture(s) this census claims are not answered by \
+         the assembled tool:\n  {}",
+        inert.len(),
+        CANON_GESTURES.len(),
+        inert.join("\n  "),
+    );
+}
+
+/// One canon surface the census records as OWED, and the probe that measures
+/// the absence. `Some(evidence)` means the tool answers it after all.
+type CanonProbe = fn(&std::rc::Rc<ShellState>) -> Option<String>;
+
+/// ★★★★★ R1886 — the census's `gap` rows, each with a probe that MEASURES the
+/// absence.
+///
+/// A `gap` is a verdict like any other and rots like any other. Both of these
+/// were `have` in the prose table this census replaces, ticked because the
+/// *framework* carries the widget — so an absence recorded here without an
+/// instrument would be the same class of claim, pointing the other way.
+///
+/// ⚠ Each probe asks a PROPERTY, never a name. The tooltip probe asks the
+/// published accessibility tree for the role, not the paint for a tag spelled
+/// `tooltip`; a tag-name search would answer `absent` for a tooltip somebody
+/// named something else, which is how an absence census lies.
+const CANON_GAPS: &[(&str, CanonProbe)] = &[
+    ("affordance.tooltip", |state| {
+        use pinion_a11y::WidgetA11y;
+        let mut seen = Vec::new();
+        for seat in spec::RAIL
+            .iter()
+            .filter(|s| matches!(s.seat, spec::Seat::Page))
+        {
+            state
+                .go(seat.key)
+                .unwrap_or_else(|why| panic!("{} is open and refused: {why:?}", seat.key));
+            let _ = painted_at((WIN_W, WIN_H));
+            for node in super::AnalyzerShellView::access_node(&ScreenState::default(), None) {
+                if node.role == pinion_a11y::AriaRole::Tooltip {
+                    seen.push(format!("{} at {}", node.tag, seat.key));
+                }
+            }
+        }
+        (!seen.is_empty()).then(|| seen.join(", "))
+    }),
+    ("affordance.hover", |state| {
+        let shot = painted();
+        let (x, y) = aim(&shot, "card.packet#0.grip");
+        let before = format!("{:?}", painted_at((WIN_W, WIN_H)).1);
+        ShellOracle::move_cursor(state, x, y);
+        let after = format!("{:?}", painted_at((WIN_W, WIN_H)).1);
+        (before != after).then(|| "the frame changed under a resting cursor".to_owned())
+    }),
+];
+
+/// ★★★★★ R1886 — **every surface the canon census records as OWED is still
+/// owed**, measured on the assembled tool rather than asserted.
+///
+/// This is a ratchet in the direction a census rots: a `gap` nobody re-measures
+/// stays written down after it is repaid, and the tool then under-reports what
+/// it can do. When one of these starts answering, this test fails and says what
+/// to do — move the row to `have`, give it a `proven_by`, and close the debt it
+/// names.
+///
+/// # The control, and why it is not optional
+///
+/// The hover probe compares two painted frames. Two frames of an unchanged
+/// application must be identical or the comparison means nothing, so that is
+/// asserted first — the same argument the gesture walk's witness control makes,
+/// on a different instrument.
+#[test]
+fn r1886_every_surface_the_canon_census_owes_is_still_owed() {
+    let census: serde_json::Value =
+        serde_json::from_str(CANON_SURFACE_CENSUS).expect("the canon surface census parses");
+    let rows = census["rows"].as_array().expect("the census declares rows");
+    let owed: BTreeSet<&str> = rows
+        .iter()
+        .filter(|row| row["verdict"] == "gap")
+        .filter_map(|row| row["id"].as_str())
+        .collect();
+    let probed: BTreeSet<&str> = CANON_GAPS.iter().map(|(id, _)| *id).collect();
+    assert_eq!(
+        owed, probed,
+        "★ the census and the probes name different owed surfaces — a `gap` \
+         nothing measures is a claim about an absence, which is the shape the \
+         two ticks this census corrected were in"
+    );
+
+    // ★ The control: an unchanged application paints the same frame twice.
+    {
+        let owner = Owner::new();
+        owner.run(|| {
+            let _ = use_shell_state();
+            let once = format!("{:?}", painted_at((WIN_W, WIN_H)).1);
+            let twice = format!("{:?}", painted_at((WIN_W, WIN_H)).1);
+            assert_eq!(
+                once, twice,
+                "two frames of an unchanged application differ, so a frame \
+                 comparison cannot tell a hover from a repaint"
+            );
+        });
+    }
+
+    let mut answered = Vec::new();
+    for (id, probe) in CANON_GAPS {
+        let owner = Owner::new();
+        owner.run(|| {
+            let state = use_shell_state();
+            if let Some(evidence) = probe(&state) {
+                answered.push(format!("{id}: {evidence}"));
+            }
+        });
+    }
+    assert!(
+        answered.is_empty(),
+        "{} surface(s) the census records as owed are answered now — move the \
+         row to `have`, give it a `proven_by`, and close the debt it names:\n  \
+         {}",
+        answered.len(),
+        answered.join("\n  "),
+    );
+}
+
 #[test]
 fn r1875_no_run_in_the_decode_tree_sits_in_a_box_too_short_for_its_face() {
     /// The pane whose content this gate judges, as it appears in a run's path.

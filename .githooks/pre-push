@@ -241,6 +241,38 @@ if ! python3 "$repo_root/tools/analyzer_debts.py" --check >&2; then
     exit 1
 fi
 
+# ★★★★★ R1886 — the CANON SURFACE census: what the behaviour canon can be
+# operated by, against what the assembled tool answers. Two steps, split the way
+# the five above are.
+#
+# ⚠ What this can and cannot check here, stated rather than hidden. The canon
+# document is confidential and is not in this repository, so the ARITHMETIC —
+# every row's count, and the completeness of the population — is re-derived by
+# `--extract <the document>` where the document is, not here. What runs at every
+# push is the pin's shape, the evidence each verdict owes, and that every `gap`
+# names a debt the tracked snapshot holds. The pin carries the document's markup
+# digest so a re-derivation cannot silently be run against another revision and
+# agree.
+step "canon surface census selftest"
+if ! python3 "$repo_root/tools/canon_surface_census.py" --selftest >&2; then
+    echo "pre-push: the canon surface census failed its own tests" >&2
+    exit 1
+fi
+step "canon surface census"
+if ! python3 "$repo_root/tools/canon_surface_census.py" >/dev/null; then
+    echo "pre-push: docs/canon-surface-census.json holds a verdict that has not" >&2
+    echo "pre-push: paid for itself, or a gap naming no registered debt" >&2
+    exit 1
+fi
+step "canon surface census proofs"
+# R1771's rule, applied to the third census on the day it was written rather
+# than 120 rounds later: a citation to a renamed or deleted test passes silently
+# on exactly the rows a reader trusts most. Its own step because it BUILDS.
+if ! python3 "$repo_root/tools/canon_surface_census.py" --check-proofs >/dev/null; then
+    echo "pre-push: a test the canon surface census cites is not one that runs" >&2
+    exit 1
+fi
+
 step "reference census"
 if ! python3 "$repo_root/tools/reference_census.py" --selftest >&2; then
     echo "pre-push: the reference census failed its own tests" >&2

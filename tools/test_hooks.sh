@@ -1993,6 +1993,33 @@ if [[ "$cohort_state" == "unreachable" ]]; then
 fi
 ok "the committed snapshot carries the pinned cohort" "$cohort_state" "same"
 
+# ★★★★★ R1886 — the CANON SURFACE census is wired, and its two commands are
+# timed apart for the reason the five above are.
+#
+# ⚠ Asserted structurally because of what this particular gate cannot do here:
+# its arithmetic is re-derived only where the (confidential, untracked) canon
+# document is, so what a push checks is the pin's shape and its evidence. A step
+# that quietly stopped running would leave a census nothing checks at all, which
+# is precisely the state this census was written to end.
+ok "the canon surface census is a push gate" \
+   "$(grep -cE '^step "canon surface census' "$repo_root/.githooks/pre-push")" "3"
+ok "its selftest runs before the census trusts itself" \
+   "$(awk '/^step "canon surface census selftest"/{s=NR} /^step "canon surface census"$/{c=NR} END{print (s>0 && c>s) ? "yes" : "no"}' \
+        "$repo_root/.githooks/pre-push")" "yes"
+# ⚠ And every gap it records must name a debt the committed snapshot holds. This
+# is the join between two artifacts that are written by different tools and can
+# drift apart in one direction only — a debt closed while the census still cites
+# it — so it is asserted where both are present rather than inside either tool.
+ok "every gap the canon census records names a registered debt" \
+   "$(cd "$repo_root" && python3 - <<'PY'
+import json
+census = json.load(open("docs/canon-surface-census.json", encoding="utf-8"))
+known = {d["name"] for d in json.load(open("docs/analyzer-debts.json", encoding="utf-8"))["debts"]}
+owed = [r["id"] for r in census["rows"] if r["verdict"] == "gap" and r.get("owed_by") not in known]
+print(",".join(owed) if owed else "all")
+PY
+)" "all"
+
 # ── lib/ident-gate.sh ────────────────────────────────────────────────────────
 #
 # The range arm is reachable only from `pre-push`, and a gate nothing can
