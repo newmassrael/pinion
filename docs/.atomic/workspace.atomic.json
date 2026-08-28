@@ -71872,6 +71872,94 @@
         "⚠ `debt-doc-links-inside-a-test-module-have-no-gate` (opened R1875) is untouched and still `blocked_by: unmeasured`. This round did no rename, so it had nothing to trip on — which is not evidence the gate exists."
       ]
     },
+    "R1877": {
+      "decision_summary": "A specification that said \"measured from what it holds\" and was not.\n\nSubject: the site the census DERIVED after R1876 — `lv.detail.layers/*`, the largest single site in the whole application.\n\n🟥 ★★★★★ THE NON-EMPTINESS ASSERTION EARNED ITS KEEP ON THE FIRST RUN, and it is this round's cheapest lesson. The gate was drafted with `sweep`, as R1876's is. `sweep` walks the shell's DASHBOARD states; the log view is a different destination and is not in it, so the gate saw **no runs at all** — and without R1857's floor it would have reported ZERO and passed while looking at nothing. Rewritten to open its destination, it reports **19 of 20**.\n\n★★★★★ THE SITE SAID 13 AND THE PANE HELD 19, across five of its six parts: `subject`, `kind`, `meta`, `layers` and `bytes`.\n\nThis destination is also the first that does NOT look like one convention multiplied by a loop — `logs` reports 88 short runs at **70** sites, nearly one apiece, where `packets` reported 171 at 56. So the pane count is what answered whether there was a family here at all. There was.\n\n🟥🟥 ★★★★★ AND THE CAUSE WAS IN THE SPECIFICATION, NOT THE PAINTER. `DetailPart` carried a hand-written `height` under a doc field saying *\"the part is measured from what it holds\"* — and **four of the six did not do that**. `subject` was 20 for a 14px face whose line box is 23; `meta` was 16 for an 11px face wanting 18. Both were too short to hold the word they exist to show.\n\n⇒ A part declares its FACE now, and `DetailPart::height()` derives the rest, so the sentence and the number cannot part company again. `LIST_LABEL_H` was 16 for a 10px face wanting 17 — both list labels on this screen were a pixel short of the words they head — and `FIELD_H` and the byte-line pitch are derived too.\n\n🟥🟥🟥 ★★★★★ DERIVING THE TABLE IS WHAT EXPOSED THE PAINTER'S OWN DIVERGENCE, which no gate had reported. `subject` and `kind` sit on the header line rather than in the column below it, so they are placed OUTSIDE the loop — and both had the literal `20` written there. The containment gate went red naming `lv.detail.subject` 3px past its own box the moment the specification's height became 23.\n\n⇒ They read `part_height(key)` now, BY KEY rather than by index, because the two parts placed outside the loop are exactly the two an index would silently mismatch.\n\n★ `detail_band(seat, x, w, px)` replaces FIVE spellings of one question — `whole`, `Rect::new(9, 4, w - 18, 13)`, `Rect::new(0, 0, at.w, 12)`, `Rect::new(0, y + 4, 88, 13)` and `Rect::new(0, y, at.w, 15)` — none of which asked the face. The faces moved into the specification with the heights that are derived from them: a face spelled in two files can disagree with the geometry built on it, which is R1834's move one screen over.",
+      "changes_bullets": [
+        "`examples/hello-log-view/src/spec.rs`",
+        "* `FONT_TINY` / `FONT_SMALL` / `FONT_BODY` / `FONT_TITLE` and `DETAIL_PART_PAD` — the faces this screen sets its text in, here because the part heights are now derived from them.",
+        "* `DetailPart::face` replaces `DetailPart::height`, and `DetailPart::height()` derives it as `line_box(face) + 2 * pad`, or `0` for a list whose height is its content's. The doc says what the swap is for.",
+        "* `LIST_LABEL_H` derived (16 -> 17, it was a pixel short), `FIELD_H` derived, `BYTE_LINE_H` new and derived — the painter had spelled that pitch as `18` and the run's own box as `15`, two numbers for one face.",
+        "`examples/hello-log-view/src/lib.rs`",
+        "* `detail_band(seat, x, w, px)` — one derivation for the five spellings the pane used.",
+        "* eight run boxes re-seated: the subject, the kind pill's word, the message, the meta line, both list headings, each decoded field's name and value, each byte line, and the no-frame refusal.",
+        "* `part_height(key)` and the two header-line parts that now use it; the faces are `spec::`'s.",
+        "`examples/hello-log-view/src/painted.rs`",
+        "* `SHORT_BOX_BUDGET` 79 -> **60**, with the site/pane distinction and the specification's part heights argued at the constant.",
+        "`examples/hello-analyzer-shell/src/painted.rs`",
+        "* `r1877_no_run_of_the_log_details_pane_sits_in_a_box_too_short_for_its_face` — a ZERO gate over one walk of the `logs` destination, family by path-segment equality. Its doc records why it is not a `sweep` gate: the draft was, and the floor caught it.",
+        "`docs/phase-b-rounds.tsv`",
+        "* row 1877, axis `modelview`, with the caveat that the axis number is not moved."
+      ],
+      "verification_bullets": [
+        "All of the following were run in the closing turn, on the tree that was committed.",
+        "* `cargo test -p hello-log-view` — **31 passed / 0 failed**.",
+        "* `cargo test -p hello-analyzer-shell` — **169 / 0**.",
+        "* `cargo clippy --workspace --all-targets --features pinion-runtime/vello` — exit 0, zero warnings.",
+        "* `cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items` — run LOCALLY, clean.",
+        "* `cargo fmt --all --check` — clean.",
+        "* Seven demos, chosen from the staged radius by what can actually move: the log section (r1731), the shell's whole walk (r1767), the shell against the reference (r1649), the window's give-up report (r1712), the verdict's provenance (r1758), pointer arrival (r1737) and the application's own count (r1738). All rc=0 under the shared headless display.",
+        "★★★ THREE INSTRUMENTS AGREE, WHICH IS ONE MORE THAN THIS CAMPAIGN HAS MANAGED BEFORE: the pane gate's entry reading of **19**, the log view's own ratchet 79 -> **60**, and the destination census `logs` 88 -> **69** at 70 -> 65 sites. All three are −19. The pane gate and the census read one frame; the ratchet is a worst-frame quantity and happened to agree, which R1876 already recorded as an observation rather than a law.",
+        "★ COUNTERFACTUAL, one variable — `detail_band` returning a hand-picked 13-tall box at the seat's top, on a verified green baseline: the gate goes red at **20 of 20 across 6 named part(s)**. That is one MORE than the entry reading, because the counterfactual is worse than what shipped: it also cuts the `message` part, which the tree happened to have right.",
+        "🟥 ★★★★★ AND THE ROUND'S FIRST MEASUREMENT WAS A GATE FAILING FOR THE RIGHT REASON. The draft used `sweep` and reported `no run at all is painted inside lv.detail`. That is R1857's floor doing exactly what it was built for — a check whose population is empty says so instead of passing. Without it this round would have shipped a green gate over an empty set, and the census would have kept naming a site nobody was repairing.",
+        "⚠ NOT CLAIMED: the rest of the staged radius. This host cannot judge a full sweep (`debt-a-deterministic-demo-has-a-wall-clock-bound`); the sweep's verdict comes from CI after publishing."
+      ],
+      "impact_refs": [
+        "5.32",
+        "5.11"
+      ],
+      "carry_forward_bullets": [
+        "🟥🟥 ★★★★★ THE CAMPAIGN HAS CHANGED PHASE, and it is stated here rather than discovered by the next round. The application's largest single site is now **8** (`pv.context/*`), down from **112** when this began at R1872. Destination totals: dashboard 100, packets 122, keys 91, logs **69**, lab 76, settings 43 — about 500 runs across many small sites.",
+        "⇒ The five rounds R1872–R1877 each found a family that a loop multiplied. That shape is running out. The next round should expect either to repay several small families at once, or to change the question the census asks — and it should decide which BEFORE picking a site, because \"one cause per round\" is a rule about causes and a long tail is not one cause.",
+        "★ THE NEXT HEAD IS STILL DERIVED, NOT CHOSEN: `cargo test -p hello-analyzer-shell r1870_the_short_box_census -- --nocapture`. After this round: `pv.context/*` 8, the dashboard's two stat-tile families 6 each, `pv.reassembly/*` 6, the filter card's chips 5.",
+        "★★ AND THE RULE THAT HAS NOW PAID FOUR TIMES gained a third face here: a census site's count is a floor on its pane's (R1874, R1875), its NAME is a floor on the pane's shape (R1876), and — new — **the pane gate's own population is a claim that can be EMPTY**. R1877's draft asked the wrong screen and said so only because the floor was there.",
+        "⚠ `debt-text-is-not-centred-in-the-box-that-holds-it` stays open (`closed_by: person`). This round's payment is the decode pane's eight sites and the specification's part heights; recorded in that file.",
+        "⚠ `debt-doc-links-inside-a-test-module-have-no-gate` (R1875) is untouched and still `blocked_by: unmeasured`.",
+        "⚠ CARRIED FROM R1876 AND STILL UNPAID: the dashboard card's shared chrome is short on every card (`Decode Inspector` 12px in 16 wanting 20, `LIVE` 10px in 14 wanting 17). It does not appear as a census site because it is two runs per card rather than a family that folds."
+      ],
+      "publishable_decision_summary": "A specification that said \"measured from what it holds\" and was not.\n\nSubject: the site the census DERIVED after R1876 — `lv.detail.layers/*`, the largest single site in the whole application.\n\n🟥 ★★★★★ THE NON-EMPTINESS ASSERTION EARNED ITS KEEP ON THE FIRST RUN, and it is this round's cheapest lesson. The gate was drafted with `sweep`, as R1876's is. `sweep` walks the shell's DASHBOARD states; the log view is a different destination and is not in it, so the gate saw **no runs at all** — and without R1857's floor it would have reported ZERO and passed while looking at nothing. Rewritten to open its destination, it reports **19 of 20**.\n\n★★★★★ THE SITE SAID 13 AND THE PANE HELD 19, across five of its six parts: `subject`, `kind`, `meta`, `layers` and `bytes`.\n\nThis destination is also the first that does NOT look like one convention multiplied by a loop — `logs` reports 88 short runs at **70** sites, nearly one apiece, where `packets` reported 171 at 56. So the pane count is what answered whether there was a family here at all. There was.\n\n🟥🟥 ★★★★★ AND THE CAUSE WAS IN THE SPECIFICATION, NOT THE PAINTER. `DetailPart` carried a hand-written `height` under a doc field saying *\"the part is measured from what it holds\"* — and **four of the six did not do that**. `subject` was 20 for a 14px face whose line box is 23; `meta` was 16 for an 11px face wanting 18. Both were too short to hold the word they exist to show.\n\n⇒ A part declares its FACE now, and `DetailPart::height()` derives the rest, so the sentence and the number cannot part company again. `LIST_LABEL_H` was 16 for a 10px face wanting 17 — both list labels on this screen were a pixel short of the words they head — and `FIELD_H` and the byte-line pitch are derived too.\n\n🟥🟥🟥 ★★★★★ DERIVING THE TABLE IS WHAT EXPOSED THE PAINTER'S OWN DIVERGENCE, which no gate had reported. `subject` and `kind` sit on the header line rather than in the column below it, so they are placed OUTSIDE the loop — and both had the literal `20` written there. The containment gate went red naming `lv.detail.subject` 3px past its own box the moment the specification's height became 23.\n\n⇒ They read `part_height(key)` now, BY KEY rather than by index, because the two parts placed outside the loop are exactly the two an index would silently mismatch.\n\n★ `detail_band(seat, x, w, px)` replaces FIVE spellings of one question — `whole`, `Rect::new(9, 4, w - 18, 13)`, `Rect::new(0, 0, at.w, 12)`, `Rect::new(0, y + 4, 88, 13)` and `Rect::new(0, y, at.w, 15)` — none of which asked the face. The faces moved into the specification with the heights that are derived from them: a face spelled in two files can disagree with the geometry built on it, which is R1834's move one screen over.",
+      "publishable_changes_bullets": [
+        "`examples/hello-log-view/src/spec.rs`",
+        "* `FONT_TINY` / `FONT_SMALL` / `FONT_BODY` / `FONT_TITLE` and `DETAIL_PART_PAD` — the faces this screen sets its text in, here because the part heights are now derived from them.",
+        "* `DetailPart::face` replaces `DetailPart::height`, and `DetailPart::height()` derives it as `line_box(face) + 2 * pad`, or `0` for a list whose height is its content's. The doc says what the swap is for.",
+        "* `LIST_LABEL_H` derived (16 -> 17, it was a pixel short), `FIELD_H` derived, `BYTE_LINE_H` new and derived — the painter had spelled that pitch as `18` and the run's own box as `15`, two numbers for one face.",
+        "`examples/hello-log-view/src/lib.rs`",
+        "* `detail_band(seat, x, w, px)` — one derivation for the five spellings the pane used.",
+        "* eight run boxes re-seated: the subject, the kind pill's word, the message, the meta line, both list headings, each decoded field's name and value, each byte line, and the no-frame refusal.",
+        "* `part_height(key)` and the two header-line parts that now use it; the faces are `spec::`'s.",
+        "`examples/hello-log-view/src/painted.rs`",
+        "* `SHORT_BOX_BUDGET` 79 -> **60**, with the site/pane distinction and the specification's part heights argued at the constant.",
+        "`examples/hello-analyzer-shell/src/painted.rs`",
+        "* `r1877_no_run_of_the_log_details_pane_sits_in_a_box_too_short_for_its_face` — a ZERO gate over one walk of the `logs` destination, family by path-segment equality. Its doc records why it is not a `sweep` gate: the draft was, and the floor caught it.",
+        "`docs/phase-b-rounds.tsv`",
+        "* row 1877, axis `modelview`, with the caveat that the axis number is not moved."
+      ],
+      "publishable_verification_bullets": [
+        "All of the following were run in the closing turn, on the tree that was committed.",
+        "* `cargo test -p hello-log-view` — **31 passed / 0 failed**.",
+        "* `cargo test -p hello-analyzer-shell` — **169 / 0**.",
+        "* `cargo clippy --workspace --all-targets --features pinion-runtime/vello` — exit 0, zero warnings.",
+        "* `cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items` — run LOCALLY, clean.",
+        "* `cargo fmt --all --check` — clean.",
+        "* Seven demos, chosen from the staged radius by what can actually move: the log section (r1731), the shell's whole walk (r1767), the shell against the reference (r1649), the window's give-up report (r1712), the verdict's provenance (r1758), pointer arrival (r1737) and the application's own count (r1738). All rc=0 under the shared headless display.",
+        "★★★ THREE INSTRUMENTS AGREE, WHICH IS ONE MORE THAN THIS CAMPAIGN HAS MANAGED BEFORE: the pane gate's entry reading of **19**, the log view's own ratchet 79 -> **60**, and the destination census `logs` 88 -> **69** at 70 -> 65 sites. All three are −19. The pane gate and the census read one frame; the ratchet is a worst-frame quantity and happened to agree, which R1876 already recorded as an observation rather than a law.",
+        "★ COUNTERFACTUAL, one variable — `detail_band` returning a hand-picked 13-tall box at the seat's top, on a verified green baseline: the gate goes red at **20 of 20 across 6 named part(s)**. That is one MORE than the entry reading, because the counterfactual is worse than what shipped: it also cuts the `message` part, which the tree happened to have right.",
+        "🟥 ★★★★★ AND THE ROUND'S FIRST MEASUREMENT WAS A GATE FAILING FOR THE RIGHT REASON. The draft used `sweep` and reported `no run at all is painted inside lv.detail`. That is R1857's floor doing exactly what it was built for — a check whose population is empty says so instead of passing. Without it this round would have shipped a green gate over an empty set, and the census would have kept naming a site nobody was repairing.",
+        "⚠ NOT CLAIMED: the rest of the staged radius. This host cannot judge a full sweep (`debt-a-deterministic-demo-has-a-wall-clock-bound`); the sweep's verdict comes from CI after publishing."
+      ],
+      "publishable_impact_refs": [
+        "5.32",
+        "5.11"
+      ],
+      "publishable_carry_forward_bullets": [
+        "🟥🟥 ★★★★★ THE CAMPAIGN HAS CHANGED PHASE, and it is stated here rather than discovered by the next round. The application's largest single site is now **8** (`pv.context/*`), down from **112** when this began at R1872. Destination totals: dashboard 100, packets 122, keys 91, logs **69**, lab 76, settings 43 — about 500 runs across many small sites.",
+        "⇒ The five rounds R1872–R1877 each found a family that a loop multiplied. That shape is running out. The next round should expect either to repay several small families at once, or to change the question the census asks — and it should decide which BEFORE picking a site, because \"one cause per round\" is a rule about causes and a long tail is not one cause.",
+        "★ THE NEXT HEAD IS STILL DERIVED, NOT CHOSEN: `cargo test -p hello-analyzer-shell r1870_the_short_box_census -- --nocapture`. After this round: `pv.context/*` 8, the dashboard's two stat-tile families 6 each, `pv.reassembly/*` 6, the filter card's chips 5.",
+        "★★ AND THE RULE THAT HAS NOW PAID FOUR TIMES gained a third face here: a census site's count is a floor on its pane's (R1874, R1875), its NAME is a floor on the pane's shape (R1876), and — new — **the pane gate's own population is a claim that can be EMPTY**. R1877's draft asked the wrong screen and said so only because the floor was there.",
+        "⚠ `debt-text-is-not-centred-in-the-box-that-holds-it` stays open (`closed_by: person`). This round's payment is the decode pane's eight sites and the specification's part heights; recorded in that file.",
+        "⚠ `debt-doc-links-inside-a-test-module-have-no-gate` (R1875) is untouched and still `blocked_by: unmeasured`.",
+        "⚠ CARRIED FROM R1876 AND STILL UNPAID: the dashboard card's shared chrome is short on every card (`Decode Inspector` 12px in 16 wanting 20, `LIVE` 10px in 14 wanting 17). It does not appear as a census site because it is two runs per card rather than a family that folds."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
