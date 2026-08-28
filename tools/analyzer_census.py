@@ -1049,6 +1049,40 @@ def selftest() -> int:
         "and a non-outside row with no such field is untouched",
         check_boundaries([good[0]], spec) == [],
     )
+    # ★★★★★ R1884 — and the ORACLE the rule resolves against, which none of the
+    # cases above can reach: they hand `check_boundaries` a synthetic mapping,
+    # so a `store_sections` reading the WRONG FIELDS satisfies every one of them.
+    #
+    # Measured by mutation in the round that shipped the rule: adding
+    # `alternatives_rejected` to the decision text left `--selftest` AND
+    # `--check-pin` both green, and it would have made a sentence the spec
+    # REJECTED citable as a ratified boundary — the strongest verdict resting on
+    # an option the project turned down. That is R1847's shape recurring inside
+    # the round that quoted it: the pure half was tested and the half that
+    # chooses what the pure half sees was not.
+    #
+    # So the oracle is asserted against the REAL store, which is the only place
+    # its field choice is visible. These four are why the store is tracked.
+    spec_now = store_sections()
+    status_3, text_3 = spec_now["3"]
+    check("the store's boundary section is readable and active", status_3 == "active")
+    check(
+        "the decision text carries the section's own caveats",
+        "Custom multimedia codec embedding out of scope" in text_3,
+    )
+    check(
+        "and NOT what that section REJECTED — a rejected alternative is not a boundary",
+        "marketing-prone" not in text_3,
+    )
+    # ★ And the docstring's advice for the clause whose ratified wording names a
+    # product: it says cite a span that does not. That was guidance until this
+    # asserted such a span exists, which is the difference between prose and a
+    # rule — `tools/reference_names.py` refuses the full sentence in a tracked
+    # file, and a citation nobody can write is a boundary nobody can claim.
+    check(
+        "a clause naming a product still has a citable span that does not",
+        "no built-in browser widget" in text_3,
+    )
 
     # ★★★★★ R1771 — the same rules for the OTHER kind of evidence, which had
     # none. Every case below is a shape this pin actually carries.
@@ -1187,6 +1221,15 @@ def store_sections() -> dict[str, tuple[str, str]]:
     Raises `Finding` when the store cannot be read — **fail closed**, because
     the alternative is a boundary check that silently stops happening, which is
     the failure mode every gate in this file exists to prevent.
+
+    ★★★★★ R1884 — **the field choice above is ASSERTED, not merely documented**,
+    in `selftest` against the real store. It had to be: `check_boundaries` is
+    pure and its cases hand it a synthetic mapping, so this function is where
+    the rule's meaning is actually decided and nothing was watching it. Measured
+    by mutation — adding `alternatives_rejected` here left `--selftest` and
+    `--check-pin` both green while making a sentence the spec REJECTED citable
+    as a ratified boundary; dropping `caveats_bullets` was green too, and would
+    have left §3 citable only by its one-line intent.
     """
     try:
         held = json.loads(STORE.read_text(encoding="utf-8"))
