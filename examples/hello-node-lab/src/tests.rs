@@ -16,6 +16,8 @@ use super::{
     palette_rect, pin_rect, scenario, spec, use_lab_state,
 };
 use crate::graph::Role;
+use pinion_node_graph::{Admission, NodeBody, ROOT};
+use std::collections::BTreeSet;
 
 /// R1788 — the plan's document as a value.
 ///
@@ -3348,6 +3350,102 @@ fn r1866_a_rewind_is_a_restart_for_both_the_tape_and_the_checks() {
             scenario::record(&state).is_err(),
             "a rewound playhead left the previous run's marks on the tape, so a \
              baseline could be kept for a run that never happened",
+        );
+    });
+}
+
+/// ★★★★★ R1885.3 — **the opening graph is heterogeneous AND every drawn wire
+/// still negotiates**, the pair of facts that makes it a compatibility TEST
+/// rather than a picture of one deployment.
+///
+/// # Why this exists, and it is not a flattering reason
+///
+/// `opening_implementation`'s doc named this test — by this exact name — and the
+/// test did not exist. R1885's own closing audit grepped for it and found zero
+/// definitions: a citation to a proof nobody wrote, in the one place a reader
+/// would go to check the claim. This repository gates that class over the
+/// atomic store's citations (`validate-code-refs`) and over the census's
+/// `proven_by` (`--check-proofs`); over Rust doc prose it gates nothing, so
+/// nothing said a word.
+///
+/// The same paragraph was wrong a second way. It said "the two non-reference
+/// builds" and by then there was ONE: the spans were changed mid-round when the
+/// walk found no refusal was reachable, and both non-reference cards ended up on
+/// the same build. **The prose did not follow the fix it was describing.**
+///
+/// # What it asserts, and what it deliberately does not
+///
+/// Heterogeneity is a COUNT OF DISTINCT BUILDS, not a check that `P-03` and
+/// `S-01` are the odd ones out: naming them would restate the table this is
+/// meant to check, and would keep passing if that table were flattened to a
+/// single build. Every link is asked of the document, so the rule under test is
+/// the one the screen runs rather than a second copy written here.
+///
+/// # 🟥 The mutation that PASSED, and what it forced
+///
+/// This test was written with two assertions and one of them was hollow. Moving
+/// both non-reference cards onto the legacy build — a graph that genuinely
+/// cannot open — left it GREEN, because `seed_links` draws with
+/// `Document::connect`, which since R1885 refuses an inadmissible pair. The two
+/// bad wires were never made, so "every drawn wire negotiates" had nothing to
+/// object to. ⇒ ★★★★★ **a population can shrink instead of an assertion
+/// failing**, and the shrink is invisible to any check phrased over what is
+/// present. The count against `spec::LINKS` is what closed it, and the same
+/// mutation now reports `5 of the 7`.
+#[test]
+fn r1885_the_opening_graph_is_heterogeneous_and_still_negotiates() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = state();
+        let doc = state.doc.borrow();
+        let tree = doc.tree(ROOT).expect("the root tree");
+
+        let builds: BTreeSet<&'static str> = tree
+            .nodes()
+            .filter_map(|n| match &n.body {
+                NodeBody::Kind(kind) => Some(kind.implementation.stack.word()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            builds.len() >= 2,
+            "★ the opening graph runs a single build, so it cannot answer the \
+             question the axis exists for: {builds:?}"
+        );
+
+        // 🟥🟥🟥 ★★★★★ R1885.3 — **the count, and it is the half that has teeth.**
+        // `seed_links` draws with `Document::connect`, which since R1885 REFUSES
+        // an inadmissible pair — so a build that cannot negotiate does not
+        // produce a refused wire, it produces NO WIRE. Measured: with both
+        // non-reference cards moved onto the legacy build, the assertion below
+        // about drawn wires passed, because the two wires that would have been
+        // refused were simply never made. ⇒ **a population can shrink instead of
+        // an assertion failing**, and "every drawn wire is fine" cannot see a
+        // wire that was never drawn. So the specification's own count is what
+        // this compares against.
+        let links = tree.links();
+        assert_eq!(
+            links.len(),
+            spec::LINKS.len(),
+            "★ the opening graph drew {} of the {} wires its specification \
+             declares — a wire `connect` refused is a wire that is not here, \
+             which is exactly what this count exists to catch",
+            links.len(),
+            spec::LINKS.len(),
+        );
+        let refused: Vec<String> = links
+            .iter()
+            .filter_map(|link| match doc.admission(ROOT, link.from, link.to) {
+                Some(Admission::Refused(why)) => Some(why.because),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            refused,
+            Vec::<String>::new(),
+            "★ the opening graph must be a compatibility test that PASSES — a \
+             screen that opens blocked asserts a defect instead of offering a \
+             test: {refused:?}"
         );
     });
 }

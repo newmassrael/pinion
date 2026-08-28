@@ -2690,11 +2690,18 @@ fn palette_reach() -> pinion_core::widgets::config_schema::Reach {
 /// answer the question the axis exists for, and a graph that opened broken
 /// would be asserting a defect rather than offering a test.
 ///
-/// The spans are chosen so the two non-reference builds are compatible with the
-/// reference and — measured by
-/// `r1885_the_opening_graph_is_heterogeneous_and_still_negotiates` — with each
-/// other, so no wire a person can draw between the opening nodes is refused.
-/// Making one of them incompatible is the edit the assembly walk performs.
+/// Two of its cards run the independent re-implementation, whose span overlaps
+/// the reference's, so no wire this graph draws is refused. That pair of facts —
+/// more than one build, and every wire still negotiating — is asserted by
+/// `r1885_the_opening_graph_is_heterogeneous_and_still_negotiates`, and putting
+/// a card on the legacy build is the edit the assembly walk performs.
+///
+/// ⚠ R1885.3 — this paragraph previously said "the two non-reference **builds**"
+/// and cited that test before it was written. Both were false: the spans were
+/// changed mid-round when the walk found no refusal was reachable, which put
+/// both non-reference cards on ONE build, and the citation named a test nobody
+/// had written. The prose did not follow the fix it was describing, and nothing
+/// gates a citation in Rust doc prose — so the test now exists and says so.
 fn opening_implementation(id: &str) -> Implementation {
     let stack = match id {
         // An independent re-implementation that has not caught up to the newest
