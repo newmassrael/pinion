@@ -940,6 +940,13 @@ fn side_panel_access(state: &LabState, which: SidePanel) -> Vec<AccessNode> {
     let at = which.at(state);
     if at.folded {
         return vec![
+            // ⚠ R1887.1 — the panel itself keeps its group node. It is still a
+            // painted, addressable region when folded, and leaving it out left
+            // `lab.palette` classified NOWHERE in the folded state, which the
+            // census reported the moment that state was swept.
+            AccessNode::new(which.tag(), AriaRole::Group)
+                .with_name(which.spec().title)
+                .with_value(AccessValue::Text("folded".to_owned())),
             AccessNode::new(format!("{}.strip", which.tag()), AriaRole::Button)
                 .with_name(format!("{} is folded, open it again", which.spec().title)),
         ];
@@ -6723,20 +6730,24 @@ fn side_panel(which: SidePanel, state: &LabState, rect: Rect, ink: &Ink, body: S
         // The whole strip is the affordance: eighteen pixels is not room for a
         // control inside a panel, and a strip whose only job is to come back
         // does not need one.
+        //
+        // ⚠ R1887.1 — `panel_content` and not the panel's own rectangle. Drawn
+        // at `(0, 0, w, h)` the strip overhung its own panel's border by a
+        // pixel on every side, which the containment gate reported the first
+        // time the sweep reached a folded panel. A box with a border is not the
+        // same rectangle as the space inside it — the note R1874 left on the
+        // palette's rows, met again one level out.
         return panel(
             which.tag(),
             rect,
             ink.raised,
             Some(ink.outline),
-            vec![quiet(
-                box_at(
-                    &format!("{}.strip", which.tag()),
-                    Rect::new(0, 0, rect.w, rect.h),
-                    ink.raised,
-                    None,
-                    0,
-                ),
-                Silence::name_of(which.tag()),
+            vec![box_at(
+                &format!("{}.strip", which.tag()),
+                panel_content(rect),
+                ink.raised,
+                None,
+                0,
             )],
         );
     }
@@ -14266,6 +14277,20 @@ fn rail_access() -> Vec<AccessNode> {
 /// key loses is the membership of the set — so the set is announced once, where
 /// it can be read in one breath, and each chip declares itself part of it.
 fn palette_access(state: &LabState) -> Vec<AccessNode> {
+    // ★★★★★ R1887.1 — **a folded panel announces what it paints and no more.**
+    //
+    // R1887's own closing audit found this the moment the sweep reached a
+    // folded palette: twelve regions came back as GHOSTS — announced by the
+    // accessibility tree, painted by nothing. A reader who never sees the
+    // drawing was being offered eight roles, three pin kinds and a switch that
+    // are not on the screen, which is worse than not being told at all: the
+    // press that follows the announcement lands on a strip.
+    //
+    // ⇒ ★ **an announcement is a claim about the paint**, and a panel with two
+    // paint branches needs two announcement branches.
+    if SidePanel::Palette.at(state).folded {
+        return side_panel_access(state, SidePanel::Palette);
+    }
     let on = state.discovery.get();
     let mut nodes = vec![
         AccessNode::new("lab.palette", AriaRole::Group)

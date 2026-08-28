@@ -1273,6 +1273,14 @@ pub const VOICES: &[VoiceSpec] = &[
         role: "button",
         population: Population::One,
     },
+    // ⚠ R1887.1 — the strip a folded panel leaves is NOT here, and the reason is
+    // this table's own: it lists the regions of the OPENING screen, and the
+    // dynamic ones are deliberately absent because their population is the
+    // state's rather than this table's. A `VoiceSpec` for the strip made the
+    // gate demand a region the opening screen correctly does not paint. The
+    // strip is not unchecked — the census asks it the stronger question, that
+    // nothing painted is left unclassified in ANY swept state, and the folded
+    // state is swept now.
     VoiceSpec {
         tag: "lab.palette.role.{}",
         role: "button",

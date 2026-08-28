@@ -141,6 +141,28 @@ const STATES: &[SweptState] = &[
     ("zoomed out", |state| {
         state.zoom.set(super::ZOOM_MIN);
     }),
+    // ★★★★★ R1887.1 — **with a panel folded**, which is the state R1887 built
+    // and this sweep could not see.
+    //
+    // The round's own closing audit found it. Every check in this file — what
+    // is painted, what is contained, what overlaps, what a press reaches, what
+    // speaks — runs over these states, and none of them folded a panel. So the
+    // screen R1887 added had three tests of its own and *no* sweep: the strip
+    // it paints had never been asked whether it is contained, whether anything
+    // is drawn over it, or whether it has a voice. ⇒ ★ **a round that adds a
+    // STATE has to add it here, or every general gate on this screen goes on
+    // describing the screen as it was before.**
+    //
+    // Folded through the same function a press goes through, so the state is
+    // one a person can actually reach.
+    ("with the palette folded to its strip", |state| {
+        super::place_panel(
+            state,
+            super::SidePanel::Palette,
+            super::PlaceAsk::Fold(true),
+        )
+        .expect("the palette declares that it folds");
+    }),
     (
         "panned, by the gesture the hint strip advertises",
         |state| {
@@ -501,6 +523,17 @@ fn declared_fault_panel(state: &LabState) -> Vec<String> {
     spec::FAULT_PANEL.roster(super::fault_rows(state).len(), &out_of_reach)
 }
 
+/// Whether this pane is folded away right now.
+///
+/// ★ R1887.1 — asked of the pane's TAG rather than of an index, so a pane the
+/// specification adds is answered without this function learning about it.
+fn folded_pane(state: &LabState, pane: &spec::PaneSpec) -> bool {
+    super::SidePanel::ALL
+        .into_iter()
+        .find(|which| which.tag() == pane.tag)
+        .is_some_and(|which| which.at(state).folded)
+}
+
 #[allow(
     clippy::too_many_lines,
     reason = "one entry per family of declared elements, each derived from the \
@@ -532,6 +565,19 @@ fn declared_tags(state: &LabState) -> Vec<String> {
     ];
     for pane in spec::PANES {
         want.push(pane.tag.to_owned());
+        // ★★★★★ R1887.1 — **a FOLDED pane declares its strip and nothing else.**
+        //
+        // R1887 declared the chrome unconditionally, and R1887's own closing
+        // audit found what that costs the moment the sweep reaches a folded
+        // panel: the forward direction demanded twenty-eight elements of a
+        // panel that is eighteen pixels wide and correctly paints none of them.
+        // ⇒ ★ what a screen owes depends on the state it is in, which is why
+        // this function takes one — and a declaration that ignores the state
+        // can only be right in the states nobody swept.
+        if folded_pane(state, pane) {
+            want.push(format!("{}.strip", pane.tag));
+            continue;
+        }
         if let Some(body) = pane.body {
             want.push(body.to_owned());
         }
@@ -550,15 +596,20 @@ fn declared_tags(state: &LabState) -> Vec<String> {
     for (seat, _) in spec::RAIL {
         want.push(format!("lab.rail.{seat}"));
     }
-    for role in spec::ROLES {
-        want.push(format!("lab.palette.role.{}", role.name));
-        want.push(format!("lab.palette.swatch.{}", role.name));
-    }
-    for (kind, _) in spec::PIN_LEGEND {
-        want.push(format!("lab.palette.pin.{kind}"));
-    }
-    for word in spec::PROTOCOLS {
-        want.push(format!("lab.palette.protocol.{word}"));
+    // ★ R1887.1 — what the palette's BODY holds, demanded only while there is a
+    // body. Same rule as the panes above, one level in: a folded panel's
+    // contents are not missing, they are not asked for.
+    if !folded_pane(state, &spec::PANES[1]) {
+        for role in spec::ROLES {
+            want.push(format!("lab.palette.role.{}", role.name));
+            want.push(format!("lab.palette.swatch.{}", role.name));
+        }
+        for (kind, _) in spec::PIN_LEGEND {
+            want.push(format!("lab.palette.pin.{kind}"));
+        }
+        for word in spec::PROTOCOLS {
+            want.push(format!("lab.palette.protocol.{word}"));
+        }
     }
     for frame in spec::FRAMES {
         want.push(format!("lab.frame.{}", frame.name));
