@@ -1260,6 +1260,30 @@ impl<K: NodeKind> Document<K> {
         found
     }
 
+    /// The pair question for a link that is ALREADY there (R1885).
+    ///
+    /// ★★★★★ Not redundant with [`Document::connect`]'s refusal. `connect` bars
+    /// an inadmissible wire, so the only way to be HOLDING one is to have made
+    /// it legal and then broken it — by re-authoring a node's kind, or by
+    /// loading a document written against a different rule. Both are exactly
+    /// what a validation pass exists to catch and neither is reachable through
+    /// `connect`, so leaving this out would have made the rule enforceable only
+    /// at the moment of drawing.
+    ///
+    /// Its own function because [`Document::validate`] is at its line budget and
+    /// because this is a different question from the per-link type walk it sits
+    /// beside: that one asks about two ports, this one about two nodes.
+    fn inadmissible(&self, tree: TreeId, link: &Link) -> Option<Violation> {
+        match self.admission(tree, link.from, link.to) {
+            Some(Admission::Refused(refusal)) => Some(Violation::Incompatible {
+                tree,
+                link: link.id,
+                refusal,
+            }),
+            _ => None,
+        }
+    }
+
     /// Every way this document breaks its own rules, in tree order.
     ///
     /// Empty for any document built through this crate's API.
@@ -1299,21 +1323,7 @@ impl<K: NodeKind> Document<K> {
                         link: link.id,
                     });
                 }
-                // ★★★★★ R1885 — and the pair question, for a link that is
-                // ALREADY there. `connect` refuses an inadmissible wire, so the
-                // only way to hold one is to have made it legal and then broken
-                // it — by re-authoring a node's kind, or by loading a document
-                // written against a different rule. Both are exactly what a
-                // validation pass exists to catch, and neither is reachable
-                // through `connect`, so leaving this out would have made the
-                // refusal enforceable only at the moment of drawing.
-                if let Some(Admission::Refused(why)) = self.admission(tree.id, link.from, link.to) {
-                    found.push(Violation::Incompatible {
-                        tree: tree.id,
-                        link: link.id,
-                        refusal: why,
-                    });
-                }
+                found.extend(self.inadmissible(tree.id, link));
                 *fed.entry((link.to, Side::Input)).or_default() += 1;
                 *fed.entry((link.from, Side::Output)).or_default() += 1;
             }

@@ -5227,6 +5227,27 @@ fn r1866_the_walk_reaches_a_lab_that_compares_two_of_its_own_runs() {
     });
 }
 
+/// The launch gate's lines that are about two builds unable to negotiate.
+///
+/// A free function rather than a nested one, because clippy is right that an
+/// item after a statement reads as if it were scoped to what precedes it.
+fn incompatible_lines(gate: &serde_json::Value) -> Vec<String> {
+    gate.as_array()
+        .expect("the gate is a list")
+        .iter()
+        .filter_map(|line| line["sentence"].as_str())
+        .filter(|s| s.contains("share no wire revision"))
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+/// The card the R1885 walk moves onto another build.
+///
+/// A peer rather than the store or the router: it is on more than one wire, so
+/// the walk's derived expectation is a number greater than one and a rule that
+/// fired on only the first wire would be caught.
+const R1885_CARD: &str = "P-01";
+
 /// ★★★★★ R1885 — **the assembled tool holds a compatibility test graph**: its
 /// peers run different builds, every drawn wire negotiates, and putting one peer
 /// on a build the other cannot talk to makes the launch gate say so — naming
@@ -5286,21 +5307,10 @@ fn r1885_the_walk_reaches_a_lab_whose_peers_run_different_builds() {
                 )
             });
 
-        /// Whether any line is about two builds that cannot negotiate.
-        fn incompatible(gate: &serde_json::Value) -> Vec<String> {
-            gate.as_array()
-                .expect("the gate is a list")
-                .iter()
-                .filter_map(|line| line["sentence"].as_str())
-                .filter(|s| s.contains("share no wire revision"))
-                .map(ToOwned::to_owned)
-                .collect()
-        }
-
         // ★ THE OPENING CLAIM: heterogeneous AND clean.
         let opening = as_json(lab.query("gate").expect("the gate slot"));
         assert_eq!(
-            incompatible(&opening),
+            incompatible_lines(&opening),
             Vec::<String>::new(),
             "the opening graph must be a compatibility test that PASSES, or the \
              screen ships an assertion of a defect: {opening}"
@@ -5320,9 +5330,11 @@ fn r1885_the_walk_reaches_a_lab_whose_peers_run_different_builds() {
         );
 
         // ★ THE EDIT: put one peer on a build the graph has moved past.
-        const CARD: &str = "P-01";
         let said = lab
-            .invoke("build", IntrospectValue::Text(format!("{CARD},legacy")))
+            .invoke(
+                "build",
+                IntrospectValue::Text(format!("{R1885_CARD},legacy")),
+            )
             .expect("`build` is a declared action of this screen");
         println!("the screen said: {said:?}");
 
@@ -5336,7 +5348,7 @@ fn r1885_the_walk_reaches_a_lab_whose_peers_run_different_builds() {
             .iter()
             .filter(|pair| {
                 pair.as_array()
-                    .is_some_and(|ends| ends.iter().any(|e| e.as_str() == Some(CARD)))
+                    .is_some_and(|ends| ends.iter().any(|e| e.as_str() == Some(R1885_CARD)))
             })
             .count();
         assert!(
@@ -5347,11 +5359,11 @@ fn r1885_the_walk_reaches_a_lab_whose_peers_run_different_builds() {
 
         // ★ AND THE GATE NOW SAYS SO.
         let after = as_json(lab.query("gate").expect("the gate slot"));
-        let refused = incompatible(&after);
+        let refused = incompatible_lines(&after);
         assert_eq!(
             refused.len(),
             wires,
-            "every wire {CARD} is on ({wires}) should now fail to negotiate: {after}"
+            "every wire {R1885_CARD} is on ({wires}) should now fail to negotiate: {after}"
         );
         for sentence in &refused {
             for word in ["legacy", "v2-v4"] {

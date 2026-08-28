@@ -2021,14 +2021,14 @@ impl Finding {
         match self {
             Self::Value(defect) => defect.blocks(),
             Self::NothingListening | Self::DiscoveryOn | Self::DialsOutside(_) => false,
-            // See the arm's own note: a name two nodes answer to does not name
-            // one node, so a launch from that graph acts on whichever the tool
-            // reached first. That is not a partial picture, it is an ambiguous
-            // one.
-            Self::Collision { .. } => true,
-            // See the arm's own note: the drawing asserts a session that cannot
-            // be established, so what is launched from it fails at the wire.
-            Self::Incompatible { .. } => true,
+            // The two that BLOCK, and they block for one reason stated two
+            // ways: what the graph says would happen cannot happen. A name two
+            // nodes answer to does not name one node, so a launch acts on
+            // whichever the tool reached first; a wire between two builds that
+            // share no revision asserts a session that cannot be established.
+            // Neither is a partial picture — the other three arms are — and
+            // that is the line this function draws.
+            Self::Collision { .. } | Self::Incompatible { .. } => true,
         }
     }
 
@@ -9985,7 +9985,7 @@ impl ExternalIntrospect for LabOracle {
                             .join(", ")
                     ))
                 })?;
-                set_build_on(&state, node, stack).map(IntrospectValue::Text)
+                Ok(IntrospectValue::Text(set_build_on(&state, node, stack)))
             }
             // ★★★ R1706 — the frame gesture's agent half, and it is ONE verb
             // because the gesture is one act: the reference's frame-drag
@@ -12999,7 +12999,7 @@ fn set_build(state: &Rc<LabState>, stack: Stack) {
         state.say(Utterance::refused(&"select a card first"));
         return;
     };
-    let _ = set_build_on(state, node, stack);
+    set_build_on(state, node, stack);
 }
 
 /// The one implementation the press and the wire verb share.
@@ -13007,7 +13007,7 @@ fn set_build(state: &Rc<LabState>, stack: Stack) {
 /// ★ Returning the sentence rather than only saying it is what lets the agent's
 /// channel and the person's toast come off ONE value — the rule this screen
 /// already follows for its refusals, so the two cannot drift.
-fn set_build_on(state: &Rc<LabState>, node: NodeId, stack: Stack) -> Result<String, InvokeError> {
+fn set_build_on(state: &Rc<LabState>, node: NodeId, stack: Stack) -> String {
     let name = state.name_of(node);
     let want = Implementation {
         stack,
@@ -13036,7 +13036,7 @@ fn set_build_on(state: &Rc<LabState>, node: NodeId, stack: Stack) -> Result<Stri
         Utterance::unchanged(format!("{name} already runs the {} build", stack.word()))
     };
     state.say(said.clone());
-    Ok(said.into_clause())
+    said.into_clause()
 }
 
 /// Which revisions each build speaks (R1885).
