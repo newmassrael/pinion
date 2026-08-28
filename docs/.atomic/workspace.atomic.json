@@ -72046,6 +72046,84 @@
         "⚠ `debt-doc-links-inside-a-test-module-have-no-gate` (R1875) is untouched and still `blocked_by: unmeasured`."
       ]
     },
+    "R1879": {
+      "decision_summary": "A segment has three shapes and the fold knew two.\n\nSubject: `debt-a-site-fold-cannot-see-an-index-glued-to-a-name`, opened one round earlier by R1878's second census axis.\n\n★ MEASURED FIRST, and the debt's figures held exactly: `keys` `(12, 14)` is **57 runs over 57 sites**, `logs` **50 over 50**, and the addresses are `kp.list.cell.0_direction` and `lv.list.cell.0_message`.\n\n★★★★★ THE TEST WAS WRITTEN BEFORE THE REPAIR AND WENT RED IN THE RIGHT PLACE — `left: \"kp.list.cell.0_direction\", right: \"kp.list.cell.*_direction\"`. That is what makes it a measurement of the OLD behaviour rather than a description of the new one.\n\n★★★★★ AND IT TESTS ALL THREE SHAPES AT ONCE, which is the round's whole shape:\n\n1. **a pure position** (`3_2`) — all digits and separators. Folds whole. R1870's case, kept.\n2. **an index glued to a name** (`0_direction`) — folds its INDEX only, to `*_direction`. A table's rows collapse and its columns stay apart, which is **more** information than shape 1 yields, not less.\n3. **a digit inside a name** (`ipv4`, `l0`, `v0x09`) — folds NOTHING.\n\nShape 2 simply had no arm, and nothing in the tests said what should happen to it.\n\n🟥🟥 ★★★★★ THE RULE IS NOT \"FOLD ANYTHING CONTAINING A DIGIT\", and that is why the index has to be **delimited** — a run of leading digits, then `_`, then a name. The lazy rule merges `proto.ipv4` with `proto.ipv6`, which is this defect's **mirror image**: an over-fold hides two real sites inside one line, and a reader cannot tell that from a correct fold. A name that merely starts with a digit (`0direction`) stays a name.\n\n★★★ THE CLOSE CONDITION THE DEBT WROTE IS MET, measured both ways. Census sites: `keys` 82 -> **33**, `logs` 65 -> **20**, with the site axis now spelling those tables BY COLUMN. Convention axis: `keys` `(12, 14)` fell from 57 sites to **8** and is no longer that destination's most scattered convention at all — `(10, 12)` at 13/13 leads now. `logs` `(12, 14)` fell 50 -> **5** and still leads there, which is a true fact about that screen rather than an unpaid remainder.\n\n⚠ RUN COUNTS DID NOT MOVE AT ALL — `keys` 91, `logs` 69 — and neither did the other four destinations' site counts. A fold is a way of REPORTING, not a defect population, and the numbers say so.",
+      "changes_bullets": [
+        "`crates/pinion-core/src/containment.rs`",
+        "* `push_site_segment` gains a third arm: leading digits followed by `_` and a name fold the digits only. The doc names all three segment shapes and argues the delimiter as the guard against the over-fold.",
+        "* `r1879_a_position_glued_to_a_name_folds_only_its_index` — the three shapes in one test, with the boundary cases spelled: two rows of one column are one site, two COLUMNS are not, a multi-digit index folds, `0direction` is a name, and `card.decode#1.tree.0` is unaffected.",
+        "`docs/analyzer-debts.json`",
+        "* the snapshot, moved because the debt closed.",
+        "`docs/phase-b-rounds.tsv`",
+        "* row 1879, axis `none`, for R1870's and R1878's reason: the artifact is the instrument's folding rule.",
+        "`memory/debt-a-site-fold-cannot-see-an-index-glued-to-a-name.md`",
+        "* closed, with the before/after table and the closing audit's finding recorded in it."
+      ],
+      "verification_bullets": [
+        "★★★★★ THE ORDER IS THE EVIDENCE: the test was written and run BEFORE the repair, and it failed naming the exact address — `left: \"kp.list.cell.0_direction\"`, `right: \"kp.list.cell.*_direction\"`. A test that only ever ran after the fix would prove nothing about what the fold used to do.",
+        "★ COUNTERFACTUAL, one variable, on a verified-green baseline — the delimiter requirement dropped (leading digits fold whether or not a `_` follows): RED, and red at exactly the over-fold the debt argued against, `left: \"kp.*direction\"` vs `right: \"kp.0direction\"`. Restored and re-verified byte-identical.",
+        "Suites, all in the closing turn:",
+        "* `cargo test -p pinion-core` — 4040 passed, 0 failed.",
+        "* `cargo test -p pinion-shell` — green.",
+        "* `cargo test -p hello-analyzer-shell` — 169 passed, 0 failed.",
+        "* the `containment` doctests — green.",
+        "Gates:",
+        "* `cargo clippy --workspace --all-targets --features pinion-runtime/vello` — exit 0, zero warnings, CI's flags.",
+        "* `cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items` — run LOCALLY, 0 warnings.",
+        "* `cargo fmt --all --check` — clean.",
+        "Demos in the blast radius, rc=0 each: r1767, r1656, r1649, r1738.",
+        "⚠ BLAST RADIUS MEASURED, NOT ASSUMED: `repeating_site` has exactly four consumers in the tree — `containment` itself, `pinion-shell`'s two grouping functions, and the analyzer shell's census — and all three crates are in the runs above."
+      ],
+      "impact_refs": [
+        "5.32",
+        "5.11"
+      ],
+      "carry_forward_bullets": [
+        "🟥🟥 ★★★★★ THE CLOSING AUDIT'S OWN FINDING, which is the round's carried lesson: the debt file's **close condition** and its **prescription** disagreed. The condition asked for the cells to appear \"in ONE line\"; the prescription said \"the table's COLUMN becomes the site and the rows fold\" — and three columns means THREE lines. Both were written in the same file in the same round. The prescription wins, because it is the half that carries an argument; the condition was a summary of it that lost a distinction. ⇒ **a debt can hold two sentences that disagree, and the one to obey is the one with the reasoning attached.** Recorded in the debt as it was closed.",
+        "★ THE PHASE JUDGEMENT IS NOW DUE AGAIN. R1877 called the campaign a long tail; R1878 refuted that with the convention axis; this round removed the fold hole that made the refutation necessary. The remaining population should be re-read against BOTH axes before the next family is chosen — that re-reading is a round's opening act, not a claim this round is entitled to make.",
+        "⚠ CARRIED, UNPAID, third round now: R1876's **dashboard card shared chrome** — `Decode Inspector` at 12px in a 16px box wanting 20, `LIVE` at 10px in 14 wanting 17, on EVERY card. The convention axis names it (dashboard `(12, 16)`, 35 runs over 35 sites); the site axis still cannot, because each card's chrome carries its own address.",
+        "* `debt-text-is-not-centred-in-the-box-that-holds-it` stays open — `closed_by: person`, a defect a person reported and a person closes.",
+        "* `debt-doc-links-inside-a-test-module-have-no-gate` stays open, `blocked_by: unmeasured`."
+      ],
+      "publishable_decision_summary": "A segment has three shapes and the fold knew two.\n\nSubject: `debt-a-site-fold-cannot-see-an-index-glued-to-a-name`, opened one round earlier by R1878's second census axis.\n\n★ MEASURED FIRST, and the debt's figures held exactly: `keys` `(12, 14)` is **57 runs over 57 sites**, `logs` **50 over 50**, and the addresses are `kp.list.cell.0_direction` and `lv.list.cell.0_message`.\n\n★★★★★ THE TEST WAS WRITTEN BEFORE THE REPAIR AND WENT RED IN THE RIGHT PLACE — `left: \"kp.list.cell.0_direction\", right: \"kp.list.cell.*_direction\"`. That is what makes it a measurement of the OLD behaviour rather than a description of the new one.\n\n★★★★★ AND IT TESTS ALL THREE SHAPES AT ONCE, which is the round's whole shape:\n\n1. **a pure position** (`3_2`) — all digits and separators. Folds whole. R1870's case, kept.\n2. **an index glued to a name** (`0_direction`) — folds its INDEX only, to `*_direction`. A table's rows collapse and its columns stay apart, which is **more** information than shape 1 yields, not less.\n3. **a digit inside a name** (`ipv4`, `l0`, `v0x09`) — folds NOTHING.\n\nShape 2 simply had no arm, and nothing in the tests said what should happen to it.\n\n🟥🟥 ★★★★★ THE RULE IS NOT \"FOLD ANYTHING CONTAINING A DIGIT\", and that is why the index has to be **delimited** — a run of leading digits, then `_`, then a name. The lazy rule merges `proto.ipv4` with `proto.ipv6`, which is this defect's **mirror image**: an over-fold hides two real sites inside one line, and a reader cannot tell that from a correct fold. A name that merely starts with a digit (`0direction`) stays a name.\n\n★★★ THE CLOSE CONDITION THE DEBT WROTE IS MET, measured both ways. Census sites: `keys` 82 -> **33**, `logs` 65 -> **20**, with the site axis now spelling those tables BY COLUMN. Convention axis: `keys` `(12, 14)` fell from 57 sites to **8** and is no longer that destination's most scattered convention at all — `(10, 12)` at 13/13 leads now. `logs` `(12, 14)` fell 50 -> **5** and still leads there, which is a true fact about that screen rather than an unpaid remainder.\n\n⚠ RUN COUNTS DID NOT MOVE AT ALL — `keys` 91, `logs` 69 — and neither did the other four destinations' site counts. A fold is a way of REPORTING, not a defect population, and the numbers say so.",
+      "publishable_changes_bullets": [
+        "`crates/pinion-core/src/containment.rs`",
+        "* `push_site_segment` gains a third arm: leading digits followed by `_` and a name fold the digits only. The doc names all three segment shapes and argues the delimiter as the guard against the over-fold.",
+        "* `r1879_a_position_glued_to_a_name_folds_only_its_index` — the three shapes in one test, with the boundary cases spelled: two rows of one column are one site, two COLUMNS are not, a multi-digit index folds, `0direction` is a name, and `card.decode#1.tree.0` is unaffected.",
+        "`docs/analyzer-debts.json`",
+        "* the snapshot, moved because the debt closed.",
+        "`docs/phase-b-rounds.tsv`",
+        "* row 1879, axis `none`, for R1870's and R1878's reason: the artifact is the instrument's folding rule.",
+        "`memory/debt-a-site-fold-cannot-see-an-index-glued-to-a-name.md`",
+        "* closed, with the before/after table and the closing audit's finding recorded in it."
+      ],
+      "publishable_verification_bullets": [
+        "★★★★★ THE ORDER IS THE EVIDENCE: the test was written and run BEFORE the repair, and it failed naming the exact address — `left: \"kp.list.cell.0_direction\"`, `right: \"kp.list.cell.*_direction\"`. A test that only ever ran after the fix would prove nothing about what the fold used to do.",
+        "★ COUNTERFACTUAL, one variable, on a verified-green baseline — the delimiter requirement dropped (leading digits fold whether or not a `_` follows): RED, and red at exactly the over-fold the debt argued against, `left: \"kp.*direction\"` vs `right: \"kp.0direction\"`. Restored and re-verified byte-identical.",
+        "Suites, all in the closing turn:",
+        "* `cargo test -p pinion-core` — 4040 passed, 0 failed.",
+        "* `cargo test -p pinion-shell` — green.",
+        "* `cargo test -p hello-analyzer-shell` — 169 passed, 0 failed.",
+        "* the `containment` doctests — green.",
+        "Gates:",
+        "* `cargo clippy --workspace --all-targets --features pinion-runtime/vello` — exit 0, zero warnings, CI's flags.",
+        "* `cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items` — run LOCALLY, 0 warnings.",
+        "* `cargo fmt --all --check` — clean.",
+        "Demos in the blast radius, rc=0 each: r1767, r1656, r1649, r1738.",
+        "⚠ BLAST RADIUS MEASURED, NOT ASSUMED: `repeating_site` has exactly four consumers in the tree — `containment` itself, `pinion-shell`'s two grouping functions, and the analyzer shell's census — and all three crates are in the runs above."
+      ],
+      "publishable_impact_refs": [
+        "5.32",
+        "5.11"
+      ],
+      "publishable_carry_forward_bullets": [
+        "🟥🟥 ★★★★★ THE CLOSING AUDIT'S OWN FINDING, which is the round's carried lesson: the debt file's **close condition** and its **prescription** disagreed. The condition asked for the cells to appear \"in ONE line\"; the prescription said \"the table's COLUMN becomes the site and the rows fold\" — and three columns means THREE lines. Both were written in the same file in the same round. The prescription wins, because it is the half that carries an argument; the condition was a summary of it that lost a distinction. ⇒ **a debt can hold two sentences that disagree, and the one to obey is the one with the reasoning attached.** Recorded in the debt as it was closed.",
+        "★ THE PHASE JUDGEMENT IS NOW DUE AGAIN. R1877 called the campaign a long tail; R1878 refuted that with the convention axis; this round removed the fold hole that made the refutation necessary. The remaining population should be re-read against BOTH axes before the next family is chosen — that re-reading is a round's opening act, not a claim this round is entitled to make.",
+        "⚠ CARRIED, UNPAID, third round now: R1876's **dashboard card shared chrome** — `Decode Inspector` at 12px in a 16px box wanting 20, `LIVE` at 10px in 14 wanting 17, on EVERY card. The convention axis names it (dashboard `(12, 16)`, 35 runs over 35 sites); the site axis still cannot, because each card's chrome carries its own address.",
+        "* `debt-text-is-not-centred-in-the-box-that-holds-it` stays open — `closed_by: person`, a defect a person reported and a person closes.",
+        "* `debt-doc-links-inside-a-test-module-have-no-gate` stays open, `blocked_by: unmeasured`."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
