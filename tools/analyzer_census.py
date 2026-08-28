@@ -37,7 +37,7 @@ application's own subject matter sitting on substrate that is present. So:
 | `have`       | the framework provides it; `covered_by` names what              |
 | `gap`        | the framework must build it, and has not                        |
 | `app`        | the substrate is here; the domain logic is the application's    |
-| `outside`    | not a framework concern at all (codecs, capture, supervision)   |
+| `outside`    | the SPEC excludes it; `outside_because` cites the ratified line  |
 | `unmeasured` | **nobody has checked**, which is not the same as `have`         |
 
 `unmeasured` is the point of the whole file. A row nobody has looked at is
@@ -120,11 +120,17 @@ Usage:
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PIN = ROOT / "docs" / "analyzer-census.json"
+
+#: The spec SSOT an `outside_because` cites. Tracked, so a fresh clone can run
+#: the check with no tool built and no network — which is why the citation
+#: resolves against this file rather than against `mnemosyne-cli`.
+STORE = ROOT / "docs" / ".atomic" / "workspace.atomic.json"
 
 #: The closed verdict vocabulary. Spelled once; the pin is checked against it.
 VERDICTS = ("have", "gap", "app", "outside", "unmeasured")
@@ -307,6 +313,123 @@ def rests_on_citations(row: dict) -> list[tuple[str, str]]:
         if not cited_paths(path):
             continue
         out.append((path, symbol))
+    return out
+
+
+#: How an `outside_because` names the ratified sentence that excludes a row.
+#:
+#: ★★★★★ R1883 — `§<id>:<phrase>`, where `<id>` is a section of the atomic store
+#: and `<phrase>` is a literal substring of that section's DECISION TEXT. The
+#: shape is deliberately the one `analyzer_debts.py` already uses for
+#: `standing_because: body:<phrase>` — a citation a reader can resolve in one
+#: step, against a document rather than against this file's own prose.
+BOUNDARY = re.compile(r"^§([0-9]+(?:\.[0-9]+)*):\s*(\S.*)$", re.S)
+
+
+def boundary_citation(row: dict) -> tuple[str, str] | None:
+    """The `(section, phrase)` an `outside_because` names, or `None`.
+
+    `None` covers both "the field is absent" and "the field is not a citation",
+    and the caller distinguishes them — an absent field and a malformed one are
+    different findings and a reader needs to be told which.
+    """
+    found = BOUNDARY.match(str(row.get("outside_because", "")).strip())
+    return (found.group(1), found.group(2).strip()) if found else None
+
+
+def check_boundaries(rows: list[dict], sections: dict[str, tuple[str, str]]) -> list[str]:
+    """Every `outside` verdict that cannot name the ratified line excluding it.
+
+    ★★★★★ R1883 — **`outside` is the strongest claim in this vocabulary and it
+    was the only one that had to earn nothing.** A `have` names a test, an `app`
+    names an assembly or the substrate it rests on, a `gap` is a debt that
+    self-corrects the moment somebody reaches for it. `outside` does more than
+    any of them: it takes the row OUT OF THE POPULATION — not owed, not
+    evidenced, not counted — and until this check the word `outside` appeared in
+    exactly two places in this file, the doc table above and `VERDICTS`. Nothing
+    read `covered_by` on such a row; nothing could.
+
+    That is the escape hatch defanging its own gate. The census exists to stop a
+    verdict being one person's unreviewed reading, and the bin that removes a
+    row from the count entirely was the bin nobody had to justify.
+
+    # Why the citation resolves against the STORE and not against a list here
+
+    A closed vocabulary spelled in this file would make this tool the second
+    author of the boundary, and the boundary is ratified elsewhere — §3, whose
+    codec clause has already been AMENDED once (the audio half retired, §5.54).
+    A hand-copy would have gone on excluding audio while the spec had stopped.
+    So the phrase must be a literal substring of the section's own decision text
+    and the tool holds no copy of it.
+
+    ⚠ **Decision text is `intent` + `caveats_bullets`, and NOT
+    `alternatives_rejected`** — those are the options the round considered and
+    turned down. A row citing a rejected alternative would be citing something
+    the spec declined to adopt, which reads like a boundary and is its opposite.
+
+    ⚠ **A ratified sentence is not always quotable into a tracked file, and
+    this round found that by tripping it.** The citation is a literal substring
+    of the spec, and §3's browser-engine clause NAMES the product it excludes —
+    so writing that bullet verbatim into the pin (or into a round's prose) is
+    refused by `tools/reference_names.py`, the confidentiality ratchet. The
+    citation is still resolvable: §3 carries other clauses, and a row whose only
+    honest ground IS that one should cite the shortest span of it that carries
+    no product name. Stated here rather than left to be rediscovered, because
+    the two gates are enforced by different hooks and neither mentions the other.
+
+    ⚠ The section must be `active`. Measured at R1883 that refuses nothing —
+    all 75 sections are active — so it is a property rather than a branch this
+    pin exercises, and the selftest is what exercises it. It is here because a
+    superseded section's sentence is not a ratified boundary, and a check that
+    only holds while the store happens to be uniform is not a check.
+
+    Pure in `rows` and `sections`, like its three siblings, so every rule is
+    testable without a filesystem, a toolchain or the 17 MB store.
+    """
+    out: list[str] = []
+    for row in rows:
+        verdict, ident = row["verdict"], row["id"]
+        if verdict != "outside":
+            # Evidence is exclusive per verdict here as everywhere else in this
+            # file: a claim carrying the wrong KIND of evidence reads stronger
+            # than it is, and `load` already refuses a `have` that names an
+            # assembly. This is that rule for the field this round adds.
+            if str(row.get("outside_because", "")).strip():
+                out.append(
+                    f"{ident}: `outside_because` is evidence for an `outside` "
+                    f"verdict and this row is `{verdict}`"
+                )
+            continue
+        raw = str(row.get("outside_because", "")).strip()
+        if not raw:
+            out.append(
+                f"{ident}: an `outside` must cite the ratified line that excludes "
+                "it (outside_because is empty) — `covered_by` is prose and no "
+                "gate can read it"
+            )
+            continue
+        cited = boundary_citation(row)
+        if cited is None:
+            out.append(
+                f"{ident}: `outside_because: {raw[:60]}` is not `§<section>:<phrase>`"
+            )
+            continue
+        section, phrase = cited
+        held = sections.get(section)
+        if held is None:
+            out.append(f"{ident}: cites §{section}, which is not a section of the store")
+            continue
+        status, text = held
+        if status != "active":
+            out.append(
+                f"{ident}: cites §{section}, whose decision_status is "
+                f"`{status}` — a superseded section ratifies nothing"
+            )
+        elif phrase not in text:
+            out.append(
+                f"{ident}: cites §{section} for a sentence it does not contain — "
+                f"{phrase[:60]!r}"
+            )
     return out
 
 
@@ -645,6 +768,11 @@ def report(rows: list[dict]) -> list[str]:
         f"  {len(rested)} of {tally['app']} `app` verdict(s) name the substrate they"
         " rest on — every one nobody has composed must, or it is a `gap`"
     )
+    bounded = [r for r in rows if r["verdict"] == "outside" and boundary_citation(r)]
+    out.append(
+        f"  {len(bounded)} of {tally['outside']} `outside` verdict(s) cite the ratified"
+        " line that excludes them — the verdict that leaves the population owes the most"
+    )
     for row in owed_rows:
         out.append(f"    {row['verdict']:<10} {row['id']:<16} {row['capability']}")
     return out
@@ -861,6 +989,67 @@ def selftest() -> int:
         rests_on_citations({"rests_on": "the parse is domain"}) == [],
     )
 
+    # ★★★★★ R1883 — `outside_because`, the evidence for the verdict that leaves
+    # the population. Every case is a shape a pin can actually carry, and the
+    # population here IS this block: after R1883's audit the pin holds no
+    # `outside` row at all, so the selftest is the only place these branches run
+    # against data. That is stated rather than hidden — a gate whose real
+    # population is empty is a gate this repository has been burned by (R1877),
+    # and the answer is that the RULE is exercised even when the pin is not.
+    spec = {
+        "3": ("active", "scope excludes WebEngine and codec embed\nvideo codecs"),
+        "9": ("superseded", "an old sentence nobody ratifies now"),
+    }
+    outside = {**good[0], "verdict": "outside", "covered_by": "prose"}
+    check(
+        "an outside that cites nothing is refused",
+        [f for f in check_boundaries([outside], spec) if "outside_because is empty" in f]
+        != [],
+    )
+    check(
+        "an outside whose citation is not §<section>:<phrase> is refused",
+        check_boundaries([{**outside, "outside_because": "a codec concern"}], spec) != [],
+    )
+    check(
+        "an outside citing a section the store does not have is refused",
+        check_boundaries([{**outside, "outside_because": "§77: anything"}], spec) != [],
+    )
+    check(
+        "an outside citing a SUPERSEDED section is refused",
+        check_boundaries(
+            [{**outside, "outside_because": "§9: an old sentence"}], spec
+        )
+        != [],
+    )
+    check(
+        "an outside citing a sentence its section does not contain is refused",
+        check_boundaries(
+            [{**outside, "outside_because": "§3: supervision is out of scope"}], spec
+        )
+        != [],
+    )
+    check(
+        "and the one that cites a ratified sentence is not refused",
+        check_boundaries(
+            [{**outside, "outside_because": "§3: scope excludes WebEngine"}], spec
+        )
+        == [],
+    )
+    # ★ Evidence is exclusive per verdict here as everywhere else: a `have`
+    # carrying a boundary citation is claiming to be excluded and measured at
+    # once, which reads stronger than either.
+    check(
+        "a non-outside row carrying a boundary citation is refused",
+        check_boundaries(
+            [{**good[0], "outside_because": "§3: scope excludes WebEngine"}], spec
+        )
+        != [],
+    )
+    check(
+        "and a non-outside row with no such field is untouched",
+        check_boundaries([good[0]], spec) == [],
+    )
+
     # ★★★★★ R1771 — the same rules for the OTHER kind of evidence, which had
     # none. Every case below is a shape this pin actually carries.
     ok_proof = [
@@ -981,6 +1170,38 @@ def cited_crates(rows: list[dict]) -> list[str]:
     return out
 
 
+def store_sections() -> dict[str, tuple[str, str]]:
+    """Each ratified section as `(decision_status, decision text)`.
+
+    ★★★★★ R1883 — the oracle [`check_boundaries`] resolves a citation against.
+    Decision text is `intent` + `caveats_bullets` joined; `alternatives_rejected`
+    is deliberately absent, for the reason that function states — a rejected
+    alternative reads like a boundary and is its opposite.
+
+    Reads the tracked store directly rather than shelling out to
+    `mnemosyne-cli`: this runs on EVERY invocation of the census, a fresh clone
+    has no built tool, and the file is the SSOT the tool would have read anyway.
+    Measured at R1883: 17.3 MB parses in 0.11s, which is why it can be here
+    beside the three checks that build nothing rather than behind a flag.
+
+    Raises `Finding` when the store cannot be read — **fail closed**, because
+    the alternative is a boundary check that silently stops happening, which is
+    the failure mode every gate in this file exists to prevent.
+    """
+    try:
+        held = json.loads(STORE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as why:
+        raise Finding(f"the spec store is unreadable ({STORE.name}): {why}") from why
+    out: dict[str, tuple[str, str]] = {}
+    for ident, section in (held.get("sections") or {}).items():
+        text = "\n".join(
+            [str(section.get("intent", ""))]
+            + [str(one) for one in (section.get("caveats_bullets") or [])]
+        )
+        out[str(ident)] = (str(section.get("decision_status", "")), text)
+    return out
+
+
 def runner_tests(crates: list[str]) -> set[str]:
     """Every test the TEST RUNNER can select in `crates`.
 
@@ -1059,6 +1280,20 @@ def main() -> int:
     if unevidenced:
         for gap in unevidenced:
             print(f"analyzer census: {gap}", file=sys.stderr)
+        return 1
+    # ★★★★★ R1883 — and the verdict that earns the MOST by claiming the least.
+    # `outside` takes a row out of the population entirely, and it was the only
+    # verdict here with nothing to cite. Runs on every invocation beside the
+    # three above: it reads the tracked store (0.11s) and builds nothing.
+    try:
+        sections = store_sections()
+    except Finding as why:
+        print(f"analyzer census: {why}", file=sys.stderr)
+        return 1
+    unbounded = check_boundaries(rows, sections)
+    if unbounded:
+        for claim in unbounded:
+            print(f"analyzer census: {claim}", file=sys.stderr)
         return 1
     # ★★★★★ R1847 — and the substrate an `app` says is already there. Reads
     # files, builds nothing, so it runs every invocation beside the two above.

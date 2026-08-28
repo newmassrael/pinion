@@ -64,6 +64,18 @@
       ]
     },
     {
+      "name": "debt-a-census-row-is-addressed-by-two-different-numbering-rules",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links analyzer-debt-repayment-loop, analyzer-tool-capability-spec",
+        "names capture.t1.1"
+      ]
+    },
+    {
       "name": "debt-a-checkpoints-verdict-is-on-the-wire-and-not-on-the-screen",
       "substituted": false,
       "blocked_by": "buildable",
@@ -188,17 +200,6 @@
       ]
     },
     {
-      "name": "debt-analyzer-census-verdicts-are-unproven",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "names dashboard.t0.1, dashboard.t0.4, dashboard.t2.6, dashboard.t2.9, lab.t0.4"
-      ]
-    },
-    {
       "name": "debt-canon-gui-surface-census",
       "substituted": false,
       "blocked_by": "campaign",
@@ -252,6 +253,18 @@
       "closed_because": "",
       "why": [
         "names dashboard.t0.6"
+      ]
+    },
+    {
+      "name": "debt-seven-capabilities-were-excluded-by-an-unratified-boundary",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links analyzer-debt-repayment-loop, debt-canon-gui-surface-census",
+        "names capture.t0.1, capture.t0.4, capture.t1.10, capture.t2.16, capture.t2.17, lab.t2.14, lab.t2.18"
       ]
     },
     {

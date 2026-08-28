@@ -4,8 +4,8 @@
     "plane": "capture",
     "tier": "t0",
     "capability": "resumable stream decode: a length-prefixed envelope, and a decoder that rewinds its cursor and asks for more bytes",
-    "verdict": "outside",
-    "covered_by": "a codec. The framework's boundary is that view-fn is sync and pure, so IO lives outside it"
+    "verdict": "unmeasured",
+    "covered_by": "R1883 audit: was `outside` on the prose 'a codec ... view-fn is sync and pure, so IO lives outside it'. Neither half is ratified. §3's codec exclusion was AMENDED to scope to video codecs and the multimedia stack (ffmpeg/gstreamer), which a length-prefixed protocol envelope is not; and §6.3 puts IO INSIDE the framework at the RPC server entry rather than outside it. Verdict unestablished"
   },
   {
     "id": "capture.t0.2",
@@ -30,8 +30,8 @@
     "plane": "capture",
     "tier": "t0",
     "capability": "session negotiation context injected into the parser, with an unobserved-handshake warning",
-    "verdict": "outside",
-    "covered_by": "a parser concern; the warning and the assumed defaults are the application's to state"
+    "verdict": "unmeasured",
+    "covered_by": "R1883 audit: was `outside` on 'a parser concern; ... the application's to state'. No section ratifies a parser boundary, and 'the application's to state' is the definition of `app`, not of `outside` — an `app` owes a substrate this row never named. Verdict unestablished"
   },
   {
     "id": "capture.t0.5",
@@ -83,8 +83,8 @@
     "plane": "capture",
     "tier": "t1",
     "capability": "fragment reassembly with a reassembled-versus-original view toggle",
-    "verdict": "outside",
-    "covered_by": "a codec concern"
+    "verdict": "unmeasured",
+    "covered_by": "R1883 audit: was `outside` on 'a codec concern'. §3's codec exclusion scopes to video codecs and the multimedia stack, not to protocol fragment reassembly — and the row's other half, a reassembled-versus-original VIEW TOGGLE, is a screen affordance no boundary excludes. Verdict unestablished"
   },
   {
     "id": "capture.t1.11",
@@ -137,16 +137,16 @@
     "plane": "capture",
     "tier": "t2",
     "capability": "doubling as a parser regression harness, with a corpus to load",
-    "verdict": "outside",
-    "covered_by": "a codec test concern"
+    "verdict": "unmeasured",
+    "covered_by": "R1883 audit: was `outside` on 'a codec test concern'. No section ratifies a testing boundary, and loading a corpus and re-running it is an application affordance with a screen. Verdict unestablished"
   },
   {
     "id": "capture.t2.17",
     "plane": "capture",
     "tier": "t2",
     "capability": "fingerprinting the peer implementation from the handshake",
-    "verdict": "outside",
-    "covered_by": "a protocol concern"
+    "verdict": "unmeasured",
+    "covered_by": "R1883 audit: was `outside` on 'a protocol concern'. Measured across all 75 active sections of the store, NO section ratifies a protocol boundary — the phrase names a subject, not an exclusion. Verdict unestablished"
   },
   {
     "id": "capture.t2.18",
@@ -280,8 +280,8 @@
     "plane": "lab",
     "tier": "t2",
     "capability": "attaching a real device as a graph node and driving it through the same surface",
-    "verdict": "outside",
-    "covered_by": "process and device supervision"
+    "verdict": "unmeasured",
+    "covered_by": "R1883 audit: was `outside` on 'process and device supervision'. No section ratifies a supervision boundary. §3's External(opaque) hatch enumerates embedded SVG/PDF/video handles, and §5.15 gives External an eight-item integration contract — a seam the framework PROVIDES, which argues `app` rather than `outside`. Verdict unestablished"
   },
   {
     "id": "lab.t2.15",
@@ -315,8 +315,8 @@
     "plane": "lab",
     "tier": "t2",
     "capability": "replaying a capture as a traffic source",
-    "verdict": "outside",
-    "covered_by": "a codec and IO concern"
+    "verdict": "unmeasured",
+    "covered_by": "R1883 audit: was `outside` on 'a codec and IO concern'. §3's codec exclusion scopes to the multimedia stack, and §6.3 places IO inside the framework at the RPC boundary — so neither half names an exclusion this row can stand on. Verdict unestablished"
   },
   {
     "id": "lab.t2.19",
