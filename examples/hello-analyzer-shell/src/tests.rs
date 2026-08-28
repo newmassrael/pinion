@@ -5227,6 +5227,111 @@ fn r1866_the_walk_reaches_a_lab_that_compares_two_of_its_own_runs() {
     });
 }
 
+/// Where a named panel of the lab sits, out of that surface's own published
+/// specification.
+///
+/// A free function rather than one nested in the test, because clippy is right
+/// that an item after a statement reads as if it were scoped to what precedes
+/// it — the same note `incompatible_lines` carries below.
+fn placed_panel(spec: &serde_json::Value, name: &str) -> serde_json::Value {
+    spec["panes"]
+        .as_array()
+        .expect("the surface publishes its panes")
+        .iter()
+        .find(|pane| pane["name"] == name)
+        .unwrap_or_else(|| panic!("{name} is a pane this surface publishes"))["at"]
+        .clone()
+}
+
+/// ★★★★★ R1887 — **the assembled tool lets a person place the node lab's side
+/// panels, and refuses the placement they do not admit.**
+///
+/// # Why here and through the shell's own external set
+///
+/// Rule (7), and the argument the two walks before it make: the lab is a
+/// MOUNTED guest, so the honest question is whether the tool a reader actually
+/// runs can be walked to that section and asked. A test reaching into
+/// `hello_node_lab`'s own state would pass on an application that never mounted
+/// it — which is exactly the arrangement the reader who reported this was
+/// looking at.
+///
+/// # What it drives, and in this order
+///
+/// Where the panel is, is read BEFORE and AFTER, from the wire, so "the edit
+/// caused this" can be told from "it opened that way" — the rule R1885's walk
+/// wrote and the reason its gate is read twice. Then the refusal, which is the
+/// half no press can reach: the header's control cycles the admitted edges by
+/// construction, so only a caller naming an edge outright can ask for one the
+/// panel does not admit. ⇒ the two channels are not redundant.
+#[test]
+fn r1887_the_walk_reaches_a_lab_whose_panels_a_person_can_place() {
+    use pinion_core::external::IntrospectValue;
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let report = walk_the_application(&state);
+        assert!(
+            report.conforms(),
+            "the application did not reproduce its specification over the walk: {}",
+            report.why().unwrap_or_default()
+        );
+        assert!(
+            report.itinerary().iter().any(|key| key == "lab"),
+            "the walk must stand in the node lab: {:?}",
+            report.itinerary()
+        );
+
+        state.go("lab").expect("the node lab section is open");
+        let mut externals = state.screens.externals(&state.journey.get());
+        let tags: Vec<String> = externals.iter().map(|e| e.tag.to_string()).collect();
+        let lab = externals
+            .iter_mut()
+            .filter_map(|e| e.handle.introspect_mut())
+            .find(|it| it.query("gate").is_ok())
+            .unwrap_or_else(|| {
+                panic!("no external of the lab section answers for the lab: {tags:?}")
+            });
+
+        let opening = as_json(lab.query("spec").expect("a slot"));
+        let before = placed_panel(&opening, "palette");
+        assert!(
+            !before.is_null(),
+            "★ the surface must say WHERE a placeable panel is, not only where \
+             it may go — a client told only what is permitted cannot tell \
+             whether a placement did anything: {opening}"
+        );
+        assert_eq!(before["folded"], serde_json::Value::Bool(false));
+
+        // ★ THE EDIT, through the verb a client is told about.
+        let said = lab
+            .invoke("place", IntrospectValue::Text("palette,right".to_owned()))
+            .expect("`place` is a declared action of this screen");
+        println!("the screen said: {said:?}");
+
+        let after = placed_panel(&as_json(lab.query("spec").expect("a slot")), "palette");
+        assert_ne!(
+            after["edge"], before["edge"],
+            "the panel is on the other edge now: {before} -> {after}"
+        );
+
+        // ★ AND THE REFUSAL, which no press can reach.
+        let refused = lab
+            .invoke("place", IntrospectValue::Text("palette,top".to_owned()))
+            .expect_err("this panel admits the sides and not the top");
+        let sentence = format!("{refused:?}");
+        for half in ["top", "left", "right"] {
+            assert!(
+                sentence.contains(half),
+                "★ a refusal names what was asked AND what is allowed, or the \
+                 caller cannot act on it: {sentence} lacks {half:?}"
+            );
+        }
+        let unmoved = placed_panel(&as_json(lab.query("spec").expect("a slot")), "palette");
+        assert_eq!(unmoved, after, "a refused placement changes nothing at all");
+    });
+}
+
 /// The launch gate's lines that are about two builds unable to negotiate.
 ///
 /// A free function rather than a nested one, because clippy is right that an

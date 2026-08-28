@@ -1259,6 +1259,20 @@ pub const VOICES: &[VoiceSpec] = &[
         role: "group",
         population: Population::One,
     },
+    // ★★★★★ R1887 — the two controls that PLACE this panel. A button each,
+    // because each one does a thing to the panel rather than reporting a state
+    // of it; what they do is in the name the accessibility tree gives them,
+    // which is derived from the placement so it says where pressing would go.
+    VoiceSpec {
+        tag: "lab.palette.flip",
+        role: "button",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "lab.palette.fold",
+        role: "button",
+        population: Population::One,
+    },
     VoiceSpec {
         tag: "lab.palette.role.{}",
         role: "button",
@@ -1338,6 +1352,17 @@ pub const VOICES: &[VoiceSpec] = &[
     VoiceSpec {
         tag: "lab.inspector",
         role: "group",
+        population: Population::One,
+    },
+    // ★★★★★ R1887 — the inspector's own pair, the palette's twins.
+    VoiceSpec {
+        tag: "lab.inspector.flip",
+        role: "button",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "lab.inspector.fold",
+        role: "button",
         population: Population::One,
     },
     VoiceSpec {

@@ -501,6 +501,11 @@ fn declared_fault_panel(state: &LabState) -> Vec<String> {
     spec::FAULT_PANEL.roster(super::fault_rows(state).len(), &out_of_reach)
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one entry per family of declared elements, each derived from the \
+              table that declares it — the length IS the screen's surface"
+)]
 fn declared_tags(state: &LabState) -> Vec<String> {
     let mut want: Vec<String> = vec![
         super::VIEW_TAG.to_owned(),
@@ -529,6 +534,17 @@ fn declared_tags(state: &LabState) -> Vec<String> {
         want.push(pane.tag.to_owned());
         if let Some(body) = pane.body {
             want.push(body.to_owned());
+        }
+        // ★★★★★ R1887 — a pane that DECLARES it may move or fold paints the
+        // chrome that does it. Derived from the pane's own policy rather than
+        // listed here, so a declaration change moves this demand with it — the
+        // rule R1688 wrote for the toolbar's seats, met on a second table.
+        if !pane.policy.allowed.is_empty() {
+            want.push(format!("{}.head", pane.tag));
+            want.push(format!("{}.flip", pane.tag));
+        }
+        if pane.policy.foldable {
+            want.push(format!("{}.fold", pane.tag));
         }
     }
     for (seat, _) in spec::RAIL {
@@ -6654,6 +6670,22 @@ fn r1853_no_fault_run_sits_in_a_box_too_short_for_its_own_face() {
         let node = state.node_of("P-01").expect("the opening graph has it");
         state.selection.set(Selection::one(node));
         card_with_enum_row(&state);
+        // ★★★★★ R1887 — painted once to give the pane its extent, then scrolled
+        // so the panel is WHOLE, then measured.
+        //
+        // The question this gate asks is about layout: does a run get a box its
+        // own face fits in. A run that straddles the fold is given a short box
+        // by the CLIP, which is a fact about where the reader has scrolled to
+        // and not about the derivation — and R1662 already guarantees every
+        // such run is reachable by scrolling. Measuring one frame conflated the
+        // two, and stayed quiet only while this panel happened to fit: R1887
+        // gave the panel a header of its own, the viewport lost that height,
+        // and the last row began to straddle. ⇒ ★ **ask a layout question at a
+        // scroll position where the thing is on screen**, or the answer is
+        // about the fold.
+        let _ = painted_at(&state, conformance_size());
+        let room = state.inspector_scroll.max().1;
+        state.inspector_scroll.scroll_to(0, room);
         let shot = painted_at(&state, conformance_size()).0;
 
         // ★ Read by the run's OWN tag, not by its nearest tagged ancestor: the

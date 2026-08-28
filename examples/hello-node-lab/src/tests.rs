@@ -2951,6 +2951,192 @@ fn r1802_a_folded_panel_leaves_a_strip_the_canvas_does_not_take() {
     });
 }
 
+// ── R1887: a panel a person can actually place ──────────────────────────────
+
+/// ★★★★★ R1887 — **pressing the header's control moves the panel, and
+/// everything derived from the placement follows it.**
+///
+/// # The defect this closes, measured at entry
+///
+/// R1802 made the placement a value and the layout honour it, and stopped
+/// there. Measured at this round's entry: outside this file, `palette_at` and
+/// `inspector_at` had **no writer in the tree** — so the honest answer to the
+/// reader who asked three times why these panels cannot be moved had become
+/// *they can, and nobody can*. This is the press.
+///
+/// # What it asserts beyond "the value changed"
+///
+/// The canvas AND the toolbar. `toolbar_rect` read the opening widths directly
+/// until this round — a divergence R1802 recorded as not yet alive because
+/// nothing could move a panel, which is a defect with a date, and the date is
+/// the round that builds the missing thing. With the palette on the right and a
+/// toolbar computed from the opening widths, the toolbar starts under the rail.
+#[test]
+fn r1887_pressing_the_header_control_moves_the_panel_and_the_layout_follows() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = use_lab_state();
+
+        let opened_at = state.palette_at.get().edge;
+        let opening_toolbar = super::toolbar_rect();
+        let opening_canvas = canvas_rect();
+
+        // Pressed where it is painted, through the screen's own hit test — the
+        // only way that proves a person can reach it.
+        let control = super::side_panel_control(palette_rect(), 0);
+        let pane = palette_rect();
+        let at = (
+            pane.x + control.x + control.w / 2,
+            pane.y + control.y + control.h / 2,
+        );
+        assert_eq!(
+            super::Hit::at(&state, at.0, at.1),
+            super::Hit::Panel(super::SidePanel::Palette, super::PanelAct::Flip),
+            "the flip control is what a press at its painted centre reaches"
+        );
+        super::move_cursor(&state, at.0, at.1);
+        super::press(&state);
+        super::release(&state);
+
+        let moved_to = state.palette_at.get().edge;
+        assert_ne!(moved_to, opened_at, "the press moved the palette");
+        assert!(
+            super::SidePanel::Palette.spec().policy.admits(moved_to),
+            "and moved it to an edge the specification admits: {moved_to:?}"
+        );
+
+        // ★ The two derivations that must follow it. The canvas already did
+        // (R1802); the toolbar is this round's.
+        let toolbar = super::toolbar_rect();
+        let canvas = canvas_rect();
+        assert_ne!(
+            toolbar.x, opening_toolbar.x,
+            "★ the toolbar still starts where it did with the palette on the \
+             other side — it is reading the opening widths rather than the \
+             placement: {toolbar:?}"
+        );
+        assert_eq!(
+            (toolbar.x, toolbar.w),
+            (canvas.x, canvas.w),
+            "the toolbar spans exactly the canvas's column, whichever edge the \
+             panels are on"
+        );
+        assert_ne!(canvas.x, opening_canvas.x, "the canvas moved with it");
+    });
+}
+
+/// ★★★★★ R1887 — **a fold is reversible by the person who did it.**
+///
+/// ⚠ The entry re-measurement sharpened the record rather than confirming it.
+/// The debt said the strip was drawn and had no control in it; measured, the
+/// fold was **geometric only** — nothing in the paint branched on `folded` at
+/// all, so a folded panel kept its whole body and painted it into eighteen
+/// pixels. Both halves are here now: the strip is what a folded panel paints,
+/// and pressing it is what brings the panel back.
+///
+/// The floor has no fold — its nearest gesture removes the panel from the
+/// layout, leaving a reader nothing to press.
+#[test]
+fn r1887_a_folded_panel_is_a_strip_a_press_brings_back() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = use_lab_state();
+
+        let open = palette_rect();
+        let fold = super::side_panel_control(open, 1);
+        let at = (open.x + fold.x + fold.w / 2, open.y + fold.y + fold.h / 2);
+        super::move_cursor(&state, at.0, at.1);
+        super::press(&state);
+        super::release(&state);
+        assert!(state.palette_at.get().folded, "the press folded it");
+
+        let strip = palette_rect();
+        assert_eq!(strip.w, PANEL_STRIP_W, "a fold leaves the strip");
+
+        // ★ Anywhere in the strip: eighteen pixels is not room for a control,
+        // so the strip IS the control. A reader who has to find a target inside
+        // it has been given a fold they cannot undo.
+        for (dx, dy) in [(1, 1), (strip.w / 2, strip.h / 2), (strip.w - 1, 40)] {
+            assert_eq!(
+                super::Hit::at(&state, strip.x + dx, strip.y + dy),
+                super::Hit::Panel(super::SidePanel::Palette, super::PanelAct::Unfold),
+                "every part of the strip brings the panel back"
+            );
+        }
+        super::move_cursor(&state, strip.x + strip.w / 2, strip.y + strip.h / 2);
+        super::press(&state);
+        super::release(&state);
+        assert!(!state.palette_at.get().folded, "and the press unfolded it");
+        assert_eq!(
+            palette_rect().w,
+            open.w,
+            "back to the width the reader had, not to a default — that is the \
+             difference between folding and hiding"
+        );
+    });
+}
+
+/// ★★★★★ R1887 — **a placement the panel does not admit is refused, and the
+/// refusal says what was asked AND what is allowed.**
+///
+/// This is the claim `pinion_core::edge_panel` was written to make, and until
+/// this round nothing reached it through a channel a caller uses: the module's
+/// own tests call the policy directly. Measured on the floor at R1801 —
+/// restricting a panel to one edge and then asking for another puts it on the
+/// other, with nothing thrown, nothing returned and no signal.
+///
+/// Driven through the WIRE because that is where a caller can ask for an edge
+/// the header's control never offers: the control cycles the admitted set by
+/// construction, so a screen-only test could not reach a refusal at all. ⇒ the
+/// two channels are not redundant, they reach different parts of the rule.
+#[test]
+fn r1887_a_placement_the_panel_does_not_admit_is_refused_with_both_halves() {
+    use pinion_core::external::{ExternalIntrospect, IntrospectValue};
+
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = use_lab_state();
+        let mut oracle = super::LabOracle::new();
+        oracle.attach(std::rc::Rc::clone(&state));
+
+        let before = state.palette_at.get();
+        let refused = oracle
+            .invoke("place", IntrospectValue::Text("palette,top".to_owned()))
+            .expect_err("the palette declares left and right, so the top is refused");
+        let said = format!("{refused:?}");
+        for half in ["top", "left", "right", "edge-not-allowed"] {
+            assert!(
+                said.contains(half),
+                "★ the refusal must carry {half:?} — a caller told only `no` \
+                 cannot act on it: {said}"
+            );
+        }
+        assert_eq!(
+            state.palette_at.get(),
+            before,
+            "and nothing moved: a refusal that half-applies is worse than none"
+        );
+
+        // The other half of the same rule: an edge it DOES admit goes through,
+        // and the answer names where the panel ended up.
+        let done = oracle
+            .invoke("place", IntrospectValue::Text("palette,right".to_owned()))
+            .expect("the palette admits the right edge");
+        assert_eq!(
+            done,
+            IntrospectValue::Text("palette right".to_owned()),
+            "the verb answers where the panel is now"
+        );
+        assert_eq!(
+            state.palette_at.get().edge,
+            pinion_core::style::ChromeEdge::Right
+        );
+    });
+}
+
 // ── R1834: a card shows the same rows at every zoom ─────────────────────────
 
 /// ★★★★★ **A card's rows do not depend on the zoom** — because the behaviour

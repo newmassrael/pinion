@@ -772,13 +772,253 @@ fn rail_rect() -> Rect {
     Rect::new(0, app_bar_h(), rail_w(), window_size().1 - app_bar_h())
 }
 
+/// ★★★★★ R1887 — **derived from the same bands the canvas is**, and it was not.
+///
+/// This function read [`PALETTE_W`] and [`INSP_W`] directly, which is the
+/// opening placement rather than the live one. At rest the two agree, and R1802
+/// recorded the divergence as a defect that was not yet alive because nothing
+/// could move a panel. This round is the round that makes a panel move, so it
+/// is also the round in which "not yet alive" expires: with the palette flipped
+/// to the right, a toolbar computed from the opening widths starts under the
+/// rail and runs past the inspector.
+///
+/// ⇒ ★ **A latent divergence is a defect with a date, and the date is whenever
+/// somebody builds the thing that was missing.**
 fn toolbar_rect() -> Rect {
     let (w, _) = window_size();
+    let (left, right) = side_bands();
     Rect::new(
-        rail_w() + PALETTE_W,
+        rail_w() + left,
         app_bar_h(),
-        w - rail_w() - PALETTE_W - INSP_W,
+        w.saturating_sub(rail_w() + left + right),
         TOOLBAR_H,
+    )
+}
+
+/// The height of a movable panel's own header — the band that holds its title
+/// and the two controls that place it.
+///
+/// ★ [`panel_content`] says in as many words that a panel which GROWS a header
+/// has to come back to it. This is that panel, and [`side_panel_content`] is
+/// that visit: the band is reserved rather than drawn over the body, so the
+/// rows inside keep every guarantee this screen's containment gates give them.
+const PANEL_HEAD_H: u32 = 26;
+
+/// The side panels a reader can place, as a value.
+///
+/// ★★★★★ R1887 — an enum rather than a pair of tags, because three things have
+/// to agree about which panel is which: the press, the wire verb, and the
+/// specification row that says where it may live. Two of those did not exist
+/// before this round, and writing them against string tags is how they would
+/// come to disagree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SidePanel {
+    Palette,
+    Inspector,
+}
+
+impl SidePanel {
+    /// Both of them, in the order the specification lists them.
+    const ALL: [Self; 2] = [Self::Palette, Self::Inspector];
+
+    /// The painted tag this panel owns.
+    const fn tag(self) -> &'static str {
+        match self {
+            Self::Palette => "lab.palette",
+            Self::Inspector => "lab.inspector",
+        }
+    }
+
+    /// The word a client names it by on the wire.
+    const fn word(self) -> &'static str {
+        match self {
+            Self::Palette => "palette",
+            Self::Inspector => "inspector",
+        }
+    }
+
+    /// The panel a wire word names, if any.
+    fn from_word(word: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|p| p.word() == word)
+    }
+
+    /// This panel's row of the specification — where its policy is declared.
+    ///
+    /// Looked up by tag rather than by index: an index would be a second
+    /// statement of the table's order, and the order is the table's.
+    fn spec(self) -> &'static spec::PaneSpec {
+        spec::PANES
+            .iter()
+            .find(|pane| pane.tag == self.tag())
+            .expect("every placeable panel is a row of the pane specification")
+    }
+
+    /// Where it is now.
+    fn at(self, state: &LabState) -> EdgePlacement {
+        match self {
+            Self::Palette => state.palette_at.get(),
+            Self::Inspector => state.inspector_at.get(),
+        }
+    }
+
+    /// Put it somewhere. Private to [`place_panel`], which is the only caller:
+    /// a writer that skipped the policy would be the floor's own defect.
+    fn put(self, state: &LabState, at: EdgePlacement) {
+        match self {
+            Self::Palette => state.palette_at.set(at),
+            Self::Inspector => state.inspector_at.set(at),
+        }
+    }
+
+    /// The edge this panel would flip to — the next edge its policy admits,
+    /// cycling, so one control reaches every declared edge.
+    ///
+    /// ★ Derived from the declaration rather than written as "the other side".
+    /// The policy admits two edges today and the specification is free to admit
+    /// a third; a control spelled `Left => Right, _ => Left` would silently go
+    /// on offering two of them.
+    fn next_edge(self, state: &LabState) -> Option<ChromeEdge> {
+        let allowed = self.spec().policy.allowed;
+        let here = self.at(state).edge;
+        let n = allowed.iter().position(|edge| *edge == here)?;
+        allowed.get((n + 1) % allowed.len()).copied()
+    }
+}
+
+/// What a caller is asking of a panel's placement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlaceAsk {
+    /// Move it to this edge.
+    Edge(ChromeEdge),
+    /// Fold it to its strip, or unfold it.
+    Fold(bool),
+}
+
+/// ★★★★★ R1887 — **the one rule a placement change goes through**, whichever
+/// channel asked.
+///
+/// The press and the wire verb both call this, so the screen and an agent
+/// cannot come to disagree about what is allowed — the discipline this tree
+/// applies wherever a gesture and a verb reach the same state.
+///
+/// The decision is [`EdgePolicy`]'s, not this function's: it reads the panel's
+/// own declared policy out of the specification and returns whatever that says.
+/// ⇒ a panel's row of `spec::PANES` is the whole statement of what may happen
+/// to it, and there is no second place to look.
+///
+/// # Errors
+///
+/// Whatever the policy refuses, carrying the edge asked for and the edges
+/// allowed. ★ The floor accepts a disallowed move in silence (measured R1801);
+/// this returns the refusal and the caller shows it.
+fn place_panel(
+    state: &LabState,
+    panel: SidePanel,
+    ask: PlaceAsk,
+) -> Result<EdgePlacement, pinion_core::edge_panel::EdgeRefusal> {
+    let policy = panel.spec().policy;
+    let from = panel.at(state);
+    let to = match ask {
+        PlaceAsk::Edge(edge) => policy.admit(from, edge)?,
+        PlaceAsk::Fold(folded) => policy.admit_fold(from, folded)?,
+    };
+    panel.put(state, to);
+    Ok(to)
+}
+
+/// What a reader who never sees the drawing is told about placing this panel.
+///
+/// ★★★★★ R1887 — the names are DERIVED from the placement, so each says where
+/// pressing would put it rather than naming the control. "Move the palette" is
+/// a label; "move the palette to the right edge" is the fact a reader needs
+/// before pressing, and it is the fact that changes when the panel moves.
+///
+/// A folded panel offers its strip and nothing else, which is what it paints:
+/// an accessibility tree naming two controls a folded panel does not draw would
+/// be describing a screen that is not there.
+fn side_panel_access(state: &LabState, which: SidePanel) -> Vec<AccessNode> {
+    let at = which.at(state);
+    if at.folded {
+        return vec![
+            AccessNode::new(format!("{}.strip", which.tag()), AriaRole::Button)
+                .with_name(format!("{} is folded, open it again", which.spec().title)),
+        ];
+    }
+    let mut nodes = Vec::new();
+    if let Some(edge) = which.next_edge(state) {
+        nodes.push(
+            AccessNode::new(format!("{}.flip", which.tag()), AriaRole::Button).with_name(format!(
+                "move the {} to the {} edge",
+                which.word(),
+                edge_word(edge)
+            )),
+        );
+    }
+    if which.spec().policy.foldable {
+        nodes.push(
+            AccessNode::new(format!("{}.fold", which.tag()), AriaRole::Button)
+                .with_name(format!("fold the {} to its strip", which.word())),
+        );
+    }
+    nodes
+}
+
+/// What a reader is told when a panel will not go where it was asked.
+///
+/// ★★★★★ R1887 — the sentence names the panel, what was asked, and **what was
+/// allowed**, because "no" is not something a reader can act on. The refusal
+/// type already carries all three; this is the one place they become a
+/// sentence, so the press and the wire cannot phrase it differently.
+fn panel_refusal_sentence(
+    which: SidePanel,
+    refused: &pinion_core::edge_panel::EdgeRefusal,
+) -> String {
+    use pinion_core::edge_panel::EdgeRefusal;
+    match refused {
+        EdgeRefusal::EdgeNotAllowed { asked, allowed } => format!(
+            "the {} does not go on the {} edge; it admits {}",
+            which.word(),
+            edge_word(*asked),
+            if allowed.is_empty() {
+                "no edge at all".to_owned()
+            } else {
+                allowed
+                    .iter()
+                    .map(|edge| edge_word(*edge))
+                    .collect::<Vec<_>>()
+                    .join(" and ")
+            }
+        ),
+        EdgeRefusal::NotFoldable => format!("the {} does not fold", which.word()),
+    }
+}
+
+/// A movable panel's header band, in the panel's own frame.
+fn side_panel_head(rect: Rect) -> Rect {
+    Rect::new(0, 0, rect.w, PANEL_HEAD_H.min(rect.h))
+}
+
+/// One of the two square controls in a panel's header, from the right.
+fn side_panel_control(rect: Rect, nth: u32) -> Rect {
+    let head = side_panel_head(rect);
+    let size = head.h.saturating_sub(8);
+    let right = head.w.saturating_sub(PAD);
+    Rect::new(
+        right.saturating_sub((nth + 1) * (size + 4)),
+        head.y + 4,
+        size,
+        size,
+    )
+}
+
+/// What is left of a movable panel for its body, once its header is reserved.
+///
+/// The visit [`panel_content`] asks for by name.
+fn side_panel_content(rect: Rect) -> Rect {
+    pinion_core::containment::content_of(
+        Rect::new(0, 0, rect.w, rect.h),
+        Some(&Border::new(Color::rgba(0, 0, 0, 0), PANEL_FRAME)),
+        &[pinion_core::style::Chrome::header(PANEL_HEAD_H)],
     )
 }
 
@@ -1296,9 +1536,21 @@ fn reset_lab_state() {
 ///
 /// That is the second instance of the class in one screen, and both were
 /// invisible for the same reason: every check aimed at a centre.
-fn in_pane(scroll: &ScrollState, px: u32, py: u32) -> (u32, u32) {
+fn in_pane(scroll: &ScrollState, pane: Rect, px: u32, py: u32) -> (u32, u32) {
     let (ox, oy) = scroll.offset();
-    let frame = i32::try_from(PANEL_FRAME).unwrap_or(0);
+    // ★★★★★ R1887 — the panel's own content origin, not [`PANEL_FRAME`]. Those
+    // were the same number exactly while a side panel reserved nothing of
+    // itself; the header this round adds moved the origin, and the constant
+    // spelling of it put every palette row a header's height out of step with
+    // the paint — which `r1662_a_control_one_scroll_away_is_pressable_after_
+    // that_scroll` reported as 36 published offsets that did not deliver.
+    // ★★★★★ R1887 — the SCROLL OFFSET alone. It also folded [`PANEL_FRAME`],
+    // which said that what the pane paints sits one pixel below what its rows
+    // state; that is no longer true, because the palette's rectangles are
+    // stated from the body's own origin now (`palette_body_origin`) and the
+    // paint subtracts exactly the same origin. Painted equals stated, so the
+    // only thing between a press and a row is how far the pane has scrolled.
+    let _ = pane;
     let fold = |v: u32, by: i32| -> u32 {
         #[allow(
             clippy::cast_sign_loss,
@@ -1308,7 +1560,7 @@ fn in_pane(scroll: &ScrollState, px: u32, py: u32) -> (u32, u32) {
         let folded = (i64::from(v) + i64::from(by)).clamp(0, i64::from(u32::MAX)) as u32;
         folded
     };
-    (fold(px, ox - frame), fold(py, oy - frame))
+    (fold(px, ox), fold(py, oy))
 }
 
 #[cfg(test)]
@@ -3578,13 +3830,84 @@ enum Hit {
         key: String,
         part: String,
     },
+    /// ★★★★★ R1887 — a movable panel's own chrome: the two controls in its
+    /// header, and the strip a folded one leaves.
+    Panel(SidePanel, PanelAct),
     Canvas,
 }
 
+/// What pressing a panel's own chrome asks of its placement.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum PanelAct {
+    /// Move it to the next edge its policy admits.
+    Flip,
+    /// Fold it to its strip.
+    Fold,
+    /// Bring a folded one back.
+    Unfold,
+}
+
+impl PanelAct {
+    /// The ask this act makes of [`place_panel`], given where the panel is.
+    ///
+    /// ★ Not a second copy of the policy: this turns a press into a QUESTION
+    /// and `place_panel` answers it. `Flip` has no ask when the panel sits on
+    /// an edge its own declaration no longer admits — which is a state a
+    /// specification edit can produce — and saying so here is better than
+    /// inventing an edge.
+    fn ask(self, state: &LabState, which: SidePanel) -> Option<PlaceAsk> {
+        match self {
+            Self::Flip => which.next_edge(state).map(PlaceAsk::Edge),
+            Self::Fold => Some(PlaceAsk::Fold(true)),
+            Self::Unfold => Some(PlaceAsk::Fold(false)),
+        }
+    }
+}
+
+/// Where a press lands on a movable panel's own chrome, if it does.
+///
+/// Asked BEFORE the panel's body, and before the scroll offset is folded into
+/// the query: a header does not scroll with what it heads, so a press on it
+/// must not be asked in the body's frame.
+fn panel_chrome_hit(
+    state: &LabState,
+    which: SidePanel,
+    rect: Rect,
+    px: u32,
+    py: u32,
+) -> Option<Hit> {
+    if which.at(state).folded {
+        // The strip is one affordance and covers the whole panel, so anything
+        // inside it brings the panel back.
+        return Some(Hit::Panel(which, PanelAct::Unfold));
+    }
+    let (lx, ly) = (px.saturating_sub(rect.x), py.saturating_sub(rect.y));
+    if contains(side_panel_control(rect, 0), lx, ly) {
+        return Some(Hit::Panel(which, PanelAct::Flip));
+    }
+    if contains(side_panel_control(rect, 1), lx, ly) {
+        return Some(Hit::Panel(which, PanelAct::Fold));
+    }
+    None
+}
+
 impl Hit {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one arm per addressable region of the screen, in painted order — \
+                  splitting it would put the order in two places, and the order is \
+                  what makes the front-to-back resolution right"
+    )]
     fn at(state: &LabState, px: u32, py: u32) -> Self {
         // The inspector, front to back: its own geometry is the form painter's.
         if contains(inspector_rect(), px, py) {
+            // ★★★★★ R1887 — the panel's own chrome first, in the panel's frame
+            // and before the body's scroll offset is applied.
+            if let Some(hit) =
+                panel_chrome_hit(state, SidePanel::Inspector, inspector_rect(), px, py)
+            {
+                return hit;
+            }
             // ★ R1682 — the node's-life seats first: they sit above the form in
             // the same scrolling body, and the form's own rows begin below
             // them, so the two cannot overlap — but asking in painted order is
@@ -3709,6 +4032,12 @@ impl Hit {
             return Self::Nothing;
         }
         if contains(palette_rect(), px, py) {
+            // ★★★★★ R1887 — the panel's own chrome first. See the inspector's
+            // twin above, and `panel_chrome_hit` for why it is before the
+            // scroll offset rather than after it.
+            if let Some(hit) = panel_chrome_hit(state, SidePanel::Palette, palette_rect(), px, py) {
+                return hit;
+            }
             // ★ R1662 — the palette body SCROLLS, so a press has to be asked
             // in the frame the rows are stated in. Every rectangle here
             // (`palette_row`, `discovery_rect`) is written in the unscrolled
@@ -3718,7 +4047,7 @@ impl Hit {
             // did not: R1662's end-to-end probe pressed the centre of the
             // scrolled-to `Querier` row and the screen answered `Publisher`,
             // which is the R1656 class exactly.
-            let (px, py) = in_pane(&state.palette_scroll, px, py);
+            let (px, py) = in_pane(&state.palette_scroll, palette_rect(), px, py);
             for (n, role) in Role::ALL.into_iter().enumerate() {
                 if contains(palette_row(n), px, py) {
                     return Self::Role(role);
@@ -3983,6 +4312,17 @@ impl Hit {
             Self::SaveGraph => "save".into(),
             Self::OpenGraph => "open".into(),
             Self::ClearGraph => "clear".into(),
+            // ★ R1887 — the word names the panel AND the act, because "you
+            // pressed a panel control" does not say which of the two.
+            Self::Panel(which, act) => format!(
+                "panel:{}:{}",
+                which.word(),
+                match act {
+                    PanelAct::Flip => "flip",
+                    PanelAct::Fold => "fold",
+                    PanelAct::Unfold => "unfold",
+                }
+            ),
             // ★★★★★ R1791 — the word CARRIES what moved, so the wire answers
             // *where did save go* rather than only *you pressed the control*.
             // The floor has no member that names what its extension holds.
@@ -4146,33 +4486,65 @@ fn rail_seat(n: usize) -> Rect {
     )
 }
 
+/// ★★★★★ R1887 — **where the palette's body starts, in window coordinates**,
+/// and every rectangle inside it is stated from here.
+///
+/// It was `rail_w() + PAD` and `app_bar_h() + 56` — the panel's OPENING place,
+/// spelled out. R1802 made `palette_rect` derive from a placement that can
+/// change and stopped there, so the panel could move and its contents could
+/// not: the round that gives a reader the gesture is the round in which that
+/// becomes a defect a person can see, and the first thing it would have done is
+/// paint the palette on the right with its rows still on the left.
+///
+/// ⇒ ★ **Deriving the container and leaving the contents is half a derivation**,
+/// and half a derivation is stable exactly until somebody uses the half that
+/// moved.
+fn palette_body_origin() -> (u32, u32) {
+    let rect = palette_rect();
+    let inside = side_panel_content(rect);
+    (rect.x + inside.x, rect.y + inside.y)
+}
+
+/// The clearance the palette's first group heading keeps below the body's top.
+///
+/// It was folded into the `56` that stated the first row's position from the
+/// window's top; separated because that `56` was two facts — where the body
+/// starts, which the panel now answers, and how far in the content begins,
+/// which is this.
+const PAL_BODY_TOP: u32 = 56;
+
+/// How wide a row of the palette's body is.
+fn palette_body_w() -> u32 {
+    palette_rect().w.saturating_sub(PAD * 2)
+}
+
 fn palette_row(n: usize) -> Rect {
     let n = u32::try_from(n).unwrap_or(0);
     // Two groups of four, each under its own heading.
     let group = n / 4;
     let within = n % 4;
+    let (x, y) = palette_body_origin();
     Rect::new(
-        rail_w() + PAD,
-        app_bar_h()
-            + 56
+        x + PAD,
+        y + PAL_BODY_TOP
             + group * (PAL_HEAD_H + 4 * PAL_ROW_H + 12)
             + PAL_HEAD_H
             + within * PAL_ROW_H,
-        PALETTE_W - PAD * 2,
+        palette_body_w(),
         PAL_ROW_H - 5,
     )
 }
 
 /// Where the pin legend starts — under both palette groups.
 fn legend_top() -> u32 {
-    app_bar_h() + 56 + 2 * (PAL_HEAD_H + 4 * PAL_ROW_H + 12)
+    palette_body_origin().1 + PAL_BODY_TOP + 2 * (PAL_HEAD_H + 4 * PAL_ROW_H + 12)
 }
 
 fn legend_row(n: usize) -> Rect {
     Rect::new(
-        rail_w() + PAD,
+        palette_body_origin().0 + PAD,
         legend_top() + PAL_HEAD_H + u32::try_from(n).unwrap_or(0) * 20,
-        PALETTE_W - PAD * 2,
+        palette_body_w(),
         18,
     )
 }
@@ -4185,7 +4557,7 @@ const CHIP_BORDER: u32 = 1;
 
 fn protocol_chip(n: usize) -> Rect {
     Rect::new(
-        rail_w() + PAD + u32::try_from(n).unwrap_or(0) * 40,
+        palette_body_origin().0 + PAD + u32::try_from(n).unwrap_or(0) * 40,
         legend_top() + PAL_HEAD_H + 3 * 20 + 6,
         36,
         // ★★★★★ R1874 — DERIVED. Authored `18`, which held a 10px word only
@@ -4199,9 +4571,9 @@ fn protocol_chip(n: usize) -> Rect {
 
 fn discovery_rect() -> Rect {
     Rect::new(
-        rail_w() + PAD,
+        palette_body_origin().0 + PAD,
         legend_top() + PAL_HEAD_H + 3 * 20 + 6 + 18 + 20 + PAL_HEAD_H,
-        PALETTE_W - PAD * 2,
+        palette_body_w(),
         58,
     )
 }
@@ -5576,10 +5948,17 @@ fn in_body(state: &LabState, local: Rect) -> Rect {
 fn body_origin(state: &LabState) -> (i32, i32) {
     let pane = inspector_rect();
     let (ox, oy) = state.inspector_scroll.offset();
-    let frame = i32::try_from(PANEL_FRAME).unwrap_or(0);
+    // ★★★★★ R1887 — through [`side_panel_content`], which is the same function
+    // the painter hands the scroll pane. It read `pane.y + PANEL_FRAME`, which
+    // was the content origin exactly while the panel reserved nothing of
+    // itself; the header this round adds moved that origin, and a second
+    // spelling of it would have put every affordance in this pane a header's
+    // height above where it is drawn — the R1656 class this transform exists to
+    // prevent, reintroduced by the round that grew the chrome.
+    let body = side_panel_content(pane);
     (
-        i32::try_from(pane.x).unwrap_or(i32::MAX) + frame - ox,
-        i32::try_from(pane.y).unwrap_or(i32::MAX) + frame - oy,
+        i32::try_from(pane.x + body.x).unwrap_or(i32::MAX) - ox,
+        i32::try_from(pane.y + body.y).unwrap_or(i32::MAX) - oy,
     )
 }
 
@@ -5746,7 +6125,7 @@ fn inspector_geometry_local(state: &LabState) -> FormGeometry {
 /// that make the viewport — where the body has been scrolled to, and how tall
 /// it is — so a reader who scrolls gets the direction their screen justifies.
 fn inspector_room(state: &LabState) -> Rect {
-    let body = panel_content(inspector_rect());
+    let body = side_panel_content(inspector_rect());
     let (ox, oy) = state.inspector_scroll.offset();
     #[allow(
         clippy::cast_sign_loss,
@@ -6184,9 +6563,21 @@ fn rail_icon(name: &str, seat: Rect, ink: Color) -> Vec<Scene> {
     }
 }
 
+/// A window rectangle in the palette BODY's own frame.
+///
+/// ★★★★★ R1887 — the one transform every child of that pane goes through, and
+/// the peer of [`in_body`] next door. It was written out three times as
+/// `r - rect.origin`, which was right while the pane sat at the panel's own
+/// origin plus a one-pixel frame; the header this round adds moved the pane, so
+/// three spellings of one transform became three chances to move two of them.
+fn in_palette_body(r: Rect) -> Rect {
+    let (x, y) = palette_body_origin();
+    Rect::new(r.x.saturating_sub(x), r.y.saturating_sub(y), r.w, r.h)
+}
+
 fn palette(state: &LabState, ink: Ink) -> Scene {
     let rect = palette_rect();
-    let local = |r: Rect| Rect::new(r.x - rect.x, r.y - rect.y, r.w, r.h);
+    let local = in_palette_body;
 
     // ★ R1874 — the pane's usable width, named once. The three headings and the
     // two header lines each carried their own hand-picked clipping width (180,
@@ -6199,11 +6590,15 @@ fn palette(state: &LabState, ink: Ink) -> Scene {
     // beside 13px and 10px faces wanting 21 and 17 — both short, and their
     // relation (a `+20` between two hand-picked tops) was exactly the shape
     // R1873 measured putting a column heading one pixel below its own cells.
+    // ★ R1887 — measured from the BODY's origin, which is where this pane's
+    // children are stated from now, and not from the panel's: the panel keeps a
+    // header band of its own above the body, and subtracting the panel origin
+    // would give this strip that band's height as well as its own.
     let header = Rect::new(
         PAD,
         0,
         body_w,
-        (palette_row(0).y - rect.y).saturating_sub(PAL_HEAD_H),
+        (palette_row(0).y - palette_body_origin().1).saturating_sub(PAL_HEAD_H),
     );
     let [title_band, blurb_band] =
         pinion_core::containment::stacked_line_rects(header, PAD, body_w, [FONT_BODY + 1, 10]);
@@ -6216,7 +6611,7 @@ fn palette(state: &LabState, ink: Ink) -> Scene {
         let head = palette_row(group_n * 4);
         children.push(palette_heading(
             group,
-            head.y - rect.y - PAL_HEAD_H,
+            head.y - palette_body_origin().1 - PAL_HEAD_H,
             body_w,
             ink,
         ));
@@ -6279,15 +6674,15 @@ fn palette(state: &LabState, ink: Ink) -> Scene {
     // derived from `children` by the pane rather than declared here, so it
     // cannot go stale as rows are added
     // ([[debt-the-node-lab-panes-do-not-scroll]]).
-    panel(
-        "lab.palette",
+    side_panel(
+        SidePanel::Palette,
+        state,
         rect,
-        ink.surface,
-        Some(ink.outline),
-        vec![quiet(
+        &ink,
+        quiet(
             scroll_pane(
                 &state.palette_scroll,
-                panel_content(rect),
+                side_panel_content(rect),
                 (0, PAD),
                 // Every press on this screen belongs to the one root `External`
                 // that does the screen's own hit test, so the pane must be
@@ -6296,7 +6691,99 @@ fn palette(state: &LabState, ink: Ink) -> Scene {
                 children,
             ),
             Silence::layout("scrolls the palette; the pane above it is what a reader lands on"),
-        )],
+        ),
+    )
+}
+
+/// ★★★★★ R1887 — **a movable panel, with the header that makes it movable by a
+/// person and the strip that makes a fold reversible by one.**
+///
+/// # Why the header exists at all
+///
+/// Before this round the two side panels had a placement that was a value, a
+/// layout that honoured it, and gates over both — and **nothing that could
+/// change it**. Measured at entry: outside `tests.rs`, `palette_at` and
+/// `inspector_at` had no writer in the tree. A reader asked three times across
+/// eleven rounds why these panels cannot be moved, and the honest answer had
+/// become *they can, and nobody can*.
+///
+/// # Why folding paints a strip rather than a narrow panel
+///
+/// ⚠ The entry re-measurement sharpened this debt rather than confirming it.
+/// The record said the strip was drawn and had no control in it; measured, the
+/// fold was **geometric only** — a folded panel kept its whole body and painted
+/// it into eighteen pixels, because nothing branched on `folded` in the paint
+/// at all. So the branch is here: a folded panel is a strip and the strip is
+/// one affordance, which is what makes a fold reversible by the person who did
+/// it. The floor has no fold at all — its nearest gesture removes the panel
+/// from the layout, leaving nothing to press to bring it back.
+fn side_panel(which: SidePanel, state: &LabState, rect: Rect, ink: &Ink, body: Scene) -> Scene {
+    let at = which.at(state);
+    if at.folded {
+        // The whole strip is the affordance: eighteen pixels is not room for a
+        // control inside a panel, and a strip whose only job is to come back
+        // does not need one.
+        return panel(
+            which.tag(),
+            rect,
+            ink.raised,
+            Some(ink.outline),
+            vec![quiet(
+                box_at(
+                    &format!("{}.strip", which.tag()),
+                    Rect::new(0, 0, rect.w, rect.h),
+                    ink.raised,
+                    None,
+                    0,
+                ),
+                Silence::name_of(which.tag()),
+            )],
+        );
+    }
+    let head = side_panel_head(rect);
+    let flip = side_panel_control(rect, 0);
+    let fold = side_panel_control(rect, 1);
+    // The title's box is the line box its own face needs, centred in the header
+    // band — the derivation this screen uses everywhere a run sits in a seat, so
+    // a face change moves the box with it (R1874's rule).
+    let title_band = line_rect_in(
+        head,
+        head.x + PAD,
+        flip.x.saturating_sub(head.x + PAD),
+        FONT_SMALL,
+    );
+    panel(
+        which.tag(),
+        rect,
+        ink.surface,
+        Some(ink.outline),
+        vec![
+            quiet(
+                tagged_label(
+                    &format!("{}.head", which.tag()),
+                    which.spec().title,
+                    title_band,
+                    FONT_SMALL,
+                    ink.text_2,
+                ),
+                Silence::name_of(which.tag()),
+            ),
+            box_at(
+                &format!("{}.flip", which.tag()),
+                flip,
+                ink.raised,
+                Some(ink.outline),
+                4,
+            ),
+            box_at(
+                &format!("{}.fold", which.tag()),
+                fold,
+                ink.raised,
+                Some(ink.outline),
+                4,
+            ),
+            body,
+        ],
     )
 }
 
@@ -6326,11 +6813,12 @@ fn palette_heading(text: &str, strip_top: u32, w: u32, ink: Ink) -> Scene {
 /// The pin legend and the transport chips: three appearances and what each one
 /// means, next to the colours an accept pin is drawn in.
 fn palette_legend(rect: Rect, ink: Ink) -> Vec<Scene> {
-    let local = |r: Rect| Rect::new(r.x - rect.x, r.y - rect.y, r.w, r.h);
+    let _ = rect;
+    let local = in_palette_body;
     let mut children = vec![palette_heading(
         "pins",
-        legend_top() - rect.y,
-        PALETTE_W - PAD * 2,
+        legend_top() - palette_body_origin().1,
+        palette_body_w(),
         ink,
     )];
     for (n, (kind, meaning)) in spec::PIN_LEGEND.iter().enumerate() {
@@ -6460,7 +6948,8 @@ fn discovery_caption_tag() -> String {
 
 /// The determinism switch, off by default.
 fn palette_determinism(state: &LabState, rect: Rect, ink: Ink) -> Vec<Scene> {
-    let local = |r: Rect| Rect::new(r.x - rect.x, r.y - rect.y, r.w, r.h);
+    let _ = rect;
+    let local = in_palette_body;
     let mut children: Vec<Scene> = Vec::new();
     let toggle = local(discovery_rect());
     let on = state.discovery.get();
@@ -7894,15 +8383,15 @@ fn inspector(state: &LabState, field: (TextFieldState, u32), theme: &Theme, ink:
         // about the palette, and this is the pane state a reader sizing the
         // tool up is most likely to be looking at.
         children.extend(inspector_reach(ink));
-        return panel(
-            "lab.inspector",
+        return side_panel(
+            SidePanel::Inspector,
+            state,
             rect,
-            ink.surface,
-            Some(ink.outline),
-            vec![quiet(
+            &ink,
+            quiet(
                 scroll_pane(
                     &state.inspector_scroll,
-                    panel_content(rect),
+                    side_panel_content(rect),
                     (0, PAD),
                     PanePointer::PassesThrough,
                     children,
@@ -7910,7 +8399,7 @@ fn inspector(state: &LabState, field: (TextFieldState, u32), theme: &Theme, ink:
                 Silence::layout(
                     "scrolls the inspector; the pane above it is what a reader lands on",
                 ),
-            )],
+            ),
         );
     };
     children.extend(inspector_identity(state, node, ink));
@@ -8673,15 +9162,15 @@ fn inspector_pane(
     // ★★ R1684 — the field goes ON TOP of the form, because it now stands over
     // a form row.
     children.extend(inspector_field(state, field, theme));
-    panel(
-        "lab.inspector",
+    side_panel(
+        SidePanel::Inspector,
+        state,
         rect,
-        ink.surface,
-        Some(ink.outline),
-        vec![quiet(
+        &ink,
+        quiet(
             scroll_pane(
                 &state.inspector_scroll,
-                panel_content(rect),
+                side_panel_content(rect),
                 (0, PAD),
                 // Every press on this screen belongs to the one root `External`
                 // that does the screen's own hit test, so the pane must be
@@ -8690,7 +9179,7 @@ fn inspector_pane(
                 children,
             ),
             Silence::layout("scrolls the inspector; the pane above it is what a reader lands on"),
-        )],
+        ),
     )
 }
 
@@ -9337,6 +9826,27 @@ const FIELDS: &[SchemaField] = &{
         ),
         SchemaField::action("send", "string"),
         SchemaField::action("key", "string"),
+        // ★★★★★ R1887 — **place a side panel**, the wire's half of the gesture
+        // the header now offers. §2 #2 makes RPC the agent's primary path, so
+        // this is not a lesser channel: a placement a person can change and an
+        // agent cannot would be a screen an agent cannot drive.
+        //
+        // Both arms of the ask go through one verb rather than two, because
+        // they are one question about one value — where does this panel sit —
+        // and `place palette,fold` reads as what it does. The panel's domain is
+        // `panes`, so a client picks a name the surface published rather than
+        // guessing one.
+        SchemaField::action_with(
+            "place",
+            "string",
+            ArgForm::Delimited(','),
+            const {
+                &[
+                    SchemaArg::key("panel", "string", "panes"),
+                    SchemaArg::open("where", "string"),
+                ]
+            },
+        ),
     ]
 };
 
@@ -10526,6 +11036,67 @@ impl ExternalIntrospect for LabOracle {
                 let chord = Self::text(&args)?;
                 Ok(IntrospectValue::Bool(key(&state, chord.trim())))
             }
+            // ★★★★★ R1887 — the wire's half of placing a panel, through
+            // `place_panel`, which is the function the press calls. One rule,
+            // two channels: a screen and an agent that disagreed about what a
+            // panel admits would be two declarations of one policy.
+            "place" => {
+                let said = Self::text(&args)?;
+                let (name, want) = said.split_once(',').ok_or_else(|| {
+                    InvokeError::rejected(
+                        "`place` takes <panel>,<edge|fold|unfold> — the panel and where it goes"
+                            .to_owned(),
+                    )
+                })?;
+                let which = SidePanel::from_word(name.trim()).ok_or_else(|| {
+                    InvokeError::rejected(format!(
+                        "{:?} is not a panel this screen places; the `spec` slot's `panes` \
+                         names the ones that are",
+                        name.trim()
+                    ))
+                })?;
+                let ask = match want.trim() {
+                    "fold" => PlaceAsk::Fold(true),
+                    "unfold" => PlaceAsk::Fold(false),
+                    // ★ The edge vocabulary is the FRAMEWORK's, read back
+                    // through the same function that publishes it, so the word
+                    // a client is told and the word it may send are one word.
+                    word => {
+                        let edge = [
+                            ChromeEdge::Left,
+                            ChromeEdge::Right,
+                            ChromeEdge::Top,
+                            ChromeEdge::Bottom,
+                        ]
+                        .into_iter()
+                        .find(|edge| edge_word(*edge) == word)
+                        .ok_or_else(|| {
+                            InvokeError::rejected(format!(
+                                "{word:?} is neither an edge nor `fold` / `unfold`"
+                            ))
+                        })?;
+                        PlaceAsk::Edge(edge)
+                    }
+                };
+                match place_panel(&state, which, ask) {
+                    Ok(at) => Ok(IntrospectValue::Text(format!(
+                        "{} {}{}",
+                        which.word(),
+                        edge_word(at.edge),
+                        if at.folded { ", folded" } else { "" }
+                    ))),
+                    // ★★★★★ The refusal reaches the caller AND the screen. The
+                    // floor, measured at R1801, accepts a move its own
+                    // declaration forbids and returns nothing, throws nothing
+                    // and signals nothing — a constraint that can be walked
+                    // past in silence is a comment.
+                    Err(refused) => Err(InvokeError::rejected(format!(
+                        "{} ({})",
+                        panel_refusal_sentence(which, &refused),
+                        refused.wire_word()
+                    ))),
+                }
+            }
             _ => Err(InvokeError::UnknownPath),
         }
     }
@@ -10566,6 +11137,45 @@ fn edge_word(edge: ChromeEdge) -> &'static str {
     }
 }
 
+/// Each pane of this screen, as the wire publishes it: what it is, where it may
+/// go, and **where it is**.
+///
+/// ★★★★★ R1887 — `at` is the half that was missing. `edges` says where a panel
+/// MAY live, which R1801 was right to call the defect a reader kept hitting;
+/// but a client told only what is permitted cannot tell whether a `place` did
+/// anything, and cannot draw the arrangement it is looking at. `name` is the
+/// word the `place` verb takes, so the domain a client picks from and the
+/// domain that verb accepts are one list rather than two.
+fn panes_json() -> Vec<serde_json::Value> {
+    // Through `placements`, which reads the live state without constructing it
+    // — the same source the layout reads, so the wire cannot answer about an
+    // arrangement the screen is not in.
+    let (palette, inspector) = placements();
+    spec::PANES
+        .iter()
+        .map(|pane| {
+            let placed = SidePanel::ALL.into_iter().find(|s| s.tag() == pane.tag);
+            serde_json::json!({
+                "tag": pane.tag, "title": pane.title, "width": pane.width, "body": pane.body,
+                "name": placed.map(SidePanel::word),
+                "edges": pane.policy.allowed.iter().copied().map(edge_word).collect::<Vec<_>>(),
+                "foldable": pane.policy.foldable,
+                "at": placed.map(|which| {
+                    let at = match which {
+                        SidePanel::Palette => palette,
+                        SidePanel::Inspector => inspector,
+                    };
+                    serde_json::json!({
+                        "edge": edge_word(at.edge),
+                        "extent": at.extent,
+                        "folded": at.folded,
+                    })
+                }),
+            })
+        })
+        .collect()
+}
+
 fn spec_json() -> serde_json::Value {
     serde_json::json!({
         // ★ R1664 — `body` is published too. R1662 added the column to the
@@ -10580,11 +11190,14 @@ fn spec_json() -> serde_json::Value {
         // was right: nothing had ever said. A pane that may move now names the
         // edges it admits, and a pane that may not answers `[]`, which is a
         // different statement from not being asked.
-        "panes": spec::PANES.iter().map(|p| serde_json::json!({
-            "tag": p.tag, "title": p.title, "width": p.width, "body": p.body,
-            "edges": p.policy.allowed.iter().copied().map(edge_word).collect::<Vec<_>>(),
-            "foldable": p.policy.foldable,
-        })).collect::<Vec<_>>(),
+        // ★★★★★ R1887 — and `at`, which is WHERE IT IS. `edges` says where a
+        // panel may live and R1801 was right that its absence was the defect a
+        // reader kept hitting; but a client told only what is permitted cannot
+        // tell whether a `place` did anything, and cannot render the
+        // arrangement it is looking at. `name` is the word that verb takes, so
+        // the domain a client picks from and the domain the verb accepts are
+        // one list rather than two.
+        "panes": panes_json(),
         // ★ R1681 — published so the demo's family pin is derived from the
         // specification rather than written down, the same way `links` is.
         "observed": spec::OBSERVED.iter().map(|(from, to)| serde_json::json!({
@@ -12073,6 +12686,11 @@ fn toggle_running(state: &Rc<LabState>) {
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one arm per hit this screen resolves — the peer of `Hit::at`, and \
+              splitting it would separate a press from what the press does"
+)]
 fn release(state: &Rc<LabState>) {
     let (px, py) = state.cursor.get();
     let now = Hit::at(state, px, py);
@@ -12126,6 +12744,21 @@ fn release(state: &Rc<LabState>) {
         Hit::Rename | Hit::AddKey => edit_seat(state, &now),
         // ★ R1688 — through the same function the wire's `zoom_by` calls, so
         // the stepper and the verb anchor the same way.
+        // ★★★★★ R1887 — the panel's own chrome, through `place_panel`, which is
+        // the same function the wire verb calls. A refusal is SAID rather than
+        // dropped: measured at R1801, the floor accepts a move its own
+        // declaration forbids and reports nothing at all.
+        Hit::Panel(which, act) => match act.ask(state, which) {
+            None => state.say(Utterance::refused(&format!(
+                "the {} sits on an edge its own declaration no longer admits",
+                which.word()
+            ))),
+            Some(ask) => {
+                if let Err(refused) = place_panel(state, which, ask) {
+                    state.say(Utterance::refused(&panel_refusal_sentence(which, &refused)));
+                }
+            }
+        },
         Hit::Zoom(up) => {
             zoom_to(state, zoom_stepped(state, up));
         }
@@ -13643,6 +14276,7 @@ fn palette_access(state: &LabState) -> Vec<AccessNode> {
                 spec::PROTOCOLS.join(", "),
             ))),
     ];
+    nodes.extend(side_panel_access(state, SidePanel::Palette));
     for role in spec::ROLES {
         nodes.push(
             AccessNode::new(format!("lab.palette.role.{}", role.name), AriaRole::Button)
@@ -13951,6 +14585,7 @@ fn toolbar_access(state: &LabState) -> Vec<AccessNode> {
 fn inspector_access(state: &LabState) -> Vec<AccessNode> {
     let mut nodes =
         vec![AccessNode::new("lab.inspector", AriaRole::Group).with_name(spec::PANES[3].title)];
+    nodes.extend(side_panel_access(state, SidePanel::Inspector));
     if let Some(node) = state.active_card() {
         let name = state.name_of(node);
         nodes.push(
