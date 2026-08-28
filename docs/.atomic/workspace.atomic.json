@@ -71960,6 +71960,92 @@
         "⚠ CARRIED FROM R1876 AND STILL UNPAID: the dashboard card's shared chrome is short on every card (`Decode Inspector` 12px in 16 wanting 20, `LIVE` 10px in 14 wanting 17). It does not appear as a census site because it is two runs per card rather than a family that folds."
       ]
     },
+    "R1878": {
+      "decision_summary": "The census had one question and it could not ask the other.\n\n🟥🟥🟥 ★★★★★ THE ROUND'S FIRST ACT WAS TO CHOOSE THE SHAPE — repay several small families, or change the question the census asks — and only a measurement could settle it.\n\nR1877 closed saying the campaign had entered a **long tail**: 501 runs, largest site 6. The entry re-measurement CONFIRMED both numbers and the new axis REFUTED the conclusion. It was never a long tail.\n\n★★★★★ `short_box_sites` folds by ADDRESS, so it can only see a convention that a loop repeated at ONE place in the tree. A convention applied two runs at a time across many places is invisible to every line it prints, however many lines it is given.\n\n⇒ `group_short_boxes_by_convention` folds the same population by the `(face, box height)` pair an AUTHOR chose, and orders by **how many distinct sites a convention reaches** — deliberately NOT the site axis's order, because an axis added to see what the first one misses is worthless if it sorts the same way.\n\n⚠ `short_by` is not in the signature: it is derived from the pair (`line_box(px) * lines - box_h`), so including it would split one convention into as many rows as there are line counts.\n\n🟥🟥🟥 ★★★★★ WHAT IT FOUND ON THE FIRST RUN. `keys` `(12, 14)` is **57 runs over 57 sites** — 63% of that destination. `logs` `(12, 14)` is **50 over 50** — 72%. One run per site, so the site axis could never spell either. The addresses are `kp.list.cell.0_direction` and `lv.list.cell.0_message`: **a table's cells**.\n\n★★★★★ AND THE CAUSE IS A HOLE IN THE FOLD, not a scatter in the tree. `containment::push_site_segment` folds a segment only when it is ALL digits, `_` and `-`. So `pv.list.cell.3_2` folds to `pv.list.cell.*` — which is how R1872 saw and repaired that table — while `kp.list.cell.0_direction`, an index glued to a NAME, stays its own site. Two tables of the same shape, 107 runs between them, reported as 107 separate one-run sites.\n\n⇒ Registered as `debt-a-site-fold-cannot-see-an-index-glued-to-a-name`, with the prescription argued: fold the leading digits only (`0_direction` -> `*_direction`), so the table's COLUMN becomes the site and its rows fold — which is MORE information than `pv.list.cell.*` gets today.\n\n⚠ NOT repaired here. The fold lives in `pinion-core` and moves every site count on six destinations: a different cause with a different blast radius, which is this project's standing rule.",
+      "changes_bullets": [
+        "`crates/pinion-shell/src/substrate.rs`",
+        "* `BoxConvention { px, box_h }` — the pair an author chose, and the doc's argument for why `short_by` is not in it.",
+        "* `group_short_boxes_by_convention(rows)` — the same population folded by that pair, ordered by scatter then run count then the signature, which is total for `group_short_boxes`'s reason.",
+        "* `scattered_over(rows)` — how many distinct sites a group reaches, named because the gate asserts on it too and two spellings could disagree.",
+        "`crates/pinion-shell/src/lib.rs`",
+        "* the three re-exported beside the site axis, with the reason the second question exists.",
+        "`examples/hello-analyzer-shell/src/painted.rs`",
+        "* `short_box_truths_of` gains the new axis's THREE truths — partition, no key twice, report independent of walk order — asserted on all six destinations' real populations, plus a FOURTH that is its own: the axis must lead with its most scattered convention or its comparator is not the one its doc claims.",
+        "* `short_box_convention_report_of` — the printout, split out because `clippy::pedantic`'s `too_many_lines` fired at 102/100 and the seam it forced is the honest one: one axis per function.",
+        "* the widest convention prints three of its addresses, because a count cannot say whether a scattered signature is one authoring habit or several that chose the same pair.",
+        "`memory/debt-a-site-fold-cannot-see-an-index-glued-to-a-name.md`",
+        "* the finding, with the three candidate prescriptions weighed and one chosen.",
+        "`docs/analyzer-debts.json`",
+        "* the snapshot, moved because the debt entered the family."
+      ],
+      "verification_bullets": [
+        "All of the following were run in the closing turn, on the tree that was committed.",
+        "* `cargo test -p pinion-shell` — **264 passed / 0 failed** (plus its five other targets, all ok).",
+        "* `cargo test -p hello-analyzer-shell` — **169 / 0**.",
+        "* `cargo clippy --workspace --all-targets --features pinion-runtime/vello` — exit 0, zero warnings.",
+        "* `cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items` — run LOCALLY, clean.",
+        "* `cargo fmt --all --check` — clean.",
+        "* Four demos that walk the shell — r1767, r1649, r1738, r1656 — all rc=0 under the shared headless display.",
+        "★ COUNTERFACTUAL, one variable — the scatter key removed from the convention comparator, leaving run count: the census goes red at `packets` naming exactly that (`the convention axis does not lead with its most scattered convention, so its order is not the one its doc claims`), on a verified green baseline.",
+        "★★★★★ THE AXIS'S FINDING IS THE MEASUREMENT, and it is reproduced by the command the campaign already runs: `cargo test -p hello-analyzer-shell r1870_the_short_box_census -- --nocapture` now prints an `R1878 conventions <destination>` line and an `R1878 widest <destination>` line beside the site census. Measured this round: dashboard 11 pairs of which 7 scatter, widest `(12, 16)` at 35 runs over 35 sites; packets 6 of which 3, widest `(11, 14)` at 19 over 12; keys 10 of which 5, widest `(12, 14)` at **57 over 57**; logs 8 of which 4, widest `(12, 14)` at **50 over 50**; lab 13 of which 7, widest `(9, 14)` at 18 over 18; settings 9 of which 7, widest `(12, 15)` at 10 over 10.",
+        "🟥🟥 ★★★★★ AND THE CLOSING AUDIT CAUGHT THIS ROUND'S OWN CLAIM. The entry first said the finding was \"registered as a debt\" — and `python3 tools/analyzer_debts.py` did not name it. The tool DERIVES the family from links to declared roots, so writing `memory/debt-*.md` puts a file where `grep -l 'status: open'` finds it and leaves it OUTSIDE the census this project actually asks. ⇒ **a debt file is not a registered debt until the census names it**, which is R1742's rule (*open remainders must be debt files*) one step further in. The file links `analyzer-debt-repayment-loop` now, the tool names it, and `docs/analyzer-debts.json` moved — which is also what makes the push gate agree.",
+        "⚠ NOT CLAIMED: that the two axes together see everything. They see what folds by address and what folds by authored pair. A convention that is neither — a single wrong box nobody repeated — is still one line among many, and that is the honest residue of adding a second question rather than a complete one."
+      ],
+      "impact_refs": [
+        "5.32",
+        "5.11"
+      ],
+      "carry_forward_bullets": [
+        "🟥🟥 ★★★★★ THE NEXT ROUND'S SUBJECT IS NAMED BY THIS ROUND'S INSTRUMENT, and it is the fold rather than a screen: `debt-a-site-fold-cannot-see-an-index-glued-to-a-name`. `containment::push_site_segment` folds a segment only when it is all digits, `_` and `-`, so an index glued to a name (`kp.list.cell.0_direction`) is its own site. The prescription is argued in the debt: fold the LEADING digits only, so a table's column becomes the site and its rows fold.",
+        "⚠ It is `pinion-core` and it moves every site count on six destinations, so expect the census's own numbers to change and say so at the constants that read them. The two axes should then AGREE about those two tables — the site axis spelling them, the convention axis no longer calling them the most scattered thing on the screen. That agreement is the close condition written into the debt.",
+        "★ AND R1877'S CLOSING SENTENCE IS RETRACTED BY MEASUREMENT: the campaign was NOT in a long tail. 107 of the ~500 remaining runs are two tables the census could not fold. The phase judgement should be re-made after the fold is repaired, not before.",
+        "⚠ CARRIED AND STILL UNPAID from R1876: the dashboard card's shared chrome is short on every card (`Decode Inspector` 12px in 16 wanting 20, `LIVE` 10px in 14 wanting 17). The new axis SEES it now — it is part of dashboard's `(12, 16)` at 35 over 35 — which is the first time an instrument has named it at all.",
+        "⚠ `debt-text-is-not-centred-in-the-box-that-holds-it` stays open (`closed_by: person`); this round repaid none of its sites, it built the instrument that picks the next ones.",
+        "⚠ `debt-doc-links-inside-a-test-module-have-no-gate` (R1875) is untouched and still `blocked_by: unmeasured`."
+      ],
+      "publishable_decision_summary": "The census had one question and it could not ask the other.\n\n🟥🟥🟥 ★★★★★ THE ROUND'S FIRST ACT WAS TO CHOOSE THE SHAPE — repay several small families, or change the question the census asks — and only a measurement could settle it.\n\nR1877 closed saying the campaign had entered a **long tail**: 501 runs, largest site 6. The entry re-measurement CONFIRMED both numbers and the new axis REFUTED the conclusion. It was never a long tail.\n\n★★★★★ `short_box_sites` folds by ADDRESS, so it can only see a convention that a loop repeated at ONE place in the tree. A convention applied two runs at a time across many places is invisible to every line it prints, however many lines it is given.\n\n⇒ `group_short_boxes_by_convention` folds the same population by the `(face, box height)` pair an AUTHOR chose, and orders by **how many distinct sites a convention reaches** — deliberately NOT the site axis's order, because an axis added to see what the first one misses is worthless if it sorts the same way.\n\n⚠ `short_by` is not in the signature: it is derived from the pair (`line_box(px) * lines - box_h`), so including it would split one convention into as many rows as there are line counts.\n\n🟥🟥🟥 ★★★★★ WHAT IT FOUND ON THE FIRST RUN. `keys` `(12, 14)` is **57 runs over 57 sites** — 63% of that destination. `logs` `(12, 14)` is **50 over 50** — 72%. One run per site, so the site axis could never spell either. The addresses are `kp.list.cell.0_direction` and `lv.list.cell.0_message`: **a table's cells**.\n\n★★★★★ AND THE CAUSE IS A HOLE IN THE FOLD, not a scatter in the tree. `containment::push_site_segment` folds a segment only when it is ALL digits, `_` and `-`. So `pv.list.cell.3_2` folds to `pv.list.cell.*` — which is how R1872 saw and repaired that table — while `kp.list.cell.0_direction`, an index glued to a NAME, stays its own site. Two tables of the same shape, 107 runs between them, reported as 107 separate one-run sites.\n\n⇒ Registered as `debt-a-site-fold-cannot-see-an-index-glued-to-a-name`, with the prescription argued: fold the leading digits only (`0_direction` -> `*_direction`), so the table's COLUMN becomes the site and its rows fold — which is MORE information than `pv.list.cell.*` gets today.\n\n⚠ NOT repaired here. The fold lives in `pinion-core` and moves every site count on six destinations: a different cause with a different blast radius, which is this project's standing rule.",
+      "publishable_changes_bullets": [
+        "`crates/pinion-shell/src/substrate.rs`",
+        "* `BoxConvention { px, box_h }` — the pair an author chose, and the doc's argument for why `short_by` is not in it.",
+        "* `group_short_boxes_by_convention(rows)` — the same population folded by that pair, ordered by scatter then run count then the signature, which is total for `group_short_boxes`'s reason.",
+        "* `scattered_over(rows)` — how many distinct sites a group reaches, named because the gate asserts on it too and two spellings could disagree.",
+        "`crates/pinion-shell/src/lib.rs`",
+        "* the three re-exported beside the site axis, with the reason the second question exists.",
+        "`examples/hello-analyzer-shell/src/painted.rs`",
+        "* `short_box_truths_of` gains the new axis's THREE truths — partition, no key twice, report independent of walk order — asserted on all six destinations' real populations, plus a FOURTH that is its own: the axis must lead with its most scattered convention or its comparator is not the one its doc claims.",
+        "* `short_box_convention_report_of` — the printout, split out because `clippy::pedantic`'s `too_many_lines` fired at 102/100 and the seam it forced is the honest one: one axis per function.",
+        "* the widest convention prints three of its addresses, because a count cannot say whether a scattered signature is one authoring habit or several that chose the same pair.",
+        "`memory/debt-a-site-fold-cannot-see-an-index-glued-to-a-name.md`",
+        "* the finding, with the three candidate prescriptions weighed and one chosen.",
+        "`docs/analyzer-debts.json`",
+        "* the snapshot, moved because the debt entered the family."
+      ],
+      "publishable_verification_bullets": [
+        "All of the following were run in the closing turn, on the tree that was committed.",
+        "* `cargo test -p pinion-shell` — **264 passed / 0 failed** (plus its five other targets, all ok).",
+        "* `cargo test -p hello-analyzer-shell` — **169 / 0**.",
+        "* `cargo clippy --workspace --all-targets --features pinion-runtime/vello` — exit 0, zero warnings.",
+        "* `cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items` — run LOCALLY, clean.",
+        "* `cargo fmt --all --check` — clean.",
+        "* Four demos that walk the shell — r1767, r1649, r1738, r1656 — all rc=0 under the shared headless display.",
+        "★ COUNTERFACTUAL, one variable — the scatter key removed from the convention comparator, leaving run count: the census goes red at `packets` naming exactly that (`the convention axis does not lead with its most scattered convention, so its order is not the one its doc claims`), on a verified green baseline.",
+        "★★★★★ THE AXIS'S FINDING IS THE MEASUREMENT, and it is reproduced by the command the campaign already runs: `cargo test -p hello-analyzer-shell r1870_the_short_box_census -- --nocapture` now prints an `R1878 conventions <destination>` line and an `R1878 widest <destination>` line beside the site census. Measured this round: dashboard 11 pairs of which 7 scatter, widest `(12, 16)` at 35 runs over 35 sites; packets 6 of which 3, widest `(11, 14)` at 19 over 12; keys 10 of which 5, widest `(12, 14)` at **57 over 57**; logs 8 of which 4, widest `(12, 14)` at **50 over 50**; lab 13 of which 7, widest `(9, 14)` at 18 over 18; settings 9 of which 7, widest `(12, 15)` at 10 over 10.",
+        "🟥🟥 ★★★★★ AND THE CLOSING AUDIT CAUGHT THIS ROUND'S OWN CLAIM. The entry first said the finding was \"registered as a debt\" — and `python3 tools/analyzer_debts.py` did not name it. The tool DERIVES the family from links to declared roots, so writing `memory/debt-*.md` puts a file where `grep -l 'status: open'` finds it and leaves it OUTSIDE the census this project actually asks. ⇒ **a debt file is not a registered debt until the census names it**, which is R1742's rule (*open remainders must be debt files*) one step further in. The file links `analyzer-debt-repayment-loop` now, the tool names it, and `docs/analyzer-debts.json` moved — which is also what makes the push gate agree.",
+        "⚠ NOT CLAIMED: that the two axes together see everything. They see what folds by address and what folds by authored pair. A convention that is neither — a single wrong box nobody repeated — is still one line among many, and that is the honest residue of adding a second question rather than a complete one."
+      ],
+      "publishable_impact_refs": [
+        "5.32",
+        "5.11"
+      ],
+      "publishable_carry_forward_bullets": [
+        "🟥🟥 ★★★★★ THE NEXT ROUND'S SUBJECT IS NAMED BY THIS ROUND'S INSTRUMENT, and it is the fold rather than a screen: `debt-a-site-fold-cannot-see-an-index-glued-to-a-name`. `containment::push_site_segment` folds a segment only when it is all digits, `_` and `-`, so an index glued to a name (`kp.list.cell.0_direction`) is its own site. The prescription is argued in the debt: fold the LEADING digits only, so a table's column becomes the site and its rows fold.",
+        "⚠ It is `pinion-core` and it moves every site count on six destinations, so expect the census's own numbers to change and say so at the constants that read them. The two axes should then AGREE about those two tables — the site axis spelling them, the convention axis no longer calling them the most scattered thing on the screen. That agreement is the close condition written into the debt.",
+        "★ AND R1877'S CLOSING SENTENCE IS RETRACTED BY MEASUREMENT: the campaign was NOT in a long tail. 107 of the ~500 remaining runs are two tables the census could not fold. The phase judgement should be re-made after the fold is repaired, not before.",
+        "⚠ CARRIED AND STILL UNPAID from R1876: the dashboard card's shared chrome is short on every card (`Decode Inspector` 12px in 16 wanting 20, `LIVE` 10px in 14 wanting 17). The new axis SEES it now — it is part of dashboard's `(12, 16)` at 35 over 35 — which is the first time an instrument has named it at all.",
+        "⚠ `debt-text-is-not-centred-in-the-box-that-holds-it` stays open (`closed_by: person`); this round repaid none of its sites, it built the instrument that picks the next ones.",
+        "⚠ `debt-doc-links-inside-a-test-module-have-no-gate` (R1875) is untouched and still `blocked_by: unmeasured`."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
