@@ -72418,6 +72418,44 @@
         "Still true after three rounds: the gates judge whether a citation exists and resolves, never whether it is SUFFICIENT. Cohort `loop` 6 to 5."
       ]
     },
+    "R1884": {
+      "decision_summary": "A pure rule and its oracle are two gates, and testing the pure half is the half that is easy to remember.\n\nR1883 shipped `check_boundaries`, which refuses an `outside` verdict that cannot cite the ratified line excluding it. That function is pure in `(rows, sections)` and its eight selftest cases hand it a SYNTHETIC mapping of sections — which is exactly what makes the rule testable without a filesystem, and exactly what makes the rule's MEANING invisible to those cases. What decides that meaning is `store_sections()`, which chooses which fields of a spec section count as its decision text, and nothing was watching it. This is R1847's shape (\"the gate was vacuous on the very rows it was built for\") recurring inside the round that quoted R1847.",
+      "changes_bullets": [
+        "Four assertions in `selftest`, against the REAL store rather than a fixture, because the field choice is visible nowhere else and that is why the store is tracked: the boundary section reads back `active`; the decision text contains `Custom multimedia codec embedding out of scope`; it does NOT contain `marketing-prone`, a phrase that lives only in that section's rejected alternatives; and a clause whose ratified wording names a product still has a citable span that does not.",
+        "The fourth turns R1883's PROSE into a predicate. That round's docstring advised citing \"the shortest span that carries no product name\", because `tools/reference_names.py` refuses the full sentence in a tracked file — but nobody had measured that such a span exists. Without one there would be a ratified boundary NO ROW COULD EVER CITE, and the two gates would be in a standoff neither could report.",
+        "`store_sections()` now records the mutation results in its own docstring, so the field choice reads as asserted rather than as a decision somebody once made."
+      ],
+      "verification_bullets": [
+        "Two mutations, run BEFORE anything was written, to establish the hole rather than assume it. Adding `alternatives_rejected` to the decision text: `--selftest` PASS and `--check-pin` rc=0 — green, while making a sentence the spec REJECTED citable as a ratified boundary, so the census's strongest verdict could have rested on an option the project explicitly turned down. Dropping `caveats_bullets`: green as well, and would have left §3 citable only by its one-line intent, silently refusing three of its four ratified clauses.",
+        "Both mutations re-run after the assertions landed: the first turns exactly one red (`a rejected alternative is not a boundary`), the second turns two red (the caveats assertion and the product-free-span assertion). The tool is green with neither mutation present.",
+        "Green: `analyzer_census.py --selftest` PASS; `--check-pin` rc=0; `tools/test_hooks.sh` 237 passed 0 failed; `tools/reference_names.py --check` 0 in 0 files."
+      ],
+      "impact_refs": [
+        "3"
+      ],
+      "carry_forward_bullets": [
+        "This round was found by R1883's own closing audit asking obligation 2 — is what this round WROTE true? — of a docstring rather than of code, and the answer was that two of its sentences were true and neither was checked. The standing form: when a round ships a pure rule plus an impure oracle, the oracle is a second gate and the selftest's fixture is precisely what hides it.",
+        "Unchanged and still open: the boundary check's real population is empty (`0 of 0`) because R1883's audit left no `outside` row in the pin, so the eight pure cases and the five pin counterfactuals remain the only place those branches meet data. Cohort `loop` is 5, all five now `campaign`, so the next round has no non-campaign option and must declare its slice."
+      ],
+      "publishable_decision_summary": "A pure rule and its oracle are two gates, and testing the pure half is the half that is easy to remember.\n\nR1883 shipped `check_boundaries`, which refuses an `outside` verdict that cannot cite the ratified line excluding it. That function is pure in `(rows, sections)` and its eight selftest cases hand it a SYNTHETIC mapping of sections — which is exactly what makes the rule testable without a filesystem, and exactly what makes the rule's MEANING invisible to those cases. What decides that meaning is `store_sections()`, which chooses which fields of a spec section count as its decision text, and nothing was watching it. This is R1847's shape (\"the gate was vacuous on the very rows it was built for\") recurring inside the round that quoted R1847.",
+      "publishable_changes_bullets": [
+        "Four assertions in `selftest`, against the REAL store rather than a fixture, because the field choice is visible nowhere else and that is why the store is tracked: the boundary section reads back `active`; the decision text contains `Custom multimedia codec embedding out of scope`; it does NOT contain `marketing-prone`, a phrase that lives only in that section's rejected alternatives; and a clause whose ratified wording names a product still has a citable span that does not.",
+        "The fourth turns R1883's PROSE into a predicate. That round's docstring advised citing \"the shortest span that carries no product name\", because `tools/reference_names.py` refuses the full sentence in a tracked file — but nobody had measured that such a span exists. Without one there would be a ratified boundary NO ROW COULD EVER CITE, and the two gates would be in a standoff neither could report.",
+        "`store_sections()` now records the mutation results in its own docstring, so the field choice reads as asserted rather than as a decision somebody once made."
+      ],
+      "publishable_verification_bullets": [
+        "Two mutations, run BEFORE anything was written, to establish the hole rather than assume it. Adding `alternatives_rejected` to the decision text: `--selftest` PASS and `--check-pin` rc=0 — green, while making a sentence the spec REJECTED citable as a ratified boundary, so the census's strongest verdict could have rested on an option the project explicitly turned down. Dropping `caveats_bullets`: green as well, and would have left §3 citable only by its one-line intent, silently refusing three of its four ratified clauses.",
+        "Both mutations re-run after the assertions landed: the first turns exactly one red (`a rejected alternative is not a boundary`), the second turns two red (the caveats assertion and the product-free-span assertion). The tool is green with neither mutation present.",
+        "Green: `analyzer_census.py --selftest` PASS; `--check-pin` rc=0; `tools/test_hooks.sh` 237 passed 0 failed; `tools/reference_names.py --check` 0 in 0 files."
+      ],
+      "publishable_impact_refs": [
+        "3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "This round was found by R1883's own closing audit asking obligation 2 — is what this round WROTE true? — of a docstring rather than of code, and the answer was that two of its sentences were true and neither was checked. The standing form: when a round ships a pure rule plus an impure oracle, the oracle is a second gate and the selftest's fixture is precisely what hides it.",
+        "Unchanged and still open: the boundary check's real population is empty (`0 of 0`) because R1883's audit left no `outside` row in the pin, so the eight pure cases and the five pin counterfactuals remain the only place those branches meet data. Cohort `loop` is 5, all five now `campaign`, so the next round has no non-campaign option and must declare its slice."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
