@@ -72210,6 +72210,88 @@
         "⚠ Also carried, unpaid and unchanged: [[debt-text-is-not-centred-in-the-box-that-holds-it]] stays open (`closed_by: person`), and [[debt-doc-links-inside-a-test-module-have-no-gate]] stays open (`blocked_by: unmeasured`)."
       ]
     },
+    "R1881": {
+      "decision_summary": "Bump the SCE pin 4fd846df76 -> d3db11c415 (89 commits), the triple plus the\nlock, and regenerate the tracked statechart emit R1766 made a committed\nartifact. The bump is what makes the emit change READABLE: 16 modules moved,\n15 of them only their `template-hash` header, and exactly one --\nmulti_window_sm.rs -- changed body, 293 lines for a net -67. That asymmetry is\nexplained rather than assumed: `crates/pinion-core/fixtures/multi_window.scxml`\nis this tree's ONLY chart with a real `<parallel>` element (app.scxml and\ndock_panel.scxml name one in a COMMENT and both emit `HAS_PARALLEL_STATES =\nfalse`), and conflict resolution is emitted only where a parallel exists. So\none chart is the whole blast radius of an upstream rewrite of W3C Appendix D.\nWhat upstream changed, read from the diff rather than from the commit\nsubjects: `compute_exit_set` now reads the CONFIGURATION and takes `&self`,\nand the SAME procedure is shared by `remove_conflicting_transitions` and\n`execute_microstep` -- before, those two computed exit sets by different\nroutes and could disagree. `transition_domain` is extracted as Appendix D\ngetTransitionDomain. Three rules that are not in the appendix are GONE (a\ntarget/source equality check and a `<parallel>`-ancestor check in each\ndirection); they stood in for an exit set assembled from the source's own\nancestor chain, which cannot name the sibling regions a transition leaving a\n`<parallel>` exits. A new ordered-set dedup on (source, target) replaces what\nthe removed target/source criterion incidentally covered.",
+      "changes_bullets": [
+        "Cargo.toml: both `rev` values (sce-rust-runtime, sce-build) -> d3db11c415",
+        "vendor/sce gitlink moved to d3db11c415; Cargo.lock relocked for 3 packages",
+        "crates/pinion-core/generated/: 16 modules regenerated (15 header-only,",
+        "multi_window_sm.rs body rewritten by the upstream Appendix D change)"
+      ],
+      "verification_bullets": [
+        "`python3 tools/pin_sync.py --check-dual-pin` -> `dual pin: SCE@d3db11c",
+        "(manifest = lock = vendor/sce)`. `PINION_REGEN_STATECHARTS=1 cargo test -p",
+        "pinion-core --test statechart_emit` 4/4, so the committed emit equals a fresh",
+        "run of the newly pinned generator. `cargo test -p pinion-core` 4040/0.",
+        "`cargo test --workspace` 353 test binaries, 13,812 passed, 0 failed. Clippy",
+        "with CI's exact flags (`--workspace --all-targets --features",
+        "pinion-runtime/vello`) exit 0, zero warnings. `cargo doc --workspace --no-deps",
+        "--features pinion-runtime/vello --document-private-items` run LOCALLY, exit 0.",
+        "`cargo fmt --all --check`, `tools/reference_names.py --check` and",
+        "`tools/test_hooks.sh` all exit 0. Demo proof aimed at the one chart that",
+        "actually moved -- hello_multi_window_r670b, r672_multi_window_race_free,",
+        "r1419_window_focus_multi -- all PASS under the shared headless display.",
+        "NOT CLAIMED: the rest of the staged demo radius. `tools/demo_radius.py --mode",
+        "staged --count` answers 641 of 659, because a pinion-core pin sits at the root",
+        "of the package graph; that is the full sweep, which is CI-primary by the R835",
+        "policy and which this host cannot judge",
+        "(`debt-a-deterministic-demo-has-a-wall-clock-bound`)."
+      ],
+      "impact_refs": [
+        "5.4",
+        "5.14"
+      ],
+      "carry_forward_bullets": [
+        "SCE-006 IS NOT CLOSED BY THIS BUMP, and it is the finding worth carrying",
+        "because the opposite is the natural assumption: the upstream rewrite lands",
+        "precisely on the `<parallel>` exit-set machinery SCE-006 is about, and a",
+        "reader of that diff could close the debt on it. Measured instead --",
+        "`resume::tests::r1768_a_parallel_with_atomic_regions_publishes_a_pair_its_own_engine_refuses`",
+        "still PASSES, and that test asserts the DEFECT, so it goes red on the day",
+        "upstream closes the hole. It did not. The debt stays open in",
+        "`memory/sce-upstream-debts.md`, with the handoff still unwritten."
+      ],
+      "publishable_decision_summary": "Bump the SCE pin 4fd846df76 -> d3db11c415 (89 commits), the triple plus the\nlock, and regenerate the tracked statechart emit R1766 made a committed\nartifact. The bump is what makes the emit change READABLE: 16 modules moved,\n15 of them only their `template-hash` header, and exactly one --\nmulti_window_sm.rs -- changed body, 293 lines for a net -67. That asymmetry is\nexplained rather than assumed: `crates/pinion-core/fixtures/multi_window.scxml`\nis this tree's ONLY chart with a real `<parallel>` element (app.scxml and\ndock_panel.scxml name one in a COMMENT and both emit `HAS_PARALLEL_STATES =\nfalse`), and conflict resolution is emitted only where a parallel exists. So\none chart is the whole blast radius of an upstream rewrite of W3C Appendix D.\nWhat upstream changed, read from the diff rather than from the commit\nsubjects: `compute_exit_set` now reads the CONFIGURATION and takes `&self`,\nand the SAME procedure is shared by `remove_conflicting_transitions` and\n`execute_microstep` -- before, those two computed exit sets by different\nroutes and could disagree. `transition_domain` is extracted as Appendix D\ngetTransitionDomain. Three rules that are not in the appendix are GONE (a\ntarget/source equality check and a `<parallel>`-ancestor check in each\ndirection); they stood in for an exit set assembled from the source's own\nancestor chain, which cannot name the sibling regions a transition leaving a\n`<parallel>` exits. A new ordered-set dedup on (source, target) replaces what\nthe removed target/source criterion incidentally covered.",
+      "publishable_changes_bullets": [
+        "Cargo.toml: both `rev` values (sce-rust-runtime, sce-build) -> d3db11c415",
+        "vendor/sce gitlink moved to d3db11c415; Cargo.lock relocked for 3 packages",
+        "crates/pinion-core/generated/: 16 modules regenerated (15 header-only,",
+        "multi_window_sm.rs body rewritten by the upstream Appendix D change)"
+      ],
+      "publishable_verification_bullets": [
+        "`python3 tools/pin_sync.py --check-dual-pin` -> `dual pin: SCE@d3db11c",
+        "(manifest = lock = vendor/sce)`. `PINION_REGEN_STATECHARTS=1 cargo test -p",
+        "pinion-core --test statechart_emit` 4/4, so the committed emit equals a fresh",
+        "run of the newly pinned generator. `cargo test -p pinion-core` 4040/0.",
+        "`cargo test --workspace` 353 test binaries, 13,812 passed, 0 failed. Clippy",
+        "with CI's exact flags (`--workspace --all-targets --features",
+        "pinion-runtime/vello`) exit 0, zero warnings. `cargo doc --workspace --no-deps",
+        "--features pinion-runtime/vello --document-private-items` run LOCALLY, exit 0.",
+        "`cargo fmt --all --check`, `tools/reference_names.py --check` and",
+        "`tools/test_hooks.sh` all exit 0. Demo proof aimed at the one chart that",
+        "actually moved -- hello_multi_window_r670b, r672_multi_window_race_free,",
+        "r1419_window_focus_multi -- all PASS under the shared headless display.",
+        "NOT CLAIMED: the rest of the staged demo radius. `tools/demo_radius.py --mode",
+        "staged --count` answers 641 of 659, because a pinion-core pin sits at the root",
+        "of the package graph; that is the full sweep, which is CI-primary by the R835",
+        "policy and which this host cannot judge",
+        "(`debt-a-deterministic-demo-has-a-wall-clock-bound`)."
+      ],
+      "publishable_impact_refs": [
+        "5.4",
+        "5.14"
+      ],
+      "publishable_carry_forward_bullets": [
+        "SCE-006 IS NOT CLOSED BY THIS BUMP, and it is the finding worth carrying",
+        "because the opposite is the natural assumption: the upstream rewrite lands",
+        "precisely on the `<parallel>` exit-set machinery SCE-006 is about, and a",
+        "reader of that diff could close the debt on it. Measured instead --",
+        "`resume::tests::r1768_a_parallel_with_atomic_regions_publishes_a_pair_its_own_engine_refuses`",
+        "still PASSES, and that test asserts the DEFECT, so it goes red on the day",
+        "upstream closes the hole. It did not. The debt stays open in",
+        "`memory/sce-upstream-debts.md`, with the handoff still unwritten."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
