@@ -242,7 +242,24 @@ const SIZES: &[(&str, (u32, u32))] = &[
 /// destination-wide census (`r1870_the_short_box_census_of_every_destination`)
 /// counts short runs per destination across its whole frame and answers a
 /// different, larger number; do not compare the two.
-const SHORT_BOX_BUDGET: usize = 147;
+///
+/// ★★★★★ R1876 — **147 -> 103**, and the 44 came from FOUR authoring sites in
+/// the decode card: the tree row's key and its value, the byte pane's offset,
+/// and each byte cell. All four were `Rect::new(x, 3, w, 13)` beside
+/// `FONT_TINY` wanting 17, in a 19-pixel row — the same convention R1873
+/// removed from the table cards two rounds earlier, in the same file, in a card
+/// nobody had pointed at it. They are `super::decode_band`'s now.
+///
+/// ⇒ **`decode_band` is `grid_cell` split at the seam that mattered**: a table
+/// cell carries a tag and wants a `Scene`, a decode run is untagged and wants
+/// the RECTANGLE. Two consumers of one derivation rather than one of them
+/// re-deriving it — R1875's lesson about a helper named for its first pane.
+///
+/// ⚠ **What this fall does NOT include, said rather than arranged**: the card's
+/// own chrome. `"Decode Inspector"` and `"LIVE"` are still short, and they are
+/// short on **every card on this screen** because the header is shared — a
+/// different cause with a different blast radius, carried forward by name.
+const SHORT_BOX_BUDGET: usize = 103;
 
 /// Where every tag in the painted scene ended up, and every text run with it.
 struct Painted {
@@ -7280,6 +7297,118 @@ fn r1874_no_run_in_the_node_palettes_body_sits_in_a_box_too_short_for_its_face()
             cut.len(),
         );
     });
+}
+
+/// ★★★★★ R1876 — **no run of a decode card sits in a box too short for its
+/// face**, over every state and size the sweep covers.
+///
+/// The fourth destination of the short-box campaign, on the site the census
+/// DERIVED: `card.decode#*.tree.*` was the largest single site in the whole
+/// application once R1875 had repaid the capture viewer's tree.
+///
+/// ⚠ **The family is the CARD, not the site.** R1874 and R1875 each measured
+/// the same thing — a census site's count is a FLOOR on its pane's, because
+/// the census folds by address and a pane's short runs scatter across as many
+/// sites as it has tag families. Asking about the whole card is what makes the
+/// rest visible, and it is why this gate is written BEFORE the repair.
+///
+/// ⚠ The card's own segment carries an index (`card.decode#0`), so the family
+/// is a PREFIX on a path segment rather than an equality — a shape R1875's
+/// `pv.tree.body` did not need and this one does.
+///
+/// # ⚠ What this family deliberately EXCLUDES, and why it is said rather than
+/// silently arranged
+///
+/// A run is in this family when its path holds a segment that is the card's
+/// prefix **and carries a part name after it** — `card.decode#1.tree.0`,
+/// `card.decode#1.bytes.2`, `card.decode#1.byte.7`. A run whose deepest card
+/// segment is the bare `card.decode#1` is the card's own CHROME: its title and
+/// its status badge.
+///
+/// That chrome is short too — measured at this round's entry, `"Decode
+/// Inspector"` sits in a 16px box for a 12px face wanting 20, and `"LIVE"` in
+/// 14 for a 10px face wanting 17. It is excluded because **every card on this
+/// screen shares that header**, so it is a different cause with a different
+/// blast radius, and this project's rule is one cause per round. It is carried
+/// forward by name rather than left for someone to rediscover.
+///
+/// ⚠ **The unit is the SWEEP**, not one frame: every state and every size. So
+/// this count and a census site's are not comparable quantities — R1875's
+/// lesson about naming the unit instead of reconciling two of them.
+///
+/// ⚠ Non-emptiness is asserted first, and the count says `N of M`.
+#[test]
+fn r1876_no_run_of_a_decode_card_sits_in_a_box_too_short_for_its_face() {
+    /// The card family this gate judges, as a run's path spells it.
+    const CARD: &str = "card.decode#";
+
+    /// Whether a path segment is a NAMED PART of a decode card, rather than the
+    /// card itself. `card.decode#1.tree.0` is; `card.decode#1` is not.
+    fn is_card_part(seg: &str) -> bool {
+        seg.strip_prefix(CARD)
+            .is_some_and(|rest| rest.contains('.'))
+    }
+
+    /// The card a named part belongs to: `card.decode#1.tree.0` -> `card.decode#1`.
+    ///
+    /// ⚠ R1876's counterfactual is what made this necessary. The first draft
+    /// counted the PART segments and said `across 14 named card part(s)` —
+    /// true, and it reads as *fourteen cards* when this screen paints ONE.
+    /// R1872 and R1873 each found the same class in their own counterfactual:
+    /// a count is only as good as the noun beside it. Both are reported now.
+    fn card_of(part: &str) -> String {
+        match part.find('.').and_then(|_| part.match_indices('.').nth(1)) {
+            Some((at, _)) => part[..at].to_owned(),
+            None => part.to_owned(),
+        }
+    }
+
+    let mut cut: Vec<String> = Vec::new();
+    let mut seen = 0usize;
+    let mut parts: BTreeSet<String> = BTreeSet::new();
+    let mut cards: BTreeSet<String> = BTreeSet::new();
+    sweep(|_, _, scene, case| {
+        scene.for_each_node(&mut |visit| {
+            if matches!(visit.node, Scene::Text(_))
+                && visit.path.iter().any(|seg| is_card_part(seg))
+            {
+                seen += 1;
+            }
+        });
+        for short in pinion_core::containment::short_boxes(scene) {
+            let Some(card) = short.path.iter().find(|seg| is_card_part(seg)) else {
+                continue;
+            };
+            cards.insert(card_of(card));
+            parts.insert(card.clone());
+            cut.push(format!(
+                "{case}: {} {:?} at {}px in a {}px box needs {} (short by {})",
+                short.address(),
+                short.content,
+                short.px,
+                short.rect.h,
+                short.needs,
+                short.short_by,
+            ));
+        }
+    });
+
+    assert!(
+        seen > 0,
+        "no run at all is painted inside a named part of a `{CARD}…` card — \
+         the family this gate names has moved, and a zero that describes \
+         nothing is not a zero",
+    );
+    assert!(
+        cut.is_empty(),
+        "{} of the {seen} run(s) this gate looked at sit in a box too short for \
+         their own face, across {} named part(s) of {} decode card(s); every \
+         one of them should come from `decode_band`, so this is that derivation \
+         being bypassed rather than a number to raise: {cut:#?}",
+        cut.len(),
+        parts.len(),
+        cards.len(),
+    );
 }
 
 /// ★★★★★ R1875 — **the capture viewer's decode tree has NO box too short for

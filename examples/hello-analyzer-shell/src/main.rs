@@ -252,6 +252,15 @@ const BYTES_FLOOR: u32 = 66;
 /// to nothing.
 const VALUE_W: u32 = 74;
 const KEY_FLOOR: u32 = 30;
+/// ★ R1876 — the height of one row of a decode card, tree side and byte side
+/// alike.
+///
+/// Lifted because it was `const ROW_H: u32 = 19;` declared **twice**, once
+/// inside `decode_body` and once inside `byte_pane` — two panes that are read
+/// side by side and have to line up, agreeing by coincidence. The two were
+/// equal, which is the only reason nobody noticed; a change to one would have
+/// staggered the bytes against the tree they annotate.
+const DECODE_ROW_H: u32 = 19;
 /// (R1668) A filter stat tile: its height, and the narrowest it can be and
 /// still hold a number. The three go or stay together.
 const STAT_H: u32 = 46;
@@ -7499,6 +7508,26 @@ fn grid_cell(
     )
 }
 
+/// ★★★★★ R1876 — one run's box in a decode card's body: a band tall enough for
+/// the card's face, centred in the row that holds it.
+///
+/// A sibling of [`grid_cell`] rather than a second spelling of it. `grid_cell`
+/// serves a run that carries a TAG and so returns a whole `Scene`; a decode
+/// card's key, value, offset and byte cells are untagged, and what they need is
+/// the RECTANGLE. Splitting at that seam is what lets both come from one
+/// derivation instead of one of them re-deriving it.
+///
+/// ⚠ The seat's height and the face are the point, and they are why this is a
+/// function and not four calls to
+/// [`line_rect_in`](pinion_core::containment::line_rect_in): all four sites
+/// were `Rect::new(x, 3, w, 13)` beside `FONT_TINY`, whose `line_box` is
+/// **17**, in a 19-pixel row — four pixels short, four times, each site naming
+/// the face and the height again. Here the row and the face are named ONCE.
+fn decode_band(x: u32, w: u32) -> Rect {
+    let seat = Rect::new(x, 0, w, DECODE_ROW_H);
+    pinion_core::containment::line_rect_in(seat, x, w, FONT_TINY)
+}
+
 /// The message stream: a header row of columns over the opening rows.
 fn stream_body(state: &ShellState, id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
     const HEAD_H: u32 = 20;
@@ -7603,7 +7632,7 @@ fn stream_body(state: &ShellState, id: &str, rect: Rect, palette: Palette) -> Ve
 
 /// The decode inspector: the layer tree beside the bytes it decoded.
 fn decode_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
-    const ROW_H: u32 = 19;
+    const ROW_H: u32 = DECODE_ROW_H;
     // The tree keeps at least half the card; the bytes pane takes what is left,
     // and is dropped entirely when that is less than one byte's worth. A fixed
     // pane on a card narrower than the pane paints outside the card, which the
@@ -7634,10 +7663,13 @@ fn decode_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
         let with_value = !value.is_empty() && room >= KEY_FLOOR + VALUE_W;
         let key_w = if with_value { room - VALUE_W } else { room };
         let mut cells = Vec::new();
+        // ★ R1876 — the key and its value are two runs of ONE row, and both
+        // were `y = 3` with a height of 13 for a face wanting 17. Derived from
+        // the row, they share its centre by construction.
         if key_w > 0 {
             cells.push(clipped(
                 key,
-                Rect::new(indent, 3, key_w, 13),
+                decode_band(indent, key_w),
                 FONT_TINY,
                 if heading { palette.ink } else { palette.muted },
                 TextOverflow::Ellipsis,
@@ -7646,7 +7678,7 @@ fn decode_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
         if with_value {
             cells.push(clipped(
                 value,
-                Rect::new(indent + key_w, 3, VALUE_W, 13),
+                decode_band(indent + key_w, VALUE_W),
                 FONT_TINY,
                 palette.ink,
                 TextOverflow::EllipsisStart,
@@ -7678,7 +7710,7 @@ fn decode_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
 /// The law screen B is built on (R1663): what is drawn lit is exactly what the
 /// map says the selection occupies, not a resemblance of it.
 fn byte_pane(id: &str, pane: Rect, card: Rect, palette: Palette) -> Vec<Scene> {
-    const ROW_H: u32 = 19;
+    const ROW_H: u32 = DECODE_ROW_H;
     let mut out = Vec::new();
     if pane.w < BYTES_FLOOR {
         return out;
@@ -7691,7 +7723,7 @@ fn byte_pane(id: &str, pane: Rect, card: Rect, palette: Palette) -> Vec<Scene> {
         }
         let mut cells = vec![label(
             &format!("{:04x}", line * 4),
-            Rect::new(6, 3, 30, 13),
+            decode_band(6, 30),
             FONT_TINY,
             palette.muted,
         )];
@@ -7707,7 +7739,7 @@ fn byte_pane(id: &str, pane: Rect, card: Rect, palette: Palette) -> Vec<Scene> {
             cells.push(Scene::Container(
                 ContainerNode::new(vec![label(
                     &format!("{byte:02x}"),
-                    Rect::new(2, 3, 18, 13),
+                    decode_band(2, 18),
                     FONT_TINY,
                     if lit { palette.on_accent } else { palette.ink },
                 )])
