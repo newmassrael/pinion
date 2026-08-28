@@ -30,7 +30,20 @@ use pinion_core::test_fixtures::screen_ink::{
 /// across this tree was measured at 289 of 290 runs on one screen: not a
 /// backlog of slips but a convention that never consulted the face. Lowering
 /// this is the repair, and `containment::line_rect` is how.
-const SHORT_BOX_BUDGET: usize = 79;
+///
+/// ★★★★★ R1877 — **79 -> 60**, and the 19 are the decode pane's, measured as a
+/// PANE rather than as the census site that named it. The census said
+/// `lv.detail.layers/*` was 13; the pane held **19 of its 20 runs** short,
+/// across five of its parts, because the site folds by address and the pane's
+/// other four parts each fold somewhere else.
+///
+/// ⇒ `crate::detail_band`, and — this is the part that could not be contained
+/// in the runs — the specification's part HEIGHTS. `DetailPart` declared a
+/// hand-written `height` under a doc saying *"the part is measured from what it
+/// holds"*, and four of six did not: it declares its FACE now and the height is
+/// derived. `LIST_LABEL_H` was 16 for a 10px face wanting 17, so both list
+/// labels on this screen were a pixel short of the words they head.
+const SHORT_BOX_BUDGET: usize = 60;
 use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::{Frame, Scene};
 

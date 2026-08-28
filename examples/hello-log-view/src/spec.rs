@@ -125,16 +125,53 @@ pub const HEADER: &[HeaderPart] = &[
 
 // ── The decode pane ─────────────────────────────────────────────────────────
 
+/// The faces this screen sets its text in.
+///
+/// ★★★★★ R1877 — **here rather than in the painter, because the parts' heights
+/// are now DERIVED from them** and a face spelled in two files is a face that
+/// can disagree with the geometry built on it. R1834 moved a face into the
+/// specification for the same reason one screen over.
+pub const FONT_TINY: u32 = 10;
+/// The face a list's own label is set in.
+pub const FONT_SMALL: u32 = 11;
+/// The face a record's message is set in.
+pub const FONT_BODY: u32 = 12;
+/// The face the pane's title is set in.
+pub const FONT_TITLE: u32 = 14;
+
+/// The clearance a fixed part keeps above and below the single run it holds.
+pub const DETAIL_PART_PAD: u32 = 1;
+
 /// One part of the decode pane, top to bottom.
 pub struct DetailPart {
     /// The suffix of its paint tag, and the key the specification compares.
     pub key: &'static str,
     /// What a reader calls it.
     pub title: &'static str,
-    /// How tall the part is, for the parts whose height is fixed. `0` means the
-    /// part is measured from what it holds — the decoded fields and the bytes
-    /// are lists, and a list's height is its content's.
-    pub height: u32,
+    /// The face the part's own run is set in, or `0` when the part is a LIST
+    /// whose height comes from its content — the decoded fields and the bytes.
+    ///
+    /// ★★★★★ R1877 — this replaces a hand-written `height`, and the swap is the
+    /// round. The field it replaces was documented *"the part is measured from
+    /// what it holds"*, and **four of the six did not do that**: `subject` was
+    /// 20 for a 14px face whose line box is 23, and `meta` was 16 for an 11px
+    /// face wanting 18 — both too short to hold the word they exist to show.
+    /// A part now declares WHAT IT HOLDS and [`DetailPart::height`] derives the
+    /// rest, so the sentence and the number cannot part company again.
+    pub face: u32,
+}
+
+impl DetailPart {
+    /// How tall this part is: the line box of the face it holds, plus its
+    /// clearance — or `0` for a list, whose height is its content's.
+    #[must_use]
+    pub const fn height(&self) -> u32 {
+        if self.face == 0 {
+            0
+        } else {
+            pinion_core::containment::line_box(self.face) + DETAIL_PART_PAD * 2
+        }
+    }
 }
 
 /// The six parts of the decode pane.
@@ -142,39 +179,51 @@ pub const DETAIL: &[DetailPart] = &[
     DetailPart {
         key: "subject",
         title: "Decode Inspector",
-        height: 20,
+        face: FONT_TITLE,
     },
     DetailPart {
         key: "kind",
         title: "Type",
-        height: 20,
+        face: FONT_SMALL,
     },
     DetailPart {
         key: "message",
         title: "Message",
-        height: 22,
+        face: FONT_BODY,
     },
     DetailPart {
         key: "meta",
         title: "When and where",
-        height: 16,
+        face: FONT_SMALL,
     },
     DetailPart {
         key: "layers",
         title: "Decoded layers",
-        height: 0,
+        face: 0,
     },
     DetailPart {
         key: "bytes",
         title: "Wire bytes",
-        height: 0,
+        face: 0,
     },
 ];
 
 /// One decoded field row's height inside the `layers` part.
-pub const FIELD_H: u32 = 22;
+///
+/// ★ R1877 — derived. It was `22`, which happens to be what an 11px face wants
+/// plus four; now it says so, and a face change moves it.
+pub const FIELD_H: u32 = pinion_core::containment::line_box(FONT_SMALL) + 4;
 /// The label above a list part.
-pub const LIST_LABEL_H: u32 = 16;
+///
+/// ★★ R1877 — derived, and it was **too short**: `16` for a 10px face whose
+/// line box is 17, so both list labels this screen paints were one pixel
+/// shorter than the words they hold.
+pub const LIST_LABEL_H: u32 = pinion_core::containment::line_box(FONT_TINY);
+/// One line of the byte dump.
+///
+/// ★ R1877 — derived from the face it shows, where the painter spelled `18`
+/// twice: once as the row pitch and once as the run's own box.
+pub const BYTE_LINE_H: u32 = pinion_core::containment::line_box(FONT_SMALL);
 
 // ── Severity ────────────────────────────────────────────────────────────────
 

@@ -7299,6 +7299,100 @@ fn r1874_no_run_in_the_node_palettes_body_sits_in_a_box_too_short_for_its_face()
     });
 }
 
+/// ★★★★★ R1877 — **no run of the log view's detail pane sits in a box too
+/// short for its face.**
+///
+/// The fifth destination of the short-box campaign, on the site the census
+/// DERIVED: `lv.detail.layers/*` was the largest single site in the whole
+/// application once R1876 had repaid the decode card.
+///
+/// ⚠ **This destination is shaped differently from the four before it**, and
+/// the gate is written first to find out how. `logs` reports 88 short runs at
+/// **70** sites — nearly one apiece — where `packets` reported 171 at 56 and
+/// the dashboard 144 at 57. A near-1:1 ratio is what a screen looks like when
+/// its short boxes are NOT one convention multiplied by a loop, so the pane's
+/// count is the measurement that says whether this round has a family to repay
+/// or a scatter to work through one site at a time.
+///
+/// ⚠ Family is the pane, by path segment equality — `lv.detail` carries no
+/// index, so R1876's prefix-with-a-part-name shape is not needed here.
+///
+/// # 🟥 The non-emptiness assertion earned its keep on the FIRST run
+///
+/// The draft used [`sweep`], as R1876's gate does. `sweep` walks the shell's
+/// DASHBOARD states; the log view is a different destination and is not in it,
+/// so the gate saw **no runs at all** — and without the floor it would have
+/// reported ZERO and passed while looking at nothing.
+///
+/// ⇒ this gate opens its destination the way R1874's and R1875's do, and the
+/// unit is therefore ONE FRAME rather than the sweep. R1857's rule — *a
+/// check's population is a claim* — is what turned a silent pass into a
+/// failure that named its own cause.
+///
+/// ⚠ The count says `N of M`, and also how many named PARTS of the pane are
+/// involved: this destination reports 88 short runs at 70 sites, so whether
+/// there is a family to repay at all is the question the number has to answer.
+#[test]
+fn r1877_no_run_of_the_log_details_pane_sits_in_a_box_too_short_for_its_face() {
+    /// The pane whose content this gate judges, as a run's path spells it.
+    const PANE: &str = "lv.detail";
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        state
+            .go("logs")
+            .unwrap_or_else(|why| panic!("the log section is open and refused: {why:?}"));
+        let (_, scene) = painted_at((WIN_W, WIN_H));
+
+        let mut seen = 0usize;
+        scene.for_each_node(&mut |visit| {
+            if matches!(visit.node, Scene::Text(_)) && visit.path.iter().any(|seg| seg == PANE) {
+                seen += 1;
+            }
+        });
+        assert!(
+            seen > 0,
+            "no run at all is painted inside `{PANE}` — the pane this gate \
+             names has moved, and a zero that describes nothing is not a zero",
+        );
+
+        let mut families: BTreeSet<String> = BTreeSet::new();
+        let cut: Vec<String> = pinion_core::containment::short_boxes(&scene)
+            .into_iter()
+            .filter(|row| row.path.iter().any(|seg| seg == PANE))
+            .map(|row| {
+                // The named part of the pane this run sits in, so the failure
+                // says how many FAMILIES are involved and not only how many
+                // runs — the question this destination's 1:1 ratio makes the
+                // interesting one.
+                if let Some(part) = row.path.iter().find(|seg| seg.starts_with("lv.detail.")) {
+                    families.insert(part.clone());
+                }
+                format!(
+                    "{} {:?} at {}px in a {}px box needs {} (short by {})",
+                    row.address(),
+                    row.content,
+                    row.px,
+                    row.rect.h,
+                    row.needs,
+                    row.short_by,
+                )
+            })
+            .collect();
+        assert!(
+            cut.is_empty(),
+            "{} of the {seen} run(s) this gate looked at sit in a box too short \
+             for their own face, across {} named part(s) of the pane; every one \
+             of them should come from a derivation that reads the face, so this \
+             is that derivation being bypassed rather than a number to raise: \
+             {cut:#?}",
+            cut.len(),
+            families.len(),
+        );
+    });
+}
+
 /// ★★★★★ R1876 — **no run of a decode card sits in a box too short for its
 /// face**, over every state and size the sweep covers.
 ///

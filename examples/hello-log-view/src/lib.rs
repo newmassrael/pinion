@@ -115,9 +115,25 @@ const DETAIL_TAG: &str = "lv.detail";
 /// The section header.
 const HEADER_TAG: &str = "lv.header";
 
-const FONT_SMALL: u32 = 11;
-const FONT_BODY: u32 = 12;
-const FONT_TITLE: u32 = 14;
+// ★ R1877 — from the specification rather than spelled a second time here: the
+// decode pane's part heights are DERIVED from these faces, so a copy in the
+// painter is a copy that can disagree with the geometry built on it.
+const FONT_TINY: u32 = spec::FONT_TINY;
+const FONT_SMALL: u32 = spec::FONT_SMALL;
+const FONT_BODY: u32 = spec::FONT_BODY;
+const FONT_TITLE: u32 = spec::FONT_TITLE;
+
+/// One run's box inside a decode part: a band tall enough for the face,
+/// centred in the seat that holds it.
+///
+/// ★★★★★ R1877 — the pane's runs were `whole`, `Rect::new(9, 4, w - 18, 13)`,
+/// `Rect::new(0, 0, at.w, 12)`, `Rect::new(0, y + 4, 88, 13)` and
+/// `Rect::new(0, y, at.w, 15)` — five spellings of one question, none of which
+/// asked the face. Measured at this round's entry, **19 of the pane's 20 runs**
+/// were in a box too short for the face they are set in.
+fn detail_band(seat: Rect, x: u32, w: u32, px: u32) -> Rect {
+    pinion_core::containment::line_rect_in(seat, x, w, px)
+}
 
 // ── Geometry ────────────────────────────────────────────────────────────────
 
@@ -293,13 +309,35 @@ fn byte_layout(bytes: &[u8]) -> HexLayout {
 /// are lists, and a list's height is its content's. Passing the record in is
 /// what makes that possible, and it is why this takes an argument where the
 /// sibling section's peer does not.
+/// The height the specification gives one fixed decode part, by key.
+///
+/// ★ R1877 — by KEY rather than by index, because the two parts placed outside
+/// the loop are exactly the two an index would silently mismatch.
+fn part_height(key: &str) -> u32 {
+    spec::DETAIL
+        .iter()
+        .find(|part| part.key == key)
+        .map_or(0, spec::DetailPart::height)
+}
+
 fn detail_parts(record: &'static spec::RowSpec) -> Vec<(&'static str, Rect)> {
     let inner = DETAIL_W.saturating_sub(2 * PAD);
     let mut out = Vec::with_capacity(spec::DETAIL.len());
-    out.push(("subject", Rect::new(PAD, 14, 150, 20)));
+    // ★★★★★ R1877 — the first two parts sit on the header line rather than in
+    // the column below it, so they are placed here; their HEIGHT is still the
+    // specification's. Both were the literal `20`, and deriving the table's
+    // heights is what exposed them: a 14px title wants a 23px line box, the
+    // containment gate reported the words 3px past their own box, and nothing
+    // had related the number here to the face over there.
+    out.push(("subject", Rect::new(PAD, 14, 150, part_height("subject"))));
     out.push((
         "kind",
-        Rect::new(DETAIL_W.saturating_sub(PAD + 96), 14, 96, 20),
+        Rect::new(
+            DETAIL_W.saturating_sub(PAD + 96),
+            14,
+            96,
+            part_height("kind"),
+        ),
     ));
     let mut y = HEADER_H + 18;
     for part in &spec::DETAIL[2..] {
@@ -311,10 +349,10 @@ fn detail_parts(record: &'static spec::RowSpec) -> Vec<(&'static str, Rect)> {
                 spec::LIST_LABEL_H
                     + 18 * u32::try_from(byte_layout(record.bytes).rows().max(1)).unwrap_or(1)
             }
-            _ => part.height,
+            _ => part.height(),
         };
         out.push((part.key, Rect::new(PAD, y, inner, height)));
-        y += height + if part.height == 0 { 18 } else { 9 };
+        y += height + if part.height() == 0 { 18 } else { 9 };
     }
     out
 }
@@ -1051,7 +1089,12 @@ fn detail_part_paint(key: &str, at: Rect, record: &'static spec::RowSpec, ink: I
             .map_or("", |p| p.title)
     };
     match key {
-        "subject" => vec![label(title_of("subject"), whole, FONT_TITLE, ink.text)],
+        "subject" => vec![label(
+            title_of("subject"),
+            detail_band(whole, 0, whole.w, FONT_TITLE),
+            FONT_TITLE,
+            ink.text,
+        )],
         "kind" => vec![
             box_at(
                 "lv.detail.kind.pill",
@@ -1063,12 +1106,17 @@ fn detail_part_paint(key: &str, at: Rect, record: &'static spec::RowSpec, ink: I
             .silenced(Silence::decorative("the tone behind the type tag")),
             label(
                 record.kind,
-                Rect::new(9, 4, whole.w.saturating_sub(18), 13),
+                detail_band(whole, 9, whole.w.saturating_sub(18), FONT_SMALL),
                 FONT_SMALL,
                 kind_ink(record.kind),
             ),
         ],
-        "message" => vec![label(record.message, whole, FONT_BODY, ink.text)],
+        "message" => vec![label(
+            record.message,
+            detail_band(whole, 0, whole.w, FONT_BODY),
+            FONT_BODY,
+            ink.text,
+        )],
         "meta" => vec![label(
             format!(
                 "{} · {} · src {}",
@@ -1076,7 +1124,7 @@ fn detail_part_paint(key: &str, at: Rect, record: &'static spec::RowSpec, ink: I
                 record.severity.label(),
                 record.source
             ),
-            whole,
+            detail_band(whole, 0, whole.w, FONT_SMALL),
             FONT_SMALL,
             severity_ink(record.severity, ink),
         )],
@@ -1087,23 +1135,35 @@ fn detail_part_paint(key: &str, at: Rect, record: &'static spec::RowSpec, ink: I
 }
 
 fn decoded_fields(at: Rect, record: &'static spec::RowSpec, ink: Ink) -> Vec<Scene> {
+    // ★ R1877 — the list's own label sits in the strip the specification
+    // reserves for it, and that strip is now `line_box(FONT_TINY)` rather than
+    // a 16 that was one pixel short of the words it holds.
+    let heading = Rect::new(0, 0, at.w, spec::LIST_LABEL_H);
     let mut out = vec![label(
         "DECODED LAYERS",
-        Rect::new(0, 0, at.w, 12),
-        10,
+        detail_band(heading, 0, at.w, FONT_TINY),
+        FONT_TINY,
         ink.text_3,
     )];
     for (n, (name, value)) in record.fields.iter().enumerate() {
-        let y = spec::LIST_LABEL_H + u32::try_from(n).unwrap_or(0) * spec::FIELD_H;
+        // ★ R1877 — the name and its value are two runs of ONE row, and both
+        // were `y + 4` with a height of 13 for a face wanting 18. Bands of the
+        // row, they share its centre by construction.
+        let row = Rect::new(
+            0,
+            spec::LIST_LABEL_H + u32::try_from(n).unwrap_or(0) * spec::FIELD_H,
+            at.w,
+            spec::FIELD_H,
+        );
         out.push(label(
             *name,
-            Rect::new(0, y + 4, 88, 13),
+            detail_band(row, 0, 88, FONT_SMALL),
             FONT_SMALL,
             ink.text_3,
         ));
         out.push(label(
             *value,
-            Rect::new(96, y + 4, at.w.saturating_sub(96), 13),
+            detail_band(row, 96, at.w.saturating_sub(96), FONT_SMALL),
             FONT_SMALL,
             ink.text,
         ));
@@ -1119,16 +1179,20 @@ fn decoded_fields(at: Rect, record: &'static spec::RowSpec, ink: Ink) -> Vec<Sce
 /// reference draws that case rather than hiding it, and a blank block would be
 /// indistinguishable from a decode that failed.
 fn wire_bytes(at: Rect, record: &'static spec::RowSpec, ink: Ink) -> Vec<Scene> {
+    let heading = Rect::new(0, 0, at.w, spec::LIST_LABEL_H);
     let mut out = vec![label(
         "WIRE BYTES",
-        Rect::new(0, 0, at.w, 12),
-        10,
+        detail_band(heading, 0, at.w, FONT_TINY),
+        FONT_TINY,
         ink.text_3,
     )];
     if record.bytes.is_empty() {
+        // The refusal line takes one byte-line's seat, so a frame that is
+        // missing occupies exactly what a frame that is present would.
+        let seat = Rect::new(0, spec::LIST_LABEL_H, at.w, spec::BYTE_LINE_H);
         out.push(label(
             spec::NO_FRAME,
-            Rect::new(0, spec::LIST_LABEL_H + 2, at.w, 14),
+            detail_band(seat, 0, at.w, FONT_SMALL),
             FONT_SMALL,
             ink.warn,
         ));
@@ -1143,10 +1207,18 @@ fn wire_bytes(at: Rect, record: &'static spec::RowSpec, ink: Ink) -> Vec<Scene> 
                 pinion_core::widgets::hex_dump::Cell::new(col, row),
             ));
         }
-        let y = spec::LIST_LABEL_H + u32::try_from(row).unwrap_or(0) * 18;
+        // ★ R1877 — the pitch and the run's own box were `18` and `15`, two
+        // numbers for one face. Both are `BYTE_LINE_H` now, so a line's seat
+        // and the band inside it cannot disagree.
+        let seat = Rect::new(
+            0,
+            spec::LIST_LABEL_H + u32::try_from(row).unwrap_or(0) * spec::BYTE_LINE_H,
+            at.w,
+            spec::BYTE_LINE_H,
+        );
         out.push(label(
             line.trim_end().to_owned(),
-            Rect::new(0, y, at.w, 15),
+            detail_band(seat, 0, at.w, FONT_SMALL),
             FONT_SMALL,
             ink.text_2,
         ));
