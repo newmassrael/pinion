@@ -7157,9 +7157,10 @@ fn short_box_report_of(
 /// population is hundreds of runs authored over many rounds, and a gate
 /// demanding zero on a tree that cannot give it is a gate somebody turns off.
 /// But a ratchet is the shape of a BACKLOG, not the shape of a surface somebody
-/// just built. What this round built is `cell_band` — a run's box in the message
-/// list is a band tall enough for the face, centred in the seat that holds it —
-/// and every run in that table now comes from it, so for this family the honest
+/// just built. What this round built is `run_band` (R1872 named it `cell_band`;
+/// R1875 widened the name when the decode tree became its second pane) — a
+/// run's box is a band tall enough for the face, centred in the seat that holds
+/// it — and every run in that table now comes from it, so for this family the honest
 /// number is **zero**, permanently, by construction.
 ///
 /// Asserted from the SHELL rather than from the screen's own file, because the
@@ -7205,7 +7206,7 @@ fn r1872_no_run_in_the_message_list_sits_in_a_box_too_short_for_its_face() {
             cut.is_empty(),
             "{} run(s) of the message list ({families} sub-famil(ies) under \
              `{FAMILY}`) sit in a box too short for their own face; every one \
-             of them is authored by `cell_band`, so this is that derivation \
+             of them is authored by `run_band`, so this is that derivation \
              being bypassed rather than a number to raise: {cut:#?}",
             cut.len(),
         );
@@ -7241,6 +7242,74 @@ fn r1874_no_run_in_the_node_palettes_body_sits_in_a_box_too_short_for_its_face()
         state
             .go("lab")
             .unwrap_or_else(|why| panic!("the lab section is open and refused: {why:?}"));
+        let (_, scene) = painted_at((WIN_W, WIN_H));
+
+        let mut seen = 0usize;
+        scene.for_each_node(&mut |visit| {
+            if matches!(visit.node, Scene::Text(_)) && visit.path.iter().any(|seg| seg == PANE) {
+                seen += 1;
+            }
+        });
+        assert!(
+            seen > 0,
+            "no run at all is painted inside `{PANE}` — the pane this gate \
+             names has moved, and a zero that describes nothing is not a zero",
+        );
+
+        let cut: Vec<_> = pinion_core::containment::short_boxes(&scene)
+            .into_iter()
+            .filter(|row| row.path.iter().any(|seg| seg == PANE))
+            .map(|row| {
+                format!(
+                    "{} {:?} at {}px in a {}px box needs {} (short by {})",
+                    row.address(),
+                    row.content,
+                    row.px,
+                    row.rect.h,
+                    row.needs,
+                    row.short_by,
+                )
+            })
+            .collect();
+        assert!(
+            cut.is_empty(),
+            "{} of the {seen} run(s) inside `{PANE}` sit in a box too short for \
+             their own face; every one of them should come from a derivation \
+             that reads the face, so this is that derivation being bypassed \
+             rather than a number to raise: {cut:#?}",
+            cut.len(),
+        );
+    });
+}
+
+/// ★★★★★ R1875 — **the capture viewer's decode tree has NO box too short for
+/// its face**, and the gate is zero rather than a share of that screen's
+/// ratchet.
+///
+/// The third destination of the short-box campaign, on the site the census
+/// DERIVED: `pv.tree.body/*` was the largest single site in the whole
+/// application once R1874 had repaid the node palette.
+///
+/// ⚠ **The family is a PATH, not a tag** — R1874's rule, and the reason it is
+/// worth restating: a census SITE is not a PANE. The census folds by address,
+/// so a pane's short runs scatter across as many sites as there are tag
+/// families inside it, and the site's number is a floor on the pane's. Written
+/// against a tag prefix this would match nothing and pass by describing
+/// nothing.
+///
+/// ⚠ The count says `N of M`: R1873's lesson, that a count with no denominator
+/// is the shape a wrong claim hides in.
+#[test]
+fn r1875_no_run_in_the_decode_tree_sits_in_a_box_too_short_for_its_face() {
+    /// The pane whose content this gate judges, as it appears in a run's path.
+    const PANE: &str = "pv.tree.body";
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        state
+            .go("packets")
+            .unwrap_or_else(|why| panic!("the capture section is open and refused: {why:?}"));
         let (_, scene) = painted_at((WIN_W, WIN_H));
 
         let mut seen = 0usize;

@@ -1245,9 +1245,18 @@ fn tree_row(n: usize) -> Rect {
 /// Only a layer row draws one. The rectangle is returned for any `n` because it
 /// is pure arithmetic; who draws it is [`tree_row_paint`]'s question and who
 /// answers for it is [`Hit::at`]'s, and both ask [`spec::LAYERS`].
+///
+/// ★★★★★ R1875 — a band of the row, like every other run in it. It was
+/// `y + 5, h = 12` for a face wanting 18, so the glyph it paints was in a box
+/// that could not hold it.
+///
+/// ⚠ The hit target grows with the box, and that is CORRECT rather than a side
+/// effect: R1815 made this one rectangle precisely so the thing a reader sees
+/// and the thing a press resolves to cannot differ. A chevron whose box is the
+/// size of its glyph is also a chevron whose press target is, and both were
+/// six pixels short of the face.
 fn tree_chevron(n: usize) -> Rect {
-    let row = tree_row(n);
-    Rect::new(PAD - 6, row.y + 5, 10, 12)
+    run_band(tree_row(n), PAD - 6, 10)
 }
 
 /// The byte grid's column arithmetic — the crate's, so the painter and the hit
@@ -2479,7 +2488,7 @@ fn list_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
         children.push(tagged_label(
             &format!("pv.list.head.{n}"),
             column.title,
-            cell_band(list_head_seat(), col.x, col.w.saturating_sub(8)),
+            run_band(list_head_seat(), col.x, col.w.saturating_sub(8)),
             FONT_SMALL,
             ink.text_3,
         ));
@@ -2543,7 +2552,7 @@ fn list_row_paint(n: usize, visual: usize, selected: usize, ink: Ink) -> Vec<Sce
         ));
         let cell = |i: usize| {
             let c = list_col(i);
-            cell_band(row, c.x, c.w.saturating_sub(8))
+            run_band(row, c.x, c.w.saturating_sub(8))
         };
         // ★★★★★ R1693 — every cell carries its own tag, which is what makes the
         // list a grid a reader can traverse rather than sixteen paragraphs. The
@@ -2612,7 +2621,7 @@ fn name_column_paint(n: usize, name_col: Rect, row: Rect, name: &str, ink: Ink) 
                 // `y: u32` and could only add a hand-picked offset to it; a band
                 // needs the seat's height as well, which is why the parameter
                 // changed rather than the arithmetic.
-                cell_band(row, right, width),
+                run_band(row, right, width),
                 FONT_SMALL,
                 fg,
             )
@@ -2669,7 +2678,7 @@ fn name_column_paint(n: usize, name_col: Rect, row: Rect, name: &str, ink: Ink) 
         n,
         NAME_COLUMN,
         name.to_owned(),
-        cell_band(row, name_col.x, right.saturating_sub(name_col.x + 8)),
+        run_band(row, name_col.x, right.saturating_sub(name_col.x + 8)),
         ink.text,
     ));
     runs
@@ -2714,8 +2723,14 @@ fn correlation_json() -> serde_json::Value {
     )
 }
 
-/// One run's box in the message list: a band tall enough for the list's face,
+/// One run's box on this screen: a band tall enough for the screen's face,
 /// centred in the seat that holds it.
+///
+/// ★★★★★ R1875 — **renamed from `cell_band` because it has a second pane
+/// now.** The decode tree carried the identical mistake at five more sites, and
+/// the whole repair there was to call this. A helper named for the first place
+/// it was needed is a helper the next reader does not recognise as theirs —
+/// which is how one convention comes to be written out twice.
 ///
 /// ★★★★★ R1872 — **derived, never hand-picked, and that is the repair rather
 /// than a bigger number.** Every box in this table was authored
@@ -2735,8 +2750,10 @@ fn correlation_json() -> serde_json::Value {
 /// ⚠ The centre is preserved exactly: `seat.y + 5` with height 12 centres at
 /// `seat.y + 11`, and `ROW_H` is 22, so this is the same centre with the right
 /// height. The header's old `y = 6, h = 12` centres at 12 in a 24-pixel head,
-/// likewise.
-fn cell_band(seat: Rect, x: u32, w: u32) -> Rect {
+/// likewise. The decode tree R1875 moved onto this had `y + 5` and `12` too,
+/// in the same `ROW_H`, so the same sentence covers it — which is the evidence
+/// that it was one convention rather than two.
+fn run_band(seat: Rect, x: u32, w: u32) -> Rect {
     pinion_core::containment::line_rect_in(seat, x, w, FONT_SMALL)
 }
 
@@ -2744,6 +2761,16 @@ fn cell_band(seat: Rect, x: u32, w: u32) -> Rect {
 /// pane's own coordinates.
 fn list_head_seat() -> Rect {
     Rect::new(0, 0, list_rect().w, HEAD_H)
+}
+
+/// The seat the decode tree's title sits in — its head strip, in the tree
+/// pane's own coordinates.
+///
+/// ★ R1875 — named beside its sibling rather than spelled inline, because the
+/// two panes' head strips are the same fact and the pair is what makes
+/// `HEAD_H` a shared constant rather than a coincidence.
+fn tree_head_seat() -> Rect {
+    Rect::new(0, 0, tree_rect().w, HEAD_H)
 }
 
 /// The tag one message cell is addressed by: the row and the column it is in.
@@ -2811,10 +2838,16 @@ fn tree_row_paint(
             .silenced(Silence::part_of(format!("pv.tree.field.{path}"))),
         );
     }
+    // ★★★★★ R1875 — the field's name, the badge beside it and the value are
+    // three runs of ONE row, and before this each was authored `y + 5` with a
+    // height of 12 for a face wanting 18. Three heights and three offsets that
+    // nothing related to the face or to each other; now all three are bands of
+    // the row, so they share its centre by construction and a face change moves
+    // every one of them.
     children.push(tagged_label(
         &format!("pv.tree.field.{path}"),
         name.clone(),
-        Rect::new(indent + 6, row.y + 5, 128, 12),
+        run_band(row, indent + 6, 128),
         FONT_SMALL,
         if layer.is_some() {
             ink.text
@@ -2835,7 +2868,7 @@ fn tree_row_paint(
             tagged_label(
                 &format!("pv.tree.derived.{path}"),
                 "derived",
-                Rect::new(right, row.y + 5, width, 12),
+                run_band(row, right, width),
                 FONT_SMALL,
                 ink.text_3,
             )
@@ -2847,11 +2880,10 @@ fn tree_row_paint(
     }
     children.push(label(
         value.clone(),
-        Rect::new(
+        run_band(
+            row,
             indent + TREE_VALUE_X,
-            row.y + 5,
             right.saturating_sub(indent + TREE_VALUE_X + TREE_VALUE_TAIL),
-            12,
         ),
         FONT_SMALL,
         ink.text,
@@ -2866,7 +2898,10 @@ fn tree_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
         tagged_label(
             "pv.tree.title",
             format!("{}  ·  L0 -> L3", spec::PANES[1].title),
-            Rect::new(PAD, 6, 200, 12),
+            // ★ R1875 — the head strip is the seat, the same way the message
+            // list's headings take `list_head_seat`. `y = 6, h = 12` centred at
+            // 12 in a 24px head; so does this, with the height the face needs.
+            run_band(tree_head_seat(), PAD, 200),
             FONT_SMALL,
             ink.text_3,
         )

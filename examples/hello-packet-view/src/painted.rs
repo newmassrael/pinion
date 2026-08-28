@@ -153,7 +153,9 @@ const SIZES: &[(&str, (u32, u32))] = &[
 /// paragraphs up being executed rather than a new decision**: *the repair is one
 /// decision applied to all of them at once, which is why these two are left
 /// uniform with their siblings rather than fixed alone.* The one decision is
-/// [`crate::cell_band`] — a run's box in the message list is a band tall enough
+/// [`crate::run_band`] (R1872 called it `cell_band`; R1875 widened the name
+/// when the decode tree became its second pane) — a run's box is a band tall
+/// enough
 /// for the face, centred in the seat that holds it — and it reaches the seven
 /// column headings, the 112 cells and the nine row annotations together.
 ///
@@ -164,7 +166,24 @@ const SIZES: &[(&str, (u32, u32))] = &[
 /// only re-seated — so this is the improvement direction of the very ambiguity
 /// the paragraph above warns the pin cannot tell apart, and it is argued here
 /// for that reason.
-const SHORT_BOX_BUDGET: usize = 162;
+///
+/// ★★★★★ R1875 — **162 -> 114**, and the same one decision reached the pane
+/// beside the list. The decode tree's title, its fold chevrons, its field
+/// names, its `derived` badges and its values were all `y + 5` with a height
+/// of 12 in the same `ROW_H`, for the same `FONT_SMALL` wanting 18 — so the
+/// sentence R1872 wrote about the message list was already true of the tree,
+/// and nobody had gone and looked.
+///
+/// ⇒ `cell_band` is **`run_band`** now. A helper named for the first place it
+/// was needed is a helper the next reader does not recognise as theirs, which
+/// is how one convention comes to be written out twice.
+///
+/// ⚠ The census site for that pane said **21** and the pane holds **49**: the
+/// census folds by ADDRESS, so a pane's short runs scatter across as many
+/// sites as it has tag families and the site's count is a floor on the pane's.
+/// The gate that found the other 28 asks about the PANE, in the integrated
+/// shell, and asks for zero.
+const SHORT_BOX_BUDGET: usize = 114;
 
 /// Where every tag in the painted scene ended up, and every text run with it.
 struct Painted {
