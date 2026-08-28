@@ -8013,6 +8013,20 @@ const CANON_SURFACE_CENSUS: &str = include_str!("../../../docs/canon-surface-cen
 /// How this application performs one canon gesture, or `false` if it cannot.
 type CanonDrive = fn(&std::rc::Rc<ShellState>) -> bool;
 
+/// Bring the application to where the gesture can be made at all.
+///
+/// ★★★★★ R1886.2 — **separate from the driver, and the round's own closing
+/// audit is what separated them.** Two of these gestures live on sections the
+/// tool does not open in — a value roster on the preferences page, a wheel over
+/// the graph canvas — so their drivers began by navigating. The witness is read
+/// between the two halves; with the navigation inside the driver it was read at
+/// one destination and compared against another, and *the destination changed*
+/// is a difference every such gesture produces whether or not it does anything.
+///
+/// It is the same argument [`reach_precondition`] makes for the operation
+/// table, met again on a different table: getting THERE is not the act.
+type CanonReach = fn(&std::rc::Rc<ShellState>);
+
 /// ★★★★★ R1886 — one canon gesture kind, and the way the ASSEMBLED tool
 /// performs it.
 ///
@@ -8026,98 +8040,124 @@ type CanonDrive = fn(&std::rc::Rc<ShellState>) -> bool;
 /// the painted surface, the router, or the widget hook a mouse reaches — never
 /// by assignment. A driver that wrote the state directly would prove the state
 /// is writable, which nobody doubted.
-const CANON_GESTURES: &[(&str, CanonDrive)] = &[
+const CANON_GESTURES: &[(&str, CanonReach, CanonDrive)] = &[
     // A press on an element causes that element's operation.
-    ("gesture.press", |state| {
-        let shot = painted();
-        press_tag(state, &shot, "card.packet#0.tear_off");
-        true
-    }),
+    (
+        "gesture.press",
+        |_| {},
+        |state| {
+            let shot = painted();
+            press_tag(state, &shot, "card.packet#0.tear_off");
+            true
+        },
+    ),
     // A press, a move and a release move the thing under the cursor. The canon
     // spells this with three event families; here it is one gesture.
-    ("gesture.drag", |state| {
-        let shot = painted();
-        drag_tag(state, &shot, "card.packet#0.grip", (CELL_STEP, 0));
-        true
-    }),
+    (
+        "gesture.drag",
+        |_| {},
+        |state| {
+            let shot = painted();
+            drag_tag(state, &shot, "card.packet#0.grip", (CELL_STEP, 0));
+            true
+        },
+    ),
     // Picked up on one surface, let go on another — through the ROUTER, which
     // is what performs a release, so this is the path real input takes.
-    ("gesture.carry", |state| {
-        let kind = first_placeable();
-        let shot = painted();
-        let row = aim(&shot, &format!("shell.palette.{kind}"));
-        let mut drag = RouterDrag::over(state, painted_at((WIN_W, WIN_H)).1);
-        drag.cursor(row);
-        drag.press();
-        drag.cursor(board_middle());
-        drag.release();
-        true
-    }),
+    (
+        "gesture.carry",
+        |_| {},
+        |state| {
+            let kind = first_placeable();
+            let shot = painted();
+            let row = aim(&shot, &format!("shell.palette.{kind}"));
+            let mut drag = RouterDrag::over(state, painted_at((WIN_W, WIN_H)).1);
+            drag.cursor(row);
+            drag.press();
+            drag.cursor(board_middle());
+            drag.release();
+            true
+        },
+    ),
     // Typing into a field changes what the field holds as each character
     // arrives — the application bar's search, opened the way a person opens it.
-    ("gesture.type", |state| {
-        ShellOracle::key(state, "/") && ShellOracle::key(state, "z")
-    }),
+    (
+        "gesture.type",
+        |_| {},
+        |state| ShellOracle::key(state, "/") && ShellOracle::key(state, "z"),
+    ),
     // Opening a roster on a value control and pressing an option writes it.
-    ("gesture.choose", |state| {
-        let row = spec::VALUE_ROWS[0].key;
-        let shot = painted_at_destination("settings");
-        press_tag(state, &shot, &format!("shell.settings.choose.{row}"));
-        let shot = painted();
-        let stem = format!("shell.settings.option.{row}.");
-        let Some(option) = shot.family(&stem).first().map(|tag| (*tag).to_owned()) else {
-            return false;
-        };
-        press_tag(state, &shot, &option);
-        true
-    }),
+    (
+        "gesture.choose",
+        |_| {
+            painted_at_destination("settings");
+        },
+        |state| {
+            let row = spec::VALUE_ROWS[0].key;
+            let shot = painted();
+            press_tag(state, &shot, &format!("shell.settings.choose.{row}"));
+            let shot = painted();
+            let stem = format!("shell.settings.option.{row}.");
+            let Some(option) = shot.family(&stem).first().map(|tag| (*tag).to_owned()) else {
+                return false;
+            };
+            press_tag(state, &shot, &option);
+            true
+        },
+    ),
     // A wheel over the graph canvas zooms it. The canvas is a MOUNTED section,
     // so the honest question is whether the tool a reader runs can be walked to
     // it and turned — not whether the guest answers a wheel in its own binary.
-    ("gesture.wheel", |state| {
-        let shot = painted_at_destination("lab");
-        let Some(canvas) = shot.rect("lab.canvas") else {
-            return false; // no graph canvas is on screen to turn a wheel over
-        };
-        let mut externals = state.screens.externals(&state.journey.get());
-        for entry in &mut externals {
-            // ★ The runtime announces every painted surface's size before it
-            // delivers input to it (`announce_external_sizes`), and this harness
-            // paints without that pass — so it does what that pass does, from
-            // the same scene and the same rectangle. Without it the surface is
-            // one pixel wide to the framework and every fraction lands at its
-            // origin, which is not the tool declining a wheel.
-            let Some(surface) = shot.rect(&entry.tag) else {
-                continue;
+    (
+        "gesture.wheel",
+        |_| {
+            painted_at_destination("lab");
+        },
+        |state| {
+            let shot = painted();
+            let Some(canvas) = shot.rect("lab.canvas") else {
+                return false; // no graph canvas is on screen to turn a wheel over
             };
-            pinion_core::external::record_surface_size(&entry.tag, surface.w, surface.h);
-            let at = centre(canvas);
-            #[allow(
-                clippy::cast_precision_loss,
-                reason = "a window pixel over a surface size is a fraction in [0, 1]"
-            )]
-            let at_rel = (
-                (at.0.saturating_sub(surface.x)) as f32 / surface.w as f32,
-                (at.1.saturating_sub(surface.y)) as f32 / surface.h as f32,
-            );
-            // The router's own precondition, repeated rather than skipped: it
-            // offers `wheel` only where `wheel_intent` answers, so a driver that
-            // called `wheel` regardless would exercise a path no mouse takes.
-            if pinion_core::external::External::wheel_intent(&*entry.handle, at_rel).is_none() {
-                continue;
+            let mut externals = state.screens.externals(&state.journey.get());
+            for entry in &mut externals {
+                // ★ The runtime announces every painted surface's size before it
+                // delivers input to it (`announce_external_sizes`), and this harness
+                // paints without that pass — so it does what that pass does, from
+                // the same scene and the same rectangle. Without it the surface is
+                // one pixel wide to the framework and every fraction lands at its
+                // origin, which is not the tool declining a wheel.
+                let Some(surface) = shot.rect(&entry.tag) else {
+                    continue;
+                };
+                pinion_core::external::record_surface_size(&entry.tag, surface.w, surface.h);
+                let at = centre(canvas);
+                #[allow(
+                    clippy::cast_precision_loss,
+                    reason = "a window pixel over a surface size is a fraction in [0, 1]"
+                )]
+                let at_rel = (
+                    (at.0.saturating_sub(surface.x)) as f32 / surface.w as f32,
+                    (at.1.saturating_sub(surface.y)) as f32 / surface.h as f32,
+                );
+                // The router's own precondition, repeated rather than skipped: it
+                // offers `wheel` only where `wheel_intent` answers, so a driver that
+                // called `wheel` regardless would exercise a path no mouse takes.
+                if pinion_core::external::External::wheel_intent(&*entry.handle, at_rel).is_none() {
+                    continue;
+                }
+                let reading = pinion_core::widgets::wheel::WheelReading::new(
+                    at_rel,
+                    (0.0, -pinion_core::event::LINE_HEIGHT_PX),
+                    pinion_core::GesturePhase::Update,
+                    pinion_core::input::Modifiers::empty(),
+                );
+                if pinion_core::external::External::wheel(&mut *entry.handle, &reading) {
+                    return true;
+                }
             }
-            let reading = pinion_core::widgets::wheel::WheelReading::new(
-                at_rel,
-                (0.0, -pinion_core::event::LINE_HEIGHT_PX),
-                pinion_core::GesturePhase::Update,
-                pinion_core::input::Modifiers::empty(),
-            );
-            if pinion_core::external::External::wheel(&mut *entry.handle, &reading) {
-                return true;
-            }
-        }
-        false
-    }),
+            false
+        },
+    ),
 ];
 
 /// Everything a client can read about the assembled application, right now.
@@ -8194,7 +8234,7 @@ fn r1886_every_canon_gesture_kind_the_census_claims_is_answered() {
         .filter(|row| row["class"] == "gesture" && row["verdict"] == "have")
         .filter_map(|row| row["id"].as_str())
         .collect();
-    let driven: BTreeSet<&str> = CANON_GESTURES.iter().map(|(id, _)| *id).collect();
+    let driven: BTreeSet<&str> = CANON_GESTURES.iter().map(|(id, _, _)| *id).collect();
     assert_eq!(
         claimed, driven,
         "★ the census and the drivers name different gestures — a `have` with \
@@ -8223,10 +8263,13 @@ fn r1886_every_canon_gesture_kind_the_census_claims_is_answered() {
     }
 
     let mut inert = Vec::new();
-    for (id, drive) in CANON_GESTURES {
+    for (id, reach, drive) in CANON_GESTURES {
         let owner = Owner::new();
         owner.run(|| {
             let state = use_shell_state();
+            // ★ Getting there is not the act — the witness is read AFTER the
+            // section the gesture lives on is open. See [`CanonReach`].
+            reach(&state);
             let before = assembled_witness(&state);
             if !drive(&state) {
                 inert.push(format!(

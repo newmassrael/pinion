@@ -25,6 +25,14 @@ failures a prose census always has both happened:
    right and the recipe printed under it is wrong, which is the worse of the two
    arrangements: a reader who follows the recipe concludes the canon binds no
    presses at all.
+   ⚠ R1886.2, the round's own closing audit: **six is the count of rows that
+   come out entirely zero, and it is not the whole damage.** Two more come out
+   WRONG rather than empty — the drag-and-drop row's four handlers go to zero
+   while its `draggable` survives, so the row reads `0+1`; and the hover row
+   reads 1 against its recorded 3, because a CSS `:hover` rule and the
+   prototype's own hover attribute are different tokens. A recipe can be wrong
+   loudly (a zero) or quietly (a plausible smaller number), and the quiet way is
+   the one a reader accepts.
 2. **Two `have` marks were ticked on the wrong subject.** The tooltip row and
    the hover row were marked present because the *framework* has those widgets.
    Measured against the *application*, no section of the assembled tool mounts
