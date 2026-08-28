@@ -277,7 +277,24 @@ const SIZES: &[(&str, (u32, u32))] = &[
 /// the gap is the two units this doc already warns about — the pin is one
 /// frame's worst case, the census counts every destination's whole frame. Do
 /// not reconcile them; read each from its own instrument.
-const SHORT_BOX_BUDGET: usize = 93;
+///
+/// ★★★★★ R1882 — **93 -> 79**, and the fourteen are a card's own CHROME: the
+/// title and the ready badge that `card_header` paints on every card. This is
+/// the first fall in the campaign whose repair is in a **crate** rather than in
+/// a screen, and the reason is the defect's own shape: the layout wrote `16`
+/// and `14` as literals *because it could not see the faces at all* —
+/// `title_px` and `badge_px` lived on the spec only the painter receives. ⇒ **a
+/// layout cannot honour a floor on a value it never receives.**
+///
+/// ⚠ **The measured population was not the census's number, and that gap is why
+/// the gate came first.** The convention axis's head reads `(12, 16)` at 33
+/// runs — but four of the sites it prints are `kp.detail.*`, another screen
+/// entirely. `r1882_no_run_of_a_cards_own_chrome_sits_in_a_box_too_short_for_
+/// its_face` names only the chrome and reported **246 of 246 across 8 cards**,
+/// which is the sweep's unit rather than one frame's. Two instruments, two
+/// units, one repair — and a repair aimed at 33 would have been aimed at a
+/// population nobody had measured.
+const SHORT_BOX_BUDGET: usize = 79;
 
 /// Where every tag in the painted scene ended up, and every text run with it.
 struct Painted {
@@ -7774,6 +7791,97 @@ fn r1876_no_run_of_a_decode_card_sits_in_a_box_too_short_for_its_face() {
          being bypassed rather than a number to raise: {cut:#?}",
         cut.len(),
         parts.len(),
+        cards.len(),
+    );
+}
+
+/// ★★★★★ R1882 — **a card's own CHROME has no box too short for its face**, over
+/// every state and size the sweep covers.
+///
+/// The eighth family of the short-box campaign, and the one R1876 deliberately
+/// set aside: its gate judged a decode card's named PARTS and said, in writing,
+/// that the card's bare header — its title and its status badge — was a
+/// different cause with a different blast radius. It was carried by name in
+/// three consecutive ledgers before R1880 made it a registered debt, and the
+/// application-wide census head is what now points at it.
+///
+/// # ⚠ The gate exists to SPLIT A DENOMINATOR, not to confirm a number
+///
+/// The convention axis's head is `(12, 16)` at 33 runs over 33 sites across
+/// three destinations — and **those are not all card chrome**: four of the
+/// sites the census prints are `kp.detail.*`, which is a different screen and,
+/// on the face of it, a different author. A repair aimed at 33 would be aimed
+/// at a population nobody had measured. So this gate names ONLY the chrome, and
+/// its own count is the number the repair owns.
+///
+/// # What "the card itself" means, as a path spells it
+///
+/// A card segment is `card.<kind>#<n>`; a segment with a `.` after the `#n` is
+/// a named PART (`card.decode#1.tree.0`). A run belongs to the chrome when its
+/// path holds a card segment and **no** part segment — that is the title and
+/// the badge, which `card_header::header_scene` paints and every card shares.
+///
+/// ⚠ Non-emptiness is asserted first and the count says `N of M`, for the two
+/// reasons this file has measured: a family that has moved must turn a gate RED
+/// rather than green (R1877), and a count with no denominator is the shape a
+/// wrong claim hides in (R1873).
+#[test]
+fn r1882_no_run_of_a_cards_own_chrome_sits_in_a_box_too_short_for_its_face() {
+    /// Whether a path segment names a card at all.
+    fn is_card(seg: &str) -> bool {
+        seg.starts_with("card.") && seg.contains('#')
+    }
+
+    /// Whether that segment names a PART of a card rather than the card itself.
+    fn is_card_part(seg: &str) -> bool {
+        is_card(seg) && seg.split_once('#').is_some_and(|(_, n)| n.contains('.'))
+    }
+
+    /// Whether a run's path puts it in a card's own chrome.
+    fn is_chrome(path: &[String]) -> bool {
+        path.iter().any(|seg| is_card(seg)) && !path.iter().any(|seg| is_card_part(seg))
+    }
+
+    let mut seen = 0usize;
+    let mut cards: BTreeSet<String> = BTreeSet::new();
+    let mut cut: Vec<String> = Vec::new();
+    sweep(|_, _, scene, case| {
+        scene.for_each_node(&mut |visit| {
+            if matches!(visit.node, Scene::Text(_)) && is_chrome(visit.path) {
+                seen += 1;
+            }
+        });
+        for short in pinion_core::containment::short_boxes(scene) {
+            if !is_chrome(&short.path) {
+                continue;
+            }
+            if let Some(card) = short.path.iter().find(|seg| is_card(seg)) {
+                cards.insert(card.clone());
+            }
+            cut.push(format!(
+                "{case}: {} {:?} at {}px in a {}px box needs {} (short by {})",
+                short.address(),
+                short.content,
+                short.px,
+                short.rect.h,
+                short.needs,
+                short.short_by,
+            ));
+        }
+    });
+
+    assert!(
+        seen > 0,
+        "no run at all is painted in a card's own chrome — the family this gate \
+         names has moved, and a zero that describes nothing is not a zero",
+    );
+    assert!(
+        cut.is_empty(),
+        "{} of the {seen} run(s) in a card's own chrome sit in a box too short \
+         for their own face, across {} card(s); every one of them is placed by \
+         `card_header::lay_out`, so this is that layout being asked for a box it \
+         cannot size rather than a number to raise: {cut:#?}",
+        cut.len(),
         cards.len(),
     );
 }

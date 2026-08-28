@@ -2130,6 +2130,11 @@ const CARD_METRICS: card_header::CardMetrics = card_header::CardMetrics {
     title_gap: 20,
     min_title: 24,
     badge_w: 54,
+    // ★ R1882 — the two faces live with the other measurements now, because a
+    // face fixes the line box a run needs and the layout could not see them
+    // where they were. They are the same two this screen always passed.
+    title_px: FONT_BODY,
+    badge_px: FONT_TINY,
 };
 
 /// One header control slot. Right-aligned, in declaration order, so the
@@ -7232,8 +7237,6 @@ fn header_scene(card: &Card, rect: Rect, palette: Palette, maximized: bool) -> V
             restore: maximized,
             title: card.title(),
             badge: "LIVE",
-            title_px: FONT_BODY,
-            badge_px: FONT_TINY,
             ink: card_header::HeaderInk {
                 title: palette.ink,
                 muted: palette.muted,

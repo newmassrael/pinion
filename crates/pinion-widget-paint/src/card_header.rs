@@ -60,11 +60,18 @@
 //! survived a narrowing, only look. Answering **which parts gave way** is the
 //! capability this type has and that one does not.
 
+use pinion_core::containment;
 use pinion_core::scene::{ContainerNode, PathCommand, PathNode, PathPoint, Rect, Scene, TextNode};
 use pinion_core::style::{
     BoxStyle, Color, LayoutStyle, PathStyle, Size, Stroke, TextOverflow, TextStyle,
 };
 use pinion_core::widgets::card::CardAffordance;
+
+/// The ready badge's status dot, across.
+const BADGE_DOT: u32 = 6;
+
+/// The clearance between that dot and the badge's word.
+const BADGE_GAP: u32 = 4;
 
 /// The measurements a card header lays out against.
 ///
@@ -101,6 +108,22 @@ pub struct CardMetrics {
     pub min_title: u32,
     /// The ready badge's width, including the gap before it.
     pub badge_w: u32,
+    /// The face the title is set in.
+    ///
+    /// ★★★★★ R1882 — a face lives here, with the other measurements, because
+    /// **a face size IS a measurement**: it fixes the line box a run needs, and
+    /// a layout that cannot see it cannot honour that floor. This module's
+    /// stated exclusions are theme, colour and glyph; a size in pixels is none
+    /// of the three.
+    ///
+    /// It used to live on [`HeaderSpec`], which only [`header_scene`] receives —
+    /// so [`lay_out`] wrote the two text boxes' heights as literals (`16` and
+    /// `14`) for faces it had no way to ask about, and every card in the one
+    /// shipped consumer painted a title three pixels short of its own line.
+    /// ⇒ *a layout cannot honour a floor on a value it never receives.*
+    pub title_px: u32,
+    /// The face the ready badge's word is set in.
+    pub badge_px: u32,
 }
 
 impl Default for CardMetrics {
@@ -117,6 +140,8 @@ impl Default for CardMetrics {
             title_gap: 20,
             min_title: 24,
             badge_w: 54,
+            title_px: 12,
+            badge_px: 10,
         }
     }
 }
@@ -302,13 +327,27 @@ pub fn lay_out(header: Rect, offered: usize, ready: bool, metrics: CardMetrics) 
         text_room
     };
 
-    let title = (title_w > 0).then(|| Rect::new(text_x, header.y + 9, title_w, 16));
+    // ★★★★★ R1882 — both text boxes are DERIVED from the faces they hold, and
+    // both are centred on the same band, so the two cannot drift apart and
+    // neither can be written too short. `line_rect_in` is `band_in` with the
+    // height taken from `line_box`, and `band_in` rounds ONCE from the band's
+    // own centre — so a title and a badge of different faces still share a
+    // centre line exactly.
+    //
+    // ⚠ The band is the NOMINAL one (`metrics.band_h`), not `header.h`, for the
+    // reason `CardMetrics::band_h` documents: the consumer's frame eats into
+    // the rectangle while its slot and dot arithmetic stayed keyed to the
+    // nominal band. Keeping to that band is what makes these two agree with the
+    // grip, the dot and the slots rather than with the frame.
+    let band = Rect::new(header.x, header.y, header.w, metrics.band_h);
+    let title =
+        (title_w > 0).then(|| containment::line_rect_in(band, text_x, title_w, metrics.title_px));
     let badge = show_badge.then(|| {
-        Rect::new(
+        containment::line_rect_in(
+            band,
             text_x + title_w + 4,
-            header.y + metrics.band_h / 2 - 3,
             metrics.badge_w,
-            14,
+            metrics.badge_px,
         )
     });
 
@@ -369,10 +408,6 @@ pub struct HeaderSpec<'a> {
     pub title: &'a str,
     /// The badge's word.
     pub badge: &'a str,
-    /// The title's font size.
-    pub title_px: u32,
-    /// The badge's font size.
-    pub badge_px: u32,
     /// The colours.
     pub ink: HeaderInk,
 }
@@ -547,16 +582,28 @@ pub fn header_scene(
         ));
     }
     if let Some(title) = laid.title() {
-        out.push(run(spec.title, title, spec.title_px, spec.ink.title));
+        out.push(run(spec.title, title, metrics.title_px, spec.ink.title));
     }
     if let Some(badge) = laid.badge() {
-        out.push(dot(badge.x, badge.y, 6, spec.ink.accent));
-        out.push(run(
-            spec.badge,
-            Rect::new(badge.x + 10, header.y + 10, 40, 14),
-            spec.badge_px,
+        // ★★★★★ R1882 — the word's box is the badge's OWN slot, inset, rather
+        // than a second rectangle written from the header's top. That second
+        // rectangle was `Rect::new(badge.x + 10, header.y + 10, 40, 14)`, and
+        // its `14` was a HEIGHT WRITTEN TWICE: once here for the word and once
+        // in `lay_out` for the slot. The debt this repays named only the
+        // layout's copy; measuring found this one too, which is why the word
+        // now takes the slot's height instead of stating one.
+        //
+        // The dot is centred in that slot for the same reason — a mark placed
+        // at the slot's top only looked centred while the slot happened to be
+        // the dot's own size.
+        let word = Rect::new(badge.x + BADGE_DOT + BADGE_GAP, badge.y, 40, badge.h);
+        out.push(dot(
+            badge.x,
+            badge.y + badge.h / 2 - BADGE_DOT / 2,
+            BADGE_DOT,
             spec.ink.accent,
         ));
+        out.push(run(spec.badge, word, metrics.badge_px, spec.ink.accent));
     }
     for (n, slot) in laid.slots().iter().copied() {
         let affordance = spec.offered[n];
@@ -591,8 +638,8 @@ fn run(text: &str, rect: Rect, px: u32, fg: Color) -> Scene {
 #[cfg(test)]
 mod tests {
     use super::{
-        CardMetrics, HeaderInk, HeaderLayout, HeaderSpec, grip_rect, header_scene, lay_out,
-        slot_rect,
+        CardMetrics, HeaderInk, HeaderLayout, HeaderSpec, containment, grip_rect, header_scene,
+        lay_out, slot_rect,
     };
     use pinion_core::scene::Rect;
     use pinion_core::style::Color;
@@ -627,6 +674,86 @@ mod tests {
                         );
                     }
                 }
+            }
+        }
+    }
+
+    /// ★★★★★ **No text part is ever placed in a box shorter than its own
+    /// face's line**, at every width and at every face this layout can be given.
+    ///
+    /// R1816's sibling above is the same doctrine on the other axis. That one
+    /// says *a part that does not fit across is absent rather than painted
+    /// smaller*; this one says the same thing about DOWN — a box shorter than
+    /// the line it holds **is** a part painted smaller, and the module had been
+    /// doing it on every card since the lift.
+    ///
+    /// ⚠ It is a property over faces, not a check of two numbers, because the
+    /// defect was never a wrong constant — it was a layout that could not see
+    /// the faces at all and therefore wrote a literal for whatever it was
+    /// handed. Sweeping the face is what makes that unrepresentable rather than
+    /// merely corrected once.
+    ///
+    /// ⚠ And it compares against [`containment::line_box`]'s own output rather
+    /// than re-spelling `px * 3 / 2 + 2`. A gate that re-spells its rule becomes
+    /// the rule's second author, and this project has measured what that costs.
+    #[test]
+    fn r1882_no_header_text_sits_in_a_box_shorter_than_its_face() {
+        for title_px in [8, 10, 12, 13, 16, 20, 24] {
+            for badge_px in [8, 10, 12, 16] {
+                let metrics = CardMetrics {
+                    title_px,
+                    badge_px,
+                    ..CardMetrics::default()
+                };
+                for w in 0..400 {
+                    let head = band(w);
+                    let laid = lay_out(head, 4, true, metrics);
+                    if let Some(title) = laid.title() {
+                        assert!(
+                            title.h >= containment::line_box(title_px),
+                            "w={w} title_px={title_px}: {title:?} holds a \
+                             {title_px}px face needing {}",
+                            containment::line_box(title_px),
+                        );
+                    }
+                    if let Some(badge) = laid.badge() {
+                        assert!(
+                            badge.h >= containment::line_box(badge_px),
+                            "w={w} badge_px={badge_px}: {badge:?} holds a \
+                             {badge_px}px face needing {}",
+                            containment::line_box(badge_px),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// ★ A title and a badge of DIFFERENT faces still share one centre line.
+    ///
+    /// This is the property `band_in` exists for and the reason the two boxes
+    /// are derived from the same band rather than each from its own offset: the
+    /// naive `(outer.h - h) / 2` rounds twice and two faces of different parity
+    /// then sit a pixel apart, which reads as a crooked header and is invisible
+    /// to any check that looks at one part at a time.
+    #[test]
+    fn r1882_title_and_badge_share_a_centre_line_at_every_face_pair() {
+        for title_px in [9, 10, 11, 12, 13] {
+            for badge_px in [9, 10, 11, 12, 13] {
+                let metrics = CardMetrics {
+                    title_px,
+                    badge_px,
+                    ..CardMetrics::default()
+                };
+                let laid = lay_out(band(400), 4, true, metrics);
+                let title = laid.title().expect("400px fits a title");
+                let badge = laid.badge().expect("400px fits a badge");
+                assert_eq!(
+                    title.y + title.h / 2,
+                    badge.y + badge.h / 2,
+                    "title_px={title_px} badge_px={badge_px}: {title:?} and \
+                     {badge:?} do not share a centre",
+                );
             }
         }
     }
@@ -718,15 +845,49 @@ mod tests {
             "and the first-declared is three slots further left"
         );
 
-        // The title: `Rect::new(text_x, rect.y + 9, title_w, 16)` where
-        // text_x = grip.x + grip.w + 20.
+        // The title's X is still the consumer's: text_x = grip.x + grip.w + 20.
         let laid = lay_out(head, 4, false, metrics);
         let title = laid.title().expect("300px fits a title");
-        assert_eq!((title.x, title.y, title.h), (14 + 18 + 20, 29, 16));
+        assert_eq!(
+            title.x,
+            14 + 18 + 20,
+            "the title starts where it always did"
+        );
         assert_eq!(
             title.x + title.w,
             slot_rect(head, 4, 0, metrics).x,
             "the title ends exactly where the strip begins"
+        );
+
+        // ★★★★★ R1882 — the title's HEIGHT is deliberately NOT the consumer's
+        // any more, and this is the one assertion in the module that has to say
+        // so. It was `Rect::new(text_x, rect.y + 9, title_w, 16)` — a 16px box
+        // for a 12px face that needs 20 — so preserving it would have been
+        // preserving a defect. What replaces the literal is the DERIVATION's
+        // own output rather than a second number chosen here: a gate that
+        // re-spells the rule becomes its second author, and this module has
+        // already paid for that once.
+        assert_eq!(
+            (title.y, title.h),
+            (
+                containment::line_rect_in(
+                    Rect::new(head.x, head.y, head.w, metrics.band_h),
+                    title.x,
+                    title.w,
+                    metrics.title_px,
+                )
+                .y,
+                containment::line_box(metrics.title_px),
+            ),
+            "the title's box is one line of its own face, on the nominal band"
+        );
+        // And the centre is unmoved, which is what makes this a repair rather
+        // than a reposition: the old box ran 9..25 of a 34px band and the new
+        // one runs 7..27 — same centre line, four more pixels of room.
+        assert_eq!(
+            title.y + title.h / 2,
+            head.y + metrics.band_h / 2,
+            "the title still sits on the band's centre line"
         );
     }
 
@@ -851,8 +1012,6 @@ mod tests {
             restore: false,
             title: "ingest",
             badge: "LIVE",
-            title_px: 12,
-            badge_px: 10,
             ink,
         };
         let metrics = CardMetrics::default();

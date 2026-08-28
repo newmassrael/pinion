@@ -53,17 +53,6 @@
       ]
     },
     {
-      "name": "debt-a-card-header-lays-text-out-without-knowing-its-face",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links analyzer-debt-repayment-loop"
-      ]
-    },
-    {
       "name": "debt-a-card-settings-control-opens-nothing",
       "substituted": false,
       "blocked_by": "buildable",
