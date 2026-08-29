@@ -1818,12 +1818,16 @@ ok "and it refuses the prose form of an invariant" "$impact_prose" "refused"
 # ── R1892: the round verdict leads with a word a driver can read ────────────
 #
 # ★★★★★ An independent checker watches this repository's repayment loop and its
-# driver reads the FIRST WORD of the answer. Measured across the loop's run
-# logs, 19 milestone claims went unverified because the answer began with
-# something else — 14 distinct first words, `Permission`, `You've`, `The`,
-# `Verdict`, `Independent`, one empty string, and the sentence that forced this
-# tool. None was wrong and none was silence; each was UNREADABLE, which the
-# driver counts as no verdict at all.
+# driver reads the FIRST WORD of the answer. Milestone claims keep going
+# unverified because the answer begins with something else. None was wrong and
+# none was silence; each was UNREADABLE, which the driver counts as no verdict
+# at all.
+#
+# ★ HOW MANY, AND OF WHAT SHAPE, IS A COMMAND: `round_verdict.py --census`.
+# R1892 wrote the count into this comment and into the tool's docstring, and
+# eight rounds later both were wrong the same way — the number had grown and a
+# shape had appeared that neither sentence could describe. A count in a comment
+# is a count nobody re-measures.
 #
 # The checker's prompt lives in another repository this session must not edit,
 # so what is built here is the thing that makes a verdict cheap to give: a
@@ -1832,8 +1836,12 @@ ok "and it refuses the prose form of an invariant" "$impact_prose" "refused"
 # a gate performs it — so it is performed here, beside the other guard whose
 # reason for existing is that a prescription nobody executes is not a repair.
 verdict_self="$(python3 "$repo_root/tools/round_verdict.py" --selftest 2>&1 || true)"
+# ★ R1901 — a WORD, not a number. This line used to grep `12 passed, 0 failed`,
+# so the count lived here and in the tool, and adding a case made both wrong
+# together. The tool now derives its own count and reports PASS/FAIL, which is
+# the form `phase_b_tally.py --selftest` already uses.
 ok "the round verdict passes its own selftest" \
-   "$(grep -c 'round_verdict selftest: 12 passed, 0 failed' <<<"$verdict_self")" \
+   "$(grep -c 'round_verdict selftest: PASS' <<<"$verdict_self")" \
    "1"
 # ★ And the property itself, asserted HERE rather than only inside the tool: a
 # gate that trusts a tool's own selftest to check the tool's own contract has
@@ -1849,6 +1857,26 @@ PY
 )"
 ok "a closed round's verdict begins with the word YES, with nothing before it" \
    "$verdict_first_word" "YES NO YN"
+
+# ★★★★★ R1901 — and the two properties the CENSUS half rests on, asserted from
+# outside the tool for the same reason the first-word property is.
+#
+# 1. A census that cannot see the driver's log REFUSES. That log belongs to
+#    another repository's program, so this reader can go blind without anything
+#    breaking — and a census answering "nothing wrong" when its source moved is
+#    worse than one that refuses. `--from` at a directory that does not exist is
+#    exactly the blind case.
+# 2. `--line` is ONE line. The cheapest repair on record is "run this and paste
+#    the output", and a seven-line report asks the reader to choose which line
+#    to quote — choosing is the step that has gone wrong every time.
+verdict_blind="$(python3 "$repo_root/tools/round_verdict.py" --census \
+                 --from "$repo_root/tools/no-such-log-dir" 2>&1 || true)"
+ok "a census with no log to read refuses, rather than reporting a clean bill" \
+   "$(grep -c '^NO — could not look' <<<"$verdict_blind")" "1"
+verdict_line="$(python3 "$repo_root/tools/round_verdict.py" --line 2>&1 || true)"
+ok "the line form is exactly one line" "$(wc -l <<<"$verdict_line")" "1"
+ok "and that one line begins with a verdict word" \
+   "$(grep -cE '^(YES|NO) ' <<<"$verdict_line")" "1"
 
 # --- R1799: the step timer -------------------------------------------------
 #

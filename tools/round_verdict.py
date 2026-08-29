@@ -6,17 +6,29 @@ read a verdict.
 
 An independent checker watches this repository's repayment loop and its answer
 has to begin with ``YES`` or ``NO``; the driver reads the first word and nothing
-else. Measured across the loop's run logs, **19 milestone claims went
-unverified because the checker's answer began with something else** — 14
-distinct first words, among them ``Permission``, ``You've``, ``The``,
-``Verdict``, ``Independent``, one empty string, and (the round that forced this
-tool) ``I've verified the code, tests, spec, ledger, and push state on disk;
-the walk and the shell test suite are still running in the background.``
+else. Milestone claims keep going unverified because the answer begins with
+something else — each of them a *sentence a careful reader would write*. The
+checker was not wrong and was not silent; it was UNREADABLE, and an unreadable
+verdict is counted as no verdict at all, so the claim rests on the working
+agent's own word.
 
-Every one of those is a *sentence a careful reader would write*. The checker was
-not wrong and was not silent — it was UNREADABLE, and an unreadable verdict is
-counted as no verdict at all, so the claim rests on the working agent's own
-word.
+★ **How many, and of what shape, is a command — do not read it off this page.**
+
+    python3 tools/round_verdict.py --census
+
+R1892 wrote the count into this docstring and into the hook beside it, and eight
+rounds later both were wrong in the same direction: the number had grown and a
+*new shape* had appeared that neither sentence could have described. This is the
+repository's own standing rule about a number in prose, met inside the tool
+built to make a number readable.
+
+⚠⚠ The census splits the failures by **whether a prompt could reach them**, and
+that split is the point. An answer with words in it can be fixed by requiring
+the checker to lead with a verdict. An answer with *no words at all* — an empty
+string, or a bare line-break tag — cannot: there is nothing to put a verdict in
+front of. Asking "is there a path to zero for this predicate" of the handoff's
+first requirement, the answer for that bucket is **no**, and only the parser
+half (treat unreadable as a dispute rather than as consent) reaches it.
 
 ★★★★★ The fix that is available HERE. The checker's prompt belongs to a driver
 in another repository, which this repository's own rules forbid editing from a
@@ -49,17 +61,25 @@ claim.
 
     python3 tools/round_verdict.py            # the newest round git knows
     python3 tools/round_verdict.py R1891      # a named round
+    python3 tools/round_verdict.py --line     # EXACTLY one line, nothing else
+    python3 tools/round_verdict.py --census   # the unreadable answers on record
     python3 tools/round_verdict.py --selftest # the tool's own gate
 
 Exit status is 0 for YES and 1 for NO, so a shell can branch on it without
 parsing — but the first word is the contract, because the reader this exists for
 reads words.
+
+★ ``--line`` exists because the cheapest repair on record is *"run this command
+and paste its output"*, and the default report is seven lines. Seven lines
+invite a reader to choose which one to quote, and choosing is the step that has
+gone wrong every time. One line removes the step.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -270,6 +290,125 @@ def render(round_no: int, closed: bool, checks: list[Check]) -> str:
     return "\n".join(lines)
 
 
+# ── The census of unreadable checker answers ────────────────────────────────
+#
+# ⚠ THIS READS ANOTHER PROGRAM'S LOG. The line shape and the directory belong to
+# the loop driver, which lives in a repository a pinion session must not edit —
+# so this reader can go blind without anything breaking. That is why "no records
+# found" is a **NO** here rather than a clean bill: a census that answers
+# "nothing wrong" when its source has moved is worse than one that refuses.
+
+#: How the driver writes an answer it could not read: the answer inside escaped
+#: quotes, and then the driver's own sentence about it.
+#:
+#: ★★★★★ R1901 — the first draft was ``(.*)$`` and it was WRONG IN THE DIRECTION
+#: THAT HIDES THE FINDING. The driver writes ``the checker answered \"<br>\",
+#: and nothing in that reply is a YES or a NO — fix its prompt…``, so taking the
+#: rest of the line appended the driver's own prose to every answer and made
+#: **every** record classify as `prose`. The census then reported `contentless
+#: 0` — erasing exactly the bucket this round exists to name, and disagreeing
+#: with a hand count that was right.
+#:
+#: ⇒ the classifier was correct and the EXTRACTOR was not, which is why
+#: `extract_answers` is tested against verbatim driver lines rather than only
+#: against strings this file made up.
+CHECKER_ANSWERED = re.compile(r'the checker answered \\"(.*?)\\"')
+
+#: Markup that stands in for an answer the checker did not give. Stripped before
+#: asking whether anything was said, because a bare line-break tag has letters
+#: in it and is nonetheless nothing a person wrote.
+MARKUP = re.compile(r"<[^>]*>")
+
+
+def classify(answer: str) -> str:
+    """Which of three buckets an answer falls in. There is no fourth.
+
+    ``verdict``     the first token is exactly ``YES`` or ``NO`` — readable.
+    ``prose``       words, but not a verdict first. A prompt requirement reaches
+                    this bucket: the checker wrote a sentence and can be told to
+                    lead with the verdict instead.
+    ``contentless`` nothing was said at all once markup and punctuation are
+                    removed. **A prompt requirement does not reach this bucket**,
+                    because there is nothing to put a verdict in front of.
+
+    ★ Case matters, and that is measured rather than chosen: the driver reads
+    ``YES``/``NO`` exactly, so a lower-case ``yes`` is prose here — it would be
+    prose to the driver too, and calling it readable would be this tool
+    disagreeing with the reader it exists to serve.
+    """
+    body = answer.strip().strip('\\"').strip('"').strip()
+    said = re.sub(r"[^\w]", "", MARKUP.sub("", body))
+    if not said:
+        return "contentless"
+    first = body.split()[0].strip('"').strip("\\")
+    return "verdict" if first in {"YES", "NO"} else "prose"
+
+
+def extract_answers(text: str) -> list[str]:
+    """Every checker answer a run log records, as the checker gave it.
+
+    Its own function because the bug this round found was HERE and not in
+    [`classify`] — see the note on [`CHECKER_ANSWERED`].
+    """
+    return [m.group(1) for m in CHECKER_ANSWERED.finditer(text)]
+
+
+def census_logs(from_dir: Path | None) -> tuple[Path, list[Path]]:
+    """Where the driver's run logs are, and which ones exist."""
+    if from_dir is None:
+        runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+        from_dir = Path(runtime) / "loop"
+    return from_dir, sorted(from_dir.glob("run*.log")) if from_dir.is_dir() else []
+
+
+def census(from_dir: Path | None) -> tuple[bool, str]:
+    """Classify every checker answer the driver recorded, and report.
+
+    ⚠ **A numerator with no denominator, stated rather than hidden.** Measured
+    at R1901: the driver logs an answer only when it could not read one, and no
+    log shape records a readable answer at all. So this counts failures and
+    cannot produce a rate, and saying so is the difference between a census and
+    a number somebody will later divide by something it does not measure.
+    """
+    where, logs = census_logs(from_dir)
+    if not logs:
+        return False, (
+            f"NO — could not look: {where} holds no run log, so this is not a "
+            f"clean bill. The driver's log directory is another program's; when "
+            f"it moves, this refuses rather than reporting zero."
+        )
+    buckets: dict[str, list[str]] = {"verdict": [], "prose": [], "contentless": []}
+    for log in logs:
+        for answer in extract_answers(log.read_text(errors="replace")):
+            buckets[classify(answer)].append(answer)
+    total = sum(len(v) for v in buckets.values())
+    if total == 0:
+        return False, (
+            f"NO — could not look: {len(logs)} run log(s) under {where} and not "
+            f"one records a checker answer. Either nothing has been checked, or "
+            f"the line this reads has changed shape; both are 'unclassified', "
+            f"which is not a pass."
+        )
+    unreadable = len(buckets["prose"]) + len(buckets["contentless"])
+    head = "YES" if unreadable == 0 else "NO"
+    firsts = {
+        (a.strip('\\"').strip('"').split() or [""])[0]
+        for a in buckets["prose"] + buckets["contentless"]
+    }
+    lines = [
+        f"{head} — {total} recorded checker answer(s), {unreadable} unreadable",
+        f"  contentless {len(buckets['contentless']):3d}  no words at all; a prompt "
+        f"requirement has NO path to zero here",
+        f"  prose       {len(buckets['prose']):3d}  words, but not a verdict first; "
+        f"a prompt requirement reaches these",
+        f"  verdict     {len(buckets['verdict']):3d}  first token is exactly YES or NO",
+        f"  {len(firsts)} distinct first token(s) among the unreadable",
+        "  numerator only: the driver logs an answer ONLY when it could not read "
+        "one, so no rate can be taken from this",
+    ]
+    return unreadable == 0, "\n".join(lines)
+
+
 def selftest() -> int:
     """The tool's own gate.
 
@@ -279,8 +418,15 @@ def selftest() -> int:
     was built for.
     """
     failures: list[str] = []
+    ran = 0
 
     def expect(what: str, cond: bool) -> None:
+        # ★ R1901 — the count is DERIVED. It used to be `12 - len(failures)`,
+        # with the 12 written by hand here and again in the hook that greps this
+        # line, so adding a case made both lie in the same direction. The same
+        # defect this tool's docstring was carrying about the census number.
+        nonlocal ran
+        ran += 1
         if not cond:
             failures.append(what)
 
@@ -318,9 +464,84 @@ def selftest() -> int:
         ROUND_IN_SUBJECT.search("fix: 1891 things") is None,
     )
 
+    # ── R1901: the census classifier ────────────────────────────────────────
+    #
+    # Every case here is a shape the driver actually recorded, not one invented
+    # to exercise a branch — which is what makes the three buckets a reading of
+    # the evidence rather than a taxonomy.
+    # ★★★★★ THE EXTRACTOR, against VERBATIM driver lines. This is where this
+    # round's bug was, and a fixture this file invented would not have found it:
+    # the driver's sentence CONTINUES after the closing quote, and taking the
+    # rest of the line made every answer look like prose.
+    real_contentless = (
+        'the checker answered \\"<br>\\", and nothing in that reply is a YES or '
+        "a NO — fix its prompt or its program, because nothing here can turn that"
+    )
+    real_empty = (
+        'the checker answered \\"\\", which is not YES or NO — fix its prompt or '
+        "its program, because nothing here can turn that into a verdict"
+    )
+    expect("an answer is read up to its closing quote and no further",
+           extract_answers(real_contentless) == ["<br>"])
+    expect("an empty answer is read as empty, not as the driver's sentence",
+           extract_answers(real_empty) == [""])
+    expect("a line with no checker answer yields none",
+           extract_answers("Reviewing --ReviewNone--> Priming") == [])
+    expect("two answers in one text are read as two",
+           len(extract_answers(real_contentless + "\n" + real_empty)) == 2)
+    # ★ And the property the bug violated, stated directly: the driver's own
+    # words about the answer must not become part of the answer.
+    expect("the driver's sentence is not part of the answer",
+           all("fix its prompt" not in a for a in extract_answers(real_contentless)))
+
+    expect("a bare YES is readable", classify("YES") == "verdict")
+    expect("a bare NO is readable", classify("NO") == "verdict")
+    expect("a verdict with a dash after it is readable",
+           classify("YES — R1900 is closed") == "verdict")
+    expect("a lower-case yes is NOT readable, because the driver reads YES",
+           classify("yes, the round is closed") == "prose")
+    expect("a Verdict: label is prose, not a verdict", classify("Verdict: YES") == "prose")
+    expect("a polite preamble is prose", classify("Permission to continue") == "prose")
+    expect("the sentence that opened this debt is prose",
+           classify("I've verified the code, tests, spec") == "prose")
+    # ★★★★★ The two shapes a PROMPT REQUIREMENT CANNOT REACH. Both are on
+    # record, and telling a checker to lead with a verdict does nothing for
+    # either, because neither contains anything a verdict could lead.
+    expect("an empty answer is contentless", classify("") == "contentless")
+    expect("a bare line-break tag is contentless, though it has letters in it",
+           classify("<br>") == "contentless")
+    expect("markup around real words is still prose",
+           classify("<br>Still checking") == "prose")
+    expect("punctuation alone is contentless", classify("...") == "contentless")
+    # Every answer lands in exactly one of three buckets and there is no fourth,
+    # so nothing is silently uncounted — the rule this repository applies to any
+    # gate with an escape hatch.
+    expect(
+        "every classification is one of exactly three",
+        {classify(s) for s in ["YES", "no", "", "<br>", "The check passed"]}
+        <= {"verdict", "prose", "contentless"},
+    )
+
+    # ★ A census that cannot see its source must REFUSE, never report zero.
+    seen_none, said_none = census(ROOT / "tools" / "no-such-log-dir")
+    expect("a census with no log to read answers NO", not seen_none)
+    expect("and says it could not look", "could not look" in said_none)
+    expect("a refusing census still leads with the verdict word", said_none.startswith("NO"))
+
+    # `--line` is one line, and it is the verdict line.
+    one = render(1, True, fake_ok).splitlines()[0]
+    expect("the line form is a single line", "\n" not in one)
+    expect("and it is the verdict", one.startswith("YES"))
+
     for line in failures:
         print(f"  FAIL {line}")
-    print(f"round_verdict selftest: {12 - len(failures)} passed, {len(failures)} failed")
+    # ★ `PASS` / `FAIL`, the form `phase_b_tally.py --selftest` already uses, so
+    # the gate beside this greps a WORD rather than a number it has to be told
+    # when to change.
+    print(
+        f"round_verdict selftest: {'PASS' if not failures else 'FAIL'} "
+        f"({len(failures)} failure(s), {ran - len(failures)} of {ran} passed)"
+    )
     return 1 if failures else 0
 
 
@@ -329,12 +550,32 @@ def main() -> int:
     parser.add_argument("round", nargs="?", help="round token, e.g. R1891")
     parser.add_argument("--selftest", action="store_true")
     parser.add_argument(
+        "--line",
+        action="store_true",
+        help="exactly one line: the verdict and nothing to choose between",
+    )
+    parser.add_argument(
+        "--census",
+        action="store_true",
+        help="classify every checker answer the loop driver recorded",
+    )
+    parser.add_argument(
+        "--from",
+        dest="from_dir",
+        help="where the driver's run logs are (default: $XDG_RUNTIME_DIR/loop)",
+    )
+    parser.add_argument(
         "--json", action="store_true", help="machine form; the verdict is still the first field"
     )
     args = parser.parse_args()
 
     if args.selftest:
         return selftest()
+
+    if args.census:
+        clean, said = census(Path(args.from_dir) if args.from_dir else None)
+        print(said)
+        return 0 if clean else 1
 
     if args.round:
         m = re.fullmatch(r"[Rr]?(\d+)", args.round)
@@ -361,6 +602,8 @@ def main() -> int:
                 indent=2,
             )
         )
+    elif args.line:
+        print(render(round_no, closed, checks).splitlines()[0])
     else:
         print(render(round_no, closed, checks))
     return 0 if closed else 1
