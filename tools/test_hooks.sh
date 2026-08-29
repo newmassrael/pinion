@@ -1843,6 +1843,30 @@ verdict_self="$(python3 "$repo_root/tools/round_verdict.py" --selftest 2>&1 || t
 ok "the round verdict passes its own selftest" \
    "$(grep -c 'round_verdict selftest: PASS' <<<"$verdict_self")" \
    "1"
+# ★★★★★ R1901.2 — AND THAT IT PERFORMED EVERY CASE IT DECLARES.
+#
+# The closing audit of R1901 found the hole that round's own repair opened:
+# replacing `12 passed` with `PASS` stopped a hand-kept number from rotting and
+# also stopped anything noticing when the run performs fewer cases than the
+# source declares. So the count is not written down again — it is derived from
+# the source, and compared with the count the run reports.
+#
+# 🟥🟥🟥 WHAT THIS DOES *NOT* CATCH, measured rather than assumed. A
+# counterfactual that DELETED a call site came back PASSED: deleting it moves
+# BOTH sides of this comparison, because both are derived from the same file.
+# ⇒ ★★★★★ deriving two sides of a check from one source makes the check blind
+# to any edit that changes them together, and "derived on both sides" is not by
+# itself a stronger gate than a written-down number — the number a ratchet
+# keeps would catch the deletion and this cannot.
+#
+# What it DOES catch, proven by a counterfactual that reds: a case that is
+# written but never REACHED — disabled behind a condition, or in a block that
+# stopped executing. The source still declares it, the run no longer performs
+# it, and `PASS` alone says nothing.
+verdict_declared="$(grep -cE '^ +expect\(' "$repo_root/tools/round_verdict.py")"
+ok "the verdict selftest performs every case its source declares" \
+   "$(grep -oE '[0-9]+ of [0-9]+ passed' <<<"$verdict_self")" \
+   "$verdict_declared of $verdict_declared passed"
 # ★ And the property itself, asserted HERE rather than only inside the tool: a
 # gate that trusts a tool's own selftest to check the tool's own contract has
 # one reader, and this contract has an outside reader by construction.
