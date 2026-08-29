@@ -6590,7 +6590,12 @@ fn palette(state: &LabState, ink: Ink) -> Scene {
     // two header lines each carried their own hand-picked clipping width (180,
     // 200, 120, 140, 160) and none of them was related to the pane; every one
     // is now the room the pane actually has, which only ever delays a clip.
-    let body_w = PALETTE_W - PAD * 2;
+    // ⚠ R1887.2 — [`palette_body_w`], not the OPENING width. The two are equal
+    // today and are two derivations of one number, which is the arrangement
+    // this round's own debt (`a panel's extent is a value nobody can drag`) says
+    // becomes false the moment somebody builds the width drag. Written as the
+    // derivation now, so that round has one fewer place to remember.
+    let body_w = palette_body_w();
     // ★★★★★ R1874 — the title and its subtitle are TWO LINES IN ONE SEAT, and
     // the seat is the room above the first group heading rather than a number.
     // They were `Rect::new(PAD, 14, 180, 16)` and `Rect::new(PAD, 34, 200, 12)`
@@ -6672,8 +6677,8 @@ fn palette(state: &LabState, ink: Ink) -> Scene {
         children.push(label(role.gist(), gist_band, 10, ink.text_3));
     }
 
-    children.extend(palette_legend(rect, ink));
-    children.extend(palette_determinism(state, rect, ink));
+    children.extend(palette_legend(ink));
+    children.extend(palette_determinism(state, ink));
     // ★ R1662 — the pane scrolls. Its content is taller than any window this
     // screen declares a floor for, and before this the overflow was simply
     // painted past the bottom edge: `scene/scroll_reach` reported the last
@@ -6823,8 +6828,11 @@ fn palette_heading(text: &str, strip_top: u32, w: u32, ink: Ink) -> Scene {
 
 /// The pin legend and the transport chips: three appearances and what each one
 /// means, next to the colours an accept pin is drawn in.
-fn palette_legend(rect: Rect, ink: Ink) -> Vec<Scene> {
-    let _ = rect;
+/// ⚠ R1887.2 — it took the panel's rectangle until R1887 made the body's origin
+/// its own derivation, and then kept taking it with a `let _ = rect;` to keep
+/// the compiler quiet. That is the shape this project has a rule about: an
+/// unused thing SILENCED is a signal turned off, so the parameter is gone.
+fn palette_legend(ink: Ink) -> Vec<Scene> {
     let local = in_palette_body;
     let mut children = vec![palette_heading(
         "pins",
@@ -6958,8 +6966,9 @@ fn discovery_caption_tag() -> String {
 }
 
 /// The determinism switch, off by default.
-fn palette_determinism(state: &LabState, rect: Rect, ink: Ink) -> Vec<Scene> {
-    let _ = rect;
+/// ⚠ R1887.2 — the panel rectangle it used to take is gone, for the reason on
+/// [`palette_legend`].
+fn palette_determinism(state: &LabState, ink: Ink) -> Vec<Scene> {
     let local = in_palette_body;
     let mut children: Vec<Scene> = Vec::new();
     let toggle = local(discovery_rect());
@@ -6967,7 +6976,7 @@ fn palette_determinism(state: &LabState, rect: Rect, ink: Ink) -> Vec<Scene> {
     children.push(palette_heading(
         "graph determinism",
         toggle.y - PAL_HEAD_H,
-        PALETTE_W - PAD * 2,
+        palette_body_w(),
         ink,
     ));
     // ★ The caption IS the switch's description — the switch points at it with
