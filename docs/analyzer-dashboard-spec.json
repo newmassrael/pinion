@@ -90,8 +90,22 @@
     "owed": []
   },
   "palette_head": {
+    "$comment": [
+      "R1903 — `fold` sits between the title and the hint, and that is the",
+      "reference's RENDERED order rather than its markup order. Its markup",
+      "draws the heading block, then a flex spacer, then a 26x26 button titled",
+      "Collapse — the button third. It RENDERS the button on the title's row,",
+      "right-aligned, with the hint on the line below, so a person meets title,",
+      "button, hint. This roster records what a person meets, because that is",
+      "what a painted surface can be compared against: reading order is",
+      "geometric. Do not 'fix' this to the markup order — the only way to make",
+      "the control read third is to put it below the hint, which is off the",
+      "header band and onto the catalogue, reproducing the DOM by breaking the",
+      "picture."
+    ],
     "canon": [
       { "key": "title", "title": "Widget Palette" },
+      { "key": "fold", "title": "<this part is painted and draws no words>" },
       { "key": "hint", "title": "Drag onto the canvas to place" }
     ],
     "owed": [

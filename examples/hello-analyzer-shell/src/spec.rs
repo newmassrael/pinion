@@ -33,9 +33,11 @@
 
 use pinion_core::availability::{Unavailable, UnavailableKind};
 use pinion_core::conformance::Ledger;
+use pinion_core::edge_panel::{EdgePlacement, EdgePolicy, Resize};
 /// R1697 — the operations table's shape, from the framework rather than from a
 /// second copy of the sibling screen's (see [`OPERATIONS`]).
 pub use pinion_core::operation::Operation as OperationSpec;
+use pinion_core::style::ChromeEdge;
 use pinion_core::widgets::chip_group::Choice;
 use pinion_core::widgets::destination::{
     Destination, Destinations, Required, RosterSpec, SeatSpec,
@@ -57,6 +59,36 @@ pub const SUB_BAR_H: u32 = 46;
 pub const RAIL_W: u32 = 52;
 /// The palette panel's width.
 pub const PALETTE_W: u32 = 292;
+/// ★★★★★ R1903 — what the palette leaves behind when it is put away.
+///
+/// The canon's own number, read from its markup this round: its drawer is a
+/// flex sibling that is `width:300px` while open and, when closed, is replaced
+/// by a `width:44px` strip carrying the toggle. So the panel does not vanish —
+/// it becomes a narrow band, and the canvas takes the difference.
+///
+/// ⚠ Not zero, and the distinction is the axis's: `fold` leaves a way back and
+/// `hide` does not. A hidden panel with no strip is one a reader has to already
+/// know about, and the canon agrees — the strip IS the affordance there.
+pub const PALETTE_STRIP_W: u32 = 44;
+/// ★★★★★ R1903 — **where the palette may live.**
+///
+/// It does not move between edges: the canon's palette is the right-hand drawer
+/// and carries no gesture that moves it, so an empty allowed-set is the honest
+/// declaration — *this cannot be moved*, said where a client can read it, which
+/// is different from nobody having said. It does not resize either. What it
+/// does is FOLD, and that is the one thing this policy admits.
+pub const PALETTE_POLICY: EdgePolicy = EdgePolicy {
+    allowed: &[],
+    foldable: true,
+    resize: Resize::Fixed,
+};
+/// ★★★★★ R1903 — **where the palette opens: showing**, as the canon's
+/// `paletteOpen` initialises.
+///
+/// Checked against [`PALETTE_POLICY`] by `EdgePolicy::admit_opening`, which is
+/// the judgement R1902 built and this screen's first use of it — before that
+/// round no opening placement in this tree met its own declaration at all.
+pub const PALETTE_OPENS: EdgePlacement = EdgePlacement::open(ChromeEdge::Right, PALETTE_W);
 /// The board's column count. The reference states it as a constant, and a
 /// board's arrangement is only portable between two tools that agree what a
 /// cell is.
@@ -772,6 +804,25 @@ pub const FOCUS_RING: &[StopSpec] = &[
         // NOT its accessibility children, which are three section groups and
         // two status readouts — the distinction `Roving` exists to keep.
         cursor: Some(RovingSpec::new(Axis::Vertical).with_ends(Ends::Stop)),
+    },
+    // ★★★★★ R1903 — the control that puts the palette away.
+    //
+    // AFTER the catalogue, because the ring is enumerated over the paint and
+    // the panel's own container is the stop the walk meets first; the control
+    // is inside it. The order was measured rather than chosen — the first
+    // draft put it before and the ring gate answered with both lists.
+    //
+    // Its own stop rather than a member of the catalogue's roving cursor: that
+    // cursor enumerates the thirteen entries a reader picks a widget from, and
+    // a control that removes the panel is not one of them. Folding it in would
+    // have made "the last entry" mean something other than what a reader feels,
+    // which is the distinction `Roving` exists to keep.
+    StopSpec {
+        tag: "shell.palette.head.fold",
+        holds: "the control that puts the palette away",
+        at: Where::At("dashboard"),
+        // One button: nothing to move between.
+        cursor: None,
     },
 ];
 
@@ -3279,6 +3330,15 @@ pub const VOICES: &[VoiceSpec] = &[
     VoiceSpec {
         tag: "shell.palette",
         role: "list",
+        population: Population::One,
+        at: Where::At("dashboard"),
+    },
+    // ★★★★★ R1903 — the control that puts the palette away. It speaks, so it
+    // is declared: a region this screen paints and announces without a
+    // declaration is a client told something the window does not do.
+    VoiceSpec {
+        tag: "shell.palette.head.fold",
+        role: "button",
         population: Population::One,
         at: Where::At("dashboard"),
     },

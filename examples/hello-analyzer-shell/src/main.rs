@@ -107,6 +107,7 @@ use pinion_core::drop_target::{
     BOARD_WIDGET_DRAG_KIND, DropAccept, DropAction, DropActions, DropClause, DropContract,
     DropOffer, DropStanding, DropVerdict, standing_value,
 };
+use pinion_core::edge_panel::EdgePlacement;
 use pinion_core::external::{
     ArgForm, Backend, BackendFallback, BackendSupport, DragPayload, DragUpdate, External,
     ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
@@ -241,6 +242,7 @@ const APP_BAR_H: u32 = spec::APP_BAR_H;
 const SUB_BAR_H: u32 = spec::SUB_BAR_H;
 const RAIL_W: u32 = spec::RAIL_W;
 const PALETTE_W: u32 = spec::PALETTE_W;
+const PALETTE_STRIP_W: u32 = spec::PALETTE_STRIP_W;
 const GRID_COLS: u32 = spec::GRID_COLS;
 const ROW_H: u32 = 174;
 const GAP: u32 = 16;
@@ -438,13 +440,75 @@ fn status_slot_rect() -> Rect {
     )
 }
 
+thread_local! {
+    /// ★★★★★ R1903 — **an address book to the one state, not a second copy of
+    /// anything.**
+    ///
+    /// This screen's geometry is a set of pure functions with no state in hand,
+    /// and `canvas_rect` alone has a dozen callers — one of them `col_pitch`,
+    /// which `cell_rect` uses, which everything uses. Threading a placement
+    /// through that would turn a dozen pure helpers into state-takers, so the
+    /// fact has to be readable from where they stand.
+    ///
+    /// ⚠ What this is NOT: a mirror of the placement. The sibling screen's
+    /// `use_lab_state` warns that a second holder leaves the state's own
+    /// untouched, and that warning is about holding the FACT twice. What is
+    /// held here is a clone of the same `Rc` the owner's cache holds — two
+    /// pointers to one value, so a write through either is a write to the one
+    /// signal. There is still exactly one holder.
+    ///
+    /// ★ The first draft peeked the owner cache instead
+    /// (`Owner::cache_get_by_str`), and it was wrong in the direction that
+    /// hides: the geometry runs where `Owner::current()` is not the owner that
+    /// cached the state — and for the wire, where there is no owner at all — so
+    /// the peek answered `None` and every rectangle read the OPENING placement
+    /// forever. The toast said the palette had been put away and the panel was
+    /// still 292px wide. The in-process gate did not catch it because its owner
+    /// is flat: the walk did.
+    static SHELL_STATE: RefCell<Option<Rc<ShellState>>> = const { RefCell::new(None) };
+}
+
+/// **Where the palette is right now**, as a placement value.
+///
+/// Reads the address book above without constructing anything: a geometry
+/// helper must not build state or register an animation, and this does neither.
+/// Before the state exists — which is what a test asking for a rectangle first
+/// sees — the answer is where the palette opens. Total, with no `unwrap` on the
+/// path.
+fn palette_placement() -> EdgePlacement {
+    SHELL_STATE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .map_or(spec::PALETTE_OPENS, |state| state.palette_at.get())
+    })
+}
+
+/// ★★★★★ R1903 — **how much room the palette takes on the right**, and the ONE
+/// derivation that answers it.
+///
+/// Measured this round: FIVE sites read `PALETTE_W` as chrome width — the
+/// canvas rectangle, the sub bar's rectangle, the sub bar's chip layout, the
+/// mounted roster's left inset, and the palette's own rectangle — and each
+/// would have gone on subtracting the open width while the panel was folded.
+/// That is R1887's lesson on this axis, stated one screen over: *a container
+/// derived from a placement while the things around it are nailed to a constant
+/// is half a derivation, and half a derivation is stable only until somebody
+/// moves the other half.*
+///
+/// ⚠ The palette's own ROWS keep reading `PALETTE_W`, and that is correct
+/// rather than missed: they are laid out in the panel's own space at its OPEN
+/// width, and a folded panel does not build them at all.
+fn palette_room() -> u32 {
+    palette_placement().thickness(PALETTE_STRIP_W)
+}
+
 /// The canvas rectangle: everything between the rail and the palette, under
 /// both bars and above the status band.
 fn canvas_rect() -> Rect {
     Rect::new(
         RAIL_W,
         APP_BAR_H + SUB_BAR_H,
-        win_w() - RAIL_W - PALETTE_W,
+        win_w() - RAIL_W - palette_room(),
         win_h()
             .saturating_sub(APP_BAR_H + SUB_BAR_H)
             .saturating_sub(status_band_h()),
@@ -1148,6 +1212,17 @@ struct ShellState {
     /// dock" from a coincidence of what is painted under the cursor into a
     /// property with a sentence.
     crossing: Signal<Option<Crossing>>,
+    /// ★★★★★ R1903 — **where the palette is**, as the placement value the
+    /// framework's panel axis speaks.
+    ///
+    /// The canon keeps this as `paletteOpen` and puts `togglePalette` /
+    /// `openPalette` on it; this screen had neither, so its palette was chrome
+    /// a reader could not put away. A `bool` would have been the cheap
+    /// spelling — and the wrong one, because R1902 made an opening placement a
+    /// thing a policy JUDGES, and a bare flag has nothing to be judged.
+    ///
+    /// Seeded from `spec::PALETTE_OPENS`, which that judgement admits.
+    palette_at: Signal<EdgePlacement>,
     /// ★★★★★ R1900 — **the occupant a strip press picked up**, when the drag in
     /// flight began on a tab rather than on the grip.
     ///
@@ -1431,7 +1506,7 @@ fn screen_roster() -> ScreenRoster {
         .collect();
     for key in open {
         let beside = if key == "dashboard" {
-            RAIL_W + PALETTE_W
+            RAIL_W + palette_room()
         } else {
             RAIL_W
         };
@@ -1548,6 +1623,7 @@ impl ShellState {
             float_grab: Signal::new(None),
             crossing: Signal::new(None),
             tab_carry: Signal::new(None),
+            palette_at: Signal::new(spec::PALETTE_OPENS),
             float_z: RefCell::new(0),
             // ★ R1719/R1778 — this screen is the one that opens having ALREADY
             // said something; the node lab and the packet viewer open silent.
@@ -2007,11 +2083,19 @@ fn use_shell_state() -> Rc<ShellState> {
     // `arrangement_storage`. `use_app_storage` is itself an `Owner::cache`, and
     // this framework refuses a factory that re-enters the cache.
     let storage = arrangement_storage();
-    owner.cache(STATE_KEY, move || {
+    let state = owner.cache(STATE_KEY, move || {
         let state = ShellState::new(clock, theme, toast, storage);
         restore_arrangements(&state);
         state
-    })
+    });
+    // ★★★★★ R1903 — publish the ADDRESS of that state to this thread, so the
+    // screen's pure geometry helpers can read the palette's placement from
+    // where they stand. A clone of the same `Rc`, overwritten on every call, so
+    // the newest state is the one the rectangles answer about — the staleness
+    // the sibling screen's own note warns of, closed by never letting the book
+    // hold an older address than the cache does.
+    SHELL_STATE.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&state)));
+    state
 }
 
 /// ★★★★★ R1826 — **the OS windows this application wants**, derived from the
@@ -2676,7 +2760,7 @@ impl SubChip {
 
     /// In the sub bar's own space, whose origin is `(RAIL_W, APP_BAR_H)`.
     fn rect(self) -> Rect {
-        let bar_w = win_w() - RAIL_W - PALETTE_W;
+        let bar_w = win_w() - RAIL_W - palette_room();
         match self {
             Self::Preset => Rect::new(16, 7, 178, 32),
             Self::EditLayout => Rect::new(bar_w - 330, 7, 140, 32),
@@ -2805,11 +2889,27 @@ fn palette_row_h() -> u32 {
 }
 
 /// The palette panel's rectangle.
+/// ★ R1903 — the fold control, in the palette panel's own space.
+///
+/// One function because the paint draws it and [`Hit::at`] finds it, and this
+/// screen's standing debt is exactly what a second copy of that rectangle would
+/// be ([[debt-paint-and-gesture-read-two-facts]]).
+///
+/// ★ The canon's own measurements, read from its markup this round: a 26x26
+/// button with a 7px radius, right-aligned in a header padded `14px 16px`
+/// after a flex spacer, carrying `title="Collapse"`. Reproduced rather than
+/// approximated — the size and the corner are the two things a reader's eye
+/// actually compares.
+const fn palette_fold_rect() -> Rect {
+    Rect::new(PALETTE_W - 16 - 26, 14, 26, 26)
+}
+
 fn palette_rect() -> Rect {
+    let room = palette_room();
     Rect::new(
-        win_w() - PALETTE_W,
+        win_w() - room,
         APP_BAR_H,
-        PALETTE_W,
+        room,
         win_h()
             .saturating_sub(APP_BAR_H)
             .saturating_sub(status_band_h()),
@@ -2901,6 +3001,16 @@ enum Hit {
     /// cycles that column's order.
     AlarmColumn(String, usize),
     Remedy(String),
+    /// ★★★★★ R1903 — the control that puts the palette away. On the panel's own
+    /// header, where the canon's is.
+    PaletteFold,
+    /// ★★★★★ R1903 — the strip a folded palette leaves, and the WHOLE of it is
+    /// the affordance.
+    ///
+    /// The canon agrees literally: its closed state draws a 44px band whose own
+    /// element carries the toggle. Putting a small button inside a narrow strip
+    /// would be a fold a reader cannot undo without aiming.
+    PaletteStrip,
     /// ★★★★★ R1900 — one tab of a shared cell's strip, by the occupant it
     /// names.
     ///
@@ -2964,8 +3074,18 @@ impl Hit {
             return Self::in_settings(state, px - region.x, py - region.y);
         }
         if px >= palette_rect().x {
+            // ★★★★★ R1903 — a FOLDED palette is a strip, and the whole strip is
+            // the affordance. Asked before the rows, because a folded panel
+            // builds none of them: the rows below would answer `Nothing` and a
+            // reader's press on the band would do nothing at all.
+            if palette_placement().folded {
+                return Self::PaletteStrip;
+            }
             let panel = palette_rect();
             let (lx, ly) = (px - panel.x, py - panel.y);
+            if contains(palette_fold_rect(), lx, ly) {
+                return Self::PaletteFold;
+            }
             for row in palette_rows() {
                 if let Some(def) = row.def
                     && contains(row.rect, lx, ly)
@@ -3387,6 +3507,8 @@ fn hit_word(hit: &Hit) -> String {
         Hit::Affordance(id, affordance) => format!("card.{id}.{}", affordance.wire()),
         Hit::Stepper(id, verb) => format!("card.{id}.{verb}"),
         Hit::Remedy(id) => format!("card.{id}.remedy"),
+        Hit::PaletteFold => format!("{PALETTE_HEAD}fold"),
+        Hit::PaletteStrip => "shell.palette.strip".to_owned(),
         // ★ R1900 — the tab names the OCCUPANT it selects, not the cell it is
         // drawn in. The cell's name is whichever occupant is in front, so a tag
         // built from it would change under a person's finger every time they
@@ -3894,6 +4016,45 @@ impl ShellOracle {
             label_of(member)
         )));
         Ok(IntrospectValue::Text(format!("{member},{col},{row}")))
+    }
+
+    /// ★★★★★ R1903 — `palette <fold|unfold|toggle>`: put the palette away, or
+    /// bring it back.
+    ///
+    /// **The one place the placement changes.** The header control, the strip,
+    /// the sub bar's add button and a client all arrive here, so the screen and
+    /// an agent cannot come to mean different things by the same act — the rule
+    /// R1887 established for the sibling screen's panels.
+    ///
+    /// The policy is asked rather than assumed: `admit_fold` is what refuses a
+    /// fold on a panel that declared it does not fold, and its refusal carries
+    /// the sentence a person is shown. A screen that folded without asking
+    /// would be the habit this axis exists to end — a declared constraint
+    /// quietly losing to an imperative call.
+    fn place_palette(state: &Rc<ShellState>, verb: &str) -> Result<EdgePlacement, InvokeError> {
+        let at = state.palette_at.get();
+        let want = match verb.trim() {
+            "fold" => true,
+            "unfold" => false,
+            "toggle" => !at.folded,
+            other => {
+                return Err(InvokeError::rejected(format!(
+                    "the palette folds and unfolds; {other:?} is neither"
+                )));
+            }
+        };
+        let placed = spec::PALETTE_POLICY
+            .admit_fold(at, want)
+            .map_err(|why| InvokeError::rejected(why.reason().to_string()))?;
+        state.palette_at.set(placed);
+        state.say(Utterance::done(if placed.folded {
+            "palette put away \u{2014} the strip brings it back".to_owned()
+        } else {
+            // The canon's own sentence for `openPalette`, which is what makes
+            // the re-opening tell a reader what the panel is FOR.
+            "palette open \u{2014} drag a widget onto the canvas".to_owned()
+        }));
+        Ok(placed)
     }
 
     /// ★★★★★ R1900 — `reveal <card>`: bring an occupant of a shared place to
@@ -4672,6 +4833,10 @@ const FIELDS: &[SchemaField] = const {
         SchemaField::action("on_top", "string"),
         // R1891 — `<card>,<window|canvas>`: where a detached card lives.
         SchemaField::action("detach_home", "string"),
+        // ★★★★★ R1903 — `fold` / `unfold` / `toggle`: the canon's own two verbs
+        // plus the toggle its control performs, as one action with a closed
+        // vocabulary that refuses anything else by name.
+        SchemaField::action("palette", "string"),
         // ★★★★★ R1900 — a place two cards share. Three verbs rather than one
         // with a mode word, because each takes a different argument and a
         // grammar that says so is a grammar a client can be refused against.
@@ -5195,6 +5360,11 @@ impl ExternalIntrospect for ShellOracle {
             // is half a capability — and these go through the SAME board calls
             // the pointer reaches, so the two cannot come to mean different
             // things.
+            // ★★★★★ R1903 — the canon's `togglePalette` / `openPalette`, on the
+            // wire. §2 #2 makes the agent the primary path, so a panel a hand
+            // can put away and a client cannot is half a capability.
+            "palette" => Self::place_palette(&state, &Self::text(&args)?)
+                .map(|at| IntrospectValue::Text(if at.folded { "folded" } else { "open" }.into())),
             "share" => Self::share_place(&state, &args),
             "unshare" => Self::unshare_place(&state, &args),
             "reveal" => Self::reveal_tab(&state, Self::text(&args)?.trim()),
@@ -6277,6 +6447,13 @@ impl ShellOracle {
                 }
             }
             Hit::Remedy(id) => Self::apply_remedy(state, &id),
+            // ★★★★★ R1903 — both palette gestures go through the ONE verb, so
+            // the pointer and a client cannot mean different things by them.
+            Hit::PaletteFold | Hit::PaletteStrip => {
+                if let Err(why) = Self::place_palette(state, "toggle") {
+                    state.say(Utterance::refused(&why));
+                }
+            }
             // ★★★★★ R1900 — the press already brought this tab to the front,
             // so the latch says which one is there rather than doing it again.
             //
@@ -6380,16 +6557,31 @@ impl ShellOracle {
                 }));
             }
             SubChip::AddWidget => {
-                // The palette is always open in this shell, so the button is
-                // what SAYS where widgets come from rather than opening a second
-                // chooser.
+                // ★★★★★ R1903 — this is the canon's `openPalette`, at last.
+                //
+                // The comment that stood here said "the palette is always open
+                // in this shell, so the button is what SAYS where widgets come
+                // from" — true when written, and it was the gap written down:
+                // the canon's button OPENS the drawer if it is closed and then
+                // says its sentence, and ours could only ever say the sentence.
+                //
+                // Opening rather than toggling, deliberately and as the canon
+                // does: a reader who asks to add a widget wants the palette
+                // there, and a button that closed it on the second press would
+                // take the thing away from somebody reaching for it.
                 //
                 // ★ R1695 — it used to move the rail's highlight to `catalog`
-                // as well, which is this round's own defect in miniature: the
-                // rail said you were at a destination the window had not taken
-                // you to. The pointer is what the button aims, and it aims at
-                // the palette on this page.
-                state.say(Utterance::done("pick a widget from the palette \u{2192}"));
+                // as well, which was that round's defect in miniature: the rail
+                // said you were at a destination the window had not taken you
+                // to. The pointer is what the button aims, and it aims at the
+                // palette on this page.
+                if state.palette_at.get().folded {
+                    if let Err(why) = Self::place_palette(state, "unfold") {
+                        state.say(Utterance::refused(&why));
+                    }
+                } else {
+                    state.say(Utterance::done("pick a widget from the palette \u{2192}"));
+                }
             }
         }
     }
@@ -7824,7 +8016,7 @@ fn sub_bar_scene(state: &ShellState, palette: Palette) -> Scene {
                 .with_layout(absolute(Rect::new(
                     RAIL_W,
                     APP_BAR_H,
-                    win_w() - RAIL_W - PALETTE_W,
+                    win_w() - RAIL_W - palette_room(),
                     SUB_BAR_H,
                 ))),
         ),
@@ -11337,6 +11529,19 @@ fn spec_json() -> serde_json::Value {
             "palette_w": spec::PALETTE_W,
             "grid_cols": spec::GRID_COLS,
         },
+        // ★★★★★ R1903 — the palette's placement, and what it may do. `at` is
+        // where it IS, `opens` where it arrives — two facts, for the reason
+        // R1900 gave one screen over: the same bit cannot say whether a panel
+        // was put away by a person or came that way. `foldable` is the policy,
+        // published so a client is told what the `palette` verb will accept
+        // rather than having to be refused to find out.
+        // ⚠ `palette_placement`, not `palette`: this document already publishes
+        // a `palette` — the catalogue roster — and a second meaning under one
+        // key is the shape this tree keeps paying for. Lifted into its own
+        // function for the reason the lint gives, which is the same reason
+        // `floating_ids` was lifted at R1738: adding one slot took this
+        // builder a line over its budget.
+        "palette_placement": palette_placement_json(),
         "source": spec::SOURCE,
         "transport": spec::TRANSPORT,
         "rate": spec::RATE,
@@ -11456,6 +11661,27 @@ fn spec_json() -> serde_json::Value {
                 "at": where_word(*at),
             }))
         }).collect::<Vec<_>>(),
+    })
+}
+
+/// ★★★★★ R1903 — the palette's placement, and what it may do.
+///
+/// `at` is where it IS and `opens` where it arrives — two facts, for the reason
+/// R1900 gave one screen over: the same bit cannot say whether a panel was put
+/// away by a person or came that way, and a client restoring a session needs
+/// the second. `foldable` is the policy, published so a client is told what the
+/// `palette` verb accepts rather than having to be refused to find out.
+fn palette_placement_json() -> serde_json::Value {
+    let at = palette_placement();
+    serde_json::json!({
+        "at": { "edge": "right", "extent": at.extent, "folded": at.folded },
+        "opens": {
+            "edge": "right",
+            "extent": spec::PALETTE_OPENS.extent,
+            "folded": spec::PALETTE_OPENS.folded,
+        },
+        "foldable": spec::PALETTE_POLICY.foldable,
+        "strip_w": spec::PALETTE_STRIP_W,
     })
 }
 
@@ -11818,8 +12044,44 @@ fn join_mark_scene(host: &Tile, palette: Palette) -> Scene {
     )
 }
 
+/// ★★★★★ R1903 — a folded palette: a strip, and the WHOLE strip is what a
+/// reader presses to bring it back.
+///
+/// The canon's closed state literally: a narrow band on the same edge, carrying
+/// the toggle on its own element. Not a button inside a band — a fold a reader
+/// has to aim at to undo is a fold that traps them.
+///
+/// Its rows are not built at all, which is what makes the strip the only way
+/// back rather than merely the visible one — the R1695 rule about a page that
+/// is not current, applied to a panel that is not open.
+fn palette_strip_scene(palette: Palette) -> Scene {
+    let panel = palette_rect();
+    let mid = panel.h / 2;
+    Scene::Container(
+        ContainerNode::new(vec![
+            // Three dots down the middle: the same grip vocabulary this screen
+            // uses everywhere else for "a thing a hand takes hold of".
+            Scene::Container(
+                ContainerNode::new(
+                    (0..3)
+                        .map(|n| dot(0, n * 8, 4, palette.muted))
+                        .collect::<Vec<_>>(),
+                )
+                .with_tag("shell.palette.strip.grip")
+                .with_layout(absolute(Rect::new(panel.w / 2 - 2, mid - 12, 4, 20))),
+            ),
+        ])
+        .with_tag("shell.palette.strip")
+        .with_style(BoxStyle::filled(palette.raised).with_border(Border::new(palette.outline, 1)))
+        .with_layout(absolute(panel).with_focusable(true)),
+    )
+}
+
 /// The palette panel: the catalogue, grouped, with a count at the foot.
 fn palette_scene(state: &ShellState, palette: Palette) -> Scene {
+    if palette_placement().folded {
+        return palette_strip_scene(palette);
+    }
     let panel = palette_rect();
     // ★★★★★ R1761 — the panel's own heading, ADDRESSABLE. It was two loose
     // labels, so the two lines a reader reads first were the two lines nothing
@@ -11839,6 +12101,22 @@ fn palette_scene(state: &ShellState, palette: Palette) -> Scene {
         // again would be one fact in two voices. Addressable for the
         // specification, silent for the reader.
         .silenced(Silence::name_of("shell.palette")),
+        // ★★★★★ R1903 — the control that puts it away, at the rectangle
+        // `Hit::at` asks the same function for.
+        Scene::Container(
+            ContainerNode::new(vec![Scene::Container(
+                ContainerNode::new(Vec::new())
+                    .with_style(BoxStyle::filled(palette.muted))
+                    .with_layout(absolute(Rect::new(7, 12, 12, 2))),
+            )])
+            .with_tag(format!("{PALETTE_HEAD}fold"))
+            .with_style(
+                BoxStyle::filled(palette.raised)
+                    .with_corner_radius(7)
+                    .with_border(Border::new(palette.outline, 1)),
+            )
+            .with_layout(absolute(palette_fold_rect()).with_focusable(true)),
+        ),
         cell(
             PALETTE_HEAD_HINT.to_owned(),
             spec::PALETTE_HINT,
@@ -12706,7 +12984,16 @@ impl WidgetA11y for AnalyzerShellView {
         }
         root = root.with_child("shell.canvas");
         if dashboard {
-            root = root.with_child("shell.palette");
+            // ★ R1903 — the child is whichever of the two the panel currently
+            // IS, read from the same placement the paint reads. A tree naming
+            // `shell.palette` while the screen draws a strip would be the
+            // announce-what-is-not-painted class this tree already has a name
+            // for.
+            root = root.with_child(if palette_placement().folded {
+                "shell.palette.strip"
+            } else {
+                "shell.palette"
+            });
         }
         // ★ R1867 — the status band's slot has two occupants and the tree
         // carries whichever is PAINTED. `shell.toast` is a live region and
@@ -13656,6 +13943,18 @@ fn series_reading(series: &[f64]) -> String {
 /// what the disabled cascade resolved. One declaration, and the wire, the
 /// accessibility tree and the ink cannot disagree.
 fn palette_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
+    // ★★★★★ R1903 — a folded palette announces its STRIP and nothing else, for
+    // the same reason it paints nothing else: a reader told about thirteen
+    // catalogue rows that are not on screen is a reader sent looking for them.
+    // The strip carries the panel's name plus what pressing it does, so the way
+    // back is the thing that is announced.
+    if palette_placement().folded {
+        return vec![
+            AccessNode::new("shell.palette.strip", AriaRole::Button)
+                .with_name(format!("{}, put away", spec::PALETTE_TITLE))
+                .with_value(AccessValue::Text("open the palette".to_owned())),
+        ];
+    }
     let mut list = AccessNode::new("shell.palette", AriaRole::List)
         .with_name(spec::PALETTE_TITLE)
         // ★ R1761 — and the line the panel paints under that name, which is
@@ -13702,6 +14001,16 @@ fn palette_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
         AccessNode::new("shell.palette.reserved", AriaRole::Status)
             .with_name("Reserved")
             .with_value(AccessValue::Text(spec::reserved_count().to_string())),
+    );
+    // ★★★★★ R1903 — the fold control is a keyboard stop, so it must be a node
+    // the tree can name: a reader who lands on something the tree cannot name
+    // has landed nowhere, which is what the ring gate says in those words.
+    //
+    // A sibling of the list rather than a child of it, because the catalogue's
+    // roving cursor enumerates the thirteen entries and this is not one of them.
+    nodes.push(
+        AccessNode::new(format!("{PALETTE_HEAD}fold"), AriaRole::Button)
+            .with_name(format!("Put {} away", spec::PALETTE_TITLE)),
     );
     nodes.insert(0, list);
     nodes

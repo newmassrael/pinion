@@ -5494,3 +5494,234 @@ fn r1885_the_walk_reaches_a_lab_whose_peers_run_different_builds() {
         );
     });
 }
+
+// ── R1903: the palette is a placement, and everything follows it ───────────
+
+/// ★★★★★ R1903 — **the palette opens where its own policy admits.**
+///
+/// R1902 built `EdgePolicy::admit_opening` on the finding that every CHANGE to
+/// a placement met a policy and the opening state met nothing. This is that
+/// judgement reaching the shell — its first consumer outside the node lab, and
+/// the reason the palette's arrangement is a placement value here rather than
+/// the `bool` a fold would otherwise be: a flag has nothing to be judged.
+#[test]
+fn r1903_the_palette_opens_where_its_own_policy_admits() {
+    let admitted = spec::PALETTE_POLICY
+        .admit_opening(spec::PALETTE_OPENS)
+        .unwrap_or_else(|why| {
+            panic!(
+                "the palette opens at {:?}, which its own policy refuses: {}",
+                spec::PALETTE_OPENS,
+                why.reason()
+            )
+        });
+    assert_eq!(
+        admitted,
+        spec::PALETTE_OPENS,
+        "an admitted opening is returned unchanged"
+    );
+    // ⚠ The canon's own arrangement — that it opens SHOWING and that it CAN
+    // close — is asserted in `r1903_folding_the_palette_gives_its_room_to_the
+    // _canvas`, on the values the running screen answers with.
+    //
+    // ★ Not here, and clippy is what said so: an `assert!` on a `const` is
+    // computed at compile time and optimised out, so it checks nothing at run
+    // time. Two claims about this round's whole point were written that way and
+    // would have passed for ever. A claim about a constant belongs where the
+    // constant has become a value something read.
+}
+
+/// ★★★★★ R1903 — **every chrome derivation follows the fold.**
+///
+/// Measured this round: FIVE sites read the palette's open width as chrome —
+/// the canvas rectangle, the sub bar's rectangle, its chip layout, the mounted
+/// roster's left inset, and the panel's own rectangle. That is more than the
+/// four this campaign's carry recorded, and the extra one is the point: a site
+/// nobody counted is a site that goes on subtracting 292 pixels from a panel
+/// that is 44 wide.
+///
+/// The claim is not "the canvas grew". It is that the room the panel takes and
+/// the room everything else is given are **one number**, so they cannot
+/// disagree — which is what a half-derivation cannot promise.
+#[test]
+fn r1903_folding_the_palette_gives_its_room_to_the_canvas() {
+    Owner::new().run(|| {
+        let state = use_shell_state();
+        // ★ The canon's arrangement, read from the RUNNING screen rather than
+        // asserted on a constant — see the note in the gate above for why that
+        // distinction cost two checks that could never have failed.
+        assert!(
+            !state.palette_at.get().folded,
+            "the canon opens its palette showing, so this screen does"
+        );
+        assert!(
+            spec::PALETTE_POLICY
+                .admit_fold(state.palette_at.get(), true)
+                .is_ok(),
+            "the canon puts a Collapse control on it, so this one folds"
+        );
+        let open_panel = super::palette_rect();
+        let open_canvas = super::canvas_rect();
+        assert_eq!(
+            open_panel.w,
+            spec::PALETTE_W,
+            "it opens at the width the specification gives it"
+        );
+
+        super::ShellOracle::place_palette(&state, "fold").expect("the policy admits a fold");
+        let shut_panel = super::palette_rect();
+        let shut_canvas = super::canvas_rect();
+
+        assert_eq!(
+            shut_panel.w,
+            spec::PALETTE_STRIP_W,
+            "a folded palette is its strip, not nothing — the way back has to be \
+             on screen"
+        );
+        // ★★★★★ THE WAY BACK IS REACHABLE, asserted ABSOLUTELY.
+        //
+        // A counterfactual found this hole and it is worth stating: setting the
+        // strip width to zero — a fold that leaves nothing, which is a HIDE and
+        // the thing this axis exists to distinguish — passed every check above,
+        // because they are all RELATIVE. `shut_panel.w == PALETTE_STRIP_W` and
+        // "the canvas grew by `PALETTE_W - PALETTE_STRIP_W`" both move with the
+        // constant, so both stay true at zero. That is R1901.2's lesson in a
+        // new shape: two sides derived from one source are blind to an edit
+        // that moves them together.
+        //
+        // The property is not a width, it is REACHABILITY: a person who folded
+        // the panel can press something and get it back. So the assertion is
+        // the hit test's own answer at the strip's middle, which no constant
+        // can satisfy vacuously.
+        // ⚠ And the floor is ABSOLUTE, which took two attempts. The first was
+        // the hit test alone, and it still passed at a strip zero pixels wide:
+        // `palette_rect` then sits at `x == win_w()` with no extent, the probe
+        // lands exactly on the window's right edge, and `Hit::at` answers
+        // `PaletteStrip` for any x at or past that column. A reachability check
+        // that a point OFF the screen satisfies is not one.
+        assert!(
+            shut_panel.w > 0,
+            "a fold leaves a strip and a hide leaves nothing; that distinction \
+             is this axis's whole point and it is a floor, not a ratio"
+        );
+        let probe = (
+            shut_panel.x + shut_panel.w / 2,
+            shut_panel.y + shut_panel.h / 2,
+        );
+        assert!(
+            probe.0 < super::win_w(),
+            "the point a person would aim at is ON the screen: {probe:?} in a \
+             {}px window",
+            super::win_w()
+        );
+        assert!(
+            matches!(
+                super::Hit::at(&state, probe.0, probe.1),
+                super::Hit::PaletteStrip
+            ),
+            "a folded palette must leave something a pointer can press, or the \
+             fold is a hide: nothing answers at {probe:?} inside {shut_panel:?}"
+        );
+        assert_eq!(
+            shut_canvas.w - open_canvas.w,
+            spec::PALETTE_W - spec::PALETTE_STRIP_W,
+            "the canvas grows by EXACTLY what the panel gave up: one number, \
+             read twice, rather than two derivations that agree today"
+        );
+        // The panel and the canvas still meet, with nothing between and nothing
+        // overlapping — the property a second constant would break silently.
+        assert_eq!(
+            shut_canvas.x + shut_canvas.w,
+            shut_panel.x,
+            "the canvas ends where the strip begins"
+        );
+        assert_eq!(
+            open_canvas.x + open_canvas.w,
+            open_panel.x,
+            "and did before the fold, so this is a property rather than a state"
+        );
+
+        super::ShellOracle::place_palette(&state, "unfold").expect("unfolding is never refused");
+        assert_eq!(
+            super::palette_rect(),
+            open_panel,
+            "and it comes back to exactly where it opened"
+        );
+        assert_eq!(super::canvas_rect(), open_canvas);
+    });
+}
+
+/// ★★★★★ R1903 — **the strip is what a folded palette announces, and the
+/// catalogue is not.**
+///
+/// A reader told about thirteen rows that are not painted is a reader sent
+/// looking for them — the announce-what-is-not-drawn class this tree already
+/// has a name for, and the one R1900's closing audit found in its own work.
+#[test]
+fn r1903_a_folded_palette_announces_its_way_back_and_not_its_rows() {
+    Owner::new().run(|| {
+        let state = use_shell_state();
+        let open: Vec<String> = super::palette_nodes(&state)
+            .into_iter()
+            .map(|n| n.tag)
+            .collect();
+        assert!(
+            open.iter().any(|t| t == "shell.palette"),
+            "open, the catalogue is announced: {open:?}"
+        );
+        assert!(
+            open.iter().any(|t| t == "shell.palette.head.fold"),
+            "and so is the control that puts it away: {open:?}"
+        );
+
+        super::ShellOracle::place_palette(&state, "fold").expect("the policy admits a fold");
+        let shut: Vec<String> = super::palette_nodes(&state)
+            .into_iter()
+            .map(|n| n.tag)
+            .collect();
+        assert_eq!(
+            shut,
+            vec!["shell.palette.strip".to_owned()],
+            "folded, the strip is the whole announcement"
+        );
+        super::ShellOracle::place_palette(&state, "unfold").expect("unfolding is never refused");
+    });
+}
+
+/// ★★★★★ R1903 — **the pointer and the wire reach one verb.**
+///
+/// The header control, the strip and a client all go through `place_palette`,
+/// so the screen and an agent cannot come to mean different things by the same
+/// act — the rule R1887 established for the sibling screen's panels. And a word
+/// the verb does not know is refused BY NAME rather than ignored.
+#[test]
+fn r1903_both_palette_gestures_go_through_the_one_verb_and_it_refuses_by_name() {
+    Owner::new().run(|| {
+        let state = use_shell_state();
+        for hit in [super::Hit::PaletteFold, super::Hit::PaletteStrip] {
+            let before = state.palette_at.get().folded;
+            super::ShellOracle::act_on_hit(&state, hit);
+            assert_ne!(
+                state.palette_at.get().folded,
+                before,
+                "each gesture toggles the one placement"
+            );
+        }
+        assert!(
+            !state.palette_at.get().folded,
+            "two toggles come back to where they started"
+        );
+
+        let refused = super::ShellOracle::place_palette(&state, "vanish")
+            .expect_err("the vocabulary is closed");
+        let sentence = format!("{refused:?}");
+        assert!(
+            sentence.contains("vanish"),
+            "a refusal names what was asked: {sentence}"
+        );
+        assert!(
+            !state.palette_at.get().folded,
+            "and a refusal changes nothing"
+        );
+    });
+}

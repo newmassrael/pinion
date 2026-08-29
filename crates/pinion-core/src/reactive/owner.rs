@@ -1474,6 +1474,28 @@ impl Owner {
     /// the walk; no factory runs, no slot is created on miss, no
     /// signal is read.
     ///
+    /// ## ★★★★★ A peek taken WHILE the cache is being built answers `None`
+    ///
+    /// R1903 — this borrowed the cache strictly and panicked
+    /// `already mutably borrowed` when called from inside a
+    /// [`Self::cache`] factory, which is where a screen's own geometry
+    /// helper reaches it: the shell's palette placement is read by
+    /// rectangle functions that run while the state holding it is
+    /// still being constructed. 124 tests failed on one such call.
+    ///
+    /// The repair is a **non-blocking** borrow, and it is the honest
+    /// one rather than a workaround: a cache mid-insert has no answer
+    /// for a peeker, and *no answer* is precisely what this function's
+    /// `Option` already means. Every caller treats `None` as "not
+    /// there" — the RPC lookups all document it that way — so nothing
+    /// gains a case it did not have, and a panic nobody could catch
+    /// goes away.
+    ///
+    /// ⚠ It does NOT make re-entrancy safe in general.
+    /// [`Self::cache`] still refuses a factory that re-enters it
+    /// (R1897), because that one has to build something and cannot
+    /// answer "not yet". This is the read half, and the read half can.
+    ///
     /// Pinned by `r605_cache_get_by_str_returns_cached_value`,
     /// `r605_cache_get_by_str_returns_none_when_absent`, and
     /// `r605_cache_get_by_str_is_type_aware`.
@@ -1481,7 +1503,9 @@ impl Owner {
     pub fn cache_get_by_str<V: 'static>(&self, key: &str) -> Option<Rc<V>> {
         let type_id = TypeId::of::<V>();
         let any_rc: Rc<dyn Any> = {
-            let cache = self.inner.cache.borrow();
+            // Non-blocking: a cache being written has no answer for a peek, and
+            // `None` is what this function already says when there is none.
+            let cache = self.inner.cache.try_borrow().ok()?;
             cache
                 .iter()
                 .find(|((tid, k), _)| *tid == type_id && k.as_ref() == key)
@@ -1751,6 +1775,44 @@ mod tests {
             .expect("OtherProbe slot must resolve");
         assert_eq!(probe.0, 7);
         assert_eq!(other.0, "hi");
+    }
+
+    /// ★★★★★ R1903 — **a peek taken while the cache is being built answers
+    /// `None` rather than panicking.**
+    ///
+    /// Measured before the repair: a screen's geometry helper reaching the
+    /// state it is being asked about — which is exactly when a rectangle
+    /// function runs during that state's own construction — panicked
+    /// `already mutably borrowed` and took 124 tests of one example with it.
+    ///
+    /// `None` is not a new case for any caller: every one of them already
+    /// treats it as "not there", which is what a cache mid-insert honestly is.
+    #[test]
+    fn r1903_a_peek_from_inside_a_factory_answers_none_rather_than_panicking() {
+        let owner = Owner::new();
+        let seen: Rc<std::cell::Cell<bool>> = Rc::new(std::cell::Cell::new(false));
+        let witness = Rc::clone(&seen);
+        let built = owner.cache::<CacheProbe, _>("under-construction", {
+            let owner = owner.clone();
+            move || {
+                // The peek the shell's geometry takes, at the one moment the
+                // cache cannot answer it.
+                let peeked: Option<Rc<CacheProbe>> = owner.cache_get_by_str("under-construction");
+                witness.set(peeked.is_none());
+                CacheProbe(11)
+            }
+        });
+        assert!(
+            seen.get(),
+            "a peek during construction answers None, not a panic"
+        );
+        assert_eq!(built.0, 11, "and the factory still built its value");
+        // And afterwards the same peek finds it, so the softened borrow did not
+        // cost the function its job.
+        let after: Rc<CacheProbe> = owner
+            .cache_get_by_str("under-construction")
+            .expect("the slot resolves once the factory has returned");
+        assert_eq!(after.0, 11);
     }
 
     #[test]
