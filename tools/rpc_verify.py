@@ -869,6 +869,12 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         # R1662 — the fontconfig this subprocess was launched with, filled in by
         # `__enter__`; see `_gate_font_pin`.
         self._env_fontconfig: Optional[Path] = None
+        # ★ R1899 — the storage root THIS subprocess was given, when the harness
+        # is the one that chose it. `None` means the caller owns the variable
+        # (`isolated_storage_dir`, or a demo that set it), and teardown leaves
+        # that root alone: a walk needing three processes to share one store
+        # must outlive any one of them.
+        self._own_storage: Optional[Path] = None
         # R1662 — this surface is being MEASURED for the ink ratchets, so the
         # three ink gates stand down.
         #
@@ -968,6 +974,32 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         # (the font-source demos), and the gate stands down there rather than
         # asserting about a database it did not choose.
         self._env_fontconfig = pinned
+        # ★★★★★ R1899 §3 §5.15 — **a demo does not write to the developer's
+        # home directory**, and a sweep's verdict does not depend on run order.
+        #
+        # Set here rather than in each demo because it is a property of every
+        # driven binary, including ones nobody has written yet. A caller that
+        # has ALREADY chosen a storage root keeps it: `isolated_storage_dir`
+        # sets this variable in `os.environ` (so it is already in `env`), which
+        # is how the walks that need several processes to share one store — a
+        # save outliving the run that made it — still work.
+        #
+        # ⚠ THE CLASS WAS WRITTEN DOWN AND NOT MADE A PROPERTY. The docstring
+        # on `isolated_storage_dir` has said since R666 that R665 introduced
+        # persistence-by-default and that the demos predating it "would
+        # contaminate each other without isolation". R1897 gave a SECOND
+        # application the same persistence and only its own walk isolated:
+        # `r1649` saves an arrangement, that save now lands on disk, and
+        # `r1893` — which asserts the application ships FOUR arrangements —
+        # found five and went red in CI. Measured on this machine, the file was
+        # sitting in the real data directory with `Layout 5` in it. ⇒ a
+        # prescription recorded as advice is one every later app has to
+        # rediscover; this makes it the harness's answer instead.
+        if "PINION_STORAGE_DIR" not in env:
+            self._own_storage = Path(
+                tempfile.mkdtemp(prefix=f"pinion-demo-{self.example}-")
+            )
+            env["PINION_STORAGE_DIR"] = str(self._own_storage)
         # R1319 — demo-supplied env wins (e.g. `PINION_LOG`), so a demo can observe a
         # level-gated `tracing` line the default `warn` filter would drop.
         env.update(self.extra_env)
@@ -1939,6 +1971,14 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
 
     def __exit__(self, exc_type, exc, tb) -> None:
         leak = self.shutdown()
+        # ★ R1899 — and the store this harness minted goes with it. Only that
+        # one: a root the CALLER chose is the caller's to remove, which is what
+        # keeps `isolated_storage_dir`'s several-processes-one-store walks
+        # working. Removed before the leak check so a leaking demo still
+        # cleans up after itself.
+        if self._own_storage is not None:
+            shutil.rmtree(self._own_storage, ignore_errors=True)
+            self._own_storage = None
         # R1570.3 — a leak fails the demo that caused it, but never masks a
         # failure already in flight: an assertion error is the more useful
         # verdict, and the leak is a consequence of whatever went wrong.
