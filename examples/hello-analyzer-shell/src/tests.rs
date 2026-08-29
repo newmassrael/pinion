@@ -5725,3 +5725,172 @@ fn r1903_both_palette_gestures_go_through_the_one_verb_and_it_refuses_by_name() 
         );
     });
 }
+
+// ── R1905: a detached card's rectangle is in a SPACE, and a home change
+//    crosses between two of them ──────────────────────────────────────────
+
+/// ★★★★★ R1905 — **changing home converts the rectangle; it does not relabel
+/// it.**
+///
+/// R1891 gave a torn-off card a `DetachHome` and deliberately left the geometry
+/// alone, writing down that the transfer between the two coordinate spaces was
+/// undecided. Measured on the running tool at the start of this round, the
+/// consequence was exact:
+///
+/// ```text
+/// tear off      -> floats [{x:120, y:40, home:"window"}], window at [120,40]
+/// detach_home   -> floats [{x:120, y:40, home:"canvas"}]
+/// ```
+///
+/// The identical pair, read against two different origins, so a reader watched
+/// the panel jump by however far the window manager had placed this window from
+/// the display's corner.
+///
+/// # Why this test stamps the origin itself
+///
+/// Because the conversion is BY the host's own origin, and a host at `(0, 0)`
+/// makes converting and relabelling the same arithmetic — the shape R1901.2
+/// named, where both sides of a check move together and the check goes blind.
+/// Under a bare offscreen display there is no window manager to place this
+/// window anywhere else, so the fact is stamped here through the very function
+/// `pinion-shell` stamps it with. That is not a mock: it is the seam, driven.
+#[test]
+fn r1905_changing_home_crosses_the_two_coordinate_spaces() {
+    Owner::new().run(|| {
+        let state = use_shell_state();
+        // The host is somewhere a window manager put it. Through the framework's
+        // own sink, so a change to how the origin is published breaks this.
+        pinion_core::external::publish_window_origins([(super::MAIN_WINDOW, (300, 150))]);
+        let transfer = super::shell_transfer();
+        assert!(
+            transfer.knows_offset(),
+            "the stamp is what the screen reads; without it every crossing is adrift"
+        );
+
+        super::ShellOracle::detach(&state, "packet#0").expect("a board card tears off");
+        let torn = state
+            .float("packet#0")
+            .expect("the card is floating after a tear-off");
+        assert_eq!(
+            torn.home,
+            pinion_core::detach::DetachHome::Window,
+            "this host prefers a window, which is what makes the crossing real"
+        );
+        // Put its window somewhere the crossing lands INSIDE the canvas, so
+        // this leg reads the conversion rather than the pull-in. The opening
+        // (120, 40) is above and left of a host at (300, 150) and would be
+        // pulled to the corner — a real behaviour, asserted in the test below.
+        let before = super::Float {
+            x: 900,
+            y: 600,
+            ..torn
+        };
+        state.set_float("packet#0", &before);
+
+        super::ShellOracle::set_detach_home(
+            &state,
+            &super::IntrospectValue::Text("packet#0,canvas".into()),
+        )
+        .expect("the canvas is a home this host admits");
+        let after = state.float("packet#0").expect("it is still floating");
+        // ⚠ The offset is the CANVAS's origin on the display, not the window's:
+        // a float's stored pair is in the canvas's own frame. Read from the
+        // screen's own derivation rather than written down, or this gate would
+        // assert a second spelling of the layout.
+        let canvas = super::canvas_rect();
+        let (ox, oy) = (300 + canvas.x, 150 + canvas.y);
+        assert_eq!(
+            (after.x, after.y),
+            (before.x - ox, before.y - oy),
+            "★★★★★ the numbers CROSS by the canvas's origin on the display. \
+             Equal to `before` here is the defect this round repaid, not a pass"
+        );
+        assert_eq!(
+            state.arrival.get(),
+            Some(pinion_core::detach::Arrival::Kept),
+            "and the wire says it landed where the reader last saw it"
+        );
+
+        // Back again: a card sent to the canvas and returned must not drift, or
+        // a reader who changes their mind pays a display origin every trip.
+        super::ShellOracle::set_detach_home(
+            &state,
+            &super::IntrospectValue::Text("packet#0,window".into()),
+        )
+        .expect("a window is a home this host admits");
+        let back = state.float("packet#0").expect("it is still floating");
+        assert_eq!(
+            (back.x, back.y),
+            (before.x, before.y),
+            "a round trip is the identity"
+        );
+    });
+}
+
+/// ★★★★★ R1905 — **a card crossing into the canvas can still be picked up.**
+///
+/// The display's space is larger than this window, so a window near the far
+/// corner of a desktop converts to a host coordinate past its edge — and a
+/// panel whose header is outside the canvas cannot be grabbed again. R1903
+/// measured the weaker rule's cost one gesture over: a reachability check
+/// satisfied by a point *outside the window* is not a check, so this asks the
+/// screen's own hit test, at a point inside the window, for the panel's header.
+#[test]
+fn r1905_a_card_crossing_into_the_canvas_stays_reachable() {
+    Owner::new().run(|| {
+        let state = use_shell_state();
+        pinion_core::external::publish_window_origins([(super::MAIN_WINDOW, (0, 0))]);
+        super::ShellOracle::detach(&state, "packet#0").expect("a board card tears off");
+        // Put its window out past the far corner of this window, which is where
+        // a second monitor's coordinates are.
+        let float = state.float("packet#0").expect("it is floating");
+        state.set_float(
+            "packet#0",
+            &super::Float {
+                x: 4000,
+                y: 3000,
+                ..float
+            },
+        );
+        super::ShellOracle::set_detach_home(
+            &state,
+            &super::IntrospectValue::Text("packet#0,canvas".into()),
+        )
+        .expect("the canvas is a home this host admits");
+
+        let landed = state.float("packet#0").expect("it is still floating");
+        // ⚠ The bound is the CANVAS's, not the window's: a canvas float's
+        // rectangle is in the canvas's own frame. Read from the screen's
+        // derivation so this gate cannot be a second spelling of the layout.
+        let canvas = super::canvas_rect();
+        assert!(
+            landed.x + landed.w <= canvas.w && landed.y + landed.h <= canvas.h,
+            "the whole panel is inside the canvas it crossed into: \
+             {landed:?} in {}x{}",
+            canvas.w,
+            canvas.h
+        );
+        assert!(
+            matches!(
+                state.arrival.get(),
+                Some(pinion_core::detach::Arrival::PulledIn { .. })
+            ),
+            "and it SAYS it was moved rather than reporting the place asked for"
+        );
+        // The property is not the rectangle — it is that a hand can reach it.
+        // Asked of the screen's own hit test, in WINDOW coordinates, at a point
+        // the window contains: R1903 measured that a reachability check
+        // satisfied by a point outside the window is not a check.
+        let px = canvas.x + landed.x + landed.w / 2;
+        let py = canvas.y + landed.y + 8;
+        assert!(
+            px < super::win_w() && py < super::win_h(),
+            "the probe point is inside the window: ({px}, {py})"
+        );
+        assert!(
+            matches!(super::Hit::at(&state, px, py), super::Hit::Float(ref id) if id == "packet#0"),
+            "the panel's header answers a press at ({px}, {py}); got {:?}",
+            super::Hit::at(&state, px, py)
+        );
+    });
+}

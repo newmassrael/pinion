@@ -3376,6 +3376,7 @@ impl<V: WidgetView + 'static> AppShell<V> {
         // winit Window + GPU renderer + accesskit_winit::Adapter
         // per spec and inserts the matching `WindowSlot` +
         // `spec_id_to_window_id` entry.
+        let mut added_any = false;
         for spec in &new_specs {
             if !old_ids.contains(spec.id.as_ref()) {
                 // `make_primary == false` — the primary was assigned
@@ -3383,6 +3384,7 @@ impl<V: WidgetView + 'static> AppShell<V> {
                 // reconcile passes; runtime-added windows are always
                 // secondary.
                 self.resume_spec(event_loop, spec, None, false);
+                added_any = true;
             }
         }
         // R1087 §5.16 PR-31 — move pass: a spec present in BOTH old and
@@ -3501,6 +3503,35 @@ impl<V: WidgetView + 'static> AppShell<V> {
             );
             self.request_quit(event_loop);
             return;
+        }
+        // ★★★★★ R1905 — the window SET changed, so re-publish where the
+        // windows are.
+        //
+        // `pinion_core::external::window_origin` is what a screen reads to
+        // convert a detached panel between the display's coordinate space and
+        // its own, and the published fact is set-valued: *where every live
+        // window is*, not *where this one window is*. The drop pass above is the
+        // only place a window leaves that set, and without this line a closed
+        // window's origin would keep answering for ever, because the two lazy
+        // re-stamps do not reach here — `stamp_all_window_origins` runs at RPC
+        // entry only while more than one window is open, which is exactly false
+        // again the moment the last torn-off card is redocked.
+        //
+        // ⚠ The alternative was a per-window `forget` beside the removal, and
+        // measuring the sink says that is the weaker repair: all three callers
+        // of `set_live_window_origins` pass `collect_window_origins()`, the
+        // complete live set, so the framework already holds the whole truth and
+        // a "remember to forget" rule can only be a way to get it wrong. A
+        // surface size (`record_surface_size`) genuinely is announced one at a
+        // time and keeps its `forget`; a window origin is not, and mirroring the
+        // singular shape is what let a stale entry exist at all.
+        //
+        // Covers the ADD pass too, so a window that never moves is not adrift
+        // until its first `Moved`; a fresh window's position may still be the
+        // manager's provisional one, and the `Moved` handler re-publishes.
+        if removed_any || added_any {
+            self.core
+                .set_live_window_origins(self.collect_window_origins());
         }
         // Re-request paint on every active window so the next event
         // loop iteration renders the new topology. drain dispatches
@@ -3990,6 +4021,28 @@ impl<V: WidgetView + 'static> AppShell<V> {
         // about where the window now is.
         self.origins
             .note_window_moved(self.windows.contains_key(&window_id));
+        // ★★★★★ R1905 — and RE-STAMP, because a move is the only thing that
+        // makes an origin wrong and this is where the framework learns of one.
+        //
+        // The stamp below is what `pinion_core::external::window_origin` reads,
+        // and a screen converting a detached panel between the display's
+        // coordinate space and its own asks it from a PRESS — not from a drag
+        // and not from an RPC dispatch, the two paths that stamp already
+        // ([`Self::stamp_live_window_origins`] is drag-gated by design and
+        // [`Self::stamp_all_window_origins`] runs at RPC entry). Without this a
+        // person's press would convert against an origin from whenever the last
+        // drag happened, or against none at all.
+        //
+        // Cost is one display-server round trip per window per MOVE event, not
+        // per pointer event: `Moved` is rare, and R1723's freshness generation
+        // is exactly the fact being answered here. Before the echo test below
+        // for the same reason the line above is: an echo of our own
+        // `set_outer_position` still moved the window, and suppressing the
+        // write-back is about the DECLARED spec, not about where the window is.
+        if self.windows.contains_key(&window_id) {
+            self.core
+                .set_live_window_origins(self.collect_window_origins());
+        }
         let Some(slot) = self.windows.get(&window_id) else {
             return;
         };

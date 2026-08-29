@@ -43,12 +43,28 @@
 //! the places this host can put it?" — a strictly larger question, and one the
 //! floor does not need because it targets exactly one windowing surface.
 //!
-//! # What this module does NOT decide
+//! # What this module decides about geometry, and what it still does not
 //!
-//! Geometry. Where a canvas float sits and how big it is stays the host's,
-//! because a canvas float's rectangle is in the host's coordinate space and a
-//! window's is in the display's. This module says *which space*, and the host
-//! reads that to know which rectangle it owns.
+//! ⚠ **R1891 wrote here that this module does not decide geometry, and R1905
+//! made that sentence false without touching it.** [`Transfer::cross`] converts
+//! a panel's position between the two spaces and bounds where it may land,
+//! which is geometry by any reading. It is corrected rather than quietly
+//! deleted because the interesting part is *how* it went false: the round that
+//! broke the claim had this paragraph in front of it, and a module header is
+//! prose that nothing re-performs — the class this tree paid for four rounds
+//! running (R1853-R1856), each time in the round that wrote the prose.
+//!
+//! It decides the **relation between the two spaces**: which space each home
+//! measures its rectangle in ([`DetachHome::space`]), how a position crosses
+//! between them and whether the crossing kept its place ([`Transfer::cross`],
+//! [`Arrival`]), and that a panel arriving in a bounded space lands somewhere
+//! its header can still be grabbed.
+//!
+//! It still does not decide where a float sits *within* a home or how big it
+//! is — the host owns that and hands this module the pair, never asks it to
+//! choose one. Nor does it hold the display topology, so a host on a monitor
+//! left of or above the primary is a stated residue (see [`Transfer`]) rather
+//! than a silent wrong answer.
 
 use crate::external::RefusalReason;
 
@@ -101,6 +117,69 @@ impl DetachHome {
             "canvas" => Some(Self::Canvas),
             _ => None,
         }
+    }
+
+    /// The coordinate space a panel living here has its rectangle in.
+    ///
+    /// **Derived, not declared.** The two facts would otherwise be two fields
+    /// that can disagree, and the disagreement is silent: four numbers are four
+    /// numbers whichever space they mean. This is [`DetachPolicy::for_host`]'s
+    /// argument one level down.
+    #[must_use]
+    pub const fn space(self) -> Space {
+        match self {
+            Self::Window => Space::Display,
+            Self::Canvas => Space::Host,
+        }
+    }
+}
+
+/// The coordinate space a detached panel's rectangle is measured in.
+///
+/// # Why this exists as a value at all
+///
+/// Measured on the assembled analysis tool at R1905, tearing one card off and
+/// then sending it to the canvas:
+///
+/// ```text
+/// floats: [{x: 120, y: 40, w: 520, h: 380, home: "window"}]
+///         torn-packet#0 position [120, 40]        <- the DISPLAY's space
+/// floats: [{x: 120, y: 40, w: 520, h: 380, home: "canvas"}]
+///                                                 <- the HOST's space
+/// ```
+///
+/// The identical four numbers, read against two different origins, with nothing
+/// in the value saying which — and the panel therefore arriving somewhere
+/// nobody chose. ⇒ ★★★★★ *A rectangle without its space is not a place.*
+///
+/// [`DetachHome`] already distinguishes the two homes, so this is derived from
+/// it rather than stored beside it; what the type adds is a NAME for the thing
+/// a transfer converts between, so [`Transfer`] can be written down and gated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Space {
+    /// The display's, shared by every window on it — where a window manager
+    /// places things and where a second monitor has coordinates of its own.
+    Display,
+    /// The host window's own client area, which is where a canvas float is
+    /// painted and where the host's hit test asks its questions.
+    Host,
+}
+
+impl Space {
+    /// The wire word, so a client branches without parsing a sentence.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Display => "display",
+            Self::Host => "host",
+        }
+    }
+}
+
+/// Serialised as its wire name, for [`DetachHome`]'s reason.
+impl serde::Serialize for Space {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
     }
 }
 
@@ -251,9 +330,223 @@ impl DetachPolicy {
     }
 }
 
+/// How a rectangle arrived in the space it crossed into.
+///
+/// Three arms and no catch-all, for [`crate::crossing::CrossingPolicy`]'s
+/// reason: "the caller did not think about it" must not be spellable as one of
+/// the honest answers. A caller that has an [`Arrived`] has been told which of
+/// the three happened.
+/// ⚠ **No `Default`.** "Nothing has crossed yet" is a different statement from
+/// any of these three, and a holder that needs to say it says it with `None` —
+/// a default arm here would be an escape hatch that lets an unasked question
+/// look like an answered one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Arrival {
+    /// The same place on the reader's screen, named in the other space.
+    ///
+    /// Reachable only when the host can say where its own space begins — see
+    /// [`Transfer::new`]. That is the whole point of the seam this arm forced:
+    /// an arm no input can produce is decoration, and this tree has shipped one
+    /// before and had to withdraw it before release (R1898).
+    Kept,
+    /// The same place would have left the panel where nothing could reach it,
+    /// so it was pulled back by this much.
+    ///
+    /// The destination is bounded (a host canvas has an extent), and a panel
+    /// whose header is outside it cannot be picked up again. R1903 measured the
+    /// cost of the weaker rule: a reachability check satisfied by a point
+    /// *outside the window* is not a check.
+    PulledIn {
+        /// How far the panel was moved back horizontally.
+        dx: i32,
+        /// How far vertically.
+        dy: i32,
+    },
+    /// The offset between the two spaces is not known here, so "the same place"
+    /// names no value. The numbers cross unconverted and say so.
+    ///
+    /// ⚠ This is the honest arm, not the escape hatch: it is what the assembled
+    /// tool did *silently* before this type existed. A gate that lets a real
+    /// host sit in this arm for ever has stopped testing anything — see the
+    /// walk, which asserts the assembled tool is NOT adrift.
+    Adrift,
+}
+
+impl Arrival {
+    /// The wire word, so a client branches without parsing a sentence.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Kept => "kept",
+            Self::PulledIn { .. } => "pulled-in",
+            Self::Adrift => "adrift",
+        }
+    }
+
+    /// Whether the panel is where the reader last saw it.
+    #[must_use]
+    pub const fn is_exact(self) -> bool {
+        matches!(self, Self::Kept)
+    }
+}
+
+/// Where a panel landed, and how it got there.
+///
+/// The pair rather than a bare point, because a caller that gets only the point
+/// cannot tell a converted place from an unconverted one — which is exactly the
+/// state R1905 found and the reason this module grew a transfer at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Arrived {
+    at: (i32, i32),
+    how: Arrival,
+}
+
+impl Arrived {
+    /// The panel's position, in the destination home's space.
+    #[must_use]
+    pub const fn at(self) -> (i32, i32) {
+        self.at
+    }
+
+    /// How it got there.
+    #[must_use]
+    pub const fn how(self) -> Arrival {
+        self.how
+    }
+}
+
+/// The relation between the two spaces a detached panel can live in.
+///
+/// # What this decides, and why R1891 could not
+///
+/// R1891 gave a panel a [`DetachHome`] and deliberately left the geometry
+/// alone, writing down that "a canvas float's rectangle is in the host's
+/// coordinate space and a window's is in the display's" and that the transfer
+/// between them was undecided. It was undecided because **the one input it
+/// needs did not exist**: the host's own origin. Measured at R1905 through
+/// `scene/windows` on the assembled tool, the main window answered
+/// `position: None` — a window-manager-placed window, and the framework
+/// published no live origin for it, so nothing in the tree *could* convert.
+///
+/// [`crate::external::window_origin`] is the seam that closed that, and this is
+/// the value that consumes it.
+///
+/// # Why the host's extent is part of the relation
+///
+/// Because a crossing into the host's space has to land somewhere a reader can
+/// still grab. The display's side needs no such bound — where a window may sit
+/// is the window manager's judgement and this value does not hold the display
+/// topology — so the asymmetry is real and is stated rather than smoothed over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Transfer {
+    origin: Option<(i32, i32)>,
+    host: (u32, u32),
+}
+
+impl Transfer {
+    /// The relation for a host that knows where it is: `origin` is the host
+    /// space's top-left corner in the display's space, and `host` is how far
+    /// the host's space runs.
+    #[must_use]
+    pub const fn new(origin: (i32, i32), host: (u32, u32)) -> Self {
+        Self {
+            origin: Some(origin),
+            host,
+        }
+    }
+
+    /// The relation for a host that cannot say where it is.
+    ///
+    /// `None` rather than `(0, 0)`: a host at an unknown position is not a host
+    /// at the display's corner, and a default here would make every crossing
+    /// report [`Arrival::Kept`] while landing the panel wherever the numbers
+    /// happened to fall. **A default is an escape hatch that disables its own
+    /// gate**, which is the failure this tree names in its standing rules.
+    #[must_use]
+    pub const fn adrift(host: (u32, u32)) -> Self {
+        Self { origin: None, host }
+    }
+
+    /// Whether this host can say where its own space begins.
+    #[must_use]
+    pub const fn knows_offset(self) -> bool {
+        self.origin.is_some()
+    }
+
+    /// Cross a panel's position from one home's space into another's.
+    ///
+    /// `size` is the panel's own extent, needed because staying reachable is
+    /// about the whole rectangle and not about its corner.
+    ///
+    /// Crossing to the home it is already in is the identity and reports
+    /// [`Arrival::Kept`] — there is no conversion to get wrong, and refusing it
+    /// would make every caller special-case a no-op.
+    #[must_use]
+    pub fn cross(
+        self,
+        from: DetachHome,
+        to: DetachHome,
+        at: (i32, i32),
+        size: (u32, u32),
+    ) -> Arrived {
+        if from.space() == to.space() {
+            return Arrived {
+                at,
+                how: Arrival::Kept,
+            };
+        }
+        let Some((ox, oy)) = self.origin else {
+            // Unconverted, but still reachable: the bound below is about where
+            // a panel can be picked up, and that is true whether or not the
+            // offset is known.
+            let (at, _) = self.reachable_in(to, at, size);
+            return Arrived {
+                at,
+                how: Arrival::Adrift,
+            };
+        };
+        let crossed = match to.space() {
+            Space::Host => (at.0 - ox, at.1 - oy),
+            Space::Display => (at.0 + ox, at.1 + oy),
+        };
+        let (at, moved) = self.reachable_in(to, crossed, size);
+        let how = match moved {
+            Some((dx, dy)) => Arrival::PulledIn { dx, dy },
+            None => Arrival::Kept,
+        };
+        Arrived { at, how }
+    }
+
+    /// Pull `at` back until a panel of `size` can still be grabbed in `to`.
+    ///
+    /// Returns the landing and how far it had to move, `None` when it did not.
+    /// Only the host's space is bounded — see this type's header.
+    fn reachable_in(
+        self,
+        to: DetachHome,
+        at: (i32, i32),
+        size: (u32, u32),
+    ) -> ((i32, i32), Option<(i32, i32)>) {
+        if to.space() != Space::Host {
+            return (at, None);
+        }
+        // A panel wider than the host still has to be grabbable, so the upper
+        // bound never falls below zero: its corner stays in and the overflow
+        // hangs off the far edge. Clamping to a negative would push the header
+        // out of reach, which is the thing being prevented.
+        let limit =
+            |extent: u32, span: u32| i32::try_from(extent.saturating_sub(span)).unwrap_or(0);
+        let x = at.0.clamp(0, limit(self.host.0, size.0));
+        let y = at.1.clamp(0, limit(self.host.1, size.1));
+        let moved = (x != at.0 || y != at.1).then_some((x - at.0, y - at.1));
+        ((x, y), moved)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{DetachHome, DetachPolicy, DetachRefusal};
+    use super::{Arrival, DetachHome, DetachPolicy, DetachRefusal, Space, Transfer};
 
     #[test]
     fn a_home_round_trips_through_its_wire_name() {
@@ -354,5 +647,143 @@ mod tests {
         let words: Vec<&str> = homes.iter().map(|h| h.as_str()).collect();
         assert_eq!(words.len(), 2);
         assert_ne!(words[0], words[1]);
+    }
+
+    /// The two homes are two SPACES, and the mapping is derived from the home
+    /// rather than stored beside it.
+    #[test]
+    fn r1905_each_home_names_the_space_its_rectangle_is_measured_in() {
+        assert_eq!(DetachHome::Window.space(), Space::Display);
+        assert_eq!(DetachHome::Canvas.space(), Space::Host);
+        // Two homes, two spaces: a crossing always has something to convert.
+        assert_ne!(DetachHome::Window.space(), DetachHome::Canvas.space());
+        assert_eq!(Space::Display.as_str(), "display");
+        assert_eq!(Space::Host.as_str(), "host");
+    }
+
+    /// ★★★★★ The defect this module grew a transfer for, as an assertion.
+    ///
+    /// The numbers measured off the running analysis tool at R1905: a card torn
+    /// off sits at `(120, 40)`, its window opens at display `(120, 40)`, and
+    /// sending it to the canvas left the same pair meaning a host coordinate.
+    /// With the host at `(300, 150)` those are two places 335 px apart.
+    #[test]
+    fn r1905_a_crossing_converts_rather_than_relabelling() {
+        let transfer = Transfer::new((300, 150), (1440, 900));
+        let arrived = transfer.cross(
+            DetachHome::Window,
+            DetachHome::Canvas,
+            (420, 190),
+            (520, 380),
+        );
+        // Display (420, 190) is host (120, 40) — the same place on the screen.
+        assert_eq!(arrived.at(), (120, 40));
+        assert_eq!(arrived.how(), Arrival::Kept);
+        // And back the other way, which must be the inverse or a card sent to
+        // the canvas and returned would drift every trip.
+        let back = transfer.cross(
+            DetachHome::Canvas,
+            DetachHome::Window,
+            arrived.at(),
+            (520, 380),
+        );
+        assert_eq!(back.at(), (420, 190));
+        assert_eq!(back.how(), Arrival::Kept);
+    }
+
+    /// A crossing into the host's space lands somewhere a reader can grab.
+    #[test]
+    fn r1905_a_panel_crossing_into_the_host_stays_reachable() {
+        // The host is at (300, 150) and 1440x900; a window near the far corner
+        // of a wider desktop converts to a host coordinate past its edge.
+        let transfer = Transfer::new((300, 150), (1440, 900));
+        let arrived = transfer.cross(
+            DetachHome::Window,
+            DetachHome::Canvas,
+            (2400, 1200),
+            (520, 380),
+        );
+        let (x, y) = arrived.at();
+        assert!(
+            x >= 0 && y >= 0 && x + 520 <= 1440 && y + 380 <= 900,
+            "the whole panel must be inside the host it crossed into; got {:?}",
+            arrived.at()
+        );
+        assert!(
+            matches!(arrived.how(), Arrival::PulledIn { .. }),
+            "and it must SAY it was moved, not report the place it was asked for"
+        );
+        // A panel wider than the host keeps its corner in rather than being
+        // pushed out the other side — the header is what gets grabbed.
+        let big = transfer.cross(
+            DetachHome::Window,
+            DetachHome::Canvas,
+            (2400, 1200),
+            (2000, 1600),
+        );
+        assert_eq!(big.at(), (0, 0));
+    }
+
+    /// The honest arm: a host that cannot say where it is says so.
+    #[test]
+    fn r1905_a_host_that_cannot_place_itself_reports_an_unconverted_crossing() {
+        let transfer = Transfer::adrift((1440, 900));
+        assert!(!transfer.knows_offset());
+        let arrived = transfer.cross(
+            DetachHome::Window,
+            DetachHome::Canvas,
+            (420, 190),
+            (520, 380),
+        );
+        assert_eq!(arrived.how(), Arrival::Adrift);
+        assert!(
+            !arrived.how().is_exact(),
+            "an unconverted crossing is not the same place"
+        );
+        // Unconverted is not unbounded: reachability is about where a panel can
+        // be picked up and holds whether or not the offset is known.
+        let far = transfer.cross(
+            DetachHome::Window,
+            DetachHome::Canvas,
+            (5000, 5000),
+            (520, 380),
+        );
+        assert_eq!(far.at(), (920, 520));
+        assert_eq!(far.how(), Arrival::Adrift);
+    }
+
+    /// Crossing to the home it is already in is the identity.
+    #[test]
+    fn r1905_a_crossing_to_the_same_home_moves_nothing() {
+        let transfer = Transfer::new((300, 150), (1440, 900));
+        for home in [DetachHome::Window, DetachHome::Canvas] {
+            let arrived = transfer.cross(home, home, (77, 88), (520, 380));
+            assert_eq!(arrived.at(), (77, 88));
+            assert_eq!(arrived.how(), Arrival::Kept);
+        }
+    }
+
+    /// Every arm has a wire word, and they are distinct.
+    #[test]
+    fn r1905_every_arrival_names_itself_on_the_wire() {
+        let arms = [
+            Arrival::Kept,
+            Arrival::PulledIn { dx: -1, dy: -2 },
+            Arrival::Adrift,
+        ];
+        let words: Vec<&str> = arms.iter().map(|a| a.as_str()).collect();
+        assert_eq!(words.len(), 3);
+        assert_ne!(words[0], words[1]);
+        assert_ne!(words[1], words[2]);
+        assert_ne!(words[0], words[2]);
+        // Exactly one of them means "where the reader last saw it".
+        assert_eq!(arms.iter().filter(|a| a.is_exact()).count(), 1);
+        // And it round-trips, so a session or a client reading it back gets the
+        // arm that was written and not a default.
+        for arm in arms {
+            let json = serde_json::to_string(&arm).expect("an arrival serialises");
+            let back: Arrival = serde_json::from_str(&json).expect("and round-trips");
+            assert_eq!(back, arm);
+        }
     }
 }

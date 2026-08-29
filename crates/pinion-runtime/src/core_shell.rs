@@ -2999,6 +2999,38 @@ impl<V: WidgetCore> CoreShell<V> {
     /// cursor against real positions, not the DECLARED ones (a WM-placed `"main"`
     /// has declared position `None`). See [`Self::live_window_origin`].
     pub fn set_live_window_origins(&self, origins: Vec<(String, (f64, f64))>) {
+        // ★★★★★ R1905 — the SAME collection reaches the screen-readable fact.
+        //
+        // `pinion_core::external::window_origin` is what a screen asks when it
+        // has to convert between the display's coordinate space and its own —
+        // the conversion a detached panel makes when it changes home, which had
+        // no input at all before this (measured R1905: `scene/windows` answered
+        // `position: None` for the window manager's placement, and nothing else
+        // published where the host was).
+        //
+        // Published HERE, inside the one sink, rather than beside each caller:
+        // the two readers want different units (this map stays `f64` because the
+        // cross-window drop resolution R1151 built on it is sub-pixel; a window
+        // position on the wire is `i32` logical, §5.21), and a second collection
+        // is how two facts about one window come to disagree. One collect, one
+        // publish, two views of it.
+        //
+        // ★ Set-valued, matching the `clear` + `extend` two lines below: this
+        // argument is the complete live set at every caller, so a window that
+        // closed stops answering because it is absent from the next publish.
+        // The alternative — a per-window stamp plus a "forget the closed one"
+        // rule — is a rule that can be forgotten, and R1905 wrote it that way
+        // first and then measured the callers.
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "a logical window origin is an integer position on the wire (§5.21); \
+                      the fractional part is the drop resolution's, not this reader's"
+        )]
+        pinion_core::external::publish_window_origins(
+            origins
+                .iter()
+                .map(|(id, (x, y))| (id.as_str(), (*x as i32, *y as i32))),
+        );
         let mut map = self.live_window_origins.borrow_mut();
         map.clear();
         map.extend(origins);

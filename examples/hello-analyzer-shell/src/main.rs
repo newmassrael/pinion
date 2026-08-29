@@ -102,7 +102,7 @@ use pinion_chart::{
 };
 use pinion_core::availability::Unavailable;
 use pinion_core::crossing::{Crossing, CrossingPolicy, Passage, Rest, Side};
-use pinion_core::detach::{DetachHome, DetachPolicy};
+use pinion_core::detach::{Arrival, DetachHome, DetachPolicy};
 use pinion_core::drop_target::{
     BOARD_WIDGET_DRAG_KIND, DropAccept, DropAction, DropActions, DropClause, DropContract,
     DropOffer, DropStanding, DropVerdict, standing_value,
@@ -945,6 +945,56 @@ fn detach_policy() -> DetachPolicy {
     DetachPolicy::for_host(true)
 }
 
+/// ★★★★★ R1905 — **the relation between the two spaces a detached card can
+/// live in**, built from what this host can actually say about itself.
+///
+/// A window-homed card's rectangle is in the display's coordinate space and a
+/// canvas-homed one's is in this window's. R1891 gave the card a home and left
+/// the geometry alone, and the result was measurable on the running tool: the
+/// identical `(120, 40)` served as a display coordinate while the card was a
+/// window and as a host coordinate the moment it was sent to the canvas, so a
+/// reader watched the panel jump by however far the window manager had placed
+/// this window from the corner.
+///
+/// [`pinion_core::external::window_origin`] is the fact that was missing —
+/// measured at R1905, `scene/windows` answered `position: None` for this
+/// window, because the manager placed it and the shell never commanded one, and
+/// nothing else published where it was.
+///
+/// ⚠ **`adrift` is not a fallback that hides anything.** A host that cannot say
+/// where it is gets a transfer that says the crossing was unconverted, and the
+/// wire publishes that word — which is strictly more than the silence this
+/// replaces. The walk asserts this host is NOT adrift, so the honest arm cannot
+/// quietly become the only one that ever runs.
+/// ⚠ **The host space is the CANVAS's, not the window's** — found by this
+/// round's own gate, which asked the running screen's hit test for the panel it
+/// had just placed and did not get it. `Hit::at` folds the canvas origin out
+/// before it reads the floats (`in_canvas(state, px - canvas.x, py - canvas.y)`),
+/// so a float's stored pair is in the canvas's own frame and is short of the
+/// window's by the rail, the palette and the two bars. Converting against the
+/// window's origin would have landed every crossed panel that much off — the
+/// [[debt-paint-and-gesture-read-two-facts]] class, one space up — written with
+/// this file's own wiki-link spelling and not with rustdoc's, because a memory
+/// slug is not a Rust path and `[` … `]` around one asks rustdoc to resolve it.
+///
+/// ⇒ ★ *The offset between two spaces is only right if you named the right two.*
+fn shell_transfer() -> pinion_core::detach::Transfer {
+    let canvas = canvas_rect();
+    let host = (canvas.w, canvas.h);
+    match pinion_core::external::window_origin(MAIN_WINDOW) {
+        // The display's origin of the CANVAS: where the window is, plus where
+        // the canvas starts inside it.
+        Some((wx, wy)) => pinion_core::detach::Transfer::new(
+            (
+                wx.saturating_add(i32::try_from(canvas.x).unwrap_or(0)),
+                wy.saturating_add(i32::try_from(canvas.y).unwrap_or(0)),
+            ),
+            host,
+        ),
+        None => pinion_core::detach::Transfer::adrift(host),
+    }
+}
+
 /// The store a person's own arrangements are kept in.
 ///
 /// ⚠ **Resolved OUTSIDE any `Owner::cache` factory and then held by
@@ -1223,6 +1273,19 @@ struct ShellState {
     ///
     /// Seeded from `spec::PALETTE_OPENS`, which that judgement admits.
     palette_at: Signal<EdgePlacement>,
+    /// ★★★★★ R1905 — **how the last card that changed home got where it is**.
+    ///
+    /// Published beside `floats` rather than folded into it, because it is a
+    /// fact about a CROSSING and not about a panel: a client reading only the
+    /// new position cannot tell a converted place from an unconverted one, and
+    /// that indistinguishability is the whole defect R1891 left open. The same
+    /// argument `spec.palette_placement` makes with its `at`/`opens` pair one
+    /// gesture over.
+    ///
+    /// Not persisted, and `Option` rather than a fourth arm: "nothing has
+    /// crossed yet" is a different statement from any arrival, and a session
+    /// reopened tomorrow has made no crossing.
+    arrival: Signal<Option<Arrival>>,
     /// ★★★★★ R1900 — **the occupant a strip press picked up**, when the drag in
     /// flight began on a tab rather than on the grip.
     ///
@@ -1624,6 +1687,8 @@ impl ShellState {
             crossing: Signal::new(None),
             tab_carry: Signal::new(None),
             palette_at: Signal::new(spec::PALETTE_OPENS),
+            // R1905 — nothing has changed home yet, which is not an arrival.
+            arrival: Signal::new(None),
             float_z: RefCell::new(0),
             // ★ R1719/R1778 — this screen is the one that opens having ALREADY
             // said something; the node lab and the packet viewer open silent.
@@ -3457,6 +3522,21 @@ const fn float_rect(float: &Float) -> Rect {
     Rect::new(float.x, float.y, float.w, float.h)
 }
 
+/// A float's position in the space its own home speaks, as the signed pair a
+/// [`pinion_core::detach::Transfer`] crosses.
+///
+/// Signed because the display's space is: a monitor left of the primary has
+/// negative coordinates in it. The stored pair is unsigned because a canvas
+/// float's rectangle cannot be — see the note at the one call site that
+/// converts back.
+#[allow(
+    clippy::cast_possible_wrap,
+    reason = "a float's stored position is bounded by the window it was placed in"
+)]
+const fn at_of(float: &Float) -> (i32, i32) {
+    (float.x as i32, float.y as i32)
+}
+
 /// The corner a resize is grabbed by, in the same space as [`float_rect`].
 const fn float_grip_rect(float: &Float) -> Rect {
     let rect = float_rect(float);
@@ -4099,19 +4179,57 @@ impl ShellOracle {
         let home = detach_policy()
             .admit(asked)
             .map_err(|refusal| InvokeError::rejected(refusal.reason().to_string()))?;
+        // ★★★★★ R1905 — the numbers CROSS, they are not merely relabelled.
+        //
+        // `Float { home, ..f }` was this line, and it changed which space the
+        // rectangle is read against while leaving the rectangle alone. See
+        // [`shell_transfer`] for what that measured.
+        let transfer = shell_transfer();
+        let mut arrival = None;
         let floats = state
             .floats
             .get()
             .into_iter()
-            .map(|f| if f.id == id { Float { home, ..f } } else { f })
+            .map(|f| {
+                if f.id != id {
+                    return f;
+                }
+                let arrived = transfer.cross(f.home, home, at_of(&f), (f.w, f.h));
+                arrival = Some(arrived.how());
+                let (x, y) = arrived.at();
+                Float {
+                    home,
+                    // A host origin is at or past the display's corner and a
+                    // host coordinate is non-negative, so a crossing INTO the
+                    // display's space cannot go below zero from here. The one
+                    // arrangement that would — this window on a monitor left of
+                    // or above the primary — needs the display topology, which
+                    // `Transfer` deliberately does not hold (its header says
+                    // why), and is this round's stated residue.
+                    x: u32::try_from(x).unwrap_or(0),
+                    y: u32::try_from(y).unwrap_or(0),
+                    ..f
+                }
+            })
             .collect();
         state.floats.set(floats);
+        // The card was checked to be floating above, so the map arm above ran
+        // for it and this is `Some`. `expect` rather than a default: a default
+        // would be this round's own escape hatch, one type down from the one
+        // `Arrival` refuses.
+        let arrival = arrival.expect("the card was found floating, so its crossing ran");
+        state.arrival.set(Some(arrival));
         state.say(Utterance::done(format!(
-            "{} \u{2192} {}",
+            "{} \u{2192} {} ({})",
             label_of(id),
-            home.as_str()
+            home.as_str(),
+            arrival.as_str()
         )));
-        Ok(IntrospectValue::Text(format!("{id} {}", home.as_str())))
+        Ok(IntrospectValue::Text(format!(
+            "{id} {} {}",
+            home.as_str(),
+            arrival.as_str()
+        )))
     }
 
     /// ★★★★★ R1733 — what the palette OFFERS of a kind: its catalogue entry
@@ -4692,6 +4810,8 @@ const FIELDS: &[SchemaField] = const {
         SchemaField::new("floats", "json"),
         // R1891 — the homes this host can put a detached card in.
         SchemaField::new("detach_policy", "json"),
+        // R1905 — how the last card that changed home got where it is.
+        SchemaField::new("arrival", "json"),
         // R1826 — which OS window carries each detached card.
         SchemaField::new("detached", "json"),
         SchemaField::new("float_grab", "string"),
@@ -4921,10 +5041,39 @@ fn floats_json(state: &ShellState) -> serde_json::Value {
                     // from there was indistinguishable from one this slot had
                     // not caught up with.
                     "home": f.home.as_str(),
+                    // ★★★★★ R1905 — and WHICH SPACE those four numbers are in,
+                    // said rather than derivable.
+                    //
+                    // ⚠ The paragraph above claims `home` already answers this.
+                    // It does not: it answers which HOME, and a client still has
+                    // to hold the mapping from home to space — which is a fact
+                    // about this framework that nothing on the wire stated. The
+                    // two homes' spaces are what a crossing converts between, so
+                    // the name of the space is what a client needs to reason
+                    // about a position at all.
+                    "space": f.home.space().as_str(),
                 })
             })
             .collect(),
     )
+}
+
+/// ★★★★★ R1905 — how the last card that changed home got where it is.
+///
+/// `null` until one has, which is not [`Arrival::Adrift`]: an unasked question
+/// and an unconvertible one are different answers and a client branching on
+/// them acts differently.
+fn arrival_json(state: &ShellState) -> serde_json::Value {
+    match state.arrival.get() {
+        Some(arrival) => serde_json::json!({
+            "how": arrival.as_str(),
+            "exact": arrival.is_exact(),
+            // The offset a crossing WOULD use, so a client can tell "this host
+            // cannot convert" from "it converted and nothing moved".
+            "knows_offset": shell_transfer().knows_offset(),
+        }),
+        None => serde_json::Value::Null,
+    }
 }
 
 /// ★ R1898 — everything a caller can ask about what a POINTER is doing.
@@ -5140,6 +5289,10 @@ impl ExternalIntrospect for ShellOracle {
             // R1891 — the homes this host offers, and which it picks by
             // default. A client reads this before asking for one.
             "detach_policy" => Ok(IntrospectValue::Json(detach_policy_json())),
+            // ★★★★★ R1905 — and how the last crossing between two homes went.
+            // A client reading only the new position cannot tell a converted
+            // place from an unconverted one.
+            "arrival" => Ok(IntrospectValue::Json(arrival_json(state))),
             // ★★★★★ R1826 — **what is detached, and WHERE IT WENT.**
             //
             // `floating` says which cards left the board and `floats` says
@@ -5302,7 +5455,7 @@ impl ExternalIntrospect for ShellOracle {
             }
             "preset" => ShellOracle::apply_preset(&state, &word(&value)?),
             "sources" | "cards" | "card_count" | "placed_count" | "layout" | "maximized"
-            | "restore_to" | "floating" | "floats" | "detached" | "detach_policy"
+            | "restore_to" | "floating" | "floats" | "detached" | "detach_policy" | "arrival"
             | "float_grab" | "crossing" | "presets" | "arrangements" | "transport" | "playhead"
             | "affordances" | "states" | "remedies" | "steppers" | "toast" | "cursor"
             | "selected" | "hit" | "keymap" | "rail" | "tabs" | "catalogue" | "config_open"

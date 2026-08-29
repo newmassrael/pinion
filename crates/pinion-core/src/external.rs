@@ -46,6 +46,90 @@ thread_local! {
     /// Tag -> the size the framework last announced for that surface.
     static SURFACE_SIZES: RefCell<BTreeMap<String, (u32, u32)>> =
         const { RefCell::new(BTreeMap::new()) };
+
+    /// Window id -> where that window's client area sits in the display's
+    /// space, as the platform last reported it. See [`window_origin`].
+    static WINDOW_ORIGINS: RefCell<BTreeMap<String, (i32, i32)>> =
+        const { RefCell::new(BTreeMap::new()) };
+}
+
+/// ★★★★★ R1905 — **where a window actually is**, readable wherever a screen
+/// has to reason about the display's coordinate space.
+///
+/// # Why this had to exist before a detached panel could move home
+///
+/// `pinion_core::detach` gives a torn-off panel a home, and the two homes
+/// measure their rectangles against different origins: a window's against the
+/// display's, a canvas float's against the host's own client area. Converting
+/// between them needs one number — where the host is — and measured at R1905
+/// through `scene/windows` on the assembled analysis tool, **nothing in this
+/// tree published it**: the main window answered `position: None`, which is the
+/// truthful report of a window the manager placed and the shell never
+/// commanded.
+///
+/// The consequence was silent and is the defect R1891 left open: the same
+/// `(120, 40)` served as a display coordinate while the panel was a window and
+/// as a host coordinate the moment it was sent to the canvas, and a reader
+/// watched it jump.
+///
+/// # Why a stamped fact and not a scope
+///
+/// [`with_window_extent`] is a scope because an extent is true only while the
+/// frame it was computed for is being built. Where a window *is* stays true
+/// between frames, and — measured at R1903, in this same shell — the paths that
+/// need it do not all run inside a paint: `invoke` and `query` answer with no
+/// owner scope at all, so a scoped statement would read `None` on exactly the
+/// wire path a detached panel is driven from. So it is stamped state, like
+/// [`surface_size`] one surface down.
+///
+/// # Why `Option` and never a zero
+///
+/// A window whose position the platform has not reported is not a window at the
+/// display's corner. Returning `(0, 0)` would let every conversion report
+/// success while landing panels wherever the arithmetic fell —
+/// [`crate::detach::Transfer::adrift`] is the value that says so instead.
+///
+/// Answers `None` for a window that has never been published, and — because
+/// [`publish_window_origins`] is set-valued — for one that has closed.
+#[must_use]
+pub fn window_origin(window_id: &str) -> Option<(i32, i32)> {
+    WINDOW_ORIGINS.with(|origins| origins.borrow().get(window_id).copied())
+}
+
+/// Publish where the platform says **every live window** is, replacing whatever
+/// was published before — called by the layer that holds the window handles,
+/// never by a widget.
+///
+/// ★ Public for [`record_surface_size`]'s reason: the reporter lives in
+/// `pinion-shell`, two crates up. A widget calling this would be inventing a
+/// position rather than reading one.
+///
+/// Logical pixels, matching `WindowSpec::position` and `scene/windows` (§5.21),
+/// so a screen never has to know which of the two units it is holding.
+///
+/// # ★★★★★ Why this is set-valued where [`record_surface_size`] is not
+///
+/// A surface size is announced one surface at a time — there is no moment at
+/// which the framework holds every surface's size — so that fact is stamped
+/// singly and retired by an explicit [`forget_surface_size`]. Window origins are
+/// the opposite: the shell reads them by walking its live window map, so every
+/// publisher already holds the complete truth. Stamping them one at a time would
+/// add a "remember to forget the closed one" rule whose only possible effect is
+/// to be forgotten — and R1905 wrote exactly that leak before measuring the
+/// callers. Replacing the map means a window that is gone stops answering
+/// because it is *absent from the next publish*, not because someone remembered
+/// it.
+///
+/// ⇒ *A fact the reporter holds whole should be published whole.*
+pub fn publish_window_origins<'a>(origins: impl IntoIterator<Item = (&'a str, (i32, i32))>) {
+    // Collected before the borrow so an iterator that itself reads an origin
+    // cannot meet a half-written map — and so a partial publish is not a state
+    // this function can leave behind.
+    let next: BTreeMap<String, (i32, i32)> = origins
+        .into_iter()
+        .map(|(id, origin)| (id.to_owned(), origin))
+        .collect();
+    WINDOW_ORIGINS.with(|origins| *origins.borrow_mut() = next);
 }
 
 /// ★★★ R1684.4 — **the size a surface was last laid out at, readable from
@@ -4714,6 +4798,57 @@ impl ExternalIntrospect for CountedExternal {
 mod tests {
     use super::*;
     use crate::event::WindowEvent;
+
+    /// ★★★★★ R1905 — **a window that closed stops answering, because the fact
+    /// is published whole.**
+    ///
+    /// The reader is [`window_origin`], and what a detached panel does with it
+    /// is convert its rectangle between the display's coordinate space and the
+    /// host's. A stale entry there does not fail loudly: it converts against a
+    /// window that is not on screen and puts the panel somewhere nobody chose —
+    /// exactly the silent class [`crate::detach::Transfer::adrift`] exists to
+    /// make sayable.
+    ///
+    /// R1905's first draft stamped one window at a time and added a `forget`
+    /// beside the shell's window-removal line. This asserts the shape that
+    /// replaced it: **absence from the next publish is what retires a window**,
+    /// so there is no rule left to forget. A publisher that merged into the map
+    /// instead of replacing it fails here.
+    #[test]
+    fn r1905_publishing_window_origins_retires_the_ones_that_are_gone() {
+        publish_window_origins([("main", (200, 100)), ("torn", (800, 100))]);
+        assert_eq!(window_origin("main"), Some((200, 100)));
+        assert_eq!(window_origin("torn"), Some((800, 100)));
+        assert_eq!(
+            window_origin("never-opened"),
+            None,
+            "a window nobody published is not a window at the display's corner",
+        );
+
+        // The torn-off window closes; the shell publishes the live set, which is
+        // the only thing it can produce — it walks the windows it still has.
+        publish_window_origins([("main", (200, 100))]);
+        assert_eq!(
+            window_origin("torn"),
+            None,
+            "★ a closed window answers nothing; converting against it would put \
+             a panel at a place taken from a window that is not on screen",
+        );
+        assert_eq!(
+            window_origin("main"),
+            Some((200, 100)),
+            "and the survivor is untouched — retiring one is not clearing all",
+        );
+
+        // A negative origin survives: a monitor left of or above the primary has
+        // them, and clamping here would be a silent lie one space up.
+        publish_window_origins([("main", (-1920, -40))]);
+        assert_eq!(window_origin("main"), Some((-1920, -40)));
+
+        // And an empty publish is a legal statement — no windows are open.
+        publish_window_origins(std::iter::empty());
+        assert_eq!(window_origin("main"), None);
+    }
 
     /// ★★★★★ R1841 — **a question about a size that is not a window is
     /// answered, not fatal.**

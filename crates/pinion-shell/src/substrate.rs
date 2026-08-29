@@ -10427,6 +10427,55 @@ mod r1104_cross_window_exclusion_tests {
         );
     }
 
+    /// ★★★★★ R1905 — **the same stamp a cross-window drop resolves against is
+    /// what a detached panel converts its space by, and it retires a window
+    /// that closed.**
+    ///
+    /// `set_live_window_origins` is the shell's one sink for "where the windows
+    /// actually are", built for R1148's cross-window drop above. R1905 gave it a
+    /// second reader — [`pinion_core::external::window_origin`], which a screen
+    /// asks when a torn-off card changes home and its rectangle has to cross
+    /// between the display's coordinate space and the host's.
+    ///
+    /// Two facts are asserted together because either alone is a half-truth: the
+    /// sink must REACH that reader (a fact published nowhere is a fact nobody
+    /// has), and the publish must be **set-valued** (a window that closed must
+    /// stop answering, or a crossing converts against a window that is not on
+    /// screen and the panel lands somewhere nobody chose). The shell's every
+    /// caller passes `collect_window_origins()`, the complete live set, which is
+    /// what makes the second property expressible here at all.
+    #[test]
+    fn r1905_the_live_origin_stamp_reaches_the_screen_and_retires_a_closed_window() {
+        let sc = shell_with_two_dock_windows();
+        sc.set_live_window_origins(vec![
+            ("main".to_string(), (200.0, 100.0)),
+            (FLOAT_WINDOW.to_string(), (800.0, 100.0)),
+        ]);
+        assert_eq!(
+            pinion_core::external::window_origin("main"),
+            Some((200, 100)),
+            "the stamp reaches the reader a screen converts with; without this \
+             every crossing is adrift and the panel jumps",
+        );
+        assert_eq!(
+            pinion_core::external::window_origin(FLOAT_WINDOW),
+            Some((800, 100)),
+        );
+        // The torn-off window closes. The shell can only publish the set it
+        // still has, and that absence is what retires the entry.
+        sc.set_live_window_origins(vec![("main".to_string(), (200.0, 100.0))]);
+        assert_eq!(
+            pinion_core::external::window_origin(FLOAT_WINDOW),
+            None,
+            "★ a window that is gone answers nothing",
+        );
+        assert_eq!(
+            pinion_core::external::window_origin("main"),
+            Some((200, 100)),
+            "and the survivor keeps its place",
+        );
+    }
+
     // ---- R1617 §5.16 §5.41 §2 #7 — the window's home, per both answerers ----
 
     /// A two-panel desk: 1920x1080 primary, a second one abutting to its right.
