@@ -1902,6 +1902,33 @@ ok "the line form is exactly one line" "$(wc -l <<<"$verdict_line")" "1"
 ok "and that one line begins with a verdict word" \
    "$(grep -cE '^(YES|NO) ' <<<"$verdict_line")" "1"
 
+# ★★★★★ R1906 — 3. THE POPULATION INCLUDES THE CHECK THAT NEVER ANSWERED.
+#
+# The driver writes TWO sentences when a check verifies nothing: an answer it
+# could not read, and `the checker was started and never answered`. The census
+# matched only the first, so for five rounds the second was not a bucket, not a
+# refusal and not an "unclassified" — it was absent, and absent from a count is
+# the escape-hatch shape this repository's rules refuse.
+#
+# ⚠ Asserted from OUTSIDE the tool, with the expectation WRITTEN DOWN here
+# rather than derived from the tool: R1901.2 measured that a check deriving both
+# sides from one source is blind to an edit moving them together, and dropping
+# the second regex is exactly such an edit. The fixture is a VERBATIM driver
+# line for R1901's reason — a line invented from the docstring would describe
+# the failures already known, which is how the blind spot survived.
+verdict_fixture="$(mktemp -d)"
+printf '%s\n' \
+  'it said: \"the checker was started and never answered: the wait ended NotYet — give it longer, or a faster judge\" — it was shown the agent'"'"'s own account of this turn' \
+  > "$verdict_fixture/run1.log"
+verdict_unanswered="$(python3 "$repo_root/tools/round_verdict.py" --census \
+                      --from "$verdict_fixture" 2>&1 || true)"
+rm -rf "$verdict_fixture"
+ok "a check that never answered is counted, not silently dropped" \
+   "$(grep -cE '^NO — 1 recorded check\(s\) that verified nothing: 0 answered unreadably, 1 never answered' <<<"$verdict_unanswered")" \
+   "1"
+ok "and it is reported on its own line with its wait reason" \
+   "$(grep -cE '^  unanswered +1 .*NotYet 1' <<<"$verdict_unanswered")" "1"
+
 # --- R1799: the step timer -------------------------------------------------
 #
 # It is an instrument, so what it has to get right is that it MEASURES: a step

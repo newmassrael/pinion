@@ -12,6 +12,25 @@ checker was not wrong and was not silent; it was UNREADABLE, and an unreadable
 verdict is counted as no verdict at all, so the claim rests on the working
 agent's own word.
 
+⚠⚠ **R1906 — and it was not silent is only true of ONE of the two shapes the
+driver records.** Measured against the driver's own logs at R1906, it writes
+*two* different sentences when a check fails to verify a milestone: ``the
+checker answered "…"`` — an answer it could not read — and ``the checker was
+started and never answered: the wait ended <reason>``. Until R1906 this census
+matched only the first, so the second was **not in the population at all**: not
+a bucket, not a refusal, not an "unclassified" — absent. A count of checker
+failures that cannot see a whole failure MODE is the escape-hatch shape this
+repository's standing rules name, and the reason it went unnoticed for five
+rounds is the ordinary one — the class that hit was the class the instrument
+was blind to, so it never appeared in its own report.
+
+⇒ ★★★★★ *An instrument built from the failures you have seen cannot count the
+failure that stopped you seeing.* Both shapes are counted now, and they are kept
+APART rather than summed into "failures", because the two prescriptions on
+record reach different sets: telling a checker to lead with a verdict reaches an
+answer with words in it, and reaches **neither** an answer with no words nor a
+checker that never spoke.
+
 ★ **How many, and of what shape, is a command — do not read it off this page.**
 
     python3 tools/round_verdict.py --census
@@ -83,6 +102,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -314,6 +334,25 @@ def render(round_no: int, closed: bool, checks: list[Check]) -> str:
 #: against strings this file made up.
 CHECKER_ANSWERED = re.compile(r'the checker answered \\"(.*?)\\"')
 
+#: The driver's OTHER sentence: the checker was asked and produced nothing at
+#: all, so there is no answer to read, readable or otherwise. The capture is the
+#: wait's own reason word, because "it is still thinking" and "the run ended
+#: under it" are different problems with different repairs.
+#:
+#: ★★★★★ R1906 — THE SHAPE THIS CENSUS COULD NOT SEE, and the one that produced
+#: the failure that sent this round here. `CHECKER_ANSWERED` needs the words
+#: "the checker answered", which this line does not contain, so every such
+#: record fell outside the population silently — the census reported its answer
+#: buckets and said nothing about the records it had never matched.
+#:
+#: Deliberately anchored on the driver's phrasing UP TO the reason word and no
+#: further: the sentence continues with advice ("give it longer, or a faster
+#: judge") that is the driver's, not the checker's, and R1901's bug was exactly
+#: taking the rest of a line.
+CHECKER_UNANSWERED = re.compile(
+    r"the checker was started and never answered: the wait ended (\w+)"
+)
+
 #: Markup that stands in for an answer the checker did not give. Stripped before
 #: asking whether anything was said, because a bare line-break tag has letters
 #: in it and is nonetheless nothing a person wrote.
@@ -353,6 +392,20 @@ def extract_answers(text: str) -> list[str]:
     return [m.group(1) for m in CHECKER_ANSWERED.finditer(text)]
 
 
+def extract_unanswered(text: str) -> list[str]:
+    """Every check the driver recorded as never having answered, by wait reason.
+
+    Separate from [`extract_answers`] and not folded into it, because these are
+    not answers: there is nothing to classify, and a bucket for them inside the
+    answer taxonomy would say a checker that never spoke had said something
+    unreadable. The two are disjoint on the driver's real lines, which the
+    selftest asserts in both directions — the discriminating property, since a
+    regex that matched both would report the same total while destroying the
+    distinction this round exists to make.
+    """
+    return [m.group(1) for m in CHECKER_UNANSWERED.finditer(text)]
+
+
 def census_logs(from_dir: Path | None) -> tuple[Path, list[Path]]:
     """Where the driver's run logs are, and which ones exist."""
     if from_dir is None:
@@ -378,35 +431,55 @@ def census(from_dir: Path | None) -> tuple[bool, str]:
             f"it moves, this refuses rather than reporting zero."
         )
     buckets: dict[str, list[str]] = {"verdict": [], "prose": [], "contentless": []}
+    waits: list[str] = []
     for log in logs:
-        for answer in extract_answers(log.read_text(errors="replace")):
+        text = log.read_text(errors="replace")
+        for answer in extract_answers(text):
             buckets[classify(answer)].append(answer)
-    total = sum(len(v) for v in buckets.values())
+        waits.extend(extract_unanswered(text))
+    answered = sum(len(v) for v in buckets.values())
+    total = answered + len(waits)
     if total == 0:
         return False, (
             f"NO — could not look: {len(logs)} run log(s) under {where} and not "
-            f"one records a checker answer. Either nothing has been checked, or "
-            f"the line this reads has changed shape; both are 'unclassified', "
-            f"which is not a pass."
+            f"one records a checker answer OR a check that never answered. "
+            f"Either nothing has been checked, or a line this reads has changed "
+            f"shape; both are 'unclassified', which is not a pass."
         )
     unreadable = len(buckets["prose"]) + len(buckets["contentless"])
-    head = "YES" if unreadable == 0 else "NO"
+    unverified = unreadable + len(waits)
+    head = "YES" if unverified == 0 else "NO"
     firsts = {
         (a.strip('\\"').strip('"').split() or [""])[0]
         for a in buckets["prose"] + buckets["contentless"]
     }
+    # The wait reasons, most common first, because "it is still thinking" and
+    # "the run ended under it" are different problems: one wants a longer bound
+    # or a faster judge, the other wants the check to start earlier.
+    why = ", ".join(
+        f"{reason} {waits.count(reason)}"
+        for reason in sorted(set(waits), key=lambda r: (-waits.count(r), r))
+    )
     lines = [
-        f"{head} — {total} recorded checker answer(s), {unreadable} unreadable",
+        f"{head} — {total} recorded check(s) that verified nothing: "
+        f"{answered} answered unreadably, {len(waits)} never answered",
         f"  contentless {len(buckets['contentless']):3d}  no words at all; a prompt "
         f"requirement has NO path to zero here",
         f"  prose       {len(buckets['prose']):3d}  words, but not a verdict first; "
         f"a prompt requirement reaches these",
         f"  verdict     {len(buckets['verdict']):3d}  first token is exactly YES or NO",
+        # ★★★★★ R1906 — the shape this census was blind to. Its own line rather
+        # than a share of `prose`, because a checker that never spoke has said
+        # nothing to lead with a verdict, so NEITHER recorded prescription — the
+        # prompt half or the parser half — reaches it. Naming it as a fourth
+        # bucket inside the answer taxonomy would have hidden that.
+        f"  unanswered  {len(waits):3d}  the checker never spoke; NEITHER "
+        f"prescription reaches these" + (f" — {why}" if why else ""),
         f"  {len(firsts)} distinct first token(s) among the unreadable",
-        "  numerator only: the driver logs an answer ONLY when it could not read "
-        "one, so no rate can be taken from this",
+        "  numerator only: the driver records a check ONLY when it failed to "
+        "verify, so no rate can be taken from this",
     ]
-    return unreadable == 0, "\n".join(lines)
+    return unverified == 0, "\n".join(lines)
 
 
 def selftest() -> int:
@@ -494,6 +567,39 @@ def selftest() -> int:
     expect("the driver's sentence is not part of the answer",
            all("fix its prompt" not in a for a in extract_answers(real_contentless)))
 
+    # ── R1906: the shape that was outside the population ────────────────────
+    #
+    # ★★★★★ Verbatim driver lines again, and for a sharper reason than R1901's:
+    # this whole class was invisible because nothing here had ever SEEN one. A
+    # fixture invented from the docstring would have described the failures
+    # already known, which is exactly how the blind spot survived.
+    real_unanswered = (
+        'it said: \\"the checker was started and never answered: the wait ended '
+        'NotYet — give it longer, or a faster judge\\" — it was shown the '
+        "agent's own account of this turn"
+    )
+    real_run_ended = (
+        'it said: \\"the checker was started and never answered: the wait ended '
+        'RunEnded — give it longer, or a faster judge\\" — the run ended between '
+        "the typing and the Enter, so nothing was asked"
+    )
+    expect("a check that never answered is read, with its wait reason",
+           extract_unanswered(real_unanswered) == ["NotYet"])
+    expect("and a run that ended under the wait is a different reason",
+           extract_unanswered(real_run_ended) == ["RunEnded"])
+    expect("the driver's advice is not part of the reason",
+           all("give it longer" not in r for r in extract_unanswered(real_unanswered)))
+    # ★★★★★ THE DISCRIMINATING PROPERTY, both directions. A regex matching both
+    # shapes would keep the total right and destroy the distinction, which is
+    # the failure this round is repairing rather than the one it could cause.
+    expect("an unanswered check is NOT read as an answer",
+           extract_answers(real_unanswered) == [])
+    expect("an unreadable answer is NOT read as unanswered",
+           extract_unanswered(real_contentless) == [])
+    expect("a line with neither shape yields neither",
+           extract_unanswered("Reviewing --ReviewNone--> Priming") == []
+           and extract_answers("Reviewing --ReviewNone--> Priming") == [])
+
     expect("a bare YES is readable", classify("YES") == "verdict")
     expect("a bare NO is readable", classify("NO") == "verdict")
     expect("a verdict with a dash after it is readable",
@@ -527,6 +633,35 @@ def selftest() -> int:
     expect("a census with no log to read answers NO", not seen_none)
     expect("and says it could not look", "could not look" in said_none)
     expect("a refusing census still leads with the verdict word", said_none.startswith("NO"))
+
+    # ★★★★★ R1906 — the AGGREGATION, not only the extractors. The blind spot was
+    # here: both regexes could be perfect and the census still report a
+    # population that omits one of them. Driven over a real log directory shape,
+    # with one log holding one of each, so the reported line is the thing under
+    # test rather than a count computed twice.
+    with tempfile.TemporaryDirectory() as tmp:
+        (Path(tmp) / "run1.log").write_text(
+            real_contentless + "\n" + real_unanswered + "\n" + real_run_ended + "\n"
+        )
+        seen_both, said_both = census(Path(tmp))
+        expect("a census that sees an unanswered check does not report YES", not seen_both)
+        expect("it counts BOTH shapes in the population",
+               "3 recorded check(s)" in said_both)
+        expect("and keeps them apart rather than summing them",
+               "1 answered unreadably, 2 never answered" in said_both)
+        expect("the unanswered bucket is reported on its own line",
+               "unanswered    2" in said_both)
+        expect("with the wait reasons broken out, commonest first",
+               "NotYet 1, RunEnded 1" in said_both)
+        expect("and it still says NEITHER prescription reaches them",
+               "NEITHER prescription reaches" in said_both)
+    # A directory whose logs record neither shape must REFUSE, not report a
+    # clean bill — the same rule as an unreadable source, one level in.
+    with tempfile.TemporaryDirectory() as tmp:
+        (Path(tmp) / "run1.log").write_text("Reviewing --ReviewNone--> Priming\n")
+        seen_quiet, said_quiet = census(Path(tmp))
+        expect("a log recording neither shape is a refusal", not seen_quiet)
+        expect("and it says so as 'could not look'", "could not look" in said_quiet)
 
     # `--line` is one line, and it is the verdict line.
     one = render(1, True, fake_ok).splitlines()[0]
