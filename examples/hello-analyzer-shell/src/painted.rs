@@ -3572,7 +3572,12 @@ const OPERATION_GESTURES: &[OperationGesture] = &[
     ("detach a card", |state, shot| {
         press_tag(state, shot, "card.packet#0.tear_off");
     }),
-    // ★★★★★ The three rows this round exists for, and the three that had no
+    // ★ R1891 — "put a detached panel on the canvas" is NOT here, and that is
+    // the table's own rule rather than an omission: it is declared
+    // `gesture: false` (there is no pointer affordance for moving a panel
+    // between homes yet), so it reaches the five below through its VERB, and a
+    // driver for it would fail the join this file asserts in both directions.
+    // ★★★★★ The three rows R1697 exists for, and the three that had no
     // driver because they had no operation.
     ("move a detached panel", |state, shot| {
         drag_tag(state, shot, "float.packet#0", (40, 25));
@@ -3657,6 +3662,14 @@ fn reach_precondition(op: &spec::OperationSpec, state: &std::rc::Rc<ShellState>)
                 op.name
             )
         });
+    // ★★★★★ R1891 — **the chain, not one link.** This walked back exactly one
+    // step, which was right while every precondition was reachable from a fresh
+    // application; the first two-deep chain in the table (a canvas-homed panel
+    // needs a detached card, which needs a card on the board) would otherwise
+    // run its verb against a card that never left the board and be refused.
+    // ⚠ The table is already cycle-checked — `operation::in_order` runs in this
+    // file's own gate — so this recursion terminates for the same reason.
+    reach_precondition(earlier, state);
     if let Some((_, drive)) = OPERATION_GESTURES.iter().find(|(n, _)| *n == earlier.name) {
         let shot = painted();
         drive(state, &shot);
@@ -3730,9 +3743,27 @@ fn drive_gesture(
 }
 
 /// Tear a card off and answer with the panel it became.
-fn detached(state: &std::rc::Rc<ShellState>, card: &str) -> super::Float {
+/// Tear `card` off and put its panel ON THE CANVAS.
+///
+/// ★ R1891 — the second half is what this round added, and it is what the three
+/// tests below are about. Tearing off takes the host's preferred home, which on
+/// a windowing build is a real window; a window-homed card paints no
+/// `float.<id>` over this canvas and there is nothing here to drag, raise or
+/// size. The gestures these tests assert are the CANVAS home's — the form the
+/// behaviour canon uses, and the only form a backend with no window server can
+/// offer — so the fixture asks for that home explicitly rather than relying on
+/// a default that is not this test's subject.
+fn detached_onto_canvas(state: &std::rc::Rc<ShellState>, card: &str) -> super::Float {
     let shot = painted();
     press_tag(state, &shot, &format!("card.{card}.tear_off"));
+    let mut oracle = ShellOracle::new();
+    oracle.attach_state(std::rc::Rc::clone(state));
+    oracle
+        .invoke(
+            "detach_home",
+            IntrospectValue::Text(format!("{card},canvas")),
+        )
+        .unwrap_or_else(|why| panic!("{card} moves to the canvas: {why:?}"));
     state
         .float(card)
         .unwrap_or_else(|| panic!("{card} was torn off, so it is a panel"))
@@ -3752,7 +3783,7 @@ fn r1697_a_panel_cannot_be_sized_below_its_floor() {
     let owner = Owner::new();
     owner.run(|| {
         let state = use_shell_state();
-        let panel = detached(&state, "packet#0");
+        let panel = detached_onto_canvas(&state, "packet#0");
         assert_eq!(
             (panel.w, panel.h),
             (super::FLOAT_W, super::FLOAT_H),
@@ -3799,8 +3830,8 @@ fn r1697_a_press_brings_the_panel_under_it_to_the_front() {
     let owner = Owner::new();
     owner.run(|| {
         let state = use_shell_state();
-        let first = detached(&state, "packet#0");
-        let second = detached(&state, "decode#1");
+        let first = detached_onto_canvas(&state, "packet#0");
+        let second = detached_onto_canvas(&state, "decode#1");
         assert!(second.z > first.z, "the newest panel arrives in front");
 
         // Put them on top of one another, so a point exists that both cover.
@@ -3816,6 +3847,10 @@ fn r1697_a_press_brings_the_panel_under_it_to_the_front() {
                 // R1826 — this case is about two panels overlapping on the
                 // canvas, which the window level has nothing to do with.
                 on_top: false,
+                // ★ R1891 — and it is about the CANVAS, so the home is stated
+                // rather than inherited: a window-homed panel paints nothing
+                // here to overlap.
+                home: pinion_core::detach::DetachHome::Canvas,
             },
         );
         // ★ The point comes from the PAINTED rectangle, never from the state's
@@ -3912,7 +3947,7 @@ fn r1697_a_click_on_a_panel_does_not_announce_a_move() {
     let owner = Owner::new();
     owner.run(|| {
         let state = use_shell_state();
-        let panel = detached(&state, "packet#0");
+        let panel = detached_onto_canvas(&state, "packet#0");
         let opening = state.toast.showing();
 
         let shot = painted();
@@ -4034,8 +4069,12 @@ fn r1819_every_gesture_this_screen_advertises_does_something() {
                     // and it is detached the way a person detaches it rather
                     // than by assignment — the same rule `reach_precondition`
                     // follows for the operation table.
+                    // ★ R1891 — and it has to be on the CANVAS, because that is
+                    // where a `float.<id>` a pointer can grab is painted. On a
+                    // windowing host tearing off gives a window instead, whose
+                    // panel this canvas does not draw.
                     "drag a detached panel" => {
-                        press_tag(&state, &shot, "card.packet#0.tear_off");
+                        detached_onto_canvas(&state, "packet#0");
                         let shot = painted();
                         drag_tag(&state, &shot, "float.packet#0", (40, 25));
                     }

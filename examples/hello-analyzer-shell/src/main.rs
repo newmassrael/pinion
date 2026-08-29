@@ -101,6 +101,7 @@ use pinion_chart::{
     Bar, BarChart, BinEnds, Binned, ChartStyle, Mute, QuantileMethod, Quantiles, Sparkline,
 };
 use pinion_core::availability::Unavailable;
+use pinion_core::detach::{DetachHome, DetachPolicy};
 use pinion_core::drop_target::{
     BOARD_WIDGET_DRAG_KIND, DropAccept, DropAction, DropActions, DropClause, DropContract,
     DropOffer, DropStanding, DropVerdict, standing_value,
@@ -794,6 +795,55 @@ struct Float {
     /// loads — the same tolerance the arrangement's other additive fields take.
     #[serde(default)]
     on_top: bool,
+    /// ★★★★★ R1891 — **where this panel lives**, and the reason it is a field
+    /// on the float rather than a switch on the application.
+    ///
+    /// Measured at R1891 on the running assembled tool: tearing one card off
+    /// left `windows: ["main", "torn-packet#0"]` AND five `float.packet#0…`
+    /// regions painted in the main window. Two pictures of one card, from two
+    /// models that did not track each other — the window topology keyed on
+    /// which windows exist, the float carrying live geometry.
+    ///
+    /// Every reader of a float now derives from this: the window topology takes
+    /// the [`DetachHome::Window`] ones, the canvas paint and the hit test take
+    /// the [`DetachHome::Canvas`] ones, and `detached` reports the window ones
+    /// because those are the only ones that HAVE a window. A card can no longer
+    /// be in both places because the value cannot say both.
+    ///
+    /// Per float rather than per application, for [`on_top`](Self::on_top)'s
+    /// reason: which panel a reader wants out on the desktop and which they
+    /// want kept over the board is a decision about ONE panel.
+    ///
+    /// `#[serde(default = "default_detach_home")]` so a session saved before
+    /// this field existed reopens with its panels where that build put them —
+    /// which was a window, alongside a canvas float this round removes.
+    #[serde(default = "default_detach_home")]
+    home: DetachHome,
+}
+
+/// Where a float loaded from a session that predates the field goes.
+///
+/// Not [`DetachPolicy::preferred`], because that is a function of the host and
+/// this is a function of HISTORY: builds before R1891 opened a window for every
+/// detached card, so a session written by one is describing windows.
+fn default_detach_home() -> DetachHome {
+    DetachHome::Window
+}
+
+/// What this host can do with a detached card.
+///
+/// `true` because this binding publishes a window topology — `use_shell_windows`
+/// hands the shell a `Vec<WindowSpec>` and the shell opens what is in it. That
+/// is not a claim this comment makes on its own: `r1891`'s walk tears a card
+/// off and asserts a window actually appears, so the capability and the policy
+/// are checked against each other in the running application rather than
+/// agreeing here on paper.
+///
+/// A terminal backend would answer `false` and get [`DetachHome::Canvas`], which
+/// is why the choice exists at all (§2 #6) — this file is the GUI half of a
+/// dual-dispatch framework, not the only half.
+fn detach_policy() -> DetachPolicy {
+    DetachPolicy::for_host(true)
 }
 
 /// A detached panel being moved or resized, in flight.
@@ -1413,8 +1463,12 @@ impl ShellState {
     /// chain to a top-level and comparing pointers, which answers only for a
     /// panel the caller already holds. Here it is a published slot, so an agent
     /// that never saw the gesture can ask.
+    /// ★ R1891 — the WINDOW-homed floats only, because those are the only ones
+    /// that have a window to name. A canvas-homed panel is detached and has no
+    /// window id; reporting one would be a correspondence to something that
+    /// does not exist, which is worse than the silence.
     fn detached(&self) -> Vec<(String, String)> {
-        self.floats_front_to_back()
+        self.floats_at(DetachHome::Window)
             .into_iter()
             .map(|f| (f.id.clone(), float_window_id(&f.id)))
             .collect()
@@ -1430,6 +1484,27 @@ impl ShellState {
         let mut floats = self.floats.get();
         floats.sort_by(|a, b| b.z.cmp(&a.z));
         floats
+    }
+
+    /// ★★★★★ R1891 — the detached panels living in `home`, frontmost first.
+    ///
+    /// **The one classifier.** Four readers used to walk every float: the window
+    /// topology opened a window for each, the canvas painted a panel for each,
+    /// the hit test looked for each over the canvas, and `detached` named a
+    /// window for each. So a torn-off card was a window AND a canvas panel at
+    /// once — measured on the running application at R1891, and not a
+    /// theoretical worry: `windows: ["main", "torn-packet#0"]` alongside five
+    /// `float.packet#0…` regions in the main window.
+    ///
+    /// Each of those four now asks this, so which of them a float appears in is
+    /// one decision rather than four that happen to agree. A float has exactly
+    /// one [`DetachHome`], so the partition is total and disjoint by
+    /// construction — there is no float this returns twice and none it drops.
+    fn floats_at(&self, home: DetachHome) -> Vec<Float> {
+        self.floats_front_to_back()
+            .into_iter()
+            .filter(|f| f.home == home)
+            .collect()
     }
 
     /// R1697 — hand out the next stacking number.
@@ -1796,12 +1871,14 @@ fn use_shell_state() -> Rc<ShellState> {
 /// place the panel had when it was detached, which is the arrangement
 /// `detach` assigns, and it stops racing the gesture.
 ///
-/// ⚠ What that costs, stated rather than hidden: **resizing the in-canvas
-/// float no longer resizes its window.** That is not a gap this round can
-/// close by patching, because it is the fork the debt itself flagged — one
-/// card now has two things claiming to be it, a panel on the canvas and a
-/// window on the desktop, and deciding which one a person manipulates is a
-/// design decision rather than an arithmetic one. Registered as its own debt.
+/// ✅ **R1891 closed the fork this used to warn about.** The paragraph here
+/// said resizing the in-canvas float no longer resized its window, and that one
+/// card had two things claiming to be it. It does not any more: a float carries
+/// a [`DetachHome`], this Effect takes the [`DetachHome::Window`] ones and the
+/// canvas paints the [`DetachHome::Canvas`] ones, so the two pictures are two
+/// disjoint sets. There is nothing to keep in sync because there is never a
+/// second copy — and the "resize does not follow" complaint dissolves with it,
+/// since the panel a reader sizes on the canvas is the only panel there is.
 fn use_shell_windows() -> Rc<Signal<Vec<WindowSpec>>> {
     let owner = Owner::current().expect("use_shell_windows requires an active Owner scope");
     let windows: Rc<Signal<Vec<WindowSpec>>> =
@@ -1827,7 +1904,11 @@ fn use_shell_windows() -> Rc<Signal<Vec<WindowSpec>>> {
         let effect = Effect::new(&owner_for_effect, move || {
             // The ONE subscription: what is detached. Everything below it is a
             // pure function of that and of what this Effect last published.
-            let floats = state.floats.get();
+            // ★ R1891 — the WINDOW-homed ones. `floats_at` reads `floats`, so
+            // the single subscription this Effect relies on is unchanged; what
+            // changes is that a canvas-homed panel no longer mints a window it
+            // is not in.
+            let floats = state.floats_at(DetachHome::Window);
             let standing = published.borrow().clone();
             let mut specs = vec![main_window_spec()];
             for float in &floats {
@@ -2722,7 +2803,11 @@ impl Hit {
         // vector read backwards, which is the same answer only while nothing
         // reorders them; a press now raises the panel it lands on, so the
         // stacking order is state and the hit test reads that state.
-        for float in state.floats_front_to_back() {
+        // ★ R1891 — only the CANVAS-homed panels are over the canvas. A
+        // window-homed card is reached by pressing in its own window, and
+        // hit-testing for it here would return a panel this scene does not
+        // paint.
+        for float in state.floats_at(DetachHome::Canvas) {
             let rect = float_rect(&float);
             if !contains(rect, cx, cy) {
                 continue;
@@ -3251,6 +3336,11 @@ impl ShellOracle {
             z,
             // R1826 — ordinary stacking until a reader asks otherwise.
             on_top: false,
+            // ★ R1891 — where it goes is the HOST's answer, not this
+            // function's. `preferred()` on a windowing host is a window, which
+            // is what R1826 built; what changes is that the canvas float is no
+            // longer painted alongside it.
+            home: detach_policy().preferred(),
         });
         state.floats.set(floats);
         state.say(Utterance::done(format!(
@@ -3325,6 +3415,55 @@ impl ShellOracle {
             }
         )));
         Ok(IntrospectValue::Bool(now))
+    }
+
+    /// ★★★★★ R1891 — **move a detached card between the places this host can
+    /// put it**, or refuse naming what it can.
+    ///
+    /// `detach_home <card>,<window|canvas>`. Keyed rather than a bare word, for
+    /// R1889's reason one verb over: the grammar must not depend on whether an
+    /// argument happens to parse as something else.
+    ///
+    /// Both refusals are the framework's, not this file's: the host's
+    /// [`DetachPolicy`] admits or refuses, and the refusal carries the homes
+    /// that WOULD have worked. A terminal-hosted build of this same binding
+    /// refuses `window` here and says so.
+    fn set_detach_home(
+        state: &Rc<ShellState>,
+        args: &IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        let text = Self::text(args)?;
+        let (id, want) = text
+            .split_once(',')
+            .ok_or_else(|| InvokeError::rejected("expected <card>,<window|canvas>"))?;
+        let (id, want) = (id.trim(), want.trim());
+        let want = want.strip_prefix("home=").unwrap_or(want);
+        if !state.is_floating(id) {
+            return Err(InvokeError::rejected(format!(
+                "card {id:?} is not detached, so it has no home to move"
+            )));
+        }
+        let asked = DetachHome::from_wire(want).ok_or_else(|| {
+            InvokeError::rejected(format!(
+                "a detached panel lives in a window or on the canvas, not {want:?}"
+            ))
+        })?;
+        let home = detach_policy()
+            .admit(asked)
+            .map_err(|refusal| InvokeError::rejected(refusal.reason().to_string()))?;
+        let floats = state
+            .floats
+            .get()
+            .into_iter()
+            .map(|f| if f.id == id { Float { home, ..f } } else { f })
+            .collect();
+        state.floats.set(floats);
+        state.say(Utterance::done(format!(
+            "{} \u{2192} {}",
+            label_of(id),
+            home.as_str()
+        )));
+        Ok(IntrospectValue::Text(format!("{id} {}", home.as_str())))
     }
 
     /// ★★★★★ R1733 — what the palette OFFERS of a kind: its catalogue entry
@@ -3858,6 +3997,8 @@ const FIELDS: &[SchemaField] = const {
         SchemaField::new("restore_to", "string"),
         SchemaField::new("floating", "string"),
         SchemaField::new("floats", "json"),
+        // R1891 — the homes this host can put a detached card in.
+        SchemaField::new("detach_policy", "json"),
         // R1826 — which OS window carries each detached card.
         SchemaField::new("detached", "json"),
         SchemaField::new("float_grab", "string"),
@@ -3989,6 +4130,8 @@ const FIELDS: &[SchemaField] = const {
         SchemaField::action("redock", "string"),
         // R1826 — the specification's always-on-top option, per detached card.
         SchemaField::action("on_top", "string"),
+        // R1891 — `<card>,<window|canvas>`: where a detached card lives.
+        SchemaField::action("detach_home", "string"),
         SchemaField::action("save_preset", "string"),
         SchemaField::action("seek", "string"),
         SchemaField::action_with(
@@ -4036,10 +4179,33 @@ fn floats_json(state: &ShellState) -> serde_json::Value {
             .map(|f| {
                 serde_json::json!({
                     "id": f.id, "x": f.x, "y": f.y, "w": f.w, "h": f.h, "z": f.z,
+                    // ★★★★★ R1891 — WHERE it is. Without this a client reading
+                    // a float saw a rectangle and had no way to know which
+                    // coordinate space it is in: the display's, or this
+                    // window's canvas. Two different questions were answerable
+                    // only by cross-referencing `detached`, and a card missing
+                    // from there was indistinguishable from one this slot had
+                    // not caught up with.
+                    "home": f.home.as_str(),
                 })
             })
             .collect(),
     )
+}
+
+/// ★★★★★ R1891 §2 #2 — **what this host can do with a detached card**, so an
+/// agent asks before it is refused rather than after.
+///
+/// The floor toolkit at 6.11 has no such surface, and does not need one: a
+/// panel it detaches is always a top-level window, so there is nothing to
+/// choose and nothing to publish. Here the answer varies with the backend
+/// (§2 #6), which makes it a fact a caller has to be able to obtain.
+fn detach_policy_json() -> serde_json::Value {
+    let policy = detach_policy();
+    serde_json::json!({
+        "homes": policy.homes().iter().map(|h| h.as_str()).collect::<Vec<_>>(),
+        "preferred": policy.preferred().as_str(),
+    })
 }
 
 impl ExternalIntrospect for ShellOracle {
@@ -4145,6 +4311,9 @@ impl ExternalIntrospect for ShellOracle {
             // Front to back, so the order IS the stacking order rather than
             // something a reader has to sort for.
             "floats" => Ok(IntrospectValue::Json(floats_json(state))),
+            // R1891 — the homes this host offers, and which it picks by
+            // default. A client reads this before asking for one.
+            "detach_policy" => Ok(IntrospectValue::Json(detach_policy_json())),
             // ★★★★★ R1826 — **what is detached, and WHERE IT WENT.**
             //
             // `floating` says which cards left the board and `floats` says
@@ -4309,10 +4478,12 @@ impl ExternalIntrospect for ShellOracle {
             }
             "preset" => ShellOracle::apply_preset(&state, &word(&value)?),
             "sources" | "cards" | "card_count" | "placed_count" | "layout" | "maximized"
-            | "restore_to" | "floating" | "floats" | "detached" | "float_grab" | "presets"
-            | "transport" | "playhead" | "affordances" | "states" | "remedies" | "steppers"
-            | "toast" | "cursor" | "selected" | "hit" | "keymap" | "rail" | "tabs"
-            | "catalogue" | "config_open" | "drag" | "carrying" => Err(InterveneError::ReadOnly),
+            | "restore_to" | "floating" | "floats" | "detached" | "detach_policy"
+            | "float_grab" | "presets" | "transport" | "playhead" | "affordances" | "states"
+            | "remedies" | "steppers" | "toast" | "cursor" | "selected" | "hit" | "keymap"
+            | "rail" | "tabs" | "catalogue" | "config_open" | "drag" | "carrying" => {
+                Err(InterveneError::ReadOnly)
+            }
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -4357,6 +4528,10 @@ impl ExternalIntrospect for ShellOracle {
             // to level and answering `ok` would be a claim about a window that
             // does not exist.
             "on_top" => Self::set_on_top(&state, Self::text(&args)?.trim()),
+            // ★★★★★ R1891 — where a detached card lives, as a verb. The homes
+            // it may take are the host's, so a build with no window server
+            // refuses `window` here with a sentence naming the canvas.
+            "detach_home" => Self::set_detach_home(&state, &args),
             "resize" => {
                 let raw = Self::text(&args)?;
                 let (id, verb) = raw.split_once(',').ok_or_else(|| {
@@ -10971,7 +11146,10 @@ fn dashboard_scene(state: &ShellState, palette: Palette) -> Vec<Scene> {
     // walks. Both read `floats_front_to_back`, so painting the frontmost panel
     // last and hitting it first are one decision rather than two that agree
     // until somebody changes one of them.
-    for float in state.floats_front_to_back().iter().rev() {
+    // ★ R1891 — and only the CANVAS-homed ones are painted here. A window-homed
+    // card is painted by its own window, which is why this used to draw a
+    // second copy of it.
+    for float in state.floats_at(DetachHome::Canvas).iter().rev() {
         if let Some(scene) = float_scene(state, float, palette) {
             canvas_children.push(scene);
         }

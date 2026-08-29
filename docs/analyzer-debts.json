@@ -255,17 +255,6 @@
       ]
     },
     {
-      "name": "debt-one-card-is-claimed-by-a-panel-and-a-window",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "names dashboard.t0.6"
-      ]
-    },
-    {
       "name": "debt-only-one-of-two-panels-is-swept-folded",
       "substituted": false,
       "blocked_by": "buildable",

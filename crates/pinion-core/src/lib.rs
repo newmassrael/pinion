@@ -40,6 +40,7 @@ pub mod conformance;
 pub mod containment;
 pub mod contrast;
 pub mod derivation;
+pub mod detach;
 pub mod directory;
 pub mod display;
 pub mod drop_target;

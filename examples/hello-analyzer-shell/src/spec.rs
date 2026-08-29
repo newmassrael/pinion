@@ -1423,44 +1423,69 @@ pub const OPERATIONS: &[OperationSpec] = &[
         witness: "floating",
         needs: None,
     },
-    // ★★★★★ The three rows this round exists for. All three were absent, all
+    // ★★★★★ R1891 — **where a detached card lives is an operation**, and the
+    // five rows below need it because they are the CANVAS home's gestures.
+    //
+    // The behaviour canon detaches into a panel drawn over its own page — it is
+    // a web prototype and cannot open a window. The development specification
+    // asks for the other thing: *tear off -> independent window*. Both are
+    // real, so this build offers both and a card carries which one it is in
+    // (`pinion_core::detach::DetachHome`). Tearing off takes the host's
+    // preferred home, which here is the window; this row is how a reader — or
+    // an agent — asks for the canon's form instead.
+    //
+    // Before this row existed the two were painted AT ONCE, which is the defect
+    // it closes: one card, a window and a canvas panel, neither tracking the
+    // other.
+    OperationSpec {
+        name: "put a detached panel on the canvas",
+        verb: Some(("detach_home", "packet#0,canvas")),
+        gesture: false,
+        witness: "floats",
+        needs: Some("detach a card"),
+    },
+    // ★★★★★ The three rows R1697 exists for. All three were absent, all
     // three are one gesture in the reference's own source — its float drag
     // calls its raise before reading the panel's origin — and the person who
     // found the first one found it by opening the window and pulling.
+    //
+    // ★ R1891 — they need the CANVAS home, not merely a detached card: a
+    // window-homed card is dragged and sized by the window manager, and there
+    // is no `float.<id>` on this canvas to grab.
     OperationSpec {
         name: "move a detached panel",
         verb: None,
         gesture: true,
         witness: "floats",
-        needs: Some("detach a card"),
+        needs: Some("put a detached panel on the canvas"),
     },
     OperationSpec {
         name: "size a detached panel",
         verb: None,
         gesture: true,
         witness: "floats",
-        needs: Some("detach a card"),
+        needs: Some("put a detached panel on the canvas"),
     },
     OperationSpec {
         name: "bring a detached panel forward",
         verb: None,
         gesture: true,
         witness: "floats",
-        needs: Some("detach a card"),
+        needs: Some("put a detached panel on the canvas"),
     },
     OperationSpec {
         name: "re-dock a detached panel",
         verb: Some(("redock", "packet#0")),
         gesture: true,
         witness: "floating",
-        needs: Some("detach a card"),
+        needs: Some("put a detached panel on the canvas"),
     },
     OperationSpec {
         name: "close a detached panel",
         verb: None,
         gesture: true,
         witness: "floating",
-        needs: Some("detach a card"),
+        needs: Some("put a detached panel on the canvas"),
     },
 ];
 
