@@ -1286,6 +1286,42 @@ fn screen_roster() -> ScreenRoster {
     roster
 }
 
+/// Build one arrangement — a board and the cards on it — from a placement list.
+///
+/// ★★★★★ R1894 — **the opening board and every shipped arrangement come from
+/// here.** This loop existed once, inside `ShellState::new`, and adding the
+/// canon's other three would have made it four copies of "place these kinds at
+/// these cells and mint a card for each". Four copies is how one of them comes
+/// to mint a card the board does not hold, which the preset then restores into
+/// a layout with a hole.
+///
+/// Ids are `<kind>#<n>` over the list's own order, so two arrangements holding
+/// the same kind give it the same id — which is what lets a card keep its
+/// identity across an `apply_preset`.
+fn arrangement_of(placed: &[spec::PlacedSpec]) -> Preset {
+    let mut board = TileGrid::new(GRID_COLS);
+    let mut cards = Vec::new();
+    for (n, spot) in placed.iter().enumerate() {
+        let def = def_of(spot.kind).expect("an arrangement names catalogue kinds");
+        let id = format!("{}#{n}", spot.kind);
+        board
+            .place(Tile::new(
+                id.clone(),
+                spot.col,
+                spot.row,
+                spot.cols,
+                spot.rows,
+            ))
+            .expect("a specified arrangement is a legal one");
+        cards.push(
+            Card::new(id, def.label)
+                .with_chrome(CardChrome::of(chrome()))
+                .with_state(CardState::Ready),
+        );
+    }
+    Preset { board, cards }
+}
+
 impl ShellState {
     fn new(
         clock: Rc<TransportClock>,
@@ -1295,38 +1331,23 @@ impl ShellState {
         let (light, dark) = reference_palettes();
         theme.set_palettes(light, dark);
         theme.set_mode(ThemeMode::Dark);
-        let mut board = TileGrid::new(GRID_COLS);
-        let mut cards = Vec::new();
-        for (n, placed) in spec::BOARD.iter().enumerate() {
-            let def = def_of(placed.kind).expect("the board names catalogue kinds");
-            let id = format!("{}#{n}", placed.kind);
-            board
-                .place(Tile::new(
-                    id.clone(),
-                    placed.col,
-                    placed.row,
-                    placed.cols,
-                    placed.rows,
-                ))
-                .expect("the specified board is a legal arrangement");
-            cards.push(
-                Card::new(id, def.label)
-                    .with_chrome(CardChrome::of(chrome()))
-                    .with_state(CardState::Ready),
-            );
-        }
+        let opening = arrangement_of(spec::BOARD);
+        let (board, cards) = (opening.board.clone(), opening.cards.clone());
         let roster = spec::destinations();
-        // ★ R1893 — the opening arrangement is one this application SHIPS, so
-        // it goes in as a built-in and a person cannot delete it. Before this
-        // round the set was a bare map and every row was the same kind of
-        // thing, which is why `delete` could not be built at all.
-        let presets = Workspaces::new().with_built_in(
-            spec::PRESET,
-            Preset {
-                board: board.clone(),
-                cards: cards.clone(),
-            },
-        );
+        // ★ R1893 — the arrangements this application SHIPS go in as built-ins,
+        // and a person cannot delete them. Before that round the set was a bare
+        // map and every row was the same kind of thing, which is why `delete`
+        // could not be built at all.
+        //
+        // ★★★★★ R1894 — and there are FOUR of them now, from the same function
+        // that built the opening board. The canon offers four subject views
+        // before a person has saved anything; this shipped one, so the
+        // provenance axis had a population of one and the menu had a single
+        // row. `spec::ARRANGEMENTS` carries the canon's own boards verbatim.
+        let mut presets = Workspaces::new().with_built_in(spec::PRESET, opening);
+        for shipped in spec::ARRANGEMENTS {
+            presets = presets.with_built_in(shipped.name, arrangement_of(shipped.board));
+        }
         Self {
             clock,
             theme,
@@ -2340,13 +2361,17 @@ impl SubChip {
 /// the reference toolkit at 6.11 makes a menu a top-level popup for the same
 /// reason. It is now a sibling of the bars, painted after them, at the window
 /// coordinates its anchor derives.
+/// The height of one preset-menu row. Named because the row's label is centred
+/// in it and the paint reads both.
+const PRESET_ROW_H: u32 = 30;
+
 fn preset_item_rect(n: u32) -> Rect {
     let anchor = SubChip::Preset.rect();
     Rect::new(
         RAIL_W + anchor.x + 8,
         APP_BAR_H + anchor.y + 44 + n * 34,
         210,
-        30,
+        PRESET_ROW_H,
     )
 }
 
@@ -6781,13 +6806,24 @@ fn preset_menu_scene(state: &ShellState, palette: Palette) -> Scene {
         palette.muted,
     )];
     let row_local = |row: Rect| Rect::new(row.x - panel.x, row.y - panel.y, row.w, row.h);
+    // ★★★★★ R1894 — the label's box is what a 12px face NEEDS, asked of the
+    // framework rather than written down.
+    //
+    // It was `y: 7, h: 16`, and 16 is three short of `line_box(12)`. Nothing
+    // noticed while the menu had one row; adding the canon's other three made
+    // the short-box gate go 79 -> 82, naming exactly the three new rows. ⇒ ★a
+    // per-row defect is invisible at one row, and the round that adds rows is
+    // the round that owes the repair — raising the budget instead would have
+    // banked the defect three times over.
+    let text_h = pinion_core::containment::line_box(FONT_BODY);
+    let text_y = (PRESET_ROW_H.saturating_sub(text_h)) / 2;
     for (n, name) in names.iter().enumerate() {
         let row = preset_item_rect(u(n));
         let on = &state.preset.get() == name;
         children.push(Scene::Container(
             ContainerNode::new(vec![label(
                 name,
-                Rect::new(12, 7, row.w.saturating_sub(20), 16),
+                Rect::new(12, text_y, row.w.saturating_sub(20), text_h),
                 FONT_BODY,
                 if on { palette.accent_fg } else { palette.ink },
             )])
@@ -6803,7 +6839,7 @@ fn preset_menu_scene(state: &ShellState, palette: Palette) -> Scene {
     children.push(Scene::Container(
         ContainerNode::new(vec![label(
             "+  Save current layout",
-            Rect::new(12, 7, save.w.saturating_sub(20), 16),
+            Rect::new(12, text_y, save.w.saturating_sub(20), text_h),
             FONT_BODY,
             palette.accent_fg,
         )])

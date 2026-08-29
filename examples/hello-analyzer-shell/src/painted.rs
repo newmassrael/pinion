@@ -294,7 +294,15 @@ const SIZES: &[(&str, (u32, u32))] = &[
 /// which is the sweep's unit rather than one frame's. Two instruments, two
 /// units, one repair — and a repair aimed at 33 would have been aimed at a
 /// population nobody had measured.
-const SHORT_BOX_BUDGET: usize = 79;
+/// ★ R1894 — **79 -> 77**, and the two are the preset menu's rows.
+///
+/// The round that added the canon's other three shipped arrangements made this
+/// gate go 79 -> 82, naming the three new rows: their label box was `h: 16`
+/// where `line_box(12)` is 20. Deriving the label's box from the face instead
+/// of writing 16 fixed the new three AND the two that had been in the budget
+/// since the menu existed — so adding rows is what made a per-row defect
+/// visible, and repairing it lowered the pin rather than raising it.
+const SHORT_BOX_BUDGET: usize = 77;
 
 /// Where every tag in the painted scene ended up, and every text run with it.
 struct Painted {

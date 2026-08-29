@@ -87,9 +87,14 @@ def board_cards(app: RpcSubprocess) -> list[str]:
 def section_a(app: RpcSubprocess) -> str:
     banner("A — the set publishes WHERE each arrangement came from")
     published = rows(app)
+    # ★★★★★ R1894 — the canon ships FOUR subject views before a person has
+    # saved anything, and this shell shipped one. A population of one cannot
+    # exercise a set: "every built-in refuses deletion" is satisfied by the
+    # single row that was there, and the menu had nothing to be ordered.
     ok(
-        f"A: the application opens with arrangements at all — {len(published)}",
-        len(published) >= 1,
+        f"A: ★★★★★ the application ships FOUR arrangements, as the canon does — "
+        f"{[r['name'] for r in published]}",
+        len(published) == 4,
     )
     ok(
         "A: ★★★★★ every row says its provenance and whether it can be deleted "
@@ -111,6 +116,37 @@ def section_a(app: RpcSubprocess) -> str:
         "out by being refused",
         all(r["deletable"] is False for r in builtin),
     )
+    # ★ R1894 — every shipped arrangement RESTORES a different board. Four rows
+    # that all produced the same layout would satisfy every assertion above and
+    # reproduce nothing: the canon's four are four SUBJECTS.
+    # ★★★★★ The fingerprint is each card's RECTANGLE, not its id.
+    #
+    # Measured: the first draft compared sorted `card.<id>` lists, and a
+    # mutation that gave two arrangements the same four widgets in a different
+    # ORDER passed — the ids differ (`#0..#3` follow the list) while the boards
+    # are the same shape. An arrangement IS a placement, so the assertion has to
+    # read placements.
+    boards = {}
+    for row in published:
+        app.intervene(f"{EXT}/preset", row["name"])
+        app.tick_ms(16)
+        rects = abs_rects_of(app.snapshot(source="paint"))
+        boards[row["name"]] = tuple(
+            sorted(rects[t] for t in rects if t.startswith("card.") and t.count(".") == 1)
+        )
+    ok(
+        f"A: ★★★★★ each shipped arrangement restores a DIFFERENT board, compared "
+        f"by where the cards LAND — "
+        f"{ {k: len(v) for k, v in boards.items()} }",
+        len(set(boards.values())) == len(published),
+    )
+    ok(
+        "A: ★★ and each holds only widgets this application's catalogue has, "
+        "so the canon's boards were reproduced rather than approximated",
+        all(len(v) > 0 for v in boards.values()),
+    )
+    app.intervene(f"{EXT}/preset", published[0]["name"])
+    app.tick_ms(16)
     # The names slot and the rows slot are the same set, or a menu and a client
     # are looking at two different things.
     assert_eq(

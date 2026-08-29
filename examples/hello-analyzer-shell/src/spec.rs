@@ -789,6 +789,147 @@ pub const OPTION_GROUPS: [(&str, &str); 4] = [
 /// The name of the layout the screen opens with.
 pub const PRESET: &str = "Overview";
 
+/// One arrangement this application SHIPS: a name and the board it restores.
+///
+/// ★★★★★ R1894 — the behaviour canon offers FOUR of these before a person has
+/// saved anything (`builtinPresets()`), each a different subject: everything at
+/// once, latency, traffic, and the topology. This shell shipped ONE, so the
+/// provenance axis R1893 built had a population of one built-in and could not
+/// be exercised on a set.
+pub struct ArrangementSpec {
+    /// What the menu calls it.
+    pub name: &'static str,
+    /// The board it restores, in the same form as [`BOARD`].
+    pub board: &'static [PlacedSpec],
+}
+
+/// The arrangements this application ships BESIDES the opening one.
+///
+/// Boards taken from the behaviour canon's own `builtinPresets()` verbatim —
+/// the same kinds at the same cells with the same spans — because a layout
+/// invented here would reproduce the canon's *idea* of subject views while
+/// reproducing none of its arrangements.
+///
+/// ⚠ The names are English where the canon mixes one Korean word into
+/// otherwise-English names. This screen's every other string is English and the
+/// mixed form would be the only one; the SUBJECT is what the canon's name
+/// carries and it survives the substitution.
+///
+/// ⚠⚠ The opening board is deliberately NOT the canon's `Overview`. This
+/// application's catalogue is not the canon's, and `BOARD`'s own doc explains
+/// why it opens with what it opens with. Reproducing the canon's other three
+/// exactly while keeping this one is the honest split: those three are
+/// arrangements OF widgets both applications have, and the opening board is a
+/// statement about this catalogue.
+pub const ARRANGEMENTS: &[ArrangementSpec] = &[
+    ArrangementSpec {
+        name: "Latency",
+        board: &[
+            PlacedSpec {
+                kind: "latency",
+                col: 0,
+                row: 0,
+                cols: 6,
+                rows: 2,
+            },
+            PlacedSpec {
+                kind: "loss",
+                col: 6,
+                row: 0,
+                cols: 6,
+                rows: 1,
+            },
+            PlacedSpec {
+                kind: "throughput",
+                col: 6,
+                row: 1,
+                cols: 6,
+                rows: 2,
+            },
+            PlacedSpec {
+                kind: "alarms",
+                col: 0,
+                row: 2,
+                cols: 6,
+                rows: 2,
+            },
+            PlacedSpec {
+                kind: "health",
+                col: 0,
+                row: 4,
+                cols: 12,
+                rows: 1,
+            },
+        ],
+    },
+    ArrangementSpec {
+        name: "Traffic",
+        board: &[
+            PlacedSpec {
+                kind: "throughput",
+                col: 0,
+                row: 0,
+                cols: 7,
+                rows: 2,
+            },
+            PlacedSpec {
+                kind: "share",
+                col: 7,
+                row: 0,
+                cols: 5,
+                rows: 2,
+            },
+            PlacedSpec {
+                kind: "packet",
+                col: 0,
+                row: 2,
+                cols: 7,
+                rows: 2,
+            },
+            PlacedSpec {
+                kind: "health",
+                col: 7,
+                row: 2,
+                cols: 5,
+                rows: 2,
+            },
+        ],
+    },
+    ArrangementSpec {
+        name: "Topology focus",
+        board: &[
+            PlacedSpec {
+                kind: "topology",
+                col: 0,
+                row: 0,
+                cols: 8,
+                rows: 3,
+            },
+            PlacedSpec {
+                kind: "health",
+                col: 8,
+                row: 0,
+                cols: 4,
+                rows: 1,
+            },
+            PlacedSpec {
+                kind: "alarms",
+                col: 8,
+                row: 1,
+                cols: 4,
+                rows: 2,
+            },
+            PlacedSpec {
+                kind: "packet",
+                col: 0,
+                row: 3,
+                cols: 8,
+                rows: 2,
+            },
+        ],
+    },
+];
+
 /// The two verbs the layout bar offers, left to right.
 ///
 /// The second is the one the palette exists for, and the reference gives it the
