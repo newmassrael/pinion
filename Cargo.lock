@@ -1797,6 +1797,7 @@ dependencies = [
  "pinion-core",
  "pinion-forge",
  "pinion-gpu",
+ "pinion-platform-storage",
  "pinion-runtime",
  "pinion-screen",
  "pinion-shell",

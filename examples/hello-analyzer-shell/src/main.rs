@@ -116,6 +116,7 @@ use pinion_core::input::PointerReading;
 use pinion_core::reactive::{Effect, Owner, Signal};
 use pinion_core::scene::{ContainerNode, PathCommand, PathNode, PathPoint, Rect, TextNode};
 use pinion_core::shrink::ShrinkPolicy;
+use pinion_core::storage::Storage;
 use pinion_core::style::{
     Border, BoxStyle, Chrome, ChromeEdge, ChromeRole, Color, LayoutStyle, PathStyle, Size, Stroke,
     TextOverflow, TextStyle,
@@ -831,6 +832,38 @@ fn default_detach_home() -> DetachHome {
     DetachHome::Window
 }
 
+/// ★★★★★ R1897 §3 §5.15 — where a person's own arrangements are kept between
+/// runs, and the ONE key they live under.
+///
+/// The behaviour canon persists two things in `localStorage`: the custom
+/// presets, and the current layout with its name. This is the first half — the
+/// arrangements — and it stores `Workspaces::saved()`, which is a person's own
+/// and nothing else: the four this application ships come back by BEING
+/// shipped, and storing them would let a later build find a previous version's
+/// on disk and resurrect it.
+///
+/// One key, so `FileStorage`'s tempfile-and-rename covers the whole write; a
+/// half-written set is a set that reopens missing arrangements.
+const STORAGE_APP: &str = "pinion-analyzer-shell";
+const STORAGE_CACHE_KEY: &str = "analyzer_shell.storage";
+const ARRANGEMENTS_KEY: &str = "analyzer_shell.arrangements";
+
+/// Bump on an incompatible stored shape. A mismatch starts from the shipped
+/// set rather than misreading — the todomvc / node-editor precedent, and the
+/// reason the blob carries a version at all.
+const ARRANGEMENTS_VERSION: u32 = 1;
+
+/// The stored form: a version and the person's own arrangements.
+///
+/// A struct rather than the bare set, because a bare set has nowhere to put the
+/// version and "this file is older than this build" then reads as a corrupt
+/// file. Named fields so a reader of the JSON can tell what it is looking at.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct StoredArrangements {
+    version: u32,
+    arrangements: Workspaces<Preset>,
+}
+
 /// What this host can do with a detached card.
 ///
 /// `true` because this binding publishes a window topology — `use_shell_windows`
@@ -845,6 +878,76 @@ fn default_detach_home() -> DetachHome {
 /// dual-dispatch framework, not the only half.
 fn detach_policy() -> DetachPolicy {
     DetachPolicy::for_host(true)
+}
+
+/// The store a person's own arrangements are kept in.
+///
+/// ⚠ **Resolved OUTSIDE any `Owner::cache` factory and then held by
+/// [`ShellState`].** `use_app_storage` is itself an `Owner::cache`, and this
+/// framework refuses a cache factory that re-enters the cache — measured this
+/// round, the first draft called it from inside the state's own factory and the
+/// binding panicked at boot with `Re-entering on key="analyzer_shell.storage"`.
+/// ⇒ ★ a hook is not a plain function: calling one from inside another's
+/// factory is a different act from calling it beside one, and only the second
+/// is allowed. Pre-resolving also means the state OWNS its dependency rather
+/// than reaching back for it at every write.
+fn arrangement_storage() -> Rc<pinion_platform_storage::AppStorage> {
+    pinion_platform_storage::use_app_storage(STORAGE_CACHE_KEY, STORAGE_APP)
+}
+
+/// ★★★★★ R1897 — write a person's own arrangements, and only those.
+///
+/// Called after every operation that changes the SET (save, delete). Not after
+/// applying one: applying changes which arrangement is current, which is a
+/// different fact and is not this key's.
+///
+/// Best effort, as [`pinion_core::storage::Storage`] is: a failed write is a
+/// silent no-op by that trait's contract, and this application treats
+/// persistence as a capability rather than a guarantee.
+fn persist_arrangements(state: &ShellState) {
+    let stored = StoredArrangements {
+        version: ARRANGEMENTS_VERSION,
+        arrangements: state.presets.borrow().saved(),
+    };
+    if let Ok(bytes) = serde_json::to_vec(&stored) {
+        state.storage.save(ARRANGEMENTS_KEY, &bytes);
+    }
+}
+
+/// Lay what a previous run saved over the arrangements this build ships.
+///
+/// ★ Every refusal is SAID, not dropped: a row whose name this build now ships
+/// and a row claiming to be a built-in are both refused by
+/// [`pinion_core::workspace::Workspaces::restore`], and a restore that
+/// discarded them silently would be one nobody could debug. They reach the
+/// person through the same utterance channel every other refusal here does.
+///
+/// A version mismatch starts from the shipped set rather than misreading —
+/// stated rather than silent, for the same reason.
+fn restore_arrangements(state: &ShellState) {
+    let Some(bytes) = state.storage.load(ARRANGEMENTS_KEY) else {
+        return;
+    };
+    let Ok(stored) = serde_json::from_slice::<StoredArrangements>(&bytes) else {
+        state.say(Utterance::done(
+            "saved layouts could not be read; starting from the ones this build ships",
+        ));
+        return;
+    };
+    if stored.version != ARRANGEMENTS_VERSION {
+        state.say(Utterance::done(format!(
+            "saved layouts are version {} and this build reads {ARRANGEMENTS_VERSION}; \
+             starting from the ones it ships",
+            stored.version
+        )));
+        return;
+    }
+    let mut presets = state.presets.borrow_mut();
+    let refused = presets.restore(stored.arrangements);
+    drop(presets);
+    for refusal in &refused {
+        state.say(Utterance::done(refusal.reason().to_string()));
+    }
 }
 
 /// A detached panel being moved or resized, in flight.
@@ -895,7 +998,12 @@ struct FloatGrab {
 /// Both, because a board is two facts — where the cells are and what is in
 /// them — and a preset restoring only the first would put the previous board's
 /// cards into the new layout's holes.
-#[derive(Debug, Clone)]
+/// ★ R1897 — serialisable, because a person's own arrangements are kept
+/// between runs and this is what one IS. Both halves have to persist for the
+/// reason the doc above gives: a preset restoring only the cells would put the
+/// previous board's cards into the new layout's holes, and a preset restored
+/// from disk is no different.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct Preset {
     board: TileGrid,
     cards: Vec<Card>,
@@ -917,6 +1025,10 @@ struct ShellState {
     /// delete built on the map would have taken both, which is why there was no
     /// delete. See [`pinion_core::workspace`].
     presets: RefCell<Workspaces<Preset>>,
+    /// ★ R1897 — where a person's own arrangements are kept, held rather than
+    /// looked up. See [`arrangement_storage`] for why it is resolved outside
+    /// this state's own cache factory.
+    storage: Rc<pinion_platform_storage::AppStorage>,
     preset: Signal<String>,
     preset_open: Signal<bool>,
     /// Layout-edit mode: the size steppers appear and the grid brightens.
@@ -1327,6 +1439,7 @@ impl ShellState {
         clock: Rc<TransportClock>,
         theme: Rc<ThemeProvider>,
         toast: Rc<pinion_core::utterance::Saying>,
+        storage: Rc<pinion_platform_storage::AppStorage>,
     ) -> Self {
         let (light, dark) = reference_palettes();
         theme.set_palettes(light, dark);
@@ -1356,6 +1469,7 @@ impl ShellState {
             maximized: Signal::new(None),
             floats: Signal::new(Vec::new()),
             presets: RefCell::new(presets),
+            storage,
             preset: Signal::new(spec::PRESET.to_string()),
             preset_open: Signal::new(false),
             editing: Signal::new(false),
@@ -1838,7 +1952,20 @@ fn use_shell_state() -> Rc<ShellState> {
         said.say(Utterance::done(format!("{} loaded", spec::PRESET)));
         said
     });
-    owner.cache(STATE_KEY, move || ShellState::new(clock, theme, toast))
+    // ★★★★★ R1897 — a person's own arrangements are laid over the shipped ones
+    // INSIDE the cache factory, so the restore runs exactly once per process
+    // rather than on every view pass. `register_animation_once` above is gated
+    // for the same reason and says so; this is that rule applied to the other
+    // thing a boot does.
+    // ⚠ Resolved HERE, beside the cache rather than inside its factory — see
+    // `arrangement_storage`. `use_app_storage` is itself an `Owner::cache`, and
+    // this framework refuses a factory that re-enters the cache.
+    let storage = arrangement_storage();
+    owner.cache(STATE_KEY, move || {
+        let state = ShellState::new(clock, theme, toast, storage);
+        restore_arrangements(&state);
+        state
+    })
 }
 
 /// ★★★★★ R1826 — **the OS windows this application wants**, derived from the
@@ -3880,6 +4007,9 @@ impl ShellOracle {
             )
             .map_err(|refusal| InvokeError::rejected(refusal.reason().to_string()))?;
         state.preset.set(name.trim().to_string());
+        // ★ R1897 — the set changed, so it is written. After the signal, so a
+        // reader of the file and a reader of the wire see the same set.
+        persist_arrangements(state);
         state.say(Utterance::done(format!(
             "layout saved \u{00B7} {}",
             name.trim()
@@ -3911,6 +4041,10 @@ impl ShellOracle {
         if state.preset.get() == name {
             state.preset.set(spec::PRESET.to_string());
         }
+        // ★ R1897 — a delete changes the set too, so a deleted arrangement
+        // stays deleted across a restart. Without this the file would bring it
+        // back and the delete would look like it had not happened.
+        persist_arrangements(state);
         state.say(Utterance::done(format!("layout deleted \u{00B7} {name}")));
         Ok(IntrospectValue::Text(state.preset_names()))
     }

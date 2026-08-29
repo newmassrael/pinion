@@ -18,6 +18,8 @@ pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
 pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
 # §5.16 paint-side AppShell (winit + Vello + RPC).
 pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R1897 — a person's own layout arrangements are kept between runs.
+pinion-platform-storage = { path = "../../crates/pinion-platform-storage", version = "0.0.1" }
 # R1537 §5.16 — the emitted renderer owns its wgpu device through pinion-gpu.
 pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
 # The KPI card's sparkline, which is the capability list's own example of a

@@ -148,6 +148,22 @@ pub enum WorkspaceRefusal {
     },
     /// An arrangement with no name cannot be found again.
     Unnamed,
+    /// ★★★★★ R1897 — a STORED set claimed an arrangement that is not a
+    /// person's to have saved.
+    ///
+    /// Distinct from [`BuiltIn`](Self::BuiltIn), which is a live operation
+    /// refused. This is a stored row rejected at restore time, and the two
+    /// reasons it happens are worth telling apart from each other only by the
+    /// sentence: a file that says `built-in` is claiming an authority it cannot
+    /// have (storage is written by a session, and a session only ever stores
+    /// what a person saved), while a file whose NAME this build now ships is
+    /// simply out of date. Both end the same way — the build's arrangement
+    /// stands — and both must be REPORTED rather than dropped, because a
+    /// restore that silently discards rows is a restore nobody can debug.
+    NotYours {
+        /// The stored name that was refused.
+        asked: String,
+    },
 }
 
 impl WorkspaceRefusal {
@@ -168,6 +184,9 @@ impl WorkspaceRefusal {
                 "{asked:?} is an arrangement this application ships; save your own under another name"
             )),
             Self::Unnamed => RefusalReason::stated("an arrangement needs a name to be found again"),
+            Self::NotYours { asked } => RefusalReason::from(format!(
+                "{asked:?} was restored from storage but this build ships an arrangement of that name; the build's stands"
+            )),
         }
     }
 
@@ -179,6 +198,7 @@ impl WorkspaceRefusal {
             Self::NoSuchArrangement { .. } => "no-such-arrangement",
             Self::BuiltIn { .. } => "built-in",
             Self::Unnamed => "unnamed",
+            Self::NotYours { .. } => "not-yours",
         }
     }
 }
@@ -337,6 +357,58 @@ impl<L> Workspaces<L> {
             });
         }
         Ok(entry.layout)
+    }
+}
+
+impl<L: Clone> Workspaces<L> {
+    /// ★★★★★ R1897 — **what a session writes to storage: the saved ones, and
+    /// only those.**
+    ///
+    /// Storing the built-ins too would look harmless and is not: they are the
+    /// APPLICATION's, and a later build with different ones would find the old
+    /// set on disk and resurrect it. What a person saved is theirs and has to
+    /// come back; what the application ships comes back by being shipped.
+    ///
+    /// ⇒ this is the first thing [`Provenance`] buys beyond the delete rule,
+    /// and it is why the distinction had to exist before persistence could.
+    #[must_use]
+    pub fn saved(&self) -> Self {
+        Self {
+            entries: self
+                .entries
+                .iter()
+                .filter(|(_, a)| a.provenance == Provenance::Saved)
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+        }
+    }
+
+    /// Lay a `stored` set over the arrangements this build ships, answering
+    /// every row it REFUSED.
+    ///
+    /// The build's arrangements stand: a stored row whose name this build now
+    /// ships is out of date, and a stored row that claims to BE a built-in is
+    /// claiming an authority storage cannot have. Both are refused by name.
+    ///
+    /// ⚠ **The refusals are returned, not logged and not dropped.** A restore
+    /// that silently discards rows is a restore nobody can debug, and this
+    /// tree's rule is that an unclassified thing is a red rather than a pass —
+    /// so the caller receives the list and decides what to say about it.
+    ///
+    /// Returns the refusals in name order, which is the order they would be
+    /// shown in.
+    pub fn restore(&mut self, stored: Self) -> Vec<WorkspaceRefusal> {
+        let mut refused = Vec::new();
+        for (name, arrangement) in stored.entries {
+            if arrangement.provenance != Provenance::Saved
+                || self.provenance(&name) == Some(Provenance::BuiltIn)
+            {
+                refused.push(WorkspaceRefusal::NotYours { asked: name });
+                continue;
+            }
+            self.entries.insert(name, arrangement);
+        }
+        refused
     }
 }
 
@@ -503,6 +575,92 @@ mod tests {
         // either way is wrong in a different direction.
         let bad = json.replace("\"saved\"", "\"mine-i-think\"");
         assert!(serde_json::from_str::<Workspaces<&str>>(&bad).is_err());
+    }
+
+    #[test]
+    fn only_what_a_person_saved_is_written_to_storage() {
+        // ★★★★★ R1897 — the built-ins are the APPLICATION's. Storing them would
+        // look harmless and is not: a later build with different ones would
+        // find the old set on disk and bring it back.
+        let mut ws = seeded();
+        ws.save("Mine", "board:mine").expect("saved");
+        ws.save("Other", "board:other").expect("saved");
+        let out = ws.saved();
+        assert_eq!(out.names(), vec!["Mine", "Other"]);
+        assert!(out.iter().all(|(_, a)| a.provenance == Provenance::Saved));
+        // And the live set is untouched by having been read.
+        assert_eq!(ws.len(), 4);
+    }
+
+    #[test]
+    fn a_restore_lays_saved_rows_over_this_builds_own_and_names_what_it_refused() {
+        let mut ws = seeded();
+        // A stored set as a previous session would have written it, plus two
+        // rows that must NOT come back: one whose name this build now ships,
+        // and one claiming to be a built-in.
+        let mut stored: Workspaces<&str> = Workspaces::new();
+        stored.save("Mine", "board:mine").expect("a person's");
+        stored
+            .save("Overview", "board:theirs")
+            .expect("a name this build now ships");
+        let stored = Workspaces {
+            entries: stored
+                .entries
+                .into_iter()
+                .chain(std::iter::once((
+                    "Sneaky".to_owned(),
+                    super::Arrangement {
+                        layout: "board:sneaky",
+                        provenance: Provenance::BuiltIn,
+                    },
+                )))
+                .collect(),
+        };
+
+        let refused = ws.restore(stored);
+        // ★ The person's own came back.
+        assert_eq!(ws.apply("Mine"), Ok(&"board:mine"));
+        assert_eq!(ws.provenance("Mine"), Some(Provenance::Saved));
+        // ★★ This build's arrangement stands, with its own layout.
+        assert_eq!(ws.apply("Overview"), Ok(&"board:overview"));
+        assert_eq!(ws.provenance("Overview"), Some(Provenance::BuiltIn));
+        // ★★★ And the row claiming to be a built-in did not get in at all.
+        assert_eq!(ws.provenance("Sneaky"), None);
+        // ★★★★★ Both refusals are REPORTED, by name. A restore that silently
+        // discarded them would be one nobody could debug.
+        let names: Vec<&str> = refused
+            .iter()
+            .map(|r| match r {
+                WorkspaceRefusal::NotYours { asked } => asked.as_str(),
+                other => panic!("unexpected refusal: {other:?}"),
+            })
+            .collect();
+        assert_eq!(names, vec!["Overview", "Sneaky"]);
+        for refusal in &refused {
+            let said = refusal.reason().to_string();
+            assert!(
+                said.contains("this build ships"),
+                "a refused restore says why the build's stands: {said}"
+            );
+            assert_eq!(refusal.wire_word(), "not-yours");
+        }
+    }
+
+    #[test]
+    fn a_save_then_restore_round_trip_brings_back_exactly_the_persons_own() {
+        // The whole journey, since that is what a session does: save, write,
+        // start again from the shipped set, read back.
+        let mut before = seeded();
+        before.save("Mine", "board:mine").expect("saved");
+        let wire = serde_json::to_string(&before.saved()).expect("serialises");
+
+        let mut after = seeded();
+        let stored: Workspaces<&str> = serde_json::from_str(&wire).expect("round-trips");
+        let refused = after.restore(stored);
+        assert!(refused.is_empty(), "nothing to refuse: {refused:?}");
+        assert_eq!(after.names(), before.names());
+        assert_eq!(after.provenance("Mine"), Some(Provenance::Saved));
+        assert_eq!(after.provenance("Overview"), Some(Provenance::BuiltIn));
     }
 
     #[test]
