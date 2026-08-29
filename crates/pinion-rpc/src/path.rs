@@ -109,7 +109,13 @@ impl PathError {
 /// Rust's `crate::`).
 #[must_use]
 pub fn split_at_external(scene_path: &str) -> Option<(Vec<String>, &str)> {
-    const SEP: &str = "/external/";
+    // R1890 — the separator is read from the workspace's SSOT rather than
+    // spelled here, so a publisher composing an address
+    // ([`pinion_core::wire_address::path_at`]) and this parser reading one
+    // cannot drift apart. The literal lived only here, which is why nothing in
+    // the tree could build such a path and R1889 concluded a mounted screen's
+    // surface was gone when it was merely addressed differently.
+    const SEP: &str = pinion_core::wire_address::SEPARATOR;
     let idx = scene_path.find(SEP)?;
     let prefix = &scene_path[..idx];
     let suffix = &scene_path[idx + SEP.len()..];
@@ -408,6 +414,61 @@ mod tests {
             "needs trailing slash"
         );
         assert!(split_at_external("").is_none());
+    }
+
+    /// ★★★★★ R1890 — **what a publisher composes is what this parser reads.**
+    ///
+    /// The bijection, asserted where both halves are visible: this crate parses
+    /// addresses and `pinion-screen` publishes them, and neither depends on the
+    /// other, so `pinion-core` owns the grammar and this is the only place the
+    /// round trip can be performed at all.
+    ///
+    /// It is not a spelling of the rule — nothing here writes `/external/`. The
+    /// input comes from the composer and the expectation from the caller's own
+    /// arguments, so a change to the separator that reached only one side fails
+    /// here rather than surfacing as a client's `UnsupportedPath` months later.
+    #[test]
+    fn a_composed_address_splits_back_into_the_surface_and_path_it_was_built_from() {
+        for (tag, introspect) in [
+            ("node_lab", "graph"),
+            ("packet_view", "spec"),
+            ("key_patterns", "nested/slot"),
+            ("", "graph"),
+        ] {
+            let composed = pinion_core::wire_address::path_at(tag, introspect);
+            let (segs, intro) = split_at_external(&composed)
+                .unwrap_or_else(|| panic!("a composed address must split: {composed}"));
+            let expected: Vec<String> = if tag.is_empty() {
+                Vec::new()
+            } else {
+                vec![tag.to_string()]
+            };
+            assert_eq!(segs, expected, "walk recovered from {composed}");
+            assert_eq!(
+                intro, introspect,
+                "introspect path recovered from {composed}"
+            );
+        }
+    }
+
+    /// R1890 — and a **surface** address is one slash short of a path, which is
+    /// what makes appending an introspect path to it produce a splittable one.
+    ///
+    /// A publisher hands out [`pinion_core::wire_address::surface_at`]; the
+    /// client appends. If that address already ended in the separator's slash
+    /// the client's join would produce `//`, whose empty segment addresses a
+    /// node nobody tagged — so this asserts the shape the joining relies on.
+    #[test]
+    fn a_surface_address_is_not_yet_splittable_and_becomes_so_when_a_path_is_joined() {
+        let surface = pinion_core::wire_address::surface_at("node_lab");
+        assert!(
+            split_at_external(&surface).is_none(),
+            "a surface names a place, not a path: {surface}"
+        );
+        let joined = format!("{surface}/graph");
+        let (segs, intro) = split_at_external(&joined).expect("joined address splits");
+        assert_eq!(segs, vec!["node_lab".to_string()]);
+        assert_eq!(intro, "graph");
     }
 
     #[test]

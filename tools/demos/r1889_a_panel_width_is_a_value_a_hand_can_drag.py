@@ -17,22 +17,28 @@ survived R1887.
 
 # Two hands, and which is which
 
-The DECLARATION is read from a standalone node lab: what bounds each pane
-promises, in the specification's own words. The BEHAVIOUR is driven in the
-assembled application — `hello-analyzer-shell`, at the seat where that screen is
-mounted — because the panels belong to a tool a person opens, and a claim about
-the guest alone is a claim about a binary nobody runs.
+The DECLARATION is what bounds each pane promises, in the specification's own
+words. The BEHAVIOUR is what the running screen does when a hand or a caller
+pushes on it. Both are read from the **assembled** application —
+`hello-analyzer-shell`, at the seat where that screen is mounted — because the
+panels belong to a tool a person opens, and a claim about the guest alone is a
+claim about a binary nobody runs. The two hands are two SOURCES, which is what
+made them worth having; they were never two processes.
 
-⚠ **The two subprocesses are not a convenience.** Measured at R1889, the guest's
-introspection surface does NOT survive mounting: `graph`, `zoom`, `running`,
-`verdict`, `nodes` and `links` all answer in the standalone lab and all six
-answer `UnknownIntrospectPath` through the shell. So the assembled application
-cannot be asked the guest's own questions at all, and the halves of this round
-that go over the wire have to be driven where the wire reaches. That is a real
-gap and it is registered rather than worked around
-(`debt-a-mounted-screens-wire-surface-does-not-survive-mounting`); what this
-demo does about it is refuse to pretend, and drive the assembled half through
-the channels that DO survive — paint and the accessibility tree.
+★★★★★ **R1890 repaired this section, and the repair was a re-measurement.**
+R1889 drove the declaration and the wire refusal in a SECOND process, on the
+finding that the guest's introspection surface does not survive mounting:
+`graph`, `zoom`, `running`, `verdict`, `nodes` and `links` all answered in a
+standalone lab and all six answered `UnknownIntrospectPath` through the shell.
+Re-measured at R1890 against the same build, every one of them answers — at
+`/<screen tag>/external/<path>`. R1889 had asked at `/external/<path>`, the ROOT
+short-circuit, which in an assembled application is the HOST's surface, so those
+six refusals were true statements about the shell rather than about the guest.
+
+The address is now published by the roster (`destinations[].screen.address`) and
+read from there below, so this demo asks the application where a screen answers
+instead of assuming a grammar. `tools/demos/r1890_a_mounted_screen_answers_on_
+the_wire.py` is where that property is held; here it is simply used.
 
 What this drives:
 
@@ -81,7 +87,9 @@ from rpc_verify import (  # noqa: E402
 )
 
 SHELL = "hello-analyzer-shell"
-LAB = "hello-node-lab"
+#: The HOST's own root surface. R1890 — naming it `HOST` rather than `EXT`
+#: because that is what it is, and reading it as "the external" is precisely the
+#: mistake that sent R1889 looking for the guest's paths here.
 EXT = "/external"
 SEAT = "lab"
 #: The pane this demo drives. The inspector, because it is the one whose body
@@ -108,17 +116,34 @@ def nodes_by_tag(app: RpcSubprocess) -> dict:
     return {n["tag"]: n for n in app.request("scene/access").result["nodes"]}
 
 
-def declaration() -> dict:
-    """Each pane's row of the specification, read from a standalone node lab.
+def js(value):
+    """A published value, whether the surface handed back JSON or a string."""
+    return json.loads(value) if isinstance(value, str) else value
+
+
+def surface_of(app: RpcSubprocess, seat: str) -> str:
+    """Where the screen mounted at `seat` answers, as the application says.
+
+    R1890 — asked rather than composed. The roster publishes each mounted
+    destination's address, so a caller never has to know that a surface lives at
+    `/<tag>/external/…`; R1889 did not know it, asked at the root, and concluded
+    from seven true refusals about the host that the guest was unreachable.
+    """
+    published = js(app.query(f"{EXT}/destinations"))
+    row = next(row for row in published["destinations"] if row["key"] == seat)
+    return row["screen"]["address"]
+
+
+def declaration(app: RpcSubprocess, surface: str) -> dict:
+    """Each pane's row of the specification, in the screen's own words.
 
     The second hand. A demo that took the bounds from this file would agree
-    with itself after somebody changed the declaration; taking them from the
-    screen under test would agree with whatever it happened to do. So they come
-    from the specification the screen publishes, and the assembled application
-    is then held to them.
+    with itself after somebody changed the declaration; taking them from what
+    the screen happens to draw would agree with whatever it happened to do. So
+    they come from the specification the screen PUBLISHES, and the drawing is
+    then held to them — two sources, one process.
     """
-    with RpcSubprocess(LAB, boot_grace=1.5) as lab:
-        said = json.loads(lab.query(f"{EXT}/spec"))
+    said = js(app.query(f"{surface}/spec"))
     return {pane["tag"]: pane for pane in said["panes"]}
 
 
@@ -240,53 +265,53 @@ def section_c(app: RpcSubprocess, declared: dict) -> None:
     )
 
 
-def section_d(declared: dict) -> None:
+def section_d(app: RpcSubprocess, surface: str, declared: dict) -> None:
     banner("D — over the wire, a width outside the range is refused WITH the range")
     bounds = declared[PANE]["resize"]
 
-    # ⚠ Driven in the standalone lab: measured at R1889 the guest's wire surface
-    # does not survive mounting, so this is where the verb can be reached at
-    # all. Registered as a debt rather than papered over — see this module's
-    # header.
+    # R1890 — driven in the ASSEMBLED application, at the address the roster
+    # publishes for this seat. R1889 ran this in a SECOND PROCESS on the finding
+    # that a guest's wire surface does not survive mounting; re-measured, what
+    # did not survive was the root short-circuit, and the surface answers at its
+    # own address. See this module's header.
     #
-    # ⚠⚠ `place` is an ACTION, so it is reached with `invoke`. The first draft
+    # ⚠ `place` is an ACTION, so it is reached with `invoke`. The first draft
     # of this section sent it through `intervene` and caught the resulting
     # `PathIsAnAction` in a bare `except`, where it read as a policy refusal —
     # and the assertion below is what caught that, because a transport error
     # does not carry the bounds. ★ A test that treats *any* raised thing as the
     # refusal it hoped for is not testing the refusal: it passes for a screen
     # that never implemented the verb.
-    with RpcSubprocess(LAB, boot_grace=1.5) as lab:
-        for asked in (bounds["min"] - 1, bounds["max"] + 1):
-            try:
-                answered = lab.invoke(f"{EXT}/place", f"inspector,width={asked}")
-            except RpcError as refusal:
-                said = str(refusal)
-                ok(
-                    f"D: ★★★★★ `width={asked}` is REFUSED and the refusal names "
-                    f"the range, so a caller knows what to ask instead",
-                    str(bounds["min"]) in said and str(bounds["max"]) in said,
-                )
-            else:
-                ok(
-                    f"D: asking for {asked} must be refused, not answered "
-                    f"{answered!r}",
-                    False,
-                )
+    for asked in (bounds["min"] - 1, bounds["max"] + 1):
+        try:
+            answered = app.invoke(f"{surface}/place", f"inspector,width={asked}")
+        except RpcError as refusal:
+            said = str(refusal)
+            ok(
+                f"D: ★★★★★ `width={asked}` is REFUSED and the refusal names "
+                f"the range, so a caller knows what to ask instead",
+                str(bounds["min"]) in said and str(bounds["max"]) in said,
+            )
+        else:
+            ok(
+                f"D: asking for {asked} must be refused, not answered "
+                f"{answered!r}",
+                False,
+            )
 
-        inside = (bounds["min"] + bounds["max"]) // 2
-        answered = lab.invoke(f"{EXT}/place", f"inspector,width={inside}")
-        ok(
-            f"D: ★★ and a width inside the range goes through, with the verb "
-            f"answering what it changed — {answered!r}",
-            str(inside) in str(answered),
-        )
+    inside = (bounds["min"] + bounds["max"]) // 2
+    answered = app.invoke(f"{surface}/place", f"inspector,width={inside}")
+    ok(
+        f"D: ★★ and a width inside the range goes through, with the verb "
+        f"answering what it changed — {answered!r}",
+        str(inside) in str(answered),
+    )
 
-        # The rail declares no resize at all: a different refusal, named.
-        ok(
-            "D: the rail declares no resize, so it is not a pane this verb sizes",
-            declared["lab.rail"].get("resize") is None,
-        )
+    # The rail declares no resize at all: a different refusal, named.
+    ok(
+        "D: the rail declares no resize, so it is not a pane this verb sizes",
+        declared["lab.rail"].get("resize") is None,
+    )
 
 
 def section_e(app: RpcSubprocess, declared: dict) -> None:
@@ -327,16 +352,19 @@ def section_e(app: RpcSubprocess, declared: dict) -> None:
 
 
 def body() -> None:
-    declared = declaration()
     with RpcSubprocess(SHELL, boot_grace=1.5) as app:
         app.intervene(f"{EXT}/nav", SEAT)
         app.tick_ms(16)
         assert_eq(app.query(f"{EXT}/nav"), SEAT, "the journey reached the node lab")
+        # R1890 — one process. The address is asked for rather than composed,
+        # and the declaration is read through it.
+        surface = surface_of(app, SEAT)
+        declared = declaration(app, surface)
         section_a(app, declared)
         section_b(app, declared)
         section_c(app, declared)
+        section_d(app, surface, declared)
         section_e(app, declared)
-    section_d(declared)
 
     print(f"\n=== {len(CHECKS)} named check(s) ===")
     for line in CHECKS:

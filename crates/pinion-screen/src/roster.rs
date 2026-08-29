@@ -966,8 +966,33 @@ impl ScreenRoster {
     /// wrote down.
     ///
     /// Additive over [`Destinations::wire`]'s shape — each row gains `mounted`,
-    /// and a mounted row gains the screen's own `tag` and `title`, which is
-    /// what lets a client address that screen's surfaces at all.
+    /// and a mounted row gains the screen's own `tag`, `title` and (R1890)
+    /// `address`.
+    ///
+    /// ★★★★★ R1890 — **`tag` was not an address, and the difference cost a
+    /// round.**
+    ///
+    /// This doc said `tag` is "what lets a client address that screen's
+    /// surfaces at all", and it was half true: a client also had to know that a
+    /// surface is reached at `/<tag>/external/<path>`, a rule that lived as a
+    /// `const` inside the transport's parser and appeared in no published
+    /// value. R1889 asked the assembled analysis tool for a mounted screen's
+    /// paths at `/external/<path>` — the root short-circuit, which in an
+    /// assembled application is the **host's** surface — got
+    /// `UnknownIntrospectPath` seven times, and concluded that a screen's wire
+    /// surface does not survive mounting. Re-measured at R1890 the same build
+    /// answers all seven, at the address nobody was publishing.
+    ///
+    /// So the row now carries the address itself, composed through
+    /// [`pinion_core::wire_address::surface_at`] — the same expression the
+    /// transport's splitter reads its separator from. A client appends an
+    /// introspect path and never learns the grammar.
+    ///
+    /// An unmounted destination publishes no address, because it has no surface
+    /// to answer one: `screen` is `null` and so is anything derived from it.
+    /// That asymmetry is the useful half — "this page is the host's own" and
+    /// "this page is a screen you can interrogate" become different values
+    /// rather than the same silence.
     #[must_use]
     pub fn wire(&self, journey: &Journey) -> serde_json::Value {
         let mut value = self.destinations.wire(journey);
@@ -983,10 +1008,13 @@ impl ScreenRoster {
                     .to_owned();
                 let screen = self.screens.get(&key);
                 row["mounted"] = serde_json::Value::Bool(screen.is_some());
-                row["screen"] = screen.map_or(
-                    serde_json::Value::Null,
-                    |s| serde_json::json!({ "tag": s.tag(), "title": s.title() }),
-                );
+                row["screen"] = screen.map_or(serde_json::Value::Null, |s| {
+                    serde_json::json!({
+                        "tag": s.tag(),
+                        "title": s.title(),
+                        "address": pinion_core::wire_address::surface_at(s.tag()),
+                    })
+                });
             }
         }
         value

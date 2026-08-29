@@ -704,6 +704,98 @@ fn r1724_the_roster_publishes_which_destinations_are_screens() {
     );
 }
 
+/// ★★★★★ R1890 — **a mounted row publishes the ADDRESS its surface answers
+/// on, not a fragment a client must know a grammar to finish.**
+///
+/// # What forced it, measured
+///
+/// R1889 asked the assembled analysis tool for the node lab's own introspect
+/// paths at `/external/<path>` — the root short-circuit, which in an assembled
+/// application resolves to the **host's** surface — collected seven
+/// `UnknownIntrospectPath` refusals, concluded that a screen's wire surface
+/// does not survive mounting, and routed a demo's action section through a
+/// second process to reach the verb at all. Re-measured at R1890 the same two
+/// binaries answer every one of those paths at `/node_lab/external/<path>`.
+///
+/// Nothing was broken; the address was simply unpublished. `tag` was on the row
+/// and the composition rule was a `const` inside the transport's parser, so
+/// assembling the two was knowledge no published value carried — which is not
+/// a self-describing surface under §2 #2.
+///
+/// # What this asserts, and what it deliberately cannot
+///
+/// That the address names *this* screen and no other, that it is built from the
+/// same expression the transport parses, and that an unmounted destination
+/// publishes none. What it cannot assert is that the address **answers** — that
+/// needs a running application with a transport attached, and it is exactly
+/// what `tools/demos/r1890_*.py` drives against the assembled tool.
+#[test]
+fn r1890_a_mounted_row_publishes_the_address_its_surface_answers_on() {
+    let roster = roster();
+    let wire = roster.wire(&at("catalog"));
+    let rows = wire["destinations"]
+        .as_array()
+        .expect("the roster publishes its destinations")
+        .clone();
+    let by_key = |key: &str| {
+        rows.iter()
+            .find(|row| row["key"] == key)
+            .expect("the key is on the rail")
+            .clone()
+    };
+
+    // Derived on the reading side too — writing `/catalog_lab/external` here
+    // would assert the literal rather than the rule, and the literal is what
+    // this round removed from the tree.
+    assert_eq!(
+        by_key("catalog")["screen"]["address"],
+        serde_json::Value::String(pinion_core::wire_address::surface_at(LAB_TAG)),
+        "the mounted screen's address, composed through the workspace's grammar",
+    );
+    assert_eq!(
+        by_key("stream")["screen"]["address"],
+        serde_json::Value::String(pinion_core::wire_address::surface_at(VIEWER_TAG)),
+    );
+
+    // ★ The property a client walking a roster relies on: an address read off
+    // one row cannot reach the screen on another. Two mounted screens, two
+    // addresses, and each carries its own tag.
+    let catalog_row = by_key("catalog");
+    let stream_row = by_key("stream");
+    let catalog = catalog_row["screen"]["address"].as_str().unwrap_or("");
+    let stream = stream_row["screen"]["address"].as_str().unwrap_or("");
+    assert_ne!(catalog, stream, "two screens are two places");
+    assert!(
+        catalog.contains(LAB_TAG) && !catalog.contains(VIEWER_TAG),
+        "an address names the screen it was published on: {catalog}"
+    );
+    assert!(
+        stream.contains(VIEWER_TAG) && !stream.contains(LAB_TAG),
+        "an address names the screen it was published on: {stream}"
+    );
+
+    // The asymmetry is the useful half: a page the host paints itself has no
+    // surface of its own, so it publishes no address rather than one that would
+    // refuse.
+    assert!(
+        by_key("dashboard")["screen"].is_null(),
+        "an unmounted destination has nothing to address",
+    );
+
+    // ★★ And the population floor, so this cannot pass by finding nothing:
+    // every mounted row must carry an address, counted against the roster's own
+    // idea of how many screens it holds.
+    let addressed = rows
+        .iter()
+        .filter(|row| row["mounted"] == true)
+        .filter(|row| row["screen"]["address"].is_string())
+        .count();
+    assert_eq!(
+        addressed, 2,
+        "every mounted destination publishes an address, and there are two",
+    );
+}
+
 /// The title the host publishes is the screen's. The reference keeps a mounted
 /// window's title and shows it nowhere.
 #[test]
