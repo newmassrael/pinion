@@ -38,16 +38,28 @@
 //! to write — it is the thing they already wrote, placed. [`ScreenRoster`]
 //! pairs the destination roster with the screens behind its keys.
 //!
-//! ## No default methods, on purpose
+//! ## Almost no default methods, and the exceptions are enumerated
 //!
-//! [`Screen`] declares every hook and defaults none of them. A hook added here
-//! therefore stops [`Mount`] compiling until it forwards it, which is the only
-//! mechanical guarantee available that mounting a binding does not silently
-//! drop a behaviour the binding has. The direction that guarantee does *not*
-//! cover — a hook added to `WidgetCore` / `WidgetA11y` / `WidgetView` and never
-//! mirrored here — is covered by [`coverage`], a census that reads those three
-//! traits' own source and fails when one of their hooks is neither mirrored nor
-//! pinned as window-level with a reason.
+//! A [`Screen`] hook with no default stops [`Mount`] compiling until it
+//! forwards it, which is the only *mechanical* guarantee available that
+//! mounting a binding does not silently drop a behaviour the binding has. The
+//! direction that guarantee does not cover — a hook added to `WidgetCore` /
+//! `WidgetA11y` / `WidgetView` and never mirrored here — is covered by
+//! [`coverage`], a census that reads those three traits' own source and fails
+//! when one of their hooks is neither mirrored nor pinned as window-level with
+//! a reason.
+//!
+//! ⚠ **This paragraph read *"declares every hook and defaults none of them"*
+//! and had been false since R1808**, which defaulted [`Screen::poses`] and
+//! [`Screen::pose`] with a reason in their own doc while both this sentence and
+//! [`coverage`]'s header went on asserting the absolute. Nothing performed the
+//! rule, so nothing noticed — the class this tree keeps paying for, and R1888
+//! walked into it again by defaulting a third hook.
+//!
+//! So the exception is data now: [`coverage::DEFAULTED`] names every hook that
+//! carries a default and why, an unlisted default fails the census, and — since
+//! a default is exactly the compile guarantee being waived — each listed hook
+//! must be shown to be forwarded by [`Mount`] anyway.
 //!
 //! ## Against the reference toolkit's paged container
 //!
@@ -172,6 +184,38 @@ pub trait Screen {
     /// It costs the report nothing: an away surface reproduces 0 and does not
     /// reconcile, so a section cannot pass by drawing less of itself.
     fn conformance(&self) -> Option<pinion_core::conformance::DocumentReport>;
+
+    /// ★★★★★ R1888 — **why this section publishes no verdict, in its own
+    /// words**, asked exactly when [`conformance`](Self::conformance) answers
+    /// nothing.
+    ///
+    /// The peer of
+    /// [`WidgetView::unjudged_because`](pinion_shell::WidgetView::unjudged_because),
+    /// which mirrors [`Built::Away`](pinion_core::conformance::Built::Away) one
+    /// level up: R1742 gave a *surface* the ability to say why it is not judged
+    /// and left a *section* without it, so an unjudged row carried the HOST's
+    /// inference phrased as though the screen had said it.
+    ///
+    /// # No default, for the same reason [`conformance`](Self::conformance) has
+    /// none
+    ///
+    /// The binding hook it mirrors *is* defaulted — most bindings in this tree
+    /// are not sections of anything, and a required sentence there would be
+    /// that many sites saying nothing in their own way. Here the asymmetry is
+    /// the decision, exactly as it is one hook above: a screen written
+    /// *directly* against this trait is a host's own page, and this is the hook
+    /// that says why a section of an assembled application is silent. A hook
+    /// whose whole purpose is to explain another hook's silence must not be
+    /// answerable by accident.
+    ///
+    /// ⚠ It is not a licence to be silent. What a *binding* answers when it has
+    /// said nothing is [`pinion_shell::UNSTATED`] — an admission rather than an
+    /// explanation, precisely so
+    /// [`ApplicationConformance::unaccounted`](conformance::ApplicationConformance::unaccounted)
+    /// can count it. See that constant for why a plausible-sounding default
+    /// would have been worse than none.
+    #[must_use]
+    fn unjudged_because(&self) -> String;
 
     /// ★★★★★ R1808 — how many frames this screen needs to show all of what its
     /// specification describes, and how to put it into each.

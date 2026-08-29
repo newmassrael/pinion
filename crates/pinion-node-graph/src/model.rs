@@ -740,7 +740,7 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
     /// takes two port *types* and no `self`, so a rule written there is blind to
     /// which nodes the wire runs between — and a graph whose whole subject is
     /// whether two *implementations* interoperate has nothing else to say. The
-    /// information was never missing: [`Document::vet`] resolves both nodes'
+    /// information was never missing: `Document::vet` resolves both nodes'
     /// signatures and throws the node identities away one line before the rule
     /// is consulted. This hook is that line put back.
     ///

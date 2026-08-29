@@ -230,6 +230,70 @@ impl WidgetView for ViewerFixture {
     }
 }
 
+/// ★★★★★ R1888 — **a screen that publishes no verdict and says why.**
+///
+/// The third of the three things a section can be. `LabFixture` judges;
+/// `ViewerFixture` is silent and has said nothing, which is the admission
+/// [`pinion_shell::UNSTATED`] names; this one is silent and has an account of
+/// itself. Without it every silent row in this file would look alike and the
+/// distinction the round built would have no fixture standing on either side of
+/// it.
+struct AwayFixture;
+
+/// The sentence this fixture gives, kept as a constant so a test can assert the
+/// row carries *this* string rather than assert it is merely non-empty — which
+/// the host's old constant would also have satisfied.
+const AWAY_WHY: &str = "a specification is written for this screen and it is checked inside this \
+     binary's own tests, where an assembled application cannot see it";
+
+const AWAY_TAG: &str = "fixture_away";
+
+impl WidgetCore for AwayFixture {
+    type State = u32;
+    type Event = ();
+
+    fn create_external() -> Box<dyn External> {
+        Box::new(StubExternal::new())
+    }
+
+    fn tag() -> &'static str {
+        AWAY_TAG
+    }
+
+    fn read_state(_scene: &Scene) -> u32 {
+        0
+    }
+
+    fn view(_state: u32, _frame: &Frame) -> Scene {
+        Scene::Container(ContainerNode::new(Vec::new()).with_tag(AWAY_TAG))
+    }
+
+    fn event_name((): ()) -> &'static str {
+        "away_event"
+    }
+
+    fn title() -> &'static str {
+        "the section that explains itself"
+    }
+}
+
+impl WidgetA11y for AwayFixture {}
+
+impl WidgetView for AwayFixture {
+    type Renderer = TestRenderer;
+
+    fn initial_size_strategy() -> SizeStrategy {
+        SizeStrategy::Fixed {
+            width: 800,
+            height: 600,
+        }
+    }
+
+    fn unjudged_because() -> String {
+        AWAY_WHY.to_owned()
+    }
+}
+
 // --- The fixture application --------------------------------------------------
 
 /// The specification the lab fixture answers to (R1738).
@@ -1235,6 +1299,170 @@ fn r1738_a_section_that_answers_nothing_is_a_row_and_not_a_silence() {
          closes it is different too"
     );
     assert_eq!(standing("topology"), "closed");
+}
+
+/// A roster whose `stream` seat holds a screen that is silent **and has said
+/// why**, so the two kinds of silence stand side by side in one report.
+fn roster_with_an_explained_silence() -> ScreenRoster {
+    ScreenRoster::new(
+        destinations(),
+        vec![
+            (
+                "catalog",
+                Box::new(Mount::<LabFixture>::new()) as Box<dyn Screen>,
+            ),
+            ("stream", Box::new(Mount::<AwayFixture>::new())),
+        ],
+    )
+    .expect("the fixture screens are mounted at open destinations")
+}
+
+/// ★★★★★ R1888 — **an unjudged row carries the SCREEN's sentence, not the
+/// host's.**
+///
+/// What it replaces, measured by reading the arm it stood in: `Unspecified` was
+/// a unit variant for 150 rounds, so every such row published one constant —
+/// *a screen is here and it publishes no verdict about a specification* —
+/// which is true of every unjudged section and therefore tells a reader nothing
+/// the word `unspecified` had not already told them.
+///
+/// The fact it was standing in for is one only the screen has: *nobody wrote a
+/// specification* and *one exists where the assembled application cannot reach
+/// it* are different gaps with different repairs, and a host cannot tell them
+/// apart.
+#[test]
+fn r1888_a_silent_section_publishes_the_screens_own_reason() {
+    let said = roster_with_an_explained_silence().conformance(&at("dashboard"));
+    let row = said
+        .rows()
+        .iter()
+        .find(|row| row.key == "stream")
+        .expect("the fixture holds it");
+
+    assert_eq!(
+        row.standing,
+        SectionStanding::Unspecified(AWAY_WHY.to_owned()),
+        "the row carries the binding's own sentence, arrived at through \
+         `Mount` — a host that wrote this string itself could not have named \
+         which of the two silences this is"
+    );
+    assert_eq!(
+        row.standing.why().as_deref(),
+        Some(AWAY_WHY),
+        "and that is what a reader of the report is handed"
+    );
+    assert!(
+        row.standing.accounts(),
+        "a silence with a reason is accounted for; it is a known gap with an \
+         address rather than one nobody has looked at"
+    );
+    assert!(
+        !row.standing.is_judged() && row.standing.is_unjudged(),
+        "saying why is not being judged — the count this section is in must \
+         not move because the screen explained itself"
+    );
+}
+
+/// ★★★★★ R1888 — **and a screen that has said nothing is counted, not
+/// excused.**
+///
+/// The default on the binding hook is an ADMISSION rather than an explanation,
+/// which is the whole of its design: a plausible-sounding default would pass
+/// every *did you say why* check while nobody had said anything. That only
+/// works if something looks for it, and this is that thing.
+///
+/// Both admissions in the vocabulary are asserted here, because they are one
+/// idea: a screen that answered `UNSTATED`, and a page the host paints with
+/// nothing registered for it.
+#[test]
+fn r1888_a_section_that_has_not_said_why_is_unaccounted() {
+    let said = roster().conformance(&at("dashboard"));
+
+    let row = |key: &str| {
+        said.rows()
+            .iter()
+            .find(|row| row.key == key)
+            .expect("the fixture holds it")
+    };
+
+    assert_eq!(
+        row("stream").standing,
+        SectionStanding::Unspecified(pinion_shell::UNSTATED.to_owned()),
+        "`ViewerFixture` overrides nothing, so this is the default arriving \
+         through `Mount` — and it is the admission, not a reason"
+    );
+    assert!(!row("stream").standing.accounts());
+    assert!(
+        !row("dashboard").standing.accounts(),
+        "the host's own page with no judge is the same idea one step over: a \
+         sentence saying nobody answered is not an account of anything"
+    );
+    assert!(
+        row("catalog").standing.accounts() && row("topology").standing.accounts(),
+        "a verdict and a closure are both the subject speaking for itself"
+    );
+
+    assert_eq!(
+        said.unaccounted_keys().collect::<Vec<_>>(),
+        ["dashboard", "stream"],
+        "named rather than counted, because the question a failing ratchet has \
+         to answer is which one"
+    );
+    assert_eq!(said.unaccounted(), 2);
+    assert_eq!(
+        said.unjudged(),
+        2,
+        "and unaccounted is a SUBSET of unjudged — here they coincide, which \
+         is exactly why the pair needs the fixture below to be distinguishable"
+    );
+
+    let explained = roster_with_an_explained_silence().conformance(&at("dashboard"));
+    assert_eq!(
+        (explained.unjudged(), explained.unaccounted()),
+        (2, 1),
+        "★ the two counts come apart the moment one silent section explains \
+         itself: still nothing judged it, and now only one of the two is a gap \
+         nobody has looked at"
+    );
+    assert_eq!(
+        explained.unaccounted_keys().collect::<Vec<_>>(),
+        ["dashboard"],
+    );
+}
+
+/// ★★★★★ R1888 — and both facts are on the wire, so an agent reading the
+/// application does not have to recognise a framework constant to tell a reason
+/// from an admission.
+#[test]
+fn r1888_the_wire_says_which_rows_account_for_themselves() {
+    let wire = roster_with_an_explained_silence()
+        .conformance(&at("dashboard"))
+        .to_json();
+
+    assert_eq!(wire["unjudged"], 2);
+    assert_eq!(wire["unaccounted"], 1);
+
+    let row = |key: &str| {
+        wire["rows"]
+            .as_array()
+            .expect("rows is a list")
+            .iter()
+            .find(|row| row["key"] == key)
+            .expect("the fixture holds it")
+            .clone()
+    };
+
+    assert_eq!(row("stream")["standing"], "unspecified");
+    assert_eq!(row("stream")["why"], AWAY_WHY);
+    assert_eq!(
+        row("stream")["accounts"],
+        true,
+        "the flag is published rather than left to be inferred from the \
+         sentence — inferring it means a client keeping its own copy of one of \
+         this framework's constants"
+    );
+    assert_eq!(row("dashboard")["accounts"], false);
+    assert_eq!(row("catalog")["accounts"], true);
 }
 
 /// ★★★★★ The rule the type exists for: an application does not get to report

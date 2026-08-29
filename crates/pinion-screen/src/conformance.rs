@@ -119,13 +119,27 @@ pub enum SectionStanding {
     /// R1738's remainder rather than guessed at here.
     ///
     /// ★ R1742 closed the second of those two by making the screen publish,
-    /// which leaves one live case rather than two — and leaves the remainder
-    /// open, because the type is unchanged and the next screen in that position
-    /// would be silent in exactly the same way. Worth noting that the repair is
-    /// now half built: a *surface* can say why it is not judged
-    /// ([`Built::Away`](pinion_core::conformance::Built::Away)) and a *section*
-    /// still cannot.
-    Unspecified,
+    /// which left one live case rather than two.
+    ///
+    /// ★★★★★ R1888 — **and this arm carries the SCREEN's own reason now.** It
+    /// was a unit variant for 150 rounds, so [`Self::why`] answered with a
+    /// sentence written here — the host's inference, phrased as though the
+    /// screen had said it. The two facts that sentence conflated are the ones
+    /// named above: *nobody wrote a specification* and *one exists where the
+    /// assembled application cannot reach it* are different, only the screen
+    /// knows which, and a host that guesses points a reader at the wrong
+    /// repair.
+    ///
+    /// Named after [`Built::Away`](pinion_core::conformance::Built::Away),
+    /// which is the same statement one level down: R1742 gave a SURFACE the
+    /// ability to say why it is not judged and left a SECTION without it, and
+    /// this is that other half.
+    ///
+    /// ⚠ The string is not free of obligations. A binding that answers nothing
+    /// gets [`pinion_shell::UNSTATED`], which is an admission rather than an
+    /// explanation precisely so a gate can tell the two apart — see that
+    /// constant for why a plausible default would have been worse than none.
+    Unspecified(String),
     /// The destination is open, its page is one the host paints itself, and
     /// **nothing answers for it** — neither a screen nor a judge.
     ///
@@ -170,7 +184,44 @@ impl SectionStanding {
     /// The count [`ApplicationConformance::conforms`] refuses to ignore.
     #[must_use]
     pub const fn is_unjudged(&self) -> bool {
-        matches!(self, SectionStanding::Unspecified | SectionStanding::Inline)
+        matches!(
+            self,
+            SectionStanding::Unspecified(_) | SectionStanding::Inline
+        )
+    }
+
+    /// ★★★★★ R1888 — whether the thing that OWNS this section has said
+    /// something about its own verdict.
+    ///
+    /// # The distinction, and why it is not [`is_judged`](Self::is_judged)
+    ///
+    /// Every row carries either a *reason* or an *admission*, and until this
+    /// round nothing told them apart. A reason comes from the subject and says
+    /// something only the subject knows: a verdict from the screen that painted
+    /// the section, or a closure from the destination that is shut. An
+    /// admission comes from the host and says that nobody answered —
+    /// [`Inline`](Self::Inline)'s constant sentence, and an
+    /// [`Unspecified`](Self::Unspecified) whose screen handed back
+    /// [`pinion_shell::UNSTATED`].
+    ///
+    /// Both admissions read like sentences, which is the whole difficulty: a
+    /// report full of them looks exactly like a report full of accounts, and
+    /// [`why`](Self::why) hands a reader a string either way.
+    ///
+    /// ⚠ **This is deliberately not folded into
+    /// [`ApplicationConformance::conforms`]**, which already refuses while any
+    /// section is unjudged and would therefore be unmoved by it — an
+    /// unaccounted section is a strict subset of an unjudged one. What it buys
+    /// is the finer word: *nothing judged this* and *nothing will even say why*
+    /// are different failures with different repairs, and a count that cannot
+    /// separate them sends the reader to the wrong one.
+    #[must_use]
+    pub fn accounts(&self) -> bool {
+        match self {
+            SectionStanding::Judged(_) | SectionStanding::Closed(_) => true,
+            SectionStanding::Unspecified(why) => why != pinion_shell::UNSTATED,
+            SectionStanding::Inline => false,
+        }
     }
 
     /// The word this arm is published under.
@@ -178,7 +229,7 @@ impl SectionStanding {
     pub const fn word(&self) -> &'static str {
         match self {
             SectionStanding::Judged(_) => "judged",
-            SectionStanding::Unspecified => "unspecified",
+            SectionStanding::Unspecified(_) => "unspecified",
             SectionStanding::Inline => "inline",
             SectionStanding::Closed(_) => "closed",
         }
@@ -189,9 +240,12 @@ impl SectionStanding {
     pub fn why(&self) -> Option<String> {
         match self {
             SectionStanding::Judged(_) => None,
-            SectionStanding::Unspecified => Some(
-                "a screen is here and it publishes no verdict about a specification".to_owned(),
-            ),
+            // ★★★★★ R1888 — the SCREEN's sentence, not one written here. What
+            // stood in this arm said "a screen is here and it publishes no
+            // verdict about a specification", which is true of every such
+            // section and therefore tells a reader nothing they did not have
+            // from the word `unspecified` itself.
+            SectionStanding::Unspecified(why) => Some(why.clone()),
             SectionStanding::Inline => {
                 // ★ R1761 — *and nothing answers for it*. The sentence used to
                 // stop at "no screen to ask", which read as a fact about what
@@ -483,6 +537,36 @@ impl ApplicationConformance {
             .count()
     }
 
+    /// ★★★★★ R1888 — how many sections carry an **admission** where a reason
+    /// should be: nothing answered for them, and nothing will say why.
+    ///
+    /// The population that makes [`unjudged`](Self::unjudged) two facts. A
+    /// section whose screen published no verdict *and named its reason* is a
+    /// known gap with an address; a section that answered
+    /// [`pinion_shell::UNSTATED`], or one the host paints with nothing
+    /// registered for it, is a gap nobody has looked at. Both count as
+    /// unjudged, and the repairs are not the same.
+    ///
+    /// See [`SectionStanding::accounts`] for which arms are which and why this
+    /// is not folded into [`conforms`](Self::conforms).
+    #[must_use]
+    pub fn unaccounted(&self) -> usize {
+        self.unaccounted_keys().count()
+    }
+
+    /// The sections [`unaccounted`](Self::unaccounted) counts, by key.
+    ///
+    /// Named rather than counted, for the reason
+    /// [`ScreenRoster::unsized_keys`](crate::ScreenRoster::unsized_keys) is:
+    /// an assertion that reports a number leaves a reader to find out which,
+    /// and the question a failing ratchet has to answer is *which one*.
+    pub fn unaccounted_keys(&self) -> impl Iterator<Item = &str> {
+        self.rows
+            .iter()
+            .filter(|row| !row.standing.accounts())
+            .map(|row| row.key.as_str())
+    }
+
     /// How many destinations cannot be arrived at.
     #[must_use]
     pub fn closed(&self) -> usize {
@@ -552,9 +636,9 @@ impl ApplicationConformance {
     fn judged_reports(&self) -> impl Iterator<Item = &DocumentReport> {
         self.rows.iter().filter_map(|row| match &row.standing {
             SectionStanding::Judged(report) => Some(report),
-            SectionStanding::Unspecified | SectionStanding::Inline | SectionStanding::Closed(_) => {
-                None
-            }
+            SectionStanding::Unspecified(_)
+            | SectionStanding::Inline
+            | SectionStanding::Closed(_) => None,
         })
     }
 
@@ -574,6 +658,13 @@ impl ApplicationConformance {
             // reading the second.
             "declared": self.declared(),
             "unjudged": self.unjudged(),
+            // ★★★★★ R1888 — beside `unjudged` and for the reason `declared`
+            // sits beside `judged`: it is a SUBSET of the count above it, and
+            // the two answer different questions. `unjudged` says how many
+            // sections nothing compared with a specification; this says how
+            // many of those will not even say why. A reader who has only the
+            // first cannot tell a known gap from an unlooked-at one.
+            "unaccounted": self.unaccounted(),
             "closed": self.closed(),
             "specified": self.specified(),
             "reproduced": self.reproduced(),
@@ -587,6 +678,15 @@ impl ApplicationConformance {
                         "title": row.title,
                         "showing": row.showing,
                         "standing": row.standing.word(),
+                        // ★★★★★ R1888 — whether the `why` beside it (when
+                        // there is one) is the SUBJECT's reason or the host's
+                        // admission that nobody answered. Published per row
+                        // rather than left to a client to infer from the
+                        // sentence, because inferring it means recognising a
+                        // constant string — which is a client keeping a copy of
+                        // one of this framework's values, the failure this
+                        // report exists to end.
+                        "accounts": row.standing.accounts(),
                     });
                     if let Some(tag) = &row.tag {
                         value["tag"] = serde_json::Value::String(tag.clone());

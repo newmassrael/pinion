@@ -91,6 +91,14 @@ impl<V: WidgetView> Screen for Mount<V> {
         V::conformance()
     }
 
+    /// ★★★★★ R1888 — the binding's own sentence, for the same reason the
+    /// verdict above is the binding's: a section that explained itself in its
+    /// own window and was given the host's guess when mounted would be two
+    /// builds wearing one name.
+    fn unjudged_because(&self) -> String {
+        V::unjudged_because()
+    }
+
     // R1808 — the binding's own answer, so a host walking the application never
     // has to know that this particular screen's surfaces exclude each other.
     fn poses(&self) -> usize {

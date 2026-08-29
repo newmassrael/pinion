@@ -709,9 +709,15 @@ impl ScreenRoster {
                 .map_or(SectionStanding::Inline, |judge| {
                     SectionStanding::Judged(judge.conformance(Showing::of(showing)))
                 }),
-            (Standing::Open, Some(screen)) => screen
-                .conformance()
-                .map_or(SectionStanding::Unspecified, SectionStanding::Judged),
+            // ★★★★★ R1888 — and when it publishes nothing, the row carries the
+            // SCREEN's reason. `map_or_else` rather than `map_or` deliberately:
+            // asking for the reason must not happen on the judged path, because
+            // a screen that answers both would then have both read and the row
+            // would have to choose. It is asked exactly when it is the answer.
+            (Standing::Open, Some(screen)) => screen.conformance().map_or_else(
+                || SectionStanding::Unspecified(screen.unjudged_because()),
+                SectionStanding::Judged,
+            ),
         }
     }
 

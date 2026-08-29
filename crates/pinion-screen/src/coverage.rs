@@ -1,7 +1,7 @@
 //! ★★★★★ R1724 — **the census that keeps mounting total.**
 //!
-//! [`Screen`](crate::Screen) has no default methods, so a hook added *here*
-//! stops [`Mount`](crate::Mount) compiling until it is forwarded. Nothing
+//! A [`Screen`](crate::Screen) hook with no default stops
+//! [`Mount`](crate::Mount) compiling until it is forwarded. Nothing
 //! covers the other direction: a hook added to
 //! [`WidgetCore`](pinion_core::WidgetCore),
 //! [`WidgetA11y`](pinion_a11y::WidgetA11y) or
@@ -22,6 +22,24 @@
 //!
 //! There is no fourth answer, and adding a hook to any of the three traits
 //! turns the census red until somebody gives one.
+//!
+//! # ★★★★★ R1888 — and the guarantee's own escape hatch is data now
+//!
+//! The sentence this header opened with was *"[`Screen`](crate::Screen) has no
+//! default methods"*, stated as an absolute in two files. Measured at R1888 by
+//! reading the trait's own source: **it had been false since R1808**, which
+//! defaulted [`Screen::poses`](crate::Screen::poses) and
+//! [`Screen::pose`](crate::Screen::pose) — with a good reason, written in their
+//! own doc, and with neither header updated. R1888 then defaulted a third hook
+//! before catching itself.
+//!
+//! A default is precisely the compile-time guarantee above being waived, so it
+//! is the thing this module exists to make impossible to do quietly.
+//! [`DEFAULTED`] names every one and why; an unlisted default fails, and so
+//! does a listed hook that has stopped being defaulted. And because the waived
+//! guarantee was *`Mount` cannot forget to forward it*, each listed hook must
+//! be shown to be forwarded anyway — by reading `mount.rs`, since the compiler
+//! no longer answers.
 
 /// Hooks of the binding traits that are the *application's* and not a page's,
 /// each with the reason it is not on [`Screen`](crate::Screen).
@@ -106,9 +124,45 @@ pub const FOLDED: &[(&str, &str, &str)] = &[
     ),
 ];
 
+/// ★★★★★ R1888 — the [`Screen`](crate::Screen) hooks that carry a **default
+/// body**, each with the reason, because a default is this module's own
+/// guarantee being waived for that hook.
+///
+/// `(hook, why a default is right for it)`.
+///
+/// # Why an enumerated exception rather than a rule
+///
+/// Because the alternative was tried and it silently stopped being true. Two
+/// module headers asserted *`Screen` defaults nothing* as an absolute; R1808
+/// defaulted two hooks for a reason it wrote into their own documentation and
+/// updated neither header; nothing anywhere performed the sentence, so it read
+/// as settled for eighty rounds while being false.
+///
+/// The entries below are the reason, not a permission. What each one is
+/// weighing is the same trade in both directions: requiring an answer costs
+/// every implementor a line that says nothing, and defaulting costs the
+/// mechanical proof that [`Mount`](crate::Mount) forwards it. A hook where the
+/// second matters more belongs here; a hook that exists to make a section
+/// *explain itself* does not, which is why
+/// [`Screen::unjudged_because`](crate::Screen::unjudged_because) is absent from
+/// this table and was the round's own near-miss.
+pub const DEFAULTED: &[(&str, &str)] = &[
+    (
+        "poses",
+        "answered `1` correctly for almost every screen, so requiring it \
+         would be that many sites writing the same number — and a wrong \
+         answer here is loud, since a pose a screen cannot reach refuses",
+    ),
+    (
+        "pose",
+        "the other half of the same decision: a screen with one pose has \
+         nothing to do when asked for it, and `poses` already said so",
+    ),
+];
+
 #[cfg(test)]
 mod tests {
-    use super::{FOLDED, WINDOW_LEVEL};
+    use super::{DEFAULTED, FOLDED, WINDOW_LEVEL};
     use std::collections::BTreeSet;
 
     /// The three binding traits, read from their own source so the census
@@ -117,6 +171,9 @@ mod tests {
     const WIDGET_A11Y: &str = include_str!("../../pinion-a11y/src/widget_a11y.rs");
     const WIDGET_VIEW: &str = include_str!("../../pinion-shell/src/lib.rs");
     const SCREEN: &str = include_str!("lib.rs");
+    /// ★ R1888 — read as source because for a defaulted hook the compiler no
+    /// longer says whether `Mount` forwards it.
+    const MOUNT: &str = include_str!("mount.rs");
 
     /// The `fn` names declared directly in `pub trait <name>`'s body.
     ///
@@ -150,6 +207,126 @@ mod tests {
             }
         }
         hooks
+    }
+
+    /// The `fn` names declared directly in `pub trait <name>`'s body that carry
+    /// a **default body** rather than ending the declaration at a `;`.
+    ///
+    /// A signature can span several lines, so the declaration is joined until
+    /// the character that ends it, and it is that character which answers: `{`
+    /// is a default, `;` is a requirement. Reading only the `fn` line would
+    /// call every multi-line signature a requirement — including the four this
+    /// trait has — which is the direction that would make the census pass while
+    /// blind.
+    fn defaulted_hooks(source: &str, trait_name: &str) -> BTreeSet<String> {
+        let opener = format!("pub trait {trait_name}");
+        let mut defaulted = BTreeSet::new();
+        let mut inside = false;
+        let mut pending: Option<String> = None;
+        for line in source.lines() {
+            if !inside {
+                if line.starts_with(&opener) && line.trim_end().ends_with('{') {
+                    inside = true;
+                }
+                continue;
+            }
+            if line == "}" {
+                break;
+            }
+            if pending.is_none() {
+                if let Some(rest) = line.strip_prefix("    fn ") {
+                    let name: String = rest
+                        .chars()
+                        .take_while(|c| c.is_alphanumeric() || *c == '_')
+                        .collect();
+                    if name.is_empty() {
+                        continue;
+                    }
+                    pending = Some(name);
+                } else {
+                    continue;
+                }
+            }
+            // The declaration ends at the first `;` or `{` on or after the `fn`
+            // line. A `where` clause or a wrapped argument list carries
+            // neither, so it simply falls through to the next line.
+            let ends_defaulted = match (line.find(';'), line.find('{')) {
+                (Some(_), None) => Some(false),
+                (None, Some(_)) => Some(true),
+                (Some(semi), Some(brace)) => Some(brace < semi),
+                (None, None) => None,
+            };
+            if let Some(is_default) = ends_defaulted {
+                let name = pending.take().expect("a declaration is open");
+                if is_default {
+                    defaulted.insert(name);
+                }
+            }
+        }
+        defaulted
+    }
+
+    /// ★★★★★ R1888 — a `Screen` hook that carries a default waives this
+    /// module's compile-time guarantee for itself, so it must be one this
+    /// crate has named and given a reason for.
+    ///
+    /// An EQUALITY, like every other census in this tree: an unlisted default
+    /// is the escape hatch opening quietly, and a listed hook that has stopped
+    /// being defaulted is a reason nobody needs any more standing where a
+    /// reader will take it for a live decision.
+    #[test]
+    fn r1888_every_screen_default_is_named_and_justified() {
+        let hooks = trait_hooks(SCREEN, "Screen");
+        assert!(
+            hooks.len() > 20,
+            "the `Screen` trait was not found in its own source; this census \
+             would otherwise pass by finding nothing"
+        );
+
+        let found = defaulted_hooks(SCREEN, "Screen");
+        let named: BTreeSet<String> = DEFAULTED
+            .iter()
+            .map(|(hook, _)| (*hook).to_owned())
+            .collect();
+        assert_eq!(
+            found, named,
+            "`Screen` hooks carrying a default body must be exactly the ones \
+             `coverage::DEFAULTED` names. A default is the guarantee that \
+             `Mount` cannot forget a hook, waived for that hook — the header \
+             of this module asserted there were none while two had been \
+             defaulted for eighty rounds."
+        );
+        for (hook, why) in DEFAULTED {
+            assert!(
+                !why.trim().is_empty(),
+                "`{hook}` is defaulted with no reason given"
+            );
+        }
+    }
+
+    /// ★★★★★ R1888 — and the waived guarantee, restored by reading.
+    ///
+    /// The whole cost of a default is that `Mount` compiles without forwarding
+    /// the hook, so the binding's answer is replaced by the trait's silently.
+    /// The compiler cannot say it any more; `mount.rs` can.
+    #[test]
+    fn r1888_a_defaulted_hook_is_forwarded_by_mount_anyway() {
+        assert!(
+            MOUNT.contains("impl<V: WidgetView> Screen for Mount<V> {"),
+            "`Mount`'s `Screen` impl was not found in its own source, so this \
+             census read nothing and would have passed"
+        );
+        let missing: Vec<&str> = DEFAULTED
+            .iter()
+            .map(|(hook, _)| *hook)
+            .filter(|hook| !MOUNT.contains(&format!("fn {hook}(")))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "these `Screen` hooks are defaulted AND not forwarded by `Mount`, \
+             so a binding that answers them is overridden by the trait's \
+             default with nothing saying so: {missing:?}"
+        );
     }
 
     #[test]

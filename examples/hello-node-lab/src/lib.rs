@@ -901,7 +901,8 @@ enum PlaceAsk {
 /// cannot come to disagree about what is allowed — the discipline this tree
 /// applies wherever a gesture and a verb reach the same state.
 ///
-/// The decision is [`EdgePolicy`]'s, not this function's: it reads the panel's
+/// The decision is [`pinion_core::edge_panel::EdgePolicy`]'s, not this
+/// function's: it reads the panel's
 /// own declared policy out of the specification and returns whatever that says.
 /// ⇒ a panel's row of `spec::PANES` is the whole statement of what may happen
 /// to it, and there is no second place to look.

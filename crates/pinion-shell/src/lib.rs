@@ -1479,6 +1479,28 @@ pub fn desktop_position_from(
     (ox + cursor.0.round() as i32, oy + cursor.1.round() as i32)
 }
 
+/// ★★★★★ R1888 — what a binding that has **not** said why it publishes no
+/// verdict answers with.
+///
+/// # Why this is a named constant and not a sentence in the default
+///
+/// Because a gate has to be able to find it. The point of the default on
+/// [`WidgetView::unjudged_because`] is that it is an ADMISSION — *nobody
+/// answered here* — and the only way a check can tell that apart from a screen
+/// that genuinely explained itself is to compare against the exact string. A
+/// plausible-sounding default would pass every *did you say why* check while
+/// nobody had said anything, which is the failure this whole hook exists to
+/// end.
+///
+/// So it is compared: `ScreenRoster` builds a row carrying whatever a silent
+/// screen says, and `ApplicationConformance::unaccounted` counts the rows whose
+/// sentence is this one. An admission is a number, not a string a reader has to
+/// recognise.
+///
+/// ⚠ It is public for the gate's sake, not for a binding's: a binding that
+/// wants to say this has said nothing, and should say what it means instead.
+pub const UNSTATED: &str = "this screen has not said why it publishes no verdict";
+
 /// R51.121 §5.41 — Vello-specific application-supplied widget binding.
 ///
 /// Each visual binary implements this once on a unit type;
@@ -1593,6 +1615,41 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
     #[must_use]
     fn conformance() -> Option<pinion_core::conformance::DocumentReport> {
         None
+    }
+
+    /// ★★★★★ R1888 — **why this binding publishes no verdict, in its own
+    /// words.**
+    ///
+    /// # The gap this closes
+    ///
+    /// [`conformance`](Self::conformance) answering `None` is one word for two
+    /// unrelated facts: *nobody wrote a specification for this screen*, and
+    /// *one exists and is checked somewhere the assembled application cannot
+    /// reach*. Only the screen knows which, and until this hook the host had to
+    /// guess — so the row a reader saw carried the HOST's inference, phrased as
+    /// though the screen had said it.
+    ///
+    /// The repair was half built and had been since R1742: a *surface* could
+    /// already say why it is not judged
+    /// ([`Built::Away`](pinion_core::conformance::Built::Away)) and a *section*
+    /// could not. This is the other half, named after the same word.
+    ///
+    /// # Why a default, and why THIS default
+    ///
+    /// Two hundred bindings in this workspace are not sections of any assembled
+    /// application, and requiring each to write a sentence would be two hundred
+    /// sites saying nothing in their own way. So there is a default — and it is
+    /// deliberately an ADMISSION rather than an explanation: it says the
+    /// binding has not answered, which is a different string from any reason a
+    /// screen gives, and therefore one a gate can find.
+    ///
+    /// ⚠ That is the whole design. A default reason that read plausibly would
+    /// be silence wearing an explanation, and every section would pass a check
+    /// for *did you say why* without anybody having said anything. See
+    /// [`UNSTATED`] for the constant and the gate that uses it.
+    #[must_use]
+    fn unjudged_because() -> String {
+        UNSTATED.to_owned()
     }
 
     /// ★★★★★ R1808 — **how many frames this binding needs to show all of what

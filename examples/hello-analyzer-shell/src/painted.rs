@@ -5391,6 +5391,59 @@ fn r1775_the_host_does_not_paint_on_the_screen_it_is_showing() {
 /// laptops, a toolbar overflow affordance that does not exist yet, and a screen
 /// decision three rounds paid for. What may not happen is the set changing
 /// while nobody notices.
+/// ★★★★★ R1888 — **every section of this application accounts for itself.**
+///
+/// The peer of the two censuses inside the test below, and the same rule one
+/// property over: `unsized_keys` names the sections that never said what they
+/// lay out in, `ungranted_keys` the ones this host never granted a width, and
+/// this names the ones whose row carries an ADMISSION where a reason should be
+/// — a screen that publishes no verdict and has not said why, or a page this
+/// host paints with nothing registered for it.
+///
+/// # Why this is not covered by `unjudged == 0`
+///
+/// Because it is a strictly finer question, and the coarse one is already
+/// asserted over the wire by this round's walk. An unaccounted section is a
+/// subset of an unjudged one, so while this application judges everything the
+/// two agree — and the moment a section goes silent they stop agreeing, which
+/// is the case this exists for. A silence with a reason is a known gap with an
+/// address; a silence without one is a gap nobody has looked at, and sending a
+/// reader to the wrong repair is what a single count does.
+///
+/// ⚠ It is an EQUALITY against empty, not a floor. A section that starts
+/// answering `pinion_shell::UNSTATED` fails here by name.
+#[test]
+fn r1888_no_section_of_this_application_carries_an_admission() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let roster = super::screen_roster();
+        let journey = pinion_core::widgets::destination::Journey::begin(
+            roster.destinations(),
+            spec::RAIL_ACTIVE,
+        )
+        .expect("this application opens at a destination it can reach");
+        let said = roster.conformance(&journey);
+
+        assert!(
+            said.sections() > 4,
+            "the roster answered with almost nothing, so this census read \
+             nothing and would have passed — the population is every \
+             destination, open or closed"
+        );
+
+        let unaccounted: Vec<&str> = said.unaccounted_keys().collect();
+        assert!(
+            unaccounted.is_empty(),
+            "★ {unaccounted:?} carry an admission rather than a reason: \
+             nothing answered for them and nothing will say why. A mounted \
+             screen says why through `WidgetView::unjudged_because`; a page \
+             this host paints itself gets a verdict through \
+             `ScreenRoster::judging`.",
+        );
+        assert_eq!(said.unaccounted(), 0, "and the count agrees with the list");
+    });
+}
+
 #[test]
 fn r1781_the_shipping_window_cannot_give_every_screen_what_it_declares() {
     let owner = Owner::new();
