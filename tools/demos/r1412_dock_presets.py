@@ -150,8 +150,13 @@ def body() -> None:
         checks = 0
 
         # ── (A) boot — the editor layout + the RPC surface ───────────────
-        assert q(tf, "names") == ["editor", "wide", "tall", "corrupt"], (
-            "(A) the store seeds the three built-ins + the corrupt witness"
+        # ★ R1895 — ordered BY NAME, not by the order they were seeded. The
+        # store is `pinion_core::workspace::Workspaces` now, which sorts, so the
+        # menu a person reads does not depend on the order somebody saved
+        # things in — two sessions that saved the same layouts in different
+        # orders used to show different menus.
+        assert q(tf, "names") == ["corrupt", "editor", "tall", "wide"], (
+            "(A) the store seeds the three built-ins + the corrupt witness, in name order"
         )
         checks += 1
         assert q(tf, "active") == "editor", "(A) the editor layout is active at boot"
@@ -295,8 +300,52 @@ def body() -> None:
         checks += 1
         checks += assert_side_by_side(snap(tf), "(F) live-after-delete")
         # Deleting a missing preset is a benign status, not a crash / RPC error.
-        assert "no preset" in tf.invoke(f"{PRESETS}/delete", "nope"), (
-            "(F) deleting a missing preset is a benign 'no preset' status"
+        #
+        # ★ R1895 — and the status now NAMES the set. It used to read
+        # `no preset 'nope'`, which told a caller nothing it could act on; the
+        # framework's refusal lists what would have worked.
+        missing = tf.invoke(f"{PRESETS}/delete", "nope")
+        assert "editor" in missing and "wide" in missing, (
+            f"(F) deleting a missing preset names the arrangements that exist: {missing!r}"
+        )
+        checks += 1
+
+        # ── (G) R1895 — what this example SHIPS is not a person's to remove ──
+        #
+        # ★★★★★ This is what adopting `pinion_core::workspace` bought. The old
+        # store was a `Vec<(String, String)>`, in which the four seeded presets
+        # were indistinguishable from one somebody saved — so every one of them
+        # could be deleted, INCLUDING the `corrupt` blob that leg (D) needs. A
+        # `retain` cannot tell them apart; a provenance can.
+        before = q(tf, "names")
+        for shipped in ("editor", "corrupt"):
+            refusal = tf.invoke(f"{PRESETS}/delete", shipped)
+            assert "ships" in refusal and shipped in refusal, (
+                f"(G) deleting a shipped arrangement is refused, naming it: {refusal!r}"
+            )
+            checks += 1
+        assert q(tf, "names") == before, "(G) and every refused delete left the set intact"
+        checks += 1
+        # Saving over one is refused for the same reason: a built-in that can be
+        # overwritten stops being one the moment somebody saves over it.
+        over = tf.invoke(f"{PRESETS}/save", "editor")
+        assert "ships" in over, f"(G) saving over a shipped arrangement is refused: {over!r}"
+        checks += 1
+        # ★ And the rows say so BEFORE a caller tries: name, provenance, and
+        # whether the row offers a delete — the same shape the analysis shell
+        # publishes, which is the point of lifting the axis at all.
+        rows = q(tf, "arrangements")
+        # Leg (F) deleted `mine`, so what is left is exactly what this example
+        # ships — which makes the assertion stronger than a mixed set would: all
+        # four say built-in, and all four say they offer no delete.
+        assert len(rows) == 4, f"(G) every arrangement is a row: {rows!r}"
+        checks += 1
+        assert all(
+            r["provenance"] == "built-in" and r["deletable"] is False for r in rows
+        ), f"(G) the four this example ships advertise that they offer no delete: {rows!r}"
+        checks += 1
+        assert [r["name"] for r in rows] == q(tf, "names"), (
+            "(G) the rows and the names slot are one set, not two"
         )
         checks += 1
 

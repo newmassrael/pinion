@@ -58,6 +58,7 @@ use pinion_core::style::{
 };
 use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
+use pinion_core::workspace::Workspaces;
 use pinion_core::{Frame, Owner, Scene, Signal, WidgetCore};
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use pinion_widget_paint::dock::{DockNode, DockSplitState, DockTopology, view_dock_surface};
@@ -149,18 +150,41 @@ fn use_topology() -> Rc<Signal<Option<DockTopology>>> {
         .cache("topology", || Signal::new(Some(build_editor())))
 }
 
-/// The named preset store: `(name, serialized DockTopology JSON)`. Seeded with
-/// the three built-ins plus a `"corrupt"` witness blob.
-fn use_presets() -> Rc<Signal<Vec<(String, String)>>> {
+/// The named preset store: each arrangement is a serialised `DockTopology`.
+///
+/// ★★★★★ R1895 — the framework's named-arrangement set, not a `Vec` of pairs.
+///
+/// This example and the analysis shell had each built this by hand, and R1893
+/// lifted the shape into [`pinion_core::workspace`] on the strength of that
+/// duplication. Lifting a thing ONE consumer uses is a guess about the second;
+/// this is the second, and it is where the generic earns the word — its layout
+/// is a serialised blob where the shell's is a board plus its cards, so
+/// `Workspaces<L>` is carrying two genuinely different `L`s.
+///
+/// Three things change by adopting it, each measured against what was here:
+///
+/// * The four this example SHIPS become built-ins, so `delete` refuses them
+///   with a sentence. Before, every one of them could be removed and the demo
+///   would then have nothing to apply.
+/// * The menu is ordered by name rather than by insertion, so it does not
+///   depend on the order somebody saved things in.
+/// * A refusal names what WOULD have worked. `no preset 'x'` told a caller
+///   nothing; the framework's names the set.
+fn use_presets() -> Rc<Signal<Workspaces<String>>> {
     Owner::current()
         .expect("view / external run inside the root owner")
         .cache("presets", || {
-            Signal::new(vec![
-                ("editor".to_owned(), serialize_topology(&build_editor())),
-                ("wide".to_owned(), serialize_topology(&build_wide())),
-                ("tall".to_owned(), serialize_topology(&build_tall())),
-                ("corrupt".to_owned(), corrupt_blob()),
-            ])
+            Signal::new(
+                Workspaces::new()
+                    .with_built_in("editor", serialize_topology(&build_editor()))
+                    .with_built_in("wide", serialize_topology(&build_wide()))
+                    .with_built_in("tall", serialize_topology(&build_tall()))
+                    // ⚠ The witness blob is shipped too: it is this example's
+                    // deliberate invalid topology, and a person deleting it
+                    // would remove the thing the R1412 seam is demonstrated
+                    // with. Being a built-in is exactly right for it.
+                    .with_built_in("corrupt", corrupt_blob()),
+            )
         })
 }
 
@@ -192,18 +216,21 @@ fn serialize_topology(topo: &DockTopology) -> String {
 /// same `Owner::cache` slots the view reads, so a command repaints the surface.
 struct PresetSignals {
     topology: Rc<Signal<Option<DockTopology>>>,
-    presets: Rc<Signal<Vec<(String, String)>>>,
+    presets: Rc<Signal<Workspaces<String>>>,
     active: Rc<Signal<String>>,
     status: Rc<Signal<String>>,
 }
 
 impl PresetSignals {
-    fn stored_blob(&self, name: &str) -> Option<String> {
+    /// The blob stored under `name`, or the framework's refusal — which names
+    /// every arrangement that WOULD have worked, where this used to answer
+    /// `None` and leave the caller to word its own "no preset 'x'".
+    fn stored_blob(&self, name: &str) -> Result<String, String> {
         self.presets
             .get()
-            .into_iter()
-            .find(|(n, _)| n == name)
-            .map(|(_, blob)| blob)
+            .apply(name)
+            .cloned()
+            .map_err(|refusal| refusal.reason().to_string())
     }
 
     /// Apply a named preset: deserialize its blob **through the R1412 validated
@@ -212,10 +239,12 @@ impl PresetSignals {
     /// witness) is a deserialize error: the status line records the rejection
     /// and the live topology is left untouched.
     fn apply(&self, name: &str) -> Result<(), String> {
-        let Some(blob) = self.stored_blob(name) else {
-            let msg = format!("no preset '{name}'");
-            self.status.set(msg.clone());
-            return Err(msg);
+        let blob = match self.stored_blob(name) {
+            Ok(blob) => blob,
+            Err(msg) => {
+                self.status.set(msg.clone());
+                return Err(msg);
+            }
         };
         match serde_json::from_str::<DockTopology>(&blob) {
             Ok(topo) => {
@@ -241,10 +270,14 @@ impl PresetSignals {
         };
         let blob = serialize_topology(&topo);
         let mut presets = self.presets.get();
-        if let Some(slot) = presets.iter_mut().find(|(n, _)| *n == name) {
-            slot.1 = blob;
-        } else {
-            presets.push((name.to_owned(), blob));
+        // ★ R1895 — two refusals this hand-rolled save did not have: an
+        // arrangement with no name, and one that would overwrite what this
+        // example SHIPS. The second is the one that matters here: overwriting
+        // `corrupt` would silently retire the R1412 seam's own witness.
+        if let Err(refusal) = presets.save(name, blob) {
+            let msg = refusal.reason().to_string();
+            self.status.set(msg.clone());
+            return Err(msg);
         }
         self.presets.set(presets);
         self.status.set(format!("saved '{name}'"));
@@ -255,10 +288,13 @@ impl PresetSignals {
     /// topology in place (the layout you are looking at does not vanish).
     fn delete(&self, name: &str) -> Result<(), String> {
         let mut presets = self.presets.get();
-        let before = presets.len();
-        presets.retain(|(n, _)| n != name);
-        if presets.len() == before {
-            let msg = format!("no preset '{name}'");
+        // ★★★★★ R1895 — and this is where the lift pays. A `retain` cannot tell
+        // an arrangement this example ships from one somebody saved, so before
+        // this every seeded preset could be deleted — including the invalid
+        // blob the R1412 seam is demonstrated with. The framework refuses a
+        // built-in and says what to do instead.
+        if let Err(refusal) = presets.delete(name) {
+            let msg = refusal.reason().to_string();
             self.status.set(msg.clone());
             return Err(msg);
         }
@@ -320,6 +356,8 @@ impl ExternalIntrospect for PresetCommandExternal {
                     // The live topology as a serialized blob — proof of what is
                     // actually applied, independent of the painted rects.
                     SchemaField::new("active_blob", "text"),
+                    // R1895 — name, provenance and whether a row can be deleted.
+                    SchemaField::new("arrangements", "json"),
                     // Command surface: `apply` / `save` / `delete` a named preset.
                     SchemaField::action("apply", "string"),
                     SchemaField::action("save", "string"),
@@ -332,10 +370,28 @@ impl ExternalIntrospect for PresetCommandExternal {
     fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
             "names" => {
-                let names: Vec<String> =
-                    self.sig.presets.get().into_iter().map(|(n, _)| n).collect();
+                let names: Vec<String> = self.sig.presets.get().names();
                 Ok(IntrospectValue::Json(serde_json::json!(names)))
             }
+            // ★ R1895 — the same set as ROWS, with each one's provenance and
+            // whether it offers a delete. The analysis shell publishes exactly
+            // this shape (R1893), which is the point: two consumers of one axis
+            // answer the same question the same way instead of each inventing a
+            // slot.
+            "arrangements" => Ok(IntrospectValue::Json(serde_json::Value::Array(
+                self.sig
+                    .presets
+                    .get()
+                    .iter()
+                    .map(|(name, arrangement)| {
+                        serde_json::json!({
+                            "name": name,
+                            "provenance": arrangement.provenance.as_str(),
+                            "deletable": arrangement.provenance.deletable(),
+                        })
+                    })
+                    .collect(),
+            ))),
             "active" => Ok(IntrospectValue::Text(self.sig.active.get())),
             "status" => Ok(IntrospectValue::Text(self.sig.status.get())),
             "count" => Ok(IntrospectValue::Int(
@@ -457,7 +513,7 @@ fn view_preset_bar(theme: &Theme) -> Scene {
     let on_surface = theme.resolve(ColorRole::OnSurface);
     let on_surface_muted = theme.resolve(ColorRole::OnSurfaceMuted);
 
-    let names: Vec<String> = use_presets().get().into_iter().map(|(n, _)| n).collect();
+    let names: Vec<String> = use_presets().get().names();
     let active = use_active().get();
     let status = use_status().get();
 
@@ -583,7 +639,7 @@ impl WidgetCore for PresetsView {
 
 impl WidgetA11y for PresetsView {
     fn access_node(_state: &(), _focused: Option<&str>) -> Vec<AccessNode> {
-        let names: Vec<String> = use_presets().get().into_iter().map(|(n, _)| n).collect();
+        let names: Vec<String> = use_presets().get().names();
         vec![
             AccessNode::new(PRESETS_TAG, AriaRole::Group)
                 .with_name("Dock layout preset manager")
@@ -685,8 +741,14 @@ mod tests {
             sig.apply("tall").expect("apply tall");
             sig.save("my-layout").expect("save the live layout");
             assert!(
-                sig.presets.get().iter().any(|(n, _)| n == "my-layout"),
+                sig.presets.get().names().iter().any(|n| n == "my-layout"),
                 "the saved preset appears in the store"
+            );
+            // ★ R1895 — and it is a PERSON's, so it can be deleted. A store
+            // that could not say this is why `delete` used to take built-ins.
+            assert_eq!(
+                sig.presets.get().provenance("my-layout"),
+                Some(pinion_core::workspace::Provenance::Saved)
             );
             // Switch away, then apply the saved copy — it must reconstruct the
             // tall topology through the validated Deserialize.
@@ -700,16 +762,26 @@ mod tests {
         });
     }
 
+    /// ★★★★★ R1895 — deleting a SAVED preset removes it; deleting one this
+    /// example SHIPS is refused.
+    ///
+    /// This test used to delete `wide` — one of the seeded four — and assert it
+    /// was gone, which is exactly the behaviour the lift removes: a store of
+    /// name/blob pairs cannot tell what the application shipped from what a
+    /// person saved, so every seeded preset was deletable, including the
+    /// invalid blob the R1412 seam is demonstrated with.
     #[test]
     fn deleting_a_preset_removes_it_but_keeps_the_live_layout() {
         Owner::new().run(|| {
             let sig = signals();
             sig.apply("wide").expect("apply wide");
+            sig.save("mine")
+                .expect("save the live layout as a person's");
             let live = sig.topology.get();
-            sig.delete("wide").expect("delete the wide preset");
+            sig.delete("mine").expect("delete a saved preset");
             assert!(
-                !sig.presets.get().iter().any(|(n, _)| n == "wide"),
-                "wide is gone from the store"
+                !sig.presets.get().names().iter().any(|n| n == "mine"),
+                "the saved preset is gone from the store"
             );
             assert_eq!(
                 sig.topology.get(),
@@ -719,6 +791,18 @@ mod tests {
             assert!(
                 sig.delete("nope").is_err(),
                 "deleting a missing preset errors"
+            );
+            // ★ And what the example ships stays, with a sentence saying why.
+            let refusal = sig
+                .delete("corrupt")
+                .expect_err("a shipped arrangement is not a person's to remove");
+            assert!(
+                refusal.contains("ships") && refusal.contains("corrupt"),
+                "the refusal names the arrangement and what to do instead: {refusal}"
+            );
+            assert!(
+                sig.presets.get().names().iter().any(|n| n == "corrupt"),
+                "and the witness blob leg (D) needs is still there"
             );
         });
     }

@@ -79,6 +79,21 @@ impl Provenance {
         }
     }
 
+    /// Parse a wire name back to a provenance — the inverse of [`Self::as_str`].
+    ///
+    /// `None` for an unknown word rather than a default: a row whose provenance
+    /// could not be read must fail loudly, because guessing `Saved` would make
+    /// a shipped arrangement deletable and guessing `BuiltIn` would strand a
+    /// person's.
+    #[must_use]
+    pub fn from_wire(name: &str) -> Option<Self> {
+        match name {
+            "built-in" => Some(Self::BuiltIn),
+            "saved" => Some(Self::Saved),
+            _ => None,
+        }
+    }
+
     /// Whether an arrangement of this provenance may be removed.
     ///
     /// A method rather than a match at each call site: the delete rule is this
@@ -87,6 +102,28 @@ impl Provenance {
     #[must_use]
     pub const fn deletable(self) -> bool {
         matches!(self, Self::Saved)
+    }
+}
+
+/// ★★★★★ R1895 — serialised as its wire name, so a stored set and a published
+/// row cannot disagree about where an arrangement came from.
+///
+/// Hand-written rather than derived, for the reason
+/// [`crate::detach::DetachHome`]'s is: a derive would spell the two words a
+/// second time, and a provenance that persists as one word and publishes as
+/// another is a shipped arrangement that reopens deletable.
+impl serde::Serialize for Provenance {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Provenance {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let name = <String as serde::Deserialize>::deserialize(deserializer)?;
+        Self::from_wire(&name).ok_or_else(|| {
+            serde::de::Error::custom(format!("an arrangement is built-in or saved, not {name:?}"))
+        })
     }
 }
 
@@ -147,7 +184,12 @@ impl WorkspaceRefusal {
 }
 
 /// One row of the set: an arrangement and where it came from.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// ★ R1895 — serialisable when `L` is, because a consumer holding the set in a
+/// reactive `Signal` needs that and the first consumer (holding it in a
+/// `RefCell`) did not. Lifting a shape one consumer uses is a guess about the
+/// second; the second is what turns the guess into a requirement.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Arrangement<L> {
     /// What the consumer calls a layout. This module never looks inside it.
     pub layout: L,
@@ -160,7 +202,7 @@ pub struct Arrangement<L> {
 /// Ordered by name, because the order a menu shows them in must not depend on
 /// the order they were saved — two sessions that saved the same two layouts in
 /// different orders would otherwise show different menus.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct Workspaces<L> {
     entries: BTreeMap<String, Arrangement<L>>,
 }
@@ -438,6 +480,29 @@ mod tests {
                 "{name:?} advertises deletable={offered} and delete answered {actually}"
             );
         }
+    }
+
+    #[test]
+    fn a_set_round_trips_with_every_row_keeping_its_provenance() {
+        // ★★★★★ R1895 — the second consumer holds this in a reactive `Signal`,
+        // which requires it, and the first (a `RefCell`) did not. The property
+        // that matters is not that it serialises but that PROVENANCE survives:
+        // a set that reopened with everything `Saved` would make what an
+        // application ships deletable.
+        let mut ws = seeded();
+        ws.save("Mine", "board:mine").expect("saved");
+        let json = serde_json::to_string(&ws).expect("a set serialises");
+        let back: Workspaces<&str> = serde_json::from_str(&json).expect("and round-trips");
+        assert_eq!(back, ws);
+        assert_eq!(back.provenance("Overview"), Some(Provenance::BuiltIn));
+        assert_eq!(back.provenance("Mine"), Some(Provenance::Saved));
+        // And the words are the published ones, so a stored set and a wire row
+        // cannot name the same provenance differently.
+        assert!(json.contains("\"built-in\"") && json.contains("\"saved\""));
+        // An unreadable provenance is a REFUSAL, not a default — guessing
+        // either way is wrong in a different direction.
+        let bad = json.replace("\"saved\"", "\"mine-i-think\"");
+        assert!(serde_json::from_str::<Workspaces<&str>>(&bad).is_err());
     }
 
     #[test]
