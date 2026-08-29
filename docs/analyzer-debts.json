@@ -188,6 +188,17 @@
       ]
     },
     {
+      "name": "debt-a-remainder-list-in-the-same-file-has-no-gate",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links debt-the-canon-is-one-app-and-we-are-many-binaries"
+      ]
+    },
+    {
       "name": "debt-a-status-slot-shows-one-sentence-and-hides-the-other",
       "substituted": false,
       "blocked_by": "unmeasured",
