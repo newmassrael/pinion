@@ -2804,6 +2804,70 @@ fn r1688_the_toolbar_roster_is_pressable_and_named() {
     });
 }
 
+/// ★★★★★ R1902 — **every pane opens where its own policy admits.**
+///
+/// The hole this closes, measured at R1902: every *change* to a placement went
+/// through `EdgePolicy::admit` / `admit_fold` / `admit_extent`, and the
+/// placement the screen **started in** went through nothing at all — it was two
+/// `const`s in the painter. So a pane could declare `foldable: false` and open
+/// folded, or open on an edge its own `allowed` list excludes, and the
+/// contradiction would stand for the life of the program with no call to blame
+/// and no moment to watch.
+///
+/// The gate does not re-spell the rules. It asks the *policy* whether it admits
+/// its own declared opening, which is the same function the gestures go
+/// through — so a rule that changes changes here too, and a fourth spelling of
+/// "is this edge allowed" never gets written.
+#[test]
+fn r1902_every_pane_opens_where_its_own_policy_admits() {
+    let mut checked = 0;
+    let mut folded_open = 0;
+    for pane in spec::PANES {
+        let admitted = pane.policy.admit_opening(pane.opens).unwrap_or_else(|why| {
+            panic!(
+                "{} opens at {:?}, which its own policy refuses: {}",
+                pane.tag,
+                pane.opens,
+                why.reason()
+            )
+        });
+        assert_eq!(
+            admitted, pane.opens,
+            "{}: an admitted opening is returned unchanged",
+            pane.tag
+        );
+        checked += 1;
+        if pane.opens.folded {
+            folded_open += 1;
+            assert!(
+                pane.policy.foldable,
+                "{}: a pane that opens folded must declare it folds",
+                pane.tag
+            );
+        }
+    }
+    // A floor on the population, because a `PANES` emptied by accident would
+    // make every assertion above vacuous and this test would still pass — the
+    // sweep-floor rule R1802 wrote one gate over.
+    assert_eq!(
+        checked,
+        spec::PANES.len(),
+        "every declared pane was judged; judged {checked}"
+    );
+    assert_eq!(checked, 4, "this screen declares four panes");
+    // ★★★★★ NO pane of this screen opens folded, and that is the canon's
+    // arrangement rather than an omission — re-measured at R1902 by extracting
+    // the behaviour canon: its palette state initialises OPEN. Asserted rather
+    // than left implicit, because the campaign's own prescription said the
+    // opposite and a reader arriving at that sentence needs to find the
+    // measurement that overturned it.
+    assert_eq!(
+        folded_open, 0,
+        "the canon opens its palette open; a pane that starts folded here would \
+         be a second-pass change that un-reproduces it"
+    );
+}
+
 /// ★★★★★ R1802 — **the specification says where a panel may live; the layout
 /// has to be able to put it there.**
 ///
@@ -2898,8 +2962,8 @@ fn r1802_every_edge_the_specification_admits_is_one_the_layout_honours() {
             // the probe above is the only reason that was not "fixed" in the
             // layout instead. A reset that empties a thread-local invalidates
             // every handle taken before it.
-            state.palette_at.set(super::PALETTE_OPENS_AT);
-            state.inspector_at.set(super::INSPECTOR_OPENS_AT);
+            state.palette_at.set(super::palette_opens_at());
+            state.inspector_at.set(super::inspector_opens_at());
         }
         // A floor on the SWEEP, because a policy emptied by accident would make
         // every assertion above vacuous and the test would still pass.
@@ -2947,7 +3011,7 @@ fn r1802_a_folded_panel_leaves_a_strip_the_canvas_does_not_take() {
         );
         // Through the handle, not through a thread-local reset — see the note
         // in the gate above for why that difference cost a diagnosis.
-        state.palette_at.set(super::PALETTE_OPENS_AT);
+        state.palette_at.set(super::palette_opens_at());
     });
 }
 

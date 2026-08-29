@@ -678,10 +678,35 @@ const fn floor_width(rail: u32) -> u32 {
     rail + PALETTE_W + (TOOLBAR_RIGHT_FLOOR + TOOLBAR_LEFT_CLUSTER) + INSP_W
 }
 
-/// Where the palette opens: the arrangement the hand-written layout drew.
-const PALETTE_OPENS_AT: EdgePlacement = EdgePlacement::open(ChromeEdge::Left, PALETTE_W);
-/// Where the inspector opens.
-const INSPECTOR_OPENS_AT: EdgePlacement = EdgePlacement::open(ChromeEdge::Right, INSP_W);
+/// ★★★★★ R1902 — where a pane opens, **read from the specification** rather
+/// than written here beside it.
+///
+/// These were two `const`s spelling an arrangement the specification also
+/// described, and the two were free to disagree: the spec said which edges a
+/// pane admits and whether it folds, and the constants said where it started,
+/// and nothing compared them. The palette opening folded is the change this
+/// round is about, and it is one field of one row of `spec::PANES` now — not an
+/// edit here that the declaration would have gone on contradicting.
+///
+/// ⚠ Totality rather than a `Option::unwrap`: a tag this screen asks for is one
+/// it declares, so the fallback is unreachable — but a panicking geometry
+/// helper is the thing `placements` documents itself as refusing to be.
+fn opens_at(tag: &str) -> EdgePlacement {
+    spec::PANES
+        .iter()
+        .find(|pane| pane.tag == tag)
+        .map_or(EdgePlacement::open(ChromeEdge::Left, 0), |pane| pane.opens)
+}
+
+/// Where the palette opens, as `spec::PANES` declares it.
+fn palette_opens_at() -> EdgePlacement {
+    opens_at("lab.palette")
+}
+
+/// Where the inspector opens, as `spec::PANES` declares it.
+fn inspector_opens_at() -> EdgePlacement {
+    opens_at("lab.inspector")
+}
 /// What a folded side panel leaves behind — the strip a person grabs to open it
 /// again. Not zero, which is what makes a fold different from a hide.
 const PANEL_STRIP_W: u32 = 18;
@@ -702,11 +727,10 @@ const PANEL_STRIP_W: u32 = 18;
 /// test asking for a rectangle first sees — the answer is where the panels open.
 fn placements() -> (EdgePlacement, EdgePlacement) {
     STATE.with(|slot| {
-        slot.borrow()
-            .as_ref()
-            .map_or((PALETTE_OPENS_AT, INSPECTOR_OPENS_AT), |s| {
-                (s.palette_at.get(), s.inspector_at.get())
-            })
+        slot.borrow().as_ref().map_or_else(
+            || (palette_opens_at(), inspector_opens_at()),
+            |s| (s.palette_at.get(), s.inspector_at.get()),
+        )
     })
 }
 
@@ -1849,8 +1873,8 @@ impl LabState {
             running: Signal::new(false),
             scenario: RefCell::new(scenario::Plan::new()),
             toolbar_open: Signal::new(false),
-            palette_at: Signal::new(PALETTE_OPENS_AT),
-            inspector_at: Signal::new(INSPECTOR_OPENS_AT),
+            palette_at: Signal::new(palette_opens_at()),
+            inspector_at: Signal::new(inspector_opens_at()),
             playhead: Signal::new(0.0),
             checks: RefCell::new(Vec::new()),
             tape: RefCell::new(pinion_core::regression::Timeline::new(
@@ -11426,6 +11450,21 @@ fn panes_json() -> Vec<serde_json::Value> {
                         "extent": at.extent,
                         "folded": at.folded,
                     })
+                }),
+                // ★★★★★ R1902 — where the pane OPENS, beside where it IS.
+                //
+                // Two facts, and a client had only one of them: `at` says a
+                // panel is folded and says nothing about whether that is how it
+                // arrived or something a person did. The same bit, two
+                // different things to know — and a client restoring a session,
+                // or offering "put it back", needs the second.
+                //
+                // Published in the same shape as `at` so the two can be
+                // compared field by field without either side converting.
+                "opens": serde_json::json!({
+                    "edge": edge_word(pane.opens.edge),
+                    "extent": pane.opens.extent,
+                    "folded": pane.opens.folded,
                 }),
             })
         })

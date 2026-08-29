@@ -23,7 +23,7 @@
 //! tool class uses generally; the structure and the behaviour are what is being
 //! reproduced, and those are what the table holds.
 
-use pinion_core::edge_panel::EdgePolicy;
+use pinion_core::edge_panel::{EdgePlacement, EdgePolicy};
 use pinion_core::style::ChromeEdge;
 
 /// One pane of the shell, and the width the reference gives it.
@@ -56,6 +56,25 @@ pub struct PaneSpec {
     /// panel that may move now says so where a client can read it, and a rail
     /// that may not says that too ([`EdgePolicy::fixed`]).
     pub policy: EdgePolicy,
+    /// ★★★★★ R1902 — **where this pane opens**, declared rather than seeded by
+    /// a constant nobody checks.
+    ///
+    /// [`Self::policy`] says where a pane MAY live; this says where it IS when
+    /// a reader arrives, and until R1902 the two could contradict each other
+    /// for the whole life of the program. Measured then: every *change* to a
+    /// placement went through [`EdgePolicy::admit`] / `admit_fold` /
+    /// `admit_extent`, and the placement the screen STARTED in went through
+    /// nothing at all — it was two `const`s in the painter. A pane could
+    /// declare it does not fold and open folded, and nothing would say a word.
+    ///
+    /// Declared here for the reason [`Self::policy`] is: this is where every
+    /// property of a pane is declared, and the specification is what the wire
+    /// publishes — so a client can tell *folded because it opens that way* from
+    /// *folded because somebody folded it*, which are the same bit and
+    /// different facts.
+    ///
+    /// The gate is `r1902_every_pane_opens_where_its_own_policy_admits`.
+    pub opens: EdgePlacement,
 }
 
 /// The four panes, left to right.
@@ -71,6 +90,10 @@ pub const PANES: &[PaneSpec] = &[
         // allowed-set is a statement a client can read, and it is what makes
         // "this one does not move" different from "nobody has said".
         policy: EdgePolicy::fixed(),
+        // A rail has no edge to open on. `Left` is the side it is drawn on and
+        // its policy admits nothing, so this says "there is nowhere else" twice
+        // — which is what makes the gate below non-vacuous for it too.
+        opens: EdgePlacement::open(ChromeEdge::Left, 54),
     },
     PaneSpec {
         tag: "lab.palette",
@@ -85,6 +108,23 @@ pub const PANES: &[PaneSpec] = &[
         // rather than clamped in the paint, so the gate can ask the
         // specification what this panel promises and then hold the screen to it.
         policy: EdgePolicy::movable(SIDES).resizable(180, 420),
+        // ★★★★★ R1902 — **OPEN, and that is a re-measurement overturning this
+        // campaign's own prescription.**
+        //
+        // The campaign's order step 3 says "hidden by default (the reference
+        // editor's palette is)", and the reference editor does flag its tools
+        // region hidden. But the reproduction target for THIS screen is the
+        // behaviour canon, and the canon was extracted and read this round: its
+        // palette state initialises to open, and it carries `togglePalette` /
+        // `openPalette` so a reader puts it away and brings it back. Opening
+        // folded would have been a second-pass change that UN-REPRODUCES the
+        // canon — the standing order rule's named error, skipping reproduction
+        // because our way looks better.
+        //
+        // ⇒ what this declaration is worth is not the value but the fact that
+        // there IS one: it is now checked against this pane's own policy, which
+        // nothing did before.
+        opens: EdgePlacement::open(ChromeEdge::Left, 230),
     },
     PaneSpec {
         tag: "lab.canvas",
@@ -96,6 +136,9 @@ pub const PANES: &[PaneSpec] = &[
         body: None,
         // The canvas is what the side panels flank; it has no edge of its own.
         policy: EdgePolicy::fixed(),
+        // Width 0 above: the canvas takes what the flanking panes leave, so its
+        // opening extent is not a number anybody chose.
+        opens: EdgePlacement::open(ChromeEdge::Left, 0),
     },
     PaneSpec {
         tag: "lab.inspector",
@@ -106,6 +149,10 @@ pub const PANES: &[PaneSpec] = &[
         // content: this pane holds a form with labelled rows and a three-across
         // action strip, where the palette holds a single column of chips.
         policy: EdgePolicy::movable(SIDES).resizable(240, 520),
+        // Showing, on the right, as the reference's properties region is. The
+        // asymmetry with the palette is the reference's own and is the point:
+        // one side panel starts out of the way and one does not.
+        opens: EdgePlacement::open(ChromeEdge::Right, 312),
     },
 ];
 

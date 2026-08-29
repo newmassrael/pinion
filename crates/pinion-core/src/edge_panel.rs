@@ -93,6 +93,29 @@ impl EdgePlacement {
         }
     }
 
+    /// ★★★★★ (R1902) A panel **folded to its strip** at `edge`, keeping
+    /// `extent` for when it is opened.
+    ///
+    /// The peer of [`Self::open`], and it exists because *starting folded* is a
+    /// placement rather than an act. The reference editor this campaign reads
+    /// declares its tool region hidden on the region TYPE, so a panel that
+    /// begins out of the way is a property of the panel and not a gesture
+    /// somebody performed before the reader arrived.
+    ///
+    /// ⚠ `extent` is kept, not zeroed, for the reason [`Self::extent`] gives:
+    /// opening a panel that started folded must give it a size worth having,
+    /// and a fold that forgot its extent would open to nothing. That is the
+    /// difference between folding and hiding, at the one moment the difference
+    /// is easiest to lose.
+    #[must_use]
+    pub const fn folded_at(edge: ChromeEdge, extent: u32) -> Self {
+        Self {
+            edge,
+            extent,
+            folded: true,
+        }
+    }
+
     /// How much room this placement actually takes, given the strip a folded
     /// panel keeps.
     ///
@@ -402,6 +425,80 @@ impl EdgePolicy {
             Resize::Between { .. } => Ok(EdgePlacement { extent, ..from }),
         }
     }
+
+    /// ★★★★★ (R1902) The placement a panel **opens in**, judged by the same
+    /// rules a gesture is judged by — or the refusal.
+    ///
+    /// # The hole this closes
+    ///
+    /// Measured at R1902: every *change* to a placement passed through
+    /// [`admit`](Self::admit), [`admit_fold`](Self::admit_fold) or
+    /// [`admit_extent`](Self::admit_extent), and the placement a screen
+    /// **started in** passed through nothing at all. It was a constant. So a
+    /// panel could declare `foldable: false` and open folded, or open on an
+    /// edge its own `allowed` list does not contain, and nothing anywhere would
+    /// say a word — the declaration and the opening state were free to
+    /// contradict each other for the whole life of the program.
+    ///
+    /// That is a sharper form of the habit this module was built against. The
+    /// floor toolkit lets an imperative call quietly beat a declared
+    /// constraint; here the *initial* state never met its declaration at all,
+    /// which is worse, because there is no call to blame and no moment to
+    /// watch.
+    ///
+    /// # Why it composes rather than re-spells
+    ///
+    /// The three checks are the three that already exist, called in turn. A
+    /// fourth spelling of "is this edge allowed" is a fourth answer, and this
+    /// tree has paid for that shape often enough to have a rule about it: a
+    /// gate compares against the *output of the derivation*, it does not write
+    /// the derivation again.
+    ///
+    /// # The two things it does not check, and why neither is an exemption
+    ///
+    /// A [`Resize::Fixed`] panel's extent is checked against nothing, because
+    /// there is nothing to check it against — `Fixed` declares no range, so the
+    /// opening extent is the only extent and cannot be outside anything. That
+    /// is the ABSENCE of a predicate, not an exemption from one; a `Fixed`
+    /// panel whose extent were checked with [`admit_extent`](Self::admit_extent)
+    /// would be refused for having any extent at all.
+    ///
+    /// ★★★★★ A panel with an EMPTY [`allowed`](Self::allowed) list has its
+    /// opening edge checked against nothing either, and this one the gate found
+    /// on its first run against a real specification: the first draft refused
+    /// `lab.rail`, which is pinned to the left and admits no edge. `allowed:
+    /// []` says *this cannot be MOVED*, and that field's own documentation says
+    /// so — "a rail pinned to one side says so this way". A pinned panel is
+    /// still ON a side. Refusing it would have made the declaration mean *this
+    /// panel is nowhere*, which is not a state a screen can be in.
+    ///
+    /// It is not a way to dodge the gate, because emptying `allowed` is a loud
+    /// declaration with consequences of its own — no flip control, and an empty
+    /// drop contract on the wire — and the FOLD check still applies to a pinned
+    /// panel, which is the case this gate exists for.
+    ///
+    /// # Errors
+    ///
+    /// [`EdgeRefusal::EdgeNotAllowed`] when the opening edge is not admitted;
+    /// [`EdgeRefusal::NotFoldable`] when it opens folded and may not fold;
+    /// [`EdgeRefusal::ExtentOutOfRange`] when a resizable panel opens outside
+    /// its own declared range.
+    pub fn admit_opening(&self, opening: EdgePlacement) -> Result<EdgePlacement, EdgeRefusal> {
+        let placed = if self.allowed.is_empty() {
+            opening
+        } else {
+            self.admit(opening, opening.edge)?
+        };
+        let placed = if opening.folded {
+            self.admit_fold(placed, true)?
+        } else {
+            placed
+        };
+        match self.resize {
+            Resize::Fixed => Ok(placed),
+            Resize::Between { .. } => self.admit_extent(placed, opening.extent),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -615,5 +712,158 @@ mod tests {
         assert!(EdgePlacement::open(ChromeEdge::Right, 10).is_horizontal());
         assert!(!EdgePlacement::open(ChromeEdge::Top, 10).is_horizontal());
         assert!(!EdgePlacement::open(ChromeEdge::Bottom, 10).is_horizontal());
+    }
+
+    // ── R1902: the placement a panel OPENS in is judged too ─────────────────
+
+    #[test]
+    fn r1902_a_panel_can_be_declared_folded_and_keeps_the_size_it_will_open_to() {
+        let shut = EdgePlacement::folded_at(ChromeEdge::Left, 230);
+        assert!(shut.folded);
+        assert_eq!(
+            shut.extent, 230,
+            "a fold that forgot its extent would open to nothing"
+        );
+        assert_eq!(shut.edge, ChromeEdge::Left);
+        // The two constructors differ in exactly one field, which is what makes
+        // "opens folded" a placement rather than a different kind of thing.
+        assert_eq!(
+            EdgePlacement {
+                folded: false,
+                ..shut
+            },
+            EdgePlacement::open(ChromeEdge::Left, 230)
+        );
+    }
+
+    #[test]
+    fn r1902_an_opening_placement_a_panel_admits_is_returned_unchanged() {
+        let policy = EdgePolicy::movable(SIDES);
+        let opening = EdgePlacement::folded_at(ChromeEdge::Left, 230);
+        assert_eq!(
+            policy.admit_opening(opening).expect("movable and foldable"),
+            opening
+        );
+    }
+
+    /// ★★★★★ The hole R1902 closes: a panel that declares it does not fold, and
+    /// opens folded anyway. Before this, nothing anywhere asked.
+    #[test]
+    fn r1902_a_panel_that_cannot_fold_may_not_open_folded() {
+        let rail = EdgePolicy::fixed();
+        // ★★★★★ A pinned panel is still ON a side, so its opening EDGE is
+        // admitted — the first draft refused this and the gate caught it
+        // against the real specification. What is refused is the FOLD.
+        assert!(
+            rail.admit_opening(EdgePlacement::open(ChromeEdge::Left, 54))
+                .is_ok(),
+            "an empty allowed-set says it cannot MOVE, not that it is nowhere"
+        );
+        let refused = rail
+            .admit_opening(EdgePlacement::folded_at(ChromeEdge::Left, 54))
+            .expect_err("a fixed rail declares it does not fold");
+        assert!(matches!(refused, EdgeRefusal::NotFoldable), "{refused:?}");
+
+        // A panel that may move but may not fold isolates the fold rule.
+        let never_folds = EdgePolicy {
+            allowed: SIDES,
+            foldable: false,
+            resize: Resize::Fixed,
+        };
+        assert!(
+            never_folds
+                .admit_opening(EdgePlacement::open(ChromeEdge::Left, 230))
+                .is_ok(),
+            "opening unfolded is fine"
+        );
+        let refused = never_folds
+            .admit_opening(EdgePlacement::folded_at(ChromeEdge::Left, 230))
+            .expect_err("it declared it does not fold");
+        assert!(matches!(refused, EdgeRefusal::NotFoldable), "{refused:?}");
+    }
+
+    #[test]
+    fn r1902_a_panel_may_not_open_on_an_edge_its_own_declaration_excludes() {
+        let policy = EdgePolicy::movable(&[ChromeEdge::Left]);
+        let refused = policy
+            .admit_opening(EdgePlacement::open(ChromeEdge::Right, 230))
+            .expect_err("right is not among the allowed edges");
+        let EdgeRefusal::EdgeNotAllowed { asked, allowed } = refused else {
+            panic!("{refused:?}")
+        };
+        assert_eq!(asked, ChromeEdge::Right);
+        assert_eq!(allowed, &[ChromeEdge::Left]);
+    }
+
+    /// ★★★★★ A `Fixed` panel's extent is checked against NOTHING, and that is
+    /// the absence of a predicate rather than an exemption from one — routing
+    /// it through `admit_extent` would refuse every fixed panel for having any
+    /// extent at all.
+    #[test]
+    fn r1902_a_fixed_width_panel_opens_at_its_own_width() {
+        let policy = EdgePolicy::movable(SIDES);
+        assert!(matches!(policy.resize, Resize::Fixed));
+        for extent in [1_u32, 54, 230, 9_999] {
+            assert!(
+                policy
+                    .admit_opening(EdgePlacement::open(ChromeEdge::Left, extent))
+                    .is_ok(),
+                "a fixed panel declares no range, so {extent} violates nothing"
+            );
+        }
+    }
+
+    #[test]
+    fn r1902_a_resizable_panel_may_not_open_outside_its_own_range() {
+        let policy = EdgePolicy {
+            allowed: SIDES,
+            foldable: true,
+            resize: Resize::Between { min: 180, max: 420 },
+        };
+        assert!(
+            policy
+                .admit_opening(EdgePlacement::open(ChromeEdge::Left, 180))
+                .is_ok(),
+            "the floor of the range is inside it"
+        );
+        let refused = policy
+            .admit_opening(EdgePlacement::open(ChromeEdge::Left, 120))
+            .expect_err("120 is below the declared floor");
+        let EdgeRefusal::ExtentOutOfRange { asked, min, max } = refused else {
+            panic!("{refused:?}")
+        };
+        assert_eq!((asked, min, max), (120, 180, 420));
+    }
+
+    /// ★★★★★ **The opening is judged by the same rules a gesture is** — one
+    /// rule, two moments. Asserted as an equality over a grid rather than as a
+    /// sentence, because "the same rules" is exactly the claim a second
+    /// spelling would quietly break.
+    #[test]
+    fn r1902_opening_folded_and_folding_after_the_fact_agree_everywhere() {
+        for foldable in [false, true] {
+            for edge in [ChromeEdge::Left, ChromeEdge::Right, ChromeEdge::Top] {
+                let policy = EdgePolicy {
+                    allowed: SIDES,
+                    foldable,
+                    resize: Resize::Fixed,
+                };
+                let opened = policy.admit_opening(EdgePlacement::folded_at(edge, 230));
+                // The same end state reached the other way: open there, then fold.
+                let gestured = policy
+                    .admit(EdgePlacement::open(ChromeEdge::Left, 230), edge)
+                    .and_then(|at| policy.admit_fold(at, true));
+                assert_eq!(
+                    opened.is_ok(),
+                    gestured.is_ok(),
+                    "foldable={foldable} edge={edge:?}: a state reachable by gesture \
+                     must be declarable as an opening, and one that is refused as a \
+                     gesture must be refused as an opening"
+                );
+                if let (Ok(a), Ok(b)) = (opened, gestured) {
+                    assert_eq!(a, b, "and they are the same placement");
+                }
+            }
+        }
     }
 }
