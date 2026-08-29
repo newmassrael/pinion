@@ -3518,13 +3518,24 @@ impl<V: WidgetView + 'static> AppShell<V> {
         // again the moment the last torn-off card is redocked.
         //
         // ⚠ The alternative was a per-window `forget` beside the removal, and
-        // measuring the sink says that is the weaker repair: all three callers
-        // of `set_live_window_origins` pass `collect_window_origins()`, the
+        // measuring the sink says that is the weaker repair: EVERY caller of
+        // `set_live_window_origins` passes `collect_window_origins()`, the
         // complete live set, so the framework already holds the whole truth and
-        // a "remember to forget" rule can only be a way to get it wrong. A
-        // surface size (`record_surface_size`) genuinely is announced one at a
-        // time and keeps its `forget`; a window origin is not, and mirroring the
-        // singular shape is what let a stale entry exist at all.
+        // a "remember to forget" rule can only be a way to get it wrong.
+        //
+        // ⚠⚠ R1905.2 — that sentence said "all three callers", which was true
+        // when it was measured and false three lines later, because the call
+        // BELOW is a fourth. The property is what carries the argument, not the
+        // count, so the count is gone: a number in a comment is stale from the
+        // moment it is written, and this one was stale inside its own edit.
+        //
+        // The contrast holds and is now measured rather than asserted: a
+        // surface size (`record_surface_size`) is announced from a per-window
+        // paint walk into a store that is NOT per-window, so no caller there
+        // holds the complete set and a replacing publish would wipe the other
+        // window's surfaces — see `announce_external_sizes`, whose own header
+        // records that residue. A window origin is not like that, and mirroring
+        // the singular shape is what let a stale entry exist at all.
         //
         // Covers the ADD pass too, so a window that never moves is not adrift
         // until its first `Moved`; a fresh window's position may still be the
