@@ -361,6 +361,142 @@ pub fn lay_out(header: Rect, offered: usize, ready: bool, metrics: CardMetrics) 
     }
 }
 
+// ── A shared cell's tab strip ───────────────────────────────────────────────
+
+/// ★★★★★ R1900 §5.21 — the tab boxes a shared place puts in a card header's
+/// title box, and how many occupants did not fit on each side.
+///
+/// # Why this is a layout and not a paint
+///
+/// A strip is pressed as well as drawn, and this tree has paid repeatedly for
+/// the two being separate arithmetic. [`Strip::at`] is the hit test and
+/// [`Strip::tabs`] is what a painter iterates, so a tab a person can see is a
+/// tab a person can press **by construction** rather than by two functions
+/// agreeing.
+///
+/// # Against the floor toolkit at 6.11.1
+///
+/// Read from its own 6.11.1 headers at R1900, over its tab bar and its tab
+/// container: both publish how many tabs there are, which one is current, an
+/// elide mode and whether scroll buttons are used — and **nothing that answers
+/// how many are off the ends**. A caller there can know that some tabs do not
+/// fit only by comparing rectangles it was not given.
+///
+/// Here the window is **always the one containing the
+/// front** ([`Strip::before`] / [`Strip::after`] say what is off each end), so
+/// a caller can offer the hidden ones somewhere else and can say *how many*.
+/// That is the same distinction [`HeaderLayout::dropped`] draws for
+/// affordances, kept for the same reason.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Strip {
+    tabs: Vec<(usize, Rect)>,
+    before: usize,
+    after: usize,
+    band: Rect,
+}
+
+impl Strip {
+    /// The tab boxes that fit, as `(index among the occupants, rectangle)` in
+    /// strip order — the same shape [`HeaderLayout::slots`] uses, for the same
+    /// reason: an index into what the caller offered, not a re-numbering.
+    #[must_use]
+    pub fn tabs(&self) -> &[(usize, Rect)] {
+        &self.tabs
+    }
+
+    /// How many occupants sit before the first tab shown.
+    #[must_use]
+    pub const fn before(&self) -> usize {
+        self.before
+    }
+
+    /// How many sit after the last one shown.
+    #[must_use]
+    pub const fn after(&self) -> usize {
+        self.after
+    }
+
+    /// The box the tabs were laid inside.
+    #[must_use]
+    pub const fn band(&self) -> Rect {
+        self.band
+    }
+
+    /// Which occupant a press at this point is on.
+    ///
+    /// The strip's own hit test, so a painter and a router cannot disagree
+    /// about where a tab is.
+    #[must_use]
+    pub fn at(&self, x: u32, y: u32) -> Option<usize> {
+        self.tabs.iter().find_map(|&(n, r)| {
+            (x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h).then_some(n)
+        })
+    }
+
+    /// Where the occupant in front is drawn, when it is one of the shown tabs.
+    ///
+    /// It always is — the window is chosen around it — but the `Option` is the
+    /// honest type for a strip with no room for even one tab.
+    #[must_use]
+    pub fn fore_rect(&self, fore: usize) -> Option<Rect> {
+        self.tabs
+            .iter()
+            .find_map(|&(n, r)| (n == fore).then_some(r))
+    }
+}
+
+/// Lay `occupants` tabs out inside `title`, keeping the one at `fore` visible.
+///
+/// `title` is [`HeaderLayout::title`] — the box a card's single title would
+/// have had, which is exactly the room a strip may take. The narrowest a tab
+/// may be is [`CardMetrics::min_title`], **the same number a title gives way
+/// at**: a tab is a title, so a second constant here would be a second opinion
+/// about what is legible.
+///
+/// When more occupants are offered than fit, the shown window is the widest
+/// contiguous run that contains `fore`, pushed toward the middle and clamped at
+/// the ends. `fore` past the end is treated as the last occupant rather than
+/// panicking — a caller reading a stale strip is the case this exists for.
+#[must_use]
+pub fn strip(title: Rect, occupants: usize, fore: usize, metrics: CardMetrics) -> Strip {
+    if occupants == 0 || metrics.min_title == 0 || title.w < metrics.min_title {
+        return Strip {
+            tabs: Vec::new(),
+            before: 0,
+            after: occupants,
+            band: title,
+        };
+    }
+    let room = (title.w / metrics.min_title) as usize;
+    let shown = usize::min(occupants, room);
+    let fore = usize::min(fore, occupants - 1);
+
+    // The window is centred on the front and then slid back inside the ends, so
+    // the front is shown whatever it is — which is the property the floor's
+    // scroll buttons reach only after a person has pressed one.
+    let before = usize::min(fore.saturating_sub(shown / 2), occupants - shown);
+    let each = title.w / u32::try_from(shown).unwrap_or(1).max(1);
+    let tabs = (0..shown)
+        .map(|n| {
+            let x = title.x + u32::try_from(n).unwrap_or(0) * each;
+            // The last tab takes the remainder, so the strip fills its box
+            // exactly and no dead column sits between the tabs and the edge.
+            let w = if n + 1 == shown {
+                title.x + title.w - x
+            } else {
+                each
+            };
+            (before + n, Rect::new(x, title.y, w, title.h))
+        })
+        .collect();
+    Strip {
+        tabs,
+        before,
+        after: occupants - before - shown,
+        band: title,
+    }
+}
+
 // ── The skin ────────────────────────────────────────────────────────────────
 
 /// The four colours a card header draws with.
@@ -391,12 +527,37 @@ pub struct HeaderInk {
     pub kind: Color,
 }
 
+/// ★ R1900 — one occupant of a shared place, as its header draws it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HeaderTab<'a> {
+    /// The whole tag this tab is pressed by.
+    ///
+    /// Whole rather than a suffix on `header_scene`'s prefix, and that is the
+    /// occupant's doing: the prefix names the card in FRONT, so a tab tagged
+    /// under it would be renamed for every occupant every time somebody pressed
+    /// a different tab — and a tag that moves under a driver is a tag no driver
+    /// can hold.
+    pub tag: &'a str,
+    /// What the tab says.
+    pub label: &'a str,
+}
+
 /// What a card header says and which of its affordances are live.
 ///
 /// Bundled rather than passed as eight arguments, which is also what keeps
 /// [`header_scene`] inside this crate's argument-count lint.
 #[derive(Debug, Clone)]
 pub struct HeaderSpec<'a> {
+    /// ★★★★★ R1900 — the occupants sharing this card's place, when it is
+    /// shared, and which of them is in front ([`Self::fore`]).
+    ///
+    /// Empty for a place with one occupant, and then the title is drawn exactly
+    /// as it always was. When it is not empty the strip **replaces** the title,
+    /// because a strip and a title want the same box and drawing both would put
+    /// two runs of text on one line.
+    pub tabs: &'a [HeaderTab<'a>],
+    /// Which of [`Self::tabs`] is in front. Ignored when there are none.
+    pub fore: usize,
     /// The affordances the card's chrome offers, in declaration order.
     pub offered: &'a [CardAffordance],
     /// Whether the card's state earns the ready badge.
@@ -582,7 +743,15 @@ pub fn header_scene(
         ));
     }
     if let Some(title) = laid.title() {
-        out.push(run(spec.title, title, metrics.title_px, spec.ink.title));
+        // ★★★★★ R1900 — a shared place spends this box on its strip instead of
+        // its title. One `if`, because they are alternatives rather than
+        // layers: the box holds one line of text and a title drawn under a
+        // strip is a title nobody can read.
+        if spec.tabs.is_empty() {
+            out.push(run(spec.title, title, metrics.title_px, spec.ink.title));
+        } else {
+            out.extend(strip_scene(title, spec, metrics));
+        }
     }
     if let Some(badge) = laid.badge() {
         // ★★★★★ R1882 — the word's box is the badge's OWN slot, inset, rather
@@ -621,6 +790,65 @@ pub fn header_scene(
     out
 }
 
+/// The tabs of a shared place, drawn in the box its title would have had.
+///
+/// ★ The boxes are [`strip`]'s, so what is drawn here is what
+/// [`Strip::at`] finds — the two are not two arithmetics agreeing, they are one
+/// call.
+///
+/// The occupant in front is told apart by **ink**, and the tabs by a hairline
+/// rule at each boundary. Not by an indicator bar under the front tab, which is
+/// the shape [`crate::tabs`] draws: a tab box here is exactly one line box tall
+/// (it is the title's box), so a bar inside it would either overlap the label
+/// or force the label into a box shorter than its own face needs — the defect
+/// R1882 spent a round removing from this very header.
+fn strip_scene(title: Rect, spec: &HeaderSpec<'_>, metrics: CardMetrics) -> Vec<Scene> {
+    let laid = strip(title, spec.tabs.len(), spec.fore, metrics);
+    let mut out = Vec::with_capacity(laid.tabs().len());
+    for &(n, box_) in laid.tabs() {
+        let Some(tab) = spec.tabs.get(n) else {
+            continue;
+        };
+        let front = n == spec.fore;
+        let pad = metrics.grip_inset;
+        // ★★★★★ The TAG goes on the whole tab box, not on the label inside it.
+        //
+        // Measured on the running application at R1900, with the label tagged
+        // instead: the drawn rectangles were 55 px wide with an 8 px gap
+        // between them, while the boxes a press lands in were contiguous. So
+        // the rectangle a reader is given, the rectangle a driver aims at and
+        // the rectangle a finger hits were **three different claims** about one
+        // tab, and the two outer ones were wrong. One container over
+        // [`Strip`]'s own box makes them the same rectangle.
+        let mut parts = vec![run(
+            tab.label,
+            Rect::new(pad, 0, box_.w.saturating_sub(pad * 2).max(1), box_.h),
+            metrics.title_px,
+            if front {
+                spec.ink.title
+            } else {
+                spec.ink.muted
+            },
+        )];
+        // A rule at every boundary except the strip's own leading edge, so two
+        // labels never read as one. Inside the tab, at its leading edge, where
+        // the label's inset leaves room for it.
+        if n > laid.before() {
+            parts.push(Scene::Container(
+                ContainerNode::new(Vec::new())
+                    .with_style(BoxStyle::filled(spec.ink.muted))
+                    .with_layout(absolute(Rect::new(0, 0, 1, box_.h))),
+            ));
+        }
+        out.push(Scene::Container(
+            ContainerNode::new(parts)
+                .with_tag(tab.tag.to_owned())
+                .with_layout(absolute(box_)),
+        ));
+    }
+    out
+}
+
 fn run(text: &str, rect: Rect, px: u32, fg: Color) -> Scene {
     Scene::Text(
         TextNode::styled(
@@ -639,7 +867,7 @@ fn run(text: &str, rect: Rect, px: u32, fg: Color) -> Scene {
 mod tests {
     use super::{
         CardMetrics, HeaderInk, HeaderLayout, HeaderSpec, containment, grip_rect, header_scene,
-        lay_out, slot_rect,
+        lay_out, slot_rect, strip,
     };
     use pinion_core::scene::Rect;
     use pinion_core::style::Color;
@@ -1007,6 +1235,8 @@ mod tests {
         };
         let offered = [Settings, TearOff, Maximize, Close];
         let spec = HeaderSpec {
+            tabs: &[],
+            fore: 0,
             offered: &offered,
             ready: true,
             restore: false,
@@ -1087,5 +1317,213 @@ mod tests {
         assert!(none.slots().is_empty());
         assert_eq!(none.dropped(), 0);
         assert!(none.title().is_some(), "the title takes the whole band");
+    }
+
+    /// The title box a strip is laid in, at a width that holds several tabs.
+    fn title_box(w: u32) -> Rect {
+        lay_out(band(w), 0, false, CardMetrics::default())
+            .title()
+            .expect("a header this wide has a title")
+    }
+
+    /// ★★★★★ R1900 — **every tab a strip draws is a tab the strip's own hit
+    /// test finds**, at every width and every occupant count.
+    ///
+    /// The property rather than a case, because a strip is the one place in a
+    /// card header where what is drawn and what is pressed were about to become
+    /// two arithmetics. R1816 wrote the containment property here for the same
+    /// reason; this is its reachability twin.
+    #[test]
+    fn r1900_every_drawn_tab_is_a_pressable_tab_and_stays_inside_the_title() {
+        let metrics = CardMetrics::default();
+        for w in 0..400 {
+            let Some(title) = lay_out(band(w), 0, false, metrics).title() else {
+                continue;
+            };
+            for occupants in 1..=6 {
+                for fore in 0..occupants {
+                    let laid = strip(title, occupants, fore, metrics);
+                    for &(n, r) in laid.tabs() {
+                        assert!(
+                            r.x >= title.x && r.x + r.w <= title.x + title.w,
+                            "tab {n} of {occupants} at width {w} left the title box"
+                        );
+                        assert_eq!(
+                            laid.at(r.x + r.w / 2, r.y + r.h / 2),
+                            Some(n),
+                            "tab {n} of {occupants} at width {w} is drawn where it is not pressable"
+                        );
+                    }
+                    assert_eq!(
+                        laid.before() + laid.tabs().len() + laid.after(),
+                        occupants,
+                        "every occupant is shown or counted, at width {w}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// ★★★★★ The property the floor's scroll buttons reach only after a press.
+    #[test]
+    fn r1900_the_occupant_in_front_is_always_one_of_the_tabs_shown() {
+        let metrics = CardMetrics::default();
+        for w in 0..400 {
+            let Some(title) = lay_out(band(w), 0, false, metrics).title() else {
+                continue;
+            };
+            for occupants in 1..=8 {
+                for fore in 0..occupants {
+                    let laid = strip(title, occupants, fore, metrics);
+                    if laid.tabs().is_empty() {
+                        continue;
+                    }
+                    assert!(
+                        laid.fore_rect(fore).is_some(),
+                        "the front ({fore} of {occupants}) fell off the strip at width {w}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn r1900_a_tab_gives_way_at_the_same_width_a_title_does() {
+        let metrics = CardMetrics::default();
+        let title = title_box(300);
+        let room = (title.w / metrics.min_title) as usize;
+        assert!(room >= 2, "the fixture must be wide enough to share");
+
+        let full = strip(title, room, 0, metrics);
+        assert_eq!(full.tabs().len(), room, "exactly what the box has room for");
+        assert_eq!((full.before(), full.after()), (0, 0));
+
+        let over = strip(title, room + 2, room + 1, metrics);
+        assert_eq!(
+            over.tabs().len(),
+            room,
+            "no tab is drawn narrower than a title"
+        );
+        assert_eq!(
+            over.after(),
+            0,
+            "the window slid to the end to keep the front"
+        );
+        assert_eq!(over.before(), 2);
+    }
+
+    #[test]
+    fn r1900_the_tabs_fill_the_title_box_exactly_and_leave_no_dead_column() {
+        let metrics = CardMetrics::default();
+        let title = title_box(287);
+        let laid = strip(title, 3, 1, metrics);
+        let first = laid.tabs().first().expect("three fit").1;
+        let last = laid.tabs().last().expect("three fit").1;
+        assert_eq!(first.x, title.x);
+        assert_eq!(last.x + last.w, title.x + title.w);
+        for pair in laid.tabs().windows(2) {
+            assert_eq!(
+                pair[0].1.x + pair[0].1.w,
+                pair[1].1.x,
+                "tabs are contiguous, so no press lands between two of them"
+            );
+        }
+    }
+
+    #[test]
+    fn r1900_a_box_too_narrow_for_one_tab_draws_none_and_counts_them_all() {
+        let metrics = CardMetrics::default();
+        let laid = strip(Rect::new(0, 0, metrics.min_title - 1, 20), 3, 0, metrics);
+        assert!(laid.tabs().is_empty());
+        assert_eq!(laid.after(), 3, "nothing is silently lost");
+        assert_eq!(laid.at(0, 0), None);
+        assert_eq!(laid.fore_rect(0), None);
+    }
+
+    /// ★★★★★ R1900 — **the tag is on the tab's own box**, so the rectangle a
+    /// reader is given, the one a driver aims at and the one a finger hits are
+    /// one rectangle.
+    ///
+    /// Measured on the running application with the tag on the *label* instead:
+    /// the announced boxes were 55 px wide with an 8 px gap, while
+    /// [`Strip::at`] answered over contiguous ones. Nothing was wrong with the
+    /// hit test — what was wrong is that two other channels described a
+    /// different tab.
+    #[test]
+    fn r1900_a_painted_tab_occupies_the_box_the_strip_hit_test_answers_for() {
+        let metrics = CardMetrics::default();
+        let ink = HeaderInk {
+            title: Color::rgb(0xff, 0xff, 0xff),
+            muted: Color::rgb(0x88, 0x88, 0x88),
+            accent: Color::rgb(0x00, 0xc0, 0x80),
+            kind: Color::rgb(0xc0, 0x40, 0x40),
+        };
+        let tabs = [
+            super::HeaderTab {
+                tag: "card.a.tab",
+                label: "Alpha",
+            },
+            super::HeaderTab {
+                tag: "card.b.tab",
+                label: "Beta",
+            },
+        ];
+        let spec = HeaderSpec {
+            tabs: &tabs,
+            fore: 1,
+            offered: &[],
+            ready: false,
+            restore: false,
+            title: "not drawn while a place is shared",
+            badge: "LIVE",
+            ink,
+        };
+        let head = band(400);
+        let painted = header_scene("card.a", head, &spec, metrics);
+        let announced = tags_of(&painted);
+        for want in ["card.a.tab", "card.b.tab"] {
+            assert!(
+                announced.iter().any(|t| t == want),
+                "{want} in {announced:?}"
+            );
+        }
+
+        let title = lay_out(head, 0, false, metrics)
+            .title()
+            .expect("this header has a title box");
+        let laid = strip(title, 2, 1, metrics);
+        let boxes: Vec<Rect> = laid.tabs().iter().map(|&(_, r)| r).collect();
+        let mut drawn = Vec::new();
+        for scene in &painted {
+            if let pinion_core::scene::Scene::Container(node) = scene {
+                // The whole tag, not a suffix test: a tab's tag is the
+                // caller's own and `ends_with` on a dotted name is a file
+                // extension to clippy's eye — and it would also be true of a
+                // part this header does not draw.
+                if node
+                    .tag
+                    .as_deref()
+                    .is_some_and(|t| t == "card.a.tab" || t == "card.b.tab")
+                {
+                    let (x, y) = node
+                        .layout
+                        .absolute_position
+                        .expect("a tab is placed absolutely");
+                    drawn.push((x, y, node.layout.size));
+                }
+            }
+        }
+        let want: Vec<_> = boxes
+            .iter()
+            .map(|r| (r.x, r.y, pinion_core::style::Size::px(r.w, r.h)))
+            .collect();
+        assert_eq!(drawn, want, "the painted tab boxes ARE the strip's boxes");
+    }
+
+    #[test]
+    fn r1900_a_stale_front_index_is_clamped_rather_than_panicking() {
+        let metrics = CardMetrics::default();
+        let laid = strip(title_box(300), 2, 99, metrics);
+        assert!(laid.fore_rect(1).is_some(), "the last occupant stands in");
     }
 }

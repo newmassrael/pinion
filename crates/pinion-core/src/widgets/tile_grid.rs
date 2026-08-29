@@ -101,6 +101,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::stacking::{Revealed, Stack, StackRefusal, StackUnreadable};
 use crate::style::{CursorHint, GridPlacement};
 
 /// A tile's identity, stable across moves and saves.
@@ -151,9 +152,35 @@ impl std::fmt::Display for TileId {
 /// **Zero-based**, like the dashboard tool's `gridPos`, because a model that counts
 /// from zero and a CSS grid that counts from one is one conversion — and it
 /// happens in exactly one place ([`TileGrid::placement`]) rather than at every call site.
+///
+/// # ★★★★★ Its stored form (R1900)
+///
+/// `{"id": "packet", "col": 0, "row": 0, "w": 6, "h": 2}` — and, only when the
+/// cell is shared, a `"here"` listing every occupant in strip order:
+///
+/// ```json
+/// {"id": "share", "col": 0, "row": 0, "w": 6, "h": 2, "here": ["packet", "share"]}
+/// ```
+///
+/// **`id` is the front**, exactly as it is in memory, so the wire has no second
+/// place where "who is in front" is written and no index that can point past
+/// the end. An arrangement saved before this round has no `here` and loads as
+/// a cell with one occupant — which is what it was. That compatibility is not
+/// a courtesy: R1897 made a person's layout outlive the run that saved it, so
+/// a field added here without it would have deleted layouts already on disk.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(into = "TileWire", try_from = "TileWire")]
 pub struct Tile {
-    /// Whose tile.
+    /// **Whose tile — the occupant a reader sees**, which is the front of
+    /// [`Self::members`] and not a separate name.
+    ///
+    /// ★★★★★ R1900 — before this round a tile's id and its card's id were the
+    /// same fact spelled once, so a cell could not be shared: the type had no
+    /// room for a second occupant. It now holds a [`Stack`], and this field is
+    /// kept equal to that stack's front by every mutation on
+    /// [`TileGrid`] — so a shell that reads `tile.id` to decide what to paint
+    /// keeps working unchanged, and a shell that wants the strip asks
+    /// [`Self::members`].
     pub id: TileId,
     /// Zero-based column of the left edge.
     pub col: u32,
@@ -163,19 +190,117 @@ pub struct Tile {
     pub w: u32,
     /// Height in rows. Never zero.
     pub h: u32,
+    /// Who shares this cell, in tab-strip order, and which of them is in front.
+    ///
+    /// Private, because the invariant that `id` equals its front is this
+    /// module's to keep. A tile placed the ordinary way holds exactly one.
+    stack: Stack<TileId>,
+}
+
+/// A [`Tile`] as it is stored. See the note on [`Tile`] for why `here` is
+/// absent from a cell with one occupant and why there is no front index.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TileWire {
+    id: TileId,
+    col: u32,
+    row: u32,
+    w: u32,
+    h: u32,
+    /// Everyone sharing the cell, in strip order, including the front. Omitted
+    /// when the cell is not shared — so an arrangement written before cells
+    /// could be shared reads back unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    here: Vec<TileId>,
+}
+
+impl From<Tile> for TileWire {
+    fn from(tile: Tile) -> Self {
+        let here = if tile.stack.is_shared() {
+            tile.stack.members().to_vec()
+        } else {
+            Vec::new()
+        };
+        Self {
+            id: tile.id,
+            col: tile.col,
+            row: tile.row,
+            w: tile.w,
+            h: tile.h,
+            here,
+        }
+    }
+}
+
+impl TryFrom<TileWire> for Tile {
+    type Error = StackUnreadable;
+
+    fn try_from(stored: TileWire) -> Result<Self, Self::Error> {
+        let members = if stored.here.is_empty() {
+            vec![stored.id.clone()]
+        } else {
+            stored.here
+        };
+        Ok(Self {
+            stack: Stack::rebuild(members, &stored.id)?,
+            id: stored.id,
+            col: stored.col,
+            row: stored.row,
+            w: stored.w,
+            h: stored.h,
+        })
+    }
 }
 
 impl Tile {
-    /// A tile at `(col, row)` covering `w` x `h` cells.
+    /// A tile at `(col, row)` covering `w` x `h` cells, occupied by `id` alone.
     #[must_use]
     pub fn new(id: impl Into<String>, col: u32, row: u32, w: u32, h: u32) -> Self {
+        let id = TileId::new(id);
         Self {
-            id: TileId::new(id),
+            stack: Stack::of(id.clone()),
+            id,
             col,
             row,
             w,
             h,
         }
+    }
+
+    /// (R1900) Who shares this cell, in the order a tab strip draws them.
+    ///
+    /// One long, and equal to `[self.id]`, unless something has joined it.
+    #[must_use]
+    pub fn members(&self) -> &[TileId] {
+        self.stack.members()
+    }
+
+    /// (R1900) Whether more than one occupant shares this cell — the only
+    /// condition a painter should branch on to draw a tab strip.
+    #[must_use]
+    pub fn is_shared(&self) -> bool {
+        self.stack.is_shared()
+    }
+
+    /// (R1900) Whether `id` is one of this cell's occupants.
+    ///
+    /// This is what every lookup on [`TileGrid`] asks, so a shell can go on
+    /// naming a card and get the cell that holds it whether or not the cell is
+    /// shared.
+    #[must_use]
+    pub fn holds(&self, id: &TileId) -> bool {
+        self.stack.holds(id)
+    }
+
+    /// (R1900) Where `id` sits in the strip.
+    #[must_use]
+    pub fn position(&self, id: &TileId) -> Option<usize> {
+        self.stack.position(id)
+    }
+
+    /// (R1900) Which tab is in front.
+    #[must_use]
+    pub fn fore_index(&self) -> usize {
+        self.stack.fore_index()
     }
 
     /// One past the right edge.
@@ -686,6 +811,24 @@ pub struct Displaced {
     pub to: u32,
 }
 
+/// ★ (R1900) What a [`TileGrid::share`] did: the cell two things now share,
+/// who is in it, and the cell the joining one left behind.
+///
+/// `vacated` is [`Some`] exactly when the joining occupant was alone where it
+/// came from, so its cell ceased to exist. A caller undoing the gesture needs
+/// that rectangle and cannot re-derive it — which is why it is handed back
+/// rather than left for the caller to have snapshotted first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Shared {
+    /// The cell's name now — which is the occupant that just joined, since a
+    /// join comes to the front.
+    pub place: TileId,
+    /// Everyone sharing that cell, in strip order.
+    pub members: Vec<TileId>,
+    /// The cell the joining occupant left empty, when it had one to itself.
+    pub vacated: Option<Tile>,
+}
+
 /// Why an edit was refused.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -712,6 +855,28 @@ pub enum TileError {
         /// The height asked for.
         h: u32,
     },
+    /// (R1900) The occupants of a cell refused the change — see
+    /// [`StackRefusal`] for which of the three it was.
+    ///
+    /// Wrapped rather than restated, so the sentence a person reads is the
+    /// stacking module's own and this enum does not become a second place where
+    /// "the last occupant cannot leave" is spelled.
+    Stacking(StackRefusal),
+    /// (R1900) A cell was asked to take an occupant into itself.
+    ///
+    /// Not a [`Self::Stacking`], because the stack never saw the request: the
+    /// two ids resolve to the same cell, so there is no second place for one of
+    /// them to come from.
+    SelfShare {
+        /// The id that was on both ends of the request.
+        id: TileId,
+    },
+}
+
+impl From<StackRefusal> for TileError {
+    fn from(refusal: StackRefusal) -> Self {
+        Self::Stacking(refusal)
+    }
 }
 
 impl std::fmt::Display for TileError {
@@ -726,6 +891,10 @@ impl std::fmt::Display for TileError {
                 )
             }
             Self::Empty { w, h } => write!(f, "a tile of {w}x{h} cells has no area"),
+            Self::Stacking(refusal) => f.write_str(refusal.reason().as_str()),
+            Self::SelfShare { id } => {
+                write!(f, "{id} is already the cell it was asked to share")
+            }
         }
     }
 }
@@ -815,10 +984,22 @@ impl TileGrid {
         self.tiles.iter().map(Tile::bottom).max().unwrap_or(0)
     }
 
-    /// The tile with that id.
+    /// The tile that **holds** that id — the cell it occupies, whether it is
+    /// the cell's sole occupant or one of several sharing it.
+    ///
+    /// ★ R1900 — this used to compare `t.id == id`, which was the same question
+    /// while a cell could hold one card. It is now membership, so a shell that
+    /// asks "where is this card" gets an answer that survives the card being
+    /// stacked with another. Every lookup in this module goes through one
+    /// private index-of helper for the same reason.
     #[must_use]
     pub fn tile(&self, id: &TileId) -> Option<&Tile> {
-        self.tiles.iter().find(|t| &t.id == id)
+        self.index_of(id).map(|at| &self.tiles[at])
+    }
+
+    /// Where in `tiles` the cell holding `id` is.
+    fn index_of(&self, id: &TileId) -> Option<usize> {
+        self.tiles.iter().position(|t| t.holds(id))
     }
 
     /// Whether any cell of the grid is free of tiles in the given rectangle.
@@ -872,11 +1053,10 @@ impl TileGrid {
         let (col, row) = self
             .landing(id, col, row)
             .ok_or_else(|| TileError::NoSuchTile(id.clone()))?;
-        let target = self
-            .tiles
-            .iter_mut()
-            .find(|t| &t.id == id)
+        let at = self
+            .index_of(id)
             .ok_or_else(|| TileError::NoSuchTile(id.clone()))?;
+        let target = &mut self.tiles[at];
         target.col = col;
         target.row = row;
         Ok(self.reflow_around(id))
@@ -900,7 +1080,7 @@ impl TileGrid {
     /// release that acts cannot disagree.
     #[must_use]
     pub fn landing(&self, id: &TileId, col: u32, row: u32) -> Option<(u32, u32)> {
-        let target = self.tiles.iter().find(|t| &t.id == id)?;
+        let target = self.tile(id)?;
         Some(self.landing_for(target.w, col, row))
     }
 
@@ -945,11 +1125,10 @@ impl TileGrid {
             });
         }
         let columns = self.columns;
-        let target = self
-            .tiles
-            .iter_mut()
-            .find(|t| &t.id == id)
+        let at = self
+            .index_of(id)
             .ok_or_else(|| TileError::NoSuchTile(id.clone()))?;
+        let target = &mut self.tiles[at];
         target.w = w;
         target.h = h;
         target.col = target.col.min(columns - w);
@@ -988,11 +1167,10 @@ impl TileGrid {
         row: u32,
     ) -> Result<Reflow, TileError> {
         let columns = self.columns;
-        let target = self
-            .tiles
-            .iter_mut()
-            .find(|t| &t.id == id)
+        let at = self
+            .index_of(id)
             .ok_or_else(|| TileError::NoSuchTile(id.clone()))?;
+        let target = &mut self.tiles[at];
         for edge in [handle.horizontal(), handle.vertical()]
             .into_iter()
             .flatten()
@@ -1036,11 +1214,10 @@ impl TileGrid {
             return self.move_to(id, col, row);
         }
         let columns = self.columns;
-        let target = self
-            .tiles
-            .iter_mut()
-            .find(|t| &t.id == id)
+        let at = self
+            .index_of(id)
             .ok_or_else(|| TileError::NoSuchTile(id.clone()))?;
+        let target = &mut self.tiles[at];
         let edge = nudge.direction().edge();
         // Growing a start edge lowers its line; growing an end edge raises it.
         // `TileEdge::is_start` is the only asymmetry the resize needs.
@@ -1102,11 +1279,169 @@ impl TileGrid {
     /// [`TileError::NoSuchTile`].
     pub fn remove(&mut self, id: &TileId) -> Result<Tile, TileError> {
         let at = self
-            .tiles
-            .iter()
-            .position(|t| &t.id == id)
+            .index_of(id)
             .ok_or_else(|| TileError::NoSuchTile(id.clone()))?;
         Ok(self.tiles.remove(at))
+    }
+
+    /// ★★★★★ (R1900) Put `member` into the cell that holds `into`, so the two
+    /// **share one cell** and a strip chooses between them.
+    ///
+    /// The joining occupant comes to the front, because a person who just
+    /// dropped it there is looking for it. If it was the sole occupant of its
+    /// own cell, that cell is vacated — [`Shared::vacated`] hands it back, so a
+    /// caller can undo the gesture or animate it without re-deriving a
+    /// rectangle that no longer exists.
+    ///
+    /// Nothing reflows. A vacated cell leaves a hole, exactly as
+    /// [`remove`](Self::remove) does, and closing it is [`compact`](Self::compact)'s
+    /// job — the R1607 rule that compaction is a verb rather than a
+    /// consequence.
+    ///
+    /// # Errors
+    ///
+    /// [`TileError::NoSuchTile`] when either id is on no cell;
+    /// [`TileError::SelfShare`] when they are already the same cell;
+    /// [`TileError::Stacking`] for a refusal the occupants themselves make.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pinion_core::widgets::tile_grid::{Tile, TileGrid, TileId};
+    ///
+    /// let mut board = TileGrid::new(12);
+    /// board.place(Tile::new("packet", 0, 0, 6, 2)).expect("an empty board");
+    /// board.place(Tile::new("share", 6, 0, 6, 2)).expect("beside it");
+    ///
+    /// let joined = board
+    ///     .share(&TileId::new("share"), &TileId::new("packet"))
+    ///     .expect("two cells that exist");
+    /// assert_eq!(joined.members, ["packet".into(), "share".into()]);
+    /// assert!(joined.vacated.is_some(), "its own cell is now free");
+    ///
+    /// // One cell, holding both, showing the one just dropped in.
+    /// assert_eq!(board.tiles().len(), 1);
+    /// let cell = board.tile(&TileId::new("packet")).expect("still findable");
+    /// assert!(cell.is_shared());
+    /// assert_eq!(cell.id, TileId::new("share"), "the front is what a reader sees");
+    /// ```
+    pub fn share(&mut self, member: &TileId, into: &TileId) -> Result<Shared, TileError> {
+        let from = self
+            .index_of(member)
+            .ok_or_else(|| TileError::NoSuchTile(member.clone()))?;
+        let host = self
+            .index_of(into)
+            .ok_or_else(|| TileError::NoSuchTile(into.clone()))?;
+        if from == host {
+            return Err(TileError::SelfShare { id: member.clone() });
+        }
+        // Take it out of its own cell first, so a refusal there leaves both
+        // cells untouched: a `join` that succeeded and a `part` that then
+        // refused would be the one state this pair must not reach.
+        let (vacated, host) = if self.tiles[from].stack.is_shared() {
+            self.tiles[from].stack.part(member)?;
+            self.resync(from);
+            (None, host)
+        } else {
+            let cell = self.tiles.remove(from);
+            // ★ The shift is ARITHMETIC rather than a second lookup. Asking
+            // `index_of` again would be a search that cannot fail and therefore
+            // an `expect` — a panic documented as impossible, which is the
+            // shape that survives until the day the invariant moves. Removing
+            // an earlier element shifts a later one by exactly one; `from` and
+            // `host` differ (the equal case returned above), so this is total.
+            (Some(cell), if from < host { host - 1 } else { host })
+        };
+        self.tiles[host].stack.join(member.clone())?;
+        self.resync(host);
+        Ok(Shared {
+            place: self.tiles[host].id.clone(),
+            members: self.tiles[host].members().to_vec(),
+            vacated,
+        })
+    }
+
+    /// ★ (R1900) Take `member` back out of the cell it shares and give it a
+    /// cell of its own at `(col, row)`, the same size as the one it left.
+    ///
+    /// The inverse of [`share`](Self::share), and it refuses the same way a
+    /// stack does: an occupant that is already alone in its cell has nothing to
+    /// come out of, and the refusal names the gesture that moves the cell
+    /// itself.
+    ///
+    /// # Errors
+    ///
+    /// [`TileError::NoSuchTile`]; [`TileError::Stacking`] with
+    /// [`StackRefusal::Sole`] when it is the cell's only occupant.
+    pub fn unshare(&mut self, member: &TileId, col: u32, row: u32) -> Result<Reflow, TileError> {
+        let at = self
+            .index_of(member)
+            .ok_or_else(|| TileError::NoSuchTile(member.clone()))?;
+        let (w, h) = (self.tiles[at].w, self.tiles[at].h);
+        self.tiles[at].stack.part(member)?;
+        self.resync(at);
+        self.place(Tile::new(member.as_str(), col, row, w, h))
+    }
+
+    /// (R1900) Bring `member` to the front of the cell it shares.
+    ///
+    /// What a press on a tab does, and the only way the front changes — so a
+    /// strip's highlight and the card a reader sees cannot come from two
+    /// different decisions.
+    ///
+    /// # Errors
+    ///
+    /// [`TileError::NoSuchTile`] when it is on no cell.
+    pub fn reveal(&mut self, member: &TileId) -> Result<Revealed<TileId>, TileError> {
+        let at = self
+            .index_of(member)
+            .ok_or_else(|| TileError::NoSuchTile(member.clone()))?;
+        let moved = self.tiles[at].stack.reveal(member)?;
+        self.resync(at);
+        Ok(moved)
+    }
+
+    /// (R1900) Take `member` out of whatever cell holds it, without placing it
+    /// anywhere — for a gesture that carries it off the board entirely.
+    ///
+    /// When it was the cell's sole occupant the cell goes with it, which is
+    /// [`remove`](Self::remove)'s behaviour; when it was sharing, the cell stays
+    /// for the others. The returned tile carries the rectangle it had, so a
+    /// caller can give it that size wherever it is going.
+    ///
+    /// # Errors
+    ///
+    /// [`TileError::NoSuchTile`].
+    pub fn lift(&mut self, member: &TileId) -> Result<Tile, TileError> {
+        let at = self
+            .index_of(member)
+            .ok_or_else(|| TileError::NoSuchTile(member.clone()))?;
+        if !self.tiles[at].stack.is_shared() {
+            return Ok(self.tiles.remove(at));
+        }
+        let cell = self.tiles[at].clone();
+        // `?` rather than an `expect` that argues the refusal is unreachable:
+        // it is unreachable *today*, and a returned refusal names the defect
+        // where a panic would only end the process.
+        self.tiles[at].stack.part(member)?;
+        self.resync(at);
+        Ok(Tile::new(
+            member.as_str(),
+            cell.col,
+            cell.row,
+            cell.w,
+            cell.h,
+        ))
+    }
+
+    /// Restore the invariant this module keeps: a cell's `id` **is** its
+    /// stack's front.
+    ///
+    /// One private call after every stack mutation, rather than the assignment
+    /// written out at each of them — which is how the two would come to
+    /// disagree in exactly the one path nobody re-read.
+    fn resync(&mut self, at: usize) {
+        self.tiles[at].id = self.tiles[at].stack.fore().clone();
     }
 
     /// Float every tile as far up as it will go, closing gaps.
@@ -2208,6 +2543,172 @@ mod tests {
         assert!(
             wire.contains("\"header\""),
             "the ids are the application's, so a preset re-binds to its panels"
+        );
+    }
+
+    /// ★★★★★ R1900 — the round that let a cell be shared must not delete the
+    /// layouts R1897 put on people's disks.
+    #[test]
+    fn an_arrangement_saved_before_cells_could_be_shared_still_loads() {
+        let json = r#"{"columns":12,"tiles":[
+            {"id":"packet","col":0,"row":0,"w":6,"h":2},
+            {"id":"share","col":6,"row":0,"w":6,"h":2}]}"#;
+        let grid: TileGrid = serde_json::from_str(json).expect("a layout written before R1900");
+        assert_eq!(grid.tiles().len(), 2);
+        for tile in grid.tiles() {
+            assert!(!tile.is_shared(), "a cell nobody shared holds one occupant");
+            assert_eq!(tile.members(), &[tile.id.clone()]);
+        }
+    }
+
+    #[test]
+    fn a_shared_cell_round_trips_and_its_stored_form_names_the_front() {
+        let mut grid = TileGrid::new(12);
+        grid.place(Tile::new("packet", 0, 0, 6, 2)).expect("empty");
+        grid.place(Tile::new("share", 6, 0, 6, 2)).expect("beside");
+        grid.share(&TileId::new("share"), &TileId::new("packet"))
+            .expect("two cells");
+
+        let wire = serde_json::to_string(&grid).expect("an arrangement is a value");
+        assert!(
+            wire.contains(r#""id":"share""#) && wire.contains(r#""here":["packet","share"]"#),
+            "the front is the id and the strip is listed once: {wire}"
+        );
+        let back: TileGrid = serde_json::from_str(&wire).expect("its own output");
+        assert_eq!(back, grid, "a shared cell survives a save");
+        assert!(back.tile(&TileId::new("packet")).expect("here").is_shared());
+    }
+
+    #[test]
+    fn a_stored_cell_whose_front_is_not_one_of_its_occupants_is_refused() {
+        let json = r#"{"columns":12,"tiles":[
+            {"id":"ghost","col":0,"row":0,"w":6,"h":2,"here":["packet","share"]}]}"#;
+        let refused =
+            serde_json::from_str::<TileGrid>(json).expect_err("the front must be an occupant");
+        let sentence = refused.to_string();
+        assert!(sentence.contains("ghost"), "{sentence}");
+        assert!(sentence.contains("packet, share"), "{sentence}");
+    }
+
+    #[test]
+    fn sharing_a_cell_leaves_one_cell_holding_both_and_hands_back_what_it_vacated() {
+        let mut grid = TileGrid::new(12);
+        grid.place(Tile::new("packet", 0, 0, 6, 2)).expect("empty");
+        grid.place(Tile::new("share", 6, 0, 6, 2)).expect("beside");
+
+        let joined = grid
+            .share(&TileId::new("share"), &TileId::new("packet"))
+            .expect("two cells that exist");
+        assert_eq!(
+            joined.place,
+            TileId::new("share"),
+            "the joiner comes forward"
+        );
+        assert_eq!(
+            joined.members,
+            vec![TileId::new("packet"), TileId::new("share")]
+        );
+        let vacated = joined.vacated.expect("it was alone where it came from");
+        assert_eq!((vacated.col, vacated.w), (6, 6), "the rectangle it left");
+
+        assert_eq!(grid.tiles().len(), 1);
+        let cell = grid
+            .tile(&TileId::new("packet"))
+            .expect("found by either name");
+        assert!(cell.is_shared());
+        assert_eq!(cell.col, 0, "the host cell did not move");
+    }
+
+    #[test]
+    fn a_cell_cannot_be_shared_with_itself_and_the_refusal_is_its_own_arm() {
+        let mut grid = TileGrid::new(12);
+        grid.place(Tile::new("packet", 0, 0, 6, 2)).expect("empty");
+        grid.place(Tile::new("share", 6, 0, 6, 2)).expect("beside");
+        grid.share(&TileId::new("share"), &TileId::new("packet"))
+            .expect("two cells");
+
+        let refused = grid
+            .share(&TileId::new("share"), &TileId::new("packet"))
+            .expect_err("they are one cell now");
+        assert!(
+            matches!(refused, TileError::SelfShare { .. }),
+            "not a stacking refusal: the stack was never asked — {refused}"
+        );
+        assert_eq!(grid.tiles().len(), 1, "a refusal changes nothing");
+    }
+
+    #[test]
+    fn revealing_a_tab_changes_what_the_cell_is_named_and_nothing_else() {
+        let mut grid = TileGrid::new(12);
+        grid.place(Tile::new("packet", 0, 0, 6, 2)).expect("empty");
+        grid.place(Tile::new("share", 6, 0, 6, 2)).expect("beside");
+        grid.share(&TileId::new("share"), &TileId::new("packet"))
+            .expect("two cells");
+
+        let moved = grid.reveal(&TileId::new("packet")).expect("a member");
+        assert_eq!(
+            (moved.was, moved.now),
+            (TileId::new("share"), TileId::new("packet"))
+        );
+        let cell = grid.tile(&TileId::new("share")).expect("still here");
+        assert_eq!(cell.id, TileId::new("packet"), "the name follows the front");
+        assert_eq!(cell.members().len(), 2, "and nobody left");
+    }
+
+    #[test]
+    fn taking_a_tab_back_out_gives_it_the_cell_size_it_was_sharing() {
+        let mut grid = TileGrid::new(12);
+        grid.place(Tile::new("packet", 0, 0, 6, 2)).expect("empty");
+        grid.place(Tile::new("share", 6, 0, 6, 2)).expect("beside");
+        grid.share(&TileId::new("share"), &TileId::new("packet"))
+            .expect("two cells");
+
+        grid.unshare(&TileId::new("share"), 6, 0)
+            .expect("a shared cell");
+        let out = grid.tile(&TileId::new("share")).expect("its own cell now");
+        assert_eq!((out.col, out.row, out.w, out.h), (6, 0, 6, 2));
+        assert!(!out.is_shared());
+        assert!(
+            !grid.tile(&TileId::new("packet")).expect("here").is_shared(),
+            "and the cell it left holds only the other one"
+        );
+        assert!(grid.violations().is_empty());
+    }
+
+    #[test]
+    fn the_last_occupant_of_a_cell_cannot_be_taken_out_of_it() {
+        let mut grid = TileGrid::new(12);
+        grid.place(Tile::new("packet", 0, 0, 6, 2)).expect("empty");
+        let refused = grid
+            .unshare(&TileId::new("packet"), 6, 0)
+            .expect_err("it shares with nobody");
+        assert!(matches!(
+            refused,
+            TileError::Stacking(crate::stacking::StackRefusal::Sole { .. })
+        ));
+        assert_eq!(grid.tiles().len(), 1, "and the board is unchanged");
+    }
+
+    #[test]
+    fn lifting_a_tab_off_the_board_leaves_the_cell_for_the_others() {
+        let mut grid = TileGrid::new(12);
+        grid.place(Tile::new("packet", 0, 0, 6, 2)).expect("empty");
+        grid.place(Tile::new("share", 6, 0, 6, 2)).expect("beside");
+        grid.share(&TileId::new("share"), &TileId::new("packet"))
+            .expect("two cells");
+
+        let carried = grid.lift(&TileId::new("share")).expect("a member");
+        assert_eq!((carried.w, carried.h), (6, 2), "it carries the size it had");
+        assert_eq!(grid.tiles().len(), 1, "the cell stays for the other one");
+        assert!(!grid.tile(&TileId::new("packet")).expect("here").is_shared());
+
+        let alone = grid
+            .lift(&TileId::new("packet"))
+            .expect("the sole occupant");
+        assert_eq!(alone.id, TileId::new("packet"));
+        assert!(
+            grid.tiles().is_empty(),
+            "and a sole occupant takes its cell"
         );
     }
 

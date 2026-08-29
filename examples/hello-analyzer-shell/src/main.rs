@@ -1148,6 +1148,26 @@ struct ShellState {
     /// dock" from a coincidence of what is painted under the cursor into a
     /// property with a sentence.
     crossing: Signal<Option<Crossing>>,
+    /// ★★★★★ R1900 — **the occupant a strip press picked up**, when the drag in
+    /// flight began on a tab rather than on the grip.
+    ///
+    /// A cell shared by two cards is one place with two occupants, and its
+    /// header carries both gestures: the grip drags the *place* and a tab drags
+    /// the *occupant* out of it. Those are the same [`TileDrag`] — the same
+    /// card, the same footprint, the same landing — and they differ only in
+    /// what letting go means, so the difference cannot live in the drag.
+    ///
+    /// Beside [`drag`](Self::drag) for the reason [`crossing`](Self::crossing)
+    /// is: the drag owns the CELL and this owns WHICH OCCUPANT OF IT, and a
+    /// shared cell is the one case where those are different questions.
+    ///
+    /// ⚠ Two signals that must agree is a shape this file has paid for, so
+    /// nothing reads this field directly — [`pulling_a_tab`] does, and it is
+    /// **total**: a value left behind by an earlier gesture answers `false`,
+    /// because it must name the card the drag is actually carrying *and* that
+    /// card must still be sharing a cell. A stale value therefore cannot mean
+    /// anything, rather than meaning the wrong thing.
+    tab_carry: Signal<Option<String>>,
     /// R1697 — the next stacking number a raise hands out. Monotonic, as the
     /// reference's is: comparing two panels' `z` is only meaningful while the
     /// numbers are never reused.
@@ -1527,6 +1547,7 @@ impl ShellState {
             ),
             float_grab: Signal::new(None),
             crossing: Signal::new(None),
+            tab_carry: Signal::new(None),
             float_z: RefCell::new(0),
             // ★ R1719/R1778 — this screen is the one that opens having ALREADY
             // said something; the node lab and the packet viewer open silent.
@@ -2463,6 +2484,111 @@ fn affordance_rect(header: Rect, count: u32, n: u32) -> Rect {
 // delegating wrapper R1816 left became dead code. That is the compiler saying
 // the lift finished rather than a comment claiming it did.
 
+/// ★★★★★ R1900 — the tab strip a **shared** cell puts where its title would
+/// have been, or `None` when the cell has one occupant.
+///
+/// The ONE derivation, asked by the paint and by [`Hit::at`] alike. A strip is
+/// pressed as well as drawn, and this screen's standing debt
+/// ([[debt-paint-and-gesture-read-two-facts]]) is exactly what a second copy of
+/// this arithmetic would be — the framework already refuses to let the boxes
+/// and the hit test disagree ([`card_header::Strip::at`]), and this keeps the
+/// *inputs* to it single too: the title box a strip may take depends on how
+/// many affordances the card offers and whether it earns a badge, and those are
+/// the card's facts rather than the strip's.
+fn card_strip(card: &Card, cell: &Tile, inside: Rect) -> Option<card_header::Strip> {
+    if !cell.is_shared() {
+        return None;
+    }
+    let title = card_header::lay_out(
+        header_rect(inside),
+        card.chrome().offered().len(),
+        card.state().is_ready(),
+        CARD_METRICS,
+    )
+    .title()?;
+    Some(card_header::strip(
+        title,
+        cell.members().len(),
+        cell.fore_index(),
+        CARD_METRICS,
+    ))
+}
+
+/// ★★★★★ R1900 — what letting go of the carried card **here** does.
+///
+/// The board's inner boundary, one layer in from the edge R1898 named: a
+/// release either takes a cell of the grid or joins whoever is already in one.
+/// One value, read by the preview and by the release, for the reason every
+/// other classifier on this screen is written once — a person is shown a
+/// destination and the release must go to that destination, not to a second
+/// derivation that agrees today.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Berth {
+    /// A cell of its own — the placement [`TileDrag`] already computes.
+    Own,
+    /// The place this card's header belongs to, whose occupants it joins.
+    With(String),
+}
+
+/// Which berth a release at `(px, py)` would use, for a card already on the
+/// board.
+///
+/// A header band is the target rather than a card's middle, and that is the
+/// gesture being **legible**: a title bar is where a person already believes a
+/// window's identity lives, and the strip appears exactly there — so the place
+/// a release is aimed at is the place that visibly changes. A card's middle is
+/// a region with no mark on it, which is learnt by accident or from a manual.
+fn berth_at(state: &ShellState, px: u32, py: u32, carried: &TileId) -> Berth {
+    if state.at() != "dashboard" {
+        return Berth::Own;
+    }
+    let Some(host) = Hit::at(state, px, py).header_card().map(str::to_owned) else {
+        return Berth::Own;
+    };
+    let board = state.board.get();
+    // ★★★★★ The carried card must be **on the board**, and this line was
+    // missing from the first draft — the board's own conformance sweep caught
+    // it, by carrying a PALETTE footprint over the middle of the board and
+    // finding the join mark where the specification declares the cell mark.
+    //
+    // A join takes an occupant out of one place and puts it in another, so a
+    // card that is not in a place yet has nothing to come from: joining from
+    // the palette would be *place, then share*, two acts and a second cell that
+    // exists for no frame. Answering `Own` is not a limitation swallowed — the
+    // wire's `share` verb takes it from there, in two calls that each say what
+    // they did.
+    let Some(there) = board.tile(&TileId::new(host.clone())) else {
+        return Berth::Own;
+    };
+    if board.tile(carried).is_none() || there.holds(carried) {
+        // Not on the board; or its own header, or a header of the place it is
+        // already in — for which there is no second place to come from, which
+        // is what `TileGrid::share` refuses by name. Answering `Own` keeps the
+        // *preview* honest: a mark promising a join the release would refuse is
+        // worse than no mark.
+        return Berth::Own;
+    }
+    Berth::With(host)
+}
+
+/// Whether the drag in flight is pulling `carried` **out of** a cell it shares,
+/// rather than dragging that whole cell by its grip.
+///
+/// Total by construction — see [`ShellState::tab_carry`]. A value left over
+/// from an earlier gesture names a different card, or a card that no longer
+/// shares anything, and answers `false` either way.
+fn pulling_a_tab(state: &ShellState, carried: &TileId) -> bool {
+    state
+        .tab_carry
+        .get()
+        .is_some_and(|member| member == carried.as_str())
+        && state
+            .board
+            .get()
+            .tile(carried)
+            .is_some_and(pinion_core::widgets::tile_grid::Tile::is_shared)
+}
+
 /// Where a not-ready card's remedy control sits.
 const fn remedy_rect(body: Rect) -> Rect {
     Rect::new(body.x + 10, body.y + 32, 150, 22)
@@ -2775,6 +2901,15 @@ enum Hit {
     /// cycles that column's order.
     AlarmColumn(String, usize),
     Remedy(String),
+    /// ★★★★★ R1900 — one tab of a shared cell's strip, by the occupant it
+    /// names.
+    ///
+    /// The occupant rather than an index, because an index is only meaningful
+    /// beside the strip it was read from and this value outlives that read: the
+    /// press stores it, the release acts on it, and in between the board can
+    /// have changed. The strip's own hit test ([`card_header::Strip::at`])
+    /// answers in indices and this arm is where that index stops travelling.
+    Tab(String),
     Card(String),
     FloatRedock(String),
     FloatClose(String),
@@ -3081,6 +3216,13 @@ impl Hit {
             let Some(tile) = board.tile(card.id()) else {
                 continue;
             };
+            // ★★★★★ R1900 — a shared cell is ONE card to the pointer: the one
+            // in front. Without this the other occupant answers for the same
+            // rectangle, and which of the two replied would be decided by the
+            // roster's order rather than by what a person can see.
+            if &tile.id != card.id() {
+                continue;
+            }
             let rect = cell_rect(tile);
             if !contains(rect, cx, cy) {
                 continue;
@@ -3090,6 +3232,14 @@ impl Hit {
             let id = card.id().as_str().to_string();
             let header = header_rect(inside);
             if contains(header, lx, ly) {
+                // ★ R1900 — the strip is over the title, so it is asked before
+                // the grip's catch-all and after nothing: the framework laid
+                // the tabs inside the title box, which does not overlap a slot.
+                if let Some(at) = card_strip(card, tile, inside).and_then(|s| s.at(lx, ly)) {
+                    if let Some(member) = tile.members().get(at) {
+                        return Self::Tab(member.as_str().to_string());
+                    }
+                }
                 let offered = card.chrome().offered();
                 for (n, affordance) in offered.iter().enumerate() {
                     if contains(affordance_rect(header, u(offered.len()), u(n)), lx, ly) {
@@ -3149,6 +3299,19 @@ impl Hit {
         Self::Nothing
     }
 
+    /// ★ R1900 — the card whose HEADER BAND this hit landed on, if any.
+    ///
+    /// One place, because "is the pointer on a header" is answered by
+    /// [`Self::at`] as three different arms and needed by [`berth_at`] as one
+    /// fact. Deriving it here is what keeps the two from parting company the
+    /// next time a header grows a control.
+    fn header_card(&self) -> Option<&str> {
+        match self {
+            Self::Grip(id) | Self::Affordance(id, _) | Self::Tab(id) => Some(id),
+            _ => None,
+        }
+    }
+
     fn card_id(&self) -> Option<&str> {
         match self {
             Self::Affordance(id, _)
@@ -3157,6 +3320,7 @@ impl Hit {
             | Self::Grip(id)
             | Self::FilterChip(id, _)
             | Self::AlarmColumn(id, _)
+            | Self::Tab(id)
             | Self::Stepper(id, _) => Some(id),
             _ => None,
         }
@@ -3223,6 +3387,11 @@ fn hit_word(hit: &Hit) -> String {
         Hit::Affordance(id, affordance) => format!("card.{id}.{}", affordance.wire()),
         Hit::Stepper(id, verb) => format!("card.{id}.{verb}"),
         Hit::Remedy(id) => format!("card.{id}.remedy"),
+        // ★ R1900 — the tab names the OCCUPANT it selects, not the cell it is
+        // drawn in. The cell's name is whichever occupant is in front, so a tag
+        // built from it would change under a person's finger every time they
+        // pressed a tab.
+        Hit::Tab(id) => format!("card.{id}.tab"),
         Hit::FilterChip(id, n) => format!("card.{id}.chip.{n}"),
         Hit::AlarmColumn(id, n) => format!("card.{id}.feed.head.col#{n}"),
         Hit::Card(id) => format!("card.{id}"),
@@ -3666,6 +3835,86 @@ impl ShellOracle {
     /// [`DetachPolicy`] admits or refuses, and the refusal carries the homes
     /// that WOULD have worked. A terminal-hosted build of this same binding
     /// refuses `window` here and says so.
+    /// ★★★★★ R1900 — `share <card>,<with>`: put `card` into the place `with`
+    /// occupies.
+    fn share_place(
+        state: &Rc<ShellState>,
+        args: &IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        let text = Self::text(args)?;
+        let (member, host) = text
+            .split_once(',')
+            .ok_or_else(|| InvokeError::rejected("expected <card>,<with>"))?;
+        let (member, host) = (member.trim(), host.trim());
+        let mut board = state.board.get();
+        let shared = board
+            .share(&TileId::new(member), &TileId::new(host))
+            .map_err(|why| InvokeError::rejected(why.to_string()))?;
+        state.board.set(board);
+        let names: Vec<String> = shared
+            .members
+            .iter()
+            .map(|m| label_of(m.as_str()))
+            .collect();
+        state.say(Utterance::done(format!(
+            "{} shares a place with {}",
+            label_of(member),
+            names.join(", ")
+        )));
+        Ok(IntrospectValue::Text(names.join(",")))
+    }
+
+    /// ★★★★★ R1900 — `unshare <card>,<col>,<row>`: give `card` a cell of its
+    /// own, the size of the one it was sharing.
+    fn unshare_place(
+        state: &Rc<ShellState>,
+        args: &IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        let text = Self::text(args)?;
+        let mut parts = text.split(',');
+        let (Some(member), Some(col), Some(row), None) =
+            (parts.next(), parts.next(), parts.next(), parts.next())
+        else {
+            return Err(InvokeError::rejected("expected <card>,<col>,<row>"));
+        };
+        let member = member.trim();
+        let cell = |what: &str, raw: &str| {
+            raw.trim().parse::<u32>().map_err(|_| {
+                InvokeError::rejected(format!("{what} must be a whole number, not {raw:?}"))
+            })
+        };
+        let (col, row) = (cell("col", col)?, cell("row", row)?);
+        let mut board = state.board.get();
+        board
+            .unshare(&TileId::new(member), col, row)
+            .map_err(|why| InvokeError::rejected(why.to_string()))?;
+        state.board.set(board);
+        state.say(Utterance::done(format!(
+            "{} has a place of its own at ({col},{row})",
+            label_of(member)
+        )));
+        Ok(IntrospectValue::Text(format!("{member},{col},{row}")))
+    }
+
+    /// ★★★★★ R1900 — `reveal <card>`: bring an occupant of a shared place to
+    /// the front, which is what a press on its tab does.
+    ///
+    /// Revealing what is already in front is a legal, uninteresting outcome
+    /// rather than an error — the framework models it as `was == now` — so this
+    /// answers with both halves and lets the caller see which it got.
+    fn reveal_tab(state: &Rc<ShellState>, id: &str) -> Result<IntrospectValue, InvokeError> {
+        let mut board = state.board.get();
+        let moved = board
+            .reveal(&TileId::new(id))
+            .map_err(|why| InvokeError::rejected(why.to_string()))?;
+        state.board.set(board);
+        state.say(Utterance::done(format!("{} is in front", label_of(id))));
+        Ok(IntrospectValue::Text(format!(
+            "{},{}",
+            moved.was, moved.now
+        )))
+    }
+
     fn set_detach_home(
         state: &Rc<ShellState>,
         args: &IntrospectValue,
@@ -4423,6 +4672,33 @@ const FIELDS: &[SchemaField] = const {
         SchemaField::action("on_top", "string"),
         // R1891 — `<card>,<window|canvas>`: where a detached card lives.
         SchemaField::action("detach_home", "string"),
+        // ★★★★★ R1900 — a place two cards share. Three verbs rather than one
+        // with a mode word, because each takes a different argument and a
+        // grammar that says so is a grammar a client can be refused against.
+        SchemaField::action_with(
+            "share",
+            "string",
+            ArgForm::Delimited(','),
+            const {
+                &[
+                    SchemaArg::key("card", "string", "the card that joins"),
+                    SchemaArg::key("with", "string", "a card of the place it joins"),
+                ]
+            },
+        ),
+        SchemaField::action_with(
+            "unshare",
+            "string",
+            ArgForm::Delimited(','),
+            const {
+                &[
+                    SchemaArg::key("card", "string", "the card that leaves"),
+                    SchemaArg::key("col", "int", "column of its own cell"),
+                    SchemaArg::key("row", "int", "row of its own cell"),
+                ]
+            },
+        ),
+        SchemaField::action("reveal", "string"),
         SchemaField::action("save_preset", "string"),
         // R1893 — the canon's delete, and the refusal that makes it safe.
         SchemaField::action("delete_preset", "string"),
@@ -4914,6 +5190,14 @@ impl ExternalIntrospect for ShellOracle {
             // it may take are the host's, so a build with no window server
             // refuses `window` here with a sentence naming the canvas.
             "detach_home" => Self::set_detach_home(&state, &args),
+            // ★★★★★ R1900 — the three strip verbs. §2 #2 makes the agent the
+            // primary path, so a gesture a hand can perform and a client cannot
+            // is half a capability — and these go through the SAME board calls
+            // the pointer reaches, so the two cannot come to mean different
+            // things.
+            "share" => Self::share_place(&state, &args),
+            "unshare" => Self::unshare_place(&state, &args),
+            "reveal" => Self::reveal_tab(&state, Self::text(&args)?.trim()),
             "resize" => {
                 let raw = Self::text(&args)?;
                 let (id, verb) = raw.split_once(',').ok_or_else(|| {
@@ -5250,9 +5534,51 @@ impl ShellOracle {
         if let Some(id) = hit.card_id() {
             state.selected.set(Some(id.to_string()));
         }
+        // ★★★★★ R1900 — **a press on a tab brings that occupant to the front,
+        // and the drag it opens takes it back out of the shared cell.**
+        //
+        // Both on the press, and both the floor's own behaviour: pressing a tab
+        // there activates it immediately rather than on release, and dragging
+        // one out of a tabbed dock is how a panel leaves it. The reveal happens
+        // first so the drag carries what the person is now looking at — a drag
+        // that carried the *previous* front would be the screen acting on a
+        // card the press just replaced.
+        if let Hit::Tab(member) = &hit {
+            let id = TileId::new(member.clone());
+            let mut board = state.board.get();
+            match board.reveal(&id) {
+                Ok(_) => {
+                    state.board.set(board.clone());
+                    state.tab_carry.set(Some(member.clone()));
+                    let (col, row) = cell_at_window(state, px, py);
+                    if let Ok(drag) = TileDrag::grip(&board, &id, col, row) {
+                        state.drag.set(Some(drag));
+                    }
+                    // R1898's rule, kept: a gesture that cannot cross the
+                    // board's edge SAYS so, so "it did not leave the board" is
+                    // a declaration rather than an accident of what is painted
+                    // under the cursor.
+                    state.crossing.set(Some(Crossing::open(
+                        label_of(member),
+                        CrossingPolicy::stays(
+                            "a card sharing a cell leaves the board from a cell of its own; \
+                             drag it out onto the board first",
+                        ),
+                        Side::Inside,
+                        press_point(px, py),
+                        Rest::cell(col, row),
+                    )));
+                }
+                Err(why) => state.say(Utterance::refused(&InvokeError::rejected(why.to_string()))),
+            }
+        }
         if let Hit::Grip(id) = &hit {
             let board = state.board.get();
             let (col, row) = cell_at_window(state, px, py);
+            // ★ R1900 — a grip drags the PLACE, so a gesture that began on a
+            // tab is over: clearing it here rather than only at release is what
+            // keeps `pulling_a_tab` answering about the drag in flight.
+            state.tab_carry.set(None);
             if let Ok(drag) = TileDrag::grip(&board, &TileId::new(id.clone()), col, row) {
                 state.drag.set(Some(drag));
                 // ★★★★★ R1898 — **and the edge, so carrying it off the board
@@ -5759,6 +6085,20 @@ impl ShellOracle {
         }
         let mut board = state.board.get();
         let label = label_of(drag.carried().id().as_str());
+        let carried = drag.carried().id().clone();
+        let (px, py) = state.cursor.get();
+        // ★★★★★ R1900 — the board's INNER boundary, decided before the cell is,
+        // because joining a place and taking one are different acts on the same
+        // release and only one of them is a landing.
+        match berth_at(state, px, py, &carried) {
+            Berth::With(host) => {
+                return Self::let_go_onto(state, &mut board, &carried, &host, &label);
+            }
+            Berth::Own if pulling_a_tab(state, &carried) => {
+                return Self::let_go_out_of(state, &mut board, &drag, &carried, &label);
+            }
+            Berth::Own => {}
+        }
         match drag.drop_on(&mut board) {
             Ok(Dropped::Landed { reflow, .. }) => {
                 state.board.set(board);
@@ -5794,6 +6134,73 @@ impl ShellOracle {
             // leaving the board untouched is the answer that cannot be wrong
             // about a case this build has never seen.
             Ok(_) => false,
+            Err(why) => {
+                state.say(Utterance::refused(&InvokeError::rejected(why.to_string())));
+                false
+            }
+        }
+    }
+
+    /// ★★★★★ R1900 — a card let go over another card's header joins its place.
+    ///
+    /// The whole outcome is announced, occupants and all, because the visible
+    /// change is that one card *disappeared* — it is behind a tab now, and a
+    /// sentence saying only "moved" would describe a board a person cannot see.
+    fn let_go_onto(
+        state: &Rc<ShellState>,
+        board: &mut TileGrid,
+        carried: &TileId,
+        host: &str,
+        label: &str,
+    ) -> bool {
+        match board.share(carried, &TileId::new(host.to_owned())) {
+            Ok(shared) => {
+                let names: Vec<String> = shared
+                    .members
+                    .iter()
+                    .map(|m| label_of(m.as_str()))
+                    .collect();
+                state.board.set(board.clone());
+                state.say(Utterance::done(format!(
+                    "{label} shares a place with {}",
+                    names.join(", ")
+                )));
+                false
+            }
+            Err(why) => {
+                state.say(Utterance::refused(&InvokeError::rejected(why.to_string())));
+                false
+            }
+        }
+    }
+
+    /// ★★★★★ R1900 — a tab dragged out of a shared place onto the board gets a
+    /// cell of its own there.
+    ///
+    /// The inverse of [`Self::let_go_onto`], and the reason a strip is not a
+    /// trap: R1802's standing lesson on this very campaign is that a state a
+    /// person can be *put into* and cannot get *out of* by hand is a capability
+    /// only on paper.
+    fn let_go_out_of(
+        state: &Rc<ShellState>,
+        board: &mut TileGrid,
+        drag: &TileDrag,
+        carried: &TileId,
+        label: &str,
+    ) -> bool {
+        let Some((col, row)) = drag.landing() else {
+            // Released off the board. The place keeps its occupants, which is
+            // what the crossing this gesture declared already says in words.
+            return false;
+        };
+        match board.unshare(carried, col, row) {
+            Ok(_) => {
+                state.board.set(board.clone());
+                state.say(Utterance::done(format!(
+                    "{label} has a place of its own at ({col},{row})"
+                )));
+                false
+            }
             Err(why) => {
                 state.say(Utterance::refused(&InvokeError::rejected(why.to_string())));
                 false
@@ -5870,6 +6277,18 @@ impl ShellOracle {
                 }
             }
             Hit::Remedy(id) => Self::apply_remedy(state, &id),
+            // ★★★★★ R1900 — the press already brought this tab to the front,
+            // so the latch says which one is there rather than doing it again.
+            //
+            // Not a second `reveal`: a press that reveals on the way down and
+            // again on release would be two mutations for one gesture, and the
+            // second would undo a drag that had meanwhile taken the card
+            // somewhere else. The sentence is the whole act on this path, and
+            // it is the pointer's half of what `reveal` answers on the wire.
+            Hit::Tab(id) => {
+                state.say(Utterance::done(format!("{} is in front", label_of(&id))));
+                state.selected.set(Some(id));
+            }
             // ★★★★★ R1721 — the rule applies the choice and says what happened;
             // this arm only stores it. `Utterance` either way, so a refusal
             // (there is one: a rule that keeps one on) reaches the person by the
@@ -8145,8 +8564,16 @@ fn grid_scene(rows: u32, palette: Palette, bright: bool) -> Vec<Scene> {
     )]
 }
 
-/// A card's header: grip, status light, title, LIVE badge, controls.
-fn header_scene(card: &Card, rect: Rect, palette: Palette, maximized: bool) -> Vec<Scene> {
+/// A card's header: grip, status light, title (or a shared place's tab strip),
+/// LIVE badge, controls.
+fn header_scene(
+    card: &Card,
+    rect: Rect,
+    palette: Palette,
+    maximized: bool,
+    sharing: &[TileId],
+    fore: usize,
+) -> Vec<Scene> {
     // ★ R1816 — `HDR_TAIL`, `MIN_TITLE` and `BADGE_W` used to be declared here.
     // They are `CARD_METRICS` now, and the compiler is what said so: after the
     // arithmetic moved to the framework all three became dead code, which is
@@ -8168,10 +8595,32 @@ fn header_scene(card: &Card, rect: Rect, palette: Palette, maximized: bool) -> V
     // module where a slot is — so what is drawn is what is pressed without
     // either side holding a second copy.
     let offered = card.chrome().offered();
+    // ★ R1900 — the tags and the words a strip needs, built here because both
+    // are this screen's: the tag is the occupant's own (see
+    // [`card_header::HeaderTab::tag`]) and the label is what a person calls the
+    // card, which `label_of` owns.
+    let addresses: Vec<String> = sharing
+        .iter()
+        .map(|member| format!("card.{member}.tab"))
+        .collect();
+    let words: Vec<String> = sharing
+        .iter()
+        .map(|member| label_of(member.as_str()))
+        .collect();
+    let tabs: Vec<card_header::HeaderTab<'_>> = addresses
+        .iter()
+        .zip(&words)
+        .map(|(tag, label)| card_header::HeaderTab {
+            tag: tag.as_str(),
+            label: label.as_str(),
+        })
+        .collect();
     card_header::header_scene(
         &format!("card.{id}"),
         rect,
         &card_header::HeaderSpec {
+            tabs: &tabs,
+            fore,
             offered: &offered,
             ready: card.state().is_ready(),
             restore: maximized,
@@ -10292,7 +10741,10 @@ fn keyboard_stop(node: Scene, tag: &str, at: &str) -> Scene {
 /// allow: "selected, being edited, maximised" is one question about this card at
 /// this frame, and a caller cannot now pass two of the three and forget the
 /// third.
-#[derive(Clone, Copy)]
+/// ★ R1900 — no longer `Copy`: a shared cell's strip is a list, and the
+/// compiler saying so is the type admitting that "what this card looks like"
+/// stopped being four machine words.
+#[derive(Clone)]
 struct CardFace {
     /// The board's selection rests on this card.
     selected: bool,
@@ -10300,6 +10752,17 @@ struct CardFace {
     editing: bool,
     /// This card is the one wearing the restore face of the maximise control.
     maximized: bool,
+    /// ★ R1900 — everyone sharing this card's cell, in strip order, when it is
+    /// shared with anybody. Empty otherwise, and the header then draws a title
+    /// as it always did.
+    ///
+    /// On the FACE rather than looked up inside, because a face is what a card
+    /// looks like right now and this is exactly that — and because the caller
+    /// already has the cell in hand, so looking it up again would be a second
+    /// read of a value that can change between them.
+    sharing: Vec<TileId>,
+    /// Which of [`Self::sharing`] is in front. `0` when nothing is shared.
+    fore: usize,
 }
 
 fn card_scene(
@@ -10314,6 +10777,8 @@ fn card_scene(
         selected,
         editing,
         maximized,
+        sharing,
+        fore,
     } = face;
     let inside = local(rect);
     // ★★ R1674 — the header's marks say they are IN the header band, so the
@@ -10328,10 +10793,17 @@ fn card_scene(
     // of as an undifferentiated overhang, so a reader is told which band was
     // invaded. The floor has no form for that — its whole reservation is four
     // integers with the reason discarded.
-    let mut children: Vec<Scene> = header_scene(card, header_rect(inside), palette, maximized)
-        .into_iter()
-        .map(|node| in_chrome(node, ChromeRole::Header))
-        .collect();
+    let mut children: Vec<Scene> = header_scene(
+        card,
+        header_rect(inside),
+        palette,
+        maximized,
+        &sharing,
+        fore,
+    )
+    .into_iter()
+    .map(|node| in_chrome(node, ChromeRole::Header))
+    .collect();
     children.extend(body_scene(state, card, body_rect(inside, editing), palette));
     if editing {
         children.push(in_chrome(
@@ -11294,6 +11766,58 @@ fn carry_slot_scene(ghost: &Tile, palette: Palette) -> Scene {
     )
 }
 
+/// ★★★★★ R1733/R1900 — **what a release would do, drawn.**
+///
+/// One function because there is one classifier: [`berth_at`] answers whether
+/// the release takes a cell or joins a place, and each answer has exactly one
+/// mark. Written as a `match` over the whole vocabulary rather than an `if`
+/// beside the old code, so a third berth cannot be added without a painter
+/// being chosen for it.
+fn berth_preview_scene(
+    state: &ShellState,
+    board: &TileGrid,
+    drag: &TileDrag,
+    palette: Palette,
+) -> Option<Scene> {
+    let (px, py) = state.cursor.get();
+    match berth_at(state, px, py, drag.carried().id()) {
+        Berth::With(host) => board
+            .tile(&TileId::new(host))
+            .map(|host| join_mark_scene(host, palette)),
+        // ★★★★★ R1733 — the preview is the DRAG's, so the rectangle drawn here
+        // and the cell a release commits to are the same value read twice
+        // rather than two derivations that agree today.
+        Berth::Own => drag
+            .preview(board)
+            .map(|ghost| carry_slot_scene(&ghost, palette)),
+    }
+}
+
+/// ★★★★★ R1900 — **the mark on the place a release would join.**
+///
+/// The header band rather than the whole cell, because the header is what the
+/// release is aimed at and the strip is what will change: a mark over the whole
+/// card would say "this card is going away", which is the opposite of what a
+/// join does.
+///
+/// Its accent and translucency are [`carry_slot_scene`]'s, for R1726's reason —
+/// a preview that covers what is under it hides the very thing a person is
+/// deciding about.
+fn join_mark_scene(host: &Tile, palette: Palette) -> Scene {
+    let tint = palette.accent_fg;
+    let band = header_rect(cell_rect(host));
+    Scene::Container(
+        ContainerNode::new(Vec::new())
+            .with_tag("shell.carry.join")
+            .with_style(
+                BoxStyle::filled(Color::rgba(tint.r, tint.g, tint.b, 0x24))
+                    .with_corner_radius(8)
+                    .with_border(Border::new(tint, 2)),
+            )
+            .with_layout(absolute(band)),
+    )
+}
+
 /// The palette panel: the catalogue, grouped, with a count at the foot.
 fn palette_scene(state: &ShellState, palette: Palette) -> Scene {
     let panel = palette_rect();
@@ -11802,6 +12326,13 @@ fn dashboard_scene(state: &ShellState, palette: Palette) -> Vec<Scene> {
         let Some(tile) = board.tile(card.id()) else {
             continue;
         };
+        // ★★★★★ R1900 — a shared cell draws the occupant in FRONT and nobody
+        // else. The others are not hidden by being painted over: they are not
+        // built, which is the R1695 rule about a page that is not current, and
+        // it is what makes the strip the only way to reach them.
+        if &tile.id != card.id() {
+            continue;
+        }
         canvas_children.push(card_scene(
             state,
             card,
@@ -11812,6 +12343,12 @@ fn dashboard_scene(state: &ShellState, palette: Palette) -> Vec<Scene> {
                 selected: selected.as_deref() == Some(card.id().as_str()),
                 editing,
                 maximized: maximized.as_ref().is_some_and(|m| m.id() == card.id()),
+                sharing: if tile.is_shared() {
+                    tile.members().to_vec()
+                } else {
+                    Vec::new()
+                },
+                fore: tile.fore_index(),
             },
         ));
     }
@@ -11837,14 +12374,11 @@ fn dashboard_scene(state: &ShellState, palette: Palette) -> Vec<Scene> {
     // it there is no layer between "over the cards" and "under the dragged
     // one", because the dragged card IS one of the cards.
     if let Some(drag) = &drag {
-        // ★★★★★ R1733 — the preview is the DRAG's, so the rectangle drawn here
-        // and the cell a release commits to are the same value read twice
-        // rather than two derivations that agree today. And it answers for a
-        // palette footprint the same way it answers for a card, which is what
-        // made the new gesture two lines here instead of a second painter.
-        if let Some(ghost) = drag.preview(&board) {
-            canvas_children.push(carry_slot_scene(&ghost, palette));
-        }
+        // ★★★★★ R1900 — WHICH preview is the classifier's, and the classifier
+        // is the release's. A join has no cell to mark: the card is going into
+        // a place that already exists, so marking a cell would promise a
+        // placement that is not going to happen.
+        canvas_children.extend(berth_preview_scene(state, &board, drag, palette));
         // Third consumer of the held derivation, and the one that made it a
         // function rather than only a `ContainerNode` builder — this board
         // never holds a container of its own, it hands its cards to a pane
@@ -12487,7 +13021,24 @@ fn board_nodes(state: &Rc<ShellState>) -> (String, Vec<String>, Vec<AccessNode>)
     );
     let mut children = Vec::new();
     let mut nodes = Vec::new();
+    let board = state.board.get();
     for card in &cards {
+        // ★★★★★ R1900 — a card BEHIND a tab is not announced, for the same
+        // reason it is not painted: it is not on the screen. The tab that
+        // selects it is, and it carries the card's name.
+        //
+        // This is the closing audit of this round finding its own hole: the
+        // paint stopped building the occupants a strip covers, and this tree
+        // went on publishing their rows — which is `announces a row it does not
+        // paint`, the defect this project already has a name for. The two
+        // decisions are one line each and they read the same fact, so they
+        // cannot answer differently.
+        if board
+            .tile(card.id())
+            .is_some_and(|cell| &cell.id != card.id())
+        {
+            continue;
+        }
         children.push(format!("card.{}", card.id().as_str()));
         nodes.extend(card_nodes(state, card));
     }
@@ -12690,6 +13241,35 @@ fn card_nodes(state: &Rc<ShellState>, card: &Card) -> Vec<AccessNode> {
         AccessNode::new(format!("card.{id}.grip"), AriaRole::Button)
             .with_name(format!("Move {}", card.title())),
     ];
+    // ★★★★★ R1900 — a shared place's strip, as a reader meets it: a `TabList`
+    // whose tabs say which one is selected.
+    //
+    // On the card in FRONT, because that is the one whose header carries the
+    // strip — the same rule the paint and the hit test follow, so a reader is
+    // walked through the header that is actually there. A card behind a tab
+    // keeps its own region, as a detached one does: it exists, and where it is
+    // is what changed.
+    if let Some(tile) = state.board.get().tile(card.id()) {
+        if tile.is_shared() && &tile.id == card.id() {
+            let list = format!("card.{id}.tabs");
+            region = region.with_child(list.clone());
+            let mut strip = AccessNode::new(list, AriaRole::TabList).with_name(format!(
+                "{} shares a place with {} other card(s)",
+                card.title(),
+                tile.members().len() - 1
+            ));
+            for member in tile.members() {
+                let tag = format!("card.{member}.tab");
+                strip = strip.with_child(tag.clone());
+                nodes.push(
+                    AccessNode::new(tag, AriaRole::Tab)
+                        .with_name(label_of(member.as_str()))
+                        .with_selected(member == &tile.id),
+                );
+            }
+            nodes.push(strip);
+        }
+    }
     for control in spec::CARD_CHROME {
         let tag = format!("card.{id}.{control}");
         region = region.with_child(tag.clone());

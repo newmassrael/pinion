@@ -81,6 +81,7 @@ pub mod selection;
 pub mod shrink;
 pub mod size_floor;
 pub mod size_grant;
+pub mod stacking;
 pub mod storage;
 pub mod style;
 pub mod syntax;
