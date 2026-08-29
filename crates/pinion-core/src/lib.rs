@@ -101,6 +101,7 @@ pub mod widgets;
 pub mod window_focus_state;
 pub mod window_level;
 pub mod wire_address;
+pub mod workspace;
 
 // R51.127 §5.41 — substrate-level test fixtures shared across
 // `pinion-runtime` + `pinion-tui` test suites. Gated behind the

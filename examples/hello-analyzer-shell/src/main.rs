@@ -141,6 +141,7 @@ use pinion_core::widgets::view_order::{
     compute_order, cycle_sort, sort_dir_from_str, sort_dir_str,
 };
 use pinion_core::window_level::WindowLevel;
+use pinion_core::workspace::Workspaces;
 use pinion_core::{Frame, Scene, WidgetCore};
 // ★★★★★ R1724 — the axis that makes this file an application rather than a
 // screen: a destination's page can be another binding, mounted whole.
@@ -908,7 +909,14 @@ struct ShellState {
     /// `Some` exactly while a card is maximised. The token IS the way home.
     maximized: Signal<Option<Maximized>>,
     floats: Signal<Vec<Float>>,
-    presets: RefCell<BTreeMap<String, Preset>>,
+    /// ★ R1893 — the framework's named-arrangement set, not a bare map.
+    ///
+    /// What the map could not carry: WHERE an arrangement came from. This
+    /// application ships one and a person saves others, and those are the same
+    /// kind of thing to a menu and different kinds of thing to a delete — so a
+    /// delete built on the map would have taken both, which is why there was no
+    /// delete. See [`pinion_core::workspace`].
+    presets: RefCell<Workspaces<Preset>>,
     preset: Signal<String>,
     preset_open: Signal<bool>,
     /// Layout-edit mode: the size steppers appear and the grid brightens.
@@ -1308,9 +1316,12 @@ impl ShellState {
             );
         }
         let roster = spec::destinations();
-        let mut presets = BTreeMap::new();
-        presets.insert(
-            spec::PRESET.to_string(),
+        // ★ R1893 — the opening arrangement is one this application SHIPS, so
+        // it goes in as a built-in and a person cannot delete it. Before this
+        // round the set was a bare map and every row was the same kind of
+        // thing, which is why `delete` could not be built at all.
+        let presets = Workspaces::new().with_built_in(
+            spec::PRESET,
             Preset {
                 board: board.clone(),
                 cards: cards.clone(),
@@ -1669,12 +1680,7 @@ impl ShellState {
     }
 
     fn preset_names(&self) -> String {
-        self.presets
-            .borrow()
-            .keys()
-            .cloned()
-            .collect::<Vec<_>>()
-            .join(",")
+        self.presets.borrow().names().join(",")
     }
 
     /// Say something to the person in front of the screen.
@@ -3811,13 +3817,15 @@ impl ShellOracle {
     }
 
     fn apply_preset(state: &Rc<ShellState>, name: &str) -> Result<(), InterveneError> {
-        let stored = state.presets.borrow().get(name).cloned();
-        let preset = stored.ok_or_else(|| {
-            InterveneError::out_of_range(format!(
-                "{name:?} is not a saved layout; they are {}",
-                state.preset_names()
-            ))
-        })?;
+        // ★ R1893 — the refusal is the framework's, so the sentence a person
+        // reads here and the one an agent reads from a dock editor are the same
+        // rule rather than two wordings of it.
+        let preset = state
+            .presets
+            .borrow()
+            .apply(name)
+            .cloned()
+            .map_err(|refusal| InterveneError::out_of_range(refusal.reason().to_string()))?;
         // A preset restores BOTH facts. Restoring only the arrangement would
         // put the previous board's cards into the new layout's holes.
         state.maximized.set(None);
@@ -3831,18 +3839,54 @@ impl ShellOracle {
     }
 
     fn save_preset(state: &Rc<ShellState>, name: &str) -> Result<IntrospectValue, InvokeError> {
-        if name.is_empty() {
-            return Err(InvokeError::rejected("a layout preset needs a name"));
+        // ★ R1893 — both refusals are the framework's now: an unnamed
+        // arrangement, and one that would overwrite what this application
+        // ships. The second did not exist before, and its absence was not a
+        // missing check — it was a set that could not tell the two apart.
+        state
+            .presets
+            .borrow_mut()
+            .save(
+                name,
+                Preset {
+                    board: state.board.get(),
+                    cards: state.cards.get(),
+                },
+            )
+            .map_err(|refusal| InvokeError::rejected(refusal.reason().to_string()))?;
+        state.preset.set(name.trim().to_string());
+        state.say(Utterance::done(format!(
+            "layout saved \u{00B7} {}",
+            name.trim()
+        )));
+        Ok(IntrospectValue::Text(state.preset_names()))
+    }
+
+    /// ★★★★★ R1893 — **delete a saved arrangement**, which the behaviour canon
+    /// has (`deleteCustomPreset`) and this shell did not.
+    ///
+    /// It could not have it before: the set was a bare map in which the
+    /// arrangement this application opens on looked exactly like one a person
+    /// saved, so a delete would have taken the opening layout with no way back.
+    /// The refusal that makes it safe is the framework's
+    /// ([`pinion_core::workspace`]), and it names what to do instead.
+    ///
+    /// Deleting the arrangement that is CURRENT leaves the board alone — the
+    /// cards on screen are not the preset, they are what the preset produced,
+    /// and clearing the board because a menu row went away would be a delete
+    /// doing something no reader asked for. The name shown falls back to the
+    /// application's own, because a screen labelled with an arrangement that no
+    /// longer exists is a screen lying about where its board came from.
+    fn delete_preset(state: &Rc<ShellState>, name: &str) -> Result<IntrospectValue, InvokeError> {
+        state
+            .presets
+            .borrow_mut()
+            .delete(name)
+            .map_err(|refusal| InvokeError::rejected(refusal.reason().to_string()))?;
+        if state.preset.get() == name {
+            state.preset.set(spec::PRESET.to_string());
         }
-        state.presets.borrow_mut().insert(
-            name.to_string(),
-            Preset {
-                board: state.board.get(),
-                cards: state.cards.get(),
-            },
-        );
-        state.preset.set(name.to_string());
-        state.say(Utterance::done(format!("layout saved \u{00B7} {name}")));
+        state.say(Utterance::done(format!("layout deleted \u{00B7} {name}")));
         Ok(IntrospectValue::Text(state.preset_names()))
     }
 }
@@ -4005,6 +4049,9 @@ const FIELDS: &[SchemaField] = const {
         // named layouts
         SchemaField::new("preset", "string"),
         SchemaField::new("presets", "string"),
+        // R1893 — the same set as rows: name, provenance, and whether the row
+        // offers a delete.
+        SchemaField::new("arrangements", "json"),
         SchemaField::new("preset_open", "bool"),
         // the transport
         SchemaField::new("transport", "string"),
@@ -4133,6 +4180,8 @@ const FIELDS: &[SchemaField] = const {
         // R1891 — `<card>,<window|canvas>`: where a detached card lives.
         SchemaField::action("detach_home", "string"),
         SchemaField::action("save_preset", "string"),
+        // R1893 — the canon's delete, and the refusal that makes it safe.
+        SchemaField::action("delete_preset", "string"),
         SchemaField::action("seek", "string"),
         SchemaField::action_with(
             "point",
@@ -4187,6 +4236,57 @@ fn floats_json(state: &ShellState) -> serde_json::Value {
                     // from there was indistinguishable from one this slot had
                     // not caught up with.
                     "home": f.home.as_str(),
+                })
+            })
+            .collect(),
+    )
+}
+
+/// ★ R1893 — everything a caller can ask about the SET of named arrangements.
+///
+/// Split out of `query` because that `match` reached the length this workspace
+/// lints for, and the split is by subject: a reader looking for "what does this
+/// application know about saved layouts" finds four slots together rather than
+/// four arms scattered through sixty.
+///
+/// Returns `UnknownPath` for anything else, so the caller's `match` and this
+/// function cannot disagree about which paths belong here — adding a path in
+/// one place and not the other fails closed rather than silently answering
+/// nothing.
+fn query_arrangements(state: &ShellState, path: &str) -> Result<IntrospectValue, ReadRefusal> {
+    match path {
+        "preset" => Ok(IntrospectValue::Text(state.preset.get())),
+        "presets" => Ok(IntrospectValue::Text(state.preset_names())),
+        // ★★★★★ The same set, WITH each row's provenance and whether it offers
+        // a delete. `presets` answers the names a menu shows; this answers what
+        // each row can DO, so a client draws the delete control on the rows
+        // that have one instead of offering it everywhere and finding out by
+        // being refused (§2 #2).
+        "arrangements" => Ok(IntrospectValue::Json(arrangements_json(state))),
+        "preset_open" => Ok(IntrospectValue::Bool(state.preset_open.get())),
+        _ => Err(ReadRefusal::UnknownPath),
+    }
+}
+
+/// ★★★★★ R1893 §2 #2 — **the arrangements as ROWS**, each saying where it came
+/// from and whether it can be removed.
+///
+/// `deletable` is read from the framework's own rule
+/// ([`pinion_core::workspace::Provenance::deletable`]) rather than compared
+/// against the word here, so what this publishes and what `delete_preset`
+/// enforces cannot come apart. Publishing the word alone would leave a client
+/// to re-derive the rule, which is how two readers come to disagree.
+fn arrangements_json(state: &ShellState) -> serde_json::Value {
+    serde_json::Value::Array(
+        state
+            .presets
+            .borrow()
+            .iter()
+            .map(|(name, arrangement)| {
+                serde_json::json!({
+                    "name": name,
+                    "provenance": arrangement.provenance.as_str(),
+                    "deletable": arrangement.provenance.deletable(),
                 })
             })
             .collect(),
@@ -4337,9 +4437,14 @@ impl ExternalIntrospect for ShellOracle {
             "float_grab" => text(state.float_grab.get().map_or_else(String::new, |g| {
                 format!("{},{}", g.id, if g.edge { "resize" } else { "move" })
             })),
-            "preset" => text(state.preset.get()),
-            "presets" => text(state.preset_names()),
-            "preset_open" => Ok(IntrospectValue::Bool(state.preset_open.get())),
+            // ★ R1893 — the arrangement questions are answered one function
+            // over. Not a tidy-up: this `match` had reached the length limit
+            // this workspace lints for, and the honest split is by SUBJECT
+            // rather than by whichever arm happened to be last. See
+            // `query_arrangements`.
+            "preset" | "presets" | "arrangements" | "preset_open" => {
+                query_arrangements(state, path)
+            }
             "transport" => text(transport_word(clock.status(), state.capturing.get())),
             #[allow(
                 clippy::cast_possible_truncation,
@@ -4479,11 +4584,10 @@ impl ExternalIntrospect for ShellOracle {
             "preset" => ShellOracle::apply_preset(&state, &word(&value)?),
             "sources" | "cards" | "card_count" | "placed_count" | "layout" | "maximized"
             | "restore_to" | "floating" | "floats" | "detached" | "detach_policy"
-            | "float_grab" | "presets" | "transport" | "playhead" | "affordances" | "states"
-            | "remedies" | "steppers" | "toast" | "cursor" | "selected" | "hit" | "keymap"
-            | "rail" | "tabs" | "catalogue" | "config_open" | "drag" | "carrying" => {
-                Err(InterveneError::ReadOnly)
-            }
+            | "float_grab" | "presets" | "arrangements" | "transport" | "playhead"
+            | "affordances" | "states" | "remedies" | "steppers" | "toast" | "cursor"
+            | "selected" | "hit" | "keymap" | "rail" | "tabs" | "catalogue" | "config_open"
+            | "drag" | "carrying" => Err(InterveneError::ReadOnly),
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -4540,6 +4644,9 @@ impl ExternalIntrospect for ShellOracle {
                 Self::step(&state, id.trim(), verb.trim())
             }
             "save_preset" => Self::save_preset(&state, Self::text(&args)?.trim()),
+            // ★ R1893 — the canon's `deleteCustomPreset`. Refuses a built-in
+            // with a sentence naming what to do instead.
+            "delete_preset" => Self::delete_preset(&state, Self::text(&args)?.trim()),
             "seek" => {
                 let raw = Self::text(&args)?;
                 let per_mille: i32 = raw
@@ -5318,7 +5425,7 @@ impl ShellOracle {
 
     /// The preset menu's rows: every saved layout, then "Save current layout".
     fn press_preset_item(state: &Rc<ShellState>, n: usize) {
-        let names: Vec<String> = state.presets.borrow().keys().cloned().collect();
+        let names: Vec<String> = state.presets.borrow().names();
         if let Some(name) = names.get(n) {
             ShellOracle::apply_preset(state, name).ok();
             return;
@@ -6663,7 +6770,7 @@ fn sub_bar_scene(state: &ShellState, palette: Palette) -> Scene {
 /// The saved-layout menu: a **top-level popup**, painted in window space — the
 /// same space [`preset_item_rect`] gives the hit test.
 fn preset_menu_scene(state: &ShellState, palette: Palette) -> Scene {
-    let names: Vec<String> = state.presets.borrow().keys().cloned().collect();
+    let names: Vec<String> = state.presets.borrow().names();
     let rows = u(names.len()) + 1;
     let first = preset_item_rect(0);
     let panel = Rect::new(first.x - 8, first.y - 30, first.w + 16, rows * 34 + 38);

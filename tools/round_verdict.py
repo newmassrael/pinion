@@ -81,11 +81,19 @@ class Check:
         self.said = said
 
 
-def run(*args: str, cwd: Path | None = None) -> tuple[int, str]:
+def run(*args: str, cwd: Path | None = None, raw: bool = False) -> tuple[int, str]:
     """Run a command, answering `(status, output)` rather than raising.
 
     A tool that raises on a failed subprocess cannot report *why* it could not
     look, and "could not look" is a verdict this tool has to be able to give.
+
+    ★ `raw` keeps the output EXACTLY as the command wrote it. The default strips
+    surrounding whitespace, which is right for a sentence and wrong for a
+    format whose first column is data: measured at R1893, stripping
+    `git status --porcelain` ate the leading space of a ` M path` line, so the
+    first offending path was reported as `rates/…` instead of `crates/…`. A
+    verdict tool that misnames the thing it is refusing over is one nobody
+    should believe, so the convenience is opt-out rather than universal.
     """
     try:
         done = subprocess.run(
@@ -97,7 +105,8 @@ def run(*args: str, cwd: Path | None = None) -> tuple[int, str]:
         )
     except (OSError, subprocess.TimeoutExpired) as why:
         return 127, f"{args[0]} could not run: {why}"
-    return done.returncode, (done.stdout + done.stderr).strip()
+    out = done.stdout + done.stderr
+    return done.returncode, out if raw else out.strip()
 
 
 def newest_round() -> int | None:
@@ -218,7 +227,8 @@ def check_debt_snapshot() -> Check:
 
 
 def check_tree_clean() -> Check:
-    status, out = run("git", "status", "--porcelain")
+    # `raw`, because porcelain's first two columns ARE data — see `run`.
+    status, out = run("git", "status", "--porcelain", raw=True)
     if status != 0:
         return Check("tree", False, f"git status could not run: {out[:200]}")
     dirty = [line for line in out.splitlines() if line.strip()]
