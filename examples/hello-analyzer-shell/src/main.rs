@@ -121,7 +121,7 @@ use pinion_core::shrink::ShrinkPolicy;
 use pinion_core::storage::Storage;
 use pinion_core::style::{
     Border, BoxStyle, Chrome, ChromeEdge, ChromeRole, Color, LayoutStyle, PathStyle, Size, Stroke,
-    TextOverflow, TextStyle,
+    TextAlign, TextOverflow, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme, ThemeMode, ThemeProvider, use_theme};
 use pinion_core::utterance::{Announced, Tone, Utterance};
@@ -9023,19 +9023,52 @@ fn clipped(text: &str, rect: Rect, px: u32, fg: Color, overflow: TextOverflow) -
     )
 }
 
-// ★★★ R1695 — there is no `centred` helper here, and the reason is a
-// measurement worth keeping.
-//
-// The first repair for the left-flush button labels set
-// `TextStyle::with_align(TextAlign::Center)`. Measured by ink span on the
-// rendered page it did **nothing**: the segment's `Dark` inked 634..659 inside a
-// chip starting at 635, and `Import…` inked 683..729 in a box from 682 — the
-// glyphs at the node's left edge in every case. The framework's own button does
-// not use that property either; `pinion_widget_paint::button::view_button`
-// centres with `JustifyContent::Center` on a flex row, which is the idiom this
-// screen now uses. Filed as `debt-a-declared-text-alignment-does-nothing-on-an-
-// absolutely-placed-run` rather than worked around, because the property is
-// published, accepted and reported back on `scene/snapshot`.
+/// A label centred **inside the box it was handed**, by declaring the
+/// alignment rather than by arithmetic on the caller's side.
+///
+/// ★★★★★ R1904 — this helper replaces a comment that said it could not exist,
+/// and the correction is worth keeping because the comment outlived the reason
+/// for it by 209 rounds.
+///
+/// R1695 measured three chip labels inking at their node's left edge with
+/// `TextAlign::Center` asked for, concluded the property was inert on an
+/// absolutely placed run, and wrote that down here beside a link to
+/// `debt-a-declared-text-alignment-does-nothing-on-an-absolutely-placed-run`.
+/// R1780 closed that debt by measuring the discriminator: alignment is applied
+/// after `break_all_lines(max_width)`, and `max_width` is the run's OWN
+/// rectangle — so a label handed a box its own size is centred in a box its own
+/// size, which is where it already was. All three of R1695's cases were that.
+/// Two live tests perform the corrected rule:
+/// `pinion_text::cache::r1780_an_alignment_moves_a_run_within_the_width_it_was_given`
+/// and `pinion_rpc::text_blocks::r1780_the_wire_shows_whether_an_alignment_had_room`.
+///
+/// ⇒ **the property works wherever the box is wider than the text**, and a
+/// person reading the running window found the place where that matters: a
+/// byte in an 18-wide band inked 10 wide and flush left, 3 against 9. The
+/// comment that stood here is what a reader of that code met first.
+///
+/// ⚠ **A caller with no room gets nothing**, silently, exactly as R1695
+/// measured — which is why the gate for this is
+/// `r1904_a_byte_is_centred_in_its_cell_by_ink` and it asserts the room before
+/// it asserts the centring. `pinion_widget_paint::button::view_button` still
+/// centres with `JustifyContent::Center` on a flex row, and that remains the
+/// idiom where a flex row is what the caller has; this is the idiom for a run
+/// placed at an exact rectangle, which is what this screen's dense panes are
+/// built from.
+fn centred(text: &str, rect: Rect, px: u32, fg: Color) -> Scene {
+    Scene::Text(
+        TextNode::styled(
+            text,
+            rect,
+            TextStyle::new()
+                .with_size_px(px)
+                .with_fg(fg)
+                .with_overflow(TextOverflow::Ellipsis)
+                .with_align(TextAlign::Center),
+        )
+        .with_layout(absolute(rect)),
+    )
+}
 
 /// ★★★★★ R1694 — [`clipped`], **addressable**.
 ///
@@ -9359,7 +9392,14 @@ fn byte_pane(id: &str, pane: Rect, card: Rect, palette: Palette) -> Vec<Scene> {
             }
             let lit = index >= start && index < end;
             cells.push(Scene::Container(
-                ContainerNode::new(vec![label(
+                // ★★★★★ R1904 — CENTRED in the band, which is what a person
+                // reading the running window said it was not. The band is
+                // centred in the 22-wide cell and the cell is centred on its
+                // column, and neither of those puts the GLYPHS anywhere: a run
+                // with no declared alignment inks at its box's left edge, so a
+                // 10-wide byte sat 3 from one side and 9 from the other inside
+                // a chain of boxes that were each exactly centred.
+                ContainerNode::new(vec![centred(
                     &format!("{byte:02x}"),
                     decode_band(2, 18),
                     FONT_TINY,

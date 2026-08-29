@@ -674,6 +674,94 @@ pub struct Escape {
 /// and no single answer is right for both.
 pub type InkOf<'a> = &'a mut dyn FnMut(&TextNode) -> (u32, u32);
 
+/// Where a text run's glyphs sit **inside the rectangle the run was given**,
+/// and how large they are.
+///
+/// ★★★★★ R1904 — [`InkOf`] answers *how big*, and until this round nothing
+/// answered *where*. Every derivation that needed a position took the ink to
+/// begin at the run's own `rect.x`, which is true for a run laid out flush and
+/// false for one that declared an alignment with room to move — the case
+/// `r1780_an_alignment_moves_a_run_within_the_width_it_was_given` measures. A
+/// person reading the running window reported exactly that gap: a byte not
+/// centred in its box, on a screen whose every rectangle said it was.
+///
+/// ⚠ **This is not [`escapes`]'s question, and that is why `escapes` keeps
+/// [`InkOf`].** An aligned run cannot leave a box a flush one would have stayed
+/// inside — but *not* for the reason it first reads: "the alignment width is
+/// the box" is only half of it, since a run WIDER than its box has negative
+/// room and centring half of a negative number would push the glyphs out the
+/// near side too. The half that actually settles it is that an overflowing line
+/// is not aligned at all, and that is a property of the shaper rather than an
+/// argument, so it is performed rather than asserted here:
+/// `pinion_text::cache::r1904_an_overflowing_run_is_not_moved_by_its_alignment`.
+/// Overflow is the shaper's business and the overflow policy's; *position
+/// within the box* is this one's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InkSpan {
+    /// How far right of the run's own rectangle the first glyph inks — what an
+    /// alignment moved it by, and `0` for a run laid out flush.
+    pub dx: u32,
+    /// Shaped width of the glyphs, in the caller's unit.
+    pub w: u32,
+    /// Shaped height of the glyphs, in the caller's unit.
+    pub h: u32,
+}
+
+/// Where a text run's glyphs sit inside the rectangle it was given, in the
+/// caller's unit.
+///
+/// Handed in for [`InkOf`]'s reason: the GPU path measures shaped pixels and
+/// the §2 #6 terminal measures cells, and no single answer is right for both.
+pub type InkSpanOf<'a> = &'a mut dyn FnMut(&TextNode) -> InkSpan;
+
+/// Where what a box holds sits on one axis, relative to that box's centre.
+///
+/// ★★★★★ R1904 — **two arms, because a box smaller than its content has no
+/// centre to be off.** The first draft answered a bare `i64`, and the margins
+/// are computed with `saturating_sub`, so an overflowing box reported both
+/// margins as `0` and therefore `0` — *perfectly centred*, the best answer
+/// there is, for the one case where the question does not apply.
+///
+/// That is an escape hatch disabling its own gate: whatever a caller does with
+/// the number, the unanswerable case reads as the ideal. The round's own screen
+/// gate happened to close it by asserting room first — but that was a caller
+/// remembering, not the type refusing, and the next caller does not remember.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Centring {
+    /// The content is inside the box, this far from its centre: the near
+    /// margin less the far one. `0` is centred; negative means the content
+    /// sits **left of** / **above** centre — the sign a reader uses saying "it
+    /// is too far left".
+    Within(i64),
+    /// The content is larger than the box on this axis, so it has no centre to
+    /// be measured against. Whether that is a defect is [`escapes`]'s question.
+    Overflows,
+}
+
+/// How far what a box holds sits from that box's centre, per axis.
+///
+/// ★ Each axis is derived from the two margins rather than from one of them,
+/// because "centred" is a claim about the PAIR: a left margin alone says
+/// nothing without the right one to compare against, and a check written on one
+/// margin passes for any box wide enough.
+///
+/// ⚠⚠ **The two axes are not the same question, and only [`x`](Self::x) is
+/// answerable from ink.** R1874's rule — *width is measured by ink, height by
+/// the line box* — is why: a string with no descender inks two or three pixels
+/// short of the bottom of the line it sits on, so [`y`](Self::y) reports it
+/// high of centre when it is exactly where the shaper puts it. Vertical
+/// centring is [`line_rect_in`]'s to state, not this one's to check; `y` is
+/// published because a caller comparing two runs on the same line has a use for
+/// it, not as a floor anything should be held to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OffCentre {
+    /// Horizontal, measured by ink.
+    pub x: Centring,
+    /// Vertical. ⚠ See the type's own warning: this is ink against a line box,
+    /// and a run with no descender is not off centre for reporting a value.
+    pub y: Centring,
+}
+
 /// A node's **content** rectangle: its box, less any border it draws inside it.
 ///
 /// The distinction CSS calls border box versus content box. A child is judged
@@ -1168,16 +1256,58 @@ pub struct Slack {
     pub tag: Option<String>,
     /// Window-absolute box.
     pub box_rect: Rect,
+    /// Window-absolute content rectangle — [`box_rect`](Self::box_rect) less
+    /// the border the box draws inside it, which is the region what it holds
+    /// was actually given.
+    pub inner: Rect,
     /// What the box holds, as text, when any of it is a run — the words a
     /// reader is looking at when they say the box is the wrong size.
     pub content: String,
     /// Window-absolute union of everything the box holds: the shaped ink for a
-    /// text run, the painted rectangle for anything else.
+    /// text run, **where the shaper put it**, and the painted rectangle for
+    /// anything else.
+    ///
+    /// ★ R1904 — *where* is what this gained. Before that round the position
+    /// came from the run's own rectangle, so a run an alignment had moved was
+    /// reported at the place it would have inked without one.
     pub ink: Rect,
     /// Width the box holds beyond its content rectangle's ink.
     pub spare_w: u32,
     /// Height the box holds beyond its content rectangle's ink.
     pub spare_h: u32,
+}
+
+impl Slack {
+    /// R1904 — how far what this box holds sits from the box's centre.
+    ///
+    /// Measured against [`inner`](Self::inner), for [`spare_w`](Self::spare_w)'s
+    /// reason: a border is not room the content failed to use, and a rule that
+    /// counted it would call a bordered box off-centre for drawing its own
+    /// outline.
+    ///
+    /// ⚠ **Answered from the INK, not from the rectangle the run was promised**,
+    /// which is the whole reason this exists. The two agree exactly when
+    /// nothing moved the run inside its box — and the case a person reported is
+    /// the case where they do not.
+    #[must_use]
+    pub fn off_centre(&self) -> OffCentre {
+        // Before less after: the content is off centre towards the side whose
+        // margin is the larger, and the sign says which. The overflow arm comes
+        // FIRST, because the margins below saturate and would answer `0 - 0`
+        // for it — see `Centring`.
+        let axis = |lo: u32, len: u32, ink_lo: u32, ink_len: u32| -> Centring {
+            if ink_lo < lo || ink_lo.saturating_add(ink_len) > lo.saturating_add(len) {
+                return Centring::Overflows;
+            }
+            let before = i64::from(ink_lo - lo);
+            let after = i64::from((lo + len) - (ink_lo + ink_len));
+            Centring::Within(before - after)
+        };
+        OffCentre {
+            x: axis(self.inner.x, self.inner.w, self.ink.x, self.ink.w),
+            y: axis(self.inner.y, self.inner.h, self.ink.y, self.ink.h),
+        }
+    }
 }
 
 /// Every box that holds something, with how much of it that something leaves
@@ -1195,8 +1325,12 @@ pub struct Slack {
 ///
 /// A run wider than its box reports `0` spare rather than an underflow; that
 /// direction is [`escapes`]'s question and is already answered there.
+///
+/// ★★★★★ R1904 — the metric is an [`InkSpanOf`] rather than an [`InkOf`],
+/// because [`Slack::off_centre`] asks *where* and the size alone cannot answer
+/// it. See [`InkSpan`] for why `escapes` is not changed with it.
 #[must_use]
-pub fn slack(scene: &Scene, ink_of: InkOf<'_>) -> Vec<Slack> {
+pub fn slack(scene: &Scene, ink_of: InkSpanOf<'_>) -> Vec<Slack> {
     let mut found = Vec::new();
     scene.for_each_node(&mut |visit| {
         let Scene::Container(container) = visit.node else {
@@ -1216,7 +1350,7 @@ pub fn slack(scene: &Scene, ink_of: InkOf<'_>) -> Vec<Slack> {
             // A child's rectangle is already in this box's frame; its INK is
             // the shaped extent for a run and the rectangle itself otherwise —
             // the same distinction `escapes` draws, for the same reason.
-            let (w, h) = match child {
+            let InkSpan { dx, w, h } = match child {
                 Scene::Text(text) => {
                     if !said.is_empty() {
                         said.push(' ');
@@ -1224,13 +1358,35 @@ pub fn slack(scene: &Scene, ink_of: InkOf<'_>) -> Vec<Slack> {
                     said.push_str(&text.content);
                     ink_of(text)
                 }
-                other => (other.rect().w, other.rect().h),
+                other => InkSpan {
+                    dx: 0,
+                    w: other.rect().w,
+                    h: other.rect().h,
+                },
             };
             if w == 0 || h == 0 {
                 continue;
             }
-            let at = child.rect();
-            let here = Rect::new(box_rect.x + at.x, box_rect.y + at.y, w, h);
+            // ★★★★★ R1904 — the child's own rectangle is ALREADY window
+            // absolute, folded into its scroll frame exactly as `box_rect` is,
+            // so it takes the same `translate` and NOT the box's origin on top
+            // of it. This line read `box_rect.x + at.x` until this round, which
+            // is the double count `escapes` records having made in its own
+            // first draft and repaired. What it costs is performed rather than
+            // recounted here: `r1904_slack_reports_the_ink_where_the_shaper_put_it`
+            // pins the answer for a cell at x 100 holding a run at x 102, and
+            // restoring the old line moves that ink clean outside the box —
+            // far enough that `off_centre` stops being able to answer at all.
+            //
+            // Nothing had reported it because nothing had read `ink`'s
+            // POSITION: the only consumer wanted `spare_w`, and a spare is a
+            // difference of extents that a wrong origin does not disturb. A
+            // field can be wrong for as long as it goes unasked.
+            let at = translate(child.rect(), visit.offset);
+            // `dx` is what moved the glyphs inside the rectangle the run was
+            // promised — zero for everything laid out flush, and for every mark
+            // that is not a run.
+            let here = Rect::new(at.x + dx, at.y, w, h);
             held = Some(match held {
                 Some(so_far) => so_far.union(here),
                 None => here,
@@ -1242,6 +1398,7 @@ pub fn slack(scene: &Scene, ink_of: InkOf<'_>) -> Vec<Slack> {
         found.push(Slack {
             tag: container.tag.as_ref().map(ToString::to_string),
             box_rect,
+            inner: content,
             content: said,
             ink,
             spare_w: content.w.saturating_sub(ink.w),
@@ -2176,5 +2333,160 @@ mod tests {
         let [a, b] = super::stacked_line_rects(tight, 0, 50, [16, 16]);
         assert_eq!((a.h, b.h), (super::line_box(16), super::line_box(16)));
         assert_eq!(b.y, a.y + a.h);
+    }
+
+    /// A span fixture: ink `w` wide and 12 tall, sitting `dx` right of the run's
+    /// own rectangle. No font in it, so these assertions are about the POLICY
+    /// and never about a shaper — [`stub_ink`]'s reason, one round later and one
+    /// question wider.
+    fn stub_span(dx: u32, w: u32) -> impl FnMut(&TextNode) -> InkSpan {
+        move |_| InkSpan { dx, w, h: 12 }
+    }
+
+    /// ★★★★★ R1904 — **the ink is reported where the shaper put it**, which is
+    /// neither the run's own rectangle nor that rectangle added to its owner's
+    /// origin.
+    ///
+    /// Two separate wrongs met in this one line, and both were invisible for
+    /// the same reason: [`Slack::ink`]'s only consumer read
+    /// [`Slack::spare_w`], and a spare is a difference of extents that neither
+    /// a wrong origin nor a missing offset disturbs. ⇒ **a field can be wrong
+    /// for as long as it goes unasked.**
+    ///
+    /// * the origin was counted twice (`box_rect.x + child.rect().x`) even
+    ///   though a laid-out child's rectangle is already window absolute — on
+    ///   the assembled screen that put a cell's ink far outside the cell;
+    /// * and the alignment offset was not counted at all, so a run an
+    ///   alignment had moved was reported at the place it would have inked
+    ///   without one. That is the half a person reading the running window
+    ///   reported: a byte flush left inside a chain of boxes each of which was
+    ///   exactly centred.
+    ///
+    /// The fixture is the reported shape — a 22-wide cell, a band inset two
+    /// inside it, a 10-wide byte in the band — so a regression reads as the
+    /// screen it came from.
+    #[test]
+    fn r1904_slack_reports_the_ink_where_the_shaper_put_it() {
+        let cell = |child: Scene| boxed(Rect::new(100, 50, 22, 18), "cell", vec![child]);
+        let band = || text("0d", Rect::new(102, 50, 18, 18), None);
+
+        // ★ Flush. The `102` is the assertion: `100 + 102` is the double count,
+        // and `100` alone would be the offset being dropped.
+        let found = slack(&cell(band()), &mut stub_span(0, 10));
+        assert_eq!(found.len(), 1, "one box holds something: {found:?}");
+        assert_eq!(
+            found[0].ink,
+            Rect::new(102, 50, 10, 12),
+            "the ink sits at the run's own place in the window",
+        );
+        assert_eq!(
+            found[0].off_centre().x,
+            Centring::Within(-8),
+            "and it is off centre towards the near side, which is what a person \
+             saw: two before it and ten after",
+        );
+
+        // ★★ The SAME box and the SAME run, moved by an alignment. Nothing in
+        // the scene changed — only what the shaper answered — so a channel that
+        // reads rectangles cannot tell these two apart and this one must.
+        let centred = slack(&cell(band()), &mut stub_span(4, 10));
+        assert_eq!(
+            centred[0].ink,
+            Rect::new(106, 50, 10, 12),
+            "an alignment moved the glyphs inside the box, and the ink says so",
+        );
+        assert_eq!(
+            centred[0].off_centre().x,
+            Centring::Within(0),
+            "six each side of a 10-wide run in a 22-wide cell",
+        );
+
+        // ★★★ A border is not room the content failed to use: `inner` is the
+        // content rectangle, and `off_centre` is measured against it. Without
+        // this a bordered box would be called off centre for drawing its own
+        // outline.
+        let mut framed = ContainerNode::new(vec![text("0d", Rect::new(106, 51, 10, 16), None)]);
+        framed.rect = Rect::new(100, 50, 22, 18);
+        framed.tag = Some("framed".to_owned().into());
+        framed.style = BoxStyle::filled(crate::style::Color::rgb(0x10, 0x10, 0x10)).with_border(
+            crate::style::Border::new(crate::style::Color::rgb(0xEC, 0x5A, 0xA0), 1),
+        );
+        let bordered = slack(&Scene::Container(framed), &mut stub_span(0, 10));
+        assert_eq!(
+            bordered[0].inner,
+            Rect::new(101, 51, 20, 16),
+            "the CONTENT rectangle, the border's own pixels excluded",
+        );
+        assert_eq!(
+            bordered[0].off_centre().x,
+            Centring::Within(0),
+            "and a 10-wide run centred in that content rectangle is centred",
+        );
+    }
+
+    /// ★★★★★ R1904 — **a box smaller than what it holds has no centre**, and
+    /// [`Centring`] says so rather than answering the best number there is.
+    ///
+    /// This is the round's own escape hatch, found by its closing audit and
+    /// closed by it. The margins are computed with `saturating_sub`, so the
+    /// first draft — a bare `i64` — answered `0 - 0` for an overflowing box:
+    /// *perfectly centred*, for the one case where the question does not apply.
+    /// Whatever a caller did with that number, the unanswerable case read as
+    /// the ideal.
+    ///
+    /// The screen gate that consumes this happened to be safe, because it
+    /// asserts the room before it asserts the centring — but that is a caller
+    /// remembering rather than the type refusing, and the next caller does not
+    /// remember. ⇒ the standing rule that **an unclassified case is a RED and
+    /// not a pass**, applied to a return type.
+    ///
+    /// Overflow itself is not this channel's verdict to give: whether ink
+    /// leaving its box is a defect is [`escapes`]'s question, and it is
+    /// answered there with a per-edge overhang. This one only refuses to
+    /// pretend it has an answer.
+    #[test]
+    fn r1904_a_box_smaller_than_what_it_holds_has_no_centre() {
+        let cell = |child: Scene| boxed(Rect::new(100, 50, 22, 18), "cell", vec![child]);
+        let run = || text("0d", Rect::new(102, 50, 18, 18), None);
+
+        // Wider than the box it sits in: no centre on that axis.
+        let wide = slack(&cell(run()), &mut stub_span(0, 30));
+        assert_eq!(wide[0].off_centre().x, Centring::Overflows);
+        assert_eq!(
+            wide[0].spare_w, 0,
+            "the premise: a spare saturates, which is why a difference of \
+             margins would have answered zero here",
+        );
+        assert_eq!(
+            wide[0].off_centre().y,
+            Centring::Within(-6),
+            "and the axes are answered independently — a run too wide is still \
+             somewhere in particular vertically",
+        );
+
+        // Ink starting LEFT of the box is the same refusal: it is not within,
+        // so there is no pair of margins to compare.
+        let before = slack(
+            &boxed(
+                Rect::new(100, 50, 22, 18),
+                "cell",
+                vec![text("0d", Rect::new(90, 50, 18, 18), None)],
+            ),
+            &mut stub_span(0, 10),
+        );
+        assert_eq!(before[0].off_centre().x, Centring::Overflows);
+
+        // Taller than the box: the vertical axis refuses on its own.
+        let tall = slack(&cell(run()), &mut |_| InkSpan {
+            dx: 0,
+            w: 10,
+            h: 30,
+        });
+        assert_eq!(tall[0].off_centre().y, Centring::Overflows);
+        assert_eq!(
+            tall[0].off_centre().x,
+            Centring::Within(-8),
+            "while the horizontal one still answers",
+        );
     }
 }

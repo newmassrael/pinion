@@ -674,6 +674,59 @@ impl LayoutCache {
         size
     }
 
+    /// ★★★★★ R1904 §5.36 — the ink extent of `text` **and where inside
+    /// `max_width` it begins**.
+    ///
+    /// [`Self::ink_size`] answers *how big*; this answers *how big and where*,
+    /// and the second half is a different fact whenever an alignment had room
+    /// to act. Alignment is applied after `break_all_lines(max_width)`, so a
+    /// run in a box wider than itself does not ink at the box's left edge —
+    /// and every consumer that assumed it did was reading a position nobody
+    /// had measured.
+    ///
+    /// The two halves come from two derivations on purpose: the extent from
+    /// the shaped `Layout`, the offset from the positioned runs. A single
+    /// source would move both together under an edit that broke one, which is
+    /// this repository's recorded way for a derived check to go blind.
+    ///
+    /// `dx` is `0` for a run laid out flush, for a run whose box is its own
+    /// width (where centring is an identity), and for text that shapes to
+    /// nothing.
+    ///
+    /// # Panics
+    ///
+    /// Never panics in practice — same `LruCache` invariant as
+    /// [`Self::layout`].
+    pub fn ink_span(
+        &mut self,
+        text: &str,
+        style: &TextStyle,
+        runs: &[StyleRun],
+        max_width: Option<u32>,
+    ) -> (u32, u32, u32) {
+        let dx = self
+            .positioned_runs(text, style, runs, max_width)
+            .iter()
+            .map(|run| run.start_x)
+            .fold(f32::INFINITY, f32::min);
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "clamped non-negative on the line above, and a layout \
+                      offset is a bounded pixel count"
+        )]
+        // Rounded DOWN, where the extent rounds up: both directions widen the
+        // span rather than narrowing it, so a fractional offset cannot make a
+        // run look more contained than it is.
+        let dx = if dx.is_finite() {
+            dx.max(0.0) as u32
+        } else {
+            0
+        };
+        let (w, h) = self.ink_size(text, style, runs, max_width);
+        (dx, w, h)
+    }
+
     /// R1654 §5.36 — how many lines the shaper produced for `text`.
     ///
     /// Two is the number that matters: a run that wrapped put a second line
@@ -1267,8 +1320,38 @@ impl LayoutCache {
         if let Some(cut) = self.elided_form(shape_input, style, max_width, &layout) {
             let moved = remap_runs(runs, shape_input.len(), &cut);
             let mirrored = pinion_text_unicode::bidi::mirror_paired_brackets(&cut.text);
-            let shaped = self.shape_plain(mirrored.as_ref(), style, &moved, None);
+            // ★★★★★ R1904 — `max_width`, where this passed `None` until this
+            // round. A shortened string fits the budget it was shortened to, so
+            // handing the breaker that budget cannot wrap it; what the budget
+            // DOES do is give the alignment something to align within. See
+            // `align_needs_the_width` below for the whole finding.
+            let shaped = self.shape_plain(mirrored.as_ref(), style, &moved, max_width);
             return (shaped, Some(cut.text));
+        }
+        if align_needs_the_width(style, shortens, max_width) {
+            // ★★★★★ R1904 — **an eliding policy was silencing every alignment
+            // under it**, and a person reading the running window is what
+            // found it.
+            //
+            // parley aligns within the `max_advance` `break_all_lines` was
+            // given, and "otherwise relative to the width of the longest line"
+            // — which is the run's own ink, where centring is the identity
+            // R1780 measured. R1654 drops the break width for an eliding arm
+            // on a correct premise (an arm that shortens is single line by
+            // construction, and the elision search has to read an unwrapped
+            // line), and the alignment went with it as an unnoticed second
+            // effect. So `TextOverflow::Ellipsis` — the honest contract every
+            // dense pane in this workspace declares — quietly made
+            // `TextAlign::Center` inert, and the debt R1780 closed looked
+            // exactly like this from the outside.
+            //
+            // The re-shape costs one miss and is confined to the runs that can
+            // observe it: a declared alignment that is not `Start`, under a
+            // shortening policy, with a width to be aligned in. Everything
+            // else takes the layout already shaped. It cannot be folded into
+            // the shape above — that one is what the elision search measures,
+            // and it has to be unwrapped.
+            return (self.shape_plain(shape_input, style, runs, max_width), None);
         }
         (layout, None)
     }
@@ -1673,6 +1756,27 @@ fn map_text_align(align: TextAlign) -> Alignment {
         // Start + any future #[non_exhaustive] variant.
         _ => Alignment::Start,
     }
+}
+
+/// ★★★★★ R1904 — whether an alignment can only act if the shaper is told the
+/// width, which is the case an eliding policy had been eating.
+///
+/// Three conditions, each a way for the answer to be *no*:
+///
+/// * `Start` is the writing-mode flush edge — where an unaligned run already
+///   is, so no width moves it.
+/// * a policy that does not shorten is already handed `max_width` as its break
+///   width, so its alignment has the box it needs.
+/// * with no width there is nothing to align within: parley falls back to the
+///   longest line, which for one run is the run.
+///
+/// `Justify` is included by "not `Start`" and cannot be observed under a
+/// shortening policy — such an arm is single line by construction and justify
+/// is a multi-line rule. It costs a re-shape and buys nothing, and it is left
+/// in rather than special-cased because the alternative is a second place that
+/// has to know which alignments need a width.
+fn align_needs_the_width(style: &TextStyle, shortens: bool, max_width: Option<u32>) -> bool {
+    shortens && max_width.is_some() && style.text_align != TextAlign::Start
 }
 
 impl Default for LayoutCache {
@@ -3387,6 +3491,300 @@ mod tests {
         assert!(
             (flush_none - centred_none).abs() < 0.5,
             "no width means nothing to align within: {flush_none} vs {centred_none}",
+        );
+    }
+
+    /// ★★★★★ R1904 — **an eliding policy does not silence an alignment**, and
+    /// until this round it did.
+    ///
+    /// # The finding, and why R1780 could not have seen it
+    ///
+    /// R1780 named one discriminator — is the box wider than the text — and it
+    /// is real. This is a SECOND one, upstream of it and invisible to a test
+    /// that leaves the overflow policy at its default: R1654 drops the break
+    /// width for a shortening arm, on the correct premise that such an arm is
+    /// single line by construction and that the elision search must measure an
+    /// unwrapped line. parley aligns within the width `break_all_lines` was
+    /// given and otherwise within the longest line, so dropping the width made
+    /// every alignment under `TextOverflow::Ellipsis` an identity — the exact
+    /// symptom R1780 had just finished explaining away.
+    ///
+    /// A person reading a running window is what separated them: a byte in an
+    /// 18-wide band, inked 10 wide, declared centred, sitting 3 against 9.
+    ///
+    /// ⇒ **a debt whose diagnosis is correct can still leave the reported
+    /// behaviour in place**, because a symptom can have two causes and closing
+    /// one closes the file.
+    ///
+    /// Both eliding arms are covered, because they take different paths
+    /// through `shape`: a string that fits is returned from the probe shape,
+    /// and one that does not is re-shaped from the cut.
+    #[test]
+    fn r1904_an_eliding_policy_does_not_silence_an_alignment() {
+        use pinion_core::style::{TextAlign, TextOverflow};
+
+        let mut cache = crate::test_font::own_font_cache();
+        let base = {
+            let mut s = style(14);
+            s.overflow = TextOverflow::Ellipsis;
+            s
+        };
+        let centred = {
+            let mut s = base.clone();
+            s.text_align = TextAlign::Center;
+            s
+        };
+
+        let start_x_at =
+            |cache: &mut LayoutCache, text: &str, style: &TextStyle, w: Option<u32>| {
+                cache
+                    .positioned_runs(text, style, &[], w)
+                    .first()
+                    .expect("the fixture font shapes this text")
+                    .start_x
+            };
+        let natural_of = |cache: &mut LayoutCache, text: &str| -> u32 {
+            let runs = cache.positioned_runs(text, &base, &[], None);
+            let first = runs.first().expect("the fixture font shapes this text");
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "a shaped run's width in px: non-negative, far below u32::MAX"
+            )]
+            let w = (first.end_x - first.start_x).ceil() as u32;
+            w
+        };
+
+        // ★ The arm the report came from: a string that FITS, so the policy
+        // shortens nothing and the probe shape is what is returned.
+        let short = "0d";
+        let natural = natural_of(&mut cache, short);
+        assert!(natural > 0, "the premise: this text inks something");
+        let wide = natural * 3;
+        let flush = start_x_at(&mut cache, short, &base, Some(wide));
+        let moved = start_x_at(&mut cache, short, &centred, Some(wide));
+        let expected = f64::from(wide - natural) / 2.0;
+        assert!(
+            (f64::from(moved) - f64::from(flush) - expected).abs() < 2.0,
+            "an eliding run that fits must still centre, by half the slack: \
+             {flush} -> {moved} in a box of {wide} for text of {natural}, an \
+             expected move of {expected}",
+        );
+
+        // ★★ And the arm that actually elides, which is re-shaped from the cut
+        // rather than returned from the probe. The shortened string is what
+        // gets centred, in the budget it was cut to.
+        //
+        // ★★★★★ **The budget is SEARCHED for, and the slack it leaves is a
+        // premise rather than a hope.** The first draft picked one budget and
+        // asserted the move was within two pixels of half the leftover — and a
+        // counterfactual that handed the cut arm no width at all went
+        // UNCAUGHT, because an elision fills its budget to within part of one
+        // glyph, so the leftover was near zero and "centred" and "flush" are
+        // the same answer there. ⇒ **an assertion whose expected value is zero
+        // holds for the mechanism being absent**, and the repair is to the
+        // fixture rather than to the assertion. The wide unbroken glyphs are
+        // what make a cut that leaves room possible at all.
+        let long = "WWWWWWWWWWWWWWWW";
+        let slack_of = |cache: &mut LayoutCache, budget: u32| -> Option<u32> {
+            let painted = cache
+                .painted_text(long, &centred, &[], Some(budget))?
+                .to_owned();
+            let cut_w = natural_of(cache, &painted);
+            (cut_w <= budget).then(|| budget - cut_w)
+        };
+        let wide_w = natural_of(&mut cache, "W");
+        let (budget, slack) = (natural..natural * 8)
+            .find_map(|budget| {
+                slack_of(&mut cache, budget)
+                    .filter(|slack| *slack >= 4)
+                    .map(|slack| (budget, slack))
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "no budget in this range leaves an elided cut four pixels \
+                     to move in, so the arm below could only ever assert that \
+                     nothing moved — a 'W' inks {wide_w} wide, and the search \
+                     needs one cut to fall that far short"
+                )
+            });
+        let flush_cut = start_x_at(&mut cache, long, &base, Some(budget));
+        let moved_cut = start_x_at(&mut cache, long, &centred, Some(budget));
+        assert!(
+            moved_cut >= flush_cut,
+            "an elided run cannot be moved LEFT of flush: {flush_cut} -> \
+             {moved_cut}",
+        );
+        let expected_cut = f64::from(slack) / 2.0;
+        assert!(
+            (f64::from(moved_cut) - f64::from(flush_cut) - expected_cut).abs() < 2.0,
+            "and the SHORTENED string is centred in the budget it was cut to: \
+             {flush_cut} -> {moved_cut} for a cut leaving {slack} of {budget}, \
+             an expected move of {expected_cut}",
+        );
+    }
+
+    /// ★★★★★ R1904 — **[`LayoutCache::ink_span`] answers where the run
+    /// begins**, and that half is a different fact from how wide it is.
+    ///
+    /// [`LayoutCache::ink_size`] has been asked for years and its position was
+    /// taken, everywhere, to be the run's own `rect.x` — true for a run laid
+    /// out flush and false for one an alignment moved. This is the derivation
+    /// that separates them, so it is the one that has to be performed: a break
+    /// that made `dx` constant would otherwise be caught only by an assembled
+    /// screen's gate in another crate, which is a channel this crate owns being
+    /// tested by a consumer that happens to exist.
+    ///
+    /// The three `0` cases are asserted with the moving one, because `dx` is
+    /// what a caller subtracts to recover the old behaviour and a `dx` that is
+    /// never zero is as wrong as one that always is.
+    #[test]
+    fn r1904_an_ink_span_says_where_the_run_begins() {
+        use pinion_core::style::{TextAlign, TextOverflow};
+
+        let mut cache = crate::test_font::own_font_cache();
+        let flush = {
+            let mut s = style(14);
+            s.overflow = TextOverflow::Ellipsis;
+            s
+        };
+        let centred = {
+            let mut s = flush.clone();
+            s.text_align = TextAlign::Center;
+            s
+        };
+        let text = "0d";
+
+        let (natural_dx, natural, _) = cache.ink_span(text, &flush, &[], None);
+        assert!(natural > 0, "the premise: this text inks something");
+        assert_eq!(
+            natural_dx, 0,
+            "with no width there is nothing to be offset within",
+        );
+
+        // ★ The reported shape: a box wider than the run, centring declared.
+        let band = natural + 8;
+        let (dx, w, _) = cache.ink_span(text, &centred, &[], Some(band));
+        assert_eq!(
+            w, natural,
+            "the alignment moves the ink, it does not resize it"
+        );
+        let expected = (band - natural) / 2;
+        assert!(
+            dx.abs_diff(expected) <= 1,
+            "a {natural}-wide run centred in {band} begins about {expected} in, \
+             not {dx}",
+        );
+
+        // ★★ And the three ways the answer is legitimately zero, each of which
+        // a constant-zero break would hide behind.
+        assert_eq!(
+            cache.ink_span(text, &flush, &[], Some(band)).0,
+            0,
+            "a run that declares no alignment starts at its box's edge",
+        );
+        assert_eq!(
+            cache.ink_span(text, &centred, &[], Some(natural)).0,
+            0,
+            "a box the run's own width leaves nothing to move — R1780's rule",
+        );
+        assert_eq!(
+            cache.ink_span("", &centred, &[], Some(band)).0,
+            0,
+            "text that inks nothing begins nowhere",
+        );
+    }
+
+    /// ★★★★★ R1904 — **a run wider than its box is not moved by its
+    /// alignment**, which is the property `containment::InkSpan` rests on when
+    /// it says `escapes` does not need to know where ink starts.
+    ///
+    /// # Why this is performed rather than argued
+    ///
+    /// The tempting argument is "an alignment moves a run inside the width it
+    /// was handed, and that width is the box, so it cannot leave the box". That
+    /// is only half true: a run wider than its box has NEGATIVE room, and half
+    /// of a negative number would push the glyphs out the near side as well as
+    /// the far one — an overhang a flush run would never have produced, and one
+    /// `escapes` cannot see, since its metric carries no position.
+    ///
+    /// The half that settles it is a property of the shaper: an overflowing
+    /// line is start-aligned regardless of what was asked. That is a fact about
+    /// a dependency, so a comment claiming it is a comment nobody re-measures
+    /// when the dependency moves. This is the measurement.
+    ///
+    /// The single unbroken word is load-bearing: given a breakable string the
+    /// shaper would wrap it, every line would fit, and nothing would overflow —
+    /// so the test would pass while measuring the case it was written against.
+    #[test]
+    fn r1904_an_overflowing_run_is_not_moved_by_its_alignment() {
+        use pinion_core::style::TextAlign;
+
+        // No shortening policy: this test is about a run that genuinely
+        // overflows, and an eliding one would cut it back inside the box.
+        let base = style(14);
+        assert!(
+            !base.overflow.shortens(),
+            "the premise: nothing here shortens the string, or it would not \
+             overflow at all",
+        );
+        let centred = {
+            let mut s = base.clone();
+            s.text_align = TextAlign::Center;
+            s
+        };
+
+        let mut cache = crate::test_font::own_font_cache();
+        let text = "0123456789abcdef";
+        let start_x_at = |cache: &mut LayoutCache, style: &TextStyle, w: Option<u32>| -> f32 {
+            cache
+                .positioned_runs(text, style, &[], w)
+                .first()
+                .expect("the fixture font shapes this text")
+                .start_x
+        };
+        let natural = {
+            let runs = cache.positioned_runs(text, &base, &[], None);
+            let first = runs.first().expect("the fixture font shapes this text");
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "a shaped run's width in px: non-negative, far below u32::MAX"
+            )]
+            let w = (first.end_x - first.start_x).ceil() as u32;
+            w
+        };
+        assert!(natural > 4, "the premise: this text inks something wide");
+
+        // ★ The box is half the run. Centring is asked for and MUST NOT move it
+        // — the glyphs stay where a flush run would have put them, so the
+        // overhang is entirely on the far side and is the same overhang
+        // `escapes` already reports.
+        let narrow = natural / 2;
+        let flush = start_x_at(&mut cache, &base, Some(narrow));
+        let asked = start_x_at(&mut cache, &centred, Some(narrow));
+        assert!(
+            (flush - asked).abs() < 0.5,
+            "an overflowing run must not be moved by centring: {flush} vs \
+             {asked} in a box of {narrow} for a run of {natural}",
+        );
+        assert!(
+            asked >= -0.5,
+            "and in particular it must not be pushed off the near edge: \
+             start {asked}",
+        );
+
+        // ★★ The control, without which the assertion above passes for a
+        // shaper that ignores alignment entirely: given room, the SAME text and
+        // the SAME style do move.
+        let wide = natural * 2;
+        let flush_wide = start_x_at(&mut cache, &base, Some(wide));
+        let moved_wide = start_x_at(&mut cache, &centred, Some(wide));
+        assert!(
+            moved_wide > flush_wide + 1.0,
+            "the control: with room the same run does move, or this test would \
+             hold for a shaper that never aligns at all — {flush_wide} vs \
+             {moved_wide} in a box of {wide}",
         );
     }
 }

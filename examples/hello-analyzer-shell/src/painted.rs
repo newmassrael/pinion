@@ -5929,10 +5929,7 @@ fn r1811_a_one_run_box_is_not_far_larger_than_its_run() {
 
         // The SAME cache the layout just shaped with — a stand-in measure would
         // be answering about a font nobody painted.
-        let found = pinion_core::containment::slack(&scene, &mut |text| {
-            let max_width = (text.rect.w > 0).then_some(text.rect.w);
-            cache.ink_size(&text.content, &text.style, &text.runs, max_width)
-        });
+        let found = pinion_core::containment::slack(&scene, &mut ink_span_with(&mut cache));
         assert!(
             !found.is_empty(),
             "no box on this screen holds anything, so this gate would pass by \
@@ -6035,6 +6032,287 @@ fn r1811_a_longer_toast_gets_a_wider_box() {
 /// the difference between the two fonts IS this number. It is a ratchet on that
 /// difference, not on carelessness.
 const TOAST_SLACK: u32 = 33;
+
+/// The metric [`pinion_core::containment::slack`] takes, measured with the
+/// cache the layout shaped with.
+///
+/// ★ R1904 — a SPAN rather than a size. *Where* the glyphs ink is the half of
+/// the answer [`pinion_core::containment::Slack::off_centre`] needs, and it is
+/// the half no rectangle in the scene carries: an alignment moves a run after
+/// the box was written down. A stand-in measure would answer about a font
+/// nobody painted, which is `r1811_a_one_run_box_is_not_far_larger_than_its_run`'s
+/// reason for taking the same care.
+fn ink_span_with(
+    cache: &mut pinion_text::LayoutCache,
+) -> impl FnMut(&pinion_core::scene::TextNode) -> pinion_core::containment::InkSpan + '_ {
+    |text| {
+        let max_width = (text.rect.w > 0).then_some(text.rect.w);
+        let (dx, w, h) = cache.ink_span(&text.content, &text.style, &text.runs, max_width);
+        pinion_core::containment::InkSpan { dx, w, h }
+    }
+}
+
+/// One run of a byte cell, with everything a centring gate has to weigh: what
+/// it says, the rectangle it was given, the alignment declared on it, and where
+/// the shaper actually put the glyphs inside that rectangle.
+///
+/// ★ R1904 — a named record rather than a tuple, because three of the four
+/// fields are numbers and a reader of `run.2` has no way to know which. A
+/// failure message printing this is what a person compares against the window
+/// they are looking at.
+#[derive(Debug)]
+struct ByteRun {
+    content: String,
+    /// The rectangle the run was given — and so the width the shaper aligns
+    /// within, since that is what the paint adapter hands it as `max_width`.
+    rect: Rect,
+    align: pinion_core::style::TextAlign,
+    /// Where the glyphs ink inside [`rect`](Self::rect), and how large they are.
+    span: pinion_core::containment::InkSpan,
+}
+
+/// Every [`ByteRun`] under one of `want`'s boxes.
+///
+/// ★ R1904 — asked of the RUNS rather than of the boxes, because the two
+/// halves of a centring gate's premise live in different places: a box can have
+/// room to spare while the run inside it declares no alignment at all, and from
+/// a rectangle those two failures read identically.
+///
+/// The width handed to the cache is the run's own rectangle, which is what the
+/// paint adapter hands the shaper — a stand-in width would answer about a
+/// layout nobody painted.
+fn byte_runs(
+    scene: &Scene,
+    cache: &mut pinion_text::LayoutCache,
+    want: &BTreeSet<String>,
+) -> Vec<ByteRun> {
+    let mut runs = Vec::new();
+    scene.for_each_node(&mut |visit| {
+        let Scene::Text(text) = visit.node else {
+            return;
+        };
+        let Some(owner) = visit.ancestors.last() else {
+            return;
+        };
+        if owner.tag().is_some_and(|t| want.contains(t)) {
+            let (dx, w, h) =
+                cache.ink_span(&text.content, &text.style, &text.runs, Some(text.rect.w));
+            runs.push(ByteRun {
+                content: text.content.clone(),
+                rect: text.rect,
+                align: text.style.text_align,
+                span: pinion_core::containment::InkSpan { dx, w, h },
+            });
+        }
+    });
+    runs
+}
+
+/// Everything that has to be true before "is it centred?" is a question worth
+/// asking of a byte pane, asserted rather than assumed.
+///
+/// ★ R1904 — a centring gate can pass for three reasons that have nothing to do
+/// with centring: no cell has room to spare, so nothing could move; the runs
+/// are not the strings the pane declares, so the widths belong to something
+/// else; or the two halves ran over different populations. Each is a **vacuous
+/// pass**, and the case R1780 found an 84-round-old debt had been looking at is
+/// the first one. So each is a named red here, ahead of the verdict.
+fn assert_room_to_be_centred_in(
+    cells: &[&pinion_core::containment::Slack],
+    runs: &[ByteRun],
+    want: usize,
+) {
+    // Each cell is WIDER than the byte it holds, so an alignment has room to
+    // act.
+    let tight: Vec<_> = cells.iter().filter(|c| c.spare_w < 2).collect();
+    assert!(
+        tight.is_empty(),
+        "a cell with no room cannot be centred in, and this gate would then be \
+         passing vacuously: {tight:#?}",
+    );
+
+    // One run per cell, or the halves are asking about different populations.
+    assert_eq!(
+        runs.len(),
+        want,
+        "one run per byte cell, or this gate's two halves are judging \
+         different populations",
+    );
+
+    // And each run is the BYTE, in the two-hex-digit form the pane declares.
+    // Everything downstream reasons from an ink width of about twelve pixels; a
+    // run that had picked up a label or an ellipsis would ink wider, be judged
+    // against the same box, and report a centring failure whose cause is not
+    // centring at all. The gate says which it is.
+    let malformed: Vec<_> = runs
+        .iter()
+        .filter(|run| {
+            run.content.len() != 2
+                || !run
+                    .content
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        })
+        .collect();
+    assert!(
+        malformed.is_empty(),
+        "a byte cell holds two lower-case hex digits and nothing else, or the \
+         widths every assertion below rests on are a different string's: \
+         {malformed:#?}",
+    );
+}
+
+/// The distinct answers one axis of [`Slack::off_centre`] gives across `cells`.
+///
+/// ★ A SET, so a verdict line names the spread rather than a total: twenty-four
+/// cells reading `Within(-1)` and `Within(0)` is one fact about a screen, and a
+/// mean would have hidden a single cell that was far out.
+///
+/// [`Slack::off_centre`]: pinion_core::containment::Slack::off_centre
+fn off_centre_spread(
+    cells: &[&pinion_core::containment::Slack],
+    axis: fn(pinion_core::containment::OffCentre) -> pinion_core::containment::Centring,
+) -> BTreeSet<String> {
+    cells
+        .iter()
+        .map(|c| format!("{:?}", axis(c.off_centre())))
+        .collect()
+}
+
+/// ★★★★★ R1904 — **a byte sits in the middle of the cell that lights it**, and
+/// the measurement is the INK rather than any rectangle.
+///
+/// # The report, and why no gate above this line could have caught it
+///
+/// A person read the running window and said the bytes in the decode
+/// inspector's pane were not centred in their pink cells. Measured off the
+/// rendered page: a 22-wide cell, a 10-wide glyph pair, margins of **3 and 9**
+/// where centred is 6 and 6.
+///
+/// Every geometric check this screen carries agreed the cell was fine, and each
+/// was right about what it asked. The band inside the cell IS centred — 2 and 2
+/// in 22 — and the run's box IS the band. What nothing asked was where the
+/// GLYPHS were inside that band, and the answer was flush left, because a run
+/// with no declared alignment starts where its box starts and the band is eight
+/// pixels wider than the byte.
+///
+/// ⇒ **a box centred in a box centred in a box, with the ink at the far left of
+/// all three.** The rectangle chain cannot see it; only ink can.
+///
+/// # Horizontal only, and that is a measurement rather than a concession
+///
+/// R1874's rule: width is judged by ink, height by the line box. `0d` and `5b`
+/// carry no descender, so their ink stops two to three pixels above the bottom
+/// of the line they sit on and an ink-measured vertical margin is uneven for a
+/// run that is exactly where the shaper puts it. The vertical answer is already
+/// derived — [`decode_band`](super::decode_band) is a
+/// [`line_rect_in`](pinion_core::containment::line_rect_in) band in the row —
+/// and re-checking it here by ink would report a defect that is not one.
+#[test]
+fn r1904_a_byte_is_centred_in_its_cell_by_ink() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let mut scene = super::view(ScreenState::default(), Frame::default());
+        let mut cache = pinion_text::LayoutCache::new();
+        pinion_runtime::layout::compute_layout(&mut scene, &mut cache, WIN_W, WIN_H);
+        let found = pinion_core::containment::slack(&scene, &mut ink_span_with(&mut cache));
+
+        // The population is the spec's own, so a cell that stops being painted
+        // is a failure here rather than a smaller denominator nobody noticed.
+        let want: BTreeSet<String> = spec::Population::Bytes
+            .members()
+            .into_iter()
+            .map(|member| format!("card.{member}"))
+            .collect();
+        let cells: Vec<_> = found
+            .iter()
+            .filter(|s| s.tag.as_deref().is_some_and(|t| want.contains(t)))
+            .collect();
+        assert_eq!(
+            cells.len(),
+            want.len(),
+            "the byte pane paints one cell per declared byte, or this gate is \
+             judging a population that shrank underneath it",
+        );
+
+        let runs = byte_runs(&scene, &mut cache, &want);
+        assert_room_to_be_centred_in(&cells, &runs, want.len());
+
+        // One pixel of tolerance because an odd amount of room cannot be split
+        // evenly — a rule demanding zero would be unsatisfiable for a 9-wide
+        // glyph in a 22-wide box.
+        //
+        // ★★ `Overflows` fails here rather than being skipped, which is what
+        // makes this rule have no escape hatch: an unanswerable axis is a RED,
+        // not a pass. The room assertion above would already have caught it —
+        // and that is a caller remembering rather than a rule holding, which is
+        // exactly the arrangement `Centring`'s two arms exist to end.
+        let off: Vec<_> = cells
+            .iter()
+            .map(|c| {
+                (
+                    c.tag.clone(),
+                    c.content.clone(),
+                    c.off_centre(),
+                    c.ink,
+                    c.inner,
+                )
+            })
+            .filter(|(_, _, off, _, _)| {
+                !matches!(off.x, pinion_core::containment::Centring::Within(d) if d.abs() <= 1)
+            })
+            .collect();
+
+        // ★★★ The measurement is taken BEFORE the reachability assertion and
+        // carried into its message, so a red says what a reader is looking at
+        // rather than only which precondition failed. R1904's own
+        // counterfactual is why: reverting the declared alignment made this
+        // test fail on "declares no centring" and print nothing at all about
+        // the gap a person had reported, which is a gate reporting its own
+        // plumbing instead of the defect.
+        let unmoved: Vec<_> = runs
+            .iter()
+            .filter(|run| {
+                run.align != pinion_core::style::TextAlign::Center
+                    || run.rect.w <= run.span.w
+                    || run.span.dx == 0
+            })
+            .collect();
+        assert!(
+            unmoved.is_empty(),
+            "{} of {} byte run(s) declare no centring, or were handed a box \
+             their own width, or were not moved by the shaper — each of which \
+             makes the centring below unreachable rather than merely absent. \
+             The gap those runs leave, which is what a person reading the \
+             window reported, is {} of {} cell(s) off centre: {off:#?}\n\
+             The runs: {unmoved:#?}",
+            unmoved.len(),
+            runs.len(),
+            off.len(),
+            cells.len(),
+        );
+
+        assert!(
+            off.is_empty(),
+            "{} of {} byte cell(s) hold their glyphs off centre — negative x is \
+             flush left, which is what a person saw: {off:#?}",
+            off.len(),
+            cells.len(),
+        );
+
+        // The verdict says what it read and at what size, which is this
+        // repository's rule for a judgement (R1770). The vertical figure is
+        // reported and not asserted, for the reason in this test's own header.
+        println!(
+            "r1904: {} byte cell(s) at {WIN_W}x{WIN_H}, off centre by x={:?} \
+             (ink measured, asserted) y={:?} (ink against a line box, reported \
+             only — `0d` carries no descender)",
+            cells.len(),
+            off_centre_spread(&cells, |o| o.x),
+            off_centre_spread(&cells, |o| o.y),
+        );
+    });
+}
 
 // --- R1838: the arrangement, across a gesture rather than inside a frame -----
 //
