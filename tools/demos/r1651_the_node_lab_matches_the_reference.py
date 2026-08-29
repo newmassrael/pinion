@@ -209,13 +209,38 @@ def body() -> None:
         # published by half (R1664's, on this very structure).
         EDGES = {"top", "bottom", "left", "right"}
         movable = {}
+        resizable = {}
         for pane in spec["panes"]:
-            for key in ("edges", "foldable"):
+            # ★ R1889 — `resize` joins the two, and the reason is this check's
+            # own: a third placement property reached the model this round, and
+            # the failure this loop exists to catch is exactly one published by
+            # half. `null` is a legitimate VALUE — *this pane's width is
+            # settled* — but the KEY has to be there, or "fixed" and "nobody
+            # said" collapse into one answer again.
+            for key in ("edges", "foldable", "resize"):
                 if key not in pane:
                     raise SystemExit(
                         f"[B2] pane {pane['tag']} does not publish {key!r} — "
                         "the placement declaration reached the model and not the wire"
                     )
+            span = pane["resize"]
+            if span is not None:
+                if not (isinstance(span, dict) and {"min", "max"} <= set(span)):
+                    raise SystemExit(
+                        f"[B2] pane {pane['tag']} publishes a resize that is not "
+                        f"a min/max range: {span!r}"
+                    )
+                if span["min"] >= span["max"]:
+                    raise SystemExit(
+                        f"[B2] pane {pane['tag']} publishes {span!r}, whose ends "
+                        "meet — that is a fixed pane spelled the long way"
+                    )
+                if not (span["min"] <= pane["at"]["extent"] <= span["max"]):
+                    raise SystemExit(
+                        f"[B2] pane {pane['tag']} opens at {pane['at']['extent']}, "
+                        f"outside the {span!r} it declares — the first drag would jump"
+                    )
+                resizable[pane["tag"]] = (span["min"], span["max"])
             stray = set(pane["edges"]) - EDGES
             if stray:
                 raise SystemExit(
@@ -236,6 +261,16 @@ def body() -> None:
         print(f"[B2] {len(movable)} pane(s) declare where they may live: "
               + ", ".join(f"{t} -> {'/'.join(e)}" for t, e in sorted(movable.items()))
               + f"; the other {len(spec['panes']) - len(movable)} declare they stay put")
+        # ★ R1889 — the SET again, for the same reason the edges are a set: a
+        # pane that stopped resizing and a pane that started both have to fail.
+        want_resize = {"lab.palette": (180, 420), "lab.inspector": (240, 520)}
+        if resizable != want_resize:
+            raise SystemExit(
+                f"[B2] the panes that declare a resize are {resizable}, "
+                f"expected {want_resize}"
+            )
+        print(f"[B2] {len(resizable)} pane(s) declare a width a hand may drag: "
+              + ", ".join(f"{t} -> {lo}..{hi}" for t, (lo, hi) in sorted(resizable.items())))
 
         # ── (C) FORWARD: every declared element is on the screen ────────────
         missing = []
@@ -341,8 +376,43 @@ def body() -> None:
         # chrome nobody declared is a screen that has stopped being a
         # reproduction, and a forward-only check cannot see that.
         declared = set()
+        #: How many chrome elements each pane's own declaration composes to.
+        #: Read by the `lab.inspector` family pin below, so that a pane which
+        #: stops folding — or starts — moves the pin with it instead of leaving
+        #: a constant somebody has to remember to edit.
+        chrome_of: dict[str, int] = {}
         for pane in spec["panes"]:
             declared.add(pane["tag"])
+            # ★★★★★ R1889 — **a pane's CHROME, derived from the pane's own
+            # declaration** rather than listed, which is the same rule the two
+            # lines above follow and the screen's own `declared_tags` follows on
+            # the other side of the wire.
+            #
+            # 🟥 This was MISSING, and the cost is measured: R1887 gave every
+            # movable pane a header with a flip and a fold control, and this
+            # check went red the moment it next ran — `lab.palette.{head,flip,
+            # fold}` were painted and nothing declared them. It stayed red and
+            # unseen for three rounds, because `demo-sweep` and `gpu-tests` both
+            # `needs: lint-and-test`, an unrelated rustdoc break failed that job,
+            # and a SKIPPED job is indistinguishable from a passing one in the
+            # run list. ⇒ the same hole R1470 measured at 99 pushes and R1850 and
+            # R1855 measured again — a demo outside the push gate is checked by
+            # a job standing behind another job's verdict.
+            #
+            # The inspector's copies were absorbed by the `lab.inspector` family
+            # below and so said nothing; the palette has no family, which is why
+            # it is the half that spoke. ★ A family prefix is an ACCEPTANCE, and
+            # an acceptance cannot report.
+            # `placement`, not `at` — this module already has a function by
+            # that name and a local would shadow it for the rest of `body()`.
+            placement = pane.get("at") or {}
+            if placement.get("folded"):
+                # A folded pane is a strip and paints nothing else — the
+                # screen's own rule (R1887.1), so this check has to know it too
+                # or it would demand chrome of eighteen pixels.
+                declared.add(f"{pane['tag']}.strip")
+                chrome_of[pane["tag"]] = 1
+                continue
             # ★ R1664 — a pane that SCROLLS paints a body node, and the
             # specification is where that is stated (R1662 added the column).
             # This loop read `tag` and not `body`, so R1662's scroll panes were
@@ -351,6 +421,15 @@ def body() -> None:
             # this demo, and the demo sweep does not gate a push.
             if pane.get("body"):
                 declared.add(pane["body"])
+            chrome = []
+            if pane["edges"]:
+                chrome += ["head", "flip"]
+            if pane["foldable"]:
+                chrome.append("fold")
+            if pane["resize"] is not None:
+                chrome.append("grip")
+            declared.update(f"{pane['tag']}.{part}" for part in chrome)
+            chrome_of[pane["tag"]] = len(chrome)
         for seat in spec["rail"]:
             declared.add(f"lab.rail.{seat['name']}")
         for role in spec["roles"]:
@@ -533,7 +612,20 @@ def body() -> None:
             # pill and the node's-life row. Same kind as the reach meter — a
             # read-out rather than an affordance — so again the press census
             # passes over it and this pin is what would miss it.
-            "lab.inspector": 18,
+            # ★★★★★ R1889 — 18 + WHAT THE PANE'S OWN DECLARATION COMPOSES TO,
+            # not a constant somebody bumps. R1887 gave this pane a header with
+            # a flip and a fold and R1889 gave it a grip; a hand-written pin
+            # would have gone stale twice in three rounds, and it did — this
+            # family read 18 against 22 painted members while the check that
+            # would have said so was standing behind another job's red.
+            #
+            # ⚠ The 18 is still a pin, and deliberately: those are members no
+            # declaration derives, so a constant is the honest statement of
+            # them. What is derived is exactly the part the specification
+            # already says — which is the `lab.link` rule (a family whose size
+            # is a function of the specification must not be pinned to a
+            # constant), met on a second table.
+            "lab.inspector": 18 + chrome_of["lab.inspector"],
             # ★★★★★ R1817.1 — 2, not 3, and the member did not disappear: it
             # became a CAPTION. R1813 made the determinism switch's read-out its
             # box's caption child and renamed it `lab.palette.discovery.state`

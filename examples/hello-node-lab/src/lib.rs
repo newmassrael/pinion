@@ -811,7 +811,15 @@ const PANEL_HEAD_H: u32 = 26;
 /// specification row that says where it may live. Two of those did not exist
 /// before this round, and writing them against string tags is how they would
 /// come to disagree.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// ★★★★★ R1889 — serde, because a drag holds one of these and a `Drag` rides in
+/// a `Signal`.
+///
+/// The same forcing R1801 recorded when placement became state: this framework
+/// requires a signal's payload to be `Serialize + DeserializeOwned`, so
+/// anything a gesture parks is a value a reader can read back. Not a
+/// concession — it is why the arrangement of this screen is inspectable at all,
+/// where the floor's equivalent round-trips as opaque bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 enum SidePanel {
     Palette,
     Inspector,
@@ -861,6 +869,20 @@ impl SidePanel {
         }
     }
 
+    /// ★ R1889 — the rectangle it currently occupies, in window coordinates.
+    ///
+    /// Asked through here rather than by calling one of the two rect functions
+    /// at each site, because which of them applies is a fact about the panel
+    /// and the callers that want it are about to grow: a caller that picked the
+    /// wrong one would ask about the other panel and be right most of the time,
+    /// which is the worst kind of wrong.
+    fn rect(self) -> Rect {
+        match self {
+            Self::Palette => palette_rect(),
+            Self::Inspector => inspector_rect(),
+        }
+    }
+
     /// Put it somewhere. Private to [`place_panel`], which is the only caller:
     /// a writer that skipped the policy would be the floor's own defect.
     fn put(self, state: &LabState, at: EdgePlacement) {
@@ -892,6 +914,13 @@ enum PlaceAsk {
     Edge(ChromeEdge),
     /// Fold it to its strip, or unfold it.
     Fold(bool),
+    /// ★ R1889 — make it this many logical pixels across.
+    ///
+    /// The third of the reference editor's region operators, and the last field
+    /// of `EdgePlacement` nothing could change. Asked EXACTLY, not clamped: a
+    /// drag clamps through `Resize::clamp` before it gets here, so this arm
+    /// carries a number somebody meant and the policy is free to refuse it.
+    Extent(u32),
 }
 
 /// ★★★★★ R1887 — **the one rule a placement change goes through**, whichever
@@ -922,6 +951,7 @@ fn place_panel(
     let to = match ask {
         PlaceAsk::Edge(edge) => policy.admit(from, edge)?,
         PlaceAsk::Fold(folded) => policy.admit_fold(from, folded)?,
+        PlaceAsk::Extent(extent) => policy.admit_extent(from, extent)?,
     };
     panel.put(state, to);
     Ok(to)
@@ -968,6 +998,39 @@ fn side_panel_access(state: &LabState, which: SidePanel) -> Vec<AccessNode> {
                 .with_name(format!("fold the {} to its strip", which.word())),
         );
     }
+    // ★★★★★ R1889 — the grip, published as a VALUE IN A RANGE rather than as a
+    // button.
+    //
+    // A slider is what a resize grip is: a reader drags it and what changes is
+    // one number between two bounds. Spelling it as a button would publish the
+    // gesture and drop the numbers, and the numbers are the whole of what a
+    // reader who never sees the drawing needs — they are also what makes the
+    // wire verb usable, since `place palette,width=N` is refused outside them.
+    // `AccessValue::Float` carries `valuenow` / `valuemin` / `valuemax`
+    // together, so the three cannot be published out of step.
+    if let pinion_core::edge_panel::Resize::Between { min, max } = which.spec().policy.resize {
+        nodes.push(
+            AccessNode::new(format!("{}.grip", which.tag()), AriaRole::Slider)
+                .with_name(format!("resize the {}", which.word()))
+                .with_value(AccessValue::Float {
+                    #[allow(
+                        clippy::cast_precision_loss,
+                        reason = "a logical-pixel extent is three digits; f32 is exact here"
+                    )]
+                    value: at.extent as f32,
+                    #[allow(
+                        clippy::cast_precision_loss,
+                        reason = "declared bounds, three digits, exact in f32"
+                    )]
+                    min: min as f32,
+                    #[allow(
+                        clippy::cast_precision_loss,
+                        reason = "declared bounds, three digits, exact in f32"
+                    )]
+                    max: max as f32,
+                }),
+        );
+    }
     nodes
 }
 
@@ -998,6 +1061,16 @@ fn panel_refusal_sentence(
             }
         ),
         EdgeRefusal::NotFoldable => format!("the {} does not fold", which.word()),
+        // ★ R1889 — the same shape as `EdgeNotAllowed` above: what was asked
+        // AND what is allowed, so the sentence names the number to ask next.
+        EdgeRefusal::NotResizable => format!(
+            "the {}'s width is fixed by this screen's specification",
+            which.word()
+        ),
+        EdgeRefusal::ExtentOutOfRange { asked, min, max } => format!(
+            "the {} does not go to {asked}; it resizes between {min} and {max}",
+            which.word()
+        ),
     }
 }
 
@@ -1017,6 +1090,52 @@ fn side_panel_control(rect: Rect, nth: u32) -> Rect {
         size,
         size,
     )
+}
+
+/// ★★★★★ R1889 — how wide the band a reader grabs to resize a panel is.
+///
+/// Six, which is the reference editor's own `AZONE_REGION` edge width and wide
+/// enough to hit without the panel's own border becoming a target. It is a
+/// constant rather than a specification column because it is a property of
+/// POINTING, not of any one panel: every draggable edge on this screen wants
+/// the same grab width, and a per-panel number would be four chances to make
+/// one of them unhittable.
+const PANEL_GRIP_W: u32 = 6;
+
+/// ★★★★★ R1889 — the band on a panel's OUTER edge that a reader drags to
+/// resize it, in the panel's own frame.
+///
+/// Outer, always: the edge that faces the canvas. A left-hand panel is grabbed
+/// on its right side and a right-hand panel on its left, which is what makes
+/// the gesture read as *pushing the boundary between the two* rather than as
+/// *moving the panel*. Derived from the placement rather than written per
+/// panel, so a flipped panel's grip flips with it — the half-derivation R1887
+/// paid for.
+/// ⚠ Inside [`panel_content`], not `(0, 0, w, h)` — and this is the SECOND time
+/// this file has paid for the difference. R1887.1 drew a folded panel's strip at
+/// the panel's own rectangle and it overhung the frame by a pixel on every side;
+/// the first draft of this grip did the same thing and the containment gate
+/// reported both grips the moment it ran. A box with a border is not the
+/// rectangle inside it.
+fn side_panel_grip(rect: Rect, at: EdgePlacement) -> Rect {
+    let inside = panel_content(rect);
+    let w = PANEL_GRIP_W.min(inside.w);
+    let x = match at.edge {
+        ChromeEdge::Left => inside.x + inside.w.saturating_sub(w),
+        _ => inside.x,
+    };
+    Rect::new(x, inside.y, w, inside.h)
+}
+
+/// Whether this panel offers a grip at all: it must resize, and it must not be
+/// folded.
+///
+/// ★ The fold half is not fussiness. A folded panel is an 18-pixel strip whose
+/// whole area is already the affordance that brings it back (R1887), so a grip
+/// there would put two gestures on one strip and the reader would get whichever
+/// the hit test asked first.
+fn side_panel_has_grip(state: &LabState, which: SidePanel) -> bool {
+    which.spec().policy.resize.is_draggable() && !which.at(state).folded
 }
 
 /// What is left of a movable panel for its body, once its header is reserved.
@@ -1180,6 +1299,17 @@ enum Drag {
     Rewire { link: LinkId, from: NodeId },
     /// A host frame is being moved, and every card it holds moves with it.
     Frame { frame: NodeId, from: (i32, i32) },
+    /// ★★★★★ R1889 — a side panel's width is being dragged by its grip.
+    ///
+    /// It holds only WHICH panel, and no grab offset or start width — unlike
+    /// every other arm here. That is deliberate and it is what makes the
+    /// gesture right: the boundary the reader is pushing IS the pointer, so the
+    /// width is a function of the cursor's current position and the panel's
+    /// edge, computed fresh each move. Storing a start width and adding a delta
+    /// would let the two drift apart the moment a clamp bites — the pointer
+    /// would keep accumulating past the bound and the panel would not come back
+    /// until the cursor had travelled all the way home.
+    PanelWidth { panel: SidePanel },
 }
 
 /// Which link the canvas has picked out (R1681).
@@ -3841,6 +3971,14 @@ enum Hit {
     /// ★★★★★ R1887 — a movable panel's own chrome: the two controls in its
     /// header, and the strip a folded one leaves.
     Panel(SidePanel, PanelAct),
+    /// ★ R1889 — a press on the band that resizes a panel.
+    ///
+    /// Its own arm rather than a third [`PanelAct`], because the two are
+    /// different KINDS of act: flip and fold are decided the moment the button
+    /// goes down, and this one only starts something whose value arrives with
+    /// the pointer. Folding it in would give `PanelAct::ask` an arm that has no
+    /// ask.
+    PanelGrip(SidePanel),
     Canvas,
 }
 
@@ -3895,6 +4033,15 @@ fn panel_chrome_hit(
     }
     if contains(side_panel_control(rect, 1), lx, ly) {
         return Some(Hit::Panel(which, PanelAct::Fold));
+    }
+    // ★★★★★ R1889 — the grip, asked AFTER the two header controls and before
+    // the body. After, because the grip runs the panel's full height and would
+    // otherwise swallow the right-hand end of the header on a left-hand panel;
+    // before the body, for the reason the header is — the band is chrome and
+    // does not scroll with what it sits beside.
+    if side_panel_has_grip(state, which) && contains(side_panel_grip(rect, which.at(state)), lx, ly)
+    {
+        return Some(Hit::PanelGrip(which));
     }
     None
 }
@@ -4331,6 +4478,12 @@ impl Hit {
                     PanelAct::Unfold => "unfold",
                 }
             ),
+            // ★ R1889 — its own word, so a wire reader can tell a press that
+            // PLACES a panel from one that starts resizing it. Same shape as
+            // the arm above and deliberately not folded into it: the two answer
+            // different questions and a client branching on `panel:` would have
+            // to re-split the string.
+            Self::PanelGrip(which) => format!("panel-grip:{}", which.word()),
             // ★★★★★ R1791 — the word CARRIES what moved, so the wire answers
             // *where did save go* rather than only *you pressed the control*.
             // The floor has no member that names what its extension holds.
@@ -4524,6 +4677,24 @@ const PAL_BODY_TOP: u32 = 56;
 /// How wide a row of the palette's body is.
 fn palette_body_w() -> u32 {
     palette_rect().w.saturating_sub(PAD * 2)
+}
+
+/// ★★★★★ R1889 — how wide a row of the INSPECTOR's body is, and the half of
+/// R1887's repair that round could not yet need.
+///
+/// Ten rectangles in this file derived their width from the `INSP_W` constant —
+/// the pane's OPENING width. That was true while nothing could change
+/// the width, which is exactly the arrangement R1887 wrote down as a defect
+/// with a date: *a latent divergence is a defect whose date is the round that
+/// builds the missing thing*, and R1802 had said the same sentence about
+/// `toolbar_rect` one round before it came true.
+///
+/// This round builds the width drag, so this round is that date. The palette
+/// got this treatment at R1887 ([`palette_body_w`]); the inspector gets it here,
+/// BEFORE the grip exists, because the alternative is shipping a drag that
+/// moves the panel and leaves its contents at the opening width.
+fn inspector_body_w() -> u32 {
+    inspector_rect().w.saturating_sub(PAD * 2)
 }
 
 fn palette_row(n: usize) -> Rect {
@@ -5823,7 +5994,7 @@ fn amend<T>(
 /// no room for its value.
 fn form_style() -> FormStyle {
     FormStyle::default()
-        .with_width(INSP_W - PAD * 2)
+        .with_width(inspector_body_w())
         .with_policy(RowWrap::WrapAll, FieldGrowth::AllGrow)
 }
 
@@ -5908,7 +6079,7 @@ impl NodeAct {
     /// the whole pane scrolls as one thing.
     fn local_seat(self) -> Rect {
         let n = Self::ALL.iter().position(|a| *a == self).unwrap_or(0);
-        let width = (INSP_W - PAD * 2 - NODE_ACT_GAP * 2) / 3;
+        let width = (inspector_body_w() - NODE_ACT_GAP * 2) / 3;
         let step = u32::try_from(n).unwrap_or(0) * (width + NODE_ACT_GAP);
         Rect::new(PAD + step, NODE_ACT_Y, width, NODE_ACT_H)
     }
@@ -5977,7 +6148,7 @@ fn body_origin(state: &LabState) -> (i32, i32) {
 /// that needs a value typed. The reference puts its name box in the same place
 /// for the same reason.
 fn rename_row() -> (Rect, Rect, Rect) {
-    let width = INSP_W - PAD * 2;
+    let width = inspector_body_w();
     let apply = seat_w("rename");
     let key = seat_w("+ key");
     let box_w = width.saturating_sub(apply + key + NODE_ACT_GAP * 2);
@@ -6760,6 +6931,19 @@ fn side_panel(which: SidePanel, state: &LabState, rect: Rect, ink: &Ink, body: S
     let head = side_panel_head(rect);
     let flip = side_panel_control(rect, 0);
     let fold = side_panel_control(rect, 1);
+    // ★★★★★ R1889 — the resize band, painted only when the panel declares it
+    // resizes. A grip a reader can see and cannot drag is worse than none: it
+    // is an affordance that lies, and the specification is what decides.
+    let mut chrome = Vec::new();
+    if side_panel_has_grip(state, which) {
+        chrome.push(box_at(
+            &format!("{}.grip", which.tag()),
+            side_panel_grip(rect, at),
+            ink.outline,
+            None,
+            0,
+        ));
+    }
     // The title's box is the line box its own face needs, centred in the header
     // band — the derivation this screen uses everywhere a run sits in a seat, so
     // a face change moves the box with it (R1874's rule).
@@ -6800,7 +6984,10 @@ fn side_panel(which: SidePanel, state: &LabState, rect: Rect, ink: &Ink, body: S
                 4,
             ),
             body,
-        ],
+        ]
+        .into_iter()
+        .chain(chrome)
+        .collect(),
     )
 }
 
@@ -7058,12 +7245,26 @@ fn palette_determinism(state: &LabState, ink: Ink) -> Vec<Scene> {
         ),
         Silence::decorative("the switch's track, whose position the switch announces"),
     ));
+    // ★★★★★ R1889 — the pane's width, ASKED rather than the constant it opens
+    // at. This is the last reader of `PALETTE_W` outside the four places that
+    // legitimately want the opening number (its own definition, the floor
+    // width, the toolbar's floor, and the opening placement), and it was found
+    // by the closing measurement of this round's own debt rather than by the
+    // round that built the drag — which is the whole shape that debt describes:
+    // *a latent divergence is a defect whose date is the round that builds the
+    // missing thing*. Today's arithmetic is preserved exactly, because at the
+    // opening width `palette_rect().w` IS `PALETTE_W`; what changes is that the
+    // sentence now follows a hand that widens the palette instead of staying at
+    // the width it was born with.
     children.push(label(
         "turning it on lets nodes acquire links nobody authored",
         Rect::new(
             toggle.x + 48,
             toggle.y + 28,
-            PALETTE_W - toggle.x - 48 - PAD,
+            palette_rect()
+                .w
+                .saturating_sub(toggle.x)
+                .saturating_sub(48 + PAD),
             24,
         ),
         9,
@@ -8450,7 +8651,7 @@ fn inspector(state: &LabState, field: (TextFieldState, u32), theme: &Theme, ink:
 /// [`Reach::sound`]: pinion_core::widgets::config_schema::Reach::sound
 fn inspector_reach(ink: Ink) -> Vec<Scene> {
     let reach = palette_reach();
-    let seat = Rect::new(PAD, REACH_ROW_Y, INSP_W - PAD * 2, REACH_H);
+    let seat = Rect::new(PAD, REACH_ROW_Y, inspector_body_w(), REACH_H);
     let (fill, edge, text) = if reach.sound() {
         (ink.surface, ink.outline, ink.text_3)
     } else {
@@ -8614,7 +8815,7 @@ fn fault_scope_note() -> String {
 /// cross.
 fn fault_panel(state: &LabState, top: u32, ink: Ink) -> Vec<Scene> {
     let rows = fault_rows(state);
-    let width = INSP_W - PAD * 2;
+    let width = inspector_body_w();
     let line = pinion_core::containment::line_box(FAULT_PX);
     let head_h = pinion_core::containment::line_box(FONT_SMALL);
     let notes = fault_scope_notes();
@@ -8844,7 +9045,7 @@ fn inspector_identity(state: &LabState, node: NodeId, ink: Ink) -> Vec<Scene> {
         ),
         box_at(
             "lab.inspector.degree",
-            Rect::new(PAD, 86, INSP_W - PAD * 2, 24),
+            Rect::new(PAD, 86, inspector_body_w(), 24),
             ink.accent_soft,
             Some(ink.accent_line),
             8,
@@ -8861,7 +9062,7 @@ fn inspector_identity(state: &LabState, node: NodeId, ink: Ink) -> Vec<Scene> {
         ),
         box_at(
             "lab.inspector.selcount",
-            Rect::new(PAD, SEL_COUNT_Y, INSP_W - PAD * 2, SEL_COUNT_H),
+            Rect::new(PAD, SEL_COUNT_Y, inspector_body_w(), SEL_COUNT_H),
             ink.accent_soft,
             Some(ink.accent_line),
             8,
@@ -8870,7 +9071,7 @@ fn inspector_identity(state: &LabState, node: NodeId, ink: Ink) -> Vec<Scene> {
             tagged_label(
                 "lab.inspector.selcount.text",
                 selection_caption(state),
-                Rect::new(PAD + 10, SEL_COUNT_Y + 5, INSP_W - PAD * 2 - 20, 13),
+                Rect::new(PAD + 10, SEL_COUNT_Y + 5, inspector_body_w() - 20, 13),
                 FONT_SMALL,
                 ink.accent,
             ),
@@ -9151,7 +9352,7 @@ fn inspector_pane(
 
     children.push(box_at(
         "lab.inspector.note",
-        Rect::new(PAD, note_y, INSP_W - PAD * 2, 40),
+        Rect::new(PAD, note_y, inspector_body_w(), 40),
         ink.raised,
         Some(ink.warn),
         8,
@@ -9160,7 +9361,7 @@ fn inspector_pane(
         tagged_label(
             "lab.inspector.note.text",
             restart_note(&form),
-            Rect::new(PAD + 10, note_y + 8, INSP_W - PAD * 2 - 20, 26),
+            Rect::new(PAD + 10, note_y + 8, inspector_body_w() - 20, 26),
             10,
             ink.text_2,
         ),
@@ -11065,7 +11266,8 @@ impl ExternalIntrospect for LabOracle {
                 let said = Self::text(&args)?;
                 let (name, want) = said.split_once(',').ok_or_else(|| {
                     InvokeError::rejected(
-                        "`place` takes <panel>,<edge|fold|unfold> — the panel and where it goes"
+                        "`place` takes <panel>,<edge|fold|unfold|width=N> — the panel and \
+                         where it goes"
                             .to_owned(),
                     )
                 })?;
@@ -11079,6 +11281,22 @@ impl ExternalIntrospect for LabOracle {
                 let ask = match want.trim() {
                     "fold" => PlaceAsk::Fold(true),
                     "unfold" => PlaceAsk::Fold(false),
+                    // ★★★★★ R1889 — `width=N`, a KEYED word rather than a bare
+                    // number, because the third operator takes an argument and
+                    // the other two do not. A bare `280` would make the verb's
+                    // grammar depend on whether a word parses as an integer,
+                    // which is the kind of rule a client cannot read off the
+                    // published schema.
+                    keyed if keyed.starts_with("width=") => {
+                        let n = keyed.trim_start_matches("width=");
+                        let extent = n.parse::<u32>().map_err(|_| {
+                            InvokeError::rejected(format!(
+                                "{n:?} is not a width; `width=` takes a whole number of \
+                                 logical pixels"
+                            ))
+                        })?;
+                        PlaceAsk::Extent(extent)
+                    }
                     // ★ The edge vocabulary is the FRAMEWORK's, read back
                     // through the same function that publishes it, so the word
                     // a client is told and the word it may send are one word.
@@ -11093,17 +11311,22 @@ impl ExternalIntrospect for LabOracle {
                         .find(|edge| edge_word(*edge) == word)
                         .ok_or_else(|| {
                             InvokeError::rejected(format!(
-                                "{word:?} is neither an edge nor `fold` / `unfold`"
+                                "{word:?} is neither an edge nor `fold` / `unfold` / `width=N`"
                             ))
                         })?;
                         PlaceAsk::Edge(edge)
                     }
                 };
                 match place_panel(&state, which, ask) {
+                    // ★ R1889 — the width is in the answer now, for the reason
+                    // R1887 put the edge there: a caller that cannot read back
+                    // what changed has to re-query to find out whether the verb
+                    // did anything.
                     Ok(at) => Ok(IntrospectValue::Text(format!(
-                        "{} {}{}",
+                        "{} {} {}{}",
                         which.word(),
                         edge_word(at.edge),
+                        at.extent,
                         if at.folded { ", folded" } else { "" }
                     ))),
                     // ★★★★★ The refusal reaches the caller AND the screen. The
@@ -11181,6 +11404,18 @@ fn panes_json() -> Vec<serde_json::Value> {
                 "name": placed.map(SidePanel::word),
                 "edges": pane.policy.allowed.iter().copied().map(edge_word).collect::<Vec<_>>(),
                 "foldable": pane.policy.foldable,
+                // ★★★★★ R1889 — the BOUNDS, or null for a pane whose width the
+                // specification settles. Published for the reason `edges` is:
+                // `place <panel>,width=N` refuses outside them, so a client that
+                // cannot read them can only find them by being refused. And
+                // `null` is a statement — *this one does not resize* — where an
+                // absent key would be *nobody said*.
+                "resize": match pane.policy.resize {
+                    pinion_core::edge_panel::Resize::Fixed => serde_json::Value::Null,
+                    pinion_core::edge_panel::Resize::Between { min, max } => {
+                        serde_json::json!({ "min": min, "max": max })
+                    }
+                },
                 "at": placed.map(|which| {
                     let at = match which {
                         SidePanel::Palette => palette,
@@ -12477,12 +12712,46 @@ fn move_end(
     }
 }
 
+/// ★★★★★ R1889 — the width a panel would have if its outer boundary were at
+/// `px`.
+///
+/// Derived from the EDGE, not written twice: a left-hand panel grows as the
+/// pointer moves right and a right-hand one grows as it moves left, and a panel
+/// that flips takes this with it. The inner face it is measured from is
+/// whatever the layout already puts before it — the rail for the first
+/// left-hand panel, the window's edge for a right-hand one, and the other
+/// panel's thickness when both share a side — so this asks the panel's own
+/// rectangle rather than re-deriving the stack.
+fn panel_width_under(state: &LabState, which: SidePanel, px: u32) -> u32 {
+    let rect = which.rect();
+    match which.at(state).edge {
+        ChromeEdge::Left => px.saturating_sub(rect.x),
+        _ => rect.x.saturating_add(rect.w).saturating_sub(px),
+    }
+}
+
 fn move_cursor(state: &Rc<LabState>, px: u32, py: u32) {
     state.cursor.set((px, py));
     let Some(drag) = state.drag.get() else {
         return;
     };
     match drag {
+        // ★★★★★ R1889 — the width the pointer is asking for, clamped BY THE
+        // POLICY and then admitted by it. Two calls into one declaration:
+        // `clamp` gives the drag its reading (a hand past the bound means the
+        // bound) and `place_panel` applies the same policy's `admit_extent`, so
+        // a clamped ask can never be refused and the bounds live in exactly one
+        // place. See `Resize::clamp` for why the clamp is not written here.
+        Drag::PanelWidth { panel } => {
+            let want = panel_width_under(state, panel, px);
+            if let Some(extent) = panel.spec().policy.resize.clamp(want) {
+                // A refusal here would be a defect in the clamp, not a
+                // legitimate answer — so it is reported rather than swallowed.
+                if let Err(refused) = place_panel(state, panel, PlaceAsk::Extent(extent)) {
+                    state.say(Utterance::refused(&panel_refusal_sentence(panel, &refused)));
+                }
+            }
+        }
         Drag::Pan { from, start } => {
             let dx = i64::from(px) - i64::from(from.0);
             let dy = i64::from(py) - i64::from(from.1);
@@ -12563,6 +12832,14 @@ fn press(state: &Rc<LabState>) {
         }
         Hit::Pin { node, dial: true } => {
             state.drag.set(Some(Drag::Wire { from: *node }));
+        }
+        // ★★★★★ R1889 — the grip starts a drag rather than deciding anything.
+        // The value this gesture carries is *where the pointer ends up*, so
+        // there is nothing to decide on the way down; `move_cursor` turns each
+        // position into an ask and `place_panel` answers it, which is how the
+        // drag and the wire verb stay one rule.
+        Hit::PanelGrip(which) => {
+            state.drag.set(Some(Drag::PanelWidth { panel: *which }));
         }
         // ★★ R1681 — pressing an accept pin that already holds a wire PICKS IT
         // UP, which is the reference's rule and every node editor's. A dial pin
@@ -12678,7 +12955,12 @@ fn finish_drag(state: &Rc<LabState>, drag: Drag, now: &Hit) {
             }
         },
         Drag::Node { node, .. } => apply_frame(state, node),
-        Drag::Pan { .. } | Drag::Frame { .. } => {}
+        // ★ R1889 — a width drag commits on every move, so letting go commits
+        // nothing extra. Named beside the other two that do the same rather
+        // than added to their arm, because *this one has already committed* and
+        // *this one has nothing to commit* are different facts and the next
+        // reader of this match should not have to work out which it is.
+        Drag::Pan { .. } | Drag::Frame { .. } | Drag::PanelWidth { .. } => {}
     }
 }
 
@@ -12848,6 +13130,15 @@ fn release(state: &Rc<LabState>) {
             Tone::Refused,
             format!("{name} is not this screen"),
         )),
+        // ★ R1889 — `Hit::PanelGrip` belongs here, and the compiler is what
+        // decided that rather than a preference. It was written as its own
+        // named arm with an empty body — a grip press starts a DRAG, so it is
+        // handled in `press`, and a click that begins and ends on the grip
+        // without moving is a resize to the width it already had — and
+        // `clippy::match_same_arms` refused the arm as identical to this one.
+        // ⇒ ★ a lint that forbids a named no-op is a lint that decides where
+        // the reasoning lives, so the reasoning moved here rather than an
+        // `allow` being added to keep it where it looked better.
         _ => {}
     }
 }

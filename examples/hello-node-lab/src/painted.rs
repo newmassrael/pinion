@@ -592,6 +592,13 @@ fn declared_tags(state: &LabState) -> Vec<String> {
         if pane.policy.foldable {
             want.push(format!("{}.fold", pane.tag));
         }
+        // ★★★★★ R1889 — and a pane that declares it RESIZES paints the grip
+        // that does it, by the same derivation. Above the `folded_pane` early
+        // return would have been wrong: a folded panel is a strip and paints no
+        // grip, which is what that `continue` already says.
+        if pane.policy.resize.is_draggable() {
+            want.push(format!("{}.grip", pane.tag));
+        }
     }
     for (seat, _) in spec::RAIL {
         want.push(format!("lab.rail.{seat}"));

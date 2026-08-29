@@ -3026,6 +3026,169 @@ fn r1887_pressing_the_header_control_moves_the_panel_and_the_layout_follows() {
     });
 }
 
+/// ★★★★★ R1889 — **dragging the grip changes the width, and every derivation
+/// follows it.**
+///
+/// The width counterpart of the edge assertion above, and it exists because
+/// this round's own debt named the trap: `toolbar_rect` read the OPENING widths
+/// until R1887 made panels movable, and ten rectangles inside the inspector
+/// still read the opening width until this round made them resizable. *A latent
+/// divergence is a defect with a date, and the date is the round that builds
+/// the missing thing.*
+///
+/// So this drags and then asks the three things that must have moved: the
+/// canvas, the toolbar, and the panel's own body — the third being the one
+/// R1887 had no reason to check.
+#[test]
+fn r1889_dragging_the_grip_resizes_the_panel_and_every_derivation_follows() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = use_lab_state();
+
+        let opening = state.inspector_at.get().extent;
+        let opening_canvas = canvas_rect();
+        let opening_body = super::inspector_body_w();
+
+        // Pressed where it is painted, through the screen's own hit test.
+        let pane = inspector_rect();
+        let grip = super::side_panel_grip(pane, state.inspector_at.get());
+        let at = (pane.x + grip.x + grip.w / 2, pane.y + grip.y + grip.h / 2);
+        assert_eq!(
+            super::Hit::at(&state, at.0, at.1),
+            super::Hit::PanelGrip(super::SidePanel::Inspector),
+            "the grip is what a press at its painted centre reaches"
+        );
+
+        super::move_cursor(&state, at.0, at.1);
+        super::press(&state);
+        // The inspector is on the right, so dragging LEFT widens it. Derived
+        // from the edge rather than assumed, so this still reads correctly if
+        // the opening placement is ever flipped.
+        let widen_by = 60;
+        let to = match state.inspector_at.get().edge {
+            pinion_core::style::ChromeEdge::Left => at.0 + widen_by,
+            _ => at.0 - widen_by,
+        };
+        super::move_cursor(&state, to, at.1);
+        super::release(&state);
+
+        let now = state.inspector_at.get().extent;
+        assert!(
+            now > opening,
+            "the drag widened the inspector: {opening} -> {now}"
+        );
+        assert!(
+            super::SidePanel::Inspector.spec().policy.resize.clamp(now) == Some(now),
+            "and landed inside the range the specification declares"
+        );
+
+        // ★★★★★ The three derivations. The body is the one this round moved:
+        // before it, these rectangles read `INSP_W` and would have stayed at
+        // the opening width while the panel around them grew.
+        assert!(
+            super::inspector_body_w() > opening_body,
+            "★ the inspector's BODY grew with it — ten rectangles inside this \
+             pane used to state their width from the opening constant, which is \
+             exactly the divergence that goes live the round a drag exists"
+        );
+        assert_eq!(
+            super::inspector_body_w(),
+            inspector_rect().w - super::PAD * 2,
+            "and it is one derivation from the pane, not a second number"
+        );
+        let canvas = canvas_rect();
+        assert!(
+            canvas.w < opening_canvas.w,
+            "the canvas gave up exactly what the panel took"
+        );
+        assert_eq!(
+            (super::toolbar_rect().x, super::toolbar_rect().w),
+            (canvas.x, canvas.w),
+            "and the toolbar still spans the canvas's column"
+        );
+    });
+}
+
+/// ★★★★★ R1889 — **the specification decides which panels resize, and the
+/// screen is held to BOTH directions of that.**
+///
+/// The width twin of R1802's edge census, and it is an equality rather than a
+/// spot check for the reason that round recorded: a gate that only asserts the
+/// positive case passes a screen that offers grips on everything.
+///
+/// ⚠ The population floor is what keeps it from going vacuous. If a
+/// specification edit ever made every pane fixed, every loop below would run
+/// zero times and this test would pass while nothing on the screen resized.
+#[test]
+fn r1889_every_pane_that_declares_a_resize_offers_a_grip_and_no_other_does() {
+    use pinion_core::edge_panel::Resize;
+
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = use_lab_state();
+
+        let mut draggable = 0usize;
+        let mut fixed = 0usize;
+
+        for which in [super::SidePanel::Palette, super::SidePanel::Inspector] {
+            let declared = which.spec().policy.resize;
+            let offers = super::side_panel_has_grip(&state, which);
+            match declared {
+                Resize::Between { min, max } => {
+                    draggable += 1;
+                    assert!(
+                        offers,
+                        "{} declares it resizes between {min} and {max} and the \
+                         screen offers no grip",
+                        which.word()
+                    );
+                    assert!(
+                        min < max,
+                        "a range whose ends meet is a fixed panel \
+                                        spelled the long way"
+                    );
+                    // The opening width must be reachable, or the panel opens
+                    // outside its own declared range and the first drag jumps.
+                    let opening = which.at(&state).extent;
+                    assert!(
+                        (min..=max).contains(&opening),
+                        "{} opens at {opening}, outside its own declared \
+                         {min}..={max}",
+                        which.word()
+                    );
+                }
+                Resize::Fixed => {
+                    fixed += 1;
+                    assert!(
+                        !offers,
+                        "{} declares a fixed width and the screen offers a grip \
+                         anyway — an affordance that cannot do anything",
+                        which.word()
+                    );
+                }
+            }
+        }
+
+        // ★ The floor R1802 taught: a census over a declared set is only worth
+        // running while the set is not empty.
+        assert!(
+            draggable > 0,
+            "no pane declares a resize, so every assertion above ran zero times"
+        );
+        let _ = fixed;
+
+        // And the rail, which is neither of the two placeable panels, declares
+        // `fixed()` — so the vocabulary reaches a pane that genuinely must not
+        // move rather than only the two that may.
+        assert!(
+            !spec::PANES[0].policy.resize.is_draggable(),
+            "the rail's width is the specification's"
+        );
+    });
+}
+
 /// ★★★★★ R1887 — **a fold is reversible by the person who did it.**
 ///
 /// ⚠ The entry re-measurement sharpened the record rather than confirming it.
@@ -3125,10 +3288,16 @@ fn r1887_a_placement_the_panel_does_not_admit_is_refused_with_both_halves() {
         let done = oracle
             .invoke("place", IntrospectValue::Text("palette,right".to_owned()))
             .expect("the palette admits the right edge");
+        // ★ R1889 — the WIDTH is in the answer now, and this assertion is what
+        // made the change deliberate rather than incidental: R1887 wrote the
+        // contract as `<panel> <edge>` and the round that gave the panel a
+        // third changeable property had to come here and widen it. A verb whose
+        // answer omits what it changed makes every caller re-query to find out
+        // whether it did anything.
         assert_eq!(
             done,
-            IntrospectValue::Text("palette right".to_owned()),
-            "the verb answers where the panel is now"
+            IntrospectValue::Text(format!("palette right {}", state.palette_at.get().extent)),
+            "the verb answers where the panel is now, and how wide"
         );
         assert_eq!(
             state.palette_at.get().edge,

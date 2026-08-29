@@ -77,7 +77,14 @@ pub const PANES: &[PaneSpec] = &[
         title: "Node Palette",
         width: 230,
         body: Some("lab.palette.body"),
-        policy: EdgePolicy::movable(SIDES),
+        // ★★★★★ R1889 — and a reader may drag its width between these.
+        //
+        // The floor is what the widest chip row needs before its label starts
+        // clipping; the ceiling is where a palette stops being chrome and
+        // starts competing with the canvas it serves. Both are declared here
+        // rather than clamped in the paint, so the gate can ask the
+        // specification what this panel promises and then hold the screen to it.
+        policy: EdgePolicy::movable(SIDES).resizable(180, 420),
     },
     PaneSpec {
         tag: "lab.canvas",
@@ -95,7 +102,10 @@ pub const PANES: &[PaneSpec] = &[
         title: "Node Inspector",
         width: 312,
         body: Some("lab.inspector.body"),
-        policy: EdgePolicy::movable(SIDES),
+        // ★ R1889 — wider bounds than the palette's, and the reason is in the
+        // content: this pane holds a form with labelled rows and a three-across
+        // action strip, where the palette holds a single column of chips.
+        policy: EdgePolicy::movable(SIDES).resizable(240, 520),
     },
 ];
 

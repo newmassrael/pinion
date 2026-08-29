@@ -154,6 +154,17 @@
       ]
     },
     {
+      "name": "debt-a-mounted-screens-wire-surface-does-not-survive-mounting",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links debt-the-canon-is-one-app-and-we-are-many-binaries"
+      ]
+    },
+    {
       "name": "debt-a-node-graphs-only-state-is-a-delay",
       "substituted": false,
       "blocked_by": "spec-round",
@@ -163,17 +174,6 @@
       "why": [
         "links analyzer-tool-capability-spec",
         "names lab.t2.15, lab.t2.16, lab.t2.17"
-      ]
-    },
-    {
-      "name": "debt-a-panels-extent-is-a-value-nobody-can-drag",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
     },
     {
