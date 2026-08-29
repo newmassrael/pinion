@@ -3602,7 +3602,71 @@ const OPERATION_GESTURES: &[OperationGesture] = &[
     ("close a detached panel", |state, shot| {
         press_tag(state, shot, "float.packet#0.close");
     }),
+    // ★★★★★ R1898 — the two that cross the board's edge. Both aim at a
+    // POSITION rather than a delta, because that is what each gesture means:
+    // one lets go beyond the board, the other lets go in a cell.
+    ("drag a card off the board", |state, shot| {
+        drag_tag_to(state, shot, "card.packet#0.grip", off_the_board());
+    }),
+    (
+        "dock a detached panel where it is dropped",
+        |state, shot| {
+            // The board's first cell, which the precondition's own gesture just
+            // emptied and which the panel it made cannot be covering: that
+            // panel comes to rest where the pointer let go, beyond the board's
+            // right edge.
+            drag_tag_to(state, shot, "float.packet#0.redock", board_top_left());
+        },
+    ),
 ];
+
+/// ★★★★★ R1898 — a grip the board is painting RIGHT NOW, whichever card it
+/// belongs to.
+///
+/// The advertised-gesture fixture drives every row against one accumulating
+/// state, so a row that names a card by hand is a row that breaks whenever an
+/// earlier row takes that card away — which is exactly what the first draft of
+/// these two rows did, and what this gate caught. Asking the paint is the
+/// repair: "a card on the board" is what the gesture needs, and the paint is
+/// the only thing that knows which cards are still there.
+///
+/// A grip rather than a card, because the grip is the affordance the gesture
+/// grabs and a card whose grip is not painted cannot be dragged at all.
+fn a_grip_on_the_board(shot: &Painted) -> String {
+    grip_or_mark(shot, "card.", ".grip")
+        .unwrap_or_else(|| panic!("the board paints no card grip at all"))
+}
+
+/// The same, for a detached panel's re-dock mark.
+fn a_redock_mark(shot: &Painted) -> String {
+    grip_or_mark(shot, "float.", ".redock")
+        .unwrap_or_else(|| panic!("the canvas paints no detached panel's re-dock mark"))
+}
+
+/// The first painted tag with this stem and this suffix.
+fn grip_or_mark(shot: &Painted, stem: &str, suffix: &str) -> Option<String> {
+    shot.tags
+        .keys()
+        .find(|tag| tag.starts_with(stem) && tag.ends_with(suffix))
+        .map(ToOwned::to_owned)
+}
+
+/// The board's first cell, as a window point.
+fn board_top_left() -> (u32, u32) {
+    let canvas = super::canvas_rect();
+    (canvas.x + 30, canvas.y + 30)
+}
+
+/// A window point that is inside the application and outside the board.
+///
+/// The palette's column, which is where a person carrying a card off the board
+/// actually lets go — derived from the same rectangles the layout uses rather
+/// than a number, so a window resize cannot quietly move it back onto the
+/// board.
+fn off_the_board() -> (u32, u32) {
+    let canvas = super::canvas_rect();
+    (canvas.x + canvas.w + 8, canvas.y + 40)
+}
 
 /// Far enough along the board's row that a card lands in a cell it did not
 /// start in — more than one column plus its gap at the opening window size.
@@ -3632,10 +3696,25 @@ fn press_tag(state: &std::rc::Rc<ShellState>, shot: &Painted, tag: &str) {
 /// A press at one painted tag's centre, a move by a signed delta, a release.
 fn drag_tag(state: &std::rc::Rc<ShellState>, shot: &Painted, tag: &str, by: (i32, i32)) {
     let (x, y) = aim(shot, tag);
+    drag_tag_to(state, shot, tag, {
+        let to = |v: u32, d: i32| u32::try_from(i64::from(v) + i64::from(d)).unwrap_or(0);
+        (to(x, by.0), to(y, by.1))
+    });
+}
+
+/// ★ R1898 — a press at one painted tag's centre, a move to an ABSOLUTE window
+/// point, a release.
+///
+/// The two gestures that cross the board's edge need a destination rather than
+/// a delta: "off the board" and "in that cell" are positions in the window, and
+/// a delta that reaches them at one window size reaches somewhere else at
+/// another. The delta form above is written in terms of this one, so the cursor
+/// arc is the same code for both.
+fn drag_tag_to(state: &std::rc::Rc<ShellState>, shot: &Painted, tag: &str, to: (u32, u32)) {
+    let (x, y) = aim(shot, tag);
     ShellOracle::move_cursor(state, x, y);
     ShellOracle::press(state);
-    let to = |v: u32, d: i32| u32::try_from(i64::from(v) + i64::from(d)).unwrap_or(0);
-    ShellOracle::move_cursor(state, to(x, by.0), to(y, by.1));
+    ShellOracle::move_cursor(state, to.0, to.1);
     ShellOracle::release(state);
 }
 
@@ -4091,6 +4170,33 @@ fn r1819_every_gesture_this_screen_advertises_does_something() {
                     }
                     "drag a palette entry to the board" => {
                         press_tag(&state, &shot, "shell.palette.packet");
+                    }
+                    // ★★★★★ R1898 — the board's edge, both ways. The second
+                    // needs a panel on the canvas to grab and gets one from the
+                    // first: the two advertised gestures are each other's
+                    // precondition, which is what a pair of opposite gestures
+                    // should be.
+                    //
+                    // ⚠ This fixture drives every row against ONE accumulating
+                    // state, so by the time these run the rows above have torn
+                    // `packet#0` off already and there is no card to grab.
+                    // Naming a card by hand is therefore a row that breaks
+                    // whenever an earlier row takes that card away — which is
+                    // what the first draft did, and what this gate caught. The
+                    // paint is asked instead: "a card on the board" is what the
+                    // gesture needs, and the paint is the only thing that knows
+                    // which cards are still there.
+                    "drag a card off the board" => {
+                        let grip = a_grip_on_the_board(&shot);
+                        drag_tag_to(&state, &shot, &grip, off_the_board());
+                    }
+                    "drag a detached panel's re-dock mark onto the board" => {
+                        let mark = a_redock_mark(&shot);
+                        // The board's first cell, which the panel torn off by
+                        // the row above cannot be covering: it comes to rest
+                        // where the pointer let go, and that is beyond the
+                        // board's right edge.
+                        drag_tag_to(&state, &shot, &mark, board_top_left());
                     }
                     _ => return false,
                 }

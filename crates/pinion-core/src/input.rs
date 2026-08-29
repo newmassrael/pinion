@@ -67,7 +67,13 @@ pub const DRAG_CLICK_THRESHOLD_PX: f64 = 4.0;
 /// Once latched the gesture stays a drag for its lifetime (W3C: a drag
 /// cancels the click/double-click cycle even if the cursor returns to the
 /// origin) — the latch is dropped with the press, never reset.
-#[derive(Clone, Copy, Debug)]
+///
+/// ★ R1898 — serialisable, because a gesture in flight can now be held in a
+/// `Signal` ([`crate::crossing::Crossing`]) and this framework requires a
+/// signal's value to be a readable one. Not a new capability, and not a wire
+/// form anything publishes: the latch is a press point and a bit, and both are
+/// facts a reader of a paused gesture is entitled to.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DragLatch {
     origin: (f64, f64),
     live: bool,

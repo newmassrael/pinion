@@ -101,6 +101,7 @@ use pinion_chart::{
     Bar, BarChart, BinEnds, Binned, ChartStyle, Mute, QuantileMethod, Quantiles, Sparkline,
 };
 use pinion_core::availability::Unavailable;
+use pinion_core::crossing::{Crossing, CrossingPolicy, Passage, Rest, Side};
 use pinion_core::detach::{DetachHome, DetachPolicy};
 use pinion_core::drop_target::{
     BOARD_WIDGET_DRAG_KIND, DropAccept, DropAction, DropActions, DropClause, DropContract,
@@ -1124,6 +1125,29 @@ struct ShellState {
     cursors: RefCell<BTreeMap<&'static str, Roving>>,
     /// R1697 — a detached panel being moved or sized, in flight.
     float_grab: Signal<Option<FloatGrab>>,
+    /// ★★★★★ R1898 — **which side of the board's edge the gesture in flight
+    /// would end on**, and whether ending there moves the card between them.
+    ///
+    /// The board and the loose space over it are two homes for one card, and
+    /// before this field a drag could only end in the home it began in: a card
+    /// carried off the board answered [`Dropped::Abandoned`] and a panel
+    /// carried onto it slid across and came to rest on top. Both crossings
+    /// existed as controls — the tear-off mark and the re-dock mark — and
+    /// neither existed as a gesture.
+    ///
+    /// One value, read by the preview and by the release, so the destination a
+    /// person is shown and the one the release performs are the same fact
+    /// rather than two derivations. Beside [`drag`](Self::drag) rather than
+    /// inside it for the reason [`FloatGrab`] is beside it: the drag owns the
+    /// CELL and this owns the SIDE, and folding a side into a type whose fields
+    /// are a cell coordinate would give one of them a meaning it cannot carry.
+    ///
+    /// Every gesture that can put the pointer on the other side declares one,
+    /// including the two that must NOT cross — moving a panel and sizing it —
+    /// because [`CrossingPolicy::Stays`] is what turns "this gesture does not
+    /// dock" from a coincidence of what is painted under the cursor into a
+    /// property with a sentence.
+    crossing: Signal<Option<Crossing>>,
     /// R1697 — the next stacking number a raise hands out. Monotonic, as the
     /// reference's is: comparing two panels' `z` is only meaningful while the
     /// numbers are never reused.
@@ -1502,6 +1526,7 @@ impl ShellState {
                     .collect(),
             ),
             float_grab: Signal::new(None),
+            crossing: Signal::new(None),
             float_z: RefCell::new(0),
             // ★ R1719/R1778 — this screen is the one that opens having ALREADY
             // said something; the node lab and the packet viewer open silent.
@@ -2166,19 +2191,6 @@ fn cell_rect(tile: &Tile) -> Rect {
     )
 }
 
-/// ★★★★★ R1726 — a WINDOW point turned into the cell it falls in, with the
-/// board's scroll folded in.
-///
-/// The board slides under the canvas, so a window point and a board point
-/// differ by the scroll offset. `Hit::at` has folded it since R1662 — which is
-/// why pressing a scrolled card still selects the right one — and the two
-/// places that turned a press into a CELL did not. So a drag begun after
-/// scrolling computed its grab and its destination in the unscrolled frame.
-/// Reported from the running board: scroll down, press a widget, and the drop
-/// position is not where the widget is.
-///
-/// One function, so the fold cannot be remembered at one call site and
-/// forgotten at the other — which is exactly what had happened.
 /// ★★★★★ R1733 — whether a window point is **on the board at all**.
 ///
 /// The half a card drag never needed: a card gripped on the board is always
@@ -2193,13 +2205,62 @@ fn cell_rect(tile: &Tile) -> Rect {
 /// the dashboard destination — at any other page that region belongs to the
 /// page. A floating panel over it is not the board either; it is chrome, and
 /// dropping a card onto one is not a placement.
-fn on_board(state: &ShellState, px: u32, py: u32) -> bool {
-    state.at() == "dashboard"
-        && contains(canvas_rect(), px, py)
-        && !matches!(
-            Hit::at(state, px, py),
-            Hit::Float(_) | Hit::FloatRedock(_) | Hit::FloatClose(_) | Hit::FloatResize(_)
-        )
+/// ★★★★★ R1898 — and the gesture may be CARRYING one of the panels this rule
+/// excludes.
+///
+/// A detached panel is chrome over the board, and dropping a card onto one is
+/// not a placement (R1733). But a gesture that drags a panel — or one of that
+/// panel's own marks — has that panel under the cursor for its whole life, so
+/// asking the unqualified question would answer "not over the board" every
+/// time and the crossing would be settled by *what happens to be painted*
+/// rather than by where the board is.
+///
+/// That is the difference between a rule and a coincidence, and this tree has
+/// paid for the coincidence before. One rule, stated once, with the carried
+/// panel named: every OTHER float still blocks, because dropping a card under
+/// somebody else's panel is the placement R1733 refused.
+fn on_board_ignoring(state: &ShellState, px: u32, py: u32, carrying: Option<&str>) -> bool {
+    if state.at() != "dashboard" || !contains(canvas_rect(), px, py) {
+        return false;
+    }
+    match Hit::at(state, px, py) {
+        Hit::Float(id) | Hit::FloatRedock(id) | Hit::FloatClose(id) | Hit::FloatResize(id) => {
+            carrying == Some(id.as_str())
+        }
+        _ => true,
+    }
+}
+
+/// ★★★★★ R1898 — where a release at this point would put what is being
+/// carried, on whichever side of the board's edge that is.
+///
+/// The ONE classifier behind every gesture that can cross: a card gripped on
+/// the board, a detached panel's re-dock mark carried onto it, and a panel
+/// being moved or sized that must not dock. Written once because a second
+/// spelling of "is the pointer over the board" is a second answer, which is the
+/// shape [`preview_carry`](ShellOracle::preview_carry) exists to prevent one
+/// layer down.
+///
+/// The cell is the raw one the pointer falls in. What a *joining* release
+/// actually places is the [`TileDrag`]'s landing, which folds in the footprint
+/// clamp — so this value classifies the side and the drag owns the cell, and
+/// the two cannot disagree about where the preview was.
+/// A window pixel as the framework's drag latch reads one.
+///
+/// One conversion, in one place: the latch measures a Euclidean distance and
+/// this screen counts in whole pixels, and a cast written at each of the four
+/// call sites is four chances to write it differently.
+fn press_point(px: u32, py: u32) -> (f64, f64) {
+    (f64::from(px), f64::from(py))
+}
+
+fn rest_at(state: &ShellState, px: u32, py: u32, carrying: Option<&str>) -> Rest {
+    if on_board_ignoring(state, px, py, carrying) {
+        let (col, row) = cell_at_window(state, px, py);
+        Rest::cell(col, row)
+    } else {
+        Rest::point(px, py)
+    }
 }
 
 /// ★ R1762 — a window coordinate folded into a scrolled surface's own frame.
@@ -2219,6 +2280,25 @@ fn fold_by(v: u32, by: i32) -> u32 {
     folded
 }
 
+/// ★★★★★ R1726 — a WINDOW point turned into the cell it falls in, with the
+/// board's scroll folded in.
+///
+/// The board slides under the canvas, so a window point and a board point
+/// differ by the scroll offset. `Hit::at` has folded it since R1662 — which is
+/// why pressing a scrolled card still selects the right one — and the two
+/// places that turned a press into a CELL did not. So a drag begun after
+/// scrolling computed its grab and its destination in the unscrolled frame.
+/// Reported from the running board: scroll down, press a widget, and the drop
+/// position is not where the widget is.
+///
+/// One function, so the fold cannot be remembered at one call site and
+/// forgotten at the other — which is exactly what had happened.
+///
+/// ⚠ R1898 — this paragraph had been sitting on `on_board` since R1733,
+/// documenting a function that does not fold a scroll offset and never
+/// mentioned this one. Found by removing that function: a doc comment attached
+/// to the wrong item is a claim nothing checks, and the two had been read as
+/// one block for 165 rounds.
 fn cell_at_window(state: &ShellState, px: u32, py: u32) -> (u32, u32) {
     let canvas = canvas_rect();
     let (ox, oy) = state.canvas_scroll.offset();
@@ -3701,7 +3781,7 @@ impl ShellOracle {
     /// paints one scene tag and a drop point over it carries no `#sub` half for
     /// a part clause to match. Declaring parts the wire cannot resolve would
     /// publish a promise the router could never keep. The board's own region
-    /// test stays where it is, inside the gesture — see `on_board`.
+    /// test stays where it is, inside the gesture — see `on_board_ignoring`.
     pub(crate) const fn declared_drop_contract() -> DropContract {
         DropContract::new(
             const {
@@ -4205,6 +4285,11 @@ const FIELDS: &[SchemaField] = const {
         // R1826 — which OS window carries each detached card.
         SchemaField::new("detached", "json"),
         SchemaField::new("float_grab", "string"),
+        // ★★★★★ R1898 — which side of the board's edge the gesture in flight
+        // would end on, and whether ending there moves the card between them.
+        // The floor keeps this bit private; here it is a slot, so an agent that
+        // never saw the pointer can ask what letting go would do.
+        SchemaField::new("crossing", "json"),
         // named layouts
         SchemaField::new("preset", "string"),
         SchemaField::new("presets", "string"),
@@ -4401,6 +4486,47 @@ fn floats_json(state: &ShellState) -> serde_json::Value {
     )
 }
 
+/// ★ R1898 — everything a caller can ask about what a POINTER is doing.
+///
+/// Split out of `query` for the reason [`query_arrangements`] below was, and by
+/// the same rule: this `match` reached the length this workspace lints for when
+/// the crossing slot was added, and the honest split is by subject. A reader
+/// asking "what is the hand doing" finds seven slots together — where the
+/// cursor is, what is under it, what is selected, what is being carried and in
+/// what form, which panel is being moved, and what letting go would do.
+///
+/// Returns `UnknownPath` for anything else, so the caller's `match` and this
+/// function cannot disagree about which paths belong here.
+fn query_gesture(state: &ShellState, path: &str) -> Result<IntrospectValue, ReadRefusal> {
+    match path {
+        "cursor" => {
+            let (x, y) = state.cursor.get();
+            Ok(IntrospectValue::Text(format!("{x},{y}")))
+        }
+        "selected" => Ok(IntrospectValue::Text(
+            state.selected.get().unwrap_or_default(),
+        )),
+        "hit" => {
+            let (x, y) = state.cursor.get();
+            Ok(IntrospectValue::Text(hit_word(&Hit::at(state, x, y))))
+        }
+        "drag" | "carrying" => Ok(carry_slot(state, path)),
+        // What the pointer is doing to a panel right now, or empty. The peer of
+        // `drag`, and separate for the reason the types are separate: one
+        // gesture lands in a cell and the other in a pixel.
+        "float_grab" => Ok(IntrospectValue::Text(
+            state.float_grab.get().map_or_else(String::new, |grab| {
+                format!("{},{}", grab.id, if grab.edge { "resize" } else { "move" })
+            }),
+        )),
+        // ★★★★★ R1898 — what letting go RIGHT NOW would do, refusal and all.
+        // The same value the release reads, so a client cannot be told one
+        // thing and shown another.
+        "crossing" => Ok(IntrospectValue::Json(crossing_json(state))),
+        _ => Err(ReadRefusal::UnknownPath),
+    }
+}
+
 /// ★ R1893 — everything a caller can ask about the SET of named arrangements.
 ///
 /// Split out of `query` because that `match` reached the length this workspace
@@ -4590,12 +4716,6 @@ impl ExternalIntrospect for ShellOracle {
             // saw the gesture: `scene/query .../detached` then
             // `scene/snapshot {window: <that id>}`.
             "detached" => Ok(IntrospectValue::Json(detached_json(state))),
-            // What the pointer is doing to a panel right now, or empty. The
-            // peer of `drag` below, and separate for the reason the types are
-            // separate: one gesture lands in a cell and the other in a pixel.
-            "float_grab" => text(state.float_grab.get().map_or_else(String::new, |g| {
-                format!("{},{}", g.id, if g.edge { "resize" } else { "move" })
-            })),
             // ★ R1893 — the arrangement questions are answered one function
             // over. Not a tidy-up: this `match` had reached the length limit
             // this workspace lints for, and the honest split is by SUBJECT
@@ -4642,16 +4762,15 @@ impl ExternalIntrospect for ShellOracle {
             // guessing it. A guessed duration is a check whose verdict depends
             // on machine speed, and R1787's CI run failed exactly that way.
             "saying" => Ok(IntrospectValue::Json(state.toast.to_wire())),
-            "cursor" => {
-                let (x, y) = state.cursor.get();
-                text(format!("{x},{y}"))
+            // ★ R1898 — the questions about what a POINTER is doing are
+            // answered one function over, for the reason R1893 split the
+            // arrangement ones out: this `match` had reached the length this
+            // workspace lints for, and the honest split is by SUBJECT rather
+            // than by whichever arm happened to arrive last. See
+            // `query_gesture`.
+            "cursor" | "selected" | "hit" | "drag" | "carrying" | "float_grab" | "crossing" => {
+                query_gesture(state, path)
             }
-            "selected" => text(state.selected.get().unwrap_or_default()),
-            "hit" => {
-                let (x, y) = state.cursor.get();
-                text(hit_word(&Hit::at(state, x, y)))
-            }
-            "drag" | "carrying" => Ok(carry_slot(state, path)),
             "keymap" => text(
                 KEYMAP
                     .iter()
@@ -4743,7 +4862,7 @@ impl ExternalIntrospect for ShellOracle {
             "preset" => ShellOracle::apply_preset(&state, &word(&value)?),
             "sources" | "cards" | "card_count" | "placed_count" | "layout" | "maximized"
             | "restore_to" | "floating" | "floats" | "detached" | "detach_policy"
-            | "float_grab" | "presets" | "arrangements" | "transport" | "playhead"
+            | "float_grab" | "crossing" | "presets" | "arrangements" | "transport" | "playhead"
             | "affordances" | "states" | "remedies" | "steppers" | "toast" | "cursor"
             | "selected" | "hit" | "keymap" | "rail" | "tabs" | "catalogue" | "config_open"
             | "drag" | "carrying" => Err(InterveneError::ReadOnly),
@@ -4922,6 +5041,7 @@ impl ShellOracle {
 
     fn move_cursor(state: &Rc<ShellState>, px: u32, py: u32) {
         state.cursor.set((px, py));
+        Self::carry_crossing(state, px, py);
         if let Some(grab) = state.float_grab.get() {
             Self::carry_float_grab(state, &grab, px, py);
             return;
@@ -4959,17 +5079,44 @@ impl ShellOracle {
         // The grip offset and the column clamp both live in the framework type,
         // so this file does no arithmetic that could differ from what the
         // release does.
-        let outcome = if on_board(state, px, py) {
-            let (col, row) = cell_at_window(state, px, py);
-            drag.hover(&state.board.get(), col, row);
-            drag.landing()
-                .ok_or("this footprint does not fit at that cell")
-        } else if state.at() == "dashboard" {
+        // ★★★★★ R1898 — through `rest_at`, the ONE classifier, so a carry that
+        // is a detached panel on its way back to the board is judged by the
+        // same rule as a footprint off the palette. Before this the question
+        // was spelled twice — here and at the edge — and the two disagreed
+        // about a panel the cursor was inside of.
+        let carried = Self::carried_float(state);
+        // ★★★★★ R1898 — a gesture that has not become a drag previews nothing.
+        //
+        // The crossing owns the click-vs-drag latch, and a preview drawn for a
+        // press that is still a click would be a rectangle the release does not
+        // honour — the lie this round's whole module exists to make unspellable.
+        // A palette carry has no crossing and is unaffected: the router opens
+        // its drag session, which has already made that determination.
+        if state
+            .crossing
+            .get()
+            .is_some_and(|crossing| !crossing.is_drag())
+        {
             drag.leave();
-            Err("the board is the canvas, and the cursor is not over it")
-        } else {
-            drag.leave();
-            Err("a widget lands on the dashboard's board, and that is not the page showing")
+            if drag.landing() != before {
+                state.drag.set(Some(drag));
+            }
+            return Err("the press has not become a drag yet");
+        }
+        let outcome = match rest_at(state, px, py, carried.as_deref()) {
+            Rest::Inside { col, row } => {
+                drag.hover(&state.board.get(), col, row);
+                drag.landing()
+                    .ok_or("this footprint does not fit at that cell")
+            }
+            Rest::Outside { .. } => {
+                drag.leave();
+                Err(if state.at() == "dashboard" {
+                    "the board is the canvas, and the cursor is not over it"
+                } else {
+                    "a widget lands on the dashboard's board, and that is not the page showing"
+                })
+            }
         };
         if drag.landing() != before {
             state.drag.set(Some(drag));
@@ -5108,7 +5255,69 @@ impl ShellOracle {
             let (col, row) = cell_at_window(state, px, py);
             if let Ok(drag) = TileDrag::grip(&board, &TileId::new(id.clone()), col, row) {
                 state.drag.set(Some(drag));
+                // ★★★★★ R1898 — **and the edge, so carrying it off the board
+                // takes it off the board.** The floor's own gesture: its
+                // detachable panel is dragged out by the strip this grip is.
+                //
+                // A maximised card declares the other arm, and that is a
+                // correctness requirement rather than a preference. Maximising
+                // stores the arrangement to restore into
+                // ([`Maximized`]), and that stored board still holds this
+                // card — so letting the gesture take it out would leave the
+                // restore pointing at a card that is no longer there, which is
+                // the two-pictures defect R1891 closed one axis over.
+                state.crossing.set(Some(Crossing::open(
+                    label_of(id),
+                    if state.maximized.get().is_some() {
+                        CrossingPolicy::stays(
+                            "a maximised card is in the arrangement waiting to be restored, so \
+                             restore it before taking it off the board",
+                        )
+                    } else {
+                        CrossingPolicy::Crosses
+                    },
+                    Side::Inside,
+                    press_point(px, py),
+                    // Where the card ALREADY is: the cell it occupies. A press
+                    // moves nothing, so the opening rest has to say so.
+                    Rest::cell(col, row),
+                )));
             }
+        }
+        // ★★★★★ R1898 — **a press on a detached panel's re-dock mark picks the
+        // panel up for the board.**
+        //
+        // The palette's shape, one gesture over (R1733): the ACTION is not
+        // replaced — a press and release on the mark still re-docks at the
+        // bottom of the board, which is what the behaviour canon does — and a
+        // drag off the mark onto a cell docks it THERE. One control, two
+        // gestures, the same verb underneath.
+        //
+        // Why this mark and not the panel's body: dragging the body moves the
+        // panel, which the canon has and this build must not take away. The
+        // standing rule that a floor is a floor rather than a ceiling cuts both
+        // ways — it says build what the floor has and does not say delete what
+        // it lacks. The floor resolves this same collision with a held modifier
+        // key whose flag is private to its drag state; a second affordance is
+        // reachable without knowing a keystroke, and it says what it does.
+        if let Hit::FloatRedock(id) = &hit {
+            if let Some((cols, rows)) = kind_span(kind_of(id)) {
+                if let Ok(drag) = TileDrag::pick(&state.board.get(), id.clone(), cols, rows) {
+                    state.drag.set(Some(drag));
+                }
+            }
+            state.crossing.set(Some(Crossing::open(
+                label_of(id),
+                CrossingPolicy::Crosses,
+                Side::Outside,
+                press_point(px, py),
+                // ★★★★★ Where the PANEL already is, not what is under the
+                // pointer. The mark is painted over the board, so reading the
+                // pointer's side here made a plain press on it a placement —
+                // measured on the running application, which docked the panel
+                // at column 6 and displaced five cards.
+                Rest::point(px, py),
+            )));
         }
         // ★★★★★ R1733 — **a press on a palette row picks the widget up.**
         //
@@ -5141,7 +5350,32 @@ impl ShellOracle {
         // correct — the panel is painted, hit-testable, named and announced.
         // None of them asks whether grabbing it moves it.
         if let Hit::Float(id) | Hit::FloatResize(id) = &hit {
-            Self::open_float_grab(state, id, matches!(hit, Hit::FloatResize(_)), (px, py));
+            let sizing = matches!(hit, Hit::FloatResize(_));
+            Self::open_float_grab(state, id, sizing, (px, py));
+            // ★★★★★ R1898 — **these two gestures declare that they do not
+            // dock**, and the declaration is what makes that a property.
+            //
+            // A panel lives over the board, so both of these spend their whole
+            // life with the pointer inside the board's rectangle. Leaving them
+            // undeclared would make "it does not dock" true only because the
+            // panel itself is painted under the cursor — a coincidence of
+            // stacking, not a rule — and `on_board_ignoring` deliberately looks
+            // THROUGH the carried panel so that coincidence cannot be what
+            // answers. What answers instead is this sentence, and it names the
+            // gesture that does dock rather than only saying no.
+            state.crossing.set(Some(Crossing::open(
+                label_of(id),
+                CrossingPolicy::stays(if sizing {
+                    "this drag sizes the panel; drag its re-dock mark onto a cell to put it back \
+                     on the board"
+                } else {
+                    "this drag moves the panel; drag its re-dock mark onto a cell to put it back \
+                     on the board"
+                }),
+                Side::Outside,
+                press_point(px, py),
+                Rest::point(px, py),
+            )));
         }
         *state.pressed.borrow_mut() = Some(hit);
     }
@@ -5202,6 +5436,23 @@ impl ShellOracle {
         // body.
         if let Some(grab) = state.float_grab.get() {
             state.float_grab.set(None);
+            // ★★★★★ R1898 — this release honours whatever the crossing says,
+            // and what these two gestures say is `Stays`.
+            //
+            // The arm is written even though the declaration beside them means
+            // it never runs, and that is the point: a declaration nothing would
+            // act on is a label, and a label cannot be broken by a test. With
+            // the arm here, changing either gesture's policy to `Crosses` docks
+            // the panel mid-move — which is a defect a walk can see, and does
+            // (`r1898`, section C). The sentence explaining the refusal stays
+            // readable on the `crossing` slot right up to the release rather
+            // than arriving as a toast for something nobody asked for.
+            let passage = state.crossing.get().map(|crossing| crossing.passage());
+            state.crossing.set(None);
+            if let Some(Ok(Passage::Joined { col, row })) = passage {
+                Self::dock_where(state, &grab.id, col, row);
+                return;
+            }
             // Only speak if something actually changed. A press and release
             // without movement is a click on the panel, and announcing "moved"
             // for it would be the same class of lie the rail told before R1695:
@@ -5220,6 +5471,16 @@ impl ShellOracle {
         }
         if let Some(drag) = state.drag.get() {
             state.drag.set(None);
+            // ★★★★★ R1898 — **what side of the board's edge this release is
+            // on, asked once, before the board's own commit.**
+            //
+            // The `match` is total over `Passage`, so a gesture that crossed
+            // cannot fall through to the move path by omission — which is
+            // exactly how the two crossings were missing before this round:
+            // there was no value to match on, so "off the board" reached
+            // `Dropped::Abandoned` and meant nothing.
+            let passage = state.crossing.get().map(|crossing| crossing.passage());
+            state.crossing.set(None);
             // ★★★★★ R1733 — an ABANDONED carry falls through to the latch.
             //
             // That is what keeps the palette's action alive now that pressing a
@@ -5227,7 +5488,26 @@ impl ShellOracle {
             // carries it nowhere, so the latched hit acts and the card is added
             // at the bottom exactly as before. Fidelity to a pointer-only
             // reference must not cost a reader the only path they have.
-            if !Self::commit_drag(state, drag) {
+            //
+            // ★★★★★ R1898 — and it is what keeps the re-dock mark's ACTION
+            // alive for the same reason, one gesture over. All three answers
+            // below are "may the release go on to perform what the press
+            // latched", so the rule is one rule with three bodies rather than
+            // three conventions.
+            let go_on = match passage {
+                Some(Ok(Passage::Left { x, y })) => {
+                    Self::leave_board(state, drag.carried().id().as_str(), (x, y));
+                    false
+                }
+                Some(Ok(Passage::Joined { .. })) => Self::join_board(state, drag),
+                // A move within the board, a drift outside it, a refused
+                // crossing, or a gesture that declared no crossing at all: the
+                // board's own commit answers, exactly as it did before.
+                Some(Ok(Passage::Moved { .. } | Passage::Drifted { .. }) | Err(_)) | None => {
+                    Self::commit_drag(state, drag)
+                }
+            };
+            if !go_on {
                 return;
             }
         }
@@ -5237,6 +5517,214 @@ impl ShellOracle {
             return;
         }
         Self::act_on_hit(state, latched);
+    }
+
+    /// ★★★★★ R1898 — which detached panel a gesture is carrying, if any.
+    ///
+    /// Derived from the two things already in flight rather than stored a third
+    /// time: a panel being moved or sized is the [`FloatGrab`]'s, and a panel
+    /// being carried back to the board is the fresh [`TileDrag`]'s — *if that
+    /// carry names a card that is detached*, which is what separates it from a
+    /// footprint carried off the palette. A field would be a third fact three
+    /// places would have to keep in step.
+    fn carried_float(state: &ShellState) -> Option<String> {
+        if let Some(grab) = state.float_grab.get() {
+            return Some(grab.id);
+        }
+        let drag = state.drag.get()?;
+        let id = drag.carried().id().as_str().to_owned();
+        (!drag.carried().is_placed() && state.is_floating(&id)).then_some(id)
+    }
+
+    /// ★★★★★ R1898 — carry the crossing to the cursor.
+    ///
+    /// Runs for EVERY gesture that declared one, including the two that do not
+    /// cross: `crossing` is what a client reads to know what letting go would
+    /// do, and a slot that stopped updating while a panel was being moved would
+    /// answer for a pointer position that is minutes old.
+    fn carry_crossing(state: &Rc<ShellState>, px: u32, py: u32) {
+        let Some(mut crossing) = state.crossing.get() else {
+            return;
+        };
+        let carried = Self::carried_float(state);
+        let rest = rest_at(state, px, py, carried.as_deref());
+        let before = (crossing.rest(), crossing.is_drag());
+        crossing.hover(press_point(px, py), rest);
+        if (crossing.rest(), crossing.is_drag()) != before {
+            state.crossing.set(Some(crossing));
+        }
+    }
+
+    /// ★★★★★ R1898 — **the card leaves the board, at the point it was let go
+    /// of**, and takes its rectangle with it.
+    ///
+    /// A card that changes which side of the edge it lives on has to arrive
+    /// somewhere, and the two sides do not share a coordinate system. The
+    /// transfer is stated here because it is the host that owns both spaces —
+    /// the cell is the board's, the point is the window's, and the panel's
+    /// rectangle is the canvas's.
+    ///
+    /// ⚠ This is NOT the transfer R1891 left open, and the two are easy to run
+    /// together. That one is between the two DETACHED homes — a window's
+    /// rectangle is in the display's space and a canvas float's is in the
+    /// host's, so `detach_home` still moves a panel between them without its
+    /// geometry following. This one is between docked and loose. Both are
+    /// coordinate-system crossings; only this one is closed.
+    ///
+    /// # Why the canvas and not a window
+    ///
+    /// The tear-off *control* takes [`DetachPolicy::preferred`], which on this
+    /// host is a real window (R1826). A DRAG ends at a point on this canvas, and
+    /// a panel whose position is the point the pointer let go of is a panel on
+    /// the canvas — handing that point to a window server would be handing it a
+    /// coordinate in a space it does not use. So the gesture asks for
+    /// [`DetachHome::Canvas`] by name, through the policy, and a host that
+    /// could not provide it refuses with a sentence rather than silently
+    /// putting the panel somewhere else.
+    ///
+    /// # The size it arrives at
+    ///
+    /// The size it had on the board, not the opening float size: a panel that
+    /// jumped to another size under the finger would be a different object from
+    /// the one that was picked up. Clamped up to the panel minimums, which is
+    /// what a card narrower than 320 logical pixels needs to keep its own
+    /// header controls beside its title (R1697's measurement).
+    fn leave_board(state: &Rc<ShellState>, id: &str, at: (u32, u32)) {
+        let canvas = canvas_rect();
+        let Some(tile) = state.board.get().tile(&TileId::new(id)).cloned() else {
+            return;
+        };
+        let was = cell_rect(&tile);
+        let (width, height) = (was.w.max(FLOAT_MIN_W), was.h.max(FLOAT_MIN_H));
+        // Into the canvas's own space, and kept inside it: a panel dropped over
+        // the palette would otherwise be painted outside the region that draws
+        // it, and a panel nobody can see is a panel nobody can put back.
+        let local = |point: u32, origin: u32, extent: u32, span: u32| {
+            point
+                .saturating_sub(origin)
+                .min(extent.saturating_sub(span))
+        };
+        let home = match detach_policy().admit(DetachHome::Canvas) {
+            Ok(home) => home,
+            Err(refusal) => {
+                state.say(Utterance::refused(&refusal.reason().to_string()));
+                return;
+            }
+        };
+        let mut board = state.board.get();
+        board.remove(&TileId::new(id)).ok();
+        state.board.set(board);
+        let stacking = {
+            let mut counter = state.float_z.borrow_mut();
+            *counter += 1;
+            *counter
+        };
+        let mut floats = state.floats.get();
+        floats.push(Float {
+            id: id.to_owned(),
+            x: local(at.0, canvas.x, canvas.w, width),
+            y: local(at.1, canvas.y, canvas.h, height),
+            w: width,
+            h: height,
+            z: stacking,
+            on_top: false,
+            home,
+        });
+        state.floats.set(floats);
+        state.say(Utterance::done(format!(
+            "{} \u{2192} detached panel",
+            label_of(id)
+        )));
+    }
+
+    /// ★★★★★ R1898 — dock `id` at a cell a passage named, through the one
+    /// commit body.
+    ///
+    /// For a gesture that carries no [`TileDrag`] of its own — a panel being
+    /// moved, if its policy ever said it crosses. The drag is built here and
+    /// hovered with the cell the crossing reported, so the grid's own footprint
+    /// clamp is applied exactly once and the placement goes through
+    /// [`join_board`](Self::join_board) like every other.
+    fn dock_where(state: &Rc<ShellState>, id: &str, col: u32, row: u32) -> bool {
+        let Some((w, h)) = kind_span(kind_of(id)) else {
+            return true;
+        };
+        let board = state.board.get();
+        let Ok(mut drag) = TileDrag::pick(&board, id.to_owned(), w, h) else {
+            return true;
+        };
+        drag.hover(&board, col, row);
+        Self::join_board(state, drag)
+    }
+
+    /// ★★★★★ R1898 — **the panel joins the board, in the cell the preview was
+    /// drawing.**
+    ///
+    /// The other direction, and it commits through the same [`TileDrag`] the
+    /// preview read — so the rectangle a person watched and the cell the card
+    /// takes are one value, which is R1668's rule and the reason this gesture
+    /// carries a tile drag at all rather than computing a cell here.
+    ///
+    /// The `redock` verb is NOT replaced: it puts a panel back at the bottom of
+    /// the board, which is what the behaviour canon does and what a press on
+    /// the same mark still does. This is the chosen-cell gesture beside it —
+    /// the palette's shape (R1733), one control with two gestures.
+    ///
+    /// Answers whether the release may go on to perform what the press latched,
+    /// exactly as [`commit_drag`](Self::commit_drag) does. ★ A press and a
+    /// release on the mark without moving never aimed at a cell, so the carry
+    /// has no landing and this docks nothing and answers `true` — which is what
+    /// keeps that press the plain `redock` it has always been. The alternative
+    /// — treating a press on a panel that happens to lie over the board as a
+    /// placement — was the first draft, and this gate caught it: `floating` did
+    /// not move, because a drop with no landing is `Abandoned`.
+    fn join_board(state: &Rc<ShellState>, drag: TileDrag) -> bool {
+        let id = drag.carried().id().as_str().to_owned();
+        let label = label_of(&id);
+        let mut board = state.board.get();
+        match drag.drop_on(&mut board) {
+            Ok(Dropped::Landed { at, reflow }) => {
+                state.board.set(board);
+                state.floats.set(
+                    state
+                        .floats
+                        .get()
+                        .into_iter()
+                        .filter(|f| f.id != id)
+                        .collect(),
+                );
+                state.say(Utterance::done(if reflow.is_clean() {
+                    format!("{label} re-docked at column {}, row {}", at.0, at.1)
+                } else {
+                    format!(
+                        "{label} re-docked at column {}, row {}, displacing {}",
+                        at.0,
+                        at.1,
+                        reflow
+                            .displaced()
+                            .iter()
+                            .map(|d| label_of(d.id.as_str()))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                }));
+                false
+            }
+            // Nothing was aimed at: `Unmoved` cannot happen for a carry that is
+            // not on the board, and `Abandoned` is the press that never moved.
+            // The release goes on to the latch, where the mark's own action
+            // puts the panel back at the bottom.
+            Ok(_) => true,
+            // The board would not take it there. The panel stays detached and
+            // exactly where it is, and the sentence is the grid's own — a
+            // second wording here would be a second rule. The latch is NOT
+            // performed: a refused drop must not quietly become the default
+            // placement the press would have done.
+            Err(why) => {
+                state.say(Utterance::refused(&why.to_string()));
+                false
+            }
+        }
     }
 
     /// Put down what the board was carrying. Answers whether the release should
@@ -10226,6 +10714,45 @@ fn carry_slot(state: &ShellState, path: &str) -> IntrospectValue {
             .landing()
             .map(|(col, row)| format!("{},{col},{row}", drag.carried().id()))
             .unwrap_or_default(),
+    })
+}
+
+/// ★★★★★ R1898 — **what letting go right now would do**, as a value.
+///
+/// `null` when no gesture is in flight, which is a different answer from a
+/// gesture that would do nothing: the second says so with `passage` and a
+/// reason.
+///
+/// The whole crossing is published — which side it began on, which side the
+/// pointer rests on, and the verdict — because a client that could read only
+/// the verdict could not tell "this drag does not dock" from "the pointer is
+/// not over the board yet", and those call for different next moves.
+fn crossing_json(state: &ShellState) -> serde_json::Value {
+    let Some(crossing) = state.crossing.get() else {
+        return serde_json::Value::Null;
+    };
+    let rest = match crossing.rest() {
+        Rest::Inside { col, row } => serde_json::json!({"side": "inside", "col": col, "row": row}),
+        Rest::Outside { x, y } => serde_json::json!({"side": "outside", "x": x, "y": y}),
+    };
+    let verdict = match crossing.passage() {
+        Ok(passage) => serde_json::json!({
+            "passage": passage.as_str(),
+            "crosses": passage.crosses(),
+        }),
+        Err(refusal) => serde_json::json!({
+            "passage": serde_json::Value::Null,
+            "crosses": false,
+            "refused": refusal.wire_word(),
+            "because": refusal.reason().as_str(),
+        }),
+    };
+    serde_json::json!({
+        "unit": crossing.unit(),
+        "began": crossing.began().as_str(),
+        "policy": crossing.policy().as_str(),
+        "rest": rest,
+        "verdict": verdict,
     })
 }
 

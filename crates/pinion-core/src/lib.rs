@@ -39,6 +39,7 @@ pub mod composite_tag;
 pub mod conformance;
 pub mod containment;
 pub mod contrast;
+pub mod crossing;
 pub mod derivation;
 pub mod detach;
 pub mod directory;

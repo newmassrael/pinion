@@ -1502,11 +1502,28 @@ pub const BOARD: &[PlacedSpec] = &[
 /// Taken from the behaviour prototype's own board section rather than invented:
 /// it binds a drag on a floating panel's chrome, a drag on its corner, a drag
 /// on a card's grip, and a drag out of the palette onto the canvas.
+/// ★★★★★ R1898 — the last two rows are the board's EDGE, which until this
+/// round no gesture crossed in either direction.
+///
+/// Both are the floor's own gestures rather than this build's invention: its
+/// detachable panel is dragged out of its host by the strip a card's grip is,
+/// and dragged back in the same way. Where this build differs is the way in —
+/// the floor collides "move the loose panel" with "put it back" and separates
+/// them by a held modifier key whose flag is private to its drag state, so a
+/// reader cannot ask what letting go would do. Here the two gestures are two
+/// affordances, and the one that does not dock says so
+/// ([`pinion_core::crossing::CrossingPolicy::Stays`]) in a sentence naming the
+/// one that does.
 pub const GESTURES: &[(&str, &str)] = &[
     ("drag a card by its grip", "moves it on the board"),
     ("drag a detached panel", "moves the panel"),
     ("drag a detached panel's corner", "resizes the panel"),
     ("drag a palette entry to the board", "places that widget"),
+    ("drag a card off the board", "detaches it where you let go"),
+    (
+        "drag a detached panel's re-dock mark onto the board",
+        "docks it in the cell under the cursor",
+    ),
 ];
 
 pub const OPERATIONS: &[OperationSpec] = &[
@@ -1563,6 +1580,33 @@ pub const OPERATIONS: &[OperationSpec] = &[
         gesture: true,
         witness: "floating",
         needs: None,
+    },
+    // ★★★★★ R1898 — **the board's edge, crossed by a drag.** The two rows this
+    // table could not have held before, because the value that says which side
+    // a release lands on did not exist: a card carried off the board answered
+    // `Dropped::Abandoned` and nothing happened, and a panel carried onto it
+    // slid across and came to rest on top.
+    //
+    // `verb: None` on both, and that is the asymmetry the column exists to
+    // show — the same one "move a card on the board" has carried since R1697.
+    // The verbs beside them (`act …,tear_off` and `redock`) are the DEFAULT
+    // placements: one takes the host's preferred home, the other appends at the
+    // bottom of the board, and neither takes a position. Choosing where is the
+    // gesture's, and giving it a verb would mean inventing a wire spelling for
+    // a pixel and a cell that no client has asked for.
+    OperationSpec {
+        name: "drag a card off the board",
+        verb: None,
+        gesture: true,
+        witness: "floats",
+        needs: None,
+    },
+    OperationSpec {
+        name: "dock a detached panel where it is dropped",
+        verb: None,
+        gesture: true,
+        witness: "layout",
+        needs: Some("drag a card off the board"),
     },
     // ★★★★★ R1891 — **where a detached card lives is an operation**, and the
     // five rows below need it because they are the CANVAS home's gestures.
