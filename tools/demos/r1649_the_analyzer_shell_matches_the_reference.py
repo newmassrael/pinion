@@ -626,8 +626,13 @@ def body() -> None:
             "G: ★ so 'where is it' answers 'not on the board' rather than a cell",
         )
         assert "already detached" in refused(tf, "act", "packet#0,tear_off"), "G: once only"
+        # ★ R1896 — the panel this leg goes on to click is the CANVAS one, so
+        # the home is asked for. R1891 gave a detached card a home and made a
+        # windowing host prefer a real window; the `float.<id>` this leg reads
+        # and the re-dock control it clicks are the canvas home's paint.
+        inv(tf, "detach_home", "packet#0,canvas")
         assert find_by_tag(paint(tf), "float.packet#0") is not None, (
-            "G: the detached panel is painted, with its own header"
+            "G: the detached panel is painted on the canvas, with its own header"
         )
         click(tf, at(tf, "float.packet#0.redock"))
         assert_eq(q(tf, "floating"), "", "G: the re-dock control put it back")
@@ -661,14 +666,25 @@ def body() -> None:
         assert "no card is maximised" in refused(tf, "restore", None), "H: restoring twice"
 
         # ── (I) ★ named layouts, from the menu a person opens ────────────
-        assert_eq(q(tf, "presets"), "Overview", "I: one saved layout to start")
+        # ★ R1896 — FOUR shipped layouts, not one. R1894 put the behaviour
+        # canon's own `builtinPresets()` boards in, so the menu opens with the
+        # four this application ships, ordered by name.
+        assert_eq(
+            q(tf, "presets"),
+            "Latency,Overview,Topology focus,Traffic",
+            "I: the four layouts this application ships, in name order",
+        )
         assert_eq(q(tf, "preset_open"), False, "I: the menu is closed")
         click(tf, at(tf, "shell.subbar.preset"))
         assert_eq(q(tf, "preset_open"), True, "I: pressing the preset chip opens it")
         saved = len(q(tf, "presets").split(","))
         click(tf, at(tf, f"shell.preset.item.{saved}"))
-        assert_eq(q(tf, "presets"), "Layout 2,Overview", "I: ★ saved under a derived name")
-        assert_eq(q(tf, "preset"), "Layout 2", "I: which becomes the current layout")
+        assert_eq(
+            q(tf, "presets"),
+            "Latency,Layout 5,Overview,Topology focus,Traffic",
+            "I: ★ saved under a derived name, and sorted in among the rest",
+        )
+        assert_eq(q(tf, "preset"), "Layout 5", "I: which becomes the current layout")
         assert_eq(q(tf, "preset_open"), False, "I: and the menu closed")
         cards_then = q(tf, "cards")
         tf.intervene(f"{EXT}/preset", "Overview")
@@ -680,7 +696,13 @@ def body() -> None:
             "the previous board's cards into the new layout's holes",
         )
         assert cards_then != q(tf, "cards"), "I: which really is a different board"
-        assert "is not a saved layout" in refused_write(tf, "preset", "nope"), "I: closed set"
+        # ★ R1896 — the refusal NAMES the set now. R1893 moved this rule into
+        # `pinion_core::workspace`, whose refusal lists what would have worked;
+        # it used to read "is not a saved layout" and leave the caller guessing.
+        refusal = refused_write(tf, "preset", "nope")
+        assert "Overview" in refusal and "Traffic" in refusal, (
+            f"I: a closed set, and the refusal says what is in it: {refusal!r}"
+        )
 
         # ── (J) ★ the derivation decides the PAINT, not the card kind ────
         inv(tf, "set_state", "keymap#2,denied,read scope")

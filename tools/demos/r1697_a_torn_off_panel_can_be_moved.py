@@ -121,6 +121,15 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         card = q(app, "cards").split(",")[0]
         assert_eq(q(app, "floating"), "", "B: nothing is detached to begin with")
         act(app, card, "tear_off")
+        # ★ R1896 — and onto the CANVAS, which is what this walk is about.
+        #
+        # R1891 gave a detached card a HOME (`pinion_core::detach::DetachHome`)
+        # and made the host's preferred one a real window, so a torn-off card no
+        # longer paints a `float.<id>` over this canvas by default. Every
+        # gesture below — drag, resize, raise, redock — is the CANVAS home's;
+        # a window-homed card is moved by the window manager and there is
+        # nothing here to grab. So the home is asked for rather than assumed.
+        app.invoke(f"{EXT}/detach_home", f"{card},canvas")
         app.tick_ms(16)
         assert_eq(q(app, "floating"), card, "B: the card is now a panel")
         first = panels(app)[card]
@@ -185,6 +194,9 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         banner("E — two panels, and a press brings the one underneath forward")
         second = q(app, "cards").split(",")[1]
         act(app, second, "tear_off")
+        # ★ R1896 — the canvas home again: two panels OVERLAPPING is what leg
+        # (E) is about, and two windows do not overlap on this canvas.
+        app.invoke(f"{EXT}/detach_home", f"{second},canvas")
         app.tick_ms(16)
         order = list(panels(app))
         assert_eq(order[0], second, "E: the newest panel arrives in front")
