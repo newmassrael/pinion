@@ -1815,6 +1815,41 @@ PY
 )"
 ok "and it refuses the prose form of an invariant" "$impact_prose" "refused"
 
+# ── R1892: the round verdict leads with a word a driver can read ────────────
+#
+# ★★★★★ An independent checker watches this repository's repayment loop and its
+# driver reads the FIRST WORD of the answer. Measured across the loop's run
+# logs, 19 milestone claims went unverified because the answer began with
+# something else — 14 distinct first words, `Permission`, `You've`, `The`,
+# `Verdict`, `Independent`, one empty string, and the sentence that forced this
+# tool. None was wrong and none was silence; each was UNREADABLE, which the
+# driver counts as no verdict at all.
+#
+# The checker's prompt lives in another repository this session must not edit,
+# so what is built here is the thing that makes a verdict cheap to give: a
+# command whose output BEGINS with YES or NO. That property is worthless the
+# moment a banner, a label or a blank line gets in front of it, and nothing but
+# a gate performs it — so it is performed here, beside the other guard whose
+# reason for existing is that a prescription nobody executes is not a repair.
+verdict_self="$(python3 "$repo_root/tools/round_verdict.py" --selftest 2>&1 || true)"
+ok "the round verdict passes its own selftest" \
+   "$(grep -c 'round_verdict selftest: 12 passed, 0 failed' <<<"$verdict_self")" \
+   "1"
+# ★ And the property itself, asserted HERE rather than only inside the tool: a
+# gate that trusts a tool's own selftest to check the tool's own contract has
+# one reader, and this contract has an outside reader by construction.
+verdict_first_word="$(python3 - "$repo_root" <<'PY' 2>&1 || true
+import sys
+sys.path.insert(0, sys.argv[1] + "/tools")
+from round_verdict import Check, render
+passing = render(1, True, [Check("a", True, "fine")])
+failing = render(1, False, [Check("a", False, "not fine")])
+print(f"{passing.split()[0]} {failing.split()[0]} {passing[0]}{failing[0]}")
+PY
+)"
+ok "a closed round's verdict begins with the word YES, with nothing before it" \
+   "$verdict_first_word" "YES NO YN"
+
 # --- R1799: the step timer -------------------------------------------------
 #
 # It is an instrument, so what it has to get right is that it MEASURES: a step

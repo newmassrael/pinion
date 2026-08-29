@@ -76,6 +76,17 @@
       ]
     },
     {
+      "name": "debt-a-checkers-verdict-is-unreadable-more-often-than-it-is-wrong",
+      "substituted": false,
+      "blocked_by": "cross-repo",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links analyzer-debt-repayment-loop"
+      ]
+    },
+    {
       "name": "debt-a-checkpoints-verdict-is-on-the-wire-and-not-on-the-screen",
       "substituted": false,
       "blocked_by": "buildable",

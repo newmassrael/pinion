@@ -171,6 +171,16 @@ STANDINGS: dict[str, tuple[bool, str]] = {
     "spec-round": (True, "needs a ratified specification decision first"),
     "phase-c": (True, "waits on a phase of the roadmap that has not begun"),
     "gated-axis": (True, "on an axis this machine cannot advance (OS runners)"),
+    # ★★★★★ R1892 — the repair lives in ANOTHER REPOSITORY, which this
+    # repository's own hard rule forbids editing from a pinion session
+    # (`CLAUDE.md`, 2026-06-19: even "continue that repo's work" does not
+    # authorise it). Distinct from `gated-axis`, which is about a MACHINE this
+    # tree does not have; here the machine is present and the *permission* is
+    # not. The handoff is what a pinion round can produce, so a debt wearing
+    # this word must still name what it did on this side — the first one does
+    # (`tools/round_verdict.py`), and its `standing_because` citation is what
+    # makes that checkable rather than promised.
+    "cross-repo": (True, "the repair is another repository's; a handoff is what a round here can make"),
 }
 
 BLOCKED = {word for word, (blocks, _) in STANDINGS.items() if blocks}
