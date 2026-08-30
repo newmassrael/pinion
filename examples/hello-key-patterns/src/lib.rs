@@ -1656,6 +1656,13 @@ impl WidgetCore for KeyPatternView {
         VIEW_TAG
     }
 
+    /// ★★★★★ R1911 — this screen's marks are addressed under `kp.`, not under
+    /// its root tag; the root is one marker node. See
+    /// [`WidgetCore::paint_stems`](pinion_core::WidgetCore::paint_stems).
+    fn paint_stems() -> Vec<&'static str> {
+        vec![VIEW_TAG, "kp"]
+    }
+
     fn read_state(scene: &Scene) -> (TextFieldState, u32) {
         tf_paint::read_text_field_state(scene, QUERY_TAG)
     }

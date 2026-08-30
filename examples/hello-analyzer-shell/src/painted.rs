@@ -2873,80 +2873,27 @@ fn r1695_every_open_destination_is_a_place_you_arrive_at() {
     });
 }
 
-/// ★★★★★ R1729 — **every mounted screen actually paints itself, and only
-/// where it belongs.**
-///
-/// The population is the roster's own `mounted_keys`, not a list here, so a
-/// screen mounted by a later round is covered the day it is mounted rather than
-/// the day somebody remembers to add it. R1724 wrote this check for the node
-/// lab by name; the capture viewer's mount is the second consumer, and a second
-/// hand-written copy is what this project lifts on sight.
-///
-/// Three claims per mounted screen, and the third is the one a picture cannot
-/// show:
-///
-/// 1. arriving paints regions under **that screen's own root tag**;
-/// 2. leaving takes them away, so the page is not painted everywhere at once;
-/// 3. the host's chrome survives — a page is a page, not a takeover. Measured
-///    at 6.11.1, a placed application window keeps its own menu bar, tool bar
-///    and status bar on top of its host's, and the tree publishes two of each.
-#[test]
-fn r1729_every_mounted_screen_paints_itself_where_it_belongs() {
-    let owner = Owner::new();
-    owner.run(|| {
-        let state = use_shell_state();
-        let screens = super::screen_roster();
-        let mounted: Vec<&str> = screens.mounted_keys().collect();
-        assert!(
-            mounted.len() > 1,
-            "one mounted screen makes the away-comparison below vacuous",
-        );
-
-        for key in &mounted {
-            state
-                .go(key)
-                .unwrap_or_else(|why| panic!("{key} is mounted and refused: {why:?}"));
-            let shot = painted_at((WIN_W, WIN_H)).0;
-            let root = screens
-                .tag_of(key)
-                .expect("a mounted destination names its screen's root tag");
-            let here: Vec<&String> = shot
-                .tags
-                .keys()
-                .filter(|tag| tag.as_str() == root || tag.starts_with(&format!("{root}.")))
-                .collect();
-            assert!(
-                !here.is_empty(),
-                "at {key}: the mounted screen's root is {root:?} and nothing \
-                 under it is painted, so arriving is indistinguishable from not",
-            );
-            // The host is still the host.
-            for chrome in ["shell.appbar", "shell.rail", &format!("shell.rail.{key}")] {
-                assert!(
-                    shot.rect(chrome).is_some(),
-                    "at {key}: the host's {chrome} stopped being painted",
-                );
-            }
-            // And every other mounted screen is away.
-            for other in &mounted {
-                if other == key {
-                    continue;
-                }
-                let other_root = screens.tag_of(other).expect("a mounted key has a screen");
-                assert!(
-                    !shot.tags.keys().any(|tag| {
-                        tag.as_str() == other_root || tag.starts_with(&format!("{other_root}."))
-                    }),
-                    "at {key}: {other}'s screen ({other_root}) is painted too",
-                );
-            }
-        }
-        state
-            .go(spec::RAIL_ACTIVE)
-            .expect("the opening seat is open");
-    });
-}
-
+// ★★★★★ R1729's `every_mounted_screen_paints_itself_where_it_belongs` STOOD
+// HERE and was folded into R1911's
+// [`r1911_every_open_section_paints_itself_where_it_belongs`] below, which
+// makes all three of its claims over a strictly larger population with a
+// strictly larger reading. Kept as a note rather than as a second copy: two
+// spellings of one rule are two rules the moment somebody edits one, and this
+// file already carries that lesson about its own populations.
+//
+// What it asserted, and where each claim went:
+//
+// 1. arriving paints regions under that screen's own root tag — now under
+//    every stem the section declares, which for all four mounts is more than
+//    the root (R1911 measured `packet_view`: ONE node at the root, 292 under
+//    `pv.`, so the old reading was about a marker node);
+// 2. leaving takes them away — now for every open section rather than the
+//    mounted ones, which is the claim the two host-painted pages had no check
+//    for at all;
+// 3. the host's chrome survives, a page being a page rather than a takeover.
+//    Measured at 6.11.1, a placed application window keeps its own menu bar,
+//    tool bar and status bar on top of its host's, and the tree publishes two
+//    of each.
 /// ★★★★★ R1728 — **the rail on the screen is the rail the reference draws**,
 /// walked seat by seat through the paint and the press.
 ///
@@ -8906,6 +8853,190 @@ fn r1886_every_surface_the_canon_census_owes_is_still_owed() {
         answered.len(),
         answered.join("\n  "),
     );
+}
+
+/// ★★★★★ R1911 — **every section a reader can open paints itself, and only
+/// where it belongs** — including the two this shell paints itself.
+///
+/// **Replaces R1729's `every_mounted_screen_paints_itself_where_it_belongs`**,
+/// whose population was `mounted_keys`: measured at R1911 this application
+/// opens **six** sections and mounts **four**, so the dashboard and the
+/// preferences page were not failing that check, they *were not in it* — and
+/// nothing anywhere asserted that leaving the dashboard stops the dashboard
+/// being painted. See the note where it stood for what each of its claims
+/// became.
+///
+/// ★★★★★ And its reading was thin even where it ran: `tag_of` answers a
+/// screen's root, `Screen::tag` is only required to be on the scene
+/// *somewhere*, and none of the four mounted screens hangs its content beneath
+/// it — `packet_view` is ONE node beside 292 marks addressed `pv.*`. So "this
+/// screen went away" was being asserted of a marker node.
+///
+/// ★★★★★ **What the verdict half does with the same fact, and why it is not
+/// this.** A judge is *handed* [`Showing`] rather than inferring away from
+/// finding nothing, because R1761 refused that inference: a page that stopped
+/// painting half of itself would report exactly what a page nobody is looking
+/// at reports. Refusing it at runtime is right. It leaves the handed-over claim
+/// **untested**, and this is the test.
+///
+/// Three claims per section, from the roster's own population:
+///
+/// 1. arriving paints marks the roster says are that section's;
+/// 2. leaving takes them away, so no section is painted everywhere at once;
+/// 3. the host's chrome survives — a page is a page, not a takeover.
+///
+/// ⚠ And the population itself is asserted first: a destination the roster
+/// cannot locate is RED here rather than quietly skipped, which is the whole
+/// difference between this and the check it extends.
+#[test]
+fn r1911_every_open_section_paints_itself_where_it_belongs() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let screens = super::screen_roster();
+
+        let unrooted: Vec<&str> = screens.unrooted_keys().collect();
+        assert!(
+            unrooted.is_empty(),
+            "{} open section(s) cannot say where their marks are, so this \
+             check would silently not cover them -- an unclassified \
+             destination is red here, not a pass: {unrooted:?}",
+            unrooted.len(),
+        );
+
+        let open: Vec<String> = screens
+            .destinations()
+            .keys()
+            .filter(|key| {
+                screens
+                    .destinations()
+                    .get(key)
+                    .is_some_and(|d| d.standing.is_open())
+            })
+            .map(std::string::ToString::to_string)
+            .collect();
+        assert!(
+            open.len() > super::screen_roster().mounted_keys().count(),
+            "every open section is mounted, so this check has become a second \
+             copy of R1729 and the sections it exists for are gone",
+        );
+
+        for key in &open {
+            r1911_the_claims_at(&screens, key, &open);
+        }
+        state
+            .go(spec::RAIL_ACTIVE)
+            .expect("the opening seat is open");
+    });
+}
+
+/// The five claims [`r1911_every_open_section_paints_itself_where_it_belongs`]
+/// holds **at one destination**, its own function for R1909.2's reason: the
+/// walk's job is the population and the arrival order, and the claims are a
+/// separate question about one frame. One walk still, and one place per claim.
+fn r1911_the_claims_at(screens: &pinion_screen::ScreenRoster, key: &str, open: &[String]) {
+    {
+        {
+            let shot = painted_at_destination(key);
+            let here: Vec<&String> = shot
+                .tags
+                .keys()
+                .filter(|tag| screens.paints(key, tag))
+                .collect();
+            assert!(
+                !here.is_empty(),
+                "at {key}: the section claims {:?} and nothing under any of \
+                 them is painted, so arriving is indistinguishable from not",
+                screens.paint_stems_of(key),
+            );
+            // The host is still the host.
+            for chrome in ["shell.appbar", "shell.rail", &format!("shell.rail.{key}")] {
+                assert!(
+                    shot.rect(chrome).is_some(),
+                    "at {key}: the host's {chrome} stopped being painted",
+                );
+            }
+            // ★★★★★ Nothing on this frame belongs to nobody. This is what
+            // keeps `Screen::paint_stems`'s default from being an escape
+            // hatch: a screen that leaves its real family undeclared does not
+            // pass a thinner check, its marks turn up here by name.
+            let orphans = screens.unclaimed_marks(shot.tags.keys().map(String::as_str));
+            assert!(
+                orphans.is_empty(),
+                "at {key}: {} painted mark(s) belong to no section and to no \
+                 declared host chrome, so no away-check can ever reach them: \
+                 {orphans:?}",
+                orphans.len(),
+            );
+            // ★★★★★ And every other section is away — the claim that had no
+            // check at all for the two pages this host paints itself.
+            for other in open {
+                if other == key {
+                    continue;
+                }
+                let trespass: Vec<&String> = shot
+                    .tags
+                    .keys()
+                    .filter(|tag| screens.paints(other, tag))
+                    .collect();
+                assert!(
+                    trespass.is_empty(),
+                    "at {key}: {other}'s marks are painted too, so leaving \
+                     {other} does not take it away: {trespass:?}",
+                );
+            }
+            // ★★★★★ **Whose mark is this** — the question a hit test, a press
+            // and an announced node all reduce to. Measured this round, three
+            // of R1784's four (hit testing, keys, an accessibility subtree)
+            // were PRESENT for the two host-painted pages and unattributable;
+            // only the paint root was absent. So this is the leg the paint root
+            // actually supplies, and it is asserted rather than argued.
+            for tag in &here {
+                assert_eq!(
+                    screens.section_at(tag),
+                    Some(key),
+                    "at {key}: {tag:?} is painted under this section's own \
+                     stems and the roster attributes it elsewhere",
+                );
+            }
+            for chrome in ["shell.appbar", "shell.rail"] {
+                assert_eq!(
+                    screens.section_at(chrome),
+                    None,
+                    "at {key}: the host's {chrome} was attributed to a section, \
+                     which would make that section present at every \
+                     destination",
+                );
+            }
+            // ★★★★★ And the accessibility tree is attributable by the SAME
+            // expression, applied to a second population rather than spelled a
+            // second time. This is what makes "the two host-painted pages have
+            // an accessibility subtree" a predicate instead of a sentence: 222
+            // announced dashboard regions were measured this round, and what
+            // was missing was never the subtree, it was the ability to say the
+            // subtree was the dashboard's.
+            let announced: Vec<String> = {
+                use pinion_a11y::WidgetA11y;
+                super::AnalyzerShellView::access_node(&ScreenState::default(), None)
+                    .into_iter()
+                    .map(|node| node.tag)
+                    .collect()
+            };
+            assert!(
+                announced.iter().any(|tag| screens.paints(key, tag)),
+                "at {key}: not one announced node belongs to this section, so \
+                 a reader is told about the frame and never about the page",
+            );
+            let unowned = screens.unclaimed_marks(announced.iter().map(String::as_str));
+            assert!(
+                unowned.is_empty(),
+                "at {key}: {} announced node(s) belong to no section and to no \
+                 declared host chrome, so a reader is told about something the \
+                 application cannot place: {unowned:?}",
+                unowned.len(),
+            );
+        }
+    }
 }
 
 #[test]

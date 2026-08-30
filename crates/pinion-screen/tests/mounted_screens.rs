@@ -1913,6 +1913,308 @@ fn r1784_the_unanswered_set_names_the_sections_the_question_never_reached() {
     );
 }
 
+// --- R1911: where a section's MARKS are ---------------------------------------
+
+/// ★★★★★ R1911 — **a host page can say where its marks are, and the roster
+/// answers the question for every section from one call.**
+///
+/// The asymmetry this closes, measured on the analysis tool at R1911: R1729's
+/// check — arriving paints a section, leaving takes it away, the host's chrome
+/// survives — walks `mounted_keys`, so on an application with six open sections
+/// and four mounts the two the host paints itself were not failing it, they
+/// were not in it. Nothing asserted that leaving the dashboard stops the
+/// dashboard being painted.
+#[test]
+fn r1911_the_roster_can_locate_every_sections_marks_on_a_frame() {
+    let plain = roster();
+    let unrooted: Vec<&str> = plain.unrooted_keys().collect();
+    assert_eq!(
+        unrooted,
+        ["dashboard"],
+        "the fixture opens three sections and two are mounted; `topology` is \
+         closed, so it is out of the population by construction rather than by \
+         being answered",
+    );
+
+    assert_eq!(
+        plain.paint_stems_of("catalog"),
+        Some(vec![LAB_TAG]),
+        "a mounted screen's claim is its own root tag, from the screen rather \
+         than from a second registration",
+    );
+    assert_eq!(
+        plain.paint_stems_of("dashboard"),
+        None,
+        "and a host page has nothing to say until it says it",
+    );
+
+    let painted = roster()
+        .painting("dashboard", &["board.card", "shell.palette"])
+        .expect("`dashboard` is open and has no screen");
+    assert_eq!(painted.unrooted_keys().count(), 0);
+    assert_eq!(
+        painted.paint_stems_of("dashboard"),
+        Some(vec!["board.card", "shell.palette"]),
+        "★★★★★ a SET, because a host paints a page's chrome beside its region \
+         rather than in it -- the same measurement that produced `judging`",
+    );
+
+    // ★ And the derived reading, so no caller re-spells the stem rule.
+    assert!(painted.paints("dashboard", "board.card"));
+    assert!(painted.paints("dashboard", "board.card.3.title"));
+    assert!(
+        !painted.paints("dashboard", "board.cardinal"),
+        "★ a stem is an address, not a string prefix: `board.cardinal` is a \
+         different mark and a bare `starts_with` would take it",
+    );
+    assert!(!painted.paints("dashboard", "shell.rail"));
+    assert!(
+        painted.paints("catalog", LAB_TAG),
+        "the same question reaches a mounted section, which is what lets a \
+         caller ask it once for the whole application",
+    );
+}
+
+/// A roster with nothing mounted, for the refusals that are about the
+/// destination rather than about another section's claim.
+fn unmounted() -> ScreenRoster {
+    ScreenRoster::new(destinations(), Vec::new())
+        .expect("nothing is mounted, so nothing can be mounted wrongly")
+}
+
+/// ★★★★★ R1911 — **the refusals about the DESTINATION a claim is made at.**
+///
+/// Split from the overlap refusals below along the seam the two actually have:
+/// these are answerable from the claim and the roster's own rows, while an
+/// overlap is a fact about *another* section. The last of them is the escape
+/// hatch, refused at the door.
+#[test]
+fn r1911_a_roster_refuses_a_paint_claim_at_a_destination_that_cannot_hold_one() {
+    use pinion_screen::RosterDefect;
+
+    let empty = unmounted;
+
+    assert_eq!(
+        empty().painting("sessions", &["x"]).err(),
+        Some(RosterDefect::NoSuchDestination {
+            key: "sessions".to_owned()
+        }),
+    );
+    assert_eq!(
+        empty().painting("topology", &["x"]).err(),
+        Some(RosterDefect::DestinationIsClosed {
+            key: "topology".to_owned()
+        }),
+        "a closed destination paints nothing, so a claim there would be \
+         counted by a gate asking about sections a reader can open",
+    );
+    assert_eq!(
+        empty()
+            .painting("dashboard", &["a"])
+            .expect("`dashboard` is open")
+            .painting("dashboard", &["b"])
+            .err(),
+        Some(RosterDefect::DuplicatePaint {
+            key: "dashboard".to_owned()
+        }),
+    );
+    assert_eq!(
+        roster().painting("catalog", &["x"]).err(),
+        Some(RosterDefect::SectionAlreadyPaints {
+            key: "catalog".to_owned()
+        }),
+        "★★★★★ a mounted screen's paint root is its own tag, which is also the \
+         address its externals answer at; a host-side second opinion would make \
+         where a section's marks are depend on which lookup was read first",
+    );
+    assert_eq!(
+        empty().painting("dashboard", &[]).err(),
+        Some(RosterDefect::EmptyPaintClaim {
+            key: "dashboard".to_owned()
+        }),
+        "★★★★★ the escape hatch, refused at the door: an empty claim would let \
+         `unrooted_keys` reach empty without any section becoming locatable",
+    );
+}
+
+/// ★★★★★ R1911 — **the OVERLAP refusals, and they are what makes the away-check
+/// mean anything.**
+///
+/// Two sections claiming one mark is not a tidiness problem: the containing
+/// section would be found painted at *every* destination, so "leaving takes a
+/// section away" could only be kept by excusing it — and an excused claim is an
+/// unchecked one. The overlap is refused where it is declared rather than
+/// tolerated where it is read.
+#[test]
+fn r1911_a_roster_refuses_two_claims_on_one_mark() {
+    use pinion_screen::RosterDefect;
+
+    let empty = unmounted;
+
+    assert_eq!(
+        empty()
+            .painting("dashboard", &["shell.palette"])
+            .expect("`dashboard` is open")
+            .painting("catalog", &["shell"])
+            .err(),
+        Some(RosterDefect::PaintAlreadyClaimed {
+            key: "catalog".to_owned(),
+            by: "dashboard".to_owned(),
+            stem: "shell".to_owned(),
+        }),
+        "★★★★★ an ancestor takes the descendant's marks too, so the containing \
+         section would be found painted everywhere and the away-check would go \
+         vacuous",
+    );
+    assert_eq!(
+        empty().painting("dashboard", &[LAB_TAG]).err(),
+        None,
+        "no screen is mounted in this roster, so the lab tag is unclaimed here \
+         -- which is what makes the next assertion about the MOUNT rather than \
+         about the name",
+    );
+    assert_eq!(
+        roster().painting("dashboard", &[LAB_TAG]).err(),
+        Some(RosterDefect::PaintAlreadyClaimed {
+            key: "dashboard".to_owned(),
+            by: "catalog".to_owned(),
+            stem: LAB_TAG.to_owned(),
+        }),
+        "★★ a mounted screen's tag is in the population the overlap check \
+         reads, so a host cannot claim marks a guest is already painting -- \
+         the direction a check reading only host claims would miss entirely",
+    );
+
+    // ★★★★★ Chrome is painted at EVERY destination, so a mark that is both
+    // chrome and a section's could never be shown to go away. Refused from
+    // BOTH sides, because the defect is the pair and not the order two builder
+    // calls happen to be written in -- the asymmetry the first draft had.
+    assert_eq!(
+        empty()
+            .painting("dashboard", &["shell.palette"])
+            .expect("`dashboard` is open")
+            .painting_chrome(&["shell.palette"])
+            .err(),
+        Some(RosterDefect::ChromeIsAlsoASection {
+            key: "dashboard".to_owned(),
+            stem: "shell.palette".to_owned(),
+        }),
+    );
+    assert_eq!(
+        empty()
+            .painting_chrome(&["shell.palette"])
+            .expect("nothing is claimed yet")
+            .painting("dashboard", &["shell.palette"])
+            .err(),
+        Some(RosterDefect::ChromeIsAlsoASection {
+            key: "dashboard".to_owned(),
+            stem: "shell.palette".to_owned(),
+        }),
+        "★★★★★ the same pair, declared the other way round, is the same \
+         refusal -- a check that only ran one way would depend on a line \
+         ordering nothing enforces",
+    );
+}
+
+/// ★★★★★ R1911 — **nothing on a frame belongs to nobody**, which is what keeps
+/// [`Screen::paint_stems`]'s default from being an escape hatch.
+///
+/// A screen that leaves its real mark family undeclared does not pass a thinner
+/// check: its marks turn up here, by name. Measured on the analysis tool the
+/// round this was built — all four of its mounted screens needed to override
+/// the default, because a screen's marks are not under its root tag.
+#[test]
+fn r1911_a_mark_belonging_to_no_section_and_no_chrome_is_named() {
+    let roster = roster()
+        .painting("dashboard", &["board.card"])
+        .expect("`dashboard` is open and has no screen")
+        .painting_chrome(&["host.bar", "host.rail"])
+        .expect("the host's chrome overlaps no section's claim");
+
+    let frame = [
+        "host.bar",
+        "host.bar.title",
+        "host.rail",
+        "board.card.1",
+        LAB_TAG,
+        "lab.canvas",
+        "stray.mark",
+    ];
+    assert_eq!(
+        roster.unclaimed_marks(frame),
+        vec!["lab.canvas", "stray.mark"],
+        "★★★★★ `lab.canvas` is the escape hatch made visible: the fixture lab \
+         takes the DEFAULT `paint_stems`, so its root tag is claimed and the \
+         marks it actually paints are not -- which is the exact shape all four \
+         real screens were in before this round",
+    );
+
+    // ★ And an empty frame is not evidence of anything, so the fixture above
+    // has to contain a mark of every kind for the assertion to mean what it
+    // reads as.
+    assert!(
+        roster
+            .unclaimed_marks(["host.bar", "board.card.1"])
+            .is_empty()
+    );
+}
+
+/// ★★★★★ R1911 — **whose mark is this**, which is the question a hit test, a
+/// press and an announced node all reduce to once a section has a paint root.
+///
+/// The measured finding this exists for: of the four things R1784 said a
+/// host-painted page lacks against a mounted screen — its own paint root, hit
+/// testing, keys, an accessibility subtree — only the first was **absent**.
+/// Measured on the analysis tool at R1911, pressing inside the dashboard
+/// reaches the dashboard, its keyboard stops are gated per destination, and 222
+/// of its regions are announced. What no one could say was that a given mark
+/// *was the dashboard's*. So the paint root does not supply the other three; it
+/// supplies the attribution that lets them be asked about, and this function is
+/// that attribution.
+///
+/// ★ And it is the consumer that makes `PaintAlreadyClaimed` load-bearing: the
+/// answer is single-valued exactly because the overlap is refused. A rule with
+/// no consumer is one nothing depends on.
+#[test]
+fn r1911_a_mark_says_which_section_it_belongs_to() {
+    let roster = roster()
+        .painting("dashboard", &["board.card"])
+        .expect("`dashboard` is open and has no screen")
+        .painting_chrome(&["host.bar"])
+        .expect("the host's chrome overlaps no section's claim");
+
+    assert_eq!(
+        roster.section_at("board.card.3.title"),
+        Some("dashboard"),
+        "a mark beneath a host page's declared stem is that page's",
+    );
+    assert_eq!(
+        roster.section_at(LAB_TAG),
+        Some("catalog"),
+        "★ and the same question reaches a MOUNTED section from the same call \
+         -- a caller that had to know which sections are screens would keep by \
+         hand the list this roster publishes",
+    );
+    assert_eq!(
+        roster.section_at("host.bar.title"),
+        None,
+        "★★★★★ the host's chrome belongs to no section, which is what makes it \
+         chrome: it is on the frame at every destination, so attributing it to \
+         one section would make that section present everywhere",
+    );
+    assert_eq!(
+        roster.section_at("stray.mark"),
+        None,
+        "and a mark nobody claims is unattributed rather than guessed at -- \
+         `unclaimed_marks` is where that population is named",
+    );
+    assert_eq!(
+        roster.section_at("board.cardinal"),
+        None,
+        "★ a stem is an address, not a string prefix",
+    );
+}
+
 // --- R1830: what a section is GRANTED -----------------------------------------
 
 /// ★★★★★ **The roster can now hold BOTH halves of the size question, so it can

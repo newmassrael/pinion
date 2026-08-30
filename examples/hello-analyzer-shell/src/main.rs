@@ -1564,6 +1564,53 @@ fn screen_roster() -> ScreenRoster {
     // differently. Nothing changed about what a reader could see.
     .posing("settings", Box::new(SettingsPoses))
     .expect("`settings` is an open destination this host paints itself")
+    // ★★★★★ R1911 — **and WHERE on the frame each of those two pages puts its
+    // marks.** `Screen::tag` is this for the four mounted sections; these two
+    // had no answer at all, so R1729's check — arriving paints a section,
+    // leaving takes it away, the host's chrome survives — could not include
+    // them. Measured at entry: it walked `mounted_keys` and covered four of the
+    // six sections a reader can open, and **nothing anywhere asserted that
+    // leaving the dashboard stops the dashboard being painted.**
+    //
+    // A SET rather than one stem, and that is this host's own geometry: R1761
+    // measured that the layout bar at (52,52) and the palette at (1148,52) are
+    // both OUTSIDE the page region at (52,98), because a host paints a page's
+    // chrome beside its region rather than in it. One stem could only have
+    // named the third of this page that sits in the region.
+    //
+    // ⚠ `shell.canvas` is deliberately not here and neither is `shell.appbar`
+    // or `shell.rail`: those are painted at every destination, so they are the
+    // host's chrome and not any section's marks. Claiming one would make this
+    // section "still painted" everywhere, which is the overlap `painting`
+    // refuses when two sections do it to each other.
+    //
+    // ⚠ `match.spark` is here and it is the one a reader would not derive: the
+    // sparkline inside `card.{id}.sparkline` emits its own top-level family
+    // (R1648), so a card's chart is addressed nowhere near its card. Measured
+    // rather than assumed — it is exactly the kind of mark the unclaimed check
+    // below exists to surface.
+    .painting(
+        "dashboard",
+        &["shell.subbar", "shell.palette", "card", "match.spark"],
+    )
+    .expect("`dashboard` is open, has no screen, and claims nothing a guest paints")
+    .painting("settings", &["shell.settings"])
+    .expect("`settings` is open, has no screen, and claims nothing a guest paints")
+    // ★★★★★ R1911 — **and what this host paints at EVERY destination**, which
+    // is what makes "this mark belongs to nobody" an answerable question rather
+    // than an unstated assumption. Without it a mark no section claims is
+    // indistinguishable from the frame itself, and `paint_stems`'s default
+    // would be an escape hatch: a screen that never declared its real family
+    // would quietly pass a thinner check instead of turning up unclaimed.
+    .painting_chrome(&[
+        VIEW_TAG,
+        "shell.appbar",
+        "shell.rail",
+        "shell.canvas",
+        "shell.status",
+        "shell.toast",
+    ])
+    .expect("the host's own chrome overlaps no section's claim")
     // ★★★★★ R1725 — **this application has a navigation, so its pages must not
     // each bring one.** Declared here, beside the roster it is a fact about:
     // the rail this shell paints IS `spec::RAIL`, and a screen shown inside it

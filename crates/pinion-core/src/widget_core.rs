@@ -388,6 +388,27 @@ pub trait WidgetCore: 'static {
     /// reference regression test.
     fn tag() -> &'static str;
 
+    /// ★★★★★ R1911 §5.49 — **every stem this binding's marks are addressed
+    /// under**, which the convention above does NOT make the same as
+    /// [`tag`](Self::tag).
+    ///
+    /// `tag()` is required to be on the scene *somewhere*; nothing requires the
+    /// rest of the scene to hang beneath it, and measured on the analysis tool
+    /// at R1911 it mostly does not: the capture viewer paints one node called
+    /// `packet_view` and 292 more under `pv.`, the log view one `log_view` and
+    /// 98 under `lv.`, the node lab one `node_lab` and 222 under `lab.`. A host
+    /// asking "are this section's marks on the frame" from `tag()` alone was
+    /// therefore asking about a single marker node.
+    ///
+    /// The default is the floor every binding satisfies, not permission to stay
+    /// silent: what stops it being an escape hatch is the host-side gate that
+    /// requires every painted mark to belong to some section or to the host's
+    /// own chrome, so an undeclared family is red rather than invisible.
+    #[must_use]
+    fn paint_stems() -> Vec<&'static str> {
+        vec![Self::tag()]
+    }
+
     /// Extract the cached projection from the live state scene via
     /// the §5.15 introspect channel — same path an RPC
     /// `scene/query /external/<slot>` request uses, so the cached

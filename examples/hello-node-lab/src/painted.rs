@@ -7399,11 +7399,23 @@ fn r1909_a_folded_pane_hides_exactly_what_it_holds() {
     });
 }
 
-/// ★★★★★ R1909 — **the inspector opens folded, and a press brings it back.**
+/// ★★★★★ R1909, redirected by R1911.1 — **a press puts the inspector away, and
+/// a press on the strip brings it back.**
 ///
 /// The campaign's order step 3 as a property of the running screen rather than
 /// of the specification: `r1902_every_pane_opens_where_its_own_policy_admits`
 /// reads the declaration, and this drives it.
+///
+/// ★★★★★ **What R1911.1 changed.** R1909 had this screen OPEN with its
+/// inspector folded and pressed once, to bring it back. Measured at R1911, that
+/// opening choice took **33 demo walks** red for three CI rounds — the pane was
+/// painted 18 px against a declared floor of 312, so the screen published 133
+/// addressable regions where its census expects hundreds — and it un-reproduced
+/// the behaviour canon R1902 had measured. So the screen opens showing, and
+/// this gate now drives **both** directions: a hand folds it, everything below
+/// is asserted of the strip, and a hand brings it back. That is strictly more
+/// than R1909 checked, and the `opens` assertion is sharper for it — the
+/// declaration is now shown to hold still while `at` moves AWAY from it.
 ///
 /// # Why a press and not the wire verb
 ///
@@ -7419,33 +7431,44 @@ fn r1909_a_folded_pane_hides_exactly_what_it_holds() {
 /// the screen is not a check.* So the width is asserted positive, the probe is
 /// asserted inside the window, and only then is the hit test asked.
 #[test]
-fn r1909_the_inspector_opens_folded_and_a_press_brings_it_back() {
+fn r1909_a_press_puts_the_inspector_away_and_a_press_brings_it_back() {
     let owner = Owner::new();
     owner.run(|| {
         super::reset_lab_state();
-        // ⚠ Through `super::`, NOT this file's shadow: the shadow hands out the
-        // screen with the panes showing, which is the arrangement the sweeps
-        // need and the exact opposite of what this gate is about.
         let state = super::use_lab_state();
 
-        // ── the specification opens it away ──────────────────────────────
-        let at = state.inspector_at.get();
+        // ── the screen opens with both panes showing ─────────────────────
+        let opened = state.inspector_at.get();
         assert!(
-            at.folded,
-            "★ the node lab's inspector opens FOLDED: its subject is a selected \
-             card, and nothing is selected on a screen nobody has touched"
+            !opened.folded,
+            "★ the node lab opens with its inspector SHOWING, which is what its \
+             behaviour canon does: {opened:?}"
         );
+        assert!(
+            !super::SidePanel::Palette.at(&state).folded,
+            "★ and its palette, so this gate reads a screen that opens its \
+             panels rather than one that has none"
+        );
+
+        // ── a hand puts it away ──────────────────────────────────────────
+        //
+        // Through the affordance a person has, not through the wire verb an
+        // agent has: the whole difference between a fold and a hide is that a
+        // person can undo it, and only a press can show that.
+        press_tag(&state, &painted(&state), "lab.inspector.fold");
+        let at = state.inspector_at.get();
+        assert!(at.folded, "★ the press put it away: {at:?}");
         assert_eq!(
             at.extent,
             spec::PANES[3].width,
             "★ and it kept its width, so opening it gives back a pane worth \
              having. A fold that forgot its extent would be a hide"
         );
+        // ★★ The DECLARATION did not move — the sharper half of R1909's own
+        // claim, because the pane has moved AWAY from what it declares.
         assert!(
-            !super::SidePanel::Palette.at(&state).folded,
-            "★ the palette opens SHOWING — the asymmetry is the point: one panel \
-             answers a question the reader arrives with, the other answers one \
-             about a card they have not picked yet"
+            !spec::PANES[3].opens.folded,
+            "★ folding changed the placement, not the declaration"
         );
 
         // ── the strip is really on the screen ────────────────────────────
@@ -7494,11 +7517,12 @@ fn r1909_the_inspector_opens_folded_and_a_press_brings_it_back() {
             "★ which the layout agrees with — the placement and the rectangle \
              are one fact"
         );
-        // ★ The specification is unchanged: `opens` is where it OPENS, and a
-        // person unfolding it does not rewrite that. Two facts, one bit — which
-        // is what `opens` beside `at` exists to publish.
+        // ★ The specification is unchanged in the other direction too: `opens`
+        // is where it OPENS, and a person moving it either way does not rewrite
+        // that. Two facts, one bit — which is what `opens` beside `at` exists
+        // to publish.
         assert!(
-            spec::PANES[3].opens.folded,
+            !spec::PANES[3].opens.folded,
             "★ unfolding changed the placement, not the declaration"
         );
     });

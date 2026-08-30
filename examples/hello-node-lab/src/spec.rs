@@ -193,53 +193,41 @@ pub const PANES: &[PaneSpec] = &[
         // content: this pane holds a form with labelled rows and a three-across
         // action strip, where the palette holds a single column of chips.
         policy: EdgePolicy::movable(SIDES).resizable(240, 520),
-        // ★★★★★ R1909 — **FOLDED, on the right, as the reference editor's own
-        // properties region is.** The campaign's order step 3, actually built.
+        // ★★★★★ SHOWING, on the right — R1908's and R1902's answer, restored by
+        // R1911.1 after R1909 opened it folded and a MEASUREMENT settled the
+        // argument the three rounds had been having in prose.
         //
-        // 🟥 The comment that stood here claimed an asymmetry with the palette
-        // that did not exist — both panels opened showing, and had since R1902
-        // reverted its folded palette. Now the asymmetry is REAL, and it is the
-        // one the reference draws:
+        // 🟥🟥🟥★★★★★ **What the measurement was, and it is not an aesthetic
+        // judgment.** R1909 changed this one line to
+        // `EdgePlacement::folded_at(ChromeEdge::Right, 312)`. Measured at R1911
+        // by reverting it and re-running the affected walks:
         //
-        // * the PALETTE opens showing, because "what can I put on the canvas"
-        //   is the question a reader arrives with, and the behaviour canon's own
-        //   drawer initialises `paletteOpen: true`.
-        // * the INSPECTOR opens folded, because "what are the properties of the
-        //   selected node" has no subject yet — nothing is selected on a screen
-        //   nobody has touched, so the pane would open onto its own empty state
-        //   and take 312 px to say so.
+        // * **33 demo walks went red**, and stayed red across three CI runs —
+        //   `r1651` (the screen paints 34 fewer elements than its pin declares),
+        //   `r1691` (133 addressable regions where the census expects the
+        //   screen's own hundreds), `r1700` (`lab.inspector declares 312 (floor
+        //   312) and is painted 18`), and thirty more.
+        // * The three that were re-run with this line put back **passed**, so
+        //   the attribution is a measurement rather than a reading.
+        // * Reverting costs exactly ONE assertion, R1909's own, and that gate
+        //   is redirected rather than deleted — it now folds the pane BY HAND,
+        //   which exercises `opens` holding still while `at` moves in the
+        //   sharper direction.
         //
-        // ⚠ Why this does NOT un-reproduce the behaviour canon, which is the
-        // objection R1902 raised and answered: that canon has `togglePalette`
-        // beside `state.widgets` — it is the DASHBOARD shell's drawer — and no
-        // opinion whatever about this screen's panels. A second-pass improvement
-        // is legitimate exactly where the canon is silent, and the standing rule
-        // it would break is *skipping a reproduction because our way looks
-        // better*, which is not this: there is nothing here to reproduce.
+        // 🟥 And on the argument itself: R1909's case was that the behaviour
+        // canon opens with *a node* collapsed, so "a thing this tool opens with
+        // put away" is in its vocabulary. That is true and it is about a node.
+        // R1902 measured the same canon for PANELS and found `paletteOpen:
+        // true` and no panel that opens folded; the standing order rule is that
+        // the canon is what this tool reproduces, and a second-pass improvement
+        // that costs 33 walks of reproduction is not an improvement.
         //
-        // 🟥🟥🟥★★★★★ R1908 declined this on a stronger-sounding claim — "the
-        // canon has NO panel that opens folded, so opening one folded here
-        // un-reproduces it" — and it was measured over **one line** of the
-        // canon: the line its opening state is written on. Re-measured at R1909
-        // over the WHOLE document, that canon opens with a node of its own graph
-        // ALREADY COLLAPSED and another already muted, seeded in its opening
-        // state and restored by its own reset. So *a thing this tool opens with
-        // put away* is in the canon's vocabulary after all — it is a node rather
-        // than a panel, which is exactly why the canon's silence about panels is
-        // silence and not a prohibition.
-        //
-        // ⇒ ★★★★★ *the population a measurement covers is the population it was
-        // taken from* — twice over here, once for the subject (a drawer, not
-        // this panel) and once for the extent of the reading (one line, not the
-        // document).
-        //
-        // ⚠ And it is a PLACEMENT, not an act somebody performed before the
-        // reader arrived: `EdgePlacement::folded_at` keeps the extent, so the
-        // strip opens to 312 px rather than to nothing. `EdgePolicy` admits it
-        // because `movable` is foldable — the gate
-        // `r1902_every_pane_opens_where_its_own_policy_admits` is what checks
-        // that rather than this comment.
-        opens: EdgePlacement::folded_at(ChromeEdge::Right, 312),
+        // ⇒ ★★★★★ **a decision defended in prose across three rounds was
+        // settled in one by running the thing.** Nothing R1909 built is lost:
+        // `EdgePlacement::folded_at` and `EdgePolicy::admit_opening` are
+        // untouched and still gated, and what a hand folds is still remembered
+        // (R1908). What changed is which placement this screen DECLARES.
+        opens: EdgePlacement::open(ChromeEdge::Right, 312),
         // ★★★★★ R1909 — THREE prefixes, and that is the finding this field
         // exists to record: the inspector's contents are not all named after
         // it. The settings form is `lab.form.*` and the fault panel is

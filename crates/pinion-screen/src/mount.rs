@@ -77,6 +77,14 @@ impl<V: WidgetView> Screen for Mount<V> {
         V::tag()
     }
 
+    /// ★★★★★ R1911 — the binding's own account of where its marks are, for the
+    /// reason the verdict below is the binding's: a screen whose marks a host
+    /// locates differently from the way its own window does would be two builds
+    /// wearing one name.
+    fn paint_stems(&self) -> Vec<&'static str> {
+        V::paint_stems()
+    }
+
     fn title(&self) -> &'static str {
         V::title()
     }

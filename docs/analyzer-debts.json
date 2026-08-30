@@ -344,17 +344,6 @@
       ]
     },
     {
-      "name": "debt-the-canon-is-one-app-and-we-are-many-binaries",
-      "substituted": false,
-      "blocked_by": "campaign",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links analyzer-behaviour-canon-is-the-standalone-prototype, debt-canon-gui-surface-census, screen-a-vs-canon-operation-census"
-      ]
-    },
-    {
       "name": "debt-the-reference-palette-fails-the-boundary-floor",
       "substituted": false,
       "blocked_by": "buildable",

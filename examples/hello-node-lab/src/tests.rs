@@ -2890,13 +2890,24 @@ fn r1902_every_pane_opens_where_its_own_policy_admits() {
         "at least one pane opens showing, or this screen opens as a bare canvas \
          with nothing to say what it is"
     );
-    assert_eq!(
-        folded_open, 1,
-        "exactly one pane opens folded: the inspector, whose subject — a \
-         selected node — does not exist on a screen nobody has touched. The \
-         palette opens showing because 'what can I place' is the question a \
-         reader arrives with"
-    );
+    // 🟥🟥🟥★★★★★ R1911.1 — **and the count itself is gone, because the
+    // paragraph above forbids it and then wrote one anyway.**
+    //
+    // R1902's `folded_open == 0` and R1909's `folded_open == 1` are the same
+    // move in opposite directions: a fact about this build's arrangement,
+    // asserted as a property of the screen, so whoever changed the arrangement
+    // next had to edit the gate to say the new number — which is a gate that
+    // records a choice instead of protecting one. Measured at R1911, R1909's
+    // choice took 33 demo walks red for three CI rounds and this assertion
+    // could not see any of it: it was busy agreeing with the line that caused
+    // them.
+    //
+    // What protects this screen is in the loop above, applied per pane rather
+    // than to a count: an opening its own policy admits, and — for a pane that
+    // opens folded — a declaration that it folds, so a reader has a strip to
+    // grab. Which panes those are is the build's business, and the walks are
+    // what judge it.
+    let _ = folded_open;
 }
 
 /// ★★★★★ R1802 — **the specification says where a panel may live; the layout

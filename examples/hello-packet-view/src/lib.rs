@@ -4074,6 +4074,14 @@ impl WidgetCore for PacketView {
         VIEW_TAG
     }
 
+    /// ★★★★★ R1911 — this screen's marks are addressed under `pv.`, not under
+    /// its root tag: measured over the wire at 1440x900, ONE node carries
+    /// `packet_view` and 292 carry a `pv.` address. A host asking where this
+    /// section is from `tag()` alone was asking about a marker node.
+    fn paint_stems() -> Vec<&'static str> {
+        vec![VIEW_TAG, "pv"]
+    }
+
     fn read_state(scene: &Scene) -> (TextFieldState, u32) {
         tf_paint::read_text_field_state(scene, QUERY_TAG)
     }

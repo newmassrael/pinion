@@ -6298,14 +6298,20 @@ fn r1907_every_control_a_detached_header_offers_is_drawn_and_pressable() {
     });
 }
 
-/// ★★★★★ R1909 — **the assembled tool's node lab opens with its inspector put
-/// away, and a client can bring it back.**
+/// ★★★★★ R1909, redirected by R1911.1 — **the assembled tool's node lab opens
+/// the way its behaviour canon does, and a hand can put a pane away and bring
+/// it back.**
 ///
 /// The campaign's order step 3, asserted where the standing rule says it has to
 /// be: on the screen a reader actually runs. A gate inside `hello_node_lab`
 /// proves the screen; this proves the TOOL — the lab is a mounted guest, and a
 /// test reaching into the guest's own state would pass on an application that
 /// never mounted it.
+///
+/// ⚠ R1911.1 reversed which direction the round trip runs, and
+/// [`assert_the_lab_opens_the_way_its_canon_does`] carries the measurement that
+/// forced it: opening the inspector folded cost 33 demo walks over three CI
+/// rounds and un-reproduced the canon.
 ///
 /// # What it reads, and why both facts
 ///
@@ -6331,7 +6337,7 @@ fn r1907_every_control_a_detached_header_offers_is_drawn_and_pressable() {
 /// driven too — asking a pane that does not fold to unfold must say so by name,
 /// or a client cannot tell a rejected request from one that did nothing.
 #[test]
-fn r1909_the_walk_reaches_a_lab_whose_inspector_opens_put_away() {
+fn r1909_the_walk_reaches_a_lab_whose_panes_open_as_its_canon_does() {
     use pinion_core::external::IntrospectValue;
 
     let owner = Owner::new();
@@ -6339,12 +6345,11 @@ fn r1909_the_walk_reaches_a_lab_whose_inspector_opens_put_away() {
         let state = use_shell_state();
 
         // ★★★★★ ORDER IS THE POINT, and it is the opposite of every other walk
-        // in this file. The arrangement is read BEFORE the walk, because the
-        // walk itself opens whatever it finds folded — that is what a person
-        // does, and `open_whatever_arrived_folded` is why the surfaces inside
-        // this pane can stand at all. Reading afterwards would be asking about
-        // a screen the walk had already changed, and the assertion that the
-        // inspector opens put away would be unfalsifiable.
+        // in this file. The arrangement is read BEFORE the walk, because this
+        // test folds a pane by hand below and the walk opens whatever it finds
+        // folded. Reading afterwards would be asking about a screen the walk
+        // had already changed, and the arrangement assertions would be
+        // unfalsifiable.
         state.go("lab").expect("the node lab section is open");
         let mut externals = state.screens.externals(&state.journey.get());
         let tags: Vec<String> = externals.iter().map(|e| e.tag.to_string()).collect();
@@ -6358,14 +6363,25 @@ fn r1909_the_walk_reaches_a_lab_whose_inspector_opens_put_away() {
 
         let opening = as_json(lab.query("spec").expect("a slot"));
         let inspector = pane_of(&opening, "inspector");
-        assert_the_lab_opens_with_its_inspector_put_away(&opening);
+        assert_the_lab_opens_the_way_its_canon_does(&opening);
 
-        // ── the client brings it back, through the published verb ─────────
+        // ── the client puts it away, through the published verb ───────────
+        //
+        // ★★★★★ R1911.1 REVERSED THE DIRECTION OF THIS ROUND TRIP, and that is
+        // the repair rather than a weakening. R1909 had this screen OPEN with
+        // its inspector folded and unfolded it here; measured at R1911, that
+        // opening choice took **33 demo walks** red for three CI rounds —
+        // proven by reverting the one line and watching them come back — and
+        // it also un-reproduced the behaviour canon, which R1902 had measured
+        // to have no panel that opens folded at all. So the tool opens the way
+        // its canon does, and the fold is what a HAND does.
+        //
+        // Every framework property R1909 built is still asserted here, and the
+        // headline one is asserted MORE strongly: `opens` staying put while
+        // `at` moves is a sharper claim when the pane moves AWAY from its
+        // declaration than when it moves toward it.
         let said = lab
-            .invoke(
-                "place",
-                IntrospectValue::Text("inspector,unfold".to_owned()),
-            )
+            .invoke("place", IntrospectValue::Text("inspector,fold".to_owned()))
             .expect("`place` is a declared action of this screen and this pane folds");
         println!("the screen said: {said:?}");
 
@@ -6382,23 +6398,38 @@ fn r1909_the_walk_reaches_a_lab_whose_inspector_opens_put_away() {
         drop(externals);
         assert_eq!(
             after["at"]["folded"],
-            serde_json::Value::Bool(false),
-            "★ the pane is showing now: {after}"
+            serde_json::Value::Bool(true),
+            "★ the pane is put away now: {after}"
         );
         assert_eq!(
             after["at"]["extent"], inspector["opens"]["extent"],
-            "★ at the width it had kept, not at a default: {after}"
+            "★ folding KEPT its extent, so bringing it back gives a pane worth \
+             having. A fold that forgot its width would be a hide: {after}"
         );
-        // ★★ And the DECLARATION did not move. Unfolding changes where the pane
+        // ★★ And the DECLARATION did not move. Folding changes where the pane
         // IS, never where it OPENS — which is the whole reason the surface
         // publishes two fields for one bit, and a client offering "restore the
         // default arrangement" reads the one that stayed still.
         assert_eq!(
             after["opens"]["folded"],
-            serde_json::Value::Bool(true),
+            serde_json::Value::Bool(false),
             "★ `opens` is a property of the build, not a record of what somebody \
              just did: {after}"
         );
+        // ★ And back, so the walk below stands in a tool a reader would meet.
+        {
+            let mut externals = state.screens.externals(&state.journey.get());
+            let lab = externals
+                .iter_mut()
+                .filter_map(|e| e.handle.introspect_mut())
+                .find(|it| it.query("gate").is_ok())
+                .expect("the lab section still answers");
+            lab.invoke(
+                "place",
+                IntrospectValue::Text("inspector,unfold".to_owned()),
+            )
+            .expect("a folded pane unfolds");
+        }
 
         // ── and the whole application still walks ─────────────────────────
         //
@@ -6422,35 +6453,56 @@ fn r1909_the_walk_reaches_a_lab_whose_inspector_opens_put_away() {
     });
 }
 
-/// ★★★★★ R1909 — the ARRANGEMENT half of the walk above: the inspector opens
-/// put away, the screen agrees with that declaration, and the palette does not.
+/// ★★★★★ R1909, redirected by R1911.1 — the ARRANGEMENT half of the walk
+/// above: **both panes open showing, and the screen agrees with that
+/// declaration.**
 ///
 /// Split out because the walk asserts two different kinds of thing — what the
 /// tool opens as, and what a client can then do to it — and because the whole
 /// of it in one function is past this workspace's line budget. The split is
 /// along the seam that was already there.
 ///
+/// ★★★★★ **What R1911.1 changed, and why it is not a weakening.** R1909 had
+/// the inspector open FOLDED. Measured at R1911: that one line took **33 demo
+/// walks** red for three CI rounds — the inspector was painted 18 px wide
+/// against a declared floor of 312, so 34 of its elements were absent, the
+/// node lab published 133 addressable regions instead of hundreds, and every
+/// walk that stands in the inspector failed. Proven by changing that line back
+/// and watching them come back green. It also un-reproduced the behaviour
+/// canon: R1902 measured that canon and found `paletteOpen: true` and **no
+/// panel that opens folded at all**, wrote exactly that down, and R1909
+/// replaced the finding with an argument from a *different* reference. The
+/// standing order is that the behaviour canon is what this tool reproduces.
+///
+/// Nothing R1909 built is discarded — `EdgePlacement::folded_at`,
+/// `EdgePolicy::admit_opening` and the published `opens`/`at` pair are
+/// untouched, and the round trip above now folds the pane by hand instead,
+/// which tests the same wire in the sharper direction: `opens` holding still
+/// while `at` moves AWAY from it.
+///
 /// ⚠ The palette is read in the same breath as the inspector, and that is not
-/// symmetry for its own sake: a gate that only looked at the folded pane could
-/// not tell *this tool opens one panel away* from *this tool opens with no
-/// panels*.
-fn assert_the_lab_opens_with_its_inspector_put_away(spec: &serde_json::Value) {
+/// symmetry for its own sake: a gate that read only one pane could not tell
+/// *this tool opens its panels* from *this tool has one panel*.
+fn assert_the_lab_opens_the_way_its_canon_does(spec: &serde_json::Value) {
     let inspector = pane_of(spec, "inspector");
     assert_eq!(
         inspector["opens"]["folded"],
-        serde_json::Value::Bool(true),
-        "★ the assembled tool DECLARES its inspector opens put away: {inspector}"
+        serde_json::Value::Bool(false),
+        "★★★★★ R1911.1 — the assembled tool declares its inspector opens \
+         SHOWING. R1902 measured the behaviour canon and found no panel that \
+         opens folded; R1909 opened this one folded anyway and took 33 demo \
+         walks red for three CI rounds. The standing order is that the canon \
+         is what we reproduce: {inspector}"
     );
     assert_eq!(
         inspector["at"]["folded"],
-        serde_json::Value::Bool(true),
+        serde_json::Value::Bool(false),
         "★ and it really is — `opens` reaching `at` is the claim, not the \
          declaration on its own: {inspector}"
     );
     assert_eq!(
         inspector["at"]["extent"], inspector["opens"]["extent"],
-        "★ folded KEPT its extent, so bringing it back gives a pane worth \
-         having. A fold that forgot its width would be a hide: {inspector}"
+        "★ at the extent it declares, not at a default: {inspector}"
     );
 
     let palette = pane_of(spec, "palette");

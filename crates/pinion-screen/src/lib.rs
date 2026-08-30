@@ -159,6 +159,32 @@ pub trait Screen {
     /// The screen's paint-root tag, and the tag its externals are keyed by.
     fn tag(&self) -> &'static str;
 
+    /// ★★★★★ R1911 — **every stem this screen's marks are addressed under**,
+    /// which is not the same set as [`tag`](Self::tag) and was assumed to be.
+    ///
+    /// # What forced it, measured
+    ///
+    /// R1729's check reads a section off a frame as `tag == root ||
+    /// tag.starts_with("{root}.")`. Measured on the analysis tool at R1911, the
+    /// capture viewer paints **one** node called `packet_view` and **292** more
+    /// under `pv.`; the log view one called `log_view` and 98 under `lv.`; the
+    /// node lab one called `node_lab` and 222 under `lab.`. So "leaving takes
+    /// this screen away" was being asserted of a single marker node while the
+    /// screen's actual marks were addressed somewhere the check never looked.
+    /// It was true and nearly empty.
+    ///
+    /// # The default is a floor, not permission
+    ///
+    /// `vec![self.tag()]` — every screen has at least its root. A screen whose
+    /// marks live elsewhere must say so, and what stops that being an escape
+    /// hatch is not this default: it is that the host's gate requires every
+    /// painted mark to belong to some section or to the host's own chrome, so
+    /// an undeclared family is red rather than invisible. A default nobody
+    /// checks is how the assumption above survived.
+    fn paint_stems(&self) -> Vec<&'static str> {
+        vec![self.tag()]
+    }
+
     /// What a reader calls the screen. The host publishes it as the window's
     /// title while this screen is the one showing — the row the reference
     /// toolkit keeps and shows nowhere.

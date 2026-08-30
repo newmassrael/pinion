@@ -14629,6 +14629,13 @@ impl WidgetCore for NodeLabView {
         VIEW_TAG
     }
 
+    /// ★★★★★ R1911 — this screen's marks are addressed under `lab.`, not under
+    /// its root tag; the root is one marker node. See
+    /// [`WidgetCore::paint_stems`](pinion_core::WidgetCore::paint_stems).
+    fn paint_stems() -> Vec<&'static str> {
+        vec![VIEW_TAG, "lab"]
+    }
+
     fn read_state(scene: &Scene) -> (TextFieldState, u32) {
         tf_paint::read_text_field_state(scene, EDIT_TAG)
     }

@@ -125,6 +125,66 @@ pub enum RosterDefect {
         /// The key both claim.
         key: String,
     },
+    /// ★★★★★ R1911 — a paint claim was made for a destination that already has
+    /// a screen, so two things claim to say where one section's marks are.
+    ///
+    /// The same rule as [`SectionAlreadySized`](Self::SectionAlreadySized) and
+    /// for the same reason: a mounted screen's paint root is
+    /// [`Screen::tag`](crate::Screen::tag), which is also the address its own
+    /// externals answer at, so a host-side second opinion would make "where is
+    /// this section on the frame" depend on which lookup was read first.
+    SectionAlreadyPaints {
+        /// The key with both a screen and a host-side paint claim.
+        key: String,
+    },
+    /// ★ R1911 — two paint claims declared for one destination.
+    DuplicatePaint {
+        /// The key both claim.
+        key: String,
+    },
+    /// ★★★★★ R1911 — two sections claim the same marks.
+    ///
+    /// **The refusal that makes "leaving takes a section away" mean anything.**
+    /// The check that property is asserted by reads a section's stems off the
+    /// frame and requires every *other* section's to be absent; if one
+    /// section's claim contained another's, the containing section would be
+    /// found painted at every destination and the containing claim would have
+    /// to be excused. An excused claim is an unchecked one, so the overlap is
+    /// refused where it is declared rather than tolerated where it is read.
+    PaintAlreadyClaimed {
+        /// The key making the claim.
+        key: String,
+        /// The key that already holds marks this claim would also take.
+        by: String,
+        /// The stem the two claims meet at.
+        stem: String,
+    },
+    /// ★★★★★ R1911 — a section's marks and the host's chrome are the same
+    /// marks.
+    ///
+    /// Chrome is what the host paints at **every** destination, so a mark that
+    /// is both would be found on every frame and could never be shown to go
+    /// away. Reported in one variant whichever half was declared second,
+    /// because the defect is the pair and not the order two builder calls
+    /// happen to be written in — the asymmetry the first draft of this had, and
+    /// which made the check depend on a line ordering nothing enforced.
+    ChromeIsAlsoASection {
+        /// The section whose claim the chrome meets.
+        key: String,
+        /// The stem the two meet at.
+        stem: String,
+    },
+    /// ★★★★★ R1911 — a section claimed no marks at all.
+    ///
+    /// A destination a reader can arrive at paints *something*, so an empty
+    /// claim is not a section that paints nothing — it is a declaration that
+    /// says nothing while counting as one, which would let
+    /// [`unrooted_keys`](ScreenRoster::unrooted_keys) reach empty without any
+    /// section becoming locatable. The escape hatch is refused at the door.
+    EmptyPaintClaim {
+        /// The key that claimed nothing.
+        key: String,
+    },
 }
 
 impl core::fmt::Display for RosterDefect {
@@ -165,8 +225,48 @@ impl core::fmt::Display for RosterDefect {
             RosterDefect::DuplicateGrant { key } => {
                 write!(f, "two grants declared for destination `{key}`")
             }
+            RosterDefect::SectionAlreadyPaints { key } => write!(
+                f,
+                "destination `{key}` has a screen, whose paint root is its own \
+                 tag; a second claim from the host would make where the \
+                 section's marks are depend on which registration was read"
+            ),
+            RosterDefect::DuplicatePaint { key } => {
+                write!(f, "two paint claims declared for destination `{key}`")
+            }
+            RosterDefect::PaintAlreadyClaimed { key, by, stem } => write!(
+                f,
+                "destination `{key}` claims marks under `{stem}`, which `{by}` \
+                 already holds; two sections claiming one mark makes \
+                 \"leaving takes a section away\" uncheckable, because the \
+                 containing claim is found painted everywhere"
+            ),
+            RosterDefect::ChromeIsAlsoASection { key, stem } => write!(
+                f,
+                "`{stem}` is claimed both as the host's chrome and as \
+                 `{key}`'s marks; chrome is painted at every destination, so a \
+                 mark that is both could never be shown to go away"
+            ),
+            RosterDefect::EmptyPaintClaim { key } => write!(
+                f,
+                "destination `{key}` claimed no marks at all; a section a \
+                 reader can arrive at paints something, so an empty claim is a \
+                 declaration that says nothing while counting as one"
+            ),
         }
     }
+}
+
+/// Whether two paint stems reach any of the same marks.
+///
+/// A stem names a tag and everything addressed beneath it, which is the shape
+/// R1729's check already read off the frame by hand
+/// (`tag == root || tag.starts_with("{root}.")`) — derived here so the
+/// declaration and the reading cannot drift apart. Two stems meet when they are
+/// equal or one is an ancestor of the other; `shell.palette` and
+/// `shell.settings` do not meet, and `shell` meets both.
+fn stems_meet(a: &str, b: &str) -> bool {
+    a == b || a.starts_with(&format!("{b}.")) || b.starts_with(&format!("{a}."))
 }
 
 impl std::error::Error for RosterDefect {}
@@ -236,6 +336,23 @@ pub struct ScreenRoster {
     /// frame per section cannot see, and reporting those as unreproduced is a
     /// verdict about the frame rather than about the section.
     posers: BTreeMap<String, Box<dyn SectionPoser>>,
+    /// ★★★★★ R1911 — where on the frame a page the host paints itself puts its
+    /// marks.
+    ///
+    /// A sixth map, for the reason `posers` is a fifth one. A *set* of stems
+    /// rather than the single tag a screen has, because a host page's marks are
+    /// not under one address: its chrome is painted beside its region, which is
+    /// the same measurement that produced [`judging`](ScreenRoster::judging).
+    stems: BTreeMap<String, Vec<String>>,
+    /// ★★★★★ R1911 — the stems the host paints at every destination.
+    ///
+    /// Not per-key, because that is exactly what makes it chrome: it is on the
+    /// frame whichever section the reader is at, so it can belong to none of
+    /// them. Empty until declared, which leaves
+    /// [`unclaimed_marks`](ScreenRoster::unclaimed_marks) reporting the host's
+    /// own frame — loud rather than silent, which is the direction an
+    /// undeclared population should fail in.
+    chrome_stems: Vec<String>,
     /// ★★★★★ R1725 — what this host already provides, which every screen it
     /// shows is told before it builds anything.
     ///
@@ -289,6 +406,8 @@ impl ScreenRoster {
             sizes: BTreeMap::new(),
             grants: BTreeMap::new(),
             posers: BTreeMap::new(),
+            stems: BTreeMap::new(),
+            chrome_stems: Vec::new(),
             chrome: HostChrome::NONE,
             placed_extent: Cell::new((0, 0)),
             walk: RefCell::new(Walk::default()),
@@ -445,6 +564,265 @@ impl ScreenRoster {
             });
         }
         Ok(self)
+    }
+
+    /// ★★★★★ R1911 — **declare where on the frame a page this host paints
+    /// itself puts its marks**, so "which section is this mark part of" reaches
+    /// every section a reader can arrive at.
+    ///
+    /// [`Screen::tag`](crate::Screen::tag) is this for a mounted screen, and
+    /// one stem is enough there because a screen paints into a surface of its
+    /// own. A host page has no such surface: measured on the analysis tool at
+    /// R1911, its dashboard's marks sit under the stems its cards, its palette
+    /// and its layout bar are addressed by — more than one, and not derivable
+    /// from the destination key. So this takes a *set*.
+    ///
+    /// # What forced it, measured
+    ///
+    /// R1729's check — arriving paints a section, leaving takes it away, and
+    /// the host's chrome survives — walks [`mounted_keys`](Self::mounted_keys).
+    /// Measured at R1911 on an application with six open sections, four of them
+    /// mounted: the two the host paints itself were not failing that check,
+    /// they **were not in it**, so nothing anywhere asserted that leaving the
+    /// dashboard stops the dashboard being painted.
+    ///
+    /// The verdict half does not cover it either, and deliberately.
+    /// [`Showing`](crate::conformance::Showing) *hands* a judge the fact that
+    /// its page is away, because R1761 refused "away because I found nothing"
+    /// as an excuse a page that stopped painting itself would also pass.
+    /// Refusing that inference at **runtime** is right, and it leaves the
+    /// handed-over claim untested. This is what a gate tests it against.
+    ///
+    /// # Why this is not a way out of mounting
+    ///
+    /// It says where a section's marks are — the first of the four a mount
+    /// gives, and the one the other three can only be asked *about*. It hands
+    /// out no paint, no hit test, no keys and no accessibility subtree: a page
+    /// that wants those still has to become a [`Screen`](crate::Screen).
+    ///
+    /// # Errors
+    ///
+    /// [`RosterDefect`] — a claim at a key the roster does not hold, at a key
+    /// it declares closed, at a key that already has a screen (which names its
+    /// own root), two claims at one key, an **empty** claim, or a claim
+    /// overlapping one another section already holds.
+    pub fn painting(mut self, key: &str, stems: &[&str]) -> Result<Self, RosterDefect> {
+        Self::placeable(&self.destinations, key)?;
+        if self.screens.contains_key(key) {
+            return Err(RosterDefect::SectionAlreadyPaints {
+                key: key.to_owned(),
+            });
+        }
+        if stems.is_empty() {
+            return Err(RosterDefect::EmptyPaintClaim {
+                key: key.to_owned(),
+            });
+        }
+        for stem in stems {
+            // The host's chrome first, so the pair is refused whichever half
+            // was declared second -- the order-dependence the first draft had.
+            if let Some(met) = self
+                .chrome_stems
+                .iter()
+                .find(|chrome| stems_meet(chrome, stem))
+            {
+                return Err(RosterDefect::ChromeIsAlsoASection {
+                    key: key.to_owned(),
+                    stem: met.clone(),
+                });
+            }
+            for (other, held) in self.claims() {
+                if other == key {
+                    continue;
+                }
+                if held.iter().any(|held| stems_meet(held, stem)) {
+                    return Err(RosterDefect::PaintAlreadyClaimed {
+                        key: key.to_owned(),
+                        by: other,
+                        stem: (*stem).to_owned(),
+                    });
+                }
+            }
+        }
+        let claimed: Vec<String> = stems.iter().map(|s| (*s).to_owned()).collect();
+        if self.stems.insert(key.to_owned(), claimed).is_some() {
+            return Err(RosterDefect::DuplicatePaint {
+                key: key.to_owned(),
+            });
+        }
+        Ok(self)
+    }
+
+    /// Every section's paint claim, from both sources, for the overlap check.
+    ///
+    /// A mounted screen's claim is its own root tag, and it is in here so a
+    /// host page cannot claim marks a guest already paints — the direction a
+    /// check reading only `stems` would miss entirely.
+    fn claims(&self) -> Vec<(String, Vec<String>)> {
+        self.screens
+            .iter()
+            .map(|(key, screen)| {
+                (
+                    key.clone(),
+                    screen
+                        .paint_stems()
+                        .into_iter()
+                        .map(str::to_owned)
+                        .collect(),
+                )
+            })
+            .chain(
+                self.stems
+                    .iter()
+                    .map(|(key, stems)| (key.clone(), stems.clone())),
+            )
+            .collect()
+    }
+
+    /// ★★★★★ R1911 — the stems the section at `key` paints its marks under, or
+    /// `None` when the roster cannot say where that section is on a frame.
+    ///
+    /// One stem for a mounted screen — its [`tag`](crate::Screen::tag) — and
+    /// whatever [`painting`](Self::painting) declared for a page the host draws
+    /// itself. Answering from both sources is what lets a caller ask the
+    /// question once for the whole application, which is
+    /// [`poses_of`](Self::poses_of)'s shape and for its reason: a caller that
+    /// has to know which sections are mounted is a caller keeping by hand the
+    /// list this roster exists to publish.
+    #[must_use]
+    pub fn paint_stems_of(&self, key: &str) -> Option<Vec<&str>> {
+        if let Some(screen) = self.screens.get(key) {
+            return Some(screen.paint_stems());
+        }
+        self.stems
+            .get(key)
+            .map(|stems| stems.iter().map(String::as_str).collect())
+    }
+
+    /// ★★★★★ R1911 — whether `tag` is one of the marks the section at `key`
+    /// paints.
+    ///
+    /// Derived from [`paint_stems_of`](Self::paint_stems_of) so that the
+    /// declaration and every reading of it are one expression. R1729's check
+    /// spelled this rule out by hand at three sites; a rule spelled twice is
+    /// two rules the moment one is edited, which is the failure this crate is
+    /// shaped to make unrepresentable.
+    #[must_use]
+    pub fn paints(&self, key: &str, tag: &str) -> bool {
+        self.paint_stems_of(key).is_some_and(|stems| {
+            stems
+                .iter()
+                .any(|stem| tag == *stem || tag.starts_with(&format!("{stem}.")))
+        })
+    }
+
+    /// ★★★★★ R1911 — **whose mark is this**, or `None` for the host's own
+    /// chrome and for a mark no section claims.
+    ///
+    /// The inverse of [`paints`](Self::paints), and the reason
+    /// [`PaintAlreadyClaimed`](RosterDefect::PaintAlreadyClaimed) is refused
+    /// rather than tolerated: **this function is single-valued exactly because
+    /// no two sections may claim one mark.** A refusal with no consumer is a
+    /// rule nothing depends on; this is the consumer, so the refusal is now
+    /// load-bearing rather than tidy.
+    ///
+    /// # What it is for, measured
+    ///
+    /// R1784 wrote the honest remainder of a host-painted page as *its own
+    /// paint root, hit testing, keys and an accessibility subtree*, and asked
+    /// which of the four such a page actually owes. Measured at R1911 on the
+    /// analysis tool, three of the four were **present and unattributable**
+    /// rather than absent: pressing inside the dashboard reaches the dashboard,
+    /// its keyboard stops are gated per destination, and 222 of its regions are
+    /// announced — but nothing could say that a given mark, press or announced
+    /// node *was the dashboard's*. Attribution is what a paint root gives, and
+    /// this is attribution.
+    ///
+    /// Answers over every section, mounted or host-painted, from the same
+    /// declarations — a caller that had to know which sections are screens
+    /// would be keeping by hand the list this roster exists to publish.
+    #[must_use]
+    pub fn section_at(&self, tag: &str) -> Option<&str> {
+        self.destinations.keys().find(|key| self.paints(key, tag))
+    }
+
+    /// ★★★★★ R1911 — **declare the stems the host paints at every
+    /// destination**, which is what makes "this mark belongs to nobody"
+    /// answerable.
+    ///
+    /// A section's claim says where that section is; without the host's, a mark
+    /// belonging to no section is indistinguishable from a mark belonging to
+    /// the frame itself — so a gate could only ask "is the section present" and
+    /// never "is anything here unaccounted for". The second question is the one
+    /// that keeps [`Screen::paint_stems`]'s default honest: an undeclared mark
+    /// family is red rather than invisible.
+    ///
+    /// # Errors
+    ///
+    /// [`RosterDefect::PaintAlreadyClaimed`] — chrome overlapping a section's
+    /// claim, which would make that section's marks the host's and never go
+    /// away.
+    pub fn painting_chrome(mut self, stems: &[&str]) -> Result<Self, RosterDefect> {
+        for stem in stems {
+            for (key, held) in self.claims() {
+                if let Some(met) = held.iter().find(|held| stems_meet(held, stem)) {
+                    return Err(RosterDefect::ChromeIsAlsoASection {
+                        key,
+                        stem: met.clone(),
+                    });
+                }
+            }
+        }
+        self.chrome_stems = stems.iter().map(|s| (*s).to_owned()).collect();
+        Ok(self)
+    }
+
+    /// ★★★★★ R1911 — the marks on this frame that belong to no section and to
+    /// no declared host chrome.
+    ///
+    /// The population a gate asserts is empty, and the reason
+    /// [`Screen::paint_stems`] can carry a default at all: a screen that leaves
+    /// its real mark family undeclared does not quietly pass a thinner check —
+    /// its marks turn up here, named, at every destination it paints.
+    ///
+    /// `tags` is whatever the caller read off the frame; this crate does not
+    /// paint, so the frame has to come from the host.
+    #[must_use]
+    pub fn unclaimed_marks<'t>(&self, tags: impl IntoIterator<Item = &'t str>) -> Vec<&'t str> {
+        let chrome: Vec<&str> = self.chrome_stems.iter().map(String::as_str).collect();
+        let sections: Vec<Vec<&str>> = self
+            .destinations
+            .keys()
+            .filter_map(|key| self.paint_stems_of(key))
+            .collect();
+        tags.into_iter()
+            .filter(|tag| {
+                !chrome
+                    .iter()
+                    .chain(sections.iter().flatten())
+                    .any(|stem| *tag == *stem || tag.starts_with(&format!("{stem}.")))
+            })
+            .collect()
+    }
+
+    /// ★★★★★ R1911 — the open destinations whose marks the roster cannot
+    /// locate on a frame, in roster order.
+    ///
+    /// The count a gate should assert on, for [`unsized_keys`](Self::unsized_keys)'s
+    /// reason: "four sections were checked for going away" is true of an
+    /// application with four sections and of one with forty, and only this says
+    /// which sections the question never reached. Empty is the state that lets
+    /// a host claim every section a reader can open is one a frame can be asked
+    /// about.
+    pub fn unrooted_keys(&self) -> impl Iterator<Item = &str> {
+        self.destinations
+            .keys()
+            .filter(|key| {
+                self.destinations
+                    .get(key)
+                    .is_some_and(|d| d.standing.is_open())
+            })
+            .filter(|key| self.paint_stems_of(key).is_none())
     }
 
     /// ★★★★★ R1784 — the open destinations that cannot say what they lay out
@@ -1015,8 +1393,35 @@ impl ScreenRoster {
                         "address": pinion_core::wire_address::surface_at(s.tag()),
                     })
                 });
+                // ★★★★★ R1911 — **where this section's marks are**, for every
+                // row rather than only the mounted ones. A client asking "is
+                // the dashboard still painted" had to guess the stems from the
+                // tags it happened to see, which is the rule §2 #2 exists to
+                // stop being unwritten — and the guess held only while every
+                // section that had an answer was a screen.
+                row["paints"] =
+                    self.paint_stems_of(&key)
+                        .map_or(serde_json::Value::Null, |stems| {
+                            serde_json::Value::Array(
+                                stems
+                                    .into_iter()
+                                    .map(|s| serde_json::Value::String(s.to_owned()))
+                                    .collect(),
+                            )
+                        });
             }
         }
+        // ★★★★★ R1911 — and what the HOST paints at every destination, beside
+        // the rows rather than in one, because painting at every destination is
+        // what makes a mark chrome. A client checking "is anything here
+        // unaccounted for" needs both halves; with only the rows it would keep
+        // the host's list by hand, which is the guess §2 #2 exists to end.
+        value["chrome_paints"] = serde_json::Value::Array(
+            self.chrome_stems
+                .iter()
+                .map(|s| serde_json::Value::String(s.clone()))
+                .collect(),
+        );
         value
     }
 

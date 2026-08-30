@@ -158,6 +158,16 @@ pub const DEFAULTED: &[(&str, &str)] = &[
         "the other half of the same decision: a screen with one pose has \
          nothing to do when asked for it, and `poses` already said so",
     ),
+    (
+        "paint_stems",
+        "★★★★★ R1911 — every screen has at least its root tag, so the default \
+         is a floor rather than a guess; what keeps it from being an escape \
+         hatch is NOT this default but the host's gate, which requires every \
+         painted mark to belong to some section or to declared host chrome, so \
+         an undeclared family is red rather than invisible. Measured the round \
+         it was added: all four mounted screens of the analysis tool needed to \
+         override it, because a screen's marks are not under its root tag",
+    ),
 ];
 
 #[cfg(test)]
