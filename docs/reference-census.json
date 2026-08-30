@@ -2043,7 +2043,7 @@
       "verdict": "app-content"
     },
     "GraphEditor::RecombineStructPin": {
-      "covered_by": "STRUCT PINS: a composite value port split into its members and recombined. What is missing here is a kind being askable what a type is MADE OF: measured R1912, the taxonomy trait publishes twelve associated items and the two that speak about a type answer what type a value has and whether one type reaches another — neither decomposes one. The variadic run is NOT the shape: it repeats a template the kind fixes and needs no knowledge of a type at all, where a split's member list is a property of the type the port carries",
+      "covered_by": "STRUCT PINS: a composite value port split into one port per member, and recombined. Measured R1912: the parent is HIDDEN rather than removed, each member port takes the parent's direction and its own default, the names are derived from the parent's, and the parent's authored value is distributed across the members. It NESTS — recombining walks into a member's own members — so the shape is a TREE, and the verb is addressable from either end. Refused when the port's type is a container even of a splittable element. What is missing here is a kind being askable what a type is MADE OF: the taxonomy trait publishes twelve associated items and the two that speak about a type answer what type a value has and whether one type reaches another — neither decomposes one, and neither decomposes a VALUE, which the member defaults need. The variadic run is NOT the shape: it repeats a template the kind fixes and needs no knowledge of a type at all",
       "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "absent"
@@ -2127,7 +2127,7 @@
       "verdict": "have"
     },
     "GraphEditor::SplitStructPin": {
-      "covered_by": "STRUCT PINS: a composite value port split into its members and recombined. What is missing here is a kind being askable what a type is MADE OF: measured R1912, the taxonomy trait publishes twelve associated items and the two that speak about a type answer what type a value has and whether one type reaches another — neither decomposes one. The variadic run is NOT the shape: it repeats a template the kind fixes and needs no knowledge of a type at all, where a split's member list is a property of the type the port carries",
+      "covered_by": "STRUCT PINS: a composite value port split into one port per member, and recombined. Measured R1912: the parent is HIDDEN rather than removed, each member port takes the parent's direction and its own default, the names are derived from the parent's, and the parent's authored value is distributed across the members. It NESTS — recombining walks into a member's own members — so the shape is a TREE, and the verb is addressable from either end. Refused when the port's type is a container even of a splittable element. What is missing here is a kind being askable what a type is MADE OF: the taxonomy trait publishes twelve associated items and the two that speak about a type answer what type a value has and whether one type reaches another — neither decomposes one, and neither decomposes a VALUE, which the member defaults need. The variadic run is NOT the shape: it repeats a template the kind fixes and needs no knowledge of a type at all",
       "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "absent"
@@ -2733,7 +2733,7 @@
       "verdict": "absent"
     },
     "node::CanSplitPin": {
-      "covered_by": "STRUCT PINS: a composite value port split into its members and recombined. What is missing here is a kind being askable what a type is MADE OF: measured R1912, the taxonomy trait publishes twelve associated items and the two that speak about a type answer what type a value has and whether one type reaches another — neither decomposes one. The variadic run is NOT the shape: it repeats a template the kind fixes and needs no knowledge of a type at all, where a split's member list is a property of the type the port carries",
+      "covered_by": "STRUCT PINS: a composite value port split into one port per member, and recombined. Measured R1912: the parent is HIDDEN rather than removed, each member port takes the parent's direction and its own default, the names are derived from the parent's, and the parent's authored value is distributed across the members. It NESTS — recombining walks into a member's own members — so the shape is a TREE, and the verb is addressable from either end. Refused when the port's type is a container even of a splittable element. What is missing here is a kind being askable what a type is MADE OF: the taxonomy trait publishes twelve associated items and the two that speak about a type answer what type a value has and whether one type reaches another — neither decomposes one, and neither decomposes a VALUE, which the member defaults need. The variadic run is NOT the shape: it repeats a template the kind fixes and needs no knowledge of a type at all",
       "mechanism": "graph-node",
       "proven_by": "",
       "verdict": "absent"
@@ -3699,7 +3699,7 @@
       "verdict": "host-framework"
     },
     "schema::RecombinePin": {
-      "covered_by": "STRUCT PINS: a composite value port split into its members and recombined. What is missing here is a kind being askable what a type is MADE OF: measured R1912, the taxonomy trait publishes twelve associated items and the two that speak about a type answer what type a value has and whether one type reaches another — neither decomposes one. The variadic run is NOT the shape: it repeats a template the kind fixes and needs no knowledge of a type at all, where a split's member list is a property of the type the port carries",
+      "covered_by": "STRUCT PINS: a composite value port split into one port per member, and recombined. Measured R1912: the parent is HIDDEN rather than removed, each member port takes the parent's direction and its own default, the names are derived from the parent's, and the parent's authored value is distributed across the members. It NESTS — recombining walks into a member's own members — so the shape is a TREE, and the verb is addressable from either end. Refused when the port's type is a container even of a splittable element. What is missing here is a kind being askable what a type is MADE OF: the taxonomy trait publishes twelve associated items and the two that speak about a type answer what type a value has and whether one type reaches another — neither decomposes one, and neither decomposes a VALUE, which the member defaults need. The variadic run is NOT the shape: it repeats a template the kind fixes and needs no knowledge of a type at all",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "absent"
@@ -3783,7 +3783,7 @@
       "verdict": "app-content"
     },
     "schema::SplitPin": {
-      "covered_by": "STRUCT PINS: a composite value port split into its members and recombined. What is missing here is a kind being askable what a type is MADE OF: measured R1912, the taxonomy trait publishes twelve associated items and the two that speak about a type answer what type a value has and whether one type reaches another — neither decomposes one. The variadic run is NOT the shape: it repeats a template the kind fixes and needs no knowledge of a type at all, where a split's member list is a property of the type the port carries",
+      "covered_by": "STRUCT PINS: a composite value port split into one port per member, and recombined. Measured R1912: the parent is HIDDEN rather than removed, each member port takes the parent's direction and its own default, the names are derived from the parent's, and the parent's authored value is distributed across the members. It NESTS — recombining walks into a member's own members — so the shape is a TREE, and the verb is addressable from either end. Refused when the port's type is a container even of a splittable element. What is missing here is a kind being askable what a type is MADE OF: the taxonomy trait publishes twelve associated items and the two that speak about a type answer what type a value has and whether one type reaches another — neither decomposes one, and neither decomposes a VALUE, which the member defaults need. The variadic run is NOT the shape: it repeats a template the kind fixes and needs no knowledge of a type at all",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "absent"
