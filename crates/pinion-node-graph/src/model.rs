@@ -682,6 +682,22 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
     /// multiplies.
     fn name(&self) -> String;
 
+    /// ★★★★★ R1923 — **the sentence this kind says about itself**, or `None`
+    /// when it has nothing to add to its name.
+    ///
+    /// `&self` and not an associated function, because the reference's own
+    /// hook takes the node: a kind that carries a mode or a chosen operation
+    /// should be able to describe THAT rather than its family. The engine's
+    /// tooltip hook is a virtual on the node for the same reason.
+    ///
+    /// Defaulted to `None` so an application that has nothing to say is not
+    /// forced to say something — a description invented to satisfy a trait is
+    /// worse than none, because a reader cannot tell it from a real one.
+    /// [`Document::description`] is where that absence becomes an answer.
+    fn description(&self) -> Option<String> {
+        None
+    }
+
     /// This kind's **fixed** input ports, in order.
     ///
     /// Fixed because a kind may also declare a run that repeats per node
@@ -1293,6 +1309,15 @@ pub struct Node<K: NodeKind> {
     pub y: i32,
     /// A user-facing rename. `None` means "call it what its body is called".
     pub label: Option<String>,
+    /// ★★★★★ R1923 — **a sentence a person wrote about THIS node**, or `None`
+    /// to say whatever its kind says.
+    ///
+    /// The same shape as [`label`](Self::label) one field up, and for the same
+    /// reason: a rename does not stop a node being a multiply, and a note
+    /// written on one node does not become the kind's own description. Which
+    /// of the two a reader is being shown is [`Described`]'s answer.
+    #[serde(default)]
+    pub description: Option<String>,
     /// Whether the node is **bypassed**: it does not compute, and the values
     /// arriving at its inputs pass straight out of its outputs (R1586).
     ///
@@ -1510,6 +1535,50 @@ pub enum Act<'a, K: NodeKind> {
 // already requires `Clone`, so the bound a derive adds is one every kind meets.
 impl<K: NodeKind> Copy for Act<'_, K> {}
 
+/// ★★★★★ R1923 — a node's description, and **which of its two sources said
+/// it**.
+///
+/// # Why the source travels with the sentence
+///
+/// The reference answers this question with a bare string: its node tooltip
+/// hook returns text and its own default implementation returns the class's,
+/// so a caller there is handed one value and cannot tell *a person wrote this
+/// about this node* from *this is what nodes of this sort are*. Those are
+/// different facts to a reader and to an editor — the first is editable and
+/// belongs to this node, the second is not and belongs to every node of the
+/// kind — and an interface that flattens them makes "clear the note" and "the
+/// kind has nothing to say" indistinguishable.
+///
+/// Carrying the source is R1919's [`Matched`] decision on a different axis: the
+/// answer says which question it answered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Description {
+    /// The sentence itself.
+    pub sentence: String,
+    /// Who said it.
+    pub source: Described,
+}
+
+/// ★ R1923 — where a node's description came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Described {
+    /// A person wrote it on this node.
+    Authored,
+    /// The node's kind says it about every node of its sort.
+    Kind,
+}
+
+impl Described {
+    /// The word this source is published under.
+    #[must_use]
+    pub const fn wire_word(self) -> &'static str {
+        match self {
+            Self::Authored => "authored",
+            Self::Kind => "kind",
+        }
+    }
+}
+
 /// ★ R1919 — why a node answered a search.
 ///
 /// Named rather than left implicit because the two are different facts about
@@ -1604,6 +1673,7 @@ impl<K: NodeKind> Node<K> {
             x: _,
             y: _,
             label,
+            description,
             bypassed,
             disabled,
             appearance,
@@ -1612,6 +1682,12 @@ impl<K: NodeKind> Node<K> {
             items,
         } = source;
         self.label.clone_from(label);
+        // R1923 added `description`, and the answer for it is **yes**, for the
+        // same reason as `label`: it is a sentence a person wrote about this
+        // node, so a copy that arrived without it would have silently dropped
+        // what somebody said. The kind's own description is not copied because
+        // it is not stored — the copy has the same kind and asks it too.
+        self.description.clone_from(description);
         self.bypassed = *bypassed;
         // R1682 added `disabled`, and the answer for it is **yes**, for the
         // same reason as `bypassed`: a copy of a node somebody switched off
@@ -2157,6 +2233,46 @@ impl<K: NodeKind> Document<K> {
         }
     }
 
+    /// ★★★★★ R1923 — **what this node says about itself**, and which of its two
+    /// sources said it.
+    ///
+    /// The census names this in two rows across both projects — a node asked
+    /// for its tooltip text, and a node type asked to describe a given node —
+    /// and neither can answer the second half: both hand back a bare string,
+    /// so a caller cannot tell an authored note from the kind's own sentence.
+    ///
+    /// An authored note wins when there is one, which is the same precedence
+    /// [`Node::label`] has over the body's name, and for the same reason: the
+    /// more specific statement is the one a person made.
+    ///
+    /// Answers `None` when neither has anything to say. That is a real answer
+    /// and not a hole — a kind is not obliged to describe itself, and inventing
+    /// a sentence to fill the gap would give a reader something they cannot
+    /// tell from a real description.
+    #[must_use]
+    pub fn description(&self, tree: TreeId, node: NodeId) -> Option<Description> {
+        let held = self.tree(tree)?.node(node)?;
+        if let Some(sentence) = held.description.clone() {
+            return Some(Description {
+                sentence,
+                source: Described::Authored,
+            });
+        }
+        match &held.body {
+            NodeBody::Kind(kind) => kind.description().map(|sentence| Description {
+                sentence,
+                source: Described::Kind,
+            }),
+            // ⚠ The structural bodies say nothing, and that is deliberate rather
+            // than unimplemented: a frame, a group instance, an interface end
+            // and a delay are this CRATE's, so a sentence about them would be
+            // this crate describing itself to an application's reader in
+            // whatever language this file happens to be written in. An
+            // application that wants one writes it on the node.
+            _ => None,
+        }
+    }
+
     /// ★★★★★ R1922 — **would this tree accept this body?**
     ///
     /// The census's four rows on this axis — the DCC asking a node type and a
@@ -2308,6 +2424,9 @@ impl<K: NodeKind> Document<K> {
                 x,
                 y,
                 label: None,
+                // R1923 — nothing written about it yet, so it says whatever
+                // its kind says.
+                description: None,
                 bypassed: false,
                 disabled: false,
                 appearance: Appearance::default(),

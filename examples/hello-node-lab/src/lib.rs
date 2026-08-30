@@ -10299,6 +10299,9 @@ const FIELDS: &[SchemaField] = &{
         // ★★★★★ R1922 — what this graph would ACCEPT, body by body, so an agent
         // deciding what to place reads the row before it places anything.
         SchemaField::new("accepts", "json"),
+        // ★★★★★ R1923 — what each card says about itself, and WHICH of its two
+        // sources said it, which is what the reference's bare string cannot say.
+        SchemaField::new("notes", "json"),
         // ★★★★★ R1742 — how much of the inspector specification this build is
         // showing, published beside the specification itself. `json` rather
         // than the `string` its neighbours use because it is the framework's
@@ -10596,6 +10599,21 @@ const FIELDS: &[SchemaField] = &{
         ),
         SchemaField::action("collapse", "string"),
         SchemaField::action("disable", "string"),
+        // ★★★★★ R1923 — write a note on a card, or take it away. `<card>,none`
+        // clears it, and clearing is not the same as the kind having nothing to
+        // say: the card falls back to its role's own line, which the `notes`
+        // row then reports as `kind` rather than `authored`.
+        SchemaField::action_with(
+            "note",
+            "string",
+            ArgForm::Scalar,
+            const {
+                &[
+                    SchemaArg::open("card", "string"),
+                    SchemaArg::open("sentence", "string"),
+                ]
+            },
+        ),
         // ★★★★★ R1921 — give a card a colour, or take its colour away.
         // `<card>,#rrggbb` or `<card>,none` — the second is not a special case
         // bolted on but the OTHER value the model holds, which is the whole
@@ -10796,6 +10814,8 @@ impl ExternalIntrospect for LabOracle {
             "tints" => Ok(IntrospectValue::Json(tints_wire(state))),
             // ★★★★★ R1922 — what this graph would accept, before anything is put in it.
             "accepts" => Ok(IntrospectValue::Json(accepts_wire(state))),
+            // ★★★★★ R1923 — what each card says about itself, and who said it.
+            "notes" => Ok(IntrospectValue::Json(notes_wire(state))),
             // ★ R1742 — the SAME value the host publishes for this section, so
             // "one build, two placements" is a fact a client can check rather
             // than a claim this file makes.
@@ -11568,6 +11588,42 @@ impl ExternalIntrospect for LabOracle {
             // assignment either way, because the model holds one value and not
             // a colour beside a flag. Answers what the card now carries, so a
             // caller learns the result without a second read.
+            // ★★★★★ R1923 — **write a note on a card, or take it away.** Answers
+            // the SOURCE the card now speaks from, so a caller learns whether it
+            // is reading its own words back or the role's line — which is the
+            // distinction the reference's bare string cannot carry.
+            "note" => {
+                let raw = Self::text(&args)?;
+                let (which, sentence) = raw.split_once(',').ok_or_else(|| {
+                    InvokeError::rejected(format!("{raw:?} is not <card>,<sentence>"))
+                })?;
+                let node = Self::card(&state, which.trim())?;
+                let wanted = match sentence.trim() {
+                    "none" => None,
+                    "" => {
+                        return Err(InvokeError::rejected(
+                            "an empty note is not a note — say `none` to clear one".to_owned(),
+                        ));
+                    }
+                    said => Some(said.to_owned()),
+                };
+                {
+                    let mut doc = state.doc.borrow_mut();
+                    let slot = doc
+                        .tree_mut(ROOT)
+                        .and_then(|host| host.node_mut(node))
+                        .ok_or_else(|| InvokeError::rejected("no such card"))?;
+                    slot.description = wanted;
+                }
+                let now = state
+                    .doc
+                    .borrow()
+                    .description(ROOT, node)
+                    .map_or("none", |d| d.source.wire_word());
+                let name = state.name_of(node);
+                state.say(Utterance::done(format!("{name} now speaks from its {now}")));
+                Ok(IntrospectValue::Text(now.to_owned()))
+            }
             "tint" => {
                 let raw = Self::text(&args)?;
                 let (which, colour) = raw.split_once(',').ok_or_else(|| {
@@ -16137,6 +16193,30 @@ fn pin_descriptions(state: &LabState) -> Descriptions {
         }
     }
     described
+}
+
+/// ★★★★★ R1923 — **what each card says about itself, and who said it.**
+///
+/// The source travels with every sentence, which is the half the reference
+/// cannot express: its node tooltip hands back a bare string, so a client there
+/// cannot tell a note somebody wrote on THIS node from what nodes of that sort
+/// are. An agent reading this row can — and so can an editor deciding whether
+/// there is anything to clear.
+fn notes_wire(state: &Rc<LabState>) -> serde_json::Value {
+    let doc = state.doc.borrow();
+    let rows: Vec<serde_json::Value> = state
+        .cards()
+        .into_iter()
+        .map(|node| {
+            let said = doc.description(ROOT, node);
+            serde_json::json!({
+                "node": state.name_of(node),
+                "sentence": said.as_ref().map(|d| d.sentence.clone()),
+                "source": said.as_ref().map(|d| d.source.wire_word()),
+            })
+        })
+        .collect();
+    serde_json::json!({ "nodes": rows })
 }
 
 /// ★★★★★ R1922 — **what this screen's graph would accept**, body by body.

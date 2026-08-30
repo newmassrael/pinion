@@ -1019,6 +1019,10 @@ fn copy_selection_into<K: NodeKind>(
                 x: node.x - origin.0,
                 y: node.y - origin.1,
                 label: node.label.clone(),
+                // R1923 — a note a person wrote travels with the node, exactly
+                // as its name does: a fragment that dropped it would silently
+                // lose what somebody said about this node.
+                description: node.description.clone(),
                 bypassed: node.bypassed,
                 disabled: node.disabled,
                 appearance: node.appearance.clone(),
@@ -1073,6 +1077,10 @@ fn copy_tree_body<K: NodeKind>(
                 x: node.x,
                 y: node.y,
                 label: node.label.clone(),
+                // R1923 — a note a person wrote travels with the node, exactly
+                // as its name does: a fragment that dropped it would silently
+                // lose what somebody said about this node.
+                description: node.description.clone(),
                 bypassed: node.bypassed,
                 disabled: node.disabled,
                 appearance: node.appearance.clone(),

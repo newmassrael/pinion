@@ -931,10 +931,10 @@
       "verdict": "absent"
     },
     "node::ui_description_fn": {
-      "covered_by": "a port and a node carry a name and no description",
+      "covered_by": "NodeKind::description(&self) — measured from the reference's signature, this is a node TYPE handed a node and asked to describe it, so the sentence may depend on what that node carries. Taking `&self` gives the same reach: a kind holding a mode or a chosen operation describes THAT rather than its family. Defaulted to None so a kind with nothing to add is not forced to invent something a reader could not tell from a real description. R1923",
       "mechanism": "node-type",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_node_get_tooltip_text",
+      "verdict": "have"
     },
     "node::updatefunc": {
       "covered_by": "every derived fact is recomputed on read, so a node is never TOLD the tree changed",
@@ -2919,7 +2919,7 @@
       "verdict": "have"
     },
     "node::GetPinMetaData": {
-      "covered_by": "a port and a node carry a name and no description",
+      "covered_by": "NOT a description, measured from the reference's own signature: it takes a pin name AND A KEY, so it is arbitrary key-value metadata hung on a port, not the sentence a port says about itself — that one a port has carried since R1916 (Port::describing). What is absent is the open key-value store, and its absence is deliberate until something needs it: a bag of untyped strings is where a model goes to stop being checkable. R1923",
       "mechanism": "graph-node",
       "proven_by": "",
       "verdict": "absent"
@@ -2943,10 +2943,10 @@
       "verdict": "have"
     },
     "node::GetTooltipText": {
-      "covered_by": "a port and a node carry a name and no description",
+      "covered_by": "Document::description(tree, node) — the sentence a node says about itself, from either of two sources: a note a person wrote on THIS node, or what its kind says about every node of its sort, the first winning as a label wins over a body's name. Past both references: the answer CARRIES WHICH ONE SPOKE. This hook returns a bare string and its own default hands back the class's, so a caller there is given one value and cannot tell an authored note from the kind's own sentence — two different facts, one editable and belonging to this node, the other not and belonging to every node of the kind. `None` when neither has anything to say is a real answer rather than a hole. R1923",
       "mechanism": "graph-node",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_node_get_tooltip_text",
+      "verdict": "have"
     },
     "node::GetVisualWarningTooltipText": {
       "covered_by": "a node has no WARNING state - a diagnostic a kind attaches to itself",
@@ -3297,7 +3297,7 @@
       "verdict": "absent"
     },
     "schema::CanShowDataTooltipForPin": {
-      "covered_by": "a port and a node carry a name and no description",
+      "covered_by": "a PERMISSION and not a description: measured from the signature, a schema is handed a pin and asked whether a data tooltip may be SHOWN for it — the same permission-versus-possession seam that split R1920's slice. A port here carries its own sentence (R1916) and nothing decides whether showing it is allowed; that would belong beside Document::may rather than beside the description. R1923",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "absent"

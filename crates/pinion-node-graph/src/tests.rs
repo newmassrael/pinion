@@ -1082,6 +1082,7 @@ fn validation_catches_two_nodes_claiming_one_interface_side() {
         x: 0,
         y: 0,
         label: None,
+        description: None,
         bypassed: false,
         disabled: false,
         appearance: Appearance::default(),

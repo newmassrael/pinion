@@ -44,9 +44,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use pinion_node_graph::{
-    Act, Align, Appearance, Axis, Command, Conversion, Crossings, Definitions, Direction,
-    Distribute, Document, Edge, EditError, EditPath, Extent, Faces, Fragment, Grow, Hidden,
-    Instance, InterfaceSide, Item, ItemError, LinkId, Machine, Matched, Multiplicity, Node,
+    Act, Align, Appearance, Axis, Command, Conversion, Crossings, Definitions, Described,
+    Direction, Distribute, Document, Edge, EditError, EditPath, Extent, Faces, Fragment, Grow,
+    Hidden, Instance, InterfaceSide, Item, ItemError, LinkId, Machine, Matched, Multiplicity, Node,
     NodeBody, NodeId, NodeKind, NodeSite, NotRecombinable, NotSplittable, Port, PortPath, PortRef,
     PortSite, PutAway, ROOT, Reach, Session, Sharing, Side, Socket, Stack, Straighten, Stride,
     Tint, TreeId, Variadic, WatchError,
@@ -528,6 +528,7 @@ fn proofs() -> Vec<Proof> {
     all.extend(engine_permission_proofs());
     all.extend(colour_proofs());
     all.extend(admission_proofs());
+    all.extend(description_proofs());
     all.extend(engine_wire_proofs());
     all.extend(engine_editor_proofs());
     all.extend(engine_hook_proofs());
@@ -724,6 +725,16 @@ fn colour_proofs() -> Vec<Proof> {
 /// only `node::poll` owns the proof and the other three cite it.
 fn admission_proofs() -> Vec<Proof> {
     vec![proof("dcc", "node::poll", dcc_node_poll)]
+}
+
+/// ★★★★★ R1923 — *what does this node say about itself, and who said it?* Two
+/// rows; the engine's tooltip owns the proof and the DCC's hook cites it.
+fn description_proofs() -> Vec<Proof> {
+    vec![proof(
+        "engine",
+        "node::GetTooltipText",
+        engine_node_get_tooltip_text,
+    )]
 }
 
 /// ★★★★★ R1920 — the engine's PERMISSION rows: *may this edit be made?*, asked
@@ -1512,6 +1523,114 @@ fn dcc_group_edit() {
     assert_eq!(path.current(), made.definition);
     assert_eq!(path.depth(), 1);
     assert_eq!(path.breadcrumb(&chain.document).len(), 2);
+}
+
+/// ★★★★★ R1923 — the engine's node tooltip and the DCC's node-type description
+/// hook: **what a node says about itself, and which of its two sources said it.**
+#[test]
+fn engine_node_get_tooltip_text() {
+    let mut chain = chain();
+
+    // ⚠ The fixture's kinds say nothing about themselves, which is the honest
+    // default: a kind is not obliged to describe itself, and this asserts that
+    // the absence is an ANSWER rather than a hole to be filled with something
+    // invented.
+    assert_eq!(
+        chain.document.description(ROOT, chain.add),
+        None,
+        "a kind with nothing to say, and a node nobody wrote on"
+    );
+
+    // ★ A person's note is carried, and says it was a person's.
+    if let Some(slot) = chain
+        .document
+        .tree_mut(ROOT)
+        .and_then(|host| host.node_mut(chain.add))
+    {
+        slot.description = Some("the one that adds the two readings".to_owned());
+    }
+    let said = chain
+        .document
+        .description(ROOT, chain.add)
+        .expect("a note was written");
+    assert_eq!(said.sentence, "the one that adds the two readings");
+    // ★★★★★ THE HALF THE REFERENCE CANNOT EXPRESS. Its node tooltip hook hands
+    // back a bare string and its own default returns the class's, so a caller
+    // there is given one value and cannot tell *a person wrote this about this
+    // node* from *this is what nodes of this sort are*. Those are different
+    // facts: the first is editable and belongs to this node, the second is not
+    // and belongs to every node of the kind.
+    assert_eq!(said.source, Described::Authored);
+    assert_eq!(said.source.wire_word(), "authored");
+
+    // ★ Clearing the note is not the same as the kind having nothing to say —
+    // and with this fixture's kinds silent, the answer returns to None rather
+    // than to some invented sentence.
+    if let Some(slot) = chain
+        .document
+        .tree_mut(ROOT)
+        .and_then(|host| host.node_mut(chain.add))
+    {
+        slot.description = None;
+    }
+    assert_eq!(chain.document.description(ROOT, chain.add), None);
+
+    // ★ A structural body says nothing of its own, deliberately: a frame and a
+    // group instance are this CRATE's, so a sentence about them would be the
+    // crate describing itself to an application's reader.
+    let made = chain.document.group(ROOT, &[chain.add], "Sum").unwrap();
+    assert_eq!(
+        chain.document.description(ROOT, made.node),
+        None,
+        "the crate does not put words in an application's mouth"
+    );
+    // ★ …but an application may still write one on it, which is what makes the
+    // silence a default rather than a refusal.
+    if let Some(slot) = chain
+        .document
+        .tree_mut(ROOT)
+        .and_then(|host| host.node_mut(made.node))
+    {
+        slot.description = Some("the collapsed pair".to_owned());
+    }
+    assert_eq!(
+        chain
+            .document
+            .description(ROOT, made.node)
+            .map(|d| d.source),
+        Some(Described::Authored)
+    );
+
+    // ★★★★★ THE NOTE TRAVELS WITH THE NODE, driven over the REAL public path —
+    // extract a fragment and insert it — rather than by reaching into the
+    // crate. `Node::adopt_from` destructures every field, so a new one has to
+    // be answered for, and the answer here is `label`'s: a copy that arrived
+    // without the note would have silently dropped what somebody said.
+    let lifted = chain
+        .document
+        .extract(ROOT, &[made.node])
+        .expect("the instance lifts out");
+    let landed = chain
+        .document
+        .insert(
+            ROOT,
+            &lifted,
+            (400, 400),
+            Crossings::Drop,
+            Definitions::Share,
+        )
+        .expect("and goes back in");
+    let copy = landed.nodes.first().copied().expect("one node came back");
+    assert_eq!(
+        chain.document.description(ROOT, copy).map(|d| d.sentence),
+        Some("the collapsed pair".to_owned()),
+        "a pasted copy carries the note"
+    );
+    assert_eq!(
+        chain.document.description(ROOT, copy).map(|d| d.source),
+        Some(Described::Authored),
+        "and still says a person wrote it"
+    );
 }
 
 /// ★★★★★ R1922 — the DCC's `poll`/`poll_instance` and the engine's two

@@ -380,6 +380,17 @@ impl NodeKind for LabNode {
         self.role.name().to_owned()
     }
 
+    /// ★★★★★ R1923 — what a node of this role IS, DERIVED from the one line the
+    /// palette already shows rather than written a second time.
+    ///
+    /// `Role::gist` was built for the palette; a separate sentence here would
+    /// be a second statement about the same role, free to disagree with the one
+    /// a reader saw when they placed the node. This is the crate's standing
+    /// rule about two facts that must not drift, applied to prose.
+    fn description(&self) -> Option<String> {
+        Some(self.role.gist().to_owned())
+    }
+
     /// The accept pin, present only when the role can be dialled.
     ///
     /// Absent rather than disabled for a role that never listens: a pin that

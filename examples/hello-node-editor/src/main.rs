@@ -516,7 +516,17 @@ const STORAGE_KEY: &str = "node_graph.state";
 // function of the authored value, so writing them would be saving an answer
 // beside the question it comes from — the same line the split-address comment
 // above draws, and for the same reason.
-const PERSISTED_SCHEMA_VERSION: u32 = 15;
+// R1923 -> 16: a node gained a DESCRIPTION a person can write on it
+// (`Node::description`), so every saved graph changed shape. Old blobs still
+// load — the field carries `serde(default)` and its default is `None`, which is
+// exactly "nobody wrote a note on this node, so it says whatever its kind
+// says" — and the version records which build wrote the file.
+//
+// ★ What is NOT saved, again: the KIND's own description. It is a function of
+// the kind, so writing it would freeze one build's wording into every file and
+// make a later rewording invisible to a reader who opened an old graph. The
+// same line this file draws for split addresses and for derived colour faces.
+const PERSISTED_SCHEMA_VERSION: u32 = 16;
 
 /// R1599 — the append-only `(version, digest)` ledger the persistence gate
 /// reads. See `pinion_core::test_fixtures::assert_persisted_shape` for why it
@@ -534,6 +544,7 @@ const PERSISTED_SHAPE_HISTORY: &[(u32, u64)] = &[
     (13, 0x0c39_8b88_0572_c1d0),
     (14, 0x4da8_c072_7b08_208c),
     (15, 0x66ea_2118_9854_494f),
+    (16, 0x8c78_2add_a365_ce63),
 ];
 
 /// R849 — where a newly added node first lands, and the per-add cascade step
