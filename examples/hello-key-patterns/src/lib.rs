@@ -1658,7 +1658,7 @@ impl WidgetCore for KeyPatternView {
 
     /// ★★★★★ R1911 — this screen's marks are addressed under `kp.`, not under
     /// its root tag; the root is one marker node. See
-    /// [`WidgetCore::paint_stems`](pinion_core::WidgetCore::paint_stems).
+    /// [`pinion_core::WidgetCore::paint_stems`].
     fn paint_stems() -> Vec<&'static str> {
         vec![VIEW_TAG, "kp"]
     }

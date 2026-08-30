@@ -130,7 +130,7 @@ pub enum RosterDefect {
     ///
     /// The same rule as [`SectionAlreadySized`](Self::SectionAlreadySized) and
     /// for the same reason: a mounted screen's paint root is
-    /// [`Screen::tag`](crate::Screen::tag), which is also the address its own
+    /// [`Screen::tag`], which is also the address its own
     /// externals answer at, so a host-side second opinion would make "where is
     /// this section on the frame" depend on which lookup was read first.
     SectionAlreadyPaints {
@@ -570,7 +570,7 @@ impl ScreenRoster {
     /// itself puts its marks**, so "which section is this mark part of" reaches
     /// every section a reader can arrive at.
     ///
-    /// [`Screen::tag`](crate::Screen::tag) is this for a mounted screen, and
+    /// [`Screen::tag`] is this for a mounted screen, and
     /// one stem is enough there because a screen paints into a surface of its
     /// own. A host page has no such surface: measured on the analysis tool at
     /// R1911, its dashboard's marks sit under the stems its cards, its palette
@@ -587,7 +587,7 @@ impl ScreenRoster {
     /// dashboard stops the dashboard being painted.
     ///
     /// The verdict half does not cover it either, and deliberately.
-    /// [`Showing`](crate::conformance::Showing) *hands* a judge the fact that
+    /// [`Showing`] *hands* a judge the fact that
     /// its page is away, because R1761 refused "away because I found nothing"
     /// as an excuse a page that stopped painting itself would also pass.
     /// Refusing that inference at **runtime** is right, and it leaves the
@@ -598,7 +598,7 @@ impl ScreenRoster {
     /// It says where a section's marks are — the first of the four a mount
     /// gives, and the one the other three can only be asked *about*. It hands
     /// out no paint, no hit test, no keys and no accessibility subtree: a page
-    /// that wants those still has to become a [`Screen`](crate::Screen).
+    /// that wants those still has to become a [`Screen`].
     ///
     /// # Errors
     ///
