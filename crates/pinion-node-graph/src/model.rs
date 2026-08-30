@@ -1481,15 +1481,34 @@ pub struct Found {
 /// exactly there — a `Can…Rename` predicate for the permission and a separate
 /// name validator for the value — and a caller has to consult two things and
 /// combine them itself.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Act<'a> {
-    /// Put any node into this tree — the census's graph-level question.
-    Create,
+// ⚠ `PartialEq` but not `Eq`: an act can carry a body, a body carries the
+// application's own values, and the commonest value a node graph carries is a
+// float. That is the same reason `NodeKind::Value` is `PartialEq` and not `Eq`.
+//
+#[derive(Debug, Clone, PartialEq)]
+pub enum Act<'a, K: NodeKind> {
+    /// ★★★★★ R1922 — put **this body** into this tree.
+    ///
+    /// R1920 built this arm carrying nothing, which answered only *is this
+    /// tree here*. The census's four remaining rows on this axis all ask the
+    /// sharper question — the DCC's own comment on the hook is *can this node
+    /// be added to a node tree?* — and it cannot be answered without knowing
+    /// what is being added. Carrying the body is the same decision
+    /// [`Act::Rename`] makes about a name: a question that leaves the value
+    /// out can only answer half of what it was asked.
+    Create(&'a NodeBody<K>),
     /// Take this node out of it.
     Delete(NodeId),
     /// Give this node this authored name, or take its name away with `None`.
     Rename(NodeId, Option<&'a str>),
 }
+
+// ⚠ `Copy` is written out while `Clone` is derived, and the asymmetry is the
+// point: a derived `Copy` would put `K: Copy` on the impl, which no application
+// kind has to satisfy — this type holds only references and ids, so it is
+// copyable whatever the kind is. `Clone` derives cleanly because `NodeKind`
+// already requires `Clone`, so the bound a derive adds is one every kind meets.
+impl<K: NodeKind> Copy for Act<'_, K> {}
 
 /// ★ R1919 — why a node answered a search.
 ///
@@ -1698,6 +1717,19 @@ pub struct Tree<K: NodeKind> {
 
 impl<K: NodeKind> Tree<K> {
     /// Every node, ascending by id.
+    /// ★ R1922 — place a node WITHOUT asking [`Document::admits`], which is
+    /// what reading a document from a file does.
+    ///
+    /// Test-only and named so, because the point of `admits` is that every
+    /// EDIT goes through it. What does not is a whole document arriving from
+    /// outside, and `Document::validate` exists for exactly that — so a test
+    /// showing validate still reports a state needs a way to build the state
+    /// the way a file would, rather than the way an editor cannot.
+    #[cfg(test)]
+    pub(crate) fn insert_node_for_test(&mut self, node: Node<K>) {
+        self.nodes.insert(node.id, node);
+    }
+
     pub fn nodes(&self) -> impl Iterator<Item = &Node<K>> {
         self.nodes.values()
     }
@@ -2090,16 +2122,12 @@ impl<K: NodeKind> Document<K> {
     /// Whatever the corresponding edit would answer: [`EditError::NoSuchTree`],
     /// [`EditError::NoSuchNode`], [`EditError::InterfaceEnd`],
     /// [`EditError::LabelTaken`], [`EditError::LabelEmpty`].
-    pub fn may(&self, tree: TreeId, act: Act<'_>) -> Result<(), EditError> {
+    pub fn may(&self, tree: TreeId, act: Act<'_, K>) -> Result<(), EditError> {
         if self.tree(tree).is_none() {
             return Err(EditError::NoSuchTree(tree));
         }
         match act {
-            // A tree that exists takes nodes. Stated as its own arm rather than
-            // folded into the guard above, because it is the census's
-            // graph-level question and a later graph that refuses new nodes —
-            // a read-only definition, say — belongs HERE and nowhere else.
-            Act::Create => Ok(()),
+            Act::Create(body) => self.admits(tree, body),
             Act::Delete(node) => {
                 let held = self.held(tree, node)?;
                 // ★ The one refusal that exists today, and the reason this
@@ -2126,6 +2154,97 @@ impl<K: NodeKind> Document<K> {
                 }
                 Ok(())
             }
+        }
+    }
+
+    /// ★★★★★ R1922 — **would this tree accept this body?**
+    ///
+    /// The census's four rows on this axis — the DCC asking a node type and a
+    /// node instance *can this be added to this tree*, the engine asking a node
+    /// whether it may be created under a schema and whether it is compatible
+    /// with a graph — are all this question, and until R1922 nothing here could
+    /// be asked it: a `Document` has one kind of tree, so the crate had read
+    /// that as *nothing can be refused*. Measured at this round's open, that
+    /// conclusion was wrong in the direction that matters — three placements
+    /// were accepted that leave a document nothing can use.
+    ///
+    /// # ★★★★★ Why this is a function and not a second rule beside `validate`
+    ///
+    /// `Document::validate` ALREADY reports two of these three, after the fact:
+    /// a duplicate interface end and a definition that reaches itself. So the
+    /// tempting shape is a fresh rule here that refuses early — and that is
+    /// two oracles for one rule, free to disagree, which is exactly what R1884
+    /// recorded the cost of. Instead this IS the rule: `may` asks it before an
+    /// edit, and `validate` asks it of every node already placed, so a
+    /// document loaded from a file and an edit about to happen are judged by
+    /// one predicate. Neither can drift, because there is nothing to drift
+    /// from.
+    ///
+    /// ⚠ `validate` stays, and is not made redundant by this: a document
+    /// arrives from a FILE without passing any verb, so the same rule has to be
+    /// askable of a whole document. What changed is that it is asked in one
+    /// place.
+    ///
+    /// # Errors
+    ///
+    /// [`EditError::RootHasNoOutside`] when an interface end is placed in a
+    /// tree nothing instantiates; [`EditError::InterfaceEndTaken`] when that
+    /// side already has one; [`EditError::WouldContainItself`] when a group
+    /// instance names a tree that already contains it.
+    pub fn admits(&self, tree: TreeId, body: &NodeBody<K>) -> Result<(), EditError> {
+        match body {
+            NodeBody::Interface(side) => {
+                // ★ ROOT is the one tree nothing instantiates, so an interface
+                // end there materialises a contract with no outside — nobody
+                // can ever wire to it. `validate` did not report this at all,
+                // measured at R1922's open: it was the one of the three with
+                // no diagnosis whatsoever.
+                if tree == ROOT {
+                    return Err(EditError::RootHasNoOutside { tree, side: *side });
+                }
+                if let Some(held) = self
+                    .tree(tree)
+                    .and_then(|host| host.interface_node(*side))
+                    .map(|node| node.id)
+                {
+                    return Err(EditError::InterfaceEndTaken {
+                        tree,
+                        side: *side,
+                        held_by: held,
+                    });
+                }
+                Ok(())
+            }
+            NodeBody::Group(definition) => {
+                // ★★★★★ `Nesting::cycle` is this question already answered —
+                // *may this definition be placed in this host* — over the
+                // crate's own containment relation, which is the SAME relation
+                // `validate`'s recursion finding reads. Writing a walk here
+                // would have been a second implementation of one rule; the
+                // compiler said so by refusing the name I gave it, which is
+                // R1919's lesson for the second time: the word already existed.
+                //
+                // And it names the CHAIN, which the reference does not: its own
+                // nesting refusal prints the same flat sentence for a direct
+                // self-nest and for one four groups deep, so the definitions
+                // actually carrying the recursion are never named.
+                if let Some(chain) = pinion_graph::group::Nesting::cycle(
+                    &self.containment(),
+                    tree.0 as usize,
+                    definition.0 as usize,
+                ) {
+                    return Err(EditError::WouldContainItself {
+                        tree,
+                        definition: *definition,
+                        chain: chain
+                            .into_iter()
+                            .map(|id| TreeId(u32::try_from(id).unwrap_or(u32::MAX)))
+                            .collect(),
+                    });
+                }
+                Ok(())
+            }
+            _ => Ok(()),
         }
     }
 
@@ -2163,9 +2282,10 @@ impl<K: NodeKind> Document<K> {
     ///
     /// # Errors
     ///
-    /// [`EditError::NoSuchTree`] when `tree` is not in the document — asked
-    /// through [`Self::may`], so an editor that checks first and one that just
-    /// calls this cannot get different answers (R1920).
+    /// [`EditError::NoSuchTree`] when `tree` is not in the document, and
+    /// whatever [`Self::admits`] refuses this body for (R1922) — asked through
+    /// [`Self::may`], so an editor that checks first and one that just calls
+    /// this cannot get different answers (R1920).
     pub fn add_node(
         &mut self,
         tree: TreeId,
@@ -2173,7 +2293,7 @@ impl<K: NodeKind> Document<K> {
         x: i32,
         y: i32,
     ) -> Result<NodeId, EditError> {
-        self.may(tree, Act::Create)?;
+        self.may(tree, Act::Create(&body))?;
         let host = self
             .trees
             .get_mut(tree.0 as usize)
@@ -3753,6 +3873,51 @@ pub enum EditError {
         /// Which end it is.
         side: InterfaceSide,
     },
+    /// ★★★★★ R1922 — an interface end was placed in a tree **nothing
+    /// instantiates**, so it would materialise a contract with no outside.
+    ///
+    /// [`ROOT`] is that tree: a group instance names a definition, and no node
+    /// can name the root. Measured at R1922's open, this placement SUCCEEDED
+    /// and [`Document::validate`] reported nothing at all about it — the one of
+    /// this round's three findings that had no diagnosis whatsoever.
+    RootHasNoOutside {
+        /// The tree the end was placed in.
+        tree: TreeId,
+        /// Which end it would have been.
+        side: InterfaceSide,
+    },
+    /// ★★★★★ R1922 — that side of this tree's interface **already has** its
+    /// inside end.
+    ///
+    /// [`Tree::interface_node`] documents itself as answering *the sole node
+    /// materialising `side`*, and it answers with the first — so a second one
+    /// is drawn, is wired to by nothing, and cannot be found by the accessor
+    /// that is supposed to be about it. `validate` reported it after the fact;
+    /// this refuses it before.
+    InterfaceEndTaken {
+        /// The tree.
+        tree: TreeId,
+        /// The side that is already materialised.
+        side: InterfaceSide,
+        /// The node already holding it.
+        held_by: NodeId,
+    },
+    /// ★★★★★ R1922 — a group instance would put a tree **inside itself**.
+    ///
+    /// Directly, or through any nesting that already reaches back. `validate`
+    /// reports the resulting document as recursive; this refuses the edit that
+    /// would make it so.
+    WouldContainItself {
+        /// The tree the instance would go in.
+        tree: TreeId,
+        /// The definition it names.
+        definition: TreeId,
+        /// ★ The chain that would close, host first — the definitions actually
+        /// carrying the recursion. The reference refuses the same nesting with
+        /// one flat sentence whether it is direct or four groups deep, so the
+        /// trees in between are never named there.
+        chain: Vec<TreeId>,
+    },
     /// No such link in that tree.
     NoSuchLink {
         /// The tree that was searched.
@@ -3838,6 +4003,41 @@ impl fmt::Display for EditError {
             // refused: a reader who is told "you may not" and not "this is the
             // end of the contract your callers wire to" learns nothing they
             // can act on.
+            // ★ R1922 — each says what would be LOST or what already holds the
+            // place, not merely that it refused.
+            Self::RootHasNoOutside { tree, side } => write!(
+                f,
+                "tree {} is the root, which nothing instantiates, so a {} \
+                 interface end there would have no outside to be wired from",
+                tree.0,
+                side.wire_word()
+            ),
+            Self::InterfaceEndTaken {
+                tree,
+                side,
+                held_by,
+            } => write!(
+                f,
+                "tree {}'s {} interface end is already node {}",
+                tree.0,
+                side.wire_word(),
+                held_by.0
+            ),
+            Self::WouldContainItself {
+                tree,
+                definition,
+                chain,
+            } => write!(
+                f,
+                "placing tree {} in tree {} would close the chain {}",
+                definition.0,
+                tree.0,
+                chain
+                    .iter()
+                    .map(|t| t.0.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" -> ")
+            ),
             Self::InterfaceEnd { tree, node, side } => write!(
                 f,
                 "node {} is tree {}'s own {} interface end, and removing it \

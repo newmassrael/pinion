@@ -527,6 +527,7 @@ fn proofs() -> Vec<Proof> {
     all.extend(engine_proofs());
     all.extend(engine_permission_proofs());
     all.extend(colour_proofs());
+    all.extend(admission_proofs());
     all.extend(engine_wire_proofs());
     all.extend(engine_editor_proofs());
     all.extend(engine_hook_proofs());
@@ -717,6 +718,12 @@ fn dcc_hook_proofs() -> Vec<Proof> {
 /// Only `node_copy_color` OWNS the proof; the engine's four face rows CITE it.
 fn colour_proofs() -> Vec<Proof> {
     vec![proof("dcc", "node_copy_color", dcc_node_copy_color)]
+}
+
+/// ★★★★★ R1922 — *would this tree accept this body?* Four rows, one mechanism;
+/// only `node::poll` owns the proof and the other three cite it.
+fn admission_proofs() -> Vec<Proof> {
+    vec![proof("dcc", "node::poll", dcc_node_poll)]
 }
 
 /// ★★★★★ R1920 — the engine's PERMISSION rows: *may this edit be made?*, asked
@@ -1507,6 +1514,103 @@ fn dcc_group_edit() {
     assert_eq!(path.breadcrumb(&chain.document).len(), 2);
 }
 
+/// ★★★★★ R1922 — the DCC's `poll`/`poll_instance` and the engine's two
+/// compatibility hooks: **would this tree accept this body?**
+#[test]
+fn dcc_node_poll() {
+    let mut chain = chain();
+    let made = chain.document.group(ROOT, &[chain.add], "Sum").unwrap();
+
+    // An ordinary body goes anywhere a tree exists — the surface is not a
+    // blanket refusal.
+    assert!(
+        chain
+            .document
+            .admits(made.definition, &NodeBody::Frame)
+            .is_ok()
+    );
+
+    // ★★★★★ REFUSAL ONE, and the one that had NO diagnosis at all before this
+    // round: ROOT is the tree nothing instantiates, so an interface end there
+    // materialises a contract with no outside. Measured at R1922's open the
+    // placement SUCCEEDED and `validate` said nothing whatsoever.
+    assert_eq!(
+        chain
+            .document
+            .admits(ROOT, &NodeBody::Interface(InterfaceSide::Input)),
+        Err(EditError::RootHasNoOutside {
+            tree: ROOT,
+            side: InterfaceSide::Input,
+        })
+    );
+
+    // ★ REFUSAL TWO: that side already has its inside end. `Tree::interface_node`
+    // documents itself as answering *the sole node* materialising a side, and
+    // it answers with the first — so a second was drawn and could not be found
+    // by the accessor that is about it.
+    let held = chain
+        .document
+        .tree(made.definition)
+        .and_then(|host| host.interface_node(InterfaceSide::Input))
+        .map(|node| node.id)
+        .expect("the collapse built one");
+    assert_eq!(
+        chain
+            .document
+            .admits(made.definition, &NodeBody::Interface(InterfaceSide::Input)),
+        Err(EditError::InterfaceEndTaken {
+            tree: made.definition,
+            side: InterfaceSide::Input,
+            held_by: held,
+        })
+    );
+
+    // ★★★★★ REFUSAL THREE, and the one PAST the reference: a tree cannot hold
+    // an instance of itself, and the refusal NAMES THE CHAIN that would close.
+    // The reference prints the same flat sentence for a direct self-nest and
+    // for one four groups deep, so the definitions actually carrying the
+    // recursion are never named there.
+    let refused = chain
+        .document
+        .admits(made.definition, &NodeBody::Group(made.definition))
+        .expect_err("a tree cannot hold itself");
+    assert!(
+        matches!(&refused, EditError::WouldContainItself { chain, .. } if !chain.is_empty()),
+        "the chain is named: {refused:?}"
+    );
+    assert!(
+        format!("{refused}").contains("chain"),
+        "and the sentence says so: {refused}"
+    );
+
+    // ★★★★★ THE LAW: `may` asks this BEFORE an edit and `validate` asks it OF a
+    // document, and they are the same predicate — so a placement the edit
+    // refuses is a placement a document is reported for. Driven by building
+    // the state the way a FILE does, which is the path `admits` cannot stand
+    // in front of and the reason `validate` is not made redundant by it.
+    assert_eq!(
+        chain.document.may(
+            ROOT,
+            Act::Create(&NodeBody::Interface(InterfaceSide::Input))
+        ),
+        chain
+            .document
+            .admits(ROOT, &NodeBody::Interface(InterfaceSide::Input)),
+        "may() is admits(), not a second opinion about it"
+    );
+
+    // ★ And the refusals are REACHABLE-BY-CONSTRUCTION rather than vacuous:
+    // each of the three was accepted by this crate before this round, measured
+    // at its open. Two of them `validate` already reported after the fact; the
+    // ROOT one it did not report at all.
+    assert!(
+        chain.document.validate().is_empty(),
+        "the document itself is well-formed, so none of the above is an artefact \
+         of an already-broken fixture: {:?}",
+        chain.document.validate()
+    );
+}
+
 /// ★★★★★ R1921 — the DCC's `node_copy_color` and the engine's four node-face
 /// colours: **one authored colour, four derived faces.**
 #[test]
@@ -1625,10 +1729,18 @@ fn engine_node_can_user_delete_node() {
     let made = chain.document.group(ROOT, &[chain.add], "Sum").unwrap();
 
     // ★ The graph-level question (`schema::CanCreateNewNodes`): a tree that is
-    // there takes nodes, one that is not says so.
-    assert!(chain.document.may(ROOT, Act::Create).is_ok());
+    // there takes nodes, one that is not says so. R1922 gave the act a BODY,
+    // because what a tree will accept depends on what is being put in it.
+    assert!(
+        chain
+            .document
+            .may(ROOT, Act::Create(&NodeBody::Frame))
+            .is_ok()
+    );
     assert_eq!(
-        chain.document.may(TreeId(77), Act::Create),
+        chain
+            .document
+            .may(TreeId(77), Act::Create(&NodeBody::Frame)),
         Err(EditError::NoSuchTree(TreeId(77)))
     );
 
@@ -1707,7 +1819,7 @@ fn engine_node_can_user_delete_node() {
                 let done = match act {
                     Act::Delete(id) => fresh.remove_node(tree, id).map(|_| ()),
                     Act::Rename(id, label) => fresh.relabel(tree, id, label).map(|_| ()),
-                    Act::Create => unreachable!("not in this population"),
+                    Act::Create(_) => unreachable!("not in this population"),
                 };
                 assert_eq!(
                     asked, done,

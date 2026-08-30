@@ -1055,21 +1055,52 @@ fn validation_catches_a_document_that_did_not_come_from_here() {
 fn validation_catches_two_nodes_claiming_one_interface_side() {
     let mut f = fixture();
     let made = f.document.group(ROOT, &[f.add], "Sum").unwrap();
+
+    // ★★★★★ R1922 — `add_node` now REFUSES this placement, so the fixture no
+    // longer builds the state by making it. That refusal was only safe to add
+    // because this finding stays REACHABLE, and this is where that is shown:
+    // a document arrives from a FILE without passing any verb, so a blob
+    // carrying two input ends produces exactly this state and `validate` is
+    // what a reader gets told by. The refusal and the finding are the SAME
+    // predicate (`Document::admits`) asked at two times, which is why they
+    // cannot disagree about which documents are wrong.
+    assert!(
+        matches!(
+            f.document.add_node(
+                made.definition,
+                NodeBody::Interface(InterfaceSide::Input),
+                0,
+                0,
+            ),
+            Err(EditError::InterfaceEndTaken { .. })
+        ),
+        "the edit is refused before it happens"
+    );
+    let slot = Node {
+        id: NodeId(9001),
+        body: NodeBody::Interface(InterfaceSide::Input),
+        x: 0,
+        y: 0,
+        label: None,
+        bypassed: false,
+        disabled: false,
+        appearance: Appearance::default(),
+        parent: None,
+        values: std::collections::BTreeMap::new(),
+        items: crate::items::Items::default(),
+    };
     f.document
-        .add_node(
-            made.definition,
-            NodeBody::Interface(InterfaceSide::Input),
-            0,
-            0,
-        )
-        .unwrap();
+        .tree_mut(made.definition)
+        .expect("the definition")
+        .insert_node_for_test(slot);
     assert!(
         f.document
             .validate()
             .contains(&Violation::DuplicateInterfaceNode {
                 tree: made.definition,
                 side: InterfaceSide::Input,
-            })
+            }),
+        "and a document that already holds it is still reported"
     );
 }
 

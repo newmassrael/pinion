@@ -10296,6 +10296,9 @@ const FIELDS: &[SchemaField] = &{
         // ★★★★★ R1921 — each card's authored colour and the faces derived from
         // it, published together so a client never re-derives the contrast rule.
         SchemaField::new("tints", "json"),
+        // ★★★★★ R1922 — what this graph would ACCEPT, body by body, so an agent
+        // deciding what to place reads the row before it places anything.
+        SchemaField::new("accepts", "json"),
         // ★★★★★ R1742 — how much of the inspector specification this build is
         // showing, published beside the specification itself. `json` rather
         // than the `string` its neighbours use because it is the framework's
@@ -10791,6 +10794,8 @@ impl ExternalIntrospect for LabOracle {
             "editable" => Ok(IntrospectValue::Json(editable_wire(state))),
             // ★★★★★ R1921 — what colour each card is, and what that derives.
             "tints" => Ok(IntrospectValue::Json(tints_wire(state))),
+            // ★★★★★ R1922 — what this graph would accept, before anything is put in it.
+            "accepts" => Ok(IntrospectValue::Json(accepts_wire(state))),
             // ★ R1742 — the SAME value the host publishes for this section, so
             // "one build, two placements" is a fact a client can check rather
             // than a claim this file makes.
@@ -16132,6 +16137,49 @@ fn pin_descriptions(state: &LabState) -> Descriptions {
         }
     }
     described
+}
+
+/// ★★★★★ R1922 — **what this screen's graph would accept**, body by body.
+///
+/// The framework's `Document::admits` answers one placement; this publishes the
+/// answer for every body kind this crate owns, because an agent deciding WHAT
+/// to place needs the row before it places anything. Same shape and same reason
+/// as R1920's `editable`, one axis over: that one is *may I edit this node*,
+/// this one is *may I put this here at all*.
+///
+/// ★ And the refusal is REAL on this screen rather than deferred to a tripwire:
+/// the lab's canvas is the root tree, and the root is the one tree nothing
+/// instantiates, so an interface end is refused here and the walk drives it.
+fn accepts_wire(state: &Rc<LabState>) -> serde_json::Value {
+    let doc = state.doc.borrow();
+    // The bodies this crate owns, named the way the wire names things. A kind
+    // body needs an application kind, so it is represented by one the palette
+    // can actually supply — anything else would be asking about a body no
+    // caller here could place.
+    let probes: Vec<(&str, NodeBody<LabNode>)> = vec![
+        ("frame", NodeBody::Frame),
+        (
+            "interface-input",
+            NodeBody::Interface(pinion_node_graph::InterfaceSide::Input),
+        ),
+        (
+            "interface-output",
+            NodeBody::Interface(pinion_node_graph::InterfaceSide::Output),
+        ),
+        ("group-of-this-tree", NodeBody::Group(ROOT)),
+    ];
+    let rows: Vec<serde_json::Value> = probes
+        .into_iter()
+        .map(|(word, body)| {
+            let asked = doc.admits(ROOT, &body);
+            serde_json::json!({
+                "body": word,
+                "verdict": if asked.is_ok() { "allowed" } else { "refused" },
+                "because": asked.err().map(|why| why.to_string()),
+            })
+        })
+        .collect();
+    serde_json::json!({ "bodies": rows })
 }
 
 /// ★★★★★ R1921 — `#rrggbb`, or the word for having no colour at all.

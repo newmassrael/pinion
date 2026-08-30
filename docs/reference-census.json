@@ -907,16 +907,16 @@
       "verdict": "have"
     },
     "node::poll": {
-      "covered_by": "a Document is ONE tree kind, so nothing can be refused per graph type",
+      "covered_by": "Document::admits(tree, body) — the reference's own comment on this hook is 'can this node be added to a node tree?', and that is the question. Three refusals today: an interface end in the root, which nothing instantiates, so it would materialise a contract with no outside; a second inside end for a side that already has one; and a group instance that would put a tree inside itself. Past the reference on the third: the refusal NAMES THE CHAIN that would close, where the reference prints one flat sentence whether the nesting is direct or four groups deep. R1922",
       "mechanism": "node-type",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::dcc_node_poll",
+      "verdict": "have"
     },
     "node::poll_instance": {
-      "covered_by": "a Document is ONE tree kind, so nothing can be refused per graph type",
+      "covered_by": "Document::admits(tree, body) asked of a body that is already a placed node's — the reference splits the type-level and instance-level hooks because its node type and node carry different state; here a body IS what would be placed, so one predicate answers both. R1922",
       "mechanism": "node-type",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::dcc_node_poll",
+      "verdict": "have"
     },
     "node::register_operators": {
       "covered_by": "a node type registering the DCC operators - its own UI mechanism",
@@ -2709,10 +2709,10 @@
       "verdict": "host-framework"
     },
     "node::CanCreateUnderSpecifiedSchema": {
-      "covered_by": "a Document is ONE tree kind, so nothing can be refused per graph type",
+      "covered_by": "Document::admits(tree, body) — measured from the reference's own signature, this is a node asked whether it may be created under a given schema, which is the same question `Document::may(tree, Act::Create(body))` answers before `add_node` runs. R1922",
       "mechanism": "graph-node",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::dcc_node_poll",
+      "verdict": "have"
     },
     "node::CanDuplicateNode": {
       "covered_by": "the permission surface exists (Document::may) but the edit it would gate does not: this crate has no verb that duplicates a node. Measured R1920 over Document's own edit verbs",
@@ -2979,10 +2979,10 @@
       "verdict": "app-content"
     },
     "node::IsCompatibleWithGraph": {
-      "covered_by": "a Document is ONE tree kind, so nothing can be refused per graph type",
+      "covered_by": "Document::admits(tree, body) — the reference asks this one with a GRAPH in hand rather than a schema, and it is the same predicate here because the tree is the argument. R1922",
       "mechanism": "graph-node",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::dcc_node_poll",
+      "verdict": "have"
     },
     "node::IsCompilerRelevant": {
       "covered_by": "the engine's visual script/asset subject matter",
@@ -3489,7 +3489,7 @@
       "verdict": "have"
     },
     "schema::GetGraphType": {
-      "covered_by": "a Document is ONE tree kind, so nothing can be refused per graph type",
+      "covered_by": "a tree has no KIND, which is a different absence from the one R1922 closed: measured from the reference's signature this is asked of a graph and answers what that graph IS, where the four hooks R1922 covered are asked of a NODE and answer whether it fits. A Document's trees differ by role (the root, which nothing instantiates, versus a definition) and `admits` reads that role, but nothing names a graph's kind, so nothing can vary BY kind. R1922",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "absent"
