@@ -506,7 +506,17 @@ const STORAGE_KEY: &str = "node_graph.state";
 // second-fact-that-can-disagree this crate spends its item edits avoiding. A
 // blob written by this build therefore says only *this address is split*, and
 // the reader works out what that means with the taxonomy it has.
-const PERSISTED_SCHEMA_VERSION: u32 = 14;
+// R1921 -> 15: a node gained an authored COLOUR (`Appearance::tint`), so every
+// saved graph changed shape. Old blobs still load — the field carries
+// `serde(default)` and its default is `None`, which is exactly "this node was
+// never given a colour" — so this is a shape change and not a compatibility
+// break, and the version says which.
+//
+// ★ Note what is NOT saved: the four faces the colour derives. They are a
+// function of the authored value, so writing them would be saving an answer
+// beside the question it comes from — the same line the split-address comment
+// above draws, and for the same reason.
+const PERSISTED_SCHEMA_VERSION: u32 = 15;
 
 /// R1599 — the append-only `(version, digest)` ledger the persistence gate
 /// reads. See `pinion_core::test_fixtures::assert_persisted_shape` for why it
@@ -523,6 +533,7 @@ const PERSISTED_SHAPE_HISTORY: &[(u32, u64)] = &[
     (12, 0xc793_c323_d2ba_3cac),
     (13, 0x0c39_8b88_0572_c1d0),
     (14, 0x4da8_c072_7b08_208c),
+    (15, 0x66ea_2118_9854_494f),
 ];
 
 /// R849 — where a newly added node first lands, and the per-add cascade step

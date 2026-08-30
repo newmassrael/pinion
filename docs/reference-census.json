@@ -925,7 +925,7 @@
       "verdict": "app-content"
     },
     "node::ui_class": {
-      "covered_by": "colour is not in Appearance at all - the same gap node_copy_color names",
+      "covered_by": "NOT the authored colour R1921 built, measured in the reference's own header: an optional override of the node's CLASS, used when drawing its header — so it selects which DERIVED palette a node is drawn from, per instance. A kind here gives one appearance to all its nodes and nothing lets one instance be drawn as a different class. R1921",
       "mechanism": "node-type",
       "proven_by": "",
       "verdict": "absent"
@@ -949,10 +949,10 @@
       "verdict": "app-content"
     },
     "node_copy_color": {
-      "covered_by": "colour is not in Appearance — a representation decision comes first",
+      "covered_by": "Appearance::tint — an authored colour or None, so copying one node's colour onto another is ONE assignment. Past the reference: it models this as TWO facts, a three-float colour beside a NODE_CUSTOM_COLOR bit, so a node carrying a colour it is not using is representable there and its own copy operator has to set the bit, copy the channels, AND clear the bit when the source has none. One Option makes that state unrepresentable rather than merely wrong, so 'copy the colour' and 'copy the absence' are the same line here. R1921",
       "mechanism": "cpp",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::dcc_node_copy_color",
+      "verdict": "have"
     },
     "node_socket::draw": {
       "covered_by": "drawing; this crate deliberately holds no renderer",
@@ -2865,16 +2865,16 @@
       "verdict": "app-content"
     },
     "node::GetNodeBodyTintColor": {
-      "covered_by": "colour is not in Appearance at all - the same gap node_copy_color names",
+      "covered_by": "Faces::of(tint).body — the authored colour taken toward black, so a node reads as ONE thing with a lighter band rather than as two. Derived rather than answered separately; see node::GetNodeTitleColor for why that is the decision. R1921",
       "mechanism": "graph-node",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::dcc_node_copy_color",
+      "verdict": "have"
     },
     "node::GetNodeCommentColor": {
-      "covered_by": "colour is not in Appearance at all - the same gap node_copy_color names",
+      "covered_by": "Faces::of(tint).comment — a frame's fill, taken further back than the body because a frame is drawn BEHIND what it contains. Derived from the same authored colour. R1921",
       "mechanism": "graph-node",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::dcc_node_copy_color",
+      "verdict": "have"
     },
     "node::GetNodeContextMenuActions": {
       "covered_by": "which menu items a node offers - the editor's menu, which the binding owns",
@@ -2889,16 +2889,16 @@
       "verdict": "have"
     },
     "node::GetNodeTitleColor": {
-      "covered_by": "colour is not in Appearance at all - the same gap node_copy_color names",
+      "covered_by": "Faces::of(tint).title — the header band IS the authored colour. Past the reference: it asks a node four INDEPENDENT virtuals for its four face colours, so a subclass can answer with four that do not go together and nothing there can notice; here one Appearance::tint is authored and all four faces are derived from it, so they cannot disagree. R1921",
       "mechanism": "graph-node",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::dcc_node_copy_color",
+      "verdict": "have"
     },
     "node::GetNodeTitleTextColor": {
-      "covered_by": "colour is not in Appearance at all - the same gap node_copy_color names",
+      "covered_by": "Faces::of(tint).title_text — and this is the one PAST the reference rather than level with it. There the title colour and the title TEXT colour are two unrelated virtuals, so a subclass that darkens one without the other produces a title nobody can read and nothing in that model can notice. Here the letters are CHOSEN by luminance contrast against the band they sit on, which makes an unreadable title unreachable — held over the whole colour cube by the proof, not over the colours somebody happened to try. R1921",
       "mechanism": "graph-node",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::dcc_node_copy_color",
+      "verdict": "have"
     },
     "node::GetPassThroughPin": {
       "covered_by": "Document::passthrough, derived from the SIGNATURE alone rather than from the wiring",
@@ -3537,7 +3537,7 @@
       "verdict": "app-content"
     },
     "schema::GetPinColor": {
-      "covered_by": "colour is not in Appearance at all - the same gap node_copy_color names",
+      "covered_by": "a PIN's colour, which R1921's node tint does not reach: measured from the reference's own signature, this is asked with a pin in hand, while the node face colours are asked of the node with no argument at all. A port here carries a name, a type and a flow, and nothing says what colour it is drawn in. R1921",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "absent"
@@ -3549,7 +3549,7 @@
       "verdict": "have"
     },
     "schema::GetPinTypeColor": {
-      "covered_by": "colour is not in Appearance at all - the same gap node_copy_color names",
+      "covered_by": "a TYPE's colour, and the measured signature is what separates it from the pin's: this is asked with a pin TYPE and no pin, so it can be answered where no port exists — which is what lets an editor draw a legend, or colour a type in a picker. R1921 gave nodes a colour and did not reach this: a socket type here has no colour at all. R1921",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "absent"
@@ -3567,7 +3567,7 @@
       "verdict": "app-content"
     },
     "schema::GetSecondaryPinTypeColor": {
-      "covered_by": "colour is not in Appearance at all - the same gap node_copy_color names",
+      "covered_by": "the SECOND colour a type is drawn in, for a container whose element type has a colour of its own — same mechanism and same argument as schema::GetPinTypeColor, and blocked on the same thing: a socket type here has no colour at all. R1921",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "absent"

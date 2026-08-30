@@ -102,8 +102,8 @@ use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::widgets::wheel::WheelDirection;
 use pinion_core::{CellKind, Frame, Modifiers, Scene, WidgetCore, edit_field_keymap};
 use pinion_node_graph::{
-    Act, Camera, Document, Extent, Fit, Found, Item, LinkId, LinkLayer, Margin, Node, NodeBody,
-    NodeId, PortPath, PortRef, ROOT, Relinked, Side, Socket, Violation, ZoomRange,
+    Act, Camera, Document, Extent, Faces, Fit, Found, Item, LinkId, LinkLayer, Margin, Node,
+    NodeBody, NodeId, PortPath, PortRef, ROOT, Relinked, Side, Socket, Tint, Violation, ZoomRange,
 };
 use pinion_platform_storage::AppStorage;
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
@@ -8612,13 +8612,21 @@ fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
         // ★ R1691 — the identifier and the role chip are what the CARD is
         // called and what it is. Its own announcement carries both, so a node
         // here would read the identifier twice before saying anything new.
+        // ★★★★★ R1921 — the letters are CHOSEN for contrast against the fill
+        // they sit on, never authored. That is the half the reference leaves to
+        // each subclass, and leaving it there is how a title becomes
+        // unreadable; `Faces::title_text` makes that unreachable.
+        let ink_for_name = card_tint(state, node).map_or(ink.text, |tint| {
+            let letters = Faces::of(tint).title_text;
+            Color::rgba(letters.r, letters.g, letters.b, 255)
+        });
         parts.push(quiet(
             tagged_label(
                 &format!("lab.node.{name}.id"),
                 name.clone(),
                 shape.id,
                 shape.id_font,
-                ink.text,
+                ink_for_name,
             ),
             Silence::name_of(format!("lab.node.{name}")),
         ));
@@ -8664,7 +8672,23 @@ fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
         // orthogonality is now ASSERTED rather than described — see
         // `r1919_a_name_is_looked_for_across_the_document.py` (C) and (H).
         let found_here = hits.contains(&node);
-        let mut style = BoxStyle::filled(ink.surface).with_corner_radius(9);
+        // ★★★★★ R1921 — a card a person coloured is FILLED with that colour;
+        // one nobody coloured keeps the surface its kind gives.
+        //
+        // ⚠ The `title` face and not `body`, and the first draft of this line
+        // had it wrong in a way worth recording: `title_text` is chosen for
+        // contrast against `title`, so painting the fill with the DARKER body
+        // face while lettering it for the lighter title face reintroduces
+        // exactly the unreadable combination `Faces` exists to prevent. A
+        // card here has no separate header band — the whole card IS the band —
+        // so `title` is the face it wears, and the walk holds the contrast
+        // against whatever fill it finds rather than against the one this
+        // comment claims.
+        let fill = card_tint(state, node).map_or(ink.surface, |tint| {
+            let title = Faces::of(tint).title;
+            Color::rgba(title.r, title.g, title.b, 255)
+        });
+        let mut style = BoxStyle::filled(fill).with_corner_radius(9);
         let edge = if chosen {
             ink.accent
         } else if in_selection {
@@ -10269,6 +10293,9 @@ const FIELDS: &[SchemaField] = &{
         // read rather than asked one card at a time: an agent choosing what to
         // act on needs the whole row before it acts on any of it.
         SchemaField::new("editable", "json"),
+        // ★★★★★ R1921 — each card's authored colour and the faces derived from
+        // it, published together so a client never re-derives the contrast rule.
+        SchemaField::new("tints", "json"),
         // ★★★★★ R1742 — how much of the inspector specification this build is
         // showing, published beside the specification itself. `json` rather
         // than the `string` its neighbours use because it is the framework's
@@ -10566,6 +10593,22 @@ const FIELDS: &[SchemaField] = &{
         ),
         SchemaField::action("collapse", "string"),
         SchemaField::action("disable", "string"),
+        // ★★★★★ R1921 — give a card a colour, or take its colour away.
+        // `<card>,#rrggbb` or `<card>,none` — the second is not a special case
+        // bolted on but the OTHER value the model holds, which is the whole
+        // point of an Option: the reference needs a flag beside the channels
+        // and its own copy operator has to remember to clear it.
+        SchemaField::action_with(
+            "tint",
+            "string",
+            ArgForm::Scalar,
+            const {
+                &[
+                    SchemaArg::open("card", "string"),
+                    SchemaArg::open("colour", "string"),
+                ]
+            },
+        ),
         // ★★★★★ R1919 — look for a name across the document. Declared with an
         // OPEN argument, which is the honest shape here and worth saying why:
         // every other action on this screen names a closed vocabulary because
@@ -10746,6 +10789,8 @@ impl ExternalIntrospect for LabOracle {
             "found" => Ok(IntrospectValue::Json(found_wire(state))),
             // ★★★★★ R1920 — what an agent may do, before it does it.
             "editable" => Ok(IntrospectValue::Json(editable_wire(state))),
+            // ★★★★★ R1921 — what colour each card is, and what that derives.
+            "tints" => Ok(IntrospectValue::Json(tints_wire(state))),
             // ★ R1742 — the SAME value the host publishes for this section, so
             // "one build, two placements" is a fact a client can check rather
             // than a claim this file makes.
@@ -11513,6 +11558,36 @@ impl ExternalIntrospect for LabOracle {
                 Ok(IntrospectValue::Int(
                     i64::try_from(found(&state).len()).unwrap_or(i64::MAX),
                 ))
+            }
+            // ★★★★★ R1921 — **give a card a colour, or take it away.** One
+            // assignment either way, because the model holds one value and not
+            // a colour beside a flag. Answers what the card now carries, so a
+            // caller learns the result without a second read.
+            "tint" => {
+                let raw = Self::text(&args)?;
+                let (which, colour) = raw.split_once(',').ok_or_else(|| {
+                    InvokeError::rejected(format!("{raw:?} is not <card>,<colour>"))
+                })?;
+                let node = Self::card(&state, which.trim())?;
+                let wanted = parse_tint(colour.trim())?;
+                {
+                    let mut doc = state.doc.borrow_mut();
+                    let slot = doc
+                        .tree_mut(ROOT)
+                        .and_then(|host| host.node_mut(node))
+                        .ok_or_else(|| InvokeError::rejected("no such card"))?;
+                    slot.appearance.tint = wanted;
+                }
+                let shown = match wanted {
+                    Some(t) => format!("#{:02x}{:02x}{:02x}", t.r, t.g, t.b),
+                    None => "none".to_owned(),
+                };
+                let name = state.name_of(node);
+                state.say(Utterance::done(match wanted {
+                    Some(_) => format!("{name} coloured {shown}"),
+                    None => format!("{name} back to its kind's colour"),
+                }));
+                Ok(IntrospectValue::Text(shown))
             }
             "put_away_pins" => {
                 let raw = Self::text(&args)?;
@@ -16057,6 +16132,70 @@ fn pin_descriptions(state: &LabState) -> Descriptions {
         }
     }
     described
+}
+
+/// ★★★★★ R1921 — `#rrggbb`, or the word for having no colour at all.
+///
+/// The absence is a WORD and not an empty string, because an empty argument is
+/// what a caller sends by mistake and "take the colour away" is a thing they
+/// mean on purpose. Refusing anything else is what keeps `tints` readable: a
+/// silently-ignored malformed colour would leave the card its old one and
+/// answer as though it had changed.
+fn parse_tint(raw: &str) -> Result<Option<Tint>, InvokeError> {
+    if raw.eq_ignore_ascii_case("none") {
+        return Ok(None);
+    }
+    let hex = raw.strip_prefix('#').unwrap_or(raw);
+    if hex.len() != 6 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(InvokeError::rejected(format!(
+            "{raw:?} is not #rrggbb or \"none\""
+        )));
+    }
+    let channel = |at: usize| u8::from_str_radix(&hex[at..at + 2], 16).unwrap_or(0);
+    Ok(Some(Tint::rgb(channel(0), channel(2), channel(4))))
+}
+
+/// ★★★★★ R1921 — the colour a person gave this card, if any.
+fn card_tint(state: &LabState, node: NodeId) -> Option<Tint> {
+    state
+        .doc
+        .borrow()
+        .tree(ROOT)
+        .and_then(|host| host.node(node))
+        .and_then(|held| held.appearance.tint)
+}
+
+/// ★★★★★ R1921 — every card's authored colour and the faces it derives.
+///
+/// The faces are published beside the authored value rather than left for a
+/// client to re-derive, because re-deriving them is exactly the duplication
+/// `Faces` exists to remove: a second implementation of the contrast rule
+/// would be free to disagree with the one the screen paints with.
+fn tints_wire(state: &Rc<LabState>) -> serde_json::Value {
+    let rows: Vec<serde_json::Value> = state
+        .cards()
+        .into_iter()
+        .map(|node| {
+            let tint = card_tint(state, node);
+            let faces = tint.map(Faces::of);
+            serde_json::json!({
+                "node": state.name_of(node),
+                "tint": tint.map(|t| format!("#{:02x}{:02x}{:02x}", t.r, t.g, t.b)),
+                "faces": faces.map(|f| serde_json::json!({
+                    "title": format!("#{:02x}{:02x}{:02x}", f.title.r, f.title.g, f.title.b),
+                    "body": format!("#{:02x}{:02x}{:02x}", f.body.r, f.body.g, f.body.b),
+                    "comment": format!(
+                        "#{:02x}{:02x}{:02x}", f.comment.r, f.comment.g, f.comment.b
+                    ),
+                    "title_text": format!(
+                        "#{:02x}{:02x}{:02x}",
+                        f.title_text.r, f.title_text.g, f.title_text.b
+                    ),
+                })),
+            })
+        })
+        .collect();
+    serde_json::json!({ "nodes": rows })
 }
 
 /// ★★★★★ R1920 — **what this screen would let an agent do, asked before it

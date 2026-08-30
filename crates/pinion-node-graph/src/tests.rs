@@ -18,7 +18,7 @@ use crate::{
     Occurrence, Organic, Orphaned, ParentError, PathError, Port, PortPath, PortRef, PortSite,
     PortValueError, ROOT, Reach, Relabelled, RelinkError, RepartitionError, Route, RunError,
     SelectError, Session, Severed, Sharing, Side, Socket, Stack, Standing, Stop, Straighten,
-    Stride, Tick, Timeline, TreeId, UngroupError, Unreadable, Violation, WatchError, Watches,
+    Stride, Tick, Timeline, Tint, TreeId, UngroupError, Unreadable, Violation, WatchError, Watches,
     ZoomRange, crossing,
 };
 
@@ -3421,6 +3421,10 @@ fn what_a_node_looks_like_cannot_change_what_the_graph_computes() {
             // member half survived the round trip.
             split_inputs: vec![PortPath::root(2).then(1)],
             split_outputs: vec![PortPath::root(0)],
+            // ★ R1921 — SOME, for the same reason the two above are non-empty:
+            // `None` is this field's default, so a fixture carrying it would
+            // serialise identically whether or not the field survived.
+            tint: Some(Tint::rgb(3, 5, 7)),
         },
     ];
     for look in looks {

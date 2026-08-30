@@ -45,11 +45,11 @@ use serde::{Deserialize, Serialize};
 
 use pinion_node_graph::{
     Act, Align, Appearance, Axis, Command, Conversion, Crossings, Definitions, Direction,
-    Distribute, Document, Edge, EditError, EditPath, Extent, Fragment, Grow, Hidden, Instance,
-    InterfaceSide, Item, ItemError, LinkId, Machine, Matched, Multiplicity, Node, NodeBody, NodeId,
-    NodeKind, NodeSite, NotRecombinable, NotSplittable, Port, PortPath, PortRef, PortSite, PutAway,
-    ROOT, Reach, Session, Sharing, Side, Socket, Stack, Straighten, Stride, TreeId, Variadic,
-    WatchError,
+    Distribute, Document, Edge, EditError, EditPath, Extent, Faces, Fragment, Grow, Hidden,
+    Instance, InterfaceSide, Item, ItemError, LinkId, Machine, Matched, Multiplicity, Node,
+    NodeBody, NodeId, NodeKind, NodeSite, NotRecombinable, NotSplittable, Port, PortPath, PortRef,
+    PortSite, PutAway, ROOT, Reach, Session, Sharing, Side, Socket, Stack, Straighten, Stride,
+    Tint, TreeId, Variadic, WatchError,
 };
 
 // ---------------------------------------------------------------- taxonomy
@@ -526,6 +526,7 @@ fn proofs() -> Vec<Proof> {
     all.extend(dcc_hook_proofs());
     all.extend(engine_proofs());
     all.extend(engine_permission_proofs());
+    all.extend(colour_proofs());
     all.extend(engine_wire_proofs());
     all.extend(engine_editor_proofs());
     all.extend(engine_hook_proofs());
@@ -706,6 +707,18 @@ fn dcc_hook_proofs() -> Vec<Proof> {
 
 /// The generic canvas's commands that act on **structure** — which nodes exist,
 /// which tree they are in, and whether they take part.
+/// ★★★★★ R1921 — a node's own COLOUR: one authored value, four derived faces.
+///
+/// Its own list for the reason the lists beside it have theirs — `engine_proofs`
+/// is at the length this file splits on — and because these rows are one
+/// mechanism the pin had already grouped: five of them carried the identical
+/// `covered_by` sentence before anyone reached for them.
+///
+/// Only `node_copy_color` OWNS the proof; the engine's four face rows CITE it.
+fn colour_proofs() -> Vec<Proof> {
+    vec![proof("dcc", "node_copy_color", dcc_node_copy_color)]
+}
+
 /// ★★★★★ R1920 — the engine's PERMISSION rows: *may this edit be made?*, asked
 /// before making it.
 ///
@@ -1492,6 +1505,116 @@ fn dcc_group_edit() {
     assert_eq!(path.current(), made.definition);
     assert_eq!(path.depth(), 1);
     assert_eq!(path.breadcrumb(&chain.document).len(), 2);
+}
+
+/// ★★★★★ R1921 — the DCC's `node_copy_color` and the engine's four node-face
+/// colours: **one authored colour, four derived faces.**
+#[test]
+fn dcc_node_copy_color() {
+    let mut chain = chain();
+
+    // A node with no authored colour is drawn in whatever its kind gives, and
+    // says so by carrying nothing rather than by carrying a colour it is not
+    // using — which is the state the DCC's colour-plus-flag pair CAN hold.
+    let bare = chain
+        .document
+        .tree(ROOT)
+        .and_then(|host| host.node(chain.add))
+        .map(|node| node.appearance.tint);
+    assert_eq!(bare, Some(None), "an unauthored node carries no colour");
+
+    // ★ COPYING is one assignment. The DCC has to move two facts and remember
+    // to clear the bit when the source has none; here the source's whole answer
+    // IS the value, so "copy the colour" and "copy the absence" are one line.
+    let chosen = Tint::rgb(220, 40, 60);
+    if let Some(slot) = chain
+        .document
+        .tree_mut(ROOT)
+        .and_then(|host| host.node_mut(chain.add))
+    {
+        slot.appearance.tint = Some(chosen);
+    }
+    let source = chain
+        .document
+        .tree(ROOT)
+        .and_then(|host| host.node(chain.add))
+        .map(|node| node.appearance.tint)
+        .expect("the node is there");
+    if let Some(slot) = chain
+        .document
+        .tree_mut(ROOT)
+        .and_then(|host| host.node_mut(chain.sink))
+    {
+        slot.appearance.tint = source;
+    }
+    assert_eq!(
+        chain
+            .document
+            .tree(ROOT)
+            .and_then(|host| host.node(chain.sink))
+            .and_then(|node| node.appearance.tint),
+        Some(chosen),
+        "the colour copied"
+    );
+
+    // ★★★★★ THE FOUR FACES ARE DERIVED, so a node cannot answer with four
+    // colours that do not go together. The engine asks four independent
+    // virtuals; this asks one value.
+    let faces = Faces::of(chosen);
+    assert_eq!(faces.title, chosen, "the title band IS the authored colour");
+    assert!(
+        faces.body.luminance() < faces.title.luminance(),
+        "the body reads as the same node, darker: {faces:?}"
+    );
+    assert!(
+        faces.comment.luminance() < faces.body.luminance(),
+        "and a frame sits further back still: {faces:?}"
+    );
+
+    // ★★★★★ THE LAW, OVER EVERY COLOUR THERE IS — not the ones somebody tried.
+    // The engine's title colour and title TEXT colour are two unrelated
+    // virtuals, so a subclass there can darken one and not the other and
+    // produce a title nobody can read, with nothing able to notice. Here the
+    // text is CHOSEN by contrast, which makes unreadable-title unreachable —
+    // and that is a property, so it is held over the whole cube.
+    let mut worst = 255i32;
+    let mut worst_at = Tint::default();
+    let mut checked = 0u32;
+    for r in (0..=255).step_by(15) {
+        for g in (0..=255).step_by(15) {
+            for b in (0..=255).step_by(15) {
+                let tint = Tint::rgb(r, g, b);
+                let faces = Faces::of(tint);
+                let ink = faces.title_text;
+                assert!(
+                    ink == Tint::rgb(0, 0, 0) || ink == Tint::rgb(255, 255, 255),
+                    "the letters are one of two inks: {ink:?}"
+                );
+                let gap = i32::from(faces.title.luminance()) - i32::from(ink.luminance());
+                let gap = gap.abs();
+                if gap < worst {
+                    worst = gap;
+                    worst_at = tint;
+                }
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked > 4000, "the cube was really walked — {checked}");
+    // ★ Printed, not only asserted: the MARGIN is the interesting number. A
+    // floor that sits just under the worst case would be a tolerance the size
+    // of the defect, which is R1862's lesson and which this round met again —
+    // a screen-side mutation landed at a gap of 101 against this floor of 100
+    // and passed. Anyone tightening this should read what the derivation
+    // actually leaves rather than guess.
+    println!("contrast: worst gap {worst} at {worst_at:?}, over {checked} colours");
+    // ⚠ The floor is asserted as a NUMBER measured from the derivation rather
+    // than a hope: whatever colour is authored, the letters differ from the
+    // band they sit on by at least this much luminance.
+    assert!(
+        worst >= 100,
+        "every authored colour leaves a readable title — worst {worst} at {worst_at:?}"
+    );
 }
 
 /// ★★★★★ R1920 — the engine's three permission rows: **may this edit be made?**,

@@ -18,6 +18,126 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::{Document, NodeId, NodeKind, Side, TreeId, yes};
 
+/// ★★★★★ R1921 — a colour a person authored, in sRGB.
+///
+/// Three channels and no alpha, which is a decision and not an omission: what
+/// is authored here is *what colour this node is*, and how solidly any one of
+/// its faces is painted is a fact about that face — see [`Faces`], where the
+/// body tint gets its own translucency derived rather than stored. The DCC
+/// authors three channels for the same reason; the engine's node colours are
+/// four-channel and its own default implementations then vary only the alpha,
+/// which is that derivation written four times.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash, Serialize, Deserialize)]
+pub struct Tint {
+    /// Red, sRGB.
+    pub r: u8,
+    /// Green, sRGB.
+    pub g: u8,
+    /// Blue, sRGB.
+    pub b: u8,
+}
+
+impl Tint {
+    /// Construct from raw sRGB channels.
+    #[must_use]
+    pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
+        Self { r, g, b }
+    }
+
+    /// ★ Relative luminance, 0..=255, by the coefficients a person's eye
+    /// actually weights the channels with.
+    ///
+    /// Integer arithmetic on purpose: this decides which of two text colours a
+    /// title gets, and a value that answered differently on two machines would
+    /// make [`Faces::title_text`] a fact about the renderer rather than about
+    /// the colour.
+    ///
+    /// The narrowing cannot lose anything: the coefficients sum to exactly
+    /// 1000, so the largest possible numerator is `255 * 1000` and the quotient
+    /// is at most 255. That is an arithmetic fact rather than a hope, and if it
+    /// were ever untrue the contrast floor in `dcc_node_copy_color` — which
+    /// walks the whole colour cube — is what would go red.
+    #[must_use]
+    #[allow(clippy::cast_possible_truncation)]
+    pub const fn luminance(self) -> u8 {
+        // 0.2126 R + 0.7152 G + 0.0722 B, scaled by 1000 and divided back.
+        let sum = (self.r as u32) * 213 + (self.g as u32) * 715 + (self.b as u32) * 72;
+        (sum / 1000) as u8
+    }
+
+    /// The same colour scaled toward black by `numerator/denominator`.
+    ///
+    /// Every caller passes a numerator below the denominator, so each channel
+    /// only ever shrinks and the narrowing cannot lose anything. `Faces::of`
+    /// is the only caller and this is private, which is what makes that a
+    /// statement about the code rather than about its callers.
+    #[must_use]
+    #[allow(clippy::cast_possible_truncation)]
+    const fn scaled(self, numerator: u32, denominator: u32) -> Self {
+        Self {
+            r: ((self.r as u32) * numerator / denominator) as u8,
+            g: ((self.g as u32) * numerator / denominator) as u8,
+            b: ((self.b as u32) * numerator / denominator) as u8,
+        }
+    }
+}
+
+/// ★★★★★ R1921 — the colours a node's faces are drawn in, all four DERIVED
+/// from one authored [`Tint`].
+///
+/// # Why one authored value and four derived, rather than four authored
+///
+/// The engine asks a node four separate questions — its title colour, its body
+/// tint, its comment colour and its title TEXT colour — and each is a virtual
+/// its own subclass may answer independently. So a node there can answer with
+/// four colours that do not go together, and nothing in that model can notice:
+/// most sharply, the title colour and the title text colour are two unrelated
+/// answers, and a subclass that darkens one without the other produces a title
+/// nobody can read. The DCC does not have that problem because it does not ask
+/// the question: it authors ONE colour per node and its own drawing code
+/// derives the rest.
+///
+/// This takes the DCC's shape and states the consequence the engine leaves to
+/// each subclass: [`title_text`](Self::title_text) is chosen by CONTRAST
+/// against the title it will be drawn on, so *there is no authored colour for
+/// which the title is unreadable*. That is a property a test can hold over
+/// every colour, and `appearance::tests` does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Faces {
+    /// The header band — the authored colour itself.
+    pub title: Tint,
+    /// The body behind the ports: the same colour taken toward black, so a
+    /// node reads as ONE thing with a lighter band rather than as two.
+    pub body: Tint,
+    /// A frame's fill. Frames are drawn behind what they contain, so this is
+    /// taken further down than [`body`](Self::body).
+    pub comment: Tint,
+    /// ★ The title's LETTERS, chosen for contrast against
+    /// [`title`](Self::title) rather than authored.
+    pub title_text: Tint,
+}
+
+impl Faces {
+    /// The faces an authored `tint` gives.
+    #[must_use]
+    pub const fn of(tint: Tint) -> Self {
+        Self {
+            title: tint,
+            body: tint.scaled(45, 100),
+            comment: tint.scaled(30, 100),
+            // ★★★★★ The one face that is not a scaling of the authored colour:
+            // it is a CHOICE BETWEEN two, made by luminance, and that is what
+            // makes "the title is readable" true of every colour rather than of
+            // the colours somebody happened to try.
+            title_text: if tint.luminance() > 140 {
+                Tint::rgb(0, 0, 0)
+            } else {
+                Tint::rgb(255, 255, 255)
+            },
+        }
+    }
+}
+
 /// A node's view state.
 ///
 /// Held in the document rather than in a side table keyed by [`NodeId`], for the
@@ -35,6 +155,21 @@ use crate::model::{Document, NodeId, NodeKind, Side, TreeId, yes};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct Appearance {
+    /// ★★★★★ R1921 — **the colour a person gave this node**, or `None` for
+    /// whatever its kind is drawn in.
+    ///
+    /// `Option` and not a colour beside a flag, and that is the whole decision.
+    /// The DCC models this as TWO facts — a three-float `color` and a
+    /// `NODE_CUSTOM_COLOR` bit — so *a node carrying a colour it is not using*
+    /// is representable there, and its copy-colour operator has to move both
+    /// (it does: it sets the bit, copies the channels, and clears the bit when
+    /// the source has none). One `Option` makes that state unrepresentable
+    /// rather than merely wrong, which is R1891's rule, and it is why copying a
+    /// colour here is `dst.tint = src.tint` with nothing to keep in step.
+    ///
+    /// The faces this is drawn as are derived, never stored — see [`Faces`].
+    #[serde(default)]
+    pub tint: Option<Tint>,
     /// Drawn small, with only its wired ports showing. The DCC's
     /// `collapse_toggle`.
     #[serde(default)]
@@ -143,9 +278,10 @@ pub struct Appearance {
 
 impl Default for Appearance {
     /// An ordinary node: full size, every port drawn, controls shown, no
-    /// preview, the application's own width.
+    /// preview, the application's own width, and the colour its kind gives.
     fn default() -> Self {
         Self {
+            tint: None,
             collapsed: false,
             hide_unused_ports: false,
             show_options: true,
