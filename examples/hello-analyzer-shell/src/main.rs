@@ -1273,6 +1273,17 @@ struct ShellState {
     filter_chip: Signal<Option<usize>>,
     selected: Signal<Option<String>>,
     cursor: Signal<(u32, u32)>,
+    /// ★★★★★ R1916 — whether the pointer is in the window at all, which is a
+    /// different fact from where it last was.
+    ///
+    /// A second signal beside `cursor` and not an `Option` inside it, for the
+    /// reason the node lab's is: every gesture reading `cursor` wants *the last
+    /// place the pointer was* — a drag released outside the window commits
+    /// where it left — and only the hover derivations want *is anybody
+    /// pointing at anything*. Measured on the running shell at R1916: without
+    /// it, a description shown under a resting pointer stayed on the frame
+    /// after the pointer left.
+    pointer_inside: Signal<bool>,
     pressed: RefCell<Option<Hit>>,
     drag: Signal<Option<TileDrag>>,
     /// ★★★★★ R1735 — **what the router says a release would do right now**, as
@@ -1788,6 +1799,9 @@ impl ShellState {
             filter_chip: Signal::new(spec::FILTER_CHIPS.iter().position(|(_, on)| *on)),
             selected: Signal::new(None),
             cursor: Signal::new((0, 0)),
+            // ★ False on the opening frame: a screen nobody has pointed at yet
+            // has no pointer in it. The first `move_cursor` sets it.
+            pointer_inside: Signal::new(false),
             pressed: RefCell::new(None),
             drag: Signal::new(None),
             standing: RefCell::new(DropStanding::Nowhere),
@@ -5846,6 +5860,10 @@ impl ExternalIntrospect for ShellOracle {
                     "PointerLeave" | "PointerCancel" => {
                         state.pressed.borrow_mut().take();
                         state.drag.set(None);
+                        // ★ R1916 — and the pointer is GONE, which is what
+                        // takes a resting description off the frame. A leave is
+                        // not a move to somewhere else.
+                        state.pointer_inside.set(false);
                     }
                     other => {
                         return Err(InvokeError::rejected(format!(
@@ -5902,6 +5920,8 @@ impl ShellOracle {
 
     fn move_cursor(state: &Rc<ShellState>, px: u32, py: u32) {
         state.cursor.set((px, py));
+        // ★ R1916 — a move is what says the pointer is here again after a leave.
+        state.pointer_inside.set(true);
         Self::carry_crossing(state, px, py);
         if let Some(grab) = state.float_grab.get() {
             Self::carry_float_grab(state, &grab, px, py);
@@ -12821,6 +12841,54 @@ const TOAST_DOT: u32 = 8;
 /// just did. The alternative, two slots side by side, halves the room for both
 /// and makes the toast's position depend on the length of a sentence beside it,
 /// which is the property this round exists to remove.
+/// ★★★★★ R1916 — the description of the mark a reader is resting on, drawn
+/// beside it.
+///
+/// The canon puts a `title` on 25 of its controls and this tool drew none. What
+/// was missing was not the widget — R695 built one — but a way to say *that
+/// mark over there has a sentence*, which its own module docs named as a future
+/// axis. `pinion_core::describe` is that, and this is its second consumer.
+///
+/// Empty when nothing is being rested on, which is what makes the frame CHANGE
+/// under a resting cursor — the canon surface the census calls
+/// `affordance.hover`, whose probe compares two painted frames.
+fn shell_tip_scene(state: &ShellState, palette: Palette) -> Scene {
+    let Some((tag, sentence)) =
+        shell_description_shown(state, pinion_core::focus_state::focused().as_deref())
+    else {
+        return Scene::Container(ContainerNode::new(Vec::new()));
+    };
+    let Some(anchor) =
+        pinion_core::painted::painted_regions(VIEW_TAG).and_then(|marks| marks.rect_of(&tag))
+    else {
+        return Scene::Container(ContainerNode::new(Vec::new()));
+    };
+    let face = STATUS_FACE;
+    let pad = 6;
+    // ★ WHERE it goes is the substrate's, so this screen and the node lab
+    // cannot place their descriptions differently.
+    let (x, y, w, h) = pinion_core::describe::beside(
+        (anchor.x, anchor.y, anchor.w, anchor.h),
+        (0, 0, win_w(), win_h()),
+        &sentence,
+        face,
+    );
+    Scene::Container(
+        ContainerNode::new(vec![Scene::Container(
+            ContainerNode::new(vec![label(
+                &sentence,
+                Rect::new(pad, pad / 2, w.saturating_sub(pad * 2), h),
+                face,
+                palette.ink,
+            )])
+            .with_tag(SHELL_TIP)
+            .with_style(BoxStyle::filled(palette.raised))
+            .with_layout(absolute(Rect::new(x, y, w, h))),
+        )])
+        .with_layout(absolute(Rect::new(0, 0, win_w(), win_h()))),
+    )
+}
+
 fn status_band_scene(state: &ShellState, palette: Palette) -> Scene {
     let band = status_band_rect();
     let slot = status_slot_rect();
@@ -13064,6 +13132,10 @@ fn view(_state: ScreenState, frame: Frame) -> Scene {
             // resolves to the roster rather than to whatever row it covers.
             settings_roster_scene(&state, here.key.as_ref()),
             status_band_scene(&state, palette),
+            // ★★★★★ R1916 — the description a reader is resting on, over
+            // everything and last, because it is content ABOUT what is under
+            // it. The canon's own `title` tooltips draw the same way.
+            shell_tip_scene(&state, palette),
         ])
         .collect::<Vec<_>>();
 
@@ -13602,8 +13674,80 @@ impl WidgetA11y for AnalyzerShellView {
                     .with_value(AccessValue::Text(HELP_STRIP.to_owned())),
             );
         }
+        // ★★★★★ R1916 — and the description a reader is resting on, wired to
+        // the mark it belongs to. The second consumer of
+        // `pinion_core::describe`, and the one that closes the canon's bare
+        // hover: this shell's own chrome carries icons with no room to print
+        // what they do, which is the reason the canon puts a `title` on them.
+        if let Some((tag, sentence)) = shell_description_shown(&state, focused) {
+            let anchor = nodes.iter().position(|n| n.tag == tag);
+            let control = match anchor {
+                Some(at) => nodes.remove(at),
+                None => AccessNode::new(tag, AriaRole::Button),
+            };
+            nodes.extend(pinion_a11y::describedby_region(
+                control,
+                SHELL_TIP,
+                AriaRole::Tooltip,
+                Some(sentence),
+                true,
+            ));
+        }
         nodes
     }
+}
+
+/// The tag the shell's description region is painted and announced under.
+const SHELL_TIP: &str = "shell.tip";
+
+/// ★★★★★ R1916 — the sentences this shell's own chrome carries, by paint tag.
+///
+/// The canon puts a `title` on twenty-five controls and its rule for WHICH is
+/// the one followed here: **the ones with no room to print what they do**. A
+/// card's move grip is an icon; the widen and shrink seats are icons; the
+/// palette's collapse control is an icon with a `title` in the canon's own
+/// markup. Their names are already announced — what was missing is the sentence
+/// a sighted reader gets by resting, which is the surface the census counts.
+fn shell_descriptions(state: &ShellState) -> pinion_core::describe::Descriptions {
+    let mut described = pinion_core::describe::Descriptions::new();
+    for card in state.placed() {
+        let id = card.id();
+        let title = card.title();
+        described.describe(
+            format!("card.{id}.grip"),
+            format!("Drag to move {title} to another place on the board"),
+        );
+        described.describe(
+            format!("card.{id}.widen"),
+            format!("Give {title} more of the board's width"),
+        );
+    }
+    described
+}
+
+/// ★★★★★ R1916 — the shell description a reader is being shown, as
+/// `(tag, sentence)`.
+///
+/// The same shape the node lab's is, and deliberately so: the screen hands the
+/// substrate where the reader's attention is and is handed back what to show.
+/// Neither screen carries `hovered == tag`, which is what the debt this closes
+/// named as the thing to avoid.
+fn shell_description_shown(state: &ShellState, focused: Option<&str>) -> Option<(String, String)> {
+    let described = shell_descriptions(state);
+    let cursor = state.cursor.get();
+    // ★ `hit_word` is the shell's OWN tag for what the pointer is over — the
+    // same function the pointer-target census reads — so the register's keys
+    // and the hit's answer are one spelling rather than two.
+    let hovered = state
+        .pointer_inside
+        .get()
+        .then(|| hit_word(&Hit::at(state, cursor.0, cursor.1)));
+    let shown = described.shown(&pinion_core::describe::Resting {
+        hovered: hovered.as_deref(),
+        focused,
+        dismissed: false,
+    })?;
+    Some((shown.tag.to_owned(), shown.sentence.to_owned()))
 }
 
 /// The application bar: which view is open, what capture is being read, how fast

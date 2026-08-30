@@ -8757,14 +8757,62 @@ type CanonProbe = fn(&std::rc::Rc<ShellState>) -> Option<String>;
 /// published accessibility tree for the role, not the paint for a tag spelled
 /// `tooltip`; a tag-name search would answer `absent` for a tooltip somebody
 /// named something else, which is how an absence census lies.
-const CANON_GAPS: &[(&str, CanonProbe)] = &[("affordance.hover", |state| {
-    let shot = painted();
-    let (x, y) = aim(&shot, "card.packet#0.grip");
-    let before = format!("{:?}", painted_at((WIN_W, WIN_H)).1);
-    ShellOracle::move_cursor(state, x, y);
-    let after = format!("{:?}", painted_at((WIN_W, WIN_H)).1);
-    (before != after).then(|| "the frame changed under a resting cursor".to_owned())
-})];
+/// ⚠ R1916 — **EMPTY, and that is a statement rather than a hole.** Both rows
+/// this held were repaid this round, and the test below asserts the set matches
+/// the census's `gap` rows exactly — so an empty list means *the census records
+/// no owed surface*, and a `gap` added tomorrow with no probe is RED here. The
+/// two probes did not disappear: `affordance.tooltip`'s became the walk that
+/// drives it, and `affordance.hover`'s is
+/// [`r1916_a_resting_cursor_changes_the_frame`] one function down — a `gap`
+/// row's probe becomes a `have` row's `proven_by`, which is the same
+/// measurement pointed the other way.
+const CANON_GAPS: &[(&str, CanonProbe)] = &[];
+
+/// ★★★★★ R1916 — **a cursor coming to rest changes the frame**, which is the
+/// canon surface `affordance.hover` and was owed until this round.
+///
+/// This is `CANON_GAPS`' hover probe, promoted: it stopped measuring an absence
+/// the moment the absence was repaid. The comparison is the same one, and so is
+/// its control — two frames of an unchanged application must be identical or
+/// the comparison means nothing.
+///
+/// ⚠ It compares FRAMES and not the wire. `move_cursor` publishes the pointer
+/// position, so a wire witness would change whatever the screen did with it;
+/// the canon's `style-hover` is a change in what is PAINTED, so the instrument
+/// is the paint.
+#[test]
+fn r1916_a_resting_cursor_changes_the_frame() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let shot = painted();
+        let once = format!("{:?}", painted_at((WIN_W, WIN_H)).1);
+        let twice = format!("{:?}", painted_at((WIN_W, WIN_H)).1);
+        assert_eq!(
+            once, twice,
+            "two frames of an unchanged application differ, so a frame \
+             comparison cannot tell a hover from a repaint"
+        );
+
+        let (x, y) = aim(&shot, "card.packet#0.grip");
+        ShellOracle::move_cursor(&state, x, y);
+        let resting = format!("{:?}", painted_at((WIN_W, WIN_H)).1);
+        assert_ne!(
+            twice, resting,
+            "★ resting on a card's move grip changes nothing on the frame — \
+             the canon changes appearance under a bare cursor in three places, \
+             and this is the surface that reproduces it"
+        );
+
+        // ★★★★★ And it is the DESCRIPTION that changed it, not some unrelated
+        // repaint: the region carries its own tag. Without this the test would
+        // pass on a screen that redrew a clock.
+        assert!(
+            painted_at((WIN_W, WIN_H)).0.rect("shell.tip").is_some(),
+            "★ the description region is what appeared",
+        );
+    });
+}
 
 /// ★★★★★ R1886 — **every surface the canon census records as OWED is still
 /// owed**, measured on the assembled tool rather than asserted.

@@ -8900,23 +8900,15 @@ fn pin_tip(state: &LabState, ink: Ink, canvas: Rect) -> Vec<Scene> {
     };
     let face = 10;
     let pad = 6;
-    // ★ The width is DERIVED from the face and the sentence's length rather
-    // than pinned, the same shape `line_box` is for the other axis: a floor
-    // that over-reserves. Nothing in this tree measures a real font's advance,
-    // and inventing a constant here would have been a number nobody re-derives.
-    let w = (u32::try_from(sentence.chars().count()).unwrap_or(u32::MAX) * face * 6 / 10).max(60)
-        + pad * 2;
-    let h = pinion_core::containment::line_box(face) + pad;
-    // Below and to the right of the pin, clamped inside the canvas so the
-    // sentence is never drawn where nothing can read it.
-    let x = anchor
-        .x
-        .saturating_add(anchor.w)
-        .min(canvas.x + canvas.w.saturating_sub(w));
-    let y = anchor
-        .y
-        .saturating_add(anchor.h)
-        .min(canvas.y + canvas.h.saturating_sub(h));
+    // ★ R1916 — WHERE it goes is the substrate's, so the two screens that draw
+    // descriptions cannot place them differently. What stays here is what this
+    // screen DRAWS.
+    let (x, y, w, h) = pinion_core::describe::beside(
+        (anchor.x, anchor.y, anchor.w, anchor.h),
+        (canvas.x, canvas.y, canvas.w, canvas.h),
+        &sentence,
+        face,
+    );
     let box_rect = Rect::new(x.saturating_sub(canvas.x), y.saturating_sub(canvas.y), w, h);
     vec![
         box_at(TOOLTIP_TAG, box_rect, ink.surface, Some(ink.outline_2), 6),

@@ -149,10 +149,10 @@
       "surface": "a control changes appearance while the cursor rests on it, before any press",
       "probes": [{ "in": "markup", "attribute": "style-hover" }],
       "canon": 3,
-      "verdict": "gap",
-      "covered_by": "the only thing a cursor resting changes on these screens is a carry's landing preview, which needs a drag in flight; nothing answers a bare hover",
-      "owed_by": "debt-nothing-on-these-screens-answers-a-bare-hover",
-      "proven_by": "hello-analyzer-shell::painted::r1886_every_surface_the_canon_census_owes_is_still_owed"
+      "verdict": "have",
+      "covered_by": "R1916 — the same mechanism as affordance.tooltip, which is what made this closeable in one round rather than two: pinion_core::describe carries a sentence per mark and one derivation says which one a reader is being shown, so a cursor coming to rest CHANGES THE FRAME. The shell describes its own icon chrome (a card's move grip, its widen seat) — the canon's rule for which controls get a title is the ones with no room to print what they do — and the node lab describes its pins. Past the canon: the same call answers for KEYBOARD FOCUS, so the hover affordance does not arrive as a pointer-only regression on a tree that already has focus rings; the canon has zero key bindings and copying it exactly is how that would have happened",
+      "owed_by": "",
+      "proven_by": "tools/demos/r1916_a_pin_says_what_it_is_for.py + hello-analyzer-shell::painted::r1916_a_resting_cursor_changes_the_frame"
     },
     {
       "id": "gesture.key",

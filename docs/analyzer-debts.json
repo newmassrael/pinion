@@ -277,17 +277,6 @@
       ]
     },
     {
-      "name": "debt-nothing-on-these-screens-answers-a-bare-hover",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links analyzer-behaviour-canon-is-the-standalone-prototype, debt-canon-gui-surface-census"
-      ]
-    },
-    {
       "name": "debt-only-one-of-two-panels-is-swept-folded",
       "substituted": false,
       "blocked_by": "buildable",

@@ -202,9 +202,76 @@ impl Because {
     }
 }
 
+/// ★★★★★ R1916 — **where a description goes**: beside the mark it belongs to,
+/// clamped inside the region that holds it.
+///
+/// Pure geometry, so it is testable without a window and so the two consumers
+/// this round gave it cannot place their descriptions differently. What each
+/// consumer still owns is what it DRAWS — this only answers where.
+///
+/// ⚠ Beside the ANCHOR and not at the cursor, which is WCAG 2.2 SC 1.4.13's
+/// *hoverable* obligation read honestly: a body that follows the pointer is a
+/// body the pointer can never reach. The rectangle touches the anchor's
+/// bottom-right corner, so a pointer crossing from one to the other never
+/// leaves both.
+///
+/// `face` is the text size the caller will draw at; the width is derived from
+/// it and the sentence's length as a floor that over-reserves, the same shape
+/// `containment::line_box` is for the other axis. Nothing in this tree measures
+/// a real font's advance, and a constant here would be a number nobody
+/// re-derives.
+#[must_use]
+pub fn beside(
+    anchor: (u32, u32, u32, u32),
+    within: (u32, u32, u32, u32),
+    sentence: &str,
+    face: u32,
+) -> (u32, u32, u32, u32) {
+    let pad = 6;
+    let chars = u32::try_from(sentence.chars().count()).unwrap_or(u32::MAX);
+    let w = (chars.saturating_mul(face).saturating_mul(6) / 10).max(60) + pad * 2;
+    let h = crate::containment::line_box(face) + pad;
+    // Clamped so the sentence is never drawn where nothing can read it, and
+    // saturating so a region smaller than the box still answers inside it.
+    let x = anchor
+        .0
+        .saturating_add(anchor.2)
+        .min(within.0.saturating_add(within.2.saturating_sub(w)))
+        .max(within.0);
+    let y = anchor
+        .1
+        .saturating_add(anchor.3)
+        .min(within.1.saturating_add(within.3.saturating_sub(h)))
+        .max(within.1);
+    (x, y, w, h)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Because, Descriptions, Resting};
+    use super::{Because, Descriptions, Resting, beside};
+
+    #[test]
+    fn r1916_a_description_sits_beside_its_mark_and_inside_its_region() {
+        let within = (0, 0, 400, 300);
+        let mark = (100, 100, 10, 10);
+        let (x, y, w, h) = beside(mark, within, "what this is for", 10);
+        assert_eq!((x, y), (110, 110), "the anchor's bottom-right corner");
+        assert!(w >= 60 && h > 0);
+
+        // ★ A mark at the far edge does not push the box off the region: the
+        // sentence is clamped inside, because a description drawn where nothing
+        // can read it is not a description.
+        let edge = (395, 295, 10, 10);
+        let (x, y, w, h) = beside(edge, within, "what this is for", 10);
+        assert!(x + w <= within.2, "{x} + {w} <= {}", within.2);
+        assert!(y + h <= within.3, "{y} + {h} <= {}", within.3);
+
+        // ★ And a longer sentence gets a wider box, which is what makes the
+        // width a derivation rather than a constant.
+        let short = beside(mark, within, "a", 10).2;
+        let long = beside(mark, within, "a much longer sentence than that", 10).2;
+        assert!(long > short, "{long} > {short}");
+    }
 
     fn two() -> Descriptions {
         let mut d = Descriptions::new();
