@@ -129,9 +129,31 @@ def body() -> None:
         # the box and left the pins where they were would strand every wire
         # into the card, which is the shape of defect this screen keeps
         # producing — a derivation that half-applied.
+        #
+        # 🟥🟥🟥 ★★★★★ R1915 — WHICH pins survive a collapse is not "all of
+        # them" any more, and this assertion was written before it stopped
+        # being. R1912 made the canvas ask `Document::visible_ports` instead of
+        # painting both pins unconditionally, and a collapsed node's own rule is
+        # the DCC's: *drawn small, with only its WIRED ports showing*. So a
+        # collapse now takes the unwired pins off the frame, deliberately, and
+        # this loop demanded them back.
+        #
+        # ⇒ the check asks the screen which pins are wired rather than naming
+        # them, and holds BOTH halves — the wired ones moved with the card, the
+        # unwired ones are gone. That is strictly more than it asserted before:
+        # the old form would have passed on a screen that ignored the collapse
+        # rule entirely.
+        wired = set(cards(tf)["P-03"]["pins"]["wired"])
+        assert wired, "★ P-03 has a wired pin, or this check measures nothing"
         for side in ("dial", "accept"):
             tag = f"lab.pin.P-03.{side}"
-            assert tag in painted, f"{tag} is still painted"
+            if side not in wired:
+                assert tag not in painted, (
+                    f"★ {tag} is unwired, and a collapsed card shows only its "
+                    f"wired pins — the DCC's own rule for this look"
+                )
+                continue
+            assert tag in painted, f"{tag} is wired, so it is still painted"
             px, py, pw, ph = painted[tag]
             assert (
                 after[0] - 8 <= px + pw // 2 <= after[0] + after[2] + 8

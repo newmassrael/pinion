@@ -2061,8 +2061,15 @@ fn r1655_a_press_anywhere_on_a_card_reaches_that_card() {
                             continue;
                         }
                         let kind = match got {
-                            Hit::Pin { node: p, dial } if p == node => {
-                                format!("its own {} pin", if dial { "dial" } else { "accept" })
+                            // ★ R1915 — the member is in the word, so a press
+                            // that landed on a split pin's half says which half
+                            // rather than reading as the whole pin.
+                            Hit::Pin {
+                                node: p,
+                                side,
+                                ref at,
+                            } if p == node => {
+                                format!("its own {} pin", super::pin_word(side, at))
                             }
                             Hit::Pin { node: p, .. } => {
                                 format!("ANOTHER node's pin ({})", state.name_of(p))

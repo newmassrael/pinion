@@ -625,7 +625,32 @@ def body() -> None:
             # already says — which is the `lab.link` rule (a family whose size
             # is a function of the specification must not be pinned to a
             # constant), met on a second table.
-            "lab.inspector": 18 + chrome_of["lab.inspector"],
+            #
+            # 🟥🟥🟥 ★★★★★ R1915 — 15 + THE CARD SEATS THE SCREEN PUBLISHES, not
+            # 18. That "deliberately a pin" paragraph was written one round
+            # before the pin went stale again: R1912 added a fourth seat
+            # (`lab.inspector.pins`) and left the constant at 18, so this check
+            # read 22 against 23 painted.
+            #
+            # ⇒ THREE OF THE 18 WERE NEVER UNDECLARED. The card's seats are a
+            # CLOSED vocabulary the screen owns (`NodeAct::ALL`), so counting
+            # them was always a derivation available for the asking, and calling
+            # a constant "the honest statement" of them was the error. The
+            # screen now publishes `card_seats` and this reads it. What stays a
+            # constant is the rest of the pane — the pills, the runs, the text
+            # field's row — which nothing composes.
+            #
+            # ⚠ AND THE RED SURVIVED THREE ROUNDS FOR A REASON WORTH WRITING
+            # DOWN: R1912, R1913 and R1914 each recorded that the demo sweep had
+            # not been judged since R1911. It HAD been — the sweep job ran and
+            # went red on R1912.4's and R1912.5's runs, with this family and
+            # `r1682` as the two failures. What every one of those rounds
+            # actually did was read the NEWEST COMPLETED run and stop, and the
+            # newest completed run was one whose sweep was `skipped` behind a
+            # rustdoc break. ⇒ "the newest completed run" is not "the newest run
+            # that judged this job", and only the second question finds a red
+            # that a `needs:` chain has been hiding intermittently.
+            "lab.inspector": 15 + len(spec["card_seats"]) + chrome_of["lab.inspector"],
             # ★★★★★ R1817.1 — 2, not 3, and the member did not disappear: it
             # became a CAPTION. R1813 made the determinism switch's read-out its
             # box's caption child and renamed it `lab.palette.discovery.state`

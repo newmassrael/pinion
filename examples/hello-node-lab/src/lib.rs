@@ -1310,7 +1310,19 @@ enum Drag {
         snap: bool,
     },
     /// A link is being authored out of this node's dial pin.
-    Wire { from: NodeId },
+    ///
+    /// ★★★★★ R1915 — `port` is WHICH dial pin, because a split one is several.
+    ///
+    /// A RESOLVED INDEX and not a [`PortPath`], which is the opposite of the
+    /// choice every other new site this round made — and it is the right one
+    /// here for a reason worth stating. A drag is a gesture in progress: what
+    /// it holds is *the port on the screen the hand started from*, and a
+    /// resolved index is exactly that. Nothing can split a pin while a pointer
+    /// is down, so the index cannot move underneath the drag. `path_of`
+    /// converts at the moment of release, which is when the address is what the
+    /// verb wants. (It also keeps this enum `Copy`, which is what the cell
+    /// holding it needs — a consequence rather than the reason.)
+    Wire { from: NodeId, port: u32 },
     /// ★ R1681 — a link that is already there is being re-aimed: it was picked
     /// up off the accept pin it lands on, and it follows the cursor from the
     /// pin that dials it.
@@ -4026,9 +4038,21 @@ enum Hit {
     More,
     Run,
     Node(NodeId),
+    /// ★★★★★ R1915 — a pin, **by the address that names it**.
+    ///
+    /// It carried a `bool` until this round, which said *dial or accept* and
+    /// had structurally nowhere to put WHICH MEMBER of a split pin was pressed.
+    /// R1914 put member pins on the frame and announced them; they could be
+    /// seen and not touched, which is R1890's class arriving on the hit axis —
+    /// the surface was there, the address was not.
+    ///
+    /// A root path is the pin itself, so every gesture that used to read
+    /// `dial: true` now reads `side == Side::Output`, and the ones that used to
+    /// ignore members now cannot.
     Pin {
         node: NodeId,
-        dial: bool,
+        side: Side,
+        at: PortPath,
     },
     Link(LinkId),
     /// ★ R1681 — a link a source reported, which is not in the graph and so
@@ -4501,16 +4525,22 @@ impl Hit {
         {
             return Self::Node(id);
         }
+        // ★★★★★ R1915 — `lab.pin.<card>.<pin>[.<member>…]`, split at the FIRST
+        // dot after the card's name rather than the last.
+        //
+        // 🟥 `rsplit_once` was the defect: it read the last dotted segment as
+        // the side, so `…accept.host` resolved its side to `host`, matched
+        // nothing and answered `Nothing` — a member pin that was drawn,
+        // announced, and unreachable by any press. The card's name cannot
+        // contain a dot (`node_of` is asked, so an unknown name still answers
+        // nothing), which is what makes splitting at the first dot correct
+        // rather than merely different.
         if let Some(rest) = tag.strip_prefix("lab.pin.")
-            && let Some((name, side)) = rest.rsplit_once('.')
+            && let Some((name, address)) = rest.split_once('.')
             && let Some(node) = state.node_of(name)
-            && let Some(dial) = match side {
-                "dial" => Some(true),
-                "accept" => Some(false),
-                _ => None,
-            }
+            && let Some((side, at)) = pin_address(address).ok()
         {
-            return Self::Pin { node, dial };
+            return Self::Pin { node, side, at };
         }
         if let Some(name) = tag.strip_prefix("lab.frame.")
             && let Some((id, _)) = frames_of(state).into_iter().find(|(_, n)| n == name)
@@ -4611,11 +4641,11 @@ impl Hit {
             ),
             Self::Run => "run".into(),
             Self::Node(id) => format!("node:{}", state.name_of(*id)),
-            Self::Pin { node, dial } => format!(
-                "pin:{}:{}",
-                state.name_of(*node),
-                if *dial { "dial" } else { "accept" }
-            ),
+            // ★ R1915 — the member is in the word, so a driver reading what it
+            // is standing on can tell `pin:P-02:dial` from `pin:P-02:dial.host`.
+            Self::Pin { node, side, at } => {
+                format!("pin:{}:{}", state.name_of(*node), pin_word(*side, at))
+            }
             Self::Link(id) => format!("link:{}", id.0),
             Self::Observed(from, to) => format!(
                 "observed:{}>{}",
@@ -8475,7 +8505,7 @@ fn canvas_wires(state: &LabState, ink: Ink) -> Vec<Scene> {
     // the far end. Two copies of it is how the second one would come to be
     // drawn from somewhere else.
     let in_flight = match state.drag.get() {
-        Some(Drag::Wire { from } | Drag::Rewire { from, .. }) => Some(from),
+        Some(Drag::Wire { from, .. } | Drag::Rewire { from, .. }) => Some(from),
         _ => None,
     };
     if let Some(from) = in_flight
@@ -8668,13 +8698,13 @@ fn canvas_pins(state: &LabState, node: NodeId, card: Rect, role: Role, ink: Ink)
         // client presses and the address `split_pin` accepts are the same
         // spelling by construction.
         for (side, dial) in [(Side::Output, true), (Side::Input, false)] {
-            for (ordinal, (path, port)) in member_pins(state, node, side).into_iter().enumerate() {
+            for (ordinal, (path, _)) in member_pins(state, node, side).into_iter().enumerate() {
                 children.push(box_at(
-                    &format!(
-                        "lab.pin.{name}.{}.{}",
-                        if dial { "dial" } else { "accept" },
-                        port.name,
-                    ),
+                    // ★ R1915 — the tag is `pin_word`'s output, which is the
+                    // same function `Hit::of_tag` parses back and the same one
+                    // `split_pin` accepts. One spelling, so a client can press
+                    // what it read.
+                    &format!("lab.pin.{name}.{}", pin_word(side, &path)),
                     member_pin_rect(state, card, dial, ordinal),
                     ink.surface,
                     Some(if path.depth() > 1 {
@@ -12020,6 +12050,23 @@ fn spec_json() -> serde_json::Value {
         "pin_legend": spec::PIN_LEGEND.iter().map(|(k, m)| serde_json::json!({
             "kind": k, "means": m,
         })).collect::<Vec<_>>(),
+        // ★★★★★ R1915 — the seats the inspector opens for the selected card,
+        // published so a reader's count of them is DERIVED rather than pinned.
+        //
+        // 🟥 What forced it, measured: `r1651`'s `lab.inspector` family pin is
+        // `18 + <the pane's chrome>`, and R1912 added a fourth seat without
+        // moving the 18. The demo went red and STAYED red for three rounds
+        // while the round that added the seat, and the two after it, each wrote
+        // that the sweep was unjudged — it was not, it was judged and red, and
+        // nobody read the run underneath the newest one.
+        //
+        // ⇒ the seats are a CLOSED vocabulary the screen already owns
+        // (`NodeAct::ALL`), so a count of them is a derivation and a constant
+        // was never the honest statement of that part. What stays pinned is the
+        // rest of the pane, which no declaration composes.
+        "card_seats": NodeAct::ALL.iter().map(|act| serde_json::json!({
+            "tag": act.tag(), "action": act.wire(),
+        })).collect::<Vec<_>>(),
         "protocols": spec::PROTOCOLS,
         "frames": spec::FRAMES.iter().map(|f| serde_json::json!({
             "name": f.name, "gist": f.gist, "rect": [f.rect.0, f.rect.1, f.rect.2, f.rect.3],
@@ -12406,6 +12453,78 @@ fn free_endpoints_in(
 }
 
 /// Author a link, letting the crate refuse it.
+/// ★★★★★ R1915 — author a link between two **addressed** pins.
+///
+/// `connect` is this with both addresses at the root, and that is not a wrapper
+/// for tidiness: a wire between two whole pins opens a slot on the run the
+/// accept pin repeats, and a wire onto a MEMBER lands on a port that already
+/// exists. Two different edits, one question — *which port* — so it is one verb
+/// with an address on each end.
+///
+/// # Errors
+///
+/// A refusal the model made, in the model's words: an address naming no port, a
+/// pair the taxonomy will not cross (a host half does not reach a whole
+/// locator, which is the type rule doing exactly its job), or the slot-opening
+/// refusals `connect` already had.
+fn connect_at(
+    state: &Rc<LabState>,
+    from: NodeId,
+    from_at: &PortPath,
+    to: NodeId,
+    to_at: &PortPath,
+) -> Result<String, InvokeError> {
+    // A wire between two whole pins is the gesture this screen has always had:
+    // the accept side is a variadic run, so landing on it means OPENING a slot.
+    if from_at.depth() == 0 && to_at.depth() == 0 {
+        return connect(state, from, to);
+    }
+    let addressed = |node: NodeId, at: &PortPath, side: Side| -> Result<u32, InvokeError> {
+        state
+            .doc
+            .borrow()
+            .index_of(ROOT, node, side, at)
+            .ok_or_else(|| {
+                let said = Utterance::refused(&format!(
+                    "{} has no {} pin — split it first",
+                    state.name_of(node),
+                    pin_word(side, at)
+                ));
+                state.say(said.clone());
+                InvokeError::rejected(said.into_clause())
+            })
+    };
+    let out = addressed(from, from_at, Side::Output)?;
+    let into = addressed(to, to_at, Side::Input)?;
+    let made = state
+        .doc
+        .borrow_mut()
+        .connect(ROOT, Socket::new(from, out), Socket::new(to, into));
+    match made {
+        Ok(made) => {
+            state.selected_link.set(Some(LinkPick::Authored(made.link)));
+            let word = format!(
+                "{}.{} -> {}.{}",
+                state.name_of(from),
+                pin_word(Side::Output, from_at),
+                state.name_of(to),
+                pin_word(Side::Input, to_at),
+            );
+            state.say(Utterance::done(format!("linked {word}")));
+            Ok(word)
+        }
+        Err(why) => {
+            // ★ Nothing to undo: a member port was not opened for this wire,
+            // it was already there. That asymmetry with `connect` is the whole
+            // difference between the two edits, and it is why the slot-closing
+            // line below has no counterpart here.
+            let said = Utterance::refused(&why);
+            state.say(said.clone());
+            Err(InvokeError::rejected(said.into_clause()))
+        }
+    }
+}
+
 fn connect(state: &Rc<LabState>, from: NodeId, to: NodeId) -> Result<String, InvokeError> {
     let name = state.name_of(to);
     let Ok(endpoint) = landing_endpoint(&state.doc.borrow(), &state.forms.borrow(), from, to)
@@ -13166,6 +13285,28 @@ fn put_away_pins(state: &Rc<LabState>, node: NodeId, which: &str) -> Result<Stri
 /// member of one. The refusal says which half was wrong and lists what it will
 /// take, because a caller told only "no" cannot tell a pin it does not have
 /// from a member word it spelled differently.
+/// ★★★★★ R1915 — `pin_address`'s inverse: the word an address is written
+/// under.
+///
+/// One pair and not two spellings. The paint tags, the accessibility names, the
+/// `split_pin` argument, the hit's own word and `PIN_ADDRESSES` are all this
+/// function's output — so a client that reads a tag off the frame can hand it
+/// straight back to the verb, and nothing has to know that a dot means
+/// something.
+fn pin_word(side: Side, at: &PortPath) -> String {
+    let pin = if side == Side::Output {
+        "dial"
+    } else {
+        "accept"
+    };
+    let mut word = pin.to_owned();
+    for member in &at.members {
+        word.push('.');
+        word.push_str(PIN_PARTS.get(*member as usize).copied().unwrap_or("?"));
+    }
+    word
+}
+
 fn pin_address(word: &str) -> Result<(Side, PortPath), InvokeError> {
     let (pin, member) = word
         .split_once('.')
@@ -13179,20 +13320,30 @@ fn pin_address(word: &str) -> Result<(Side, PortPath), InvokeError> {
             )));
         }
     };
-    let path = PortPath::root(0);
+    let mut path = PortPath::root(0);
     let Some(member) = member else {
         return Ok((side, path));
     };
-    let at = PIN_PARTS
-        .iter()
-        .position(|part| *part == member)
-        .ok_or_else(|| {
-            InvokeError::rejected(format!(
-                "{member:?} is not a member of a locator; it is made of {}",
-                PIN_PARTS.join(" and ")
-            ))
-        })?;
-    Ok((side, path.then(u32::try_from(at).unwrap_or(0))))
+    // ★★★★★ R1915 — EVERY level, not the first one. This taxonomy's locator is
+    // one level deep (a host and a service are atoms), so a parser that took
+    // only one level would be indistinguishable from a correct one here and
+    // would be wrong the day a member gained members. That is R1891's rule —
+    // "code that walks one step and code that walks a chain cannot be told
+    // apart before depth 2 exists" — applied before the depth rather than
+    // after, which is the only time it is cheap.
+    for level in member.split('.') {
+        let at = PIN_PARTS
+            .iter()
+            .position(|part| *part == level)
+            .ok_or_else(|| {
+                InvokeError::rejected(format!(
+                    "{level:?} is not a member of a locator; it is made of {}",
+                    PIN_PARTS.join(" and ")
+                ))
+            })?;
+        path = path.then(u32::try_from(at).unwrap_or(0));
+    }
+    Ok((side, path))
 }
 
 /// ★★★★★ R1914 — **take a pin apart into its members, or put it back.**
@@ -13668,8 +13819,17 @@ fn press(state: &Rc<LabState>) {
                 snap: false,
             }));
         }
-        Hit::Pin { node, dial: true } => {
-            state.drag.set(Some(Drag::Wire { from: *node }));
+        Hit::Pin {
+            node,
+            side: Side::Output,
+            at,
+        } => {
+            // ★ The address the press carried, resolved to the port it names
+            // right now. A pin the model cannot locate starts no drag, which is
+            // a refusal rather than a wire from port 0.
+            if let Some(port) = state.doc.borrow().index_of(ROOT, *node, Side::Output, at) {
+                state.drag.set(Some(Drag::Wire { from: *node, port }));
+            }
         }
         // ★★★★★ R1889 — the grip starts a drag rather than deciding anything.
         // The value this gesture carries is *where the pointer ends up*, so
@@ -13683,7 +13843,11 @@ fn press(state: &Rc<LabState>) {
         // UP, which is the reference's rule and every node editor's. A dial pin
         // is fan-out and always starts a new wire; an accept pin holds what
         // arrived, so grabbing it means "move this one".
-        Hit::Pin { node, dial: false } => {
+        Hit::Pin {
+            node,
+            side: Side::Input,
+            ..
+        } => {
             let at = window_to_content(state, px, py);
             if let Some(link) = link_into_pin(state, *node, at) {
                 let source = state
@@ -13758,13 +13922,34 @@ fn apply_frame(state: &Rc<LabState>, node: NodeId) {
 fn finish_drag(state: &Rc<LabState>, drag: Drag, now: &Hit) {
     match drag {
         // A wire commits onto whatever accept pin it was let go over.
-        Drag::Wire { from } => {
-            if let Hit::Pin { node, dial: false } | Hit::Node(node) = *now {
-                if node != from {
-                    connect(state, from, node).ok();
+        //
+        // ★★★★★ R1915 — and onto WHICH one. Both ends carry an address now, so
+        // a wire dragged from a split pin's host half onto another card's host
+        // half lands there rather than on the whole pin. Dropped on a card's
+        // body the address is the root, which is what it always was.
+        Drag::Wire { from, port } => {
+            let landing = match now {
+                Hit::Pin {
+                    node,
+                    side: Side::Input,
+                    at,
+                } => Some((*node, at.clone())),
+                Hit::Node(node) => Some((*node, PortPath::root(0))),
+                _ => None,
+            };
+            // ★ The index the drag started from, read back as the address the
+            // verb takes. A port that stopped existing between press and
+            // release answers nothing, and a wire from nowhere is refused
+            // rather than silently made from port 0.
+            let leaving = state.doc.borrow().path_of(ROOT, from, Side::Output, port);
+            match (landing, leaving) {
+                (Some((node, onto)), Some(out)) if node != from => {
+                    connect_at(state, from, &out, node, &onto).ok();
                 }
-            } else {
-                state.say(Utterance::new(Tone::Refused, "a link needs an accept pin"));
+                (Some(_), _) => {}
+                (None, _) => {
+                    state.say(Utterance::new(Tone::Refused, "a link needs an accept pin"));
+                }
             }
         }
         // ★★ R1681 — a picked-up link commits the same way, except that it
@@ -13772,7 +13957,12 @@ fn finish_drag(state: &Rc<LabState>, drag: Drag, now: &Hit) {
         // which is the rule every node editor has and the reference states in
         // as many words: dropping a wire on empty canvas disconnects it.
         Drag::Rewire { link, .. } => match *now {
-            Hit::Pin { node, dial: false } | Hit::Node(node) => {
+            Hit::Pin {
+                node,
+                side: Side::Input,
+                ..
+            }
+            | Hit::Node(node) => {
                 let landed = state
                     .doc
                     .borrow()
@@ -15626,10 +15816,10 @@ fn wire_access(state: &LabState) -> Vec<AccessNode> {
         // is a pin a reader who does not look at pixels cannot know exists —
         // and the split is exactly the gesture that makes new ones appear.
         for (side, word) in [(Side::Output, "dial"), (Side::Input, "accept")] {
-            for (_, port) in member_pins(state, node, side) {
+            for (path, port) in member_pins(state, node, side) {
                 nodes.push(
                     AccessNode::new(
-                        format!("lab.pin.{name}.{word}.{}", port.name),
+                        format!("lab.pin.{name}.{}", pin_word(side, &path)),
                         AriaRole::Button,
                     )
                     .with_name(format!("{name} {word} pin — its {} half", port.name)),

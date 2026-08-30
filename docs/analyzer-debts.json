@@ -176,17 +176,6 @@
       ]
     },
     {
-      "name": "debt-a-member-pin-is-drawn-but-a-gesture-cannot-name-it",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links analyzer-debt-repayment-loop"
-      ]
-    },
-    {
       "name": "debt-a-node-graphs-only-state-is-a-delay",
       "substituted": false,
       "blocked_by": "spec-round",
@@ -352,6 +341,17 @@
       "closed_because": "",
       "why": [
         "links analyzer-behaviour-canon-is-the-standalone-prototype, debt-canon-gui-surface-census"
+      ]
+    },
+    {
+      "name": "debt-the-node-lab-reproduces-the-first-release-palette-not-the-behaviour-canon",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links analyzer-behaviour-canon-is-the-standalone-prototype, screen-a-vs-canon-operation-census"
       ]
     },
     {

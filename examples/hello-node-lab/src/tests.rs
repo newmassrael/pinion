@@ -1091,7 +1091,11 @@ fn r1651_every_control_the_screen_paints_is_hit_at_the_centre_it_paints_in() {
             let dial_centre = window(dial.x + dial.w / 2, dial.y + dial.h / 2);
             assert_eq!(
                 Hit::at(&state, dial_centre.0, dial_centre.1),
-                Hit::Pin { node, dial: true },
+                Hit::Pin {
+                    node,
+                    side: pinion_node_graph::Side::Output,
+                    at: pinion_node_graph::PortPath::root(0),
+                },
                 "★ and its dial pin is reachable — a pin overhangs its card, so \
                  testing the card first would make a link impossible to author"
             );
@@ -4068,6 +4072,167 @@ fn r1914_a_pin_on_a_card_comes_apart_into_host_and_service() {
         assert_eq!(
             doc.path_of(ROOT, card, Side::Output, 0),
             Some(PortPath::root(0))
+        );
+    });
+}
+
+/// ★★★★★ R1915 — **a member pin a split put on the frame answers a press**,
+/// and it answers with the address that names it.
+///
+/// R1914 drew these pins and announced them and left them untouchable: the hit
+/// carried a `bool`, so there was structurally nowhere to put which member, and
+/// the tag parser read the last dotted segment as the side — so `…dial.host`
+/// matched nothing and answered `Nothing`. Drawn, named, and unreachable.
+///
+/// This drives the SCREEN's own painter and then presses the rectangles it
+/// drew, which is the only way to hold the two together: a press is resolved
+/// from the paint, so a test that computed the rectangle itself would be
+/// checking arithmetic rather than the frame.
+#[test]
+fn r1915_a_member_pin_answers_a_press_with_the_address_that_names_it() {
+    use pinion_node_graph::{PortPath, Side};
+
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+        let card = state
+            .cards()
+            .into_iter()
+            .find(|node| {
+                state
+                    .doc
+                    .borrow()
+                    .splittable(ROOT, *node, Side::Output, 0)
+                    .is_ok()
+            })
+            .expect("★ some card has an unwired dial pin");
+        super::split_pin(&state, card, "dial").expect("it splits");
+        crate::painted::render_so_a_press_can_be_asked(&state);
+
+        let name = state.name_of(card);
+        let window = |x: u32, y: u32| {
+            super::content_to_window(&state, i64::from(x), i64::from(y)).expect("on screen")
+        };
+        let box_of = card_rect(&state, card).expect("a card");
+
+        for (ordinal, part) in super::PIN_PARTS.iter().enumerate() {
+            let seat = super::member_pin_rect(&state, box_of, true, ordinal);
+            let at = window(seat.x + seat.w / 2, seat.y + seat.h / 2);
+            let want = PortPath::root(0).then(u32::try_from(ordinal).unwrap_or(0));
+            assert_eq!(
+                Hit::at(&state, at.0, at.1),
+                Hit::Pin {
+                    node: card,
+                    side: Side::Output,
+                    at: want.clone(),
+                },
+                "★ {name}'s {part} half is pressable where it is painted",
+            );
+            // ★★★★★ And the word the hit answers with is the word the VERB
+            // takes — one spelling, so a client can press what it read and hand
+            // it straight back.
+            assert_eq!(super::pin_word(Side::Output, &want), format!("dial.{part}"),);
+            assert_eq!(
+                super::pin_address(&format!("dial.{part}")).expect("the verb takes it"),
+                (Side::Output, want),
+            );
+        }
+    });
+}
+
+/// ★★★★★ R1915 — **a wire lands on a member pin, and folding the pin it
+/// belongs to cuts that wire and says so.**
+///
+/// The half R1914 could report and had never been made to do: `remap_ports`
+/// severs a link whose port stops existing, `Recombined::severed` names what it
+/// severed, and nothing had ever walked that path. The reference cannot: its
+/// recombine destroys the sub-pins and their links go with them, and the
+/// command answers `void`.
+#[test]
+fn r1915_a_wire_on_a_member_is_cut_by_the_fold_and_named() {
+    use pinion_node_graph::{NodeId, PortPath, Side};
+
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+        // ★ The pair is found by ASKING rather than named: both pins have to be
+        // splittable (so unwired), and the graph has to admit the wire — the
+        // first pair tried closed a cycle, which is the document's own refusal
+        // doing its job and not a fault to work around.
+        let host = PortPath::root(0).then(0);
+        let splits =
+            |node: NodeId, side: Side| state.doc.borrow().splittable(ROOT, node, side, 0).is_ok();
+        let cards = state.cards();
+        // ⚠ MEASURED, and it changed how this test is built: no pair on the
+        // OPENING GRAPH can take this wire. Its three unwired dial pins all
+        // belong to cards its one unwired accept pin already reaches, so every
+        // attempt is refused `that link would close a cycle` — the document's
+        // own rule doing its job. So the test adds a card, which is a gesture
+        // the screen has, rather than weakening the assertion until the opening
+        // graph happens to satisfy it.
+        let dialler = cards
+            .iter()
+            .copied()
+            .find(|n| splits(*n, Side::Output))
+            .expect("★ some card has an unwired dial pin");
+        super::add_node(&state, crate::graph::Role::Store);
+        let listener = *state
+            .cards()
+            .iter()
+            .rev()
+            .find(|n| !cards.contains(n))
+            .expect("★ the palette put a card on the canvas");
+        assert!(
+            splits(listener, Side::Input),
+            "★ a card nothing has dialled has an accept pin nothing is wired to",
+        );
+
+        super::split_pin(&state, dialler, "dial").expect("the dial splits");
+        super::split_pin(&state, listener, "accept").expect("the accept splits");
+        let said = super::connect_at(&state, dialler, &host, listener, &host)
+            .expect("★ a host half reaches a host half — the taxonomy's own rule");
+        assert!(
+            said.contains("dial.host") && said.contains("accept.host"),
+            "★ the link says which HALVES it joined, not which cards: {said}",
+        );
+
+        let landed = {
+            let doc = state.doc.borrow();
+            let into = doc
+                .index_of(ROOT, listener, Side::Input, &host)
+                .expect("the member is a port");
+            doc.tree(ROOT)
+                .expect("the tree")
+                .links()
+                .iter()
+                .filter(|l| l.to.node == listener && l.to.port == into)
+                .count()
+        };
+        assert_eq!(landed, 1, "★ the wire is on the MEMBER port, by index");
+
+        // ★★★★★ A wire on a member is what makes the fold cost something, and
+        // the fold says what it cost.
+        let folded = state
+            .doc
+            .borrow_mut()
+            .recombine_port(ROOT, listener, Side::Input, &host)
+            .expect("the accept pin is split");
+        assert_eq!(
+            folded.severed.len(),
+            1,
+            "★★★★★ folding took the port the wire landed on away, and NAMED the \
+             wire it had to cut — the reference's command answers `void`",
+        );
+        assert_eq!(folded.severed[0].to.node, listener);
+        assert!(
+            state
+                .doc
+                .borrow()
+                .split_paths(ROOT, listener, Side::Input)
+                .is_empty(),
+            "and nothing is split on that side any more",
         );
     });
 }

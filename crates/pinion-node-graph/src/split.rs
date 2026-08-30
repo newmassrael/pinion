@@ -22,7 +22,7 @@
 //! **R1914 built it**, so that paragraph is gone rather than left standing as a
 //! sentence a reader would have to date: the act is [`Document::split_port`]
 //! and [`Document::recombine_port`], the member ports are spliced into
-//! [`Document::signature`], the parent is [`Hidden::Split`], and the shape is a
+//! [`Document::signature`], the parent is [`Hidden::Split`](crate::Hidden), and the shape is a
 //! TREE because the reference's recombine recurses.
 //!
 //! # ★★★★★ R1914 — the act, and the one decision it had to make first
