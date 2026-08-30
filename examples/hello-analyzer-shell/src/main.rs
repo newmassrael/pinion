@@ -927,7 +927,29 @@ const ARRANGEMENTS_VERSION: u32 = 1;
 struct StoredArrangements {
     version: u32,
     arrangements: Workspaces<Preset>,
+    /// ★★★★★ R1908 — **where this person left the chrome panels**, keyed by the
+    /// panel's own tag.
+    ///
+    /// A map rather than a field per panel, so a second chrome panel needs no
+    /// change of shape here and no version bump: an unknown key is a panel this
+    /// build does not have, and a missing key is a panel nobody has moved. Both
+    /// are ordinary, and neither is a corrupt file.
+    ///
+    /// `#[serde(default)]` because a file written before this round is not
+    /// older-and-broken, it is older-and-fine — the version exists for shapes
+    /// that cannot be read, and adding a field is not one. A bump here would
+    /// have thrown away every saved arrangement on this build's first run.
+    #[serde(default)]
+    chrome: BTreeMap<String, EdgePlacement>,
 }
+
+/// The palette's key in [`StoredArrangements::chrome`].
+///
+/// The panel's own tag, so what is on disk can be matched to what is on screen
+/// by a person reading both — the reason this file stores named JSON at all
+/// rather than the opaque byte string the floor toolkit round-trips a docked
+/// arrangement through.
+const PALETTE_STORE_KEY: &str = "shell.palette";
 
 /// What this host can do with a detached card.
 ///
@@ -1023,6 +1045,11 @@ fn persist_arrangements(state: &ShellState) {
     let stored = StoredArrangements {
         version: ARRANGEMENTS_VERSION,
         arrangements: state.presets.borrow().saved(),
+        // ★★★★★ R1908 — and where the person left the chrome. Written on the
+        // same key and in the same call, because a set of arrangements and the
+        // panel beside them are one session: two keys would let a crash leave a
+        // board from today next to a palette from yesterday.
+        chrome: BTreeMap::from([(PALETTE_STORE_KEY.to_owned(), state.palette_at.get())]),
     };
     if let Ok(bytes) = serde_json::to_vec(&stored) {
         state.storage.save(ARRANGEMENTS_KEY, &bytes);
@@ -1062,6 +1089,34 @@ fn restore_arrangements(state: &ShellState) {
     drop(presets);
     for refusal in &refused {
         state.say(Utterance::done(refusal.reason().to_string()));
+    }
+    // ★★★★★ R1908 — and the chrome the person left, JUDGED before it is used.
+    //
+    // This is where `EdgePlacement::folded_at` becomes reachable at all: no
+    // specification in this tree opens a panel folded — the behaviour canon
+    // opens its palette showing, and R1902 measured that opening folded would
+    // un-reproduce it — so a folded panel is not something a build declares, it
+    // is something a person did and came back to.
+    //
+    // Through the policy, because a stored placement is the one input here that
+    // did not come from this build: an older version wrote it, this build may
+    // have narrowed the panel's range since, and a person can edit the file.
+    // `EdgePolicy::restore` asks exactly what an opening is asked and hands
+    // back a place either way, so a boot cannot fail over a remembered width.
+    if let Some(stored_at) = stored.chrome.get(PALETTE_STORE_KEY) {
+        let restored = spec::PALETTE_POLICY.restore(*stored_at, spec::PALETTE_OPENS);
+        state.palette_at.set(restored.at());
+        state.palette_restored.set(restored.believed());
+        if let Some(why) = restored.refused() {
+            // Said, never dropped: a reader who folded this panel yesterday and
+            // finds it open today is owed the sentence. A silent fallback is
+            // R1902's defect one step on — the state is judged now, and the
+            // judgement reaches nobody.
+            state.say(Utterance::done(format!(
+                "the palette could not open where you left it \u{2014} {}",
+                why.reason()
+            )));
+        }
     }
 }
 
@@ -1273,6 +1328,18 @@ struct ShellState {
     ///
     /// Seeded from `spec::PALETTE_OPENS`, which that judgement admits.
     palette_at: Signal<EdgePlacement>,
+    /// ★★★★★ R1908 — whether [`Self::palette_at`] is where a PREVIOUS RUN left
+    /// it, rather than where this build's specification opens it.
+    ///
+    /// Published beside the placement rather than folded into it, the argument
+    /// `spec.palette_placement`'s own `at`/`opens` pair makes one source back: a
+    /// folded palette is the same bit whether a person folded it a moment ago,
+    /// this build declares it opens folded, or a stored session was believed —
+    /// and a client restoring or explaining a session acts differently in each.
+    ///
+    /// `false` until a stored placement is actually used, which is also what it
+    /// says when one was read and REFUSED.
+    palette_restored: Signal<bool>,
     /// ★★★★★ R1905 — **how the last card that changed home got where it is**.
     ///
     /// Published beside `floats` rather than folded into it, because it is a
@@ -1687,6 +1754,9 @@ impl ShellState {
             crossing: Signal::new(None),
             tab_carry: Signal::new(None),
             palette_at: Signal::new(spec::PALETTE_OPENS),
+            // R1908 — nothing has been restored yet; `restore_arrangements`
+            // runs after construction and is what can set this.
+            palette_restored: Signal::new(false),
             // R1905 — nothing has changed home yet, which is not an arrival.
             arrival: Signal::new(None),
             float_z: RefCell::new(0),
@@ -4181,6 +4251,18 @@ impl ShellOracle {
             .admit_fold(at, want)
             .map_err(|why| InvokeError::rejected(why.reason().to_string()))?;
         state.palette_at.set(placed);
+        // ★★★★★ R1908 — and it OUTLIVES THE RUN. A person who puts the palette
+        // away and comes back tomorrow finds it away; before this round the
+        // placement was re-seeded from the specification at every boot, so the
+        // gesture R1903 built was undone by closing the application.
+        //
+        // Written here rather than at a shutdown hook because there is no
+        // moment this application is told it is ending — the same argument
+        // `persist_arrangements` makes for writing after each change to the set.
+        // The fold is now a person's arrangement, so it is stored where a
+        // person's arrangements are.
+        state.palette_restored.set(false);
+        persist_arrangements(state);
         state.say(Utterance::done(if placed.folded {
             "palette put away \u{2014} the strip brings it back".to_owned()
         } else {
@@ -12035,6 +12117,17 @@ fn palette_placement_json() -> serde_json::Value {
         },
         "foldable": spec::PALETTE_POLICY.foldable,
         "strip_w": spec::PALETTE_STRIP_W,
+        // ★★★★★ R1908 — whether `at` came from a PREVIOUS RUN.
+        //
+        // A third fact beside `at` and `opens`, and not derivable from them: a
+        // palette folded at the specification's own extent is the same two
+        // fields whether this build opened it that way, a person folded it a
+        // moment ago, or a stored session was read and believed. A client
+        // explaining a session, or deciding whether to offer "reset to
+        // default", needs the one this cannot be inferred from.
+        "restored": SHELL_STATE.with(|slot| {
+            slot.borrow().as_ref().is_some_and(|state| state.palette_restored.get())
+        }),
     })
 }
 

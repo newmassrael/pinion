@@ -499,6 +499,115 @@ impl EdgePolicy {
             Resize::Between { .. } => self.admit_extent(placed, opening.extent),
         }
     }
+
+    /// ★★★★★ R1908 — **judge a placement that came back from STORAGE**, and
+    /// always give the panel a place.
+    ///
+    /// # Why this is not simply [`admit_opening`](Self::admit_opening)
+    ///
+    /// The two inputs differ in how much they may be believed. A specification's
+    /// opening placement is this build's own text, and a gate already holds it
+    /// to this policy, so a screen may take it as read. A stored placement came
+    /// off a disk: an older build wrote it, a person may have edited it, the
+    /// panel's own declaration may have changed underneath it since. It has to
+    /// be judged, and it is judged by exactly the same predicate — a second
+    /// spelling of "is this placement legal" is a second answer.
+    ///
+    /// # Why it cannot fail
+    ///
+    /// A boot has to produce a screen. Refusing here would mean an application
+    /// that will not start because one panel's remembered width is outside a
+    /// range this build narrowed — which is a worse answer than opening where
+    /// the specification says. So the refusal is a VALUE the caller carries
+    /// rather than an error it must handle, and the panel falls back to
+    /// `opens`.
+    ///
+    /// ⚠ **The fallback is not silent, and that is the whole point.** R1902's
+    /// finding on this axis is that a state nothing judges can contradict its
+    /// own declaration for the life of the program; a fallback nothing REPORTS
+    /// is the same defect one step on, because the reader sees a panel in the
+    /// wrong place and has no way to learn why. [`Restored::refused`] is what a
+    /// screen shows.
+    #[must_use]
+    pub fn restore(&self, stored: EdgePlacement, opens: EdgePlacement) -> Restored {
+        // ★★★★★ R1908 — a panel that declared it CANNOT MOVE refuses a stored
+        // edge, where an opening on the same policy is waved through.
+        //
+        // This is the one place the two doors deliberately differ, and it is
+        // the difference this whole method exists for. `admit_opening` skips
+        // the edge check when `allowed` is empty because an empty set says
+        // *this cannot be MOVED*, not *this is nowhere* — and an opening
+        // placement is this build's own text, checked by its own gate, so the
+        // edge it names is the edge the screen draws.
+        //
+        // A stored edge is not that. It came off a disk, and for a pinned panel
+        // there is nothing on the screen that could honour it: the paint puts
+        // the panel where the specification says. Accepting it would put a
+        // value in `at` that no rectangle agrees with — the two-facts shape
+        // this tree keeps paying for — so it is refused, and the refusal names
+        // the empty allowed-set, which is the truthful reason.
+        //
+        // ⚠ Found because a gate asserted its own fixture was refusable and it
+        // was not: this screen's palette is `allowed: []` AND `Resize::Fixed`,
+        // so before this arm `restore` could not refuse anything at all and the
+        // judgement was vacuously true. Two absences of a predicate composed
+        // into an absence of the check.
+        if self.allowed.is_empty() && stored.edge != opens.edge {
+            return Restored {
+                at: opens,
+                refused: Some(EdgeRefusal::EdgeNotAllowed {
+                    asked: stored.edge,
+                    allowed: self.allowed,
+                }),
+            };
+        }
+        match self.admit_opening(stored) {
+            Ok(at) => Restored { at, refused: None },
+            Err(why) => Restored {
+                at: opens,
+                refused: Some(why),
+            },
+        }
+    }
+}
+
+/// ★★★★★ R1908 — where a panel is after a stored placement was judged, and
+/// whether the store was believed.
+///
+/// The pair rather than a bare placement, for [`crate::detach::Arrived`]'s
+/// reason one module over: a caller given only the placement cannot tell a
+/// remembered arrangement from a fallback, and those are the same four fields
+/// and different facts. A reader who folded a panel yesterday and finds it open
+/// today is owed the sentence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Restored {
+    at: EdgePlacement,
+    refused: Option<EdgeRefusal>,
+}
+
+impl Restored {
+    /// Where the panel goes.
+    #[must_use]
+    pub const fn at(&self) -> EdgePlacement {
+        self.at
+    }
+
+    /// Why the stored placement was not used, when it was not.
+    #[must_use]
+    pub const fn refused(&self) -> Option<&EdgeRefusal> {
+        self.refused.as_ref()
+    }
+
+    /// Whether the panel is where the store said.
+    ///
+    /// A screen publishes this so a client can tell *folded because I folded it
+    /// last time* from *folded because that is how this panel opens* — the same
+    /// distinction [`EdgePlacement`]'s own `opens`/`at` pair draws, one source
+    /// further back.
+    #[must_use]
+    pub const fn believed(&self) -> bool {
+        self.refused.is_none()
+    }
 }
 
 #[cfg(test)]
@@ -507,6 +616,174 @@ mod tests {
     use crate::style::ChromeEdge;
 
     const SIDES: &[ChromeEdge] = &[ChromeEdge::Left, ChromeEdge::Right];
+
+    /// ★★★★★ R1908 — **a remembered arrangement comes back, and it is judged.**
+    ///
+    /// This is what makes [`EdgePlacement::folded_at`] reachable at all: no
+    /// specification in this tree opens a panel folded — the behaviour canon
+    /// opens its palette showing and R1902 measured that opening folded would
+    /// un-reproduce it — so a folded OPENING placement is not where a folded
+    /// panel comes from. It comes from a person who folded one and came back.
+    #[test]
+    fn r1908_a_remembered_fold_comes_back_and_is_believed() {
+        let policy = EdgePolicy::movable(SIDES).resizable(180, 420);
+        let opens = EdgePlacement::open(ChromeEdge::Left, 230);
+        let stored = EdgePlacement::folded_at(ChromeEdge::Left, 300);
+
+        let restored = policy.restore(stored, opens);
+        assert!(
+            restored.believed(),
+            "a legal stored placement is used: {:?}",
+            restored.refused()
+        );
+        assert_eq!(restored.at(), stored);
+        assert!(
+            restored.at().folded,
+            "★ the panel is folded because a person folded it, which no `opens` \
+             in this tree says"
+        );
+        assert_eq!(
+            restored.at().extent,
+            300,
+            "and it kept the width that person had chosen, so opening it gives \
+             back a size worth having rather than the specification's"
+        );
+        assert_eq!(restored.refused(), None);
+    }
+
+    /// A stored placement this build would refuse falls back to the
+    /// specification AND SAYS WHY. A boot has to produce a screen, so this
+    /// cannot fail; a fallback nothing reports is the defect one step on from
+    /// the one R1902 closed.
+    #[test]
+    fn r1908_a_stored_placement_this_build_refuses_falls_back_and_says_why() {
+        let policy = EdgePolicy::movable(SIDES).resizable(180, 420);
+        let opens = EdgePlacement::open(ChromeEdge::Left, 230);
+
+        // A width from a build whose range was wider.
+        let too_wide = policy.restore(EdgePlacement::open(ChromeEdge::Left, 900), opens);
+        assert!(!too_wide.believed());
+        assert_eq!(too_wide.at(), opens, "the panel opens where the spec says");
+        assert!(matches!(
+            too_wide.refused(),
+            Some(EdgeRefusal::ExtentOutOfRange {
+                asked: 900,
+                min: 180,
+                max: 420
+            })
+        ));
+        assert!(
+            too_wide
+                .refused()
+                .expect("a refusal")
+                .reason()
+                .as_str()
+                .contains("420"),
+            "the sentence names what would have worked"
+        );
+
+        // An edge this panel does not admit — a build that moved it, or a hand
+        // edit of the file.
+        let wrong_edge = policy.restore(EdgePlacement::open(ChromeEdge::Top, 230), opens);
+        assert!(!wrong_edge.believed());
+        assert_eq!(wrong_edge.at(), opens);
+        assert!(matches!(
+            wrong_edge.refused(),
+            Some(EdgeRefusal::EdgeNotAllowed { .. })
+        ));
+
+        // A fold remembered for a panel that may not fold.
+        let unfoldable = EdgePolicy::fixed();
+        let pinned = EdgePlacement::open(ChromeEdge::Left, 54);
+        let folded = unfoldable.restore(EdgePlacement::folded_at(ChromeEdge::Left, 54), pinned);
+        assert!(!folded.believed());
+        assert_eq!(folded.at(), pinned);
+        assert_eq!(folded.refused(), Some(&EdgeRefusal::NotFoldable));
+    }
+
+    /// ★ For a panel that CAN move, the predicate is the same one an opening
+    /// goes through, so a placement legal as an opening is legal as a restore
+    /// and the reverse. Two spellings of "is this legal" would be two answers,
+    /// and the disk is where they would first disagree.
+    #[test]
+    fn r1908_restoring_a_movable_panel_asks_exactly_what_opening_asks() {
+        let policy = EdgePolicy::movable(SIDES).resizable(180, 420);
+        let opens = EdgePlacement::open(ChromeEdge::Left, 230);
+        for candidate in [
+            EdgePlacement::open(ChromeEdge::Left, 180),
+            EdgePlacement::open(ChromeEdge::Right, 420),
+            EdgePlacement::folded_at(ChromeEdge::Right, 200),
+            EdgePlacement::open(ChromeEdge::Left, 179),
+            EdgePlacement::open(ChromeEdge::Top, 200),
+            EdgePlacement::folded_at(ChromeEdge::Left, 421),
+        ] {
+            let opening = policy.admit_opening(candidate);
+            let restored = policy.restore(candidate, opens);
+            assert_eq!(
+                opening.is_ok(),
+                restored.believed(),
+                "the two doors disagree about {candidate:?}"
+            );
+            if let Ok(at) = opening {
+                assert_eq!(restored.at(), at);
+            }
+        }
+    }
+
+    /// ★★★★★ R1908 — **a panel that declared it cannot move refuses a stored
+    /// edge, where an opening on the same policy is waved through.**
+    ///
+    /// The one place the two doors deliberately differ, and the reason
+    /// [`EdgePolicy::restore`] exists rather than a call to `admit_opening`. An
+    /// empty allowed-set says *this cannot be MOVED*, so `admit_opening` skips
+    /// the edge check — the opening is this build's own text and the paint
+    /// draws where it says. A stored edge is not that, and for a pinned panel
+    /// no rectangle on the screen could honour it.
+    ///
+    /// 🟥 Found by a gate asserting its own fixture was refusable and finding it
+    /// was not: this tree's shell palette is `allowed: []` AND `Resize::Fixed`,
+    /// so `restore` could refuse NOTHING there and the judgement was vacuously
+    /// true. ⇒ two absences of a predicate can compose into an absence of the
+    /// check, and neither one is wrong on its own.
+    #[test]
+    fn r1908_a_pinned_panel_refuses_a_stored_edge_though_it_admits_its_own() {
+        // The shell palette's policy, which is where the vacuum was measured.
+        let pinned = EdgePolicy {
+            allowed: &[],
+            foldable: true,
+            resize: Resize::Fixed,
+        };
+        let opens = EdgePlacement::open(ChromeEdge::Right, 292);
+
+        // Its own opening is admitted, edge and all — unchanged from R1902.
+        assert!(pinned.admit_opening(opens).is_ok());
+        // And so is a fold of it, which is the one thing this panel does.
+        let folded = EdgePlacement::folded_at(ChromeEdge::Right, 292);
+        assert!(pinned.restore(folded, opens).believed());
+        assert_eq!(pinned.restore(folded, opens).at(), folded);
+
+        // A stored edge it cannot be on is REFUSED, and this is the assertion
+        // that was impossible before: every stored placement passed.
+        let elsewhere = EdgePlacement::open(ChromeEdge::Left, 292);
+        assert!(
+            pinned.admit_opening(elsewhere).is_ok(),
+            "the opening door still waves it through — that is not changed"
+        );
+        let restored = pinned.restore(elsewhere, opens);
+        assert!(
+            !restored.believed(),
+            "★ but a STORED edge is refused, because nothing on the screen could \
+             honour it and `at` would then disagree with every rectangle"
+        );
+        assert_eq!(restored.at(), opens);
+        assert!(matches!(
+            restored.refused(),
+            Some(EdgeRefusal::EdgeNotAllowed {
+                asked: ChromeEdge::Left,
+                ..
+            })
+        ));
+    }
 
     #[test]
     fn r1801_a_panel_moves_between_the_edges_it_admits() {

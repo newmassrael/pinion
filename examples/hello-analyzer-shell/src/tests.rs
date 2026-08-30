@@ -5546,7 +5546,8 @@ fn r1903_the_palette_opens_where_its_own_policy_admits() {
 #[test]
 fn r1903_folding_the_palette_gives_its_room_to_the_canvas() {
     Owner::new().run(|| {
-        let state = use_shell_state();
+        // R1908 — off disk, because folding is written now.
+        let state = use_shell_state_off_disk();
         // ★ The canon's arrangement, read from the RUNNING screen rather than
         // asserted on a constant — see the note in the gate above for why that
         // distinction cost two checks that could never have failed.
@@ -5660,7 +5661,8 @@ fn r1903_folding_the_palette_gives_its_room_to_the_canvas() {
 #[test]
 fn r1903_a_folded_palette_announces_its_way_back_and_not_its_rows() {
     Owner::new().run(|| {
-        let state = use_shell_state();
+        // R1908 — off disk, because folding is written now.
+        let state = use_shell_state_off_disk();
         let open: Vec<String> = super::palette_nodes(&state)
             .into_iter()
             .map(|n| n.tag)
@@ -5697,7 +5699,8 @@ fn r1903_a_folded_palette_announces_its_way_back_and_not_its_rows() {
 #[test]
 fn r1903_both_palette_gestures_go_through_the_one_verb_and_it_refuses_by_name() {
     Owner::new().run(|| {
-        let state = use_shell_state();
+        // R1908 — off disk, because folding is written now.
+        let state = use_shell_state_off_disk();
         for hit in [super::Hit::PaletteFold, super::Hit::PaletteStrip] {
             let before = state.palette_at.get().folded;
             super::ShellOracle::act_on_hit(&state, hit);
@@ -5891,6 +5894,222 @@ fn r1905_a_card_crossing_into_the_canvas_stays_reachable() {
             matches!(super::Hit::at(&state, px, py), super::Hit::Float(ref id) if id == "packet#0"),
             "the panel's header answers a press at ({px}, {py}); got {:?}",
             super::Hit::at(&state, px, py)
+        );
+    });
+}
+
+// ── R1908: an arrangement outlives the run ───────────────────────────────
+
+/// ★★★★★ R1908 — a shell state whose persistence is **in memory**.
+///
+/// R1908 made folding the palette a thing that is WRITTEN, so a gate that folds
+/// it now reaches storage. Without this that storage is the person's own data
+/// directory: running the suite would leave a folded palette behind for whoever
+/// next opens the application, and two gates run in parallel would write over
+/// each other.
+///
+/// It works by seeding the cache slot `arrangement_storage` reads BEFORE the
+/// state is built, which is the injection point that function's own module
+/// documents. Each test opens its own `Owner`, so each gets its own empty
+/// store — isolation and a clean slate from one line.
+///
+/// ⚠ Only the gates that WRITE use it, which is a stated limit rather than a
+/// principle: the other paths through `persist_arrangements` (saving and
+/// deleting an arrangement) are not exercised by any gate here, so the rest of
+/// this file does not reach storage. A census of which gates may write is what
+/// would turn that from a fact into a guarantee, and this round does not have
+/// one ⇒ registered as `debt-a-gate-can-write-into-the-persons-own-data-dir`.
+use pinion_core::storage::Storage as _;
+
+fn use_shell_state_off_disk() -> std::rc::Rc<super::ShellState> {
+    let _: std::rc::Rc<pinion_platform_storage::AppStorage> = Owner::current()
+        .expect("an Owner scope, as use_shell_state itself requires")
+        .cache(super::STORAGE_CACHE_KEY, || {
+            pinion_platform_storage::AppStorage::new(Box::new(
+                pinion_core::storage::InMemoryStorage::new(),
+            ))
+        });
+    use_shell_state()
+}
+
+/// ★★★★★ R1908 — **putting the palette away is WRITTEN**, so it can outlive the
+/// run.
+///
+/// R1903 built the gesture and the placement was re-seeded from the
+/// specification at every boot, so closing the application undid it. This
+/// asserts the half a single process can see: the fold reaches storage, under
+/// the panel's own tag, with the extent kept — a fold that forgot its extent
+/// would re-open to nothing, which is the difference between folding and hiding.
+#[test]
+fn r1908_putting_the_palette_away_is_written_where_arrangements_are_kept() {
+    Owner::new().run(|| {
+        let state = use_shell_state_off_disk();
+        assert!(
+            state.storage.load(super::ARRANGEMENTS_KEY).is_none(),
+            "nothing is written before anything is arranged"
+        );
+        let open_extent = state.palette_at.get().extent;
+
+        super::ShellOracle::place_palette(&state, "fold").expect("the policy admits a fold");
+        let bytes = state.storage.load(super::ARRANGEMENTS_KEY).expect(
+            "★ folding the palette writes the session; without this the \
+                     gesture is undone by closing the application",
+        );
+        let stored: super::StoredArrangements =
+            serde_json::from_slice(&bytes).expect("what was written reads back");
+        let at = stored
+            .chrome
+            .get(super::PALETTE_STORE_KEY)
+            .copied()
+            .expect("the palette is stored under its own tag");
+        assert!(at.folded, "and it is stored FOLDED, which is the fact");
+        assert_eq!(
+            at.extent, open_extent,
+            "with the width kept, so opening it gives back a size worth having"
+        );
+
+        // Unfolding is written too, or a person who puts the panel back finds
+        // it away again tomorrow — the same defect in the other direction.
+        super::ShellOracle::place_palette(&state, "unfold").expect("unfolding is never refused");
+        let bytes = state
+            .storage
+            .load(super::ARRANGEMENTS_KEY)
+            .expect("the session is still written");
+        let stored: super::StoredArrangements =
+            serde_json::from_slice(&bytes).expect("what was written reads back");
+        assert!(
+            !stored
+                .chrome
+                .get(super::PALETTE_STORE_KEY)
+                .copied()
+                .expect("still stored")
+                .folded
+        );
+    });
+}
+
+/// ★★★★★ R1908 — **a believed session REACHES THE SCREEN.**
+///
+/// 🟥 This gate exists because a counterfactual found nothing catching its
+/// absence: replacing `state.palette_at.set(restored.at())` with the
+/// specification's own placement — reading the session, judging it, and then
+/// throwing it away — left every other gate green. The write gate watches
+/// storage, the refusal gate asserts the panel ends at the specification, and
+/// that is exactly where a discarded restore also ends. ⇒ two gates whose
+/// expectations coincide on the broken state are one gate.
+#[test]
+fn r1908_a_session_this_build_can_honour_reaches_the_screen() {
+    Owner::new().run(|| {
+        let state = use_shell_state_off_disk();
+        assert!(
+            !state.palette_at.get().folded,
+            "the specification opens it showing, so a fold here can only come \
+             from the session"
+        );
+        let put_away = pinion_core::edge_panel::EdgePlacement::folded_at(
+            spec::PALETTE_OPENS.edge,
+            spec::PALETTE_OPENS.extent,
+        );
+        let stored = super::StoredArrangements {
+            version: super::ARRANGEMENTS_VERSION,
+            arrangements: state.presets.borrow().saved(),
+            chrome: std::collections::BTreeMap::from([(
+                super::PALETTE_STORE_KEY.to_owned(),
+                put_away,
+            )]),
+        };
+        state.storage.save(
+            super::ARRANGEMENTS_KEY,
+            &serde_json::to_vec(&stored).expect("it serialises"),
+        );
+
+        super::restore_arrangements(&state);
+        assert_eq!(
+            state.palette_at.get(),
+            put_away,
+            "★ the palette is where the person left it. Equal to the \
+             specification here is the state R1903 shipped, not a pass"
+        );
+        assert!(
+            state.palette_restored.get(),
+            "and the screen says so, which `at` alone cannot"
+        );
+        // The room the chrome takes follows, or the placement reached a field
+        // and not the screen — the half-derivation R1903 measured.
+        assert_eq!(
+            super::palette_room(),
+            spec::PALETTE_STRIP_W,
+            "a folded palette takes its strip's width"
+        );
+    });
+}
+
+/// ★★★★★ R1908 — **a stored placement is JUDGED, and a refusal reaches the
+/// person.**
+///
+/// A stored placement is the one input this screen takes that did not come from
+/// this build: an older version wrote it, this build may have narrowed the
+/// panel's range since, and a person can edit the file. R1902's finding on this
+/// axis is that a state nothing judges can contradict its own declaration for
+/// the life of the program — and a fallback nothing REPORTS is that defect one
+/// step on, because the reader sees the panel in the wrong place and cannot
+/// learn why.
+#[test]
+fn r1908_a_stored_placement_this_build_refuses_is_replaced_and_explained() {
+    Owner::new().run(|| {
+        let state = use_shell_state_off_disk();
+        // ⚠ An EDGE this panel cannot be on, and the fixture had to be that
+        // rather than a width. Measured while writing this gate: the palette is
+        // `allowed: []` AND `Resize::Fixed`, so no extent and no fold is
+        // refusable and `admit_opening` waves everything through — the
+        // judgement was vacuously true here. `EdgePolicy::restore` refuses a
+        // stored edge for a pinned panel exactly because of that, and the
+        // assertion below is what proves this screen's own restore is judged at
+        // all.
+        let illegal =
+            pinion_core::edge_panel::EdgePlacement::open(pinion_core::style::ChromeEdge::Left, 292);
+        assert_ne!(
+            illegal.edge,
+            spec::PALETTE_OPENS.edge,
+            "the fixture has to be an edge this panel is not on"
+        );
+        assert!(
+            spec::PALETTE_POLICY
+                .restore(illegal, spec::PALETTE_OPENS)
+                .refused()
+                .is_some(),
+            "the fixture has to be a placement this build actually refuses, or \
+             this gate asserts nothing"
+        );
+        let stored = super::StoredArrangements {
+            version: super::ARRANGEMENTS_VERSION,
+            arrangements: state.presets.borrow().saved(),
+            chrome: std::collections::BTreeMap::from([(
+                super::PALETTE_STORE_KEY.to_owned(),
+                illegal,
+            )]),
+        };
+        state.storage.save(
+            super::ARRANGEMENTS_KEY,
+            &serde_json::to_vec(&stored).expect("it serialises"),
+        );
+
+        super::restore_arrangements(&state);
+        assert_eq!(
+            state.palette_at.get(),
+            spec::PALETTE_OPENS,
+            "★ the panel opens where the specification says rather than where an \
+             unreadable session asked; a boot has to produce a screen"
+        );
+        assert!(
+            !state.palette_restored.get(),
+            "and it does NOT claim to be a restored arrangement"
+        );
+        let said = state.toast.showing();
+        assert!(
+            said.as_ref()
+                .is_some_and(|u| u.clause().contains("could not open where you left it")),
+            "★ the refusal reaches the person: {said:?}"
         );
     });
 }

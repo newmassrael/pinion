@@ -120,6 +120,17 @@
       ]
     },
     {
+      "name": "debt-a-gate-can-write-into-the-persons-own-data-dir",
+      "substituted": false,
+      "blocked_by": "",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links analyzer-debt-repayment-loop"
+      ]
+    },
+    {
       "name": "debt-a-gate-computes-its-expectation-from-the-code-it-checks",
       "substituted": false,
       "blocked_by": "buildable",

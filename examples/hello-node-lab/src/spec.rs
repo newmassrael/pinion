@@ -149,9 +149,23 @@ pub const PANES: &[PaneSpec] = &[
         // content: this pane holds a form with labelled rows and a three-across
         // action strip, where the palette holds a single column of chips.
         policy: EdgePolicy::movable(SIDES).resizable(240, 520),
-        // Showing, on the right, as the reference's properties region is. The
-        // asymmetry with the palette is the reference's own and is the point:
-        // one side panel starts out of the way and one does not.
+        // Showing, on the right, as the reference's properties region is.
+        //
+        // 🟥 R1908 — this comment used to end "the asymmetry with the palette is
+        // the reference's own and is the point: one side panel starts out of the
+        // way and one does not", and there IS no asymmetry: both panels open
+        // showing, and did from the moment R1902 reverted the folded palette
+        // after measuring that the behaviour canon opens its own drawer.
+        // The sentence survived the revert three rounds and described a screen
+        // that never existed.
+        //
+        // ⇒ the reference's tool region is hidden by default and this one is
+        // not, deliberately: the reproduction target for this screen is the
+        // behaviour canon, whose whole vocabulary of open-and-shut is
+        // `paletteOpen: true`, a menu and a popover — it has no panel that opens
+        // folded at all. Opening folded here would un-reproduce it, which is the
+        // standing order rule's named error. What a person folds is remembered
+        // instead (R1908), which is where `EdgePlacement::folded_at` belongs.
         opens: EdgePlacement::open(ChromeEdge::Right, 312),
     },
 ];
