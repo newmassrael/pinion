@@ -6357,52 +6357,8 @@ fn r1909_the_walk_reaches_a_lab_whose_inspector_opens_put_away() {
             });
 
         let opening = as_json(lab.query("spec").expect("a slot"));
-        let panes = opening["panes"]
-            .as_array()
-            .expect("the surface publishes its panes")
-            .clone();
-        let pane = |name: &str| -> serde_json::Value {
-            panes
-                .iter()
-                .find(|p| p["name"] == name)
-                .unwrap_or_else(|| panic!("{name} is a pane this surface publishes"))
-                .clone()
-        };
-
-        // ── the declaration, and the screen agreeing with it ──────────────
-        let inspector = pane("inspector");
-        assert_eq!(
-            inspector["opens"]["folded"],
-            serde_json::Value::Bool(true),
-            "★ the assembled tool DECLARES its inspector opens put away: {inspector}"
-        );
-        assert_eq!(
-            inspector["at"]["folded"],
-            serde_json::Value::Bool(true),
-            "★ and it really is — `opens` reaching `at` is the claim, not the \
-             declaration on its own: {inspector}"
-        );
-        assert_eq!(
-            inspector["at"]["extent"], inspector["opens"]["extent"],
-            "★ folded KEPT its extent, so bringing it back gives a pane worth \
-             having. A fold that forgot its width would be a hide: {inspector}"
-        );
-
-        // ★ The asymmetry, which is what makes this a decision rather than an
-        // application that opens with nothing on it.
-        let palette = pane("palette");
-        assert_eq!(
-            palette["opens"]["folded"],
-            serde_json::Value::Bool(false),
-            "★ the palette opens SHOWING: 'what can I place' is the question a \
-             reader arrives with. One panel away and one showing is the point: \
-             {palette}"
-        );
-        assert_eq!(
-            palette["at"]["folded"],
-            serde_json::Value::Bool(false),
-            "★ and it is showing: {palette}"
-        );
+        let inspector = pane_of(&opening, "inspector");
+        assert_the_lab_opens_with_its_inspector_put_away(&opening);
 
         // ── the client brings it back, through the published verb ─────────
         let said = lab
@@ -6464,6 +6420,52 @@ fn r1909_the_walk_reaches_a_lab_whose_inspector_opens_put_away() {
             report.itinerary()
         );
     });
+}
+
+/// ★★★★★ R1909 — the ARRANGEMENT half of the walk above: the inspector opens
+/// put away, the screen agrees with that declaration, and the palette does not.
+///
+/// Split out because the walk asserts two different kinds of thing — what the
+/// tool opens as, and what a client can then do to it — and because the whole
+/// of it in one function is past this workspace's line budget. The split is
+/// along the seam that was already there.
+///
+/// ⚠ The palette is read in the same breath as the inspector, and that is not
+/// symmetry for its own sake: a gate that only looked at the folded pane could
+/// not tell *this tool opens one panel away* from *this tool opens with no
+/// panels*.
+fn assert_the_lab_opens_with_its_inspector_put_away(spec: &serde_json::Value) {
+    let inspector = pane_of(spec, "inspector");
+    assert_eq!(
+        inspector["opens"]["folded"],
+        serde_json::Value::Bool(true),
+        "★ the assembled tool DECLARES its inspector opens put away: {inspector}"
+    );
+    assert_eq!(
+        inspector["at"]["folded"],
+        serde_json::Value::Bool(true),
+        "★ and it really is — `opens` reaching `at` is the claim, not the \
+         declaration on its own: {inspector}"
+    );
+    assert_eq!(
+        inspector["at"]["extent"], inspector["opens"]["extent"],
+        "★ folded KEPT its extent, so bringing it back gives a pane worth \
+         having. A fold that forgot its width would be a hide: {inspector}"
+    );
+
+    let palette = pane_of(spec, "palette");
+    assert_eq!(
+        palette["opens"]["folded"],
+        serde_json::Value::Bool(false),
+        "★ the palette opens SHOWING: 'what can I place' is the question a \
+         reader arrives with. One panel away and one showing is the point: \
+         {palette}"
+    );
+    assert_eq!(
+        palette["at"]["folded"],
+        serde_json::Value::Bool(false),
+        "★ and it is showing: {palette}"
+    );
 }
 
 /// One published pane, by the word the `place` verb takes.
