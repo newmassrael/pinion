@@ -364,6 +364,16 @@ pub fn row_in_session(n: usize) -> bool {
 pub struct ColumnSpec {
     /// The header text.
     pub title: &'static str,
+    /// ★★★★★ R1918 — **what the column holds, and that the header sorts by
+    /// it**, in a sentence.
+    ///
+    /// A required field and not an `Option`: five of these seven titles are
+    /// abbreviations or symbols a header band has no room to expand (`sn`,
+    /// `len`, `from -> to`), which is the canon's own rule for which controls
+    /// get a `title` attribute — *the ones with no room to print what they do*.
+    /// Required means a column added later cannot compile without saying what
+    /// it holds, which is a stronger gate than any test over this table.
+    pub description: &'static str,
     /// Its width in logical pixels, or 0 for the column that takes the rest.
     pub width: u32,
 }
@@ -411,30 +421,37 @@ pub struct ColumnSpec {
 pub const COLUMNS: &[ColumnSpec] = &[
     ColumnSpec {
         title: "time",
+        description: "When the message was captured",
         width: 96,
     },
     ColumnSpec {
         title: "from -> to",
+        description: "The endpoint that sent it and the one that received it",
         width: 96,
     },
     ColumnSpec {
         title: "channel",
+        description: "The transport channel it travelled on",
         width: 84,
     },
     ColumnSpec {
         title: "sn",
+        description: "Its sequence number on that channel",
         width: 54,
     },
     ColumnSpec {
         title: "type",
+        description: "Which message class it is",
         width: 76,
     },
     ColumnSpec {
         title: "name",
+        description: "The subject the message names, and what was derived about it",
         width: 0,
     },
     ColumnSpec {
         title: "len",
+        description: "How many bytes the message carries",
         width: 52,
     },
 ];

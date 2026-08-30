@@ -74,6 +74,20 @@ impl Descriptions {
         self.by_tag.get(tag).map(String::as_str)
     }
 
+    /// ★★★★★ R1918 — everything `other` describes, folded in.
+    ///
+    /// A screen with more than one population of described marks — chrome
+    /// painted at every destination, and the page currently at one — keeps them
+    /// as separate registers so a gate can ask about each, and joins them here
+    /// for the one surface that draws them. `other` wins on a shared tag, for
+    /// the same reason a later [`describe`](Self::describe) does: the caller
+    /// folding is the caller stating precedence.
+    pub fn merge(&mut self, other: &Self) {
+        for (tag, sentence) in &other.by_tag {
+            self.by_tag.insert(tag.clone(), sentence.clone());
+        }
+    }
+
     /// How many marks carry one.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -89,6 +103,41 @@ impl Descriptions {
     /// Every described tag, ascending — what a census counts.
     pub fn tags(&self) -> impl Iterator<Item = &str> {
         self.by_tag.keys().map(String::as_str)
+    }
+
+    /// ★★★★★ R1918 — **the described mark under a point**, or `None`.
+    ///
+    /// The resolution goes through the PAINT REGISTER — every mark this frame
+    /// drew, topmost first — and not through a screen's hit test. That is the
+    /// decision this method exists to make, and it is what let four more
+    /// screens gain a description surface in one round:
+    ///
+    /// A screen's `Hit` enum answers *what a press addresses*. A described mark
+    /// need not be one. Measured across this application's six pages, the marks
+    /// whose meaning their own label cannot print are mostly **column headers**
+    /// — `Sev`, `Src`, `sn`, `len` — and on two of the three list screens a
+    /// column header takes no press at all. Resolving a description against the
+    /// hit test would have meant inventing a press for each of them: a target
+    /// that answers a pointer and then does nothing, which this tree has a name
+    /// for. ⇒ **a mark can say what it is for without first being made to do
+    /// something.**
+    ///
+    /// The register's `topmost_at` order is honoured through
+    /// [`PaintedRegions::stack_at`](crate::painted::PaintedRegions::stack_at):
+    /// the first mark in the stack that carries a sentence is the answer, so a
+    /// described box under an undescribed run still answers, and a described
+    /// mark *behind* another described mark does not.
+    #[must_use]
+    pub fn under<'a>(
+        &'a self,
+        marks: &crate::painted::PaintedRegions,
+        x: u32,
+        y: u32,
+    ) -> Option<&'a str> {
+        marks
+            .stack_at(x, y)
+            .find_map(|(tag, _)| self.by_tag.get_key_value(tag))
+            .map(|(tag, _)| tag.as_str())
     }
 
     /// ★★★★★ R1916 — **which sentence a reader is being shown**, or `None`.
@@ -271,6 +320,60 @@ mod tests {
         let short = beside(mark, within, "a", 10).2;
         let long = beside(mark, within, "a much longer sentence than that", 10).2;
         assert!(long > short, "{long} > {short}");
+    }
+
+    #[test]
+    fn r1918_the_mark_under_a_point_is_the_topmost_one_that_carries_a_sentence() {
+        use crate::painted::PaintedRegions;
+        use crate::scene::Rect;
+
+        // Paint order: the pane, then the header inside it, then an undescribed
+        // run over the header. Only the pane and the header are described.
+        let marks = PaintedRegions::from_marks(vec![
+            ("pane".to_owned(), Rect::new(0, 0, 200, 100)),
+            ("head.sev".to_owned(), Rect::new(20, 0, 40, 20)),
+            ("head.sev.text".to_owned(), Rect::new(22, 4, 30, 12)),
+        ]);
+        let mut described = Descriptions::new();
+        described.describe("pane", "the pane");
+        described.describe("head.sev", "how bad the event is");
+
+        assert_eq!(
+            described.under(&marks, 30, 8),
+            Some("head.sev"),
+            "the run over it carries no sentence, so the header answers"
+        );
+        assert_eq!(
+            described.under(&marks, 120, 60),
+            Some("pane"),
+            "outside the header, the pane is what is under the point"
+        );
+
+        // ★ The control: a point over nothing described answers nothing, which
+        // is what keeps a description off the frame while a reader is not
+        // asking for one.
+        let mut only_header = Descriptions::new();
+        only_header.describe("head.sev", "how bad the event is");
+        assert_eq!(only_header.under(&marks, 120, 60), None);
+    }
+
+    #[test]
+    fn r1918_a_described_mark_needs_no_hit_test_of_its_own() {
+        // The claim in as many words: the register is asked about a point and
+        // answers from the PAINT, so a mark that takes no press still says what
+        // it is for. Nothing here consults a hit test, and that is the test.
+        use crate::painted::PaintedRegions;
+        use crate::scene::Rect;
+
+        let marks =
+            PaintedRegions::from_marks(vec![("head.len".to_owned(), Rect::new(0, 0, 30, 18))]);
+        let mut described = Descriptions::new();
+        described.describe("head.len", "how many bytes the message carries");
+        let tag = described.under(&marks, 10, 9).expect("the mark answers");
+        let shown = described
+            .shown(&Resting::hovering(tag))
+            .expect("and it carries a sentence");
+        assert_eq!(shown.sentence, "how many bytes the message carries");
     }
 
     fn two() -> Descriptions {

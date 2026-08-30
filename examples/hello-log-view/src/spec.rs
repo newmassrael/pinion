@@ -52,6 +52,15 @@ pub struct ColumnSpec {
     pub key: &'static str,
     /// What a reader calls it, in the header row.
     pub title: &'static str,
+    /// ★★★★★ R1918 — **what the column holds**, in a sentence.
+    ///
+    /// A required field and not an `Option`: three of these five titles are
+    /// abbreviations a header band has no room to expand (`Sev`, `Src`), which
+    /// is the canon's own rule for which controls get a `title` attribute —
+    /// *the ones with no room to print what they do*. Making it required means a
+    /// column added later **cannot compile** without saying what it holds, which
+    /// is a stronger gate than any test over the table.
+    pub description: &'static str,
     /// Its width in logical pixels, or 0 for the column that takes the rest.
     pub width: u32,
 }
@@ -61,26 +70,31 @@ pub const COLUMNS: &[ColumnSpec] = &[
     ColumnSpec {
         key: "time",
         title: "Time",
+        description: "When the event was seen, to the millisecond",
         width: 112,
     },
     ColumnSpec {
         key: "severity",
         title: "Sev",
+        description: "How bad the event is - info, warn or error",
         width: 58,
     },
     ColumnSpec {
         key: "source",
         title: "Src",
+        description: "The endpoint the event was reported by",
         width: 54,
     },
     ColumnSpec {
         key: "type",
         title: "Type",
+        description: "What kind of message the event is about",
         width: 104,
     },
     ColumnSpec {
         key: "message",
         title: "Message",
+        description: "The one-line reading of the event",
         width: 0,
     },
 ];
@@ -264,6 +278,27 @@ pub struct ChoiceSpec {
     pub title: &'static str,
     /// The least severity it keeps, or `None` for the choice that keeps all.
     pub floor: Option<Severity>,
+}
+
+impl ChoiceSpec {
+    /// ★★★★★ R1918 — what choosing this does, **derived from the floor**.
+    ///
+    /// The label cannot carry it: a choice reading `Warn` keeps warnings *and*
+    /// errors, because a floor is an ordering rather than a set — the very
+    /// thing the table's own comment says three independent toggles could not
+    /// express. So the control's one word is exactly the fact a reader needs a
+    /// sentence for.
+    ///
+    /// Derived rather than declared, so a choice added to [`CHOICES`] arrives
+    /// described and cannot describe itself as keeping a different floor from
+    /// the one it filters by.
+    #[must_use]
+    pub fn description(&self) -> String {
+        match self.floor {
+            None => "Keep every event, whatever its severity".to_owned(),
+            Some(floor) => format!("Keep only events at {} or worse", floor.label()),
+        }
+    }
 }
 
 /// The three choices, in the reference's order.

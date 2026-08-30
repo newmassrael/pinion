@@ -8898,39 +8898,24 @@ fn pin_tip(state: &LabState, ink: Ink, canvas: Rect) -> Vec<Scene> {
     else {
         return Vec::new();
     };
-    let face = 10;
-    let pad = 6;
-    // ★ R1916 — WHERE it goes is the substrate's, so the two screens that draw
-    // descriptions cannot place them differently. What stays here is what this
-    // screen DRAWS.
-    let (x, y, w, h) = pinion_core::describe::beside(
-        (anchor.x, anchor.y, anchor.w, anchor.h),
-        (canvas.x, canvas.y, canvas.w, canvas.h),
+    // ★★★★★ R1918 — WHERE it goes AND what it looks like are the substrate's
+    // now. R1916 lifted only the placement and left the box, the run and the
+    // run's deferral here; the round that needed four more screens to draw one
+    // lifted the rest. What stays this screen's is the INKS and the FACE, which
+    // are properties of the surface a description has to sit legibly on.
+    vec![pinion_widget_paint::described::view_description(
+        TOOLTIP_TAG,
         &sentence,
-        face,
-    );
-    let box_rect = Rect::new(x.saturating_sub(canvas.x), y.saturating_sub(canvas.y), w, h);
-    vec![
-        box_at(TOOLTIP_TAG, box_rect, ink.surface, Some(ink.outline_2), 6),
-        quiet(
-            tagged_label(
-                "lab.tip.text",
-                sentence,
-                Rect::new(
-                    box_rect.x + pad,
-                    box_rect.y + pad / 2,
-                    box_rect.w.saturating_sub(pad * 2),
-                    h.saturating_sub(pad / 2),
-                ),
-                face,
-                ink.text_2,
-            ),
-            // The box IS the description region in the accessibility tree, and
-            // the run inside it is its whole content — so the run defers to it
-            // rather than announcing the same sentence twice.
-            Silence::name_of(TOOLTIP_TAG),
-        ),
-    ]
+        anchor,
+        canvas,
+        (canvas.x, canvas.y),
+        pinion_widget_paint::described::DescriptionStyle::COMPACT,
+        pinion_widget_paint::described::DescriptionInk {
+            surface: ink.surface,
+            outline: Some(ink.outline_2),
+            ink: ink.text_2,
+        },
+    )]
 }
 
 /// The bullet's colour, which is what a sighted reader learns the tone from.
@@ -10226,6 +10211,12 @@ const BUILD_WORDS: [&str; Stack::ALL.len()] = {
 const FIELDS: &[SchemaField] = &{
     [
         SchemaField::new("spec", "string"),
+        // ★★★★★ R1918 — what the marks on this frame say about themselves, with
+        // the region they are drawn under. The lab was the first screen to draw
+        // a description (R1916) and the last to PUBLISH its register: while it
+        // was the only one, a reader could only find out by hovering, and a
+        // gate asking "does this page describe anything" had nothing to read.
+        SchemaField::new("described", "json"),
         // ★★★★★ R1742 — how much of the inspector specification this build is
         // showing, published beside the specification itself. `json` rather
         // than the `string` its neighbours use because it is the framework's
@@ -10683,6 +10674,8 @@ impl ExternalIntrospect for LabOracle {
         let text = |s: String| Ok(IntrospectValue::Text(s));
         match path {
             "spec" => text(spec_json().to_string()),
+            // ★★★★★ R1918 — what the marks on this frame say about themselves.
+            "described" => Ok(IntrospectValue::Json(described_wire(state))),
             // ★ R1742 — the SAME value the host publishes for this section, so
             // "one build, two placements" is a fact a client can check rather
             // than a claim this file makes.
@@ -15922,19 +15915,19 @@ fn wire_access(state: &LabState) -> Vec<AccessNode> {
     // assembled tool published ZERO nodes of this role across six pages while
     // the framework had carried the widget since R695; what it did not have was
     // a way to say *that mark over there has a sentence*.
+    //
+    // ★★★★★ R1918 — and the four steps around that call are the substrate's
+    // now (`described::announce_description`), because R1918 needed FOUR more
+    // screens to perform them. Finding the anchor, replacing rather than
+    // duplicating it, and synthesising one when the screen publishes none are
+    // decisions with one owner.
     if let Some(shown) = pin_description_shown(state) {
-        let anchor = nodes.iter().position(|n| n.tag == shown.0);
-        let control = match anchor {
-            Some(at) => nodes.remove(at),
-            None => AccessNode::new(shown.0.clone(), AriaRole::Button),
-        };
-        nodes.extend(pinion_a11y::describedby_region(
-            control,
+        pinion_widget_paint::described::announce_description(
+            &mut nodes,
+            &shown.0,
             TOOLTIP_TAG,
-            AriaRole::Tooltip,
-            Some(shown.1),
-            true,
-        ));
+            &shown.1,
+        );
     }
     nodes
 }
@@ -15981,6 +15974,25 @@ fn pin_descriptions(state: &LabState) -> Descriptions {
         }
     }
     described
+}
+
+/// ★★★★★ R1918 — the register as data, with the mark it is drawn under.
+///
+/// Published so a gate reads what this screen describes rather than spelling
+/// the register a second time and comparing the screen against a copy of
+/// itself. The other five pages of the assembled tool publish the same shape.
+fn described_wire(state: &Rc<LabState>) -> serde_json::Value {
+    let described = pin_descriptions(state);
+    serde_json::json!({
+        "region": TOOLTIP_TAG,
+        "marks": described
+            .tags()
+            .map(|tag| serde_json::json!({
+                "tag": tag,
+                "sentence": described.of(tag).unwrap_or_default(),
+            }))
+            .collect::<Vec<_>>(),
+    })
 }
 
 /// ★★★★★ R1916 — the pin description a reader is being shown right now, as

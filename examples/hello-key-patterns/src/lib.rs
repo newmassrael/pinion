@@ -60,6 +60,7 @@ use pinion_a11y::{
     WidgetA11y, grid_table_nodes,
 };
 use pinion_core::availability::{Recourse, Unavailable, UnavailableKind};
+use pinion_core::describe::{Descriptions, Resting};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, PointerTarget, ReadRefusal, RepaintOwner,
@@ -414,6 +415,14 @@ struct ViewState {
     list_scroll: Rc<ScrollState>,
     /// Where the cursor last was, because a press carries no coordinates.
     cursor: Signal<(u32, u32)>,
+    /// ★★★★★ R1918 — whether anybody is pointing at this screen at all.
+    ///
+    /// A second signal beside [`cursor`](Self::cursor) and not a sentinel
+    /// inside it: every gesture reading `cursor` wants *the last place the
+    /// pointer was*, and only the hover derivations want *is anybody
+    /// pointing*. A leave is not a move to somewhere else, so without this a
+    /// description stays on the frame over a window nobody is pointing at.
+    pointer_inside: Signal<bool>,
     /// The last thing the screen said, for the live region and the wire.
     said: RefCell<Option<Utterance>>,
 }
@@ -516,6 +525,7 @@ fn use_view_state() -> Rc<ViewState> {
         query,
         list_scroll,
         cursor: Signal::new((0, 0)),
+        pointer_inside: Signal::new(false),
         said: RefCell::new(None),
     })
 }
@@ -705,6 +715,8 @@ fn announce_query(state: &Rc<ViewState>) {
 
 fn move_cursor(state: &Rc<ViewState>, px: u32, py: u32) {
     state.cursor.set((px, py));
+    // ★ R1918 — a move is what says the pointer is here again after a leave.
+    state.pointer_inside.set(true);
 }
 
 fn press(state: &Rc<ViewState>) -> bool {
@@ -926,23 +938,19 @@ fn view(field: (TextFieldState, u32), _frame: Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
     let ink = ink();
     let (w, h) = window_size();
+    let mut children = vec![
+        header_bar(&state, field, &theme, ink),
+        column_header(ink),
+        list_pane(&state, ink),
+        detail_pane(&state, ink),
+    ];
+    // ★ R1918 — LAST, so a description paints over the panes it hangs off.
+    children.extend(description_scene(&state, ink));
     Scene::Container(
         ContainerNode::new(vec![
-            panel(
-                ROOT_TAG,
-                Rect::new(0, 0, w, h),
-                ink.bg,
-                None,
-                vec![
-                    header_bar(&state, field, &theme, ink),
-                    column_header(ink),
-                    list_pane(&state, ink),
-                    detail_pane(&state, ink),
-                ],
-            )
-            .silenced(Silence::layout(
-                "places the header, the column row, the list and the record pane",
-            )),
+            panel(ROOT_TAG, Rect::new(0, 0, w, h), ink.bg, None, children).silenced(
+                Silence::layout("places the header, the column row, the list and the record pane"),
+            ),
         ])
         .with_tag(VIEW_TAG)
         .with_layout(
@@ -1460,6 +1468,9 @@ impl ExternalIntrospect for ViewOracle {
             const {
                 &[
                     SchemaField::new("spec", "json"),
+                    // ★★★★★ R1918 — what the marks on this frame say about
+                    // themselves, with the region they are drawn under.
+                    SchemaField::new("described", "json"),
                     // ★★★★★ R1730 — the reading this round exists for.
                     SchemaField::new("conformance", "json"),
                     SchemaField::new("row_count", "int"),
@@ -1508,6 +1519,8 @@ impl ExternalIntrospect for ViewOracle {
         }
         match path {
             "spec" => Ok(IntrospectValue::Json(spec_json())),
+            // ★★★★★ R1918 — what the marks on this frame say about themselves.
+            "described" => Ok(IntrospectValue::Json(described_wire())),
             "conformance" => Ok(IntrospectValue::Json(conformance_json())),
             "row_count" => Ok(IntrospectValue::Int(
                 i64::try_from(spec::ROWS.len()).unwrap_or(i64::MAX),
@@ -1619,7 +1632,37 @@ impl ExternalIntrospect for ViewOracle {
                 move_cursor(&state, point.0, point.1);
                 Ok(IntrospectValue::Text(format!("{},{}", point.0, point.1)))
             }
-            "press" | "send" => Ok(IntrospectValue::Bool(press(&state))),
+            "press" => Ok(IntrospectValue::Bool(press(&state))),
+            // ★★★★★ R1918 — **`send` reads its argument now.** It did not:
+            // `"press" | "send"` answered EVERY symbolic pointer event by
+            // performing a press, so the router's `PointerUp` pressed a second
+            // time and its `PointerLeave` pressed on the way out. Measured this
+            // round while giving this screen a description surface, which needs
+            // a leave to be distinguishable from a move.
+            "send" => {
+                let event = Self::text(&args)?;
+                match event.trim() {
+                    "PointerDown" => {
+                        press(&state);
+                    }
+                    // A release commits nothing here: the selection is decided
+                    // at press and there is no drag. Accepted rather than
+                    // refused, because the router sends the pair.
+                    "PointerUp" | "PointerEnter" => {}
+                    "PointerLeave" | "PointerCancel" => {
+                        // ★ The pointer is GONE, which is a different fact from
+                        // where it last was.
+                        state.pointer_inside.set(false);
+                    }
+                    other => {
+                        return Err(InvokeError::rejected(format!(
+                            "{other:?} is not a pointer event; they are PointerDown / \
+                             PointerUp / PointerEnter / PointerLeave / PointerCancel"
+                        )));
+                    }
+                }
+                Ok(IntrospectValue::Text(state.said_sentence()))
+            }
             "key" => {
                 let chord = Self::text(&args)?;
                 Ok(IntrospectValue::Bool(key_at(&state, None, &chord)))
@@ -1716,6 +1759,16 @@ impl WidgetA11y for KeyPatternView {
         nodes.extend(header_nodes(&state));
         nodes.extend(list_nodes(&state, focused));
         nodes.extend(detail_nodes(&state));
+        // ★★★★★ R1918 — and the description a reader is resting on, tied to the
+        // mark it belongs to through `aria-describedby`.
+        if let Some((tag, sentence)) = description_shown(&state, focused) {
+            pinion_widget_paint::described::announce_description(
+                &mut nodes,
+                &tag,
+                TOOLTIP_TAG,
+                &sentence,
+            );
+        }
         nodes
     }
 
@@ -1728,6 +1781,106 @@ impl WidgetA11y for KeyPatternView {
             AccessFocus::composite(LIST_TAG, format!("kp.list.row.{}", state.cursor_row()))
         })
     }
+}
+
+/// The tag the description region is painted and announced under.
+const TOOLTIP_TAG: &str = "kp.tip";
+
+/// ★★★★★ R1918 — the sentences this screen's marks carry, by paint tag.
+///
+/// The canon's rule for WHICH decides the list: **the ones with no room to
+/// print what they do**. Four of the seven column headers are abbreviations the
+/// band cannot expand, and the record pane's one action is a button that
+/// *refuses* — a reader who has not pressed it has no way to know that, which
+/// is the strongest case on this screen for a sentence.
+///
+/// Every sentence is DERIVED from a declaration the mark is already built
+/// from: a column carries its own `description`, and the action's comes from
+/// the same [`declarer_standing`] the refusal itself is built from — so the
+/// sentence a reader is shown before pressing and the refusal they hear after
+/// cannot say two different things.
+fn descriptions() -> Descriptions {
+    let mut described = Descriptions::new();
+    for column in spec::COLUMNS {
+        described.describe(format!("kp.column.{}", column.key), column.description);
+    }
+    let why = declarer_standing();
+    described.describe(
+        "kp.detail.declarer",
+        format!(
+            "{} is {} ({})",
+            spec::DECLARER_SECTION,
+            why.kind().name(),
+            why.detail(),
+        ),
+    );
+    described
+}
+
+/// ★★★★★ R1918 — the description a reader is being shown, as `(tag, sentence)`.
+///
+/// The hovered mark is resolved from the PAINT REGISTER rather than from
+/// [`Hit`], which is why a column header can carry a sentence here: `Hit` has
+/// three arms and none of them is a header. Pressing a header would mean
+/// inventing an ordering this section does not have.
+fn description_shown(state: &Rc<ViewState>, focused: Option<&str>) -> Option<(String, String)> {
+    let described = descriptions();
+    let (px, py) = state.cursor.get();
+    let marks = pinion_core::painted::painted_regions(VIEW_TAG)?;
+    let hovered = state
+        .pointer_inside
+        .get()
+        .then(|| described.under(&marks, px, py))
+        .flatten();
+    let shown = described.shown(&Resting {
+        hovered,
+        focused,
+        dismissed: false,
+    })?;
+    Some((shown.tag.to_owned(), shown.sentence.to_owned()))
+}
+
+/// ★★★★★ R1918 — the register as data, with the mark it is drawn under.
+fn described_wire() -> serde_json::Value {
+    let described = descriptions();
+    serde_json::json!({
+        "region": TOOLTIP_TAG,
+        "marks": described
+            .tags()
+            .map(|tag| serde_json::json!({
+                "tag": tag,
+                "sentence": described.of(tag).unwrap_or_default(),
+            }))
+            .collect::<Vec<_>>(),
+    })
+}
+
+/// ★★★★★ R1918 — the description drawn beside the mark it belongs to.
+fn description_scene(state: &Rc<ViewState>, ink: Ink) -> Vec<Scene> {
+    let Some((tag, sentence)) =
+        description_shown(state, pinion_core::focus_state::focused().as_deref())
+    else {
+        return Vec::new();
+    };
+    let Some(anchor) =
+        pinion_core::painted::painted_regions(VIEW_TAG).and_then(|marks| marks.rect_of(&tag))
+    else {
+        return Vec::new();
+    };
+    let (w, h) = window_size();
+    vec![pinion_widget_paint::described::view_description(
+        TOOLTIP_TAG,
+        &sentence,
+        anchor,
+        Rect::new(0, 0, w, h),
+        (0, 0),
+        pinion_widget_paint::described::DescriptionStyle::COMPACT,
+        pinion_widget_paint::described::DescriptionInk {
+            surface: ink.surface_2,
+            outline: Some(ink.outline),
+            ink: ink.text,
+        },
+    )]
 }
 
 fn header_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {

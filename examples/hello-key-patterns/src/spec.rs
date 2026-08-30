@@ -60,6 +60,15 @@ pub struct ColumnSpec {
     pub key: &'static str,
     /// What a reader calls it, in the header row.
     pub title: &'static str,
+    /// ★★★★★ R1918 — **what the column holds**, in a sentence.
+    ///
+    /// A required field and not an `Option`: four of these seven titles are
+    /// abbreviations the header band has no room to expand (`ID`, `By`,
+    /// `Match`, `Msg/s`), which is the canon's own rule for which controls get
+    /// a `title` attribute — *the ones with no room to print what they do*.
+    /// Required means a column added later cannot compile without saying what
+    /// it holds, which is a stronger gate than any test over the table.
+    pub description: &'static str,
     /// Its width in logical pixels, or 0 for the column that takes the rest.
     ///
     /// The reference fixes six and lets the pattern take what is left, because
@@ -72,36 +81,43 @@ pub const COLUMNS: &[ColumnSpec] = &[
     ColumnSpec {
         key: "id",
         title: "ID",
+        description: "The number this declaration was given when it was seen",
         width: 52,
     },
     ColumnSpec {
         key: "pattern",
         title: "Pattern",
+        description: "The pattern declared, wildcards included",
         width: 0,
     },
     ColumnSpec {
         key: "by",
         title: "By",
+        description: "The endpoint that made the declaration",
         width: 74,
     },
     ColumnSpec {
         key: "direction",
         title: "Direction",
+        description: "What was declared - publishing, subscribing or answering",
         width: 120,
     },
     ColumnSpec {
         key: "matches",
         title: "Match",
+        description: "How many other declarations this pattern reaches",
         width: 60,
     },
     ColumnSpec {
         key: "rate",
         title: "Msg/s",
+        description: "Messages a second observed on this declaration",
         width: 64,
     },
     ColumnSpec {
         key: "status",
         title: "Status",
+        description: "Whether the pattern itself is known or only its number",
         width: 112,
     },
 ];

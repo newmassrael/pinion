@@ -4991,6 +4991,12 @@ const FIELDS: &[SchemaField] = const {
         // so. This slot is the population, so a section is missing from it only
         // by not being in the application.
         SchemaField::new("sections", "json"),
+        // ★★★★★ R1918 — what the marks on this frame say about themselves, in
+        // two populations: the chrome around every page, and the page this host
+        // paints at the destination it is at. Plus the rectangle that page
+        // occupies, which is what lets a reader tell the two apart on the FRAME
+        // rather than on this host's word.
+        SchemaField::new("described", "json"),
         // ★★★★★ R1767 — the same population, judged over the WALK a reader is
         // taking rather than over the frame in front of them.
         //
@@ -5507,6 +5513,17 @@ impl ExternalIntrospect for ShellOracle {
                 // prefixes would be inferring a rule nobody wrote down.
                 state.screens.wire(&state.journey.get()),
             )),
+            // ★★★★★ R1918 — **what the marks on this frame say about
+            // themselves**, split into the two populations that are two
+            // different claims: the chrome around every page, and the page this
+            // host paints at the destination it is at.
+            //
+            // Published rather than left to a gate to re-derive, because a gate
+            // that spelled the register a second time would be comparing this
+            // screen against a copy of itself. The region tag travels with it so
+            // a reader knows which mark on the frame to look at, which is the
+            // one thing a client cannot guess.
+            "described" => Ok(IntrospectValue::Json(described_wire(state))),
             "sections" => Ok(IntrospectValue::Json(sections_json(state))),
             "journey" => Ok(IntrospectValue::Json(journey_json(state))),
             "options" => Ok(IntrospectValue::Json(options_json(state))),
@@ -12852,7 +12869,7 @@ const TOAST_DOT: u32 = 8;
 /// Empty when nothing is being rested on, which is what makes the frame CHANGE
 /// under a resting cursor — the canon surface the census calls
 /// `affordance.hover`, whose probe compares two painted frames.
-fn shell_tip_scene(state: &ShellState, palette: Palette) -> Scene {
+fn shell_tip_scene(state: &Rc<ShellState>, palette: Palette) -> Scene {
     let Some((tag, sentence)) =
         shell_description_shown(state, pinion_core::focus_state::focused().as_deref())
     else {
@@ -12863,27 +12880,25 @@ fn shell_tip_scene(state: &ShellState, palette: Palette) -> Scene {
     else {
         return Scene::Container(ContainerNode::new(Vec::new()));
     };
-    let face = STATUS_FACE;
-    let pad = 6;
-    // ★ WHERE it goes is the substrate's, so this screen and the node lab
-    // cannot place their descriptions differently.
-    let (x, y, w, h) = pinion_core::describe::beside(
-        (anchor.x, anchor.y, anchor.w, anchor.h),
-        (0, 0, win_w(), win_h()),
-        &sentence,
-        face,
-    );
+    // ★★★★★ R1918 — WHERE it goes and WHAT IT LOOKS LIKE are both the
+    // substrate's. What stays here is the palette a description has to sit
+    // legibly on, and the window it is clamped inside.
     Scene::Container(
-        ContainerNode::new(vec![Scene::Container(
-            ContainerNode::new(vec![label(
-                &sentence,
-                Rect::new(pad, pad / 2, w.saturating_sub(pad * 2), h),
-                face,
-                palette.ink,
-            )])
-            .with_tag(SHELL_TIP)
-            .with_style(BoxStyle::filled(palette.raised))
-            .with_layout(absolute(Rect::new(x, y, w, h))),
+        ContainerNode::new(vec![pinion_widget_paint::described::view_description(
+            SHELL_TIP,
+            &sentence,
+            anchor,
+            Rect::new(0, 0, win_w(), win_h()),
+            (0, 0),
+            pinion_widget_paint::described::DescriptionStyle {
+                face: STATUS_FACE,
+                ..pinion_widget_paint::described::DescriptionStyle::COMPACT
+            },
+            pinion_widget_paint::described::DescriptionInk {
+                surface: palette.raised,
+                outline: None,
+                ink: palette.ink,
+            },
         )])
         .with_layout(absolute(Rect::new(0, 0, win_w(), win_h()))),
     )
@@ -13503,24 +13518,10 @@ impl WidgetA11y for AnalyzerShellView {
         {
             return target;
         }
-        let cursor = state
-            .cursor_of(stop)
-            // ★★★★★ R1699 — the INNERMOST tag, not the member at this level.
-            // ARIA's `aria-activedescendant` addresses any descendant of the
-            // element owning the Tab stop, and the framework's focus ring reads
-            // this same hook, so a cursor that has gone into the tab list frames
-            // the tab rather than the list.
-            .and_then(|roving| roving.active_descendant().map(str::to_owned))
-            // The board's cursor is its selection: it is spatial rather than a
-            // linear roster, so it declares no `Roving` and reports the card it
-            // is on. It has had that cursor since R1662 and published it to
-            // nobody.
-            .or_else(|| {
-                (stop == "shell.canvas")
-                    .then(|| state.selected.get().map(|id| format!("card.{id}")))
-                    .flatten()
-            });
-        Some(AccessFocus::addressing(stop, cursor))
+        Some(AccessFocus::addressing(
+            stop,
+            active_descendant(&state, stop),
+        ))
     }
 
     /// ★★★★★ R1694 — **the screen a reader can walk, locked seats included.**
@@ -13679,19 +13680,13 @@ impl WidgetA11y for AnalyzerShellView {
         // `pinion_core::describe`, and the one that closes the canon's bare
         // hover: this shell's own chrome carries icons with no room to print
         // what they do, which is the reason the canon puts a `title` on them.
+        //
+        // ★★★★★ R1918 — the four steps are the substrate's now, shared with the
+        // five other screens of this application that draw one.
         if let Some((tag, sentence)) = shell_description_shown(&state, focused) {
-            let anchor = nodes.iter().position(|n| n.tag == tag);
-            let control = match anchor {
-                Some(at) => nodes.remove(at),
-                None => AccessNode::new(tag, AriaRole::Button),
-            };
-            nodes.extend(pinion_a11y::describedby_region(
-                control,
-                SHELL_TIP,
-                AriaRole::Tooltip,
-                Some(sentence),
-                true,
-            ));
+            pinion_widget_paint::described::announce_description(
+                &mut nodes, &tag, SHELL_TIP, &sentence,
+            );
         }
         nodes
     }
@@ -13700,28 +13695,141 @@ impl WidgetA11y for AnalyzerShellView {
 /// The tag the shell's description region is painted and announced under.
 const SHELL_TIP: &str = "shell.tip";
 
-/// ★★★★★ R1916 — the sentences this shell's own chrome carries, by paint tag.
+/// ★★★★★ R1918 — the sentences this shell's CHROME carries, by paint tag.
 ///
-/// The canon puts a `title` on twenty-five controls and its rule for WHICH is
-/// the one followed here: **the ones with no room to print what they do**. A
-/// card's move grip is an icon; the widen and shrink seats are icons; the
-/// palette's collapse control is an icon with a `title` in the canon's own
-/// markup. Their names are already announced — what was missing is the sentence
-/// a sighted reader gets by resting, which is the surface the census counts.
-fn shell_descriptions(state: &ShellState) -> pinion_core::describe::Descriptions {
+/// Chrome is what the host paints at **every** destination, so what is
+/// described here is described everywhere — which is exactly why it is a
+/// separate register from [`page_descriptions`]. A gate asking *does this page
+/// say anything about its own marks* must not be satisfied by a mark that
+/// belongs to the frame around the page, and the only way to keep that honest
+/// is for the two populations to be two values rather than one filtered later.
+///
+/// ★ The canon's own choice, measured this round out of its markup: nine of its
+/// twenty-five `title` attributes are chrome — its eight rail seats and its
+/// appearance toggle — and the rest are spread over its pages. It titles
+/// **every** rail seat, which is what an icon rail with no text is: eight marks
+/// with no room to print what they do.
+///
+/// ⚠ Only the rail is here, and that is not a shortfall: this build has no
+/// appearance toggle in its application bar. Its theme control is a segment on
+/// the settings PAGE, so it is described by [`page_descriptions`] — the canon's
+/// ninth chrome title is a page mark here because this build put the control
+/// somewhere else.
+///
+/// The sentence is derived from the seat's own declaration rather than authored
+/// per seat, so a seat added to [`spec::RAIL`] arrives described.
+fn chrome_descriptions() -> pinion_core::describe::Descriptions {
     let mut described = pinion_core::describe::Descriptions::new();
-    for card in state.placed() {
-        let id = card.id();
-        let title = card.title();
-        described.describe(
-            format!("card.{id}.grip"),
-            format!("Drag to move {title} to another place on the board"),
-        );
-        described.describe(
-            format!("card.{id}.widen"),
-            format!("Give {title} more of the board's width"),
-        );
+    for seat in spec::RAIL {
+        let sentence = match seat.reserved_for() {
+            // ★ The reserved seats already SAY their requirement — the rail
+            // announces it and the refusal repeats it. What they could not do
+            // is say it to a reader who is only looking, which is the debt this
+            // register closes on this axis.
+            Some(why) => format!("{} is not in this release - booked under {why}", seat.title),
+            None => format!("Go to {}", seat.title),
+        };
+        described.describe(format!("shell.rail.{}", seat.key), sentence);
     }
+    described
+}
+
+/// ★★★★★ R1918 — the sentences the page THIS HOST PAINTS at `at` carries.
+///
+/// Empty at a destination whose page is a mounted screen: that screen keeps its
+/// own register and publishes it on its own surface. A host that answered for a
+/// page it does not paint would be answering for a register it cannot see.
+///
+/// ★★ R1916 built the first of these (the board's card chrome) and this round
+/// added the settings page's, which is the other page this host paints itself.
+/// The rule for WHICH marks is the canon's: the ones with no room to print what
+/// they do. Every switch row on the settings page prints its own gist under it
+/// and is deliberately **not** here; the locked rows' buttons say `Import…` and
+/// nothing about why they refuse, and the appearance segment's two words say
+/// nothing at all.
+fn page_descriptions(state: &ShellState, at: &str) -> pinion_core::describe::Descriptions {
+    let mut described = pinion_core::describe::Descriptions::new();
+    match at {
+        "dashboard" => {
+            for card in state.placed() {
+                let id = card.id();
+                let title = card.title();
+                described.describe(
+                    format!("card.{id}.grip"),
+                    format!("Drag to move {title} to another place on the board"),
+                );
+                described.describe(
+                    format!("card.{id}.widen"),
+                    format!("Give {title} more of the board's width"),
+                );
+            }
+        }
+        "settings" => {
+            for row in spec::KEY_ROWS {
+                described.describe(
+                    format!("shell.settings.key.{}", row.key),
+                    format!(
+                        "{} is not in this release - booked under {}",
+                        row.verb.trim_end_matches('\u{2026}').trim(),
+                        row.reserved_for
+                    ),
+                );
+            }
+            for (n, name) in spec::THEMES.iter().enumerate() {
+                described.describe(
+                    format!("shell.settings.theme.{n}"),
+                    format!("Set the whole application to the {name} appearance"),
+                );
+            }
+        }
+        _ => {}
+    }
+    described
+}
+
+/// ★★★★★ R1918 — the two registers as data, with the mark they are drawn and
+/// announced under.
+///
+/// `chrome` and `page` are separate keys and not one map, because the claim
+/// *this page says something about its own marks* is the one the debt closed
+/// here is about, and a joined map cannot be asked it.
+fn described_wire(state: &ShellState) -> serde_json::Value {
+    let rows = |described: &pinion_core::describe::Descriptions| {
+        described
+            .tags()
+            .map(|tag| {
+                serde_json::json!({
+                    "tag": tag,
+                    "sentence": described.of(tag).unwrap_or_default(),
+                })
+            })
+            .collect::<Vec<_>>()
+    };
+    let at = state.at();
+    let page = page_rect(&at);
+    serde_json::json!({
+        "region": SHELL_TIP,
+        "at": at,
+        // ★★★★★ R1918 — **the rectangle the page occupies at this
+        // destination**, published beside the two registers because it is what
+        // tells the two apart on the FRAME rather than on this host's word. A
+        // reader can now check that a page's described marks are inside its own
+        // region, which is the difference between *this page says something*
+        // and *something on this window does*.
+        "page_at": [page.x, page.y, page.w, page.h],
+        "chrome": rows(&chrome_descriptions()),
+        "page": rows(&page_descriptions(state, &at)),
+    })
+}
+
+/// Both registers as one, which is what the drawn surface reads.
+///
+/// The surface does not care which population a sentence came from — a reader
+/// resting on a rail seat and a reader resting on a card grip are shown one
+/// thing the same way. The split exists for the gate, not for the drawing.
+fn shell_descriptions(state: &ShellState) -> pinion_core::describe::Descriptions {
+    let mut described = chrome_descriptions();
+    described.merge(&page_descriptions(state, &state.at()));
     described
 }
 
@@ -13732,7 +13840,10 @@ fn shell_descriptions(state: &ShellState) -> pinion_core::describe::Descriptions
 /// substrate where the reader's attention is and is handed back what to show.
 /// Neither screen carries `hovered == tag`, which is what the debt this closes
 /// named as the thing to avoid.
-fn shell_description_shown(state: &ShellState, focused: Option<&str>) -> Option<(String, String)> {
+fn shell_description_shown(
+    state: &Rc<ShellState>,
+    focused: Option<&str>,
+) -> Option<(String, String)> {
     let described = shell_descriptions(state);
     let cursor = state.cursor.get();
     // ★ `hit_word` is the shell's OWN tag for what the pointer is over — the
@@ -13742,9 +13853,15 @@ fn shell_description_shown(state: &ShellState, focused: Option<&str>) -> Option<
         .pointer_inside
         .get()
         .then(|| hit_word(&Hit::at(state, cursor.0, cursor.1)));
+    // ★★★★★ R1918 — the keyboard reader's attention is the INNERMOST thing
+    // inside the Tab stop, and this is the same derivation the accessibility
+    // tree frames with. Passing the raw stop answered nothing for every
+    // described mark on this screen, because none of them IS a stop — a rail
+    // seat, a card grip and a settings row all live inside one.
+    let attention = focused.and_then(|stop| active_descendant(state, stop));
     let shown = described.shown(&pinion_core::describe::Resting {
         hovered: hovered.as_deref(),
-        focused,
+        focused: attention.as_deref().or(focused),
         dismissed: false,
     })?;
     Some((shown.tag.to_owned(), shown.sentence.to_owned()))
@@ -13833,6 +13950,41 @@ fn app_bar_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
 /// the arrows reach and what the arrows actually reach are the same object
 /// rather than two lists that agree today. A stop the ring declares with no
 /// cursor (the board, whose cursor is spatial) passes through unchanged.
+/// ★★★★★ R1918 — **where a keyboard reader's attention actually is**, inside
+/// the Tab stop that holds it.
+///
+/// Lifted out of `AnalyzerShellView::access_focus_target` because R1918 needed a
+/// SECOND reader of it and the two must not disagree: the accessibility tree
+/// frames the innermost thing, and a description has to be about the same
+/// thing. Measured this round on the running shell — a keyboard reader on the
+/// rail is focused on `shell.rail`, and every mark this application describes
+/// there is a `shell.rail.<seat>` INSIDE it, so a description keyed on the raw
+/// focus answered nothing for a keyboard reader on any page. The walk found it:
+/// `focus/set` on a described mark was refused `tag_not_focusable`, which is
+/// the honest report that a described mark is not itself a stop.
+///
+/// ⚠ A stop with no interior answers `None` and the caller falls back to the
+/// stop itself, which is right: for a plain control the stop IS the thing.
+fn active_descendant(state: &Rc<ShellState>, stop: &str) -> Option<String> {
+    state
+        .cursor_of(stop)
+        // ★★★★★ R1699 — the INNERMOST tag, not the member at this level.
+        // ARIA's `aria-activedescendant` addresses any descendant of the
+        // element owning the Tab stop, and the framework's focus ring reads
+        // this same hook, so a cursor that has gone into the tab list frames
+        // the tab rather than the list.
+        .and_then(|roving| roving.active_descendant().map(str::to_owned))
+        // The board's cursor is its selection: it is spatial rather than a
+        // linear roster, so it declares no `Roving` and reports the card it
+        // is on. It has had that cursor since R1662 and published it to
+        // nobody.
+        .or_else(|| {
+            (stop == "shell.canvas")
+                .then(|| state.selected.get().map(|id| format!("card.{id}")))
+                .flatten()
+        })
+}
+
 fn with_cursor_declared(node: AccessNode, state: &Rc<ShellState>) -> AccessNode {
     match state.cursor_of(&node.tag) {
         Some(roving) => node.with_navigation(&roving),
