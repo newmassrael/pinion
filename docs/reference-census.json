@@ -487,10 +487,10 @@
       "verdict": "instance"
     },
     "find_node": {
-      "covered_by": "a search across the tree AND the path to the hit",
+      "covered_by": "Document::find(from, needle) — a search across the WHOLE document from a tree, matching case-insensitively over Node::display_name so a node nobody named is findable by the word a reader has for it, with Matched saying which of the two answered. Past both references: Found::at RETURNS the way in as this crate's OWN editing position — depth() how far away the hit is, entries() each group descended together with the tree it was descended from, breadcrumb() the whole way in by name — where both references only perform the descent and publish nothing about it, so a caller there cannot ask how far away a hit is, show a reader where they are about to be taken, or hand the way in straight to an editor. Breadth-first, so the shallowest hits come first. R1919",
       "mechanism": "cpp",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::dcc_find_node",
+      "verdict": "have"
     },
     "foreach_geometry_element_zone_generation_item_add": {
       "covered_by": "one instantiation of the DCC's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
@@ -1635,10 +1635,10 @@
       "verdict": "app-content"
     },
     "BehaviorTree::SearchBT": {
-      "covered_by": "finding a node by name inside this graph",
+      "covered_by": "Document::find(from, needle) — a search across the WHOLE document from a tree, matching case-insensitively over Node::display_name so a node nobody named is findable by the word a reader has for it, with Matched saying which of the two answered. Past both references: Found::at RETURNS the way in as this crate's OWN editing position — depth() how far away the hit is, entries() each group descended together with the tree it was descended from, breadcrumb() the whole way in by name — where both references only perform the descent and publish nothing about it, so a caller there cannot ask how far away a hit is, show a reader where they are about to be taken, or hand the way in straight to an editor. Breadth-first, so the shallowest hits come first. R1919",
       "mechanism": "BehaviorTree",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::dcc_find_node",
+      "verdict": "have"
     },
     "BehaviorTreeBlackboard::DeleteEntry": {
       "covered_by": "a behaviour tree blackboard's own entries",
@@ -1935,10 +1935,10 @@
       "verdict": "app-content"
     },
     "GraphEditor::FindReferences": {
-      "covered_by": "a search across the tree and the path to the hit — the DCC's find_node",
+      "covered_by": "Document::find(from, needle) — a search across the WHOLE document from a tree, matching case-insensitively over Node::display_name so a node nobody named is findable by the word a reader has for it, with Matched saying which of the two answered. Past both references: Found::at RETURNS the way in as this crate's OWN editing position — depth() how far away the hit is, entries() each group descended together with the tree it was descended from, breadcrumb() the whole way in by name — where both references only perform the descent and publish nothing about it, so a caller there cannot ask how far away a hit is, show a reader where they are about to be taken, or hand the way in straight to an editor. Breadth-first, so the shallowest hits come first. R1919",
       "mechanism": "GraphEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::dcc_find_node",
+      "verdict": "have"
     },
     "GraphEditor::FindReferencesByClassMemberGlobal": {
       "covered_by": "a reading of FindReferences scoped to the engine's own symbol kinds",
@@ -2361,10 +2361,10 @@
       "verdict": "app-content"
     },
     "MaterialEditor::FindInMaterial": {
-      "covered_by": "finding a node by name inside this graph",
+      "covered_by": "Document::find(from, needle) — a search across the WHOLE document from a tree, matching case-insensitively over Node::display_name so a node nobody named is findable by the word a reader has for it, with Matched saying which of the two answered. Past both references: Found::at RETURNS the way in as this crate's OWN editing position — depth() how far away the hit is, entries() each group descended together with the tree it was descended from, breadcrumb() the whole way in by name — where both references only perform the descent and publish nothing about it, so a caller there cannot ask how far away a hit is, show a reader where they are about to be taken, or hand the way in straight to an editor. Breadth-first, so the shallowest hits come first. R1919",
       "mechanism": "MaterialEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::dcc_find_node",
+      "verdict": "have"
     },
     "MaterialEditor::FixupMismatchedSamplers": {
       "covered_by": "material sampler types",
@@ -2595,10 +2595,10 @@
       "verdict": "app-content"
     },
     "SoundClassGraph::FindInSoundClassGraph": {
-      "covered_by": "finding a node by name inside this graph",
+      "covered_by": "Document::find(from, needle) — a search across the WHOLE document from a tree, matching case-insensitively over Node::display_name so a node nobody named is findable by the word a reader has for it, with Matched saying which of the two answered. Past both references: Found::at RETURNS the way in as this crate's OWN editing position — depth() how far away the hit is, entries() each group descended together with the tree it was descended from, breadcrumb() the whole way in by name — where both references only perform the descent and publish nothing about it, so a caller there cannot ask how far away a hit is, show a reader where they are about to be taken, or hand the way in straight to an editor. Breadth-first, so the shallowest hits come first. R1919",
       "mechanism": "SoundClassGraph",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::dcc_find_node",
+      "verdict": "have"
     },
     "SoundClassGraph::ToggleMute": {
       "covered_by": "the audio debugger's mute on a sound class",
@@ -3957,10 +3957,10 @@
       "verdict": "app-content"
     },
     "script_editor::FindInBlueprint": {
-      "covered_by": "finding a node by name inside this graph — the DCC's `find_node` is the same gap, and neither reference's is covered",
+      "covered_by": "Document::find(from, needle) — a search across the WHOLE document from a tree, matching case-insensitively over Node::display_name so a node nobody named is findable by the word a reader has for it, with Matched saying which of the two answered. Past both references: Found::at RETURNS the way in as this crate's OWN editing position — depth() how far away the hit is, entries() each group descended together with the tree it was descended from, breadcrumb() the whole way in by name — where both references only perform the descent and publish nothing about it, so a caller there cannot ask how far away a hit is, show a reader where they are about to be taken, or hand the way in straight to an editor. Breadth-first, so the shallowest hits come first. R1919",
       "mechanism": "script-editor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::dcc_find_node",
+      "verdict": "have"
     },
     "script_editor::FindInBlueprints": {
       "covered_by": "a search across every visual script ASSET — an asset-registry question",

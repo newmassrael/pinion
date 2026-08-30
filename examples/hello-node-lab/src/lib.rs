@@ -102,7 +102,7 @@ use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::widgets::wheel::WheelDirection;
 use pinion_core::{CellKind, Frame, Modifiers, Scene, WidgetCore, edit_field_keymap};
 use pinion_node_graph::{
-    Camera, Document, Extent, Fit, Item, LinkId, LinkLayer, Margin, Node, NodeBody, NodeId,
+    Camera, Document, Extent, Fit, Found, Item, LinkId, LinkLayer, Margin, Node, NodeBody, NodeId,
     PortPath, PortRef, ROOT, Relinked, Side, Socket, Violation, ZoomRange,
 };
 use pinion_platform_storage::AppStorage;
@@ -1519,6 +1519,14 @@ struct LabState {
     stacking: RefCell<Vec<NodeId>>,
     selection: Signal<Selection<NodeId>>,
     selected_link: Signal<Option<LinkPick>>,
+    /// ★★★★★ R1919 — **what a reader is looking for**, and nothing more.
+    ///
+    /// The HITS are not kept beside it: they are derived from this and the
+    /// document on every read (`found`), so a search cannot go stale against a
+    /// node that was renamed, added or deleted after it ran. Both references
+    /// keep a result list and both have to invalidate it; a search that is a
+    /// function of the document has nothing to invalidate.
+    searching: Signal<String>,
     zoom: Signal<u32>,
     pan: Signal<(i32, i32)>,
     running: Signal<bool>,
@@ -1943,6 +1951,7 @@ impl LabState {
             stacking: RefCell::new(Vec::new()),
             selection: Signal::new(selection),
             selected_link: Signal::new(selected_link),
+            searching: Signal::new(String::new()),
             zoom: Signal::new(spec::OPENING_ZOOM),
             pan: Signal::new((0, 0)),
             running: Signal::new(false),
@@ -8543,6 +8552,21 @@ fn canvas_wires(state: &LabState, ink: Ink) -> Vec<Scene> {
     children
 }
 
+/// ★★★★★ R1919 — **what this screen's search is showing right now.**
+///
+/// Derived from `searching` and the document on every call rather than stored
+/// beside them, so a hit cannot outlive the node it names. That is the property
+/// the census rows this closes could not have: both references keep a result
+/// list built when the query ran, and both then have to invalidate it.
+fn found(state: &LabState) -> Vec<Found> {
+    state.doc.borrow().find(ROOT, &state.searching.get())
+}
+
+/// The nodes the search is currently showing, as a set the painter can ask.
+fn found_nodes(state: &LabState) -> Vec<NodeId> {
+    found(state).into_iter().map(|hit| hit.node).collect()
+}
+
 /// One card per node: its identity band, its digest rows, and its pins.
 ///
 /// ★ R1656 — the card's parts are its CHILDREN, not its siblings.
@@ -8563,6 +8587,12 @@ fn canvas_wires(state: &LabState, ink: Ink) -> Vec<Scene> {
 fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
     let mut children: Vec<Scene> = Vec::new();
     let selection = state.selection.get();
+    // ★ R1919 — the search's hits are a THIRD axis over a card, beside the two
+    // the selection already has. A hit is not a selection: a search can show
+    // six cards at once and the inspector still follows one, so folding them
+    // together would make "found" mean "selected" and lose whichever a reader
+    // asked for last.
+    let hits = found_nodes(state);
     for node in state.cards() {
         let Some(shape) = card_shape(state, node) else {
             continue;
@@ -8620,6 +8650,20 @@ fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
                 ink.text_2,
             ));
         }
+        // ★★★★★ R1919 — a search hit is drawn WIDER, and the edge COLOUR stays
+        // the selection axis's. Two channels of one edge, one per axis, because
+        // a card can be *found and selected*, *found and not*, *selected and
+        // not found*, or neither, and a reader has to be able to tell which.
+        //
+        // ⚠ The first draft of this round wrote that sentence and then gave a
+        // hit `accent_line` — the colour `in_selection` already owns — so
+        // "found" and "selected" were THE SAME EDGE on the frame and the very
+        // collapse this comment argues against had already happened. The walk
+        // caught it only because it was taught to read the edge at all: it had
+        // been comparing rectangles, and a border is not a rectangle. So the
+        // orthogonality is now ASSERTED rather than described — see
+        // `r1919_a_name_is_looked_for_across_the_document.py` (C) and (H).
+        let found_here = hits.contains(&node);
         let mut style = BoxStyle::filled(ink.surface).with_corner_radius(9);
         let edge = if chosen {
             ink.accent
@@ -8628,7 +8672,7 @@ fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
         } else {
             ink.outline_2
         };
-        style = style.with_border(Border::new(edge, 1));
+        style = style.with_border(Border::new(edge, if found_here { 3 } else { 1 }));
         children.push(Scene::Container(
             ContainerNode::new(parts)
                 .with_tag(format!("lab.node.{name}"))
@@ -10217,6 +10261,10 @@ const FIELDS: &[SchemaField] = &{
         // was the only one, a reader could only find out by hovering, and a
         // gate asking "does this page describe anything" had nothing to read.
         SchemaField::new("described", "json"),
+        // ★★★★★ R1919 — what a reader is looking for, and every node that
+        // answers with the way IN to it. The census's six search rows.
+        SchemaField::new("searching", "string"),
+        SchemaField::new("found", "json"),
         // ★★★★★ R1742 — how much of the inspector specification this build is
         // showing, published beside the specification itself. `json` rather
         // than the `string` its neighbours use because it is the framework's
@@ -10514,6 +10562,19 @@ const FIELDS: &[SchemaField] = &{
         ),
         SchemaField::action("collapse", "string"),
         SchemaField::action("disable", "string"),
+        // ★★★★★ R1919 — look for a name across the document. Declared with an
+        // OPEN argument, which is the honest shape here and worth saying why:
+        // every other action on this screen names a closed vocabulary because
+        // its argument addresses something that exists, and a needle addresses
+        // nothing — it is what a reader typed. A `one_of` here would be a
+        // roster of the graph as it is now, which is exactly what a search is
+        // for finding out.
+        SchemaField::action_with(
+            "find",
+            "string",
+            ArgForm::Scalar,
+            const { &[SchemaArg::open("needle", "string")] },
+        ),
         // ★★★★★ R1912 — put a card's pins away, or bring them back. The scope
         // vocabulary is CLOSED and built from `PIN_SCOPES` rather than spelled
         // here, so the words an agent is offered cannot drift from the ones the
@@ -10676,6 +10737,9 @@ impl ExternalIntrospect for LabOracle {
             "spec" => text(spec_json().to_string()),
             // ★★★★★ R1918 — what the marks on this frame say about themselves.
             "described" => Ok(IntrospectValue::Json(described_wire(state))),
+            // ★★★★★ R1919 — what a reader is looking for, and what answers.
+            "searching" => text(state.searching.get()),
+            "found" => Ok(IntrospectValue::Json(found_wire(state))),
             // ★ R1742 — the SAME value the host publishes for this section, so
             // "one build, two placements" is a fact a client can check rather
             // than a claim this file makes.
@@ -11431,6 +11495,19 @@ impl ExternalIntrospect for LabOracle {
             // ★★★★★ R1912 — `<card>,<scope>`, the two-part shape `place` and
             // `detach_home` already use on this screen. The scope words are the
             // references' own; see `put_away_pins`.
+            // ★★★★★ R1919 — **look for a name.** The verb sets what is being
+            // looked for and nothing else; the hits are a derivation of that
+            // and the document, so there is no result to invalidate when the
+            // graph changes underneath. Answers the COUNT, because "how many
+            // answer to this" is what a caller decides with — an empty needle
+            // clears the search and answers 0.
+            "find" => {
+                let needle = Self::text(&args)?;
+                state.searching.set(needle.trim().to_owned());
+                Ok(IntrospectValue::Int(
+                    i64::try_from(found(&state).len()).unwrap_or(i64::MAX),
+                ))
+            }
             "put_away_pins" => {
                 let raw = Self::text(&args)?;
                 let (name, which) = raw.split_once(',').ok_or_else(|| {
@@ -15974,6 +16051,35 @@ fn pin_descriptions(state: &LabState) -> Descriptions {
         }
     }
     described
+}
+
+/// ★★★★★ R1919 — the search's hits as data, each saying **where it is**.
+///
+/// `through` and `depth` are the halves neither reference publishes: both
+/// descend to the hit and select it, and a caller there cannot ask how far away
+/// it is before going. `because` keeps the two kinds of hit apart — a node a
+/// person named, and one matched by the word its kind describes itself with.
+fn found_wire(state: &Rc<LabState>) -> serde_json::Value {
+    let doc = state.doc.borrow();
+    serde_json::json!({
+        "needle": state.searching.get(),
+        "hits": found(state)
+            .into_iter()
+            .map(|hit| {
+                serde_json::json!({
+                    "node": state.name_of(hit.node),
+                    "shown": hit.shown,
+                    "because": hit.because.wire_word(),
+                    "depth": hit.at.depth(),
+                    // ★ The way IN, by the names a reader sees — and it is the
+                    // EditPath's OWN breadcrumb rather than a second walk over
+                    // the same path, so what an agent is told and what an
+                    // editor would show cannot be two different routes.
+                    "through": hit.at.breadcrumb(&doc),
+                })
+            })
+            .collect::<Vec<_>>(),
+    })
 }
 
 /// ★★★★★ R1918 — the register as data, with the mark it is drawn under.

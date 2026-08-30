@@ -754,6 +754,24 @@ impl EditPath {
         }
     }
 
+    /// ★ R1919 — a path whose FLOOR is `tree` rather than the document root.
+    ///
+    /// [`root`](Self::root) is this with `ROOT`, and is kept as its own name
+    /// because it is what a view opens at. This one exists because a search
+    /// answers *how far from where you asked*, not *how far from the root*:
+    /// `Document::find(from, …)` starts here, so a hit's
+    /// [`depth`](Self::depth) is measured from the caller's own footing.
+    ///
+    /// ⚠ `exit` from such a path stops at `tree`, which is the honest reading:
+    /// a path that never descended below its floor has nothing above it that
+    /// it knows about.
+    #[must_use]
+    pub fn at(tree: TreeId) -> Self {
+        Self {
+            entries: vec![PathEntry { tree, via: None }],
+        }
+    }
+
     /// The tree being edited.
     ///
     /// Never empty: the root entry cannot be popped, which is why this returns a

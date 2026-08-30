@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::appearance::Appearance;
+use crate::group::EditPath;
 use crate::items::{Items, Variadic, resolve};
 use crate::split::Composition;
 use std::collections::{BTreeMap, BTreeSet};
@@ -1407,6 +1408,70 @@ mod port_values {
     }
 }
 
+/// ★★★★★ R1919 — a node a search reached, and the way in to it.
+///
+/// Separate from a bare [`NodeId`] because an id alone is not an answer to
+/// *where is it*: this crate's ids are unique **within a tree**, so a search
+/// that crosses trees must say which tree, and a reader who has to go there
+/// must be told what to open. See [`Document::find`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Found {
+    /// The node that matched, in the tree [`at`](Self::at) has reached.
+    pub node: NodeId,
+    /// ★★★★★ **Where it is** — the way in, as this crate's own editing
+    /// position.
+    ///
+    /// An [`EditPath`] rather than a list of ids, and that is the decision
+    /// worth the paragraph. It already answers everything a reader of this
+    /// needs: `current()` is the tree the hit lives in, `depth()` is how far
+    /// away it is, `entries()` is each group descended together with the tree
+    /// it was descended FROM, and `breadcrumb(document)` is the whole way in
+    /// by name. Nothing here re-derives any of that.
+    ///
+    /// And a caller can hand it **straight to its editor**: the move both
+    /// references perform, and neither publishes, is a VALUE here.
+    ///
+    /// ⚠ Two earlier drafts of this round invented a type for it — first a
+    /// bare `Vec<NodeId>`, which is not an address at all because an id is
+    /// unique only within its tree, then a pair carrying that tree — and the
+    /// compiler refused both names in turn (`Step` is already one step of a
+    /// RUN, `Descent` one level of an EVALUATION). The collisions were the
+    /// tell rather than an annoyance: this crate's word for *where in the
+    /// nesting you are* already existed, and the third draft stopped inventing.
+    pub at: EditPath,
+    /// Which name matched — see [`Matched`].
+    pub because: Matched,
+    /// The name that matched, as a reader sees it. Carried so a result list can
+    /// be shown without re-resolving each hit against the document.
+    pub shown: String,
+}
+
+/// ★ R1919 — why a node answered a search.
+///
+/// Named rather than left implicit because the two are different facts about
+/// the graph: a node matched by its **authored label** was called that by a
+/// person, and one matched by its **kind's own word** was not called anything.
+/// A reader shown one list of hits cannot tell them apart otherwise, and the
+/// second kind is the majority of any real graph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Matched {
+    /// The name a person authored on this node.
+    Label,
+    /// The word the node's body describes itself by.
+    Kind,
+}
+
+impl Matched {
+    /// The word this reason is published under.
+    #[must_use]
+    pub const fn wire_word(self) -> &'static str {
+        match self {
+            Self::Label => "label",
+            Self::Kind => "kind",
+        }
+    }
+}
+
 impl<K: NodeKind> Node<K> {
     /// What has been authored on `port` of this node, if anything.
     #[must_use]
@@ -2054,6 +2119,111 @@ impl<K: NodeKind> Document<K> {
             [only] => Some(*only),
             _ => None,
         }
+    }
+
+    /// ★★★★★ R1919 — **every node under `from` whose name holds
+    /// `needle`, and the way in to each one.**
+    ///
+    /// [`nodes_labelled`](Self::nodes_labelled) answers an exact name in ONE
+    /// tree. This is the other question, and it is the one both references
+    /// have and this crate did not: *where is the thing called that, anywhere
+    /// in this document, and what do I have to open to get to it.* The
+    /// reference census names it in six rows across two projects — the DCC's
+    /// `find_node` and the engine's five per-editor finds — and its own
+    /// `covered_by` had recorded them as one mechanism before this round
+    /// reached for it.
+    ///
+    /// # ★★★★★ What is past both references: the way in is RETURNED
+    ///
+    /// Both references *perform* the descent — they open the group the hit is
+    /// in and select it — and neither *publishes* it. So a caller there cannot
+    /// ask **how far away** a hit is, or show a reader where they are about to
+    /// be taken, or open the same path twice. [`Found::at`] is that answer, and
+    /// it is this crate's OWN editing position rather than a list invented for
+    /// the occasion: [`depth`](EditPath::depth) is how far away the hit is,
+    /// [`entries`](EditPath::entries) is each group descended together with the
+    /// tree it was descended from, [`breadcrumb`](EditPath::breadcrumb) is the
+    /// whole way in by name, and the value goes **straight to an editor**.
+    ///
+    /// # Matching, stated rather than assumed
+    ///
+    /// Case-insensitive containment over [`Node::display_name`], which is the
+    /// name a reader SEES — an authored label when there is one and the body's
+    /// own word otherwise. Matching the authored label alone would make the
+    /// unnamed majority of a graph unfindable by the only word a reader has
+    /// for it, and [`Matched`] is what keeps the two answers apart in one list.
+    ///
+    /// An empty `needle` finds **nothing**. It contains-matches everything, so
+    /// the alternative is a "result" that is the whole document — which is not
+    /// an answer to a question nobody asked. Both references show nothing for
+    /// an empty query.
+    ///
+    /// # Order
+    ///
+    /// Breadth-first from `from`, so the shallowest hits come first: a reader
+    /// scanning a result list meets the nodes nearest to where they already are
+    /// before the ones several groups down.
+    ///
+    /// # Panics
+    ///
+    /// Never. A group whose definition is missing, or one that reaches itself,
+    /// ends that branch — a document is not required to be well-formed for a
+    /// search to answer.
+    #[must_use]
+    pub fn find(&self, from: TreeId, needle: &str) -> Vec<Found> {
+        if needle.is_empty() {
+            return Vec::new();
+        }
+        let needle = needle.to_lowercase();
+        let mut out = Vec::new();
+        // ★ `seen` is over TREES rather than nodes: a group definition reached
+        // twice is the same tree, and a document that reaches its own
+        // definition would otherwise descend for ever. Guarding here rather
+        // than asking the document to be acyclic is what makes the `# Panics`
+        // section above say `Never`.
+        let mut seen = vec![from];
+        // ⚠ The frontier carries the PATH, not the tree: `EditPath::current()`
+        // is the tree, so keeping both would be two facts free to disagree.
+        let mut frontier = vec![EditPath::at(from)];
+        while !frontier.is_empty() {
+            let mut next = Vec::new();
+            for at in frontier {
+                let tree = at.current();
+                let Some(host) = self.tree(tree) else {
+                    continue;
+                };
+                let mut nodes: Vec<_> = host.nodes.values().collect();
+                nodes.sort_by_key(|node| node.id);
+                for node in nodes {
+                    let shown = node.display_name();
+                    if shown.to_lowercase().contains(&needle) {
+                        out.push(Found {
+                            node: node.id,
+                            at: at.clone(),
+                            because: match node.label {
+                                Some(_) => Matched::Label,
+                                None => Matched::Kind,
+                            },
+                            shown,
+                        });
+                    }
+                    if let NodeBody::Group(inner) = node.body
+                        && !seen.contains(&inner)
+                    {
+                        seen.push(inner);
+                        let mut deeper = at.clone();
+                        // The descent is `EditPath`'s own, so a path this
+                        // search builds and one a reader walked by hand are
+                        // the same value built the same way.
+                        if deeper.enter(self, node.id).is_ok() {
+                            next.push(deeper);
+                        }
+                    }
+                }
+            }
+            frontier = next;
+        }
+        out
     }
 
     /// Give `node` an authored name, or take its authored name away with

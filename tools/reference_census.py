@@ -125,6 +125,7 @@ wants. `proven_by` names what runs.
     python3 tools/reference_census.py --emit       # a starter pin from the live trees
     python3 tools/reference_census.py --selftest   # the tool's own arithmetic
     python3 tools/reference_census.py --check-pin  # the committed judgement, tree-free
+    python3 tools/reference_census.py --owed       # what is left, by the pin's own reason
 
 The reference trees are GPL / EULA'd and live outside this repo, so they cannot
 be vendored and the census cannot be a `cargo test`. Absent trees **fail open**
@@ -141,7 +142,7 @@ import io
 import os
 import re
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 BLENDER = Path(os.environ.get("PINION_BLENDER_REF", Path.home() / "blender-ref"))
@@ -1007,7 +1008,8 @@ def report(census: Census, pin: dict, strict: bool) -> int:
         # 679 judged, 0 problems. Two readers of one census, one taught. The
         # same shape as R1612.3, in the tool that recorded it.
         pinned = pin.get(PUBLIC_TREE.get(tree, tree), {})
-        live = {public_id(tree, name): op for name, op in live.items()}
+        # ★★★★★ R1919 — the WHOLE operator, not just its key. See `public_view`.
+        live = public_view(tree, live)
         present = bool(live)
         print(f"\n=== {tree} ===")
         if not present:
@@ -1156,10 +1158,68 @@ PUBLIC_MECHANISM = {
 }
 
 
+def public_view(tree: str, live: dict[str, "Operator"]) -> dict[str, "Operator"]:
+    """★★★★★ R1919 — a live census **wholly** in the spelling the pin uses.
+
+    One function, because a half-translated census is what R1919 found: the
+    reporting path re-keyed the operators by [`public_id`] and left every
+    `Operator.mechanism` spelled the way the other project's headers spell it,
+    while [`emit`] — the function that WRITES the pin — mapped both. So the
+    pin's ids came from one translation and its mechanisms from another, and
+    `compare`, which is handed both, reported all 34 of them RECLASSIFIED
+    forever.
+
+    Returning a translated census rather than mapping inside `compare` keeps
+    `compare` pure over one vocabulary and makes *translated in one field and
+    not the other* unrepresentable — the shape R1891 recorded as stronger than
+    a rule saying the two must agree.
+    """
+    return {
+        public_id(tree, name): replace(
+            op, name=public_id(tree, op.name), mechanism=public_mechanism(op.mechanism)
+        )
+        for name, op in live.items()
+    }
+
+
+def public_mechanism(mechanism: str) -> str:
+    """The mechanism as the committed pin spells it."""
+    return PUBLIC_MECHANISM.get(mechanism, mechanism)
+
+
 def public_id(tree: str, name: str) -> str:
-    """The operator's id as the committed pin spells it."""
+    """The operator's id as the committed pin spells it.
+
+    ★★★★★ R1919 — **the owner mapping applies to BOTH trees.** It did not: the
+    `blender` arm stripped the operator prefix and returned, so a DCC name
+    carrying an owner (`bNodeType::poll`) never met [`PUBLIC_OWNER`] and stayed
+    spelled the way that project's own headers spell it.
+
+    Measured at R1919's open, over the live trees: **34 NEW and 34 GONE, and
+    they were the same 34 under two spellings** — every `bNodeType::` /
+    `bNodeSocketType::` / `bNodeTreeType::` name paired with exactly one
+    `node::` / `node_socket::` / `node_tree::` row of the pin, with no leftover
+    on either side. So the tool reported, every run, that a third of the DCC
+    census had appeared and the same third had vanished.
+
+    ⚠ The half that made it a defect rather than noise: **six of those rows
+    were ALSO reported ABSENT**, which is the tool saying two contradictory
+    things about one row — *the pin judges something the tree does not have*
+    and *the tree has something the pin says we lack*. And the campaign this
+    census closes is closed by `absent` reaching zero, so six rows nothing
+    could ever build were sitting in the number that has to reach it.
+
+    ⚠ Two spellings is also a PUBLISHABILITY defect, which is what
+    [`PUBLIC_OWNER`] exists for (R1612): the pin is a pushed artifact, and
+    `bNodeType` is the other project's internal struct name rather than the
+    neutral stem this repository publishes. The pin was right and this
+    function was wrong, which is why the repair is here and not in the pin.
+
+    This is R1614.1's class for the third time — two readers of one census and
+    only one taught — and its comment is eleven lines above the site.
+    """
     if tree == "blender":
-        return name.removeprefix("NODE_OT_")
+        name = name.removeprefix("NODE_OT_")
     if "::" in name:
         owner, member = name.split("::", 1)
         return f"{PUBLIC_OWNER.get(owner, owner)}::{member}"
@@ -1241,18 +1301,64 @@ def selftest() -> int:
     check(diff["new"] == ["NODE_OT_a"], "an operator the pin lacks is NEW")
     check(diff["gone"] == ["NODE_OT_z"], "an operator the tree lacks is GONE")
 
+    print("the public vocabulary reaches BOTH trees and BOTH fields (R1919)")
+    # ★★★★★ The population is the MAPPING TABLES themselves, so a row added to
+    # either one is demanded here without this block being edited — and there is
+    # nowhere to write an exemption. R1919 found the tables applied to one tree
+    # and one field: `public_id`'s blender arm returned before the owner map,
+    # and `compare` read `Operator.mechanism` raw while `emit` mapped it. The
+    # tool then reported 301 findings on every run — 34 NEW + 34 GONE on the DCC
+    # tree and 233 RECLASSIFIED on the engine one — and every one of them was
+    # this, not a reference that had moved.
+    for owner, stem in PUBLIC_OWNER.items():
+        for tree in PUBLIC_TREE:
+            check(
+                public_id(tree, f"{owner}::probe") == f"{stem}::probe",
+                f"`{owner}::` becomes `{stem}::` on the `{tree}` tree too",
+            )
+    for mechanism, public in PUBLIC_MECHANISM.items():
+        check(
+            public_mechanism(mechanism) == public,
+            f"the mechanism `{mechanism}` is published as `{public}`",
+        )
+    # ★ And the WHOLE operator travels, which is what `compare` is handed. A
+    # translation that moved the key and left the mechanism is exactly what ran
+    # for as long as this defect lasted, so the assertion is about both.
+    translated = public_view(
+        "blender", {"bNodeType::probe": Operator("bNodeType::probe", "bNodeType")}
+    )
+    check(list(translated) == ["node::probe"], "the key is translated")
+    check(
+        translated["node::probe"].mechanism == "node-type",
+        "★ and so is the mechanism — a half-translated census is unrepresentable",
+    )
+    check(
+        translated["node::probe"].name == "node::probe",
+        "and the operator's own name, so nothing carries the internal spelling",
+    )
+
     print("the report reads the pin under the PUBLIC names emit writes")
     # R1614.1 -- this runs `report` itself over a synthetic tree and pin,
     # because the round's FIRST version of this check asserted the PIN's shape
     # instead, and a counterfactual that restored the broken lookup passed it.
     # A test of the artifact is not a test of the reader.
     synthetic = Census(
-        blender={"NODE_OT_probe": Operator("NODE_OT_probe", "cpp")},
+        blender={
+            "NODE_OT_probe": Operator("NODE_OT_probe", "cpp"),
+            # ★★★★★ R1919 — an owner-carrying DCC name, which is the shape the
+            # round found untranslated. Without one this check asks about the
+            # engine tree only, and R1614.1's version did exactly that: it
+            # passed for 300 rounds while a third of the DCC census and every
+            # engine mechanism went through untranslated.
+            "bNodeType::probe": Operator("bNodeType::probe", "bNodeType"),
+        },
         unreal={"UEdGraphSchema::Probe": Operator("UEdGraphSchema::Probe", "UEdGraphSchema")},
     )
     synthetic_pin = {
         "dcc": {"probe": {"mechanism": "cpp", "verdict": "have",
-                          "proven_by": "pinion-core::probe"}},
+                          "proven_by": "pinion-core::probe"},
+                "node::probe": {"mechanism": "node-type", "verdict": "have",
+                                "proven_by": "pinion-core::probe"}},
         "engine": {"schema::Probe": {"mechanism": "graph-schema", "verdict": "have",
                                      "proven_by": "pinion-core::probe"}},
     }
@@ -1261,13 +1367,23 @@ def selftest() -> int:
         report(synthetic, synthetic_pin, strict=False)
     printed = buffer.getvalue()
     check(
-        "1/1 = 100%" in printed,
+        "2/2 = 100%" in printed and "1/1 = 100%" in printed,
         "★ report() finds the pin: a live id is mapped to its public spelling "
         "and the tree to its public name BEFORE the lookup",
     )
     check(
         "NEW (" not in printed,
         "and a judged operator is not reported as one the pin lacks",
+    )
+    check(
+        "GONE (" not in printed,
+        "nor is a pinned row reported as one the tree lacks",
+    )
+    check(
+        "RECLASSIFIED (" not in printed,
+        "★★★★★ nor is a judged operator reported as having changed mechanism — "
+        "the finding 267 of this tool's 301 were, and none of them was a "
+        "reference that had moved",
     )
 
     # R1614.1 -- the defect this closes: `report` looked the pin up under the
@@ -1338,6 +1454,51 @@ def selftest() -> int:
         "★ 69 instantiations of one behaviour are ONE row in the denominator — "
         "`instance` is `composition` in the other direction",
     )
+
+    print("what is OWED is a query over the pin, not a list anyone maintains (R1919)")
+    # ★★★★★ The population is the pin's own `absent` rows and the grouping key
+    # is its own `covered_by`, so this listing has nothing of its own to be
+    # stale about — which is the whole point. Three hand-written versions of
+    # this remainder were measured wrong before it became a query.
+    owed_pin = {
+        "dcc": {
+            "a": {"mechanism": "cpp", "verdict": "absent", "covered_by": "one gap"},
+            "b": {"mechanism": "cpp", "verdict": "absent", "covered_by": "one gap"},
+            "c": {"mechanism": "cpp", "verdict": "have", "covered_by": "built",
+                  "proven_by": "pinion-core::probe"},
+        },
+        "engine": {
+            "d": {"mechanism": "graph-node", "verdict": "absent",
+                  "covered_by": "one gap"},
+            "e": {"mechanism": "graph-node", "verdict": "absent",
+                  "covered_by": "another gap"},
+        },
+    }
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        rc = owed(owed_pin)
+    printed = buffer.getvalue()
+    check(rc == 0, "a pin whose absent rows all give a reason is reportable")
+    check(
+        "4 row(s) still absent, in 2 group(s)" in printed,
+        "★ only `absent` rows are owed — a `have` is not a remainder",
+    )
+    check(
+        printed.index("one gap") < printed.index("another gap"),
+        "★ the biggest chunk is named first, because that is the work order",
+    )
+    check(
+        printed.index("dcc     a") < printed.index("engine  d"),
+        "★★★★★ and a chunk SPANS the trees — the six rows this round closed "
+        "were one mechanism across both, and so is the largest one left",
+    )
+    # ★ An unclassified row is not a pass. R1919's standing rule: an escape
+    # hatch that quietly absorbs a row would make this listing look complete
+    # while the row it could not place is exactly the one nobody can plan.
+    owed_pin["dcc"]["f"] = {"mechanism": "cpp", "verdict": "absent", "covered_by": ""}
+    with contextlib.redirect_stdout(io.StringIO()):
+        rc = owed(owed_pin)
+    check(rc == 1, "★ an absent row with no reason is RED, not silently grouped")
 
     print("the regexes read what the references actually write")
     body = (
@@ -1606,6 +1767,68 @@ def proof_problems(tree: str, name: str, row: dict, repo: Path) -> list[str]:
     return []
 
 
+def owed(pin: dict) -> int:
+    """★★★★★ R1919 — **every row still absent, grouped by the reason the PIN
+    ITSELF gives**, largest group first. The campaign's remaining distance, as
+    a query.
+
+    # Why this is the tool's job and not a list in a memory file
+
+    The campaign that this census closes kept its remainder as a hand-written
+    table, and that table has now been measured wrong **three** times: it said
+    `Blender 12` when the tool said 16 and named a different twelve; it said
+    `Unreal 31` after four of those chunks had closed; and R1919's own audit
+    found its *outputs* section naming two types (`Descent`, `through`) that
+    the round had abandoned mid-flight and that exist nowhere in the code. Each
+    time the list was written by someone who had just run the tool. ⇒ **a
+    remainder kept as prose rots in the direction that hides work**, which is
+    R1833's finding on the Phase B axes, in the tool one campaign further on.
+
+    # Why `covered_by` is the right key, and not a classifier
+
+    Because it is *already there and already load-bearing*: `check_pin` refuses
+    a verdict with no reason, so every absent row carries one, and six rows
+    closed in this very round precisely because their `covered_by` texts had
+    said — long before anyone reached for them — that they were **one
+    mechanism**. Grouping on it therefore surfaces the same fact for the rest
+    without anyone inventing a taxonomy. A classifier written here would be a
+    SECOND judgement about the same rows, free to disagree with the pin's; this
+    has nothing of its own to be wrong about.
+
+    ⚠ It groups by the reason **as written**. Two rows blocked on the same
+    thing but worded differently sit apart, which understates a chunk and never
+    overstates one — the safe direction, and the one a reader can repair by
+    making the two texts agree.
+
+    Returns non-zero if any absent row gives no reason at all: an unclassified
+    row is not a pass, it is the one row this listing cannot be complete
+    without. (`check_pin` refuses the same thing at the gate; here it is what
+    makes the LISTING honest rather than what makes the pin valid.)
+    """
+    groups: dict[str, list[tuple[str, str]]] = {}
+    for tree, rows in sorted(pin.items()):
+        if not isinstance(rows, dict):
+            continue
+        for name, row in sorted(rows.items()):
+            if not isinstance(row, dict) or row.get("verdict") != "absent":
+                continue
+            reason = (row.get("covered_by") or "").strip()
+            groups.setdefault(reason, []).append((tree, name))
+    total = sum(len(rows) for rows in groups.values())
+    print(f"=== owed — {total} row(s) still absent, in {len(groups)} group(s), "
+          "by the reason the pin itself gives ===")
+    ordered = sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+    for reason, rows in ordered:
+        shown = reason or "(NO REASON GIVEN — this row cannot be planned)"
+        print(f"\n{len(rows):3d}  {shown}")
+        for tree, name in rows:
+            print(f"       {tree:7s} {name}")
+    unclassified = len(groups.get("", []))
+    if unclassified:
+        print(f"\n{unclassified} absent row(s) give no reason — see `check_pin`")
+    return 1 if unclassified else 0
+
+
 def check_pin(pin: dict, repo: Path = REPO) -> int:
     """The pin judges everything it holds, says why for each, and — for the ones
     that move the number up — names the test that runs it.
@@ -1658,6 +1881,11 @@ def main(argv: list[str]) -> int:
         help="verify the committed judgement without needing a reference tree",
     )
     parser.add_argument(
+        "--owed",
+        action="store_true",
+        help="what is still absent, grouped by the pin's own reason (tree-free)",
+    )
+    parser.add_argument(
         "--strict",
         action="store_true",
         help="exit non-zero on any finding (the pre-push reading)",
@@ -1667,6 +1895,8 @@ def main(argv: list[str]) -> int:
         return selftest()
     if args.check_pin:
         return check_pin(load_pin())
+    if args.owed:
+        return owed(load_pin())
 
     blender, unregistered = census_blender(BLENDER) if BLENDER.is_dir() else ({}, [])
     census = Census(

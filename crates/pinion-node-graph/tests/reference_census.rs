@@ -46,7 +46,7 @@ use serde::{Deserialize, Serialize};
 use pinion_node_graph::{
     Align, Appearance, Axis, Command, Conversion, Crossings, Definitions, Direction, Distribute,
     Document, Edge, EditPath, Extent, Fragment, Grow, Hidden, Instance, InterfaceSide, Item,
-    ItemError, LinkId, Machine, Multiplicity, Node, NodeBody, NodeId, NodeKind, NodeSite,
+    ItemError, LinkId, Machine, Matched, Multiplicity, Node, NodeBody, NodeId, NodeKind, NodeSite,
     NotRecombinable, NotSplittable, Port, PortPath, PortRef, PortSite, PutAway, ROOT, Reach,
     Session, Sharing, Side, Socket, Stack, Straighten, Stride, TreeId, Variadic, WatchError,
 };
@@ -631,6 +631,7 @@ fn dcc_proofs() -> Vec<Proof> {
             "collapse_hide_unused_toggle",
             dcc_collapse_hide_unused_toggle,
         ),
+        proof("dcc", "find_node", dcc_find_node),
         proof("dcc", "delete", dcc_delete),
         proof("dcc", "delete_reconnect", dcc_delete_reconnect),
         proof("dcc", "detach", dcc_detach),
@@ -1472,9 +1473,93 @@ fn dcc_group_edit() {
     assert_eq!(path.breadcrumb(&chain.document).len(), 2);
 }
 
-/// The same pair used as the DCC's toggle: entering and leaving returns the
-/// editor exactly where it was, which is the property a toggle needs and a
-/// remembered tree id cannot promise.
+/// ★★★★★ R1919 — the DCC's `find_node`: a name is looked for **across** the
+/// document rather than in one tree, and the answer says how to get there.
+#[test]
+fn dcc_find_node() {
+    // ★★★★★ R1919 — the DCC's `find_node` and the engine's five per-editor
+    // finds: a search across the tree AND the path to the hit. Six census rows,
+    // one mechanism, and the pin's own `covered_by` had said so.
+    let mut chain = chain();
+    let inner = chain.document.group(ROOT, &[chain.add], "Inner").unwrap();
+    let outer = chain.document.group(ROOT, &[inner.node], "Outer").unwrap();
+    let buried = chain
+        .document
+        .tree(outer.definition)
+        .and_then(|tree| tree.nodes().find(|n| n.label.is_none()).map(|n| n.id));
+    assert!(buried.is_some(), "the outer group holds the inner one");
+    chain
+        .document
+        .relabel(outer.definition, buried.unwrap(), Some("needle"))
+        .expect("a fresh name is accepted");
+
+    // The empty query is not a query: it contains-matches everything, and a
+    // "result" that is the whole document answers nothing.
+    assert!(chain.document.find(ROOT, "").is_empty());
+
+    // ★ The hit is TWO trees down and the search started at the root, which is
+    // what makes this a search across the tree rather than a lookup in one.
+    let hits = chain.document.find(ROOT, "needle");
+    assert_eq!(hits.len(), 1, "one node answers to it: {hits:?}");
+    let hit = &hits[0];
+    assert_eq!(hit.shown, "needle");
+    assert_eq!(hit.because, Matched::Label, "a person called it that");
+    // ★★★★★ The way IN is returned — neither reference publishes it, both only
+    // perform the descent — and it is returned as this crate's OWN editing
+    // position, so a caller hands it to its editor rather than replaying it.
+    assert_eq!(
+        hit.at.depth(),
+        1,
+        "one group away from where the search began"
+    );
+    assert_eq!(
+        hit.at.current(),
+        outer.definition,
+        "and that is where it lives"
+    );
+    assert_eq!(
+        hit.at.entries().last().and_then(|e| e.via),
+        Some(outer.node),
+        "the group descended is named"
+    );
+    // ★ The path a search builds and one a reader walks by hand are the SAME
+    // value, which is what makes it handable to an editor.
+    let mut walked = EditPath::root();
+    walked.enter(&chain.document, outer.node).unwrap();
+    assert_eq!(hit.at, walked);
+
+    // ★ Case-insensitive containment over the name a reader SEES, so a node
+    // nobody named is findable by the only word a reader has for it — and the
+    // two answers stay apart in one list.
+    let by_kind = chain.document.find(ROOT, "grou");
+    assert!(
+        by_kind.iter().any(|f| f.because == Matched::Kind),
+        "an unnamed node answers by its body's own word: {by_kind:?}"
+    );
+    assert!(
+        by_kind
+            .iter()
+            .all(|f| f.shown.to_lowercase().contains("grou")),
+        "and every hit really carries the needle"
+    );
+
+    // ★ Shallowest first, so a reader meets the nodes nearest to where they
+    // already are before the ones several groups down.
+    let depths: Vec<usize> = by_kind.iter().map(|f| f.at.depth()).collect();
+    let mut sorted = depths.clone();
+    sorted.sort_unstable();
+    assert_eq!(depths, sorted, "breadth first: {depths:?}");
+
+    assert!(
+        chain
+            .document
+            .find(ROOT, "nothing answers to this")
+            .is_empty(),
+        "and a needle nothing carries finds nothing"
+    );
+}
+
+/// The DCC's "enter / exit a group".
 #[test]
 fn dcc_group_enter_exit() {
     let mut chain = chain();
