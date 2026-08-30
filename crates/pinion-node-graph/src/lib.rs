@@ -264,7 +264,7 @@ pub use items::{Item, ItemChange, ItemEdit, ItemEditTail, ItemError, Items, Vari
 pub use layout::{Extent, Layered, Organic, Placement, Quality};
 pub use machine::{Committed, ForceError, Machine, Tick};
 pub use model::{
-    Admission, ConnectError, Connected, Control, Conversion, Document, DroppedLink, EditError,
+    Act, Admission, ConnectError, Connected, Control, Conversion, Document, DroppedLink, EditError,
     Flow, Found, Instance, Interface, InterfaceSide, KindPort, Link, LinkId, Matched, Multiplicity,
     Node, NodeBody, NodeId, NodeKind, Port, PortRef, PortValueError, ROOT, Refusal, Relabelled,
     Removed, Side, Signature, Socket, Tree, TreeId, crossing,

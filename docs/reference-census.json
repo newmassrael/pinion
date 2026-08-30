@@ -2715,7 +2715,7 @@
       "verdict": "absent"
     },
     "node::CanDuplicateNode": {
-      "covered_by": "a node cannot refuse an edit; there is no per-node permission surface",
+      "covered_by": "the permission surface exists (Document::may) but the edit it would gate does not: this crate has no verb that duplicates a node. Measured R1920 over Document's own edit verbs",
       "mechanism": "graph-node",
       "proven_by": "",
       "verdict": "absent"
@@ -2727,7 +2727,7 @@
       "verdict": "app-content"
     },
     "node::CanPasteHere": {
-      "covered_by": "a node cannot refuse an edit; there is no per-node permission surface",
+      "covered_by": "the permission surface exists (Document::may) but the edit it would gate does not: this crate has no clipboard and no paste verb. Measured R1920 over Document's own edit verbs",
       "mechanism": "graph-node",
       "proven_by": "",
       "verdict": "absent"
@@ -2739,10 +2739,10 @@
       "verdict": "have"
     },
     "node::CanUserDeleteNode": {
-      "covered_by": "a node cannot refuse an edit; there is no per-node permission surface",
+      "covered_by": "Document::may(tree, Act) — asked BEFORE the edit, answering the same Result<(), EditError> the edit itself would. Past both references: they implement the question and the edit as SEPARATE code, so a Can... predicate and the Delete beside it are free to disagree and nothing there can notice; here `remove_node`, `relabel` and `add_node` each BEGIN by asking `may`, so an editor that checks first and one that just tries cannot get different answers, and `Act` carries the VALUE (a rename is refused for the name it would take) where both references need a second call to a name validator to learn that half. The first refusal is EditError::InterfaceEnd: a tree cannot be asked to give up the inside end of its own contract, which until this round SUCCEEDED with validate() reporting nothing. R1920",
       "mechanism": "graph-node",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_node_can_user_delete_node",
+      "verdict": "have"
     },
     "node::CanUserEditPinAdvancedViewFlag": {
       "covered_by": "an ADVANCED-view class of port, hidden by default and revealed per node",
@@ -2799,10 +2799,10 @@
       "verdict": "host-framework"
     },
     "node::GetCanRenameNode": {
-      "covered_by": "a node cannot refuse an edit; there is no per-node permission surface",
+      "covered_by": "Document::may(tree, Act) — asked BEFORE the edit, answering the same Result<(), EditError> the edit itself would. Past both references: they implement the question and the edit as SEPARATE code, so a Can... predicate and the Delete beside it are free to disagree and nothing there can notice; here `remove_node`, `relabel` and `add_node` each BEGIN by asking `may`, so an editor that checks first and one that just tries cannot get different answers, and `Act` carries the VALUE (a rename is refused for the name it would take) where both references need a second call to a name validator to learn that half. The first refusal is EditError::InterfaceEnd: a tree cannot be asked to give up the inside end of its own contract, which until this round SUCCEEDED with validate() reporting nothing. R1920",
       "mechanism": "graph-node",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_node_can_user_delete_node",
+      "verdict": "have"
     },
     "node::GetDeprecationResponse": {
       "covered_by": "the engine's visual script/asset subject matter",
@@ -3243,13 +3243,13 @@
       "verdict": "have"
     },
     "schema::CanBeDeleted": {
-      "covered_by": "a node cannot refuse an edit; there is no per-node permission surface",
+      "covered_by": "the permission surface exists (Document::may) and covers NODES; a definition tree has no removal verb to gate — add_definition has no inverse. Measured R1920 over Document's own edit verbs",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "absent"
     },
     "schema::CanBeRenamed": {
-      "covered_by": "a node cannot refuse an edit; there is no per-node permission surface",
+      "covered_by": "the permission surface exists (Document::may) and covers NODES; a definition tree's name is fixed at add_definition and no verb changes it. Measured R1920 over Document's own edit verbs",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "absent"
@@ -3261,13 +3261,13 @@
       "verdict": "have"
     },
     "schema::CanCreateNewNodes": {
-      "covered_by": "a node cannot refuse an edit; there is no per-node permission surface",
+      "covered_by": "Document::may(tree, Act) — asked BEFORE the edit, answering the same Result<(), EditError> the edit itself would. Past both references: they implement the question and the edit as SEPARATE code, so a Can... predicate and the Delete beside it are free to disagree and nothing there can notice; here `remove_node`, `relabel` and `add_node` each BEGIN by asking `may`, so an editor that checks first and one that just tries cannot get different answers, and `Act` carries the VALUE (a rename is refused for the name it would take) where both references need a second call to a name validator to learn that half. The first refusal is EditError::InterfaceEnd: a tree cannot be asked to give up the inside end of its own contract, which until this round SUCCEEDED with validate() reporting nothing. R1920",
       "mechanism": "graph-schema",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_node_can_user_delete_node",
+      "verdict": "have"
     },
     "schema::CanDuplicateGraph": {
-      "covered_by": "a node cannot refuse an edit; there is no per-node permission surface",
+      "covered_by": "the permission surface exists (Document::may) but the edit it would gate does not: no verb copies a definition tree. Measured R1920 over Document's own edit verbs",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "absent"

@@ -9706,22 +9706,45 @@ fn r1599_a_run_names_what_it_could_not_do() {
         "and the refusal says how one IS entered"
     );
 
-    // The same instance, entered properly from outside, has a definition with
-    // no inside-input node once that node is removed — control tunnels to
-    // nothing, and that is named rather than treated as a halt.
-    let inside_input = document
-        .tree(grouped.definition)
-        .and_then(|t| t.interface_node(InterfaceSide::Input))
-        .map(|n| n.id)
-        .expect("the collapse built one");
-    document
-        .remove_node(grouped.definition, inside_input)
+    // An instance whose definition has the PORT control arrives by and no node
+    // on the inside: control tunnels to nothing, and that is named rather than
+    // treated as a halt.
+    //
+    // ★★★★★ R1920 — this fixture used to DELETE the definition's interface
+    // node, and `Document::may` now refuses that: removing a tree's own
+    // interface end would leave its contract with no inside end, and until
+    // R1920 it succeeded silently with `validate` reporting nothing.
+    //
+    // ⚠ The refusal was only safe to add because this finding stays REACHABLE,
+    // and that had to be measured rather than assumed — a repair that makes
+    // another diagnosis unreachable has traded one defect for a dead check.
+    // `expose` appends a port to a tree's interface and builds NO node for it,
+    // so this state arises from ordinary use and never needed a deletion to
+    // reach. That makes this fixture the more honest one: it is now the way
+    // the finding actually occurs.
+    let Flow2 {
+        document: mut hollow_doc,
+        start: from,
+    } = flow_fixture();
+    let hollow_def = hollow_doc.add_definition("hollow");
+    hollow_doc
+        .expose(
+            hollow_def,
+            InterfaceSide::Input,
+            Port::<Ty, Val>::control("in"),
+        )
+        .unwrap();
+    let hollow = hollow_doc
+        .add_node(ROOT, NodeBody::Group(hollow_def), 0, 0)
+        .unwrap();
+    hollow_doc
+        .connect(ROOT, Socket::new(from, 0), Socket::new(hollow, 0))
         .unwrap();
     assert_eq!(
-        document.run(ROOT, start, 10),
+        hollow_doc.run(ROOT, from, 10),
         Err(RunError::GroupHasNoEntry {
-            node: grouped.node,
-            definition: grouped.definition,
+            node: hollow,
+            definition: hollow_def,
         }),
         "a tunnel with nothing on the far side is a finding, not a stop"
     );

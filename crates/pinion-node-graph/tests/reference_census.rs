@@ -44,11 +44,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use pinion_node_graph::{
-    Align, Appearance, Axis, Command, Conversion, Crossings, Definitions, Direction, Distribute,
-    Document, Edge, EditPath, Extent, Fragment, Grow, Hidden, Instance, InterfaceSide, Item,
-    ItemError, LinkId, Machine, Matched, Multiplicity, Node, NodeBody, NodeId, NodeKind, NodeSite,
-    NotRecombinable, NotSplittable, Port, PortPath, PortRef, PortSite, PutAway, ROOT, Reach,
-    Session, Sharing, Side, Socket, Stack, Straighten, Stride, TreeId, Variadic, WatchError,
+    Act, Align, Appearance, Axis, Command, Conversion, Crossings, Definitions, Direction,
+    Distribute, Document, Edge, EditError, EditPath, Extent, Fragment, Grow, Hidden, Instance,
+    InterfaceSide, Item, ItemError, LinkId, Machine, Matched, Multiplicity, Node, NodeBody, NodeId,
+    NodeKind, NodeSite, NotRecombinable, NotSplittable, Port, PortPath, PortRef, PortSite, PutAway,
+    ROOT, Reach, Session, Sharing, Side, Socket, Stack, Straighten, Stride, TreeId, Variadic,
+    WatchError,
 };
 
 // ---------------------------------------------------------------- taxonomy
@@ -524,6 +525,7 @@ fn proofs() -> Vec<Proof> {
     let mut all = dcc_proofs();
     all.extend(dcc_hook_proofs());
     all.extend(engine_proofs());
+    all.extend(engine_permission_proofs());
     all.extend(engine_wire_proofs());
     all.extend(engine_editor_proofs());
     all.extend(engine_hook_proofs());
@@ -704,6 +706,25 @@ fn dcc_hook_proofs() -> Vec<Proof> {
 
 /// The generic canvas's commands that act on **structure** — which nodes exist,
 /// which tree they are in, and whether they take part.
+/// ★★★★★ R1920 — the engine's PERMISSION rows: *may this edit be made?*, asked
+/// before making it.
+///
+/// Its own list for the reason the wire/editor lists beside it are: adding to
+/// `engine_proofs` put that function past the length this file splits on. And
+/// these rows ask a different question from the commands they sat among —
+/// those name an EDIT, these name whether one is allowed at all.
+///
+/// Only the delete row OWNS this proof. `node::GetCanRenameNode` and
+/// `schema::CanCreateNewNodes` CITE it in the pin, which is how this file says
+/// *one mechanism, several rows* — the same shape R1919's search rows have.
+fn engine_permission_proofs() -> Vec<Proof> {
+    vec![proof(
+        "engine",
+        "node::CanUserDeleteNode",
+        engine_node_can_user_delete_node,
+    )]
+}
+
 fn engine_proofs() -> Vec<Proof> {
     vec![
         proof(
@@ -1471,6 +1492,121 @@ fn dcc_group_edit() {
     assert_eq!(path.current(), made.definition);
     assert_eq!(path.depth(), 1);
     assert_eq!(path.breadcrumb(&chain.document).len(), 2);
+}
+
+/// ★★★★★ R1920 — the engine's three permission rows: **may this edit be made?**,
+/// asked before making it.
+#[test]
+fn engine_node_can_user_delete_node() {
+    let mut chain = chain();
+    let made = chain.document.group(ROOT, &[chain.add], "Sum").unwrap();
+
+    // ★ The graph-level question (`schema::CanCreateNewNodes`): a tree that is
+    // there takes nodes, one that is not says so.
+    assert!(chain.document.may(ROOT, Act::Create).is_ok());
+    assert_eq!(
+        chain.document.may(TreeId(77), Act::Create),
+        Err(EditError::NoSuchTree(TreeId(77)))
+    );
+
+    // ★★★★★ THE REFUSAL THAT MAKES THIS SURFACE NON-VACUOUS. Measured at
+    // R1920's open, BEFORE it existed: this delete SUCCEEDED, the definition
+    // kept the interface ports this node was the inside end of, and
+    // `validate()` answered with an empty list. A group's contract could lose
+    // the half a caller wires to, in one ordinary delete, silently.
+    let iface = chain
+        .document
+        .tree(made.definition)
+        .and_then(|host| host.interface_node(InterfaceSide::Input))
+        .map(|node| node.id)
+        .expect("collapsing into a definition builds its interface ends");
+    assert_eq!(
+        chain.document.may(made.definition, Act::Delete(iface)),
+        Err(EditError::InterfaceEnd {
+            tree: made.definition,
+            node: iface,
+            side: InterfaceSide::Input,
+        }),
+        "a tree cannot be asked to give up the end of its own contract"
+    );
+    assert!(
+        format!(
+            "{}",
+            chain
+                .document
+                .may(made.definition, Act::Delete(iface))
+                .unwrap_err()
+        )
+        .contains("no inside end"),
+        "and the refusal says what would be LOST, not merely that it refused"
+    );
+
+    // ★ The rename question (`node::GetCanRenameNode`) carries the VALUE, so it
+    // answers the whole of what it is asked. Both references split exactly
+    // here — a permission predicate beside a separate name validator — and a
+    // caller there has to consult two things and combine them itself.
+    assert!(
+        chain
+            .document
+            .may(ROOT, Act::Rename(made.node, Some("Fresh")))
+            .is_ok()
+    );
+    assert!(matches!(
+        chain
+            .document
+            .may(ROOT, Act::Rename(made.node, Some("   "))),
+        Err(EditError::LabelEmpty { .. })
+    ));
+
+    // ★★★★★ THE LAW, AND THE WHOLE REASON THIS ANSWERS `Result<(), EditError>`
+    // RATHER THAN A TYPE OF ITS OWN: the question and the edit are ONE
+    // decision, so they cannot disagree. Driven over EVERY node of EVERY tree
+    // against BOTH gated node verbs — a population derived from the document
+    // rather than a list written here, so a node kind added later is covered
+    // without this test being edited.
+    let trees: Vec<TreeId> = std::iter::once(ROOT)
+        .chain(chain.document.definitions().map(|tree| tree.id))
+        .collect();
+    let mut refusals = 0;
+    let mut allowed = 0;
+    for tree in trees {
+        let nodes: Vec<NodeId> = chain
+            .document
+            .tree(tree)
+            .map(|host| host.nodes().map(|node| node.id).collect())
+            .unwrap_or_default();
+        for node in nodes {
+            // A fresh document each time, so an edit that LANDS cannot change
+            // what the next question is asked about.
+            for act in [Act::Delete(node), Act::Rename(node, Some("Probe"))] {
+                let mut fresh = chain.document.clone();
+                let asked = fresh.may(tree, act);
+                let done = match act {
+                    Act::Delete(id) => fresh.remove_node(tree, id).map(|_| ()),
+                    Act::Rename(id, label) => fresh.relabel(tree, id, label).map(|_| ()),
+                    Act::Create => unreachable!("not in this population"),
+                };
+                assert_eq!(
+                    asked, done,
+                    "asking and doing are one decision: {tree:?} {act:?}"
+                );
+                if asked.is_ok() {
+                    allowed += 1;
+                } else {
+                    refusals += 1;
+                }
+            }
+        }
+    }
+    // ⚠ Both counts, because either alone can be satisfied by a surface that
+    // answers one way for everything — and a permission question that always
+    // says yes is exactly the vacuous gate this round exists to not build.
+    assert!(allowed > 0, "some edits are allowed");
+    assert!(
+        refusals > 0,
+        "and some are REFUSED — {refusals} of {} asked",
+        allowed + refusals
+    );
 }
 
 /// ★★★★★ R1919 — the DCC's `find_node`: a name is looked for **across** the

@@ -536,6 +536,7 @@ impl From<EditError> for ItemError {
                 | EditError::NotAKind { tree, .. }
                 | EditError::NoSuchLink { tree, .. }
                 | EditError::NoSuchInterfacePort { tree, .. }
+                | EditError::InterfaceEnd { tree, .. }
                 | EditError::BypassWouldCycle { tree, .. }
                 | EditError::LabelTaken { tree, .. }
                 | EditError::LabelEmpty { tree, .. } => tree,

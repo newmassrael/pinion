@@ -102,8 +102,8 @@ use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::widgets::wheel::WheelDirection;
 use pinion_core::{CellKind, Frame, Modifiers, Scene, WidgetCore, edit_field_keymap};
 use pinion_node_graph::{
-    Camera, Document, Extent, Fit, Found, Item, LinkId, LinkLayer, Margin, Node, NodeBody, NodeId,
-    PortPath, PortRef, ROOT, Relinked, Side, Socket, Violation, ZoomRange,
+    Act, Camera, Document, Extent, Fit, Found, Item, LinkId, LinkLayer, Margin, Node, NodeBody,
+    NodeId, PortPath, PortRef, ROOT, Relinked, Side, Socket, Violation, ZoomRange,
 };
 use pinion_platform_storage::AppStorage;
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
@@ -10265,6 +10265,10 @@ const FIELDS: &[SchemaField] = &{
         // answers with the way IN to it. The census's six search rows.
         SchemaField::new("searching", "string"),
         SchemaField::new("found", "json"),
+        // ★★★★★ R1920 — which edits this screen would ALLOW, published as a
+        // read rather than asked one card at a time: an agent choosing what to
+        // act on needs the whole row before it acts on any of it.
+        SchemaField::new("editable", "json"),
         // ★★★★★ R1742 — how much of the inspector specification this build is
         // showing, published beside the specification itself. `json` rather
         // than the `string` its neighbours use because it is the framework's
@@ -10740,6 +10744,8 @@ impl ExternalIntrospect for LabOracle {
             // ★★★★★ R1919 — what a reader is looking for, and what answers.
             "searching" => text(state.searching.get()),
             "found" => Ok(IntrospectValue::Json(found_wire(state))),
+            // ★★★★★ R1920 — what an agent may do, before it does it.
+            "editable" => Ok(IntrospectValue::Json(editable_wire(state))),
             // ★ R1742 — the SAME value the host publishes for this section, so
             // "one build, two placements" is a fact a client can check rather
             // than a claim this file makes.
@@ -16051,6 +16057,39 @@ fn pin_descriptions(state: &LabState) -> Descriptions {
         }
     }
     described
+}
+
+/// ★★★★★ R1920 — **what this screen would let an agent do, asked before it
+/// does it.**
+///
+/// The framework's `Document::may` answers one edit at a time; this publishes
+/// the answer for every card at once, because an agent deciding WHICH card to
+/// act on needs the whole row, not a question per card. Each entry is the same
+/// decision the verb itself will make — `delete_node` and `rename` route
+/// through `may` inside the crate — so this cannot drift from what the screen
+/// will actually do. That is the point of it: an agent can plan a destructive
+/// edit without performing one to find out whether it was allowed.
+///
+/// ⚠ Every card on THIS screen is deletable today, and the walk asserts that
+/// rather than hiding it: the lab builds no subgraphs, so the one refusal that
+/// exists (a tree's own interface end) has nothing here to refuse. That is
+/// `debt-the-assembled-tool-cannot-open-a-subgraph`, and the assertion is a
+/// tripwire that goes red the day it is repaid.
+fn editable_wire(state: &Rc<LabState>) -> serde_json::Value {
+    let doc = state.doc.borrow();
+    let mut rows: Vec<serde_json::Value> = Vec::new();
+    for node in state.cards() {
+        let asked = doc.may(ROOT, Act::Delete(node));
+        rows.push(serde_json::json!({
+            "node": state.name_of(node),
+            "delete": if asked.is_ok() { "allowed" } else { "refused" },
+            // The refusal's own sentence, not a word this screen invents for
+            // it — a reader is told what would be lost, which is the half a
+            // bare "refused" cannot carry.
+            "because": asked.err().map(|why| why.to_string()),
+        }));
+    }
+    serde_json::json!({ "nodes": rows })
 }
 
 /// ★★★★★ R1919 — the search's hits as data, each saying **where it is**.

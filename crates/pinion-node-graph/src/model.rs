@@ -1039,6 +1039,19 @@ pub enum InterfaceSide {
     Output,
 }
 
+impl InterfaceSide {
+    /// The word this side is published under — the one spelling behind a
+    /// refusal's sentence and anything a client reads (R1920, the shape
+    /// [`Matched::wire_word`] set).
+    #[must_use]
+    pub const fn wire_word(self) -> &'static str {
+        match self {
+            Self::Input => "input",
+            Self::Output => "output",
+        }
+    }
+}
+
 /// What a node is.
 ///
 /// The application's own kinds are the leaves; the three structural arms are
@@ -1444,6 +1457,38 @@ pub struct Found {
     /// The name that matched, as a reader sees it. Carried so a result list can
     /// be shown without re-resolving each hit against the document.
     pub shown: String,
+}
+
+/// ★★★★★ R1920 — an edit a caller is **about to** make, so it can be asked
+/// about before it happens. See [`Document::may`].
+///
+/// # Why the subject is inside the act rather than beside it
+///
+/// The census's eight permission rows read as two axes — a SUBJECT (this node,
+/// or this graph) times a VERB — and the first draft of this type took them as
+/// two arguments. That made `may(tree, None, Act::Delete)` expressible, which
+/// is a question with no subject, and `may(tree, Some(node), Act::Create)`,
+/// which names a subject the verb has no use for. Both are nonsense the
+/// compiler would have had to be told about. Carrying the subject in the arm
+/// that needs it makes each act carry exactly what it is about — R1891's rule,
+/// and the same reason [`Found::at`] is an `EditPath` rather than a pair.
+///
+/// # Why the VALUE is carried too
+///
+/// A rename is refused for the name it would take, so a permission question
+/// that left the name out could only answer half of what it was asked and the
+/// caller would still have to try it to learn the rest. Both references split
+/// exactly there — a `Can…Rename` predicate for the permission and a separate
+/// name validator for the value — and a caller has to consult two things and
+/// combine them itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Act<'a> {
+    /// Put any node into this tree — the census's graph-level question.
+    Create,
+    /// Take this node out of it.
+    Delete(NodeId),
+    /// Give this node this authored name, or take its name away with `None`.
+    Rename(NodeId, Option<&'a str>),
 }
 
 /// ★ R1919 — why a node answered a search.
@@ -2013,11 +2058,114 @@ impl<K: NodeKind> Document<K> {
             .is_some_and(|held| matches!(held.body, NodeBody::Delay(_)) && !held.bypassed)
     }
 
+    /// ★★★★★ R1920 — **may this edit be made?**, asked *before* making it.
+    ///
+    /// The reference census names this in three rows across two projects —
+    /// *can this node be deleted*, *can this node be renamed*, *can this graph
+    /// take new nodes* — and its own `covered_by` said what was missing: **a
+    /// node cannot refuse an edit; there is no per-node permission surface.**
+    /// Measured at R1920's open, that was exactly true: every refusal this
+    /// crate had was reached by ATTEMPTING the edit, so an editor could only
+    /// find out by doing it.
+    ///
+    /// # ★★★★★ Why this answers `Result<(), EditError>` and not a type of its own
+    ///
+    /// Because the alternative is two sources of one truth. Both references
+    /// implement the question and the edit as SEPARATE code — a `Can…`
+    /// predicate beside a `Delete` that re-decides — so the two are free to
+    /// disagree, and nothing there can notice. Here there is one vocabulary and
+    /// one decision: this function IS the decision, and [`Self::remove_node`],
+    /// [`Self::relabel`] and [`Self::add_node`] each begin by asking it. An
+    /// editor that asks first and an editor that just tries cannot get
+    /// different answers, because the second one is asking too.
+    ///
+    /// That also fixes what the answer MEANS. `may(…).is_ok()` does not
+    /// predict the edit — it is the same test the edit will run, so agreement
+    /// is not a property this has to maintain. [`Act`] carries the VALUE for
+    /// the same reason: a rename is refused for the name it would take, so a
+    /// question that left the name out could only answer half of it.
+    ///
+    /// # Errors
+    ///
+    /// Whatever the corresponding edit would answer: [`EditError::NoSuchTree`],
+    /// [`EditError::NoSuchNode`], [`EditError::InterfaceEnd`],
+    /// [`EditError::LabelTaken`], [`EditError::LabelEmpty`].
+    pub fn may(&self, tree: TreeId, act: Act<'_>) -> Result<(), EditError> {
+        if self.tree(tree).is_none() {
+            return Err(EditError::NoSuchTree(tree));
+        }
+        match act {
+            // A tree that exists takes nodes. Stated as its own arm rather than
+            // folded into the guard above, because it is the census's
+            // graph-level question and a later graph that refuses new nodes —
+            // a read-only definition, say — belongs HERE and nowhere else.
+            Act::Create => Ok(()),
+            Act::Delete(node) => {
+                let held = self.held(tree, node)?;
+                // ★ The one refusal that exists today, and the reason this
+                // surface is not vacuous: see `EditError::InterfaceEnd`.
+                if let NodeBody::Interface(side) = held.body {
+                    return Err(EditError::InterfaceEnd { tree, node, side });
+                }
+                Ok(())
+            }
+            Act::Rename(node, label) => {
+                let wanted = Self::wanted_label(tree, node, label)?;
+                self.held(tree, node)?;
+                if let Some(name) = wanted.as_deref()
+                    && let Some(held_by) = self
+                        .nodes_labelled(tree, name)
+                        .into_iter()
+                        .find(|other| *other != node)
+                {
+                    return Err(EditError::LabelTaken {
+                        tree,
+                        label: name.to_owned(),
+                        held_by,
+                    });
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// The node, or the error naming why it is not there. Shared by [`Self::may`]
+    /// and the verbs, so "no such node" is one sentence rather than four.
+    fn held(&self, tree: TreeId, node: NodeId) -> Result<&Node<K>, EditError> {
+        self.tree(tree)
+            .and_then(|host| host.node(node))
+            .ok_or(EditError::NoSuchNode { tree, node })
+    }
+
+    /// The label a rename would actually store, or why it cannot be one.
+    ///
+    /// Whitespace is trimmed before either check — see [`Self::relabel`], whose
+    /// argument for that is what this carries.
+    fn wanted_label(
+        tree: TreeId,
+        node: NodeId,
+        label: Option<&str>,
+    ) -> Result<Option<String>, EditError> {
+        match label {
+            None => Ok(None),
+            Some(raw) => {
+                let trimmed = raw.trim();
+                if trimmed.is_empty() {
+                    Err(EditError::LabelEmpty { tree, node })
+                } else {
+                    Ok(Some(trimmed.to_owned()))
+                }
+            }
+        }
+    }
+
     /// Add a node to `tree` and answer its fresh id.
     ///
     /// # Errors
     ///
-    /// [`EditError::NoSuchTree`] when `tree` is not in the document.
+    /// [`EditError::NoSuchTree`] when `tree` is not in the document — asked
+    /// through [`Self::may`], so an editor that checks first and one that just
+    /// calls this cannot get different answers (R1920).
     pub fn add_node(
         &mut self,
         tree: TreeId,
@@ -2025,6 +2173,7 @@ impl<K: NodeKind> Document<K> {
         x: i32,
         y: i32,
     ) -> Result<NodeId, EditError> {
+        self.may(tree, Act::Create)?;
         let host = self
             .trees
             .get_mut(tree.0 as usize)
@@ -2063,15 +2212,12 @@ impl<K: NodeKind> Document<K> {
     ///
     /// # Errors
     ///
-    /// [`EditError::NoSuchTree`] or [`EditError::NoSuchNode`].
+    /// [`EditError::NoSuchTree`], [`EditError::NoSuchNode`], or
+    /// [`EditError::InterfaceEnd`] — all of them asked through
+    /// [`Self::may`], so an editor that checks first and one that just calls
+    /// this cannot get different answers (R1920).
     pub fn remove_node(&mut self, tree: TreeId, node: NodeId) -> Result<Removed, EditError> {
-        let host = self
-            .trees
-            .get_mut(tree.0 as usize)
-            .ok_or(EditError::NoSuchTree(tree))?;
-        if !host.nodes.contains_key(&node) {
-            return Err(EditError::NoSuchNode { tree, node });
-        }
+        self.may(tree, Act::Delete(node))?;
         let adopted = self.adopt_orphans(tree, node);
         if let Some(host) = self.trees.get_mut(tree.0 as usize) {
             host.nodes.remove(&node);
@@ -2256,41 +2402,17 @@ impl<K: NodeKind> Document<K> {
     /// # Errors
     ///
     /// [`EditError::NoSuchTree`], [`EditError::NoSuchNode`],
-    /// [`EditError::LabelTaken`], [`EditError::LabelEmpty`].
+    /// [`EditError::LabelTaken`], [`EditError::LabelEmpty`] — all of them
+    /// asked through [`Self::may`], so an editor that checks first and one
+    /// that just calls this cannot get different answers (R1920).
     pub fn relabel(
         &mut self,
         tree: TreeId,
         node: NodeId,
         label: Option<&str>,
     ) -> Result<Relabelled, EditError> {
-        let wanted = match label {
-            None => None,
-            Some(raw) => {
-                let trimmed = raw.trim();
-                if trimmed.is_empty() {
-                    return Err(EditError::LabelEmpty { tree, node });
-                }
-                Some(trimmed.to_owned())
-            }
-        };
-        if self.tree(tree).is_none() {
-            return Err(EditError::NoSuchTree(tree));
-        }
-        if self.tree(tree).and_then(|host| host.node(node)).is_none() {
-            return Err(EditError::NoSuchNode { tree, node });
-        }
-        if let Some(name) = wanted.as_deref()
-            && let Some(held_by) = self
-                .nodes_labelled(tree, name)
-                .into_iter()
-                .find(|other| *other != node)
-        {
-            return Err(EditError::LabelTaken {
-                tree,
-                label: name.to_owned(),
-                held_by,
-            });
-        }
+        self.may(tree, Act::Rename(node, label))?;
+        let wanted = Self::wanted_label(tree, node, label)?;
         let slot = self
             .trees
             .get_mut(tree.0 as usize)
@@ -3609,6 +3731,28 @@ pub enum EditError {
         /// The node whose body is structural.
         node: NodeId,
     },
+    /// ★★★★★ R1920 — **the node is this tree's own interface end, and a tree
+    /// cannot be asked to give up the end of its own contract.**
+    ///
+    /// Measured at R1920's open, before this existed: removing a definition's
+    /// [`NodeBody::Interface`] node SUCCEEDED, the tree kept the interface
+    /// ports the node was the inside end OF, and [`Document::validate`]
+    /// answered with an empty list. So a group's contract could lose the half a
+    /// reader wires to, in one ordinary delete, and nothing in the document
+    /// would say so.
+    ///
+    /// Refused rather than reported, because a refusal makes the broken state
+    /// unrepresentable while a report only describes it after the fact — and
+    /// this is the crate's first per-node refusal, which is what the reference
+    /// census's `a node cannot refuse an edit` named.
+    InterfaceEnd {
+        /// The tree whose contract this node is an end of.
+        tree: TreeId,
+        /// The interface node.
+        node: NodeId,
+        /// Which end it is.
+        side: InterfaceSide,
+    },
     /// No such link in that tree.
     NoSuchLink {
         /// The tree that was searched.
@@ -3689,6 +3833,18 @@ impl fmt::Display for EditError {
                 "node {} in tree {} is a frame, a group instance, an interface \
                  node or a delay, whose body this crate owns",
                 node.0, tree.0
+            ),
+            // ★ R1920 — says what would be LOST, not merely that it was
+            // refused: a reader who is told "you may not" and not "this is the
+            // end of the contract your callers wire to" learns nothing they
+            // can act on.
+            Self::InterfaceEnd { tree, node, side } => write!(
+                f,
+                "node {} is tree {}'s own {} interface end, and removing it \
+                 would leave the tree's contract with no inside end",
+                node.0,
+                tree.0,
+                side.wire_word()
             ),
             Self::NoSuchInterfacePort {
                 tree,
