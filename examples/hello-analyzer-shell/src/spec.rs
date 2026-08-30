@@ -1709,6 +1709,19 @@ pub const OPERATIONS: &[OperationSpec] = &[
         witness: "floats",
         needs: Some("put a detached panel on the canvas"),
     },
+    // ★★★★★ R1907 — the operation this tree has and the floor toolkit cannot:
+    // a detached panel is always a top-level window there, so there is no
+    // second home to send one to. The witness is `floats`, because what changes
+    // is which space a panel's rectangle is measured in and that is published
+    // per float; `floating` — the set of cards that left the board — does not
+    // move, and asserting against it would make this operation look inert.
+    OperationSpec {
+        name: "send a detached panel to its next home",
+        verb: Some(("detach_home", "packet#0,next")),
+        gesture: true,
+        witness: "floats",
+        needs: Some("put a detached panel on the canvas"),
+    },
     OperationSpec {
         name: "re-dock a detached panel",
         verb: Some(("redock", "packet#0")),

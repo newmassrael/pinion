@@ -60,6 +60,20 @@
 //! [`Arrival`]), and that a panel arriving in a bounded space lands somewhere
 //! its header can still be grabbed.
 //!
+//! # And what a detached panel's HEADER offers (R1907)
+//!
+//! Added here rather than in a screen because it is the same fact one step on:
+//! [`DetachedAffordance::SendHome`] means anything only where there is a second
+//! home, and where the next home IS is [`DetachPolicy::next_home`]'s answer. A
+//! screen that decided either would be spelling this policy a second time, in
+//! a painter, where nobody re-reads it when a third home appears.
+//!
+//! ⚠ This paragraph exists because R1905 added [`Transfer`] and left the
+//! paragraph above saying the module decided no geometry — the correction is
+//! two paragraphs up. A module header is prose nothing re-performs, so the
+//! habit that replaces vigilance is to write the new paragraph in the same
+//! commit as the new type.
+//!
 //! It still does not decide where a float sits *within* a home or how big it
 //! is — the host owns that and hands this module the pair, never asks it to
 //! choose one. Nor does it hold the display topology, so a host on a monitor
@@ -207,10 +221,9 @@ impl<'de> serde::Deserialize<'de> for DetachHome {
 
 /// Why a requested home was refused.
 ///
-/// One variant today. It is an enum rather than a bare error because the shape
-/// this tree settled on for a refusal is *the reason names what was asked for
-/// AND what would have worked* — `no` is not actionable and
-/// `no, this host offers canvas` is.
+/// It is an enum rather than a bare error because the shape this tree settled
+/// on for a refusal is *the reason names what was asked for AND what would have
+/// worked* — `no` is not actionable and `no, this host offers canvas` is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DetachRefusal {
     /// The host does not provide that home.
@@ -219,6 +232,27 @@ pub enum DetachRefusal {
         asked: DetachHome,
         /// The homes the host declared it provides, in preference order.
         available: &'static [DetachHome],
+    },
+    /// ★★★★★ R1907 — the host provides exactly one home, so "send it to the
+    /// next one" names nothing.
+    ///
+    /// A different statement from [`Self::HomeNotAvailable`], which is about a
+    /// home the caller *named*: here the caller named no home at all and asked
+    /// the policy to pick, and the policy has nothing to pick between. The two
+    /// would be indistinguishable through one arm, and a person told "this host
+    /// detaches to canvas only" after pressing a control that offered no choice
+    /// would reasonably ask which choice they had made.
+    ///
+    /// ⚠ **Reachable, and by design not through the gesture.** A host with one
+    /// home does not draw the control at all
+    /// ([`DetachPolicy::detached_affordances`]), because an affordance that
+    /// always refuses is worse than an absent one. What reaches this arm is the
+    /// wire: a client may ask for [`HomeRequest::Next`] anywhere. R1898's rule
+    /// is that an arm no input can produce is decoration — this one has an
+    /// input, and it is the channel a person cannot see.
+    SoleHome {
+        /// The only home this host provides.
+        home: DetachHome,
     },
 }
 
@@ -236,6 +270,10 @@ impl DetachRefusal {
                 let names: Vec<&str> = available.iter().map(|h| h.as_str()).collect();
                 RefusalReason::from(format!("this host detaches to {} only", names.join(" or ")))
             }
+            Self::SoleHome { home } => RefusalReason::from(format!(
+                "this host has only the {} to detach to, so there is no next one",
+                home.as_str()
+            )),
         }
     }
 
@@ -245,6 +283,136 @@ impl DetachRefusal {
     pub const fn wire_word(&self) -> &'static str {
         match self {
             Self::HomeNotAvailable { .. } => "home-not-available",
+            Self::SoleHome { .. } => "sole-home",
+        }
+    }
+}
+
+/// ★★★★★ R1907 — **what a DETACHED panel's header offers**, which is not what a
+/// board card's does.
+///
+/// # Why a second vocabulary rather than an arm on the board card's
+///
+/// Measured against the behaviour canon at R1907: its board card's header wires
+/// settings, detach and remove, and its detached panel's header wires re-dock
+/// and close. The two sets are disjoint but for close, and a panel that has
+/// already left the board has nothing to detach. Folding them into one
+/// vocabulary would make every consumer filter for "the ones that apply here",
+/// and a filter is where an arm goes missing.
+///
+/// # Why this is derived from the policy and not declared beside it
+///
+/// [`Self::SendHome`] exists only where there is a second home to send a panel
+/// to, and that is [`DetachPolicy`]'s fact. A host that declared its own header
+/// contents would be a second statement of the same thing, free to disagree —
+/// the pairing bug [`DetachPolicy`]'s own header records.
+///
+/// ⚠ It is a LIST and not a bit set, unlike
+/// [`CardChrome`](crate::widgets::card::CardChrome), because nothing here is
+/// per-panel: every detached panel of a host offers the same three or two. A
+/// bit set would be room for a distinction that does not exist. If a third
+/// consumer of "an affordance roster in a header" appears, that is the point to
+/// lift the shape rather than now (R1895).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum DetachedAffordance {
+    /// Send the panel to the next home this host admits.
+    ///
+    /// Offered only by a host with more than one home. The floor toolkit's
+    /// detached panel is always a top-level window, so it has no second home
+    /// and nothing to offer here — this affordance has no counterpart there.
+    SendHome,
+    /// Put the panel back where it came from.
+    Redock,
+    /// Dismiss the panel.
+    Close,
+}
+
+impl DetachedAffordance {
+    /// The wire spelling, so a client names a control without parsing prose.
+    #[must_use]
+    pub const fn wire(self) -> &'static str {
+        match self {
+            Self::SendHome => "send_home",
+            Self::Redock => "redock",
+            Self::Close => "close",
+        }
+    }
+}
+
+/// The header a host with a second home offers, in the order it lays them out.
+///
+/// `SendHome` leads because it is the one that is sometimes absent: a reader
+/// who learns the two trailing positions never has them move under them.
+const DETACHED_WITH_HOME: &[DetachedAffordance] = &[
+    DetachedAffordance::SendHome,
+    DetachedAffordance::Redock,
+    DetachedAffordance::Close,
+];
+
+/// The header a host with one home offers.
+const DETACHED_SOLE_HOME: &[DetachedAffordance] =
+    &[DetachedAffordance::Redock, DetachedAffordance::Close];
+
+/// How a caller names the home it wants.
+///
+/// # Why "the next one" is a REQUEST and not a call the caller resolves
+///
+/// A header control means *send this somewhere else*, and which somewhere is
+/// the policy's answer. If the screen computed it — "window, so next is canvas"
+/// — the policy would be spelled a second time in the place least likely to be
+/// re-read when a third home appears. R1902 met this one gesture over and the
+/// answer was the same: compose the existing check, do not re-spell it.
+///
+/// So both channels build one of these and hand it to [`Self::resolve`]: the
+/// header control makes [`Self::Next`], the wire makes whichever word it was
+/// given, and exactly one place turns a request into a home.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HomeRequest {
+    /// This home, by name.
+    Named(DetachHome),
+    /// Whichever home this host admits after the one the panel is in.
+    Next,
+}
+
+impl HomeRequest {
+    /// Parse a wire word: a home's own name, or `next`.
+    ///
+    /// `None` for anything else, for [`DetachHome::from_wire`]'s reason — a
+    /// default here would move the panel somewhere nobody asked for and report
+    /// success.
+    #[must_use]
+    pub fn from_wire(word: &str) -> Option<Self> {
+        if word == "next" {
+            return Some(Self::Next);
+        }
+        DetachHome::from_wire(word).map(Self::Named)
+    }
+
+    /// The wire word, the inverse of [`Self::from_wire`].
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Named(home) => home.as_str(),
+            Self::Next => "next",
+        }
+    }
+
+    /// The home this request means for a panel currently in `from`, or the
+    /// refusal that names what would have worked.
+    ///
+    /// # Errors
+    ///
+    /// [`DetachRefusal::HomeNotAvailable`] when a named home is not one this
+    /// host provides; [`DetachRefusal::SoleHome`] when `next` was asked of a
+    /// host that has only one.
+    pub fn resolve(
+        self,
+        policy: DetachPolicy,
+        from: DetachHome,
+    ) -> Result<DetachHome, DetachRefusal> {
+        match self {
+            Self::Named(home) => policy.admit(home),
+            Self::Next => policy.next_home(from),
         }
     }
 }
@@ -326,6 +494,56 @@ impl DetachPolicy {
                 asked,
                 available: self.homes,
             })
+        }
+    }
+
+    /// ★★★★★ R1907 — the home a panel in `from` goes to when a reader asks for
+    /// somewhere else, without naming where.
+    ///
+    /// This is what makes a home CHANGEABLE BY HAND. Until R1907 the value
+    /// existed, the wire could set it and the geometry followed (R1905), but a
+    /// person had no way to ask: the only caller of the screen's verb was the
+    /// wire dispatch. A control that means "not here" needs the policy to say
+    /// where "somewhere else" is, and asking the policy is what keeps that
+    /// answer from being spelled a second time in a painter.
+    ///
+    /// Cycles through [`Self::homes`] in preference order, so a host with three
+    /// homes needs nothing new. A panel sitting in a home this host does NOT
+    /// provide — a session saved on a windowing host and reopened on one
+    /// without — goes to [`Self::preferred`]: it is already somewhere illegal,
+    /// and the honest next step is the best legal place rather than a refusal
+    /// that would strand it there.
+    ///
+    /// # Errors
+    ///
+    /// [`DetachRefusal::SoleHome`] when this host provides one home, because
+    /// then there is no next one. That is not the same refusal as asking for a
+    /// home the host lacks, and a reader is owed the difference.
+    pub fn next_home(self, from: DetachHome) -> Result<DetachHome, DetachRefusal> {
+        let [only] = self.homes else {
+            return Ok(match self.homes.iter().position(|&h| h == from) {
+                Some(i) => self.homes[(i + 1) % self.homes.len()],
+                None => self.preferred(),
+            });
+        };
+        Err(DetachRefusal::SoleHome { home: *only })
+    }
+
+    /// What a detached panel's header offers on this host, in the order it lays
+    /// them out.
+    ///
+    /// **Derived from the homes, not declared.** [`DetachedAffordance::SendHome`]
+    /// is exactly the control whose meaning depends on there being a second
+    /// home, so a host that declared its header separately could offer a
+    /// control that always refuses. R1902 measured what that costs one gesture
+    /// over: an affordance that cannot act is worse than an absent one, because
+    /// a person reads it as a capability.
+    #[must_use]
+    pub const fn detached_affordances(self) -> &'static [DetachedAffordance] {
+        if self.homes.len() > 1 {
+            DETACHED_WITH_HOME
+        } else {
+            DETACHED_SOLE_HOME
         }
     }
 }
@@ -546,7 +764,169 @@ impl Transfer {
 
 #[cfg(test)]
 mod tests {
-    use super::{Arrival, DetachHome, DetachPolicy, DetachRefusal, Space, Transfer};
+    use super::{
+        Arrival, DetachHome, DetachPolicy, DetachRefusal, DetachedAffordance, HomeRequest, Space,
+        Transfer,
+    };
+
+    /// ★★★★★ R1907 — **a host with a second home can name where "somewhere
+    /// else" is**, which is what makes a home changeable by hand at all.
+    #[test]
+    fn r1907_the_next_home_is_the_policys_answer_and_it_cycles() {
+        let windowing = DetachPolicy::for_host(true);
+        assert_eq!(
+            windowing.next_home(DetachHome::Window),
+            Ok(DetachHome::Canvas)
+        );
+        assert_eq!(
+            windowing.next_home(DetachHome::Canvas),
+            Ok(DetachHome::Window)
+        );
+        // Two presses of one control return a panel to where it started, which
+        // is what makes the control safe to try.
+        let there = windowing
+            .next_home(DetachHome::Window)
+            .expect("a second home");
+        assert_eq!(windowing.next_home(there), Ok(DetachHome::Window));
+    }
+
+    /// A host with one home refuses, and NOT with the refusal for a home it
+    /// lacks: the caller named nothing, so being told what it should have named
+    /// would be an answer to a question it did not ask.
+    #[test]
+    fn r1907_a_host_with_one_home_has_no_next_one_and_says_so_in_its_own_words() {
+        let tui = DetachPolicy::for_host(false);
+        let refusal = tui
+            .next_home(DetachHome::Canvas)
+            .expect_err("a sole home has no next one");
+        assert_eq!(
+            refusal,
+            DetachRefusal::SoleHome {
+                home: DetachHome::Canvas
+            }
+        );
+        assert_eq!(refusal.wire_word(), "sole-home");
+        // The two refusals are distinguishable on the wire and in words, which
+        // is the whole reason there are two arms.
+        let named = tui
+            .admit(DetachHome::Window)
+            .expect_err("this host has no window server");
+        assert_ne!(refusal.wire_word(), named.wire_word());
+        assert_ne!(refusal.reason().as_str(), named.reason().as_str());
+        assert!(
+            refusal.reason().as_str().contains("no next one"),
+            "the sentence has to say what was missing: {:?}",
+            refusal.reason().as_str()
+        );
+    }
+
+    /// A panel in a home this host does not provide is already somewhere
+    /// illegal; the next home is the best legal one rather than a refusal that
+    /// would strand it there.
+    #[test]
+    fn r1907_a_panel_in_a_home_this_host_lacks_moves_to_the_preferred_one() {
+        let tui = DetachPolicy::for_host(false);
+        // `for_host(false)` has one home, so the sole-home arm wins first —
+        // that is the case above. The interesting host is one with two homes
+        // and a panel in neither, which cannot happen with today's two-home
+        // vocabulary; what IS assertable is the cycle's total-ness: every home
+        // the policy admits has a next one, and it is one the policy admits.
+        assert!(tui.next_home(DetachHome::Window).is_err());
+        let windowing = DetachPolicy::for_host(true);
+        for home in windowing.homes() {
+            let next = windowing.next_home(*home).expect("two homes have a next");
+            assert!(
+                windowing.admits(next),
+                "the next home must be one this host admits, or the control \
+                 offers a place the policy would refuse"
+            );
+            assert_ne!(next, *home, "'somewhere else' must be somewhere else");
+        }
+    }
+
+    /// ★★★★★ The header a detached panel gets is DERIVED from the homes, so a
+    /// host cannot draw a control that always refuses.
+    #[test]
+    fn r1907_the_send_home_control_exists_exactly_where_there_is_a_second_home() {
+        let windowing = DetachPolicy::for_host(true).detached_affordances();
+        let sole = DetachPolicy::for_host(false).detached_affordances();
+        assert!(windowing.contains(&DetachedAffordance::SendHome));
+        assert!(
+            !sole.contains(&DetachedAffordance::SendHome),
+            "a host with nowhere to send a panel must not offer to send it"
+        );
+        // The two the canon's own detached panel has are on every host.
+        for offered in [windowing, sole] {
+            assert!(offered.contains(&DetachedAffordance::Redock));
+            assert!(offered.contains(&DetachedAffordance::Close));
+        }
+        // ★ The trailing positions do not move when the leading one goes, so a
+        // reader who learned where close is keeps that knowledge.
+        assert_eq!(windowing.last(), sole.last());
+        assert_eq!(
+            *windowing.last().expect("a header is not empty"),
+            DetachedAffordance::Close
+        );
+        // Every offered control has a distinct wire word.
+        let words: Vec<&str> = windowing.iter().map(|a| a.wire()).collect();
+        let mut sorted = words.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(
+            sorted.len(),
+            words.len(),
+            "two controls share a name: {words:?}"
+        );
+    }
+
+    /// ★★★★★ Both channels build a request and ONE place resolves it.
+    #[test]
+    fn r1907_a_home_request_is_resolved_in_one_place_for_both_channels() {
+        let windowing = DetachPolicy::for_host(true);
+        // The wire's word, and the header control's request, through the same
+        // door — which is what stops a painter re-spelling the policy.
+        assert_eq!(
+            HomeRequest::from_wire("canvas"),
+            Some(HomeRequest::Named(DetachHome::Canvas))
+        );
+        assert_eq!(HomeRequest::from_wire("next"), Some(HomeRequest::Next));
+        assert_eq!(HomeRequest::from_wire("elsewhere"), None);
+        assert_eq!(
+            HomeRequest::Next.resolve(windowing, DetachHome::Window),
+            Ok(DetachHome::Canvas)
+        );
+        assert_eq!(
+            HomeRequest::Named(DetachHome::Canvas).resolve(windowing, DetachHome::Window),
+            Ok(DetachHome::Canvas)
+        );
+        // A named home this host lacks is refused by NAME, and `next` on a sole
+        // home is refused for the other reason — the two channels reach the two
+        // arms, so neither is decoration.
+        let tui = DetachPolicy::for_host(false);
+        assert_eq!(
+            HomeRequest::Named(DetachHome::Window)
+                .resolve(tui, DetachHome::Canvas)
+                .expect_err("no window server")
+                .wire_word(),
+            "home-not-available"
+        );
+        assert_eq!(
+            HomeRequest::Next
+                .resolve(tui, DetachHome::Canvas)
+                .expect_err("nowhere to send it")
+                .wire_word(),
+            "sole-home"
+        );
+        // And every request round-trips its wire word, so what a schema
+        // publishes is what an invoke accepts.
+        for request in [
+            HomeRequest::Named(DetachHome::Window),
+            HomeRequest::Named(DetachHome::Canvas),
+            HomeRequest::Next,
+        ] {
+            assert_eq!(HomeRequest::from_wire(request.as_str()), Some(request));
+        }
+    }
 
     #[test]
     fn a_home_round_trips_through_its_wire_name() {

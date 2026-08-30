@@ -5894,3 +5894,123 @@ fn r1905_a_card_crossing_into_the_canvas_stays_reachable() {
         );
     });
 }
+
+// ── R1907: a hand can change a detached panel's home ─────────────────────
+
+/// ★★★★★ R1907 — **the home is a thing a person can change**, through the same
+/// verb the wire uses.
+///
+/// R1891 gave a detached card a home and R1905 made the geometry follow it, and
+/// after both the only caller of the screen's verb was the wire dispatch: the
+/// value existed, an agent could set it, and a reader looking at the panel had
+/// no way to ask. This drives the control on the panel's own header and asserts
+/// that it lands where the POLICY says, not where this test says.
+#[test]
+fn r1907_the_header_control_sends_a_panel_to_the_home_the_policy_names() {
+    Owner::new().run(|| {
+        let state = use_shell_state();
+        pinion_core::external::publish_window_origins([(super::MAIN_WINDOW, (0, 0))]);
+        super::ShellOracle::detach(&state, "packet#0").expect("a board card tears off");
+        let torn = state.float("packet#0").expect("it is floating");
+        let policy = super::detach_policy();
+        let expected = policy
+            .next_home(torn.home)
+            .expect("this host has a second home");
+        assert_ne!(
+            expected, torn.home,
+            "'somewhere else' must be somewhere else"
+        );
+
+        super::ShellOracle::act_on_hit(&state, super::Hit::FloatHome("packet#0".into()));
+        let moved = state.float("packet#0").expect("it is still floating");
+        assert_eq!(
+            moved.home, expected,
+            "★★★★★ the control sends the panel where the policy says the next \
+             home is. Unchanged here is the state R1891 left, not a pass"
+        );
+        // And the geometry followed, which is R1905's seam being consulted by
+        // this new channel rather than only by the wire.
+        assert!(
+            state.arrival.get().is_some(),
+            "a crossing through the header control publishes how it arrived, \
+             or a client watching the panel cannot tell it moved from relabelled"
+        );
+
+        // Pressing it again returns the panel, so the control is safe to try —
+        // a person who presses an unfamiliar mark can undo it with the same one.
+        super::ShellOracle::act_on_hit(&state, super::Hit::FloatHome("packet#0".into()));
+        let back = state.float("packet#0").expect("it is still floating");
+        assert_eq!(back.home, torn.home, "two presses are the identity of home");
+    });
+}
+
+/// ★★★★★ R1907 — **the paint and the hit test walk ONE roster.**
+///
+/// Before this round the count of controls in a detached panel's header was the
+/// literal `2`, written twice in the painter and twice in the hit test with
+/// nothing comparing the four. That is this screen's standing
+/// `debt-paint-and-gesture-read-two-facts` in the exact place a third control
+/// had to go, so the roster is derived from the policy and asserted here from
+/// BOTH sides: every control the header offers is drawn under its own wire name
+/// AND answers a press in the box it was drawn in.
+#[test]
+fn r1907_every_control_a_detached_header_offers_is_drawn_and_pressable() {
+    Owner::new().run(|| {
+        let state = use_shell_state();
+        pinion_core::external::publish_window_origins([(super::MAIN_WINDOW, (0, 0))]);
+        super::ShellOracle::detach(&state, "packet#0").expect("a board card tears off");
+        // On the canvas, because that is the home this screen paints; a
+        // window-homed panel is drawn by its own window.
+        super::ShellOracle::set_detach_home(
+            &state,
+            &super::IntrospectValue::Text("packet#0,canvas".into()),
+        )
+        .expect("the canvas is a home this host admits");
+
+        let offered = super::float_affordances();
+        assert!(
+            offered.contains(&pinion_core::detach::DetachedAffordance::SendHome),
+            "this host has two homes, so its detached header offers the control"
+        );
+        let float = state.float("packet#0").expect("it is still floating");
+        let rect = super::float_rect(&float);
+        let header = super::header_rect(super::local(rect));
+        let mut answered = Vec::new();
+        for (n, affordance) in offered.iter().enumerate() {
+            let slot = super::float_affordance_rect(header, n);
+            assert!(
+                slot.w > 0 && slot.h > 0,
+                "the {} control occupies nothing at slot {n}",
+                affordance.wire()
+            );
+            // ⚠ Window-absolute means the CANVAS's origin is added, not just
+            // the panel's. A canvas float's stored pair is in the canvas's own
+            // frame — `Hit::at` folds that origin out before it reads the
+            // floats — and the first draft of this gate omitted it and probed
+            // (510, 19), which is up in the application bar. R1905 measured
+            // exactly this and it caught the next round anyway, which is what
+            // makes it worth a second note rather than a shorter one.
+            let canvas = super::canvas_rect();
+            let px = canvas.x + rect.x + slot.x + slot.w / 2;
+            let py = canvas.y + rect.y + slot.y + slot.h / 2;
+            let hit = super::Hit::at(&state, px, py);
+            assert_eq!(
+                super::hit_word(&hit),
+                format!("float.packet#0.{}", affordance.wire()),
+                "the press at ({px}, {py}) must answer for the control the \
+                 roster puts in slot {n}; got {hit:?}"
+            );
+            answered.push(super::hit_word(&hit));
+        }
+        // Distinct, because a roster whose slots overlapped would answer the
+        // same control twice and every assertion above would still hold.
+        let mut sorted = answered.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(
+            sorted.len(),
+            answered.len(),
+            "two slots answer the same control: {answered:?}"
+        );
+    });
+}

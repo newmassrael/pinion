@@ -3596,6 +3596,13 @@ const OPERATION_GESTURES: &[OperationGesture] = &[
     ("bring a detached panel forward", |state, shot| {
         press_tag(state, shot, "float.packet#0");
     }),
+    // ★★★★★ R1907 — the control that changes WHERE a detached panel lives.
+    // Listed beside re-dock because they are neighbours in the header and mean
+    // opposite things: one gives the panel back to the board, the other keeps
+    // it out and moves which space it is in.
+    ("send a detached panel to its next home", |state, shot| {
+        press_tag(state, shot, "float.packet#0.send_home");
+    }),
     ("re-dock a detached panel", |state, shot| {
         press_tag(state, shot, "float.packet#0.redock");
     }),

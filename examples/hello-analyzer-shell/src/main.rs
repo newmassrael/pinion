@@ -102,7 +102,7 @@ use pinion_chart::{
 };
 use pinion_core::availability::Unavailable;
 use pinion_core::crossing::{Crossing, CrossingPolicy, Passage, Rest, Side};
-use pinion_core::detach::{Arrival, DetachHome, DetachPolicy};
+use pinion_core::detach::{Arrival, DetachHome, DetachPolicy, DetachedAffordance, HomeRequest};
 use pinion_core::drop_target::{
     BOARD_WIDGET_DRAG_KIND, DropAccept, DropAction, DropActions, DropClause, DropContract,
     DropOffer, DropStanding, DropVerdict, standing_value,
@@ -2394,9 +2394,15 @@ fn on_board_ignoring(state: &ShellState, px: u32, py: u32, carrying: Option<&str
         return false;
     }
     match Hit::at(state, px, py) {
-        Hit::Float(id) | Hit::FloatRedock(id) | Hit::FloatClose(id) | Hit::FloatResize(id) => {
-            carrying == Some(id.as_str())
-        }
+        // ★ R1907 — the send-home control is part of the panel, so a point over
+        // it is over that panel. Left out of this list a card could be dropped
+        // through it onto the board underneath, which is exactly the "somebody
+        // else's panel" placement R1733 refused.
+        Hit::Float(id)
+        | Hit::FloatHome(id)
+        | Hit::FloatRedock(id)
+        | Hit::FloatClose(id)
+        | Hit::FloatResize(id) => carrying == Some(id.as_str()),
         _ => true,
     }
 }
@@ -2626,6 +2632,30 @@ const CARD_METRICS: card_header::CardMetrics = card_header::CardMetrics {
 /// rightmost is the last affordance the vocabulary declares.
 fn affordance_rect(header: Rect, count: u32, n: u32) -> Rect {
     card_header::slot_rect(header, count, n, CARD_METRICS)
+}
+
+/// ★★★★★ R1907 — **what a detached panel's header offers here**, derived from
+/// this host's own detach policy and asked by the paint and the hit test alike.
+///
+/// One derivation because a header control is drawn AND pressed, and this
+/// screen's standing debt ([[debt-paint-and-gesture-read-two-facts]]) is
+/// precisely what a second copy would be. Before this round the count was the
+/// literal `2`, written twice in the painter and twice in [`Hit::in_canvas`],
+/// with nothing comparing the four — so a third control could be drawn where
+/// nothing could press it, or pressed where nothing was drawn.
+fn float_affordances() -> &'static [DetachedAffordance] {
+    detach_policy().detached_affordances()
+}
+
+/// The box of the `n`th control a detached panel's header offers.
+///
+/// Takes the index into [`float_affordances`] rather than a count and a slot,
+/// so the two cannot be given inconsistently — the caller cannot say "the
+/// second of two" while the roster has three.
+fn float_affordance_rect(header: Rect, n: usize) -> Rect {
+    let count = u32::try_from(float_affordances().len()).unwrap_or(1);
+    let slot = u32::try_from(n).unwrap_or(0);
+    affordance_rect(header, count, slot)
 }
 
 // ★ R1817 — `grip_rect` used to be declared here. `card_header::grip_scene`
@@ -3086,6 +3116,16 @@ enum Hit {
     /// answers in indices and this arm is where that index stops travelling.
     Tab(String),
     Card(String),
+    /// ★★★★★ R1907 — the control that sends a detached panel to the next home
+    /// this host admits.
+    ///
+    /// Its own arm rather than a modifier on [`Self::FloatRedock`], because
+    /// re-docking and changing home are opposite intentions: one gives the
+    /// panel back to the board, the other keeps it detached and moves where it
+    /// lives. The canon has no counterpart — its detached panel has one place
+    /// to be — so this is the arm that carries the capability this tree has and
+    /// the reference does not.
+    FloatHome(String),
     FloatRedock(String),
     FloatClose(String),
     /// R1697 — the corner that sizes a detached panel. Its own arm rather than
@@ -3380,11 +3420,22 @@ impl Hit {
             let (lx, ly) = (cx - rect.x, cy - rect.y);
             let header = header_rect(local(rect));
             if contains(header, lx, ly) {
-                if contains(affordance_rect(header, 2, 1), lx, ly) {
-                    return Self::FloatClose(float.id.clone());
-                }
-                if contains(affordance_rect(header, 2, 0), lx, ly) {
-                    return Self::FloatRedock(float.id.clone());
+                // ★★★★★ R1907 — the roster is the ONE derivation the paint
+                // reads too. It was two hand-written `2`s here and two more in
+                // the painter, so adding a third control meant editing four
+                // constants that nothing compares — the standing
+                // [[debt-paint-and-gesture-read-two-facts]] shape, in the exact
+                // place a new affordance had to go.
+                for (n, offered) in float_affordances().iter().enumerate() {
+                    if !contains(float_affordance_rect(header, n), lx, ly) {
+                        continue;
+                    }
+                    let id = float.id.clone();
+                    return match offered {
+                        DetachedAffordance::SendHome => Self::FloatHome(id),
+                        DetachedAffordance::Redock => Self::FloatRedock(id),
+                        DetachedAffordance::Close => Self::FloatClose(id),
+                    };
                 }
             }
             return Self::Float(float.id.clone());
@@ -3597,6 +3648,9 @@ fn hit_word(hit: &Hit) -> String {
         Hit::FilterChip(id, n) => format!("card.{id}.chip.{n}"),
         Hit::AlarmColumn(id, n) => format!("card.{id}.feed.head.col#{n}"),
         Hit::Card(id) => format!("card.{id}"),
+        // ★ R1907 — the tag is the affordance's own wire word, so what a
+        // pointer answers and what the paint tagged are one name.
+        Hit::FloatHome(id) => format!("float.{id}.{}", DetachedAffordance::SendHome.wire()),
         Hit::FloatRedock(id) => format!("float.{id}.redock"),
         Hit::FloatClose(id) => format!("float.{id}.close"),
         Hit::FloatResize(id) => format!("float.{id}.resize"),
@@ -4156,6 +4210,12 @@ impl ShellOracle {
         )))
     }
 
+    /// The PARSING half: a wire string becomes a card and a [`HomeRequest`].
+    ///
+    /// ★ R1907 — split from [`Self::send_home`], which is the verb. Two
+    /// channels reach that verb now — this one and the header control — and a
+    /// verb that also parses is a verb only one of them can use, which is how
+    /// this screen came to have a home nobody could change by hand.
     fn set_detach_home(
         state: &Rc<ShellState>,
         args: &IntrospectValue,
@@ -4163,21 +4223,50 @@ impl ShellOracle {
         let text = Self::text(args)?;
         let (id, want) = text
             .split_once(',')
-            .ok_or_else(|| InvokeError::rejected("expected <card>,<window|canvas>"))?;
+            .ok_or_else(|| InvokeError::rejected("expected <card>,<window|canvas|next>"))?;
         let (id, want) = (id.trim(), want.trim());
         let want = want.strip_prefix("home=").unwrap_or(want);
+        // ★★★★★ R1907 — `next` is a request this channel can make too, so the
+        // wire is not weaker than the hand. A client driving this tool
+        // headlessly can say "somewhere else" without first reading the policy
+        // and computing the answer — which is the computation that would be a
+        // second spelling of it.
+        let asked = HomeRequest::from_wire(want).ok_or_else(|| {
+            InvokeError::rejected(format!(
+                "a detached panel lives in a window or on the canvas, or goes to \
+                 the next one; not {want:?}"
+            ))
+        })?;
+        Self::send_home(state, id, asked)
+    }
+
+    /// ★★★★★ R1907 — the ONE verb that changes where a detached panel lives.
+    ///
+    /// Both channels arrive here: the wire through [`Self::set_detach_home`],
+    /// and a person through the control on the panel's own header. R1903 built
+    /// this shape one gesture over and the reason is the same — two paths that
+    /// do the same thing differently are two behaviours, and only one of them
+    /// gets tested.
+    ///
+    /// The request is resolved by the POLICY ([`HomeRequest::resolve`]), never
+    /// here: this function does not know that the home after a window is the
+    /// canvas, and a painter that did would be the policy's second spelling.
+    fn send_home(
+        state: &Rc<ShellState>,
+        id: &str,
+        asked: HomeRequest,
+    ) -> Result<IntrospectValue, InvokeError> {
         if !state.is_floating(id) {
             return Err(InvokeError::rejected(format!(
                 "card {id:?} is not detached, so it has no home to move"
             )));
         }
-        let asked = DetachHome::from_wire(want).ok_or_else(|| {
-            InvokeError::rejected(format!(
-                "a detached panel lives in a window or on the canvas, not {want:?}"
-            ))
-        })?;
-        let home = detach_policy()
-            .admit(asked)
+        let from = state
+            .float(id)
+            .map(|f| f.home)
+            .ok_or_else(|| InvokeError::rejected(format!("card {id:?} is not detached")))?;
+        let home = asked
+            .resolve(detach_policy(), from)
             .map_err(|refusal| InvokeError::rejected(refusal.reason().to_string()))?;
         // ★★★★★ R1905 — the numbers CROSS, they are not merely relabelled.
         //
@@ -5180,6 +5269,34 @@ fn detach_policy_json() -> serde_json::Value {
     serde_json::json!({
         "homes": policy.homes().iter().map(|h| h.as_str()).collect::<Vec<_>>(),
         "preferred": policy.preferred().as_str(),
+        // ★★★★★ R1907 — what a detached panel's HEADER offers, and where "the
+        // next home" leads from each home.
+        //
+        // Both are derived from `homes` above, and both are published anyway,
+        // for the reason R1642 made a declaration a precondition of dispatch: a
+        // client that has to re-derive them is holding a second copy of this
+        // host's policy, free to disagree the day a third home appears. The
+        // roster also says whether the control EXISTS — a host with one home
+        // draws no send-home control, and a client that only saw `homes` would
+        // have to know that rule to predict it.
+        "affordances": policy
+            .detached_affordances()
+            .iter()
+            .map(|a| a.wire())
+            .collect::<Vec<_>>(),
+        // A map rather than a bare "next": which home follows depends on where
+        // the panel is, and publishing one answer would be right for one panel
+        // and wrong for the rest. Absent entirely when this host has one home,
+        // which is the honest report of "there is no next one" — an entry
+        // mapping a home to itself would read as a move that changes nothing.
+        "next_from": policy
+            .homes()
+            .iter()
+            .filter_map(|from| {
+                let to = policy.next_home(*from).ok()?;
+                Some((from.as_str().to_owned(), serde_json::Value::from(to.as_str())))
+            })
+            .collect::<serde_json::Map<String, serde_json::Value>>(),
     })
 }
 
@@ -6642,6 +6759,19 @@ impl ShellOracle {
                     state.say(Utterance::refused(&why.to_string()));
                 }
             }
+            // ★★★★★ R1907 — a person can now say WHERE a detached panel lives.
+            //
+            // Through the same verb the wire uses, and asking the POLICY where
+            // "next" is rather than deciding here: this arm does not know that
+            // the home after a window is the canvas, so a third home would need
+            // nothing of it. R1902's finding one gesture over is why — a
+            // painter that re-spells a policy is a second answer waiting to
+            // disagree with the first.
+            Hit::FloatHome(id) => {
+                if let Err(why) = Self::send_home(state, &id, HomeRequest::Next) {
+                    state.say(Utterance::refused(&why.to_string()));
+                }
+            }
             Hit::FloatRedock(id) => {
                 if let Err(why) = Self::redock(state, &id) {
                     state.say(Utterance::refused(&why));
@@ -7739,6 +7869,35 @@ fn redock_mark(rect: Rect, ink: Color) -> Scene {
                 (cx - 5, cy - 5),
             ],
             vec![(cx - 5, cy + 2), (cx + 5, cy + 2)],
+        ],
+        ink,
+        1,
+    )
+}
+
+/// ★★★★★ R1907 — **send this panel to the next home**: a frame with an arrow
+/// leaving it to the right.
+///
+/// It must not read as [`redock_mark`], which is the control beside it and
+/// means the opposite — back to the board. So the frame is drawn OPEN on the
+/// side the arrow leaves by: re-dock closes a box, send-home opens one. R1697's
+/// lesson, one control over: a control that looks like its neighbour tells a
+/// person the same thing about two different acts.
+fn send_home_mark(rect: Rect, ink: Color) -> Scene {
+    let (cx, cy) = (rect.w / 2, rect.h / 2);
+    strokes(
+        rect,
+        &[
+            // The frame, open on the right.
+            vec![
+                (cx + 1, cy - 5),
+                (cx - 5, cy - 5),
+                (cx - 5, cy + 5),
+                (cx + 1, cy + 5),
+            ],
+            // The arrow leaving through the opening.
+            vec![(cx - 2, cy), (cx + 6, cy)],
+            vec![(cx + 3, cy - 3), (cx + 6, cy), (cx + 3, cy + 3)],
         ],
         ink,
         1,
@@ -11294,23 +11453,24 @@ fn float_scene(state: &ShellState, float: &Float, palette: Palette) -> Option<Sc
                 20,
             ))),
         ),
-        Scene::Container(
-            ContainerNode::new(vec![redock_mark(
-                local(affordance_rect(header, 2, 0)),
-                palette.muted,
-            )])
-            .with_tag(format!("float.{}.redock", float.id))
-            .with_layout(absolute(affordance_rect(header, 2, 0))),
-        ),
-        Scene::Container(
-            ContainerNode::new(vec![close_mark(
-                local(affordance_rect(header, 2, 1)),
-                palette.muted,
-            )])
-            .with_tag(format!("float.{}.close", float.id))
-            .with_layout(absolute(affordance_rect(header, 2, 1))),
-        ),
     ];
+    // ★★★★★ R1907 — the header's controls, from the SAME roster the hit test
+    // walks. The marks are chosen by the affordance rather than by position, so
+    // a host whose policy drops `send_home` draws two and answers for two
+    // without either side being told a number.
+    children.extend(float_affordances().iter().enumerate().map(|(n, offered)| {
+        let slot = float_affordance_rect(header, n);
+        let mark = match offered {
+            DetachedAffordance::SendHome => send_home_mark(local(slot), palette.muted),
+            DetachedAffordance::Redock => redock_mark(local(slot), palette.muted),
+            DetachedAffordance::Close => close_mark(local(slot), palette.muted),
+        };
+        Scene::Container(
+            ContainerNode::new(vec![mark])
+                .with_tag(format!("float.{}.{}", float.id, offered.wire()))
+                .with_layout(absolute(slot)),
+        )
+    }));
     children.extend(body_scene(state, &card, body_rect(inside, false), palette));
     // ★★ R1697 — the corner, painted last so it is over the body it sits in,
     // and from the SAME function the hit test reads. An affordance a person is
