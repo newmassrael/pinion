@@ -625,10 +625,10 @@
       "verdict": "have"
     },
     "hide_socket_toggle": {
-      "covered_by": "per-socket manual hide: Appearance derives hidden ports and cannot be told",
+      "covered_by": "a hand puts a named port away and brings them all back; the two reasons a port is not drawn stay apart",
       "mechanism": "cpp",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::dcc_hide_socket_toggle",
+      "verdict": "have"
     },
     "hide_toggle": {
       "covered_by": "Appearance::collapsed",
@@ -2073,16 +2073,16 @@
       "verdict": "have"
     },
     "GraphEditor::RemoveOtherStructVarPins": {
-      "covered_by": "STRUCT PINS: a composite value port split into its members and recombined",
+      "covered_by": "a hand puts a named port away and brings them all back; the two reasons a port is not drawn stay apart",
       "mechanism": "GraphEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_graph_editor_remove_other_struct_var_pins",
+      "verdict": "have"
     },
     "GraphEditor::RemoveThisStructVarPin": {
-      "covered_by": "STRUCT PINS: a composite value port split into its members and recombined",
+      "covered_by": "a hand puts a named port away and brings them all back; the two reasons a port is not drawn stay apart",
       "mechanism": "GraphEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_graph_editor_remove_this_struct_var_pin",
+      "verdict": "have"
     },
     "GraphEditor::ResetPinToDefaultValue": {
       "covered_by": "Document::clear_port_value (R1594)",
@@ -2091,10 +2091,10 @@
       "verdict": "have"
     },
     "GraphEditor::RestoreAllStructVarPins": {
-      "covered_by": "STRUCT PINS: a composite value port split into its members and recombined",
+      "covered_by": "a hand puts a named port away and brings them all back; the two reasons a port is not drawn stay apart",
       "mechanism": "GraphEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_graph_editor_restore_all_struct_var_pins",
+      "verdict": "have"
     },
     "GraphEditor::SelectAllInputNodes": {
       "covered_by": "Document::grow (Reach)",

@@ -672,6 +672,30 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
         None
     }
 
+    /// ★★★★★ R1912 — whether this kind's ports **are** the node, so none of
+    /// them may be put away
+    /// ([`Document::put_away_ports`](crate::Document::put_away_ports)).
+    ///
+    /// The default is `false`: an ordinary node is a box with ports on it, and
+    /// hiding one leaves a box.
+    ///
+    /// # What it is for, measured
+    ///
+    /// The DCC refuses exactly this and writes the refusal as a **name test**
+    /// on one node type, with the reason in a comment beside it: *the reroute
+    /// node is the socket itself, do not hide this*. A name test covers the
+    /// node types somebody remembered; a declaration covers the ones written
+    /// next, which is the difference this crate takes everywhere else.
+    ///
+    /// It is deliberately NOT derived from the port count. A one-in one-out
+    /// node is not automatically its ports — an ordinary unary operator has the
+    /// same shape and hiding its unused output is a legitimate thing to want —
+    /// and a derivation would refuse those too while silently admitting a
+    /// pass-through node that happened to grow a third port.
+    fn ports_are_the_node(&self) -> bool {
+        false
+    }
+
     /// Compute every output from the already-resolved inputs.
     ///
     /// `inputs` is exactly as long as the node's **resolved** input list —

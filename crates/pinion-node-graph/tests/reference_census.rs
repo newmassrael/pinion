@@ -45,9 +45,10 @@ use serde::{Deserialize, Serialize};
 
 use pinion_node_graph::{
     Align, Appearance, Axis, Command, Conversion, Crossings, Definitions, Direction, Distribute,
-    Document, Edge, EditPath, Extent, Fragment, Grow, Instance, InterfaceSide, Item, ItemError,
-    LinkId, Machine, Node, NodeBody, NodeId, NodeKind, NodeSite, Port, PortRef, PortSite, ROOT,
-    Reach, Session, Sharing, Side, Socket, Stack, Straighten, Stride, TreeId, Variadic, WatchError,
+    Document, Edge, EditPath, Extent, Fragment, Grow, Hidden, Instance, InterfaceSide, Item,
+    ItemError, LinkId, Machine, Node, NodeBody, NodeId, NodeKind, NodeSite, Port, PortRef,
+    PortSite, PutAway, ROOT, Reach, Session, Sharing, Side, Socket, Stack, Straighten, Stride,
+    TreeId, Variadic, WatchError,
 };
 
 // ---------------------------------------------------------------- taxonomy
@@ -513,6 +514,7 @@ fn dcc_item_proofs() -> Vec<Proof> {
 fn dcc_proofs() -> Vec<Proof> {
     vec![
         proof("dcc", "add_empty_group", dcc_add_empty_group),
+        proof("dcc", "hide_socket_toggle", dcc_hide_socket_toggle),
         proof("dcc", "add_group", dcc_add_group),
         proof("dcc", "add_group_input_node", dcc_add_group_input_node),
         proof("dcc", "attach", dcc_attach),
@@ -601,6 +603,23 @@ fn engine_proofs() -> Vec<Proof> {
             "engine",
             "GraphEditor::CollapseNodes",
             engine_graph_editor_collapse_nodes,
+        ),
+        // ★★★★★ R1912 — the three the census filed under struct-pin SPLITTING
+        // and which are hiding, measured in the engine's own editor source.
+        proof(
+            "engine",
+            "GraphEditor::RemoveThisStructVarPin",
+            engine_graph_editor_remove_this_struct_var_pin,
+        ),
+        proof(
+            "engine",
+            "GraphEditor::RemoveOtherStructVarPins",
+            engine_graph_editor_remove_other_struct_var_pins,
+        ),
+        proof(
+            "engine",
+            "GraphEditor::RestoreAllStructVarPins",
+            engine_graph_editor_restore_all_struct_var_pins,
         ),
         proof(
             "engine",
@@ -1800,6 +1819,130 @@ fn dcc_collapse_hide_unused_toggle() {
     let ports = chain.document.visible_ports(ROOT, lonely).unwrap();
     assert!(ports.inputs.is_empty());
     assert_eq!(ports.hidden_inputs, vec![0, 1]);
+}
+
+/// ★★★★★ R1912 — the DCC's socket-hide toggle: a hand puts a node's unwired
+/// sockets away **by name**, and pressing again brings them back.
+///
+/// The reference's operator sets a per-socket user-hidden flag over the unwired
+/// sockets and clears every one of them when any is already set. Read whole,
+/// its own visibility rule is `!is_user_hidden() && is_available() &&
+/// inferred_visibility()` — three independent reasons a socket is not drawn.
+/// This crate had the derivation and no way to be told, which is why the row
+/// was `absent` while `hide_unused_ports` existed.
+///
+/// ⚠ The last assertion is the one the derivation cannot make, and it is what
+/// makes this a different capability rather than a second spelling: the
+/// reference re-derives its set from the wiring every press, so a socket it
+/// hid comes back the moment something is wired to it. A declaration does not.
+#[test]
+fn dcc_hide_socket_toggle() {
+    let mut chain = chain();
+    let lonely = node(&mut chain.document, Op::Add);
+
+    let done = chain
+        .document
+        .put_away_ports(ROOT, lonely, PutAway::Unwired)
+        .unwrap();
+    assert_eq!(
+        done.len(),
+        3,
+        "an unwired Add has two inputs and one output, and the reference's own \
+         operator takes all of them"
+    );
+    let ports = chain.document.visible_ports(ROOT, lonely).unwrap();
+    assert!(ports.nothing_drawn(), "which the reference permits too");
+    assert_eq!(ports.why_hidden(Side::Input, 0), Some(Hidden::PutAway));
+
+    assert_eq!(chain.document.restore_ports(ROOT, lonely), Some(3));
+    assert!(
+        !chain
+            .document
+            .visible_ports(ROOT, lonely)
+            .unwrap()
+            .nothing_drawn()
+    );
+
+    // ★ And it STAYS away when wired, where the reference's derivation would
+    // draw it again.
+    chain
+        .document
+        .put_away_ports(ROOT, chain.add, PutAway::Port(Side::Input, 0))
+        .unwrap();
+    assert_eq!(
+        chain
+            .document
+            .visible_ports(ROOT, chain.add)
+            .unwrap()
+            .why_hidden(Side::Input, 0),
+        Some(Hidden::PutAway),
+        "input 0 of `add` is wired in this fixture"
+    );
+}
+
+/// ★★★★★ R1912 — the engine's *remove this struct var pin*: one named pin goes
+/// away and the rest stay.
+///
+/// Measured in the engine's editor source, this and its two siblings call the
+/// node's own remove-field-pins with a given-pin selector — they touch neither
+/// sub-pins nor a parent pin, so they are HIDING and not splitting. The census
+/// had all three filed under struct-pin splitting, which is the grouping this
+/// round re-cut.
+#[test]
+fn engine_graph_editor_remove_this_struct_var_pin() {
+    let mut chain = chain();
+    chain
+        .document
+        .put_away_ports(ROOT, chain.add, PutAway::Port(Side::Input, 1))
+        .unwrap();
+    let ports = chain.document.visible_ports(ROOT, chain.add).unwrap();
+    assert_eq!(ports.inputs, vec![0]);
+    assert_eq!(ports.outputs, vec![0], "only the named pin went");
+    assert_eq!(ports.why_hidden(Side::Input, 1), Some(Hidden::PutAway));
+}
+
+/// ★★★★★ R1912 — the engine's *remove all other pins*: everything but the named
+/// one goes away, which is its own command's description verbatim.
+#[test]
+fn engine_graph_editor_remove_other_struct_var_pins() {
+    let mut chain = chain();
+    chain
+        .document
+        .put_away_ports(ROOT, chain.add, PutAway::AllOthers(Side::Input, 0))
+        .unwrap();
+    let ports = chain.document.visible_ports(ROOT, chain.add).unwrap();
+    assert_eq!(ports.inputs, vec![0]);
+    assert!(ports.outputs.is_empty(), "both sides, as the engine's does");
+    assert_eq!(ports.hidden_count(), 2);
+}
+
+/// ★★★★★ R1912 — the engine's *restore all structure pins*, and the count its
+/// own command is greyed out by.
+///
+/// The engine gates that command on "not all pins are shown"; here the same
+/// fact is the return value, so a host does not need a second query to know
+/// whether offering it would do anything.
+#[test]
+fn engine_graph_editor_restore_all_struct_var_pins() {
+    let mut chain = chain();
+    assert_eq!(
+        chain.document.restore_ports(ROOT, chain.add),
+        Some(0),
+        "nothing is away yet, which is the greyed-out state"
+    );
+    chain
+        .document
+        .put_away_ports(ROOT, chain.add, PutAway::AllOthers(Side::Input, 0))
+        .unwrap();
+    assert_eq!(chain.document.restore_ports(ROOT, chain.add), Some(2));
+    assert_eq!(
+        chain
+            .document
+            .visible_ports(ROOT, chain.add)
+            .unwrap()
+            .hidden_count(),
+        0
+    );
 }
 
 /// Collapse: drawn small, and the same request about unused ports. Two

@@ -237,7 +237,7 @@ mod swap;
 mod tests;
 mod view;
 
-pub use appearance::{Appearance, VisiblePorts};
+pub use appearance::{Appearance, Hidden, PutAway, PutAwayRefusal, VisiblePorts};
 pub use archive::{Archive, Dropped, Opening, REVISION, Unreadable, Unwritable};
 pub use arrange::{
     Align, ArrangePass, ArrangeTail, Axis, Distribute, Edge, Stack, Straighten, Straightened,

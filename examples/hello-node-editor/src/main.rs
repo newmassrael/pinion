@@ -482,7 +482,18 @@ const STORAGE_KEY: &str = "node_graph.state";
 // Every key moved (`{schema_version, graph}` -> `{revision, document,
 // companion}`), so an old blob is refused — and refused by NAME now: it comes
 // back as "this is not a saved graph", where before it was `false`.
-const PERSISTED_SCHEMA_VERSION: u32 = 12;
+// R1912 -> 13: a `Node`'s appearance gained the ports **a hand put away**, one
+// list per side. Both carry `serde(default)`, so an old blob still LOADS and
+// reads every port as drawn — which is what they were — and the version is what
+// says a file written by this build cannot be read by the last one.
+//
+// ★ It is a DECLARATION and therefore saved, where the node's existing
+// `hide_unused_ports` is a rule the reader re-derives from the wiring. That is
+// exactly the R1600 line this list keeps citing — what the graph IS goes in the
+// file, what it is DOING does not — and a person's decision about which ports
+// they want to see is the first kind: a fold that evaporated when the file
+// closed would be a hide, which is the distinction the whole axis is built on.
+const PERSISTED_SCHEMA_VERSION: u32 = 13;
 
 /// R1599 — the append-only `(version, digest)` ledger the persistence gate
 /// reads. See `pinion_core::test_fixtures::assert_persisted_shape` for why it
@@ -497,6 +508,7 @@ const PERSISTED_SHAPE_HISTORY: &[(u32, u64)] = &[
     (10, 0x9fed_b236_9417_723a),
     (11, 0x1c11_f72e_7c2e_d6c6),
     (12, 0xc793_c323_d2ba_3cac),
+    (13, 0x0c39_8b88_0572_c1d0),
 ];
 
 /// R849 — where a newly added node first lands, and the per-add cascade step

@@ -66,6 +66,14 @@ enum Op {
     /// re-index from one that shifts by a single port: with one port per item
     /// the two arithmetics agree.
     Blend,
+    /// R1912 — `(In: Number) -> Out: Number`, and its ports **are** the node.
+    ///
+    /// The shape the DCC refuses to hide sockets on, written as a declaration
+    /// rather than as a name test. It is a distinct variant from an ordinary
+    /// one-in one-out kind on purpose: the refusal must be shown to come from
+    /// what the kind DECLARES and not from its port count, and that is only
+    /// falsifiable if some other kind has the same count and is allowed.
+    Relay,
     Sink,
 }
 
@@ -101,9 +109,15 @@ impl NodeKind for Op {
             Self::Stamp => "Stamp",
             Self::Choose => "Choose",
             Self::Blend => "Blend",
+            Self::Relay => "Relay",
             Self::Sink => "Sink",
         }
         .to_owned()
+    }
+
+    /// R1912 — only [`Op::Relay`] is its ports.
+    fn ports_are_the_node(&self) -> bool {
+        matches!(self, Self::Relay)
     }
 
     fn inputs(&self) -> Vec<Port<Ty, Val>> {
@@ -136,6 +150,7 @@ impl NodeKind for Op {
                 Port::new("Base", Ty::Number).with_default(Val::Number(0)),
                 Port::new("Bias", Ty::Number).with_default(Val::Number(0)),
             ],
+            Self::Relay => vec![Port::new("In", Ty::Number)],
             Self::Sink => vec![Port::new("Result", Ty::Number)],
         }
     }
@@ -177,6 +192,7 @@ impl NodeKind for Op {
                 Port::new("Left", Ty::Number),
                 Port::new("Right", Ty::Number),
             ],
+            Self::Relay => vec![Port::new("Out", Ty::Number)],
             Self::Sink => Vec::new(),
         }
     }
@@ -229,6 +245,7 @@ impl NodeKind for Op {
                 }
                 vec![Some(Val::Number(total))]
             }
+            Self::Relay => vec![inputs.first().cloned().flatten()],
             Self::Sink => Vec::new(),
         }
     }
@@ -3230,6 +3247,11 @@ fn what_a_node_looks_like_cannot_change_what_the_graph_computes() {
             show_preview: true,
             width: Some(1),
             height: Some(2),
+            // ★ R1912 — a NON-empty pair, deliberately: this fixture exists to
+            // round-trip every field at once, and two empty vectors would
+            // serialise the same whether or not the field survived.
+            put_away_inputs: vec![0],
+            put_away_outputs: vec![1],
         },
     ];
     for look in looks {
@@ -3292,6 +3314,306 @@ fn hiding_unused_ports_hides_only_the_unwired_ones_and_names_them() {
     assert_eq!(
         f.document.visible_ports(ROOT, f.add).unwrap().inputs,
         vec![0]
+    );
+}
+
+/// ★★★★★ R1912 — **a hand can put a named port away, and the two reasons a
+/// port is not drawn stay apart.**
+///
+/// The gap four census rows across two references were one absent mechanism
+/// for: the DCC's socket-hide toggle and the engine's *remove this pin* /
+/// *remove all other pins* / *restore all*. Before this the crate had only the
+/// node-wide derivation, which re-decides from the wiring on every read and so
+/// cannot be told anything.
+///
+/// ★ The claim the derivation could never make is the last one here: a
+/// put-away port **stays away when it is wired**. That is what makes this a
+/// declaration rather than a second spelling of `hide_unused_ports`.
+#[test]
+fn r1912_a_hand_puts_a_port_away_and_the_reason_survives_being_wired() {
+    use crate::appearance::{Hidden, PutAway};
+
+    let mut f = fixture();
+    let before = f.document.visible_ports(ROOT, f.add).unwrap();
+    assert_eq!(before.hidden_count(), 0, "the fixture starts fully drawn");
+
+    // A named port, on a node whose kind allows it.
+    let done = f
+        .document
+        .put_away_ports(ROOT, f.add, PutAway::Port(Side::Input, 1))
+        .expect("`Add` is an ordinary kind and has a second input");
+    assert_eq!(done, vec![(Side::Input, 1)], "it reports what it did");
+
+    let after = f.document.visible_ports(ROOT, f.add).unwrap();
+    assert_eq!(after.inputs, vec![0]);
+    assert_eq!(after.hidden_inputs, vec![1]);
+    assert_eq!(
+        after.why_hidden(Side::Input, 1),
+        Some(Hidden::PutAway),
+        "★★★★★ the reason is a HAND's, which is the distinction neither \
+         reference publishes -- the DCC answers one conjunction of three facts \
+         and the engine removes the pin outright",
+    );
+    assert_eq!(
+        after.why_hidden(Side::Input, 0),
+        None,
+        "a drawn port has no reason to give",
+    );
+
+    // ★ Idempotent, and it says so by reporting nothing the second time --
+    // otherwise an undo reading this list would show a port the person had
+    // already put away.
+    assert_eq!(
+        f.document
+            .put_away_ports(ROOT, f.add, PutAway::Port(Side::Input, 1))
+            .expect("still allowed"),
+        Vec::new(),
+    );
+
+    // ★★★★★ THE CLAIM THE DERIVATION CANNOT MAKE. Input 1 is wired in this
+    // fixture, so `hide_unused_ports` would draw it; the declaration does not.
+    f.document
+        .tree_mut(ROOT)
+        .unwrap()
+        .node_mut(f.add)
+        .unwrap()
+        .appearance
+        .hide_unused_ports = true;
+    let both = f.document.visible_ports(ROOT, f.add).unwrap();
+    assert_eq!(
+        both.why_hidden(Side::Input, 1),
+        Some(Hidden::PutAway),
+        "★ a wired port a hand put away is still away, and still says WHY -- \
+         the rule would have drawn it",
+    );
+
+    // And the rule's own victims read the other way.
+    let feed = f
+        .document
+        .tree(ROOT)
+        .unwrap()
+        .link_into(Socket::new(f.add, 0))
+        .unwrap()
+        .id;
+    f.document.disconnect(ROOT, feed).unwrap();
+    let mixed = f.document.visible_ports(ROOT, f.add).unwrap();
+    assert_eq!(mixed.why_hidden(Side::Input, 0), Some(Hidden::Unused));
+    assert_eq!(mixed.why_hidden(Side::Input, 1), Some(Hidden::PutAway));
+
+    // Restoring is only the hand's business: the rule's port stays hidden.
+    assert_eq!(f.document.restore_ports(ROOT, f.add), Some(1));
+    let restored = f.document.visible_ports(ROOT, f.add).unwrap();
+    assert_eq!(restored.why_hidden(Side::Input, 1), None);
+    assert_eq!(
+        restored.why_hidden(Side::Input, 0),
+        Some(Hidden::Unused),
+        "★ restore does not turn the node's rule off -- that would be a second \
+         spelling of a field the caller already has",
+    );
+    assert_eq!(
+        f.document.restore_ports(ROOT, f.add),
+        Some(0),
+        "and it says nothing came back, which is the fact the engine's own \
+         command is greyed out by",
+    );
+    assert_eq!(f.document.restore_ports(ROOT, NodeId(97)), None);
+}
+
+/// ★★★★★ R1912 — **the scope is one parameter**, because the references' three
+/// commands are three answers to one question.
+#[test]
+fn r1912_one_verb_answers_all_three_of_the_references_scopes() {
+    use crate::appearance::PutAway;
+
+    // *Remove all other pins* -- the engine's, over BOTH sides.
+    let mut f = fixture();
+    f.document
+        .put_away_ports(ROOT, f.add, PutAway::AllOthers(Side::Input, 0))
+        .expect("`Add` allows it");
+    let kept = f.document.visible_ports(ROOT, f.add).unwrap();
+    assert_eq!(kept.inputs, vec![0]);
+    assert_eq!(kept.outputs, Vec::<u32>::new());
+    assert_eq!(kept.hidden_inputs, vec![1]);
+    assert_eq!(kept.hidden_outputs, vec![0]);
+
+    // *Hide unused sockets* -- the DCC's, which selects by the wiring ONCE and
+    // then remembers, where the node's rule would re-decide.
+    //
+    // ⚠ On `add`, with one addend freed. The first draft of this reached for
+    // `two` and asserted its input was unwired; a literal kind HAS no input, so
+    // the scope selected nothing and the assertion was about a port that does
+    // not exist. The test is what said so.
+    let mut f = fixture();
+    let freed = f
+        .document
+        .tree(ROOT)
+        .unwrap()
+        .link_into(Socket::new(f.add, 1))
+        .unwrap()
+        .id;
+    f.document.disconnect(ROOT, freed).unwrap();
+    let done = f
+        .document
+        .put_away_ports(ROOT, f.add, PutAway::Unwired)
+        .expect("`Add` has one unwired input now");
+    assert_eq!(
+        done,
+        vec![(Side::Input, 1)],
+        "input 0 is still fed and the output still reaches the sink, so the \
+         freed addend is the only unwired port",
+    );
+    // Wire the port that was put away, and it stays away -- the difference from
+    // the rule, on the reference's own scope.
+    let source = f
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(7)), 0, 200)
+        .unwrap();
+    f.document
+        .connect(ROOT, Socket::new(source, 0), Socket::new(f.add, 1))
+        .unwrap();
+    assert_eq!(
+        f.document
+            .visible_ports(ROOT, f.add)
+            .unwrap()
+            .why_hidden(Side::Input, 1),
+        Some(crate::appearance::Hidden::PutAway),
+        "★★★★★ the DCC's own operator would re-hide from the wiring and draw \
+         this one again; a declaration remembers what a person asked for",
+    );
+}
+
+/// ★★★★★ R1912 — **the refusals**, and the two that are this crate's own.
+#[test]
+fn r1912_a_port_that_cannot_be_put_away_says_so() {
+    use crate::appearance::{PutAway, PutAwayRefusal};
+
+    let mut f = fixture();
+    assert_eq!(
+        f.document
+            .put_away_ports(ROOT, NodeId(97), PutAway::Unwired)
+            .unwrap_err(),
+        PutAwayRefusal::NoSuchNode {
+            tree: ROOT,
+            node: NodeId(97)
+        },
+    );
+    assert_eq!(
+        f.document
+            .put_away_ports(ROOT, f.add, PutAway::Port(Side::Input, 9))
+            .unwrap_err(),
+        PutAwayRefusal::NoSuchPort {
+            side: Side::Input,
+            index: 9,
+            of: 2
+        },
+        "a refusal names how many there actually are, or a caller cannot \
+         correct the request",
+    );
+
+    // ★★★★★ The kind's own refusal, and it comes from what the kind DECLARES.
+    let relay = f
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Relay), 0, 300)
+        .unwrap();
+    assert_eq!(
+        f.document
+            .put_away_ports(ROOT, relay, PutAway::Port(Side::Input, 0))
+            .unwrap_err(),
+        PutAwayRefusal::PortsAreTheNode {
+            kind: "Relay".to_owned()
+        },
+    );
+    assert_eq!(
+        f.document
+            .put_away_ports(ROOT, relay, PutAway::Port(Side::Input, 9))
+            .unwrap_err(),
+        PutAwayRefusal::PortsAreTheNode {
+            kind: "Relay".to_owned()
+        },
+        "★ the kind answers FIRST, because it is about the node rather than \
+         the request -- a caller told to check an index would be checking the \
+         thing that was never the problem",
+    );
+    // ★ And a kind with the SAME port count is allowed, so the refusal is
+    // shown to come from the declaration rather than from the shape.
+    let sink_like = f
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Shout), 0, 400)
+        .unwrap();
+    assert!(
+        f.document
+            .put_away_ports(ROOT, sink_like, PutAway::Port(Side::Input, 0))
+            .is_ok(),
+        "`Shout` is one-in one-out too and does not declare itself its ports",
+    );
+
+    // ★★★★★ AND THE ONE THIS CRATE DOES NOT REFUSE, which is a measurement
+    // rather than an omission: the DCC's bulk operator hides EVERY unwired
+    // socket, so on a node nothing is wired to it reaches exactly this state.
+    // A first draft refused it; refusing what a reference does is a divergence,
+    // not superiority. What is superior is that the state can be SAID.
+    let mut f = fixture();
+    assert_eq!(
+        f.document
+            .put_away_ports(ROOT, f.add, PutAway::AllOthers(Side::Input, 0))
+            .expect("one port survives")
+            .len(),
+        2,
+    );
+    assert!(
+        !f.document
+            .visible_ports(ROOT, f.add)
+            .unwrap()
+            .nothing_drawn(),
+        "one port is still drawn",
+    );
+    f.document
+        .put_away_ports(ROOT, f.add, PutAway::Port(Side::Input, 0))
+        .expect("★ the last port too -- the DCC permits exactly this");
+    let empty = f.document.visible_ports(ROOT, f.add).unwrap();
+    assert!(
+        empty.nothing_drawn(),
+        "★★★★★ and the node SAYS it has nothing on the frame, which neither \
+         reference publishes -- a host can warn or offer to bring them back",
+    );
+    assert_eq!(
+        empty.hidden_count(),
+        3,
+        "nothing is lost: every port is still named",
+    );
+    assert_eq!(f.document.restore_ports(ROOT, f.add), Some(3));
+    assert!(
+        !f.document
+            .visible_ports(ROOT, f.add)
+            .unwrap()
+            .nothing_drawn(),
+        "★ and it is reversible, which is what makes permitting it right",
+    );
+
+    // ★ An empty node is not `nothing_drawn` -- that would report a node with
+    // no ports at all as one whose ports were put away, and the repairs differ.
+    let bare = f
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(1)), 0, 500)
+        .unwrap();
+    let _ = f
+        .document
+        .put_away_ports(ROOT, bare, PutAway::Port(Side::Output, 0));
+    assert!(
+        f.document
+            .visible_ports(ROOT, bare)
+            .unwrap()
+            .nothing_drawn()
+    );
+    let untouched = f
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Sink), 0, 600)
+        .unwrap();
+    assert!(
+        !f.document
+            .visible_ports(ROOT, untouched)
+            .unwrap()
+            .nothing_drawn()
     );
 }
 

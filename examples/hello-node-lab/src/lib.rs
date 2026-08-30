@@ -6223,11 +6223,24 @@ enum NodeAct {
     Disable,
     /// Take it off the canvas.
     Delete,
+    /// ★★★★★ R1912 — put the card's unwired pins away, or bring them all back.
+    ///
+    /// The DCC's socket-hide operator, whose own description is *toggle unused
+    /// node socket display*, and the engine's *restore all structure pins* —
+    /// one seat, because they are the two directions of one gesture and the
+    /// reference spells them as one toggle for that reason.
+    ///
+    /// ⚠ The per-pin scopes the engine also has (*remove this pin*, *remove all
+    /// other pins*) are not seats: a press on a pin in this lab already means
+    /// *start a wire*, which is the collision the comment above this enum names.
+    /// They are reachable through the declared `put_away_pins` action, which is
+    /// where this screen puts a verb a gesture cannot carry.
+    Pins,
 }
 
 impl NodeAct {
     /// The census. Consumers iterate this rather than re-listing the arms.
-    const ALL: [Self; 3] = [Self::Collapse, Self::Disable, Self::Delete];
+    const ALL: [Self; 4] = [Self::Collapse, Self::Disable, Self::Delete, Self::Pins];
 
     /// The word a press on this seat answers with, and the action that does the
     /// same thing — one name, so the two channels cannot drift.
@@ -6236,6 +6249,7 @@ impl NodeAct {
             Self::Collapse => "collapse",
             Self::Disable => "disable",
             Self::Delete => "delete_node",
+            Self::Pins => "put_away_pins",
         }
     }
 
@@ -6245,6 +6259,7 @@ impl NodeAct {
             Self::Collapse => "lab.inspector.collapse",
             Self::Disable => "lab.inspector.disable",
             Self::Delete => "lab.inspector.delete",
+            Self::Pins => "lab.inspector.pins",
         }
     }
 
@@ -6253,22 +6268,33 @@ impl NodeAct {
     /// The two toggles name the act they would perform rather than the state
     /// the card is in — the reference's own choice, and the one that makes a
     /// button readable without first working out which way round it is.
-    fn word(self, collapsed: bool, disabled: bool) -> &'static str {
+    fn word(self, collapsed: bool, disabled: bool, pins_away: bool) -> &'static str {
         match self {
             Self::Collapse if collapsed => "expand",
             Self::Collapse => "collapse",
             Self::Disable if disabled => "switch on",
             Self::Disable => "switch off",
             Self::Delete => "delete",
+            // ★ R1912 — the reference's own toggle direction: if anything is
+            // away, the press brings it back; otherwise it puts the unused ones
+            // away. Naming the ACT rather than the state, like the two above.
+            Self::Pins if pins_away => "show pins",
+            Self::Pins => "hide pins",
         }
     }
 
     /// Where the seat sits in the frame the inspector's body is drawn in — the
     /// same frame the identity labels above it and the form below it use, so
     /// the whole pane scrolls as one thing.
+    ///
+    /// ⚠ R1912 — the divisor is [`ALL`](NodeAct::ALL)'s length and was the
+    /// literal `3`. A fourth seat would have been laid out three-across and
+    /// drawn off the end of the pane; the count and the census were two facts
+    /// free to disagree, which is what this workspace lifts on sight.
     fn local_seat(self) -> Rect {
         let n = Self::ALL.iter().position(|a| *a == self).unwrap_or(0);
-        let width = (inspector_body_w() - NODE_ACT_GAP * 2) / 3;
+        let across = u32::try_from(Self::ALL.len()).unwrap_or(1);
+        let width = (inspector_body_w() - NODE_ACT_GAP * (across - 1)) / across;
         let step = u32::try_from(n).unwrap_or(0) * (width + NODE_ACT_GAP);
         Rect::new(PAD + step, NODE_ACT_Y, width, NODE_ACT_H)
     }
@@ -8538,6 +8564,24 @@ fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
 fn canvas_pins(state: &LabState, node: NodeId, card: Rect, role: Role, ink: Ink) -> Vec<Scene> {
     let name = state.name_of(node);
     let mut children: Vec<Scene> = Vec::new();
+    // ★★★★★ R1912 — a pin a hand PUT AWAY is not drawn, and the model is what
+    // says so. `visible_ports` answers over both reasons a port can be off the
+    // frame; asking it here rather than reading the appearance is what keeps
+    // this painter from becoming a second copy of that rule.
+    //
+    // The lab's dial pin is output 0 and its accept pin is input 0 — the
+    // variadic run's first item — which is the mapping `LabNode`'s signature
+    // declares.
+    let drawn = state.doc.borrow().visible_ports(ROOT, node);
+    let shows = |side: Side, index: u32| -> bool {
+        drawn.as_ref().is_none_or(|v| {
+            let list = match side {
+                Side::Input => &v.inputs,
+                Side::Output => &v.outputs,
+            };
+            list.contains(&index)
+        })
+    };
     {
         let listening = state.forms.borrow().get(&node).is_some_and(|f| {
             f.field("listen.endpoints")
@@ -8553,14 +8597,16 @@ fn canvas_pins(state: &LabState, node: NodeId, card: Rect, role: Role, ink: Ink)
                 _ => None,
             })
             .unwrap_or(Transport::Tcp);
-        children.push(box_at(
-            &format!("lab.pin.{name}.dial"),
-            pin_rect(state, card, true),
-            ink.accent,
-            Some(ink.accent),
-            PIN / 2,
-        ));
-        if role.accepts() {
+        if shows(Side::Output, 0) {
+            children.push(box_at(
+                &format!("lab.pin.{name}.dial"),
+                pin_rect(state, card, true),
+                ink.accent,
+                Some(ink.accent),
+                PIN / 2,
+            ));
+        }
+        if role.accepts() && shows(Side::Input, 0) {
             children.push(box_at(
                 &format!("lab.pin.{name}.accept"),
                 pin_rect(state, card, false),
@@ -8948,6 +8994,19 @@ fn card_switches(state: &LabState, node: NodeId) -> (bool, bool) {
         })
 }
 
+/// ★★★★★ R1912 — whether a hand has put any of this card's pins away.
+///
+/// Read from `visible_ports`' put-away lists rather than from the appearance's
+/// own vectors, so the seat's word, the paint and the wire all answer from the
+/// one derivation that also knows about the node's unused-port rule.
+fn pins_are_away(state: &LabState, node: NodeId) -> bool {
+    state
+        .doc
+        .borrow()
+        .visible_ports(ROOT, node)
+        .is_some_and(|v| !v.put_away_inputs.is_empty() || !v.put_away_outputs.is_empty())
+}
+
 // ── R1853: the fault-injection panel ────────────────────────────────────────
 
 /// The faults the selected node's settings admit, as one value a client reads in
@@ -8987,6 +9046,26 @@ const FAULT_LINE_H: u32 = pinion_core::containment::line_box(FAULT_PX) * 2 + 8;
 
 /// The face a fault row is set in.
 const FAULT_PX: u32 = 10;
+
+/// ★★★★★ R1912 — the closed set of scope words `put_away_pins` accepts.
+///
+/// The three the references have, plus this screen's two pin names. Written as
+/// one list because it is one vocabulary: the declaration an agent reads and
+/// the words the verb parses must be the same set, and two lists is how they
+/// stop being.
+///
+/// ⚠ `others:dial` and `others:accept` are spelled out rather than left as a
+/// prefix an agent has to infer. A domain that says "anything starting with
+/// `others:`" is a domain a client cannot enumerate, which is the whole point
+/// of publishing one.
+const PIN_SCOPES: [&str; 6] = [
+    "unwired",
+    "restore",
+    "dial",
+    "accept",
+    "others:dial",
+    "others:accept",
+];
 
 /// The closed set of fault arms the `inject` verb accepts.
 ///
@@ -9328,6 +9407,7 @@ fn inspector_identity(state: &LabState, node: NodeId, ink: Ink) -> Vec<Scene> {
     // is the same condition the hit test asks: an act on "the selected card"
     // with no card selected is a button that cannot mean anything.
     let (collapsed, disabled) = card_switches(state, node);
+    let pins_away = pins_are_away(state, node);
     for act in NodeAct::ALL {
         let seat = act.local_seat();
         // Delete is the one that cannot be undone, so it is the one drawn in
@@ -9336,7 +9416,10 @@ fn inspector_identity(state: &LabState, node: NodeId, ink: Ink) -> Vec<Scene> {
         // invites the wrong press.
         let (fill, edge, text) = match act {
             NodeAct::Delete => (ink.surface, ink.warn, ink.warn),
-            _ if act == NodeAct::Collapse && collapsed || act == NodeAct::Disable && disabled => {
+            _ if act == NodeAct::Collapse && collapsed
+                || act == NodeAct::Disable && disabled
+                || act == NodeAct::Pins && pins_away =>
+            {
                 (ink.accent_soft, ink.accent_line, ink.accent)
             }
             _ => (ink.raised, ink.outline, ink.text_2),
@@ -9353,12 +9436,15 @@ fn inspector_identity(state: &LabState, node: NodeId, ink: Ink) -> Vec<Scene> {
             act.tag(),
             seat,
             style,
-            &caption::Caption::new(act.word(collapsed, disabled), run_style(FONT_SMALL, text))
-                .centred()
-                .padding(6, 0)
-                // The seat's own name says the word; a second stop reading it
-                // back would be two stops for one fact.
-                .silent(Silence::name_of(act.tag())),
+            &caption::Caption::new(
+                act.word(collapsed, disabled, pins_away),
+                run_style(FONT_SMALL, text),
+            )
+            .centred()
+            .padding(6, 0)
+            // The seat's own name says the word; a second stop reading it
+            // back would be two stops for one fact.
+            .silent(Silence::name_of(act.tag())),
             // The hit test resolves these by rectangle, as `box_at` did.
             caption::Pointer::Transparent,
         );
@@ -10203,6 +10289,24 @@ const FIELDS: &[SchemaField] = &{
         ),
         SchemaField::action("collapse", "string"),
         SchemaField::action("disable", "string"),
+        // ★★★★★ R1912 — put a card's pins away, or bring them back. The scope
+        // vocabulary is CLOSED and built from `PIN_SCOPES` rather than spelled
+        // here, so the words an agent is offered cannot drift from the ones the
+        // verb accepts — the same rule `build` follows one field down, and the
+        // reason a declaration is worth having at all (R1637: a declaration is
+        // a precondition of dispatch, so an undeclared word is refused before
+        // it reaches the verb).
+        SchemaField::action_with(
+            "put_away_pins",
+            "string",
+            ArgForm::Delimited(','),
+            const {
+                &[
+                    SchemaArg::key("node", "string", "nodes"),
+                    SchemaArg::one_of("scope", "string", &PIN_SCOPES),
+                ]
+            },
+        ),
         // ★★★★★ R1885 — put a card on another build. The build comes from a
         // CLOSED vocabulary and it is built from `Stack::ALL` rather than
         // spelled here, so the words an agent is offered cannot drift from the
@@ -10783,6 +10887,15 @@ impl ExternalIntrospect for LabOracle {
                                 serde_json::json!({
                                     "collapsed": slot.appearance.collapsed,
                                     "disabled": slot.disabled,
+                                    // ★★★★★ R1912 — each pin's state, and the
+                                    // hidden ones say WHICH REASON. Neither
+                                    // reference publishes this: one computes
+                                    // socket visibility as a conjunction of
+                                    // three facts and hands out the
+                                    // conjunction, the other deletes the pin.
+                                    // A client offering "bring it back" needs
+                                    // to know the answer is a person's.
+                                    "pins": pins_json(&doc, node),
                                 }),
                             ))
                         })
@@ -11070,6 +11183,17 @@ impl ExternalIntrospect for LabOracle {
                 let name = Self::text(&args)?;
                 let node = Self::card(&state, name.trim())?;
                 disable_card(&state, node).map(IntrospectValue::Text)
+            }
+            // ★★★★★ R1912 — `<card>,<scope>`, the two-part shape `place` and
+            // `detach_home` already use on this screen. The scope words are the
+            // references' own; see `put_away_pins`.
+            "put_away_pins" => {
+                let raw = Self::text(&args)?;
+                let (name, which) = raw.split_once(',').ok_or_else(|| {
+                    InvokeError::rejected(format!("{raw:?} is not <card>,<scope>"))
+                })?;
+                let node = Self::card(&state, name.trim())?;
+                put_away_pins(&state, node, which.trim()).map(IntrospectValue::Text)
             }
             // ★ R1681 — either layer, told apart by the `>`. A reported link
             // has no id to name it by, so the pair is the name; refusing to let
@@ -12794,6 +12918,129 @@ fn collapse_card(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeErr
     Ok(now.to_string())
 }
 
+/// ★★★★★ R1912 — **put a card's pins away, or bring them all back.**
+///
+/// `which` is the reference's own scope vocabulary, spelled as one word so the
+/// seat and the wire reach the same verb:
+///
+/// * `unwired` — the DCC's *toggle unused node socket display*, which is what
+///   the inspector seat presses. It TOGGLES, like the reference's operator:
+///   anything away means the press brings it all back.
+/// * `dial` / `accept` — the engine's *remove this pin*, on the two this lab
+///   draws.
+/// * `others` — the engine's *remove all other pins*, about the pin named after
+///   it (`others:dial`).
+/// * `restore` — the engine's *restore all structure pins*.
+///
+/// Refusals are the model's, said in the model's words: a caller who names a
+/// pin this card does not have, or a kind whose ports are the node, is told
+/// which — and told it as a sentence a person can act on rather than as a
+/// silent no-op, which is what both references do here.
+fn put_away_pins(state: &Rc<LabState>, node: NodeId, which: &str) -> Result<String, InvokeError> {
+    use pinion_node_graph::{PutAway, Side};
+
+    let name = state.name_of(node);
+    let pin = |word: &str| -> Result<(Side, u32), InvokeError> {
+        match word {
+            "dial" => Ok((Side::Output, 0)),
+            "accept" => Ok((Side::Input, 0)),
+            other => Err(InvokeError::rejected(format!(
+                "{other:?} is not a pin of this card; it draws `dial` and `accept`"
+            ))),
+        }
+    };
+    let said = {
+        let mut doc = state.doc.borrow_mut();
+        if which == "restore" {
+            let back = doc
+                .restore_ports(ROOT, node)
+                .ok_or_else(|| InvokeError::rejected("no such card"))?;
+            format!("{name}: {back} pin(s) back")
+        } else if which == "unwired" && pins_are_away_in(&doc, node) {
+            // ★ The reference's toggle, and this is the half a scope word
+            // cannot carry: what "hide unused" means the SECOND time is
+            // "show them again".
+            let back = doc
+                .restore_ports(ROOT, node)
+                .ok_or_else(|| InvokeError::rejected("no such card"))?;
+            format!("{name}: {back} pin(s) back")
+        } else {
+            let scope = match which {
+                "unwired" => PutAway::Unwired,
+                rest => {
+                    if let Some(word) = rest.strip_prefix("others:") {
+                        let (side, index) = pin(word)?;
+                        PutAway::AllOthers(side, index)
+                    } else {
+                        let (side, index) = pin(rest)?;
+                        PutAway::Port(side, index)
+                    }
+                }
+            };
+            let done = doc
+                .put_away_ports(ROOT, node, scope)
+                .map_err(|why| InvokeError::rejected(why.to_string()))?;
+            format!("{name}: {} pin(s) away", done.len())
+        }
+    };
+    state.say(Utterance::done(said.clone()));
+    Ok(said)
+}
+
+/// Whether any of `node`'s pins are away, read from a document already borrowed.
+fn pins_are_away_in(doc: &pinion_node_graph::Document<graph::LabNode>, node: NodeId) -> bool {
+    doc.visible_ports(ROOT, node)
+        .is_some_and(|v| !v.put_away_inputs.is_empty() || !v.put_away_outputs.is_empty())
+}
+
+/// ★★★★★ R1912 — each of a card's pins, and for a hidden one the REASON.
+///
+/// `drawn`, or the reason word the model publishes
+/// ([`pinion_node_graph::Hidden::wire_word`]) — so the vocabulary a client
+/// reads is the model's and not a second one spelled here.
+///
+/// The two pins are the two this lab draws, named the way the canvas tags name
+/// them: the dial is output 0 and the accept is the first of the variadic run.
+fn pins_json(doc: &pinion_node_graph::Document<graph::LabNode>, node: NodeId) -> serde_json::Value {
+    use pinion_node_graph::Side;
+
+    let Some(seen) = doc.visible_ports(ROOT, node) else {
+        return serde_json::Value::Null;
+    };
+    let word = |side: Side, index: u32| -> &'static str {
+        seen.why_hidden(side, index)
+            .map_or("drawn", pinion_node_graph::Hidden::wire_word)
+    };
+    // ★★★★★ Which pins are WIRED, because that is what the bulk scope selects
+    // by and a host has to know whether pressing the seat would do anything.
+    // The engine greys its own restore command on exactly this kind of fact
+    // (*not all pins are shown*); neither reference publishes the other half,
+    // so a client cannot tell a seat that will do nothing from one that will.
+    let wired_out = doc
+        .tree(ROOT)
+        .is_some_and(|t| t.links().iter().any(|l| l.from == Socket::new(node, 0)));
+    let wired_in = doc
+        .tree(ROOT)
+        .and_then(|t| t.link_into(Socket::new(node, 0)))
+        .is_some();
+    let mut wired: Vec<&str> = Vec::new();
+    if wired_out {
+        wired.push("dial");
+    }
+    if wired_in {
+        wired.push("accept");
+    }
+    serde_json::json!({
+        "dial": word(Side::Output, 0),
+        "accept": word(Side::Input, 0),
+        "wired": wired,
+        // ★ The fact neither reference can be asked for: this card has nothing
+        // on the frame to wire to or from. Published rather than refused —
+        // the DCC's own bulk operator reaches this state.
+        "nothing_drawn": seen.nothing_drawn(),
+    })
+}
+
 /// Switch a card off, or back on (R1682).
 ///
 /// ★★ The model's [`Document::set_disabled`], not `set_bypassed`: this screen's
@@ -13295,6 +13542,10 @@ fn release(state: &Rc<LabState>) {
                     NodeAct::Collapse => collapse_card(state, node),
                     NodeAct::Disable => disable_card(state, node),
                     NodeAct::Delete => delete_card(state, node),
+                    // ★ R1912 — through the same function the wire calls, with
+                    // the reference's own bulk scope. Which direction the press
+                    // means is the verb's business, not this branch's.
+                    NodeAct::Pins => put_away_pins(state, node, "unwired"),
                 };
             }
         }
@@ -15246,10 +15497,13 @@ fn inspector_access(state: &LabState) -> Vec<AccessNode> {
         // "collapse" is a control that does the opposite of what a reader is
         // told, and two derivations of one word is how that happens.
         let (collapsed, disabled) = card_switches(state, node);
+        let pins_away = pins_are_away(state, node);
         for act in NodeAct::ALL {
             nodes.push(
-                AccessNode::new(act.tag(), AriaRole::Button)
-                    .with_name(format!("{} {name}", act.word(collapsed, disabled))),
+                AccessNode::new(act.tag(), AriaRole::Button).with_name(format!(
+                    "{} {name}",
+                    act.word(collapsed, disabled, pins_away)
+                )),
             );
         }
         nodes.push(
