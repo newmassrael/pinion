@@ -151,6 +151,40 @@ impl NodeKind for Op {
         }
     }
 
+    /// R1913 — a pair is written `left|right`, so taking it apart is a split on
+    /// the bar and putting it back is a join. Deliberately a TEXT encoding
+    /// rather than a struct: the reference parses its own composite defaults
+    /// out of a comma-separated string, and a fixture whose halves could not
+    /// disagree would make the round-trip law unfalsifiable.
+    fn explode(ty: &Ty, value: &Val) -> Vec<Option<Val>> {
+        match (ty, value) {
+            (Ty::Pair, Val::Text(written)) => written
+                .split('|')
+                .map(|part| part.trim().parse::<i64>().ok().map(Val::Number))
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// R1913 — the other half, and it must put the members back **in the order
+    /// they came apart**: the reference's own two chains disagree about that
+    /// for one of its four types, which is the defect `round_trips` exists to
+    /// catch.
+    fn implode(ty: &Ty, members: &[Option<Val>]) -> Option<Val> {
+        if *ty != Ty::Pair || members.len() != 2 {
+            return None;
+        }
+        let part = |slot: &Option<Val>| match slot {
+            Some(Val::Number(n)) => Some(n.to_string()),
+            _ => None,
+        };
+        Some(Val::Text(format!(
+            "{}|{}",
+            part(&members[0])?,
+            part(&members[1])?
+        )))
+    }
+
     fn inputs(&self) -> Vec<Port<Ty, Val>> {
         match self {
             Self::Num(_) | Self::Word(_) => Vec::new(),
@@ -3775,6 +3809,71 @@ fn r1912_a_port_says_whether_it_splits_and_why_not() {
             .unwrap_err(),
         NotSplittable::Atom,
         "`Add` takes numbers, and a number has no members",
+    );
+}
+
+/// ★★★★★ R1913 — **apart and back again gives the value back**, which is the
+/// law the reference cannot be given.
+///
+/// Measured at R1913 in its editor's schema, both halves are hand-written
+/// `if`-chains over **four named struct types**; for one of them the two chains
+/// use a different member order from each other, with a comment saying so; and
+/// every other composite type has its value taken apart on the way out with
+/// **nothing put back** on the way in. There is no one place the pair belongs
+/// to, so there is nothing to check it against.
+///
+/// ⚠ The law reports [`RoundTrip::NotComposite`] rather than passing on an
+/// atom, and this test asserts that: a law answering "fine" for every type
+/// without members would be green on a taxonomy that has none, which is the
+/// escape hatch this workspace refuses at the door.
+#[test]
+fn r1913_a_composite_value_comes_apart_and_goes_back_together() {
+    use crate::split::{RoundTrip, round_trips};
+
+    let pair = Val::Text("3|4".to_owned());
+    assert_eq!(
+        round_trips::<Op>(&Ty::Pair, &pair),
+        RoundTrip::Holds,
+        "the fixture's pair is written `left|right`",
+    );
+    assert!(RoundTrip::Holds.held());
+
+    // ★ The members come back in the order the type declares them, which is
+    // exactly what the reference gets wrong for one of its four.
+    assert_eq!(
+        Op::explode(&Ty::Pair, &pair),
+        vec![Some(Val::Number(3)), Some(Val::Number(4))],
+    );
+    assert_eq!(
+        Op::implode(&Ty::Pair, &[Some(Val::Number(3)), Some(Val::Number(4))]),
+        Some(pair.clone()),
+    );
+
+    // ★★★★★ An atom is NOT a hold. A law that passed here would be green on a
+    // taxonomy with no composite type at all.
+    assert_eq!(
+        round_trips::<Op>(&Ty::Number, &Val::Number(1)),
+        RoundTrip::NotComposite,
+    );
+    assert!(!RoundTrip::NotComposite.held());
+    assert_eq!(
+        round_trips::<Op>(&Ty::Bag, &Val::Text("x".to_owned())),
+        RoundTrip::NotComposite,
+        "a container is not composite for this purpose either -- it is the \
+         refusal `splittable` already names",
+    );
+
+    // ★ A value of the composite type that does not PARSE loses a member, so
+    // the law reports it rather than the pair silently agreeing on nothing.
+    assert_eq!(
+        round_trips::<Op>(&Ty::Pair, &Val::Text("3|not a number".to_owned())),
+        RoundTrip::LostIt,
+    );
+    assert_eq!(
+        round_trips::<Op>(&Ty::Pair, &Val::Number(7)),
+        RoundTrip::WrongArity { got: 0, want: 2 },
+        "a value of the wrong shape comes apart into nothing, and the law says \
+         so by ARITY rather than by losing it -- two different repairs",
     );
 }
 

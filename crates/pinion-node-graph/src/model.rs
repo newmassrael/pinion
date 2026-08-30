@@ -726,6 +726,51 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
         Composition::Atom
     }
 
+    /// ★★★★★ R1913 — **take a composite value apart**, one slot per member of
+    /// [`composition`](NodeKind::composition), in the same order.
+    ///
+    /// A member the value does not determine is `None`, which is not the same
+    /// as a member whose value is a default: the first has nothing to put on
+    /// its port and the second has something.
+    ///
+    /// # What forced it, measured
+    ///
+    /// Splitting a port is not only a question about the TYPE. Measured at
+    /// R1913 in the reference's own schema, splitting parses the parent's
+    /// authored value and writes one piece onto each member port — so a split
+    /// that knew only the members' types would produce ports a reader has to
+    /// fill in again.
+    ///
+    /// The default is empty, so a taxonomy with no composite type writes
+    /// nothing.
+    fn explode(ty: &Self::Type, value: &Self::Value) -> Vec<Option<Self::Value>> {
+        let _ = (ty, value);
+        Vec::new()
+    }
+
+    /// ★★★★★ R1913 — **put a composite value back together** from one slot per
+    /// member, or `None` when the members do not determine one.
+    ///
+    /// [`explode`](NodeKind::explode)'s other half, and they are declared
+    /// **together on the taxonomy** for a reason this crate can point at.
+    ///
+    /// # Why one declaration rather than two branch lists
+    ///
+    /// Measured at R1913, the reference writes both halves as hand-written
+    /// `if`-chains inside its editor's schema, over **four named struct types**
+    /// — and for one of them the two chains use a *different member order*,
+    /// with a comment saying so. Every other composite type gets its value
+    /// taken apart on the way out and **nothing put back** on the way in.
+    ///
+    /// Here the taxonomy that owns the type owns both directions, so the pair
+    /// is one author's, and [`round_trips`](crate::round_trips) is a law any
+    /// consumer can run against its own types — which is the check two
+    /// hand-written chains in an editor cannot be given at all.
+    fn implode(ty: &Self::Type, members: &[Option<Self::Value>]) -> Option<Self::Value> {
+        let _ = (ty, members);
+        None
+    }
+
     /// Compute every output from the already-resolved inputs.
     ///
     /// `inputs` is exactly as long as the node's **resolved** input list —

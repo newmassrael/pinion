@@ -79,6 +79,72 @@ impl<T, V> Composition<T, V> {
 pub type Splittable<K> =
     Result<Vec<Port<<K as NodeKind>::Type, <K as NodeKind>::Value>>, NotSplittable>;
 
+/// ★★★★★ R1913 — whether taking a composite value apart and putting it back
+/// gives the value back.
+///
+/// The law the reference cannot be given. Its two halves are hand-written
+/// `if`-chains in an editor's schema over four named struct types, and for one
+/// of them they use a different member order from each other — a disagreement
+/// nothing there can check, because there is no one place the pair belongs to.
+/// Here both halves are the taxonomy's, so a consumer can run this over its own
+/// types and find out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RoundTrip {
+    /// Apart and back again gave the same value.
+    Holds,
+    /// This type is not composite, so there was nothing to take apart. Reported
+    /// rather than passing: a law that answers "fine" for every atom would be
+    /// green on a taxonomy with no composite type at all.
+    NotComposite,
+    /// Taking it apart gave a different number of slots than the type has
+    /// members.
+    WrongArity {
+        /// How many slots came back.
+        got: usize,
+        /// How many members the type declares.
+        want: usize,
+    },
+    /// It came apart and would not go back together.
+    LostIt,
+    /// It went back together as something else. The arm the reference's
+    /// order mismatch would land in.
+    CameBackDifferent,
+}
+
+impl RoundTrip {
+    /// Whether the law held. [`NotComposite`](RoundTrip::NotComposite) is
+    /// **not** a hold: it means the law was never exercised, and a caller that
+    /// treated it as one would be reporting coverage it does not have.
+    #[must_use]
+    pub const fn held(self) -> bool {
+        matches!(self, Self::Holds)
+    }
+}
+
+/// ★★★★★ R1913 — run the round-trip law for one value of one type.
+///
+/// `K::explode` then `K::implode`, compared with what went in. Any taxonomy can
+/// run this over its own types; a consumer that does is checking the pair the
+/// reference leaves unchecked.
+pub fn round_trips<K: NodeKind>(ty: &K::Type, value: &K::Value) -> RoundTrip {
+    let want = match K::composition(ty) {
+        Composition::Members(members) => members.len(),
+        Composition::Atom | Composition::Container => return RoundTrip::NotComposite,
+    };
+    let apart = K::explode(ty, value);
+    if apart.len() != want {
+        return RoundTrip::WrongArity {
+            got: apart.len(),
+            want,
+        };
+    }
+    match K::implode(ty, &apart) {
+        None => RoundTrip::LostIt,
+        Some(back) if &back == value => RoundTrip::Holds,
+        Some(_) => RoundTrip::CameBackDifferent,
+    }
+}
+
 /// R1912 — why a port cannot be split, in the caller's terms.
 ///
 /// Six arms, and each is a **different repair**. The reference answers one
@@ -125,6 +191,27 @@ pub enum NotSplittable {
     /// This port's type is a container. The reference refuses this even when
     /// the element type would split.
     Container,
+}
+
+impl NotSplittable {
+    /// ★★★★★ R1913 — the word this reason is published under.
+    ///
+    /// The vocabulary belongs to the model, the way
+    /// [`Hidden::wire_word`](crate::Hidden::wire_word) does: a screen that
+    /// spelled these itself would be a second list, and the two would drift the
+    /// first time an arm is added. That is what makes a client's reading of
+    /// them a reading of the rule rather than of a transcription.
+    #[must_use]
+    pub const fn wire_word(&self) -> &'static str {
+        match self {
+            Self::NoSuchNode { .. } => "no_such_node",
+            Self::NoSuchPort { .. } => "no_such_port",
+            Self::Control => "control",
+            Self::Wired { .. } => "wired",
+            Self::Atom => "atom",
+            Self::Container => "container",
+        }
+    }
 }
 
 impl core::fmt::Display for NotSplittable {

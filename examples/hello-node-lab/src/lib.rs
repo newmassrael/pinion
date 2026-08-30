@@ -13030,10 +13030,26 @@ fn pins_json(doc: &pinion_node_graph::Document<graph::LabNode>, node: NodeId) ->
     if wired_in {
         wired.push("accept");
     }
+    // ★★★★★ R1913 — and whether each pin SPLITS, with the reason when it does
+    // not. The reference answers this as one boolean over five conditions, so
+    // its own editor can only grey a menu entry out; here each condition is a
+    // word, and two of them are reachable on THIS screen — a wired pin and an
+    // unwired one give different answers, which is the whole difference.
+    //
+    // The vocabulary is the model's (`NotSplittable::wire_word`), not spelled
+    // here: a second list drifts the first time an arm is added.
+    let splits = |side: Side, index: u32| -> &'static str {
+        doc.splittable(ROOT, node, side, index)
+            .map_or_else(|why| why.wire_word(), |_| "yes")
+    };
     serde_json::json!({
         "dial": word(Side::Output, 0),
         "accept": word(Side::Input, 0),
         "wired": wired,
+        "splits": {
+            "dial": splits(Side::Output, 0),
+            "accept": splits(Side::Input, 0),
+        },
         // ★ The fact neither reference can be asked for: this card has nothing
         // on the frame to wire to or from. Published rather than refused —
         // the DCC's own bulk operator reaches this state.
