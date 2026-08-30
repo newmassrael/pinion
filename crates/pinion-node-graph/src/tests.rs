@@ -10,15 +10,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Admission, AdoptError, Align, Appearance, Archive, Axis, BreakError, Breakpoints, Bringup,
-    Camera, Carried, Command, ConnectError, Control, Conversion, Crossings, Definitions, Direction,
-    Discovery, Distribute, Document, Dropped, DuplicateError, Edge, EditError, EditPath, Extent,
-    ExtractError, Fit, ForceError, Fragment, GroupError, Grow, Halt, InsertError, Instance,
-    InterfaceSide, Item, ItemError, Layered, LinkId, LinkLayer, Machine, Margin, Multiplicity,
-    NestError, Node, NodeBody, NodeId, NodeKind, NodeSite, ObserveError, Occurrence, Organic,
-    Orphaned, ParentError, PathError, Port, PortRef, PortSite, PortValueError, ROOT, Reach,
-    Relabelled, RelinkError, RepartitionError, Route, RunError, SelectError, Session, Severed,
-    Sharing, Side, Socket, Stack, Standing, Stop, Straighten, Stride, Tick, Timeline, TreeId,
-    UngroupError, Unreadable, Violation, WatchError, Watches, ZoomRange, crossing,
+    Camera, Carried, Command, Composition, ConnectError, Control, Conversion, Crossings,
+    Definitions, Direction, Discovery, Distribute, Document, Dropped, DuplicateError, Edge,
+    EditError, EditPath, Extent, ExtractError, Fit, ForceError, Fragment, GroupError, Grow, Halt,
+    InsertError, Instance, InterfaceSide, Item, ItemError, Layered, LinkId, LinkLayer, Machine,
+    Margin, Multiplicity, NestError, Node, NodeBody, NodeId, NodeKind, NodeSite, ObserveError,
+    Occurrence, Organic, Orphaned, ParentError, PathError, Port, PortRef, PortSite, PortValueError,
+    ROOT, Reach, Relabelled, RelinkError, RepartitionError, Route, RunError, SelectError, Session,
+    Severed, Sharing, Side, Socket, Stack, Standing, Stop, Straighten, Stride, Tick, Timeline,
+    TreeId, UngroupError, Unreadable, Violation, WatchError, Watches, ZoomRange, crossing,
 };
 
 /// The test taxonomy: two socket types, so type disagreement is reachable.
@@ -26,6 +26,16 @@ use crate::{
 enum Ty {
     Number,
     Text,
+    /// R1912 — a COMPOSITE type: two numbers under one port. The shape a split
+    /// takes apart, and the fixture's only one, so a test that finds members
+    /// found them because this type has them.
+    Pair,
+    /// R1912 — a container OF the composite above.
+    ///
+    /// Its own element splits, and the reference refuses the container anyway
+    /// (`!Pin->PinType.IsContainer()`). It exists so "container" and "atom" can
+    /// be told apart by a test rather than collapsing into one `None`.
+    Bag,
 }
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
@@ -66,6 +76,12 @@ enum Op {
     /// re-index from one that shifts by a single port: with one port per item
     /// the two arithmetics agree.
     Blend,
+    /// R1912 — `(Go: control, Whole: Pair, Loose: Bag) -> Out: Pair`.
+    ///
+    /// The one kind that makes every arm of the split question reachable: a
+    /// control port, a composite one, a container of that composite, and a
+    /// composite OUTPUT so the wire check is exercised on both sides.
+    Carry,
     /// R1912 — `(In: Number) -> Out: Number`, and its ports **are** the node.
     ///
     /// The shape the DCC refuses to hide sockets on, written as a declaration
@@ -109,6 +125,7 @@ impl NodeKind for Op {
             Self::Stamp => "Stamp",
             Self::Choose => "Choose",
             Self::Blend => "Blend",
+            Self::Carry => "Carry",
             Self::Relay => "Relay",
             Self::Sink => "Sink",
         }
@@ -118,6 +135,20 @@ impl NodeKind for Op {
     /// R1912 — only [`Op::Relay`] is its ports.
     fn ports_are_the_node(&self) -> bool {
         matches!(self, Self::Relay)
+    }
+
+    /// R1912 — this taxonomy has exactly one composite type and one container
+    /// of it, so the three arms are all reachable and a test can tell the two
+    /// refusals apart.
+    fn composition(ty: &Ty) -> Composition<Ty, Val> {
+        match ty {
+            Ty::Pair => Composition::Members(vec![
+                Port::new("Left", Ty::Number).with_default(Val::Number(0)),
+                Port::new("Right", Ty::Number).with_default(Val::Number(0)),
+            ]),
+            Ty::Bag => Composition::Container,
+            Ty::Number | Ty::Text => Composition::Atom,
+        }
     }
 
     fn inputs(&self) -> Vec<Port<Ty, Val>> {
@@ -149,6 +180,11 @@ impl NodeKind for Op {
             Self::Blend => vec![
                 Port::new("Base", Ty::Number).with_default(Val::Number(0)),
                 Port::new("Bias", Ty::Number).with_default(Val::Number(0)),
+            ],
+            Self::Carry => vec![
+                Port::control("Go"),
+                Port::new("Whole", Ty::Pair),
+                Port::new("Loose", Ty::Bag),
             ],
             Self::Relay => vec![Port::new("In", Ty::Number)],
             Self::Sink => vec![Port::new("Result", Ty::Number)],
@@ -192,6 +228,7 @@ impl NodeKind for Op {
                 Port::new("Left", Ty::Number),
                 Port::new("Right", Ty::Number),
             ],
+            Self::Carry => vec![Port::new("Out", Ty::Pair)],
             Self::Relay => vec![Port::new("Out", Ty::Number)],
             Self::Sink => Vec::new(),
         }
@@ -246,6 +283,9 @@ impl NodeKind for Op {
                 vec![Some(Val::Number(total))]
             }
             Self::Relay => vec![inputs.first().cloned().flatten()],
+            // R1912 — this kind exists for the split QUESTION, not for
+            // evaluation; it hands its composite input straight out.
+            Self::Carry => vec![inputs.get(1).cloned().flatten()],
             Self::Sink => Vec::new(),
         }
     }
@@ -3626,6 +3666,160 @@ fn r1912_a_node_may_end_up_with_nothing_drawn_and_says_so() {
             .visible_ports(ROOT, untouched)
             .unwrap()
             .nothing_drawn()
+    );
+}
+
+/// ★★★★★ R1912 — **whether a port can be split, and when not, WHICH of six
+/// reasons.**
+///
+/// The engine's `CanSplitPin` is a conjunction of five conditions answered as
+/// one boolean, so its own editor can only grey a menu entry out. Each of the
+/// five wants a different repair — unplug the wire, pick another port, accept
+/// that this type has no members — and the sixth (a container) lives one layer
+/// away in its schema's split, where a caller never sees it at all.
+#[test]
+fn r1912_a_port_says_whether_it_splits_and_why_not() {
+    use crate::split::NotSplittable;
+
+    let mut f = fixture();
+    let carry = f
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Carry), 0, 500)
+        .unwrap();
+
+    // ★ The one that SPLITS, and the members come back so a caller that asked
+    // the question does not derive the answer a second way to draw it.
+    let members = f
+        .document
+        .splittable(ROOT, carry, Side::Input, 1)
+        .expect("`Whole` carries the composite type");
+    assert_eq!(
+        members.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
+        ["Left", "Right"],
+        "in declaration order, each with the member's own name",
+    );
+    assert!(
+        members.iter().all(|p| matches!(
+            &p.flow,
+            crate::Flow::Value {
+                default: Some(_),
+                ..
+            }
+        )),
+        "★ and its own resting value: the reference moves the member defaults \
+         onto the sub-pins, so a split that lost them would arrive empty",
+    );
+
+    // ★★★★★ The six refusals, each a different repair.
+    assert_eq!(
+        f.document
+            .splittable(ROOT, NodeId(97), Side::Input, 0)
+            .unwrap_err(),
+        NotSplittable::NoSuchNode {
+            tree: ROOT,
+            node: NodeId(97)
+        },
+    );
+    assert_eq!(
+        f.document
+            .splittable(ROOT, carry, Side::Input, 9)
+            .unwrap_err(),
+        NotSplittable::NoSuchPort {
+            side: Side::Input,
+            index: 9,
+            of: 3
+        },
+    );
+    assert_eq!(
+        f.document
+            .splittable(ROOT, carry, Side::Input, 0)
+            .unwrap_err(),
+        NotSplittable::Control,
+        "★ a control port carries no value, so there is nothing to take apart",
+    );
+    assert_eq!(
+        f.document
+            .splittable(ROOT, carry, Side::Input, 2)
+            .unwrap_err(),
+        NotSplittable::Container,
+        "★★★★★ a container of a splittable element is refused, and it is told \
+         APART from a type with no members — the reference computes both into \
+         one boolean",
+    );
+    assert_eq!(
+        f.document
+            .splittable(ROOT, f.add, Side::Input, 0)
+            .unwrap_err(),
+        NotSplittable::Wired {
+            side: Side::Input,
+            index: 0
+        },
+        "★★★★★ the condition a reading of the split alone would miss: the \
+         reference's predicate is `LinkedTo.Num() == 0`, because a wire lands \
+         on the parent and the parent is about to stop being a place one can",
+    );
+    // ★ And with that wire gone the SAME port answers a different refusal,
+    // which is what shows the wire check ran rather than the type check
+    // answering for it.
+    let feed = f
+        .document
+        .tree(ROOT)
+        .unwrap()
+        .link_into(Socket::new(f.add, 0))
+        .unwrap()
+        .id;
+    f.document.disconnect(ROOT, feed).unwrap();
+    assert_eq!(
+        f.document
+            .splittable(ROOT, f.add, Side::Input, 0)
+            .unwrap_err(),
+        NotSplittable::Atom,
+        "`Add` takes numbers, and a number has no members",
+    );
+}
+
+/// ★★★★★ R1912 — **the wire check reads the side it was asked about**, which a
+/// check knowing only one direction would let half the ports through.
+#[test]
+fn r1912_an_output_that_feeds_something_does_not_split_either() {
+    use crate::split::NotSplittable;
+
+    let mut f = fixture();
+    let carry = f
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Carry), 0, 500)
+        .unwrap();
+    let other = f
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Carry), 300, 500)
+        .unwrap();
+
+    assert!(
+        f.document.splittable(ROOT, carry, Side::Output, 0).is_ok(),
+        "nothing leaves by it yet",
+    );
+    f.document
+        .connect(ROOT, Socket::new(carry, 0), Socket::new(other, 1))
+        .expect("both ends carry the composite type");
+    assert_eq!(
+        f.document
+            .splittable(ROOT, carry, Side::Output, 0)
+            .unwrap_err(),
+        NotSplittable::Wired {
+            side: Side::Output,
+            index: 0
+        },
+    );
+    assert_eq!(
+        f.document
+            .splittable(ROOT, other, Side::Input, 1)
+            .unwrap_err(),
+        NotSplittable::Wired {
+            side: Side::Input,
+            index: 1
+        },
+        "★ and the far end of the same wire, which is the direction a check \
+         reading only its own side would miss",
     );
 }
 

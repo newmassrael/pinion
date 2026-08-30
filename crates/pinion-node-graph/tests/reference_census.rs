@@ -46,9 +46,9 @@ use serde::{Deserialize, Serialize};
 use pinion_node_graph::{
     Align, Appearance, Axis, Command, Conversion, Crossings, Definitions, Direction, Distribute,
     Document, Edge, EditPath, Extent, Fragment, Grow, Hidden, Instance, InterfaceSide, Item,
-    ItemError, LinkId, Machine, Node, NodeBody, NodeId, NodeKind, NodeSite, Port, PortRef,
-    PortSite, PutAway, ROOT, Reach, Session, Sharing, Side, Socket, Stack, Straighten, Stride,
-    TreeId, Variadic, WatchError,
+    ItemError, LinkId, Machine, Node, NodeBody, NodeId, NodeKind, NodeSite, NotSplittable, Port,
+    PortRef, PortSite, PutAway, ROOT, Reach, Session, Sharing, Side, Socket, Stack, Straighten,
+    Stride, TreeId, Variadic, WatchError,
 };
 
 // ---------------------------------------------------------------- taxonomy
@@ -58,6 +58,13 @@ use pinion_node_graph::{
 enum Ty {
     Number,
     Text,
+    /// R1912 — a COMPOSITE: two numbers under one port, the shape a split takes
+    /// apart.
+    Pair,
+    /// R1912 — a container OF that composite. Its element splits and the
+    /// reference refuses the container anyway, so this is what lets a proof
+    /// tell "container" from "atom" instead of collapsing both into one no.
+    Bag,
 }
 
 /// The application's own taxonomy — the half this crate deliberately does not
@@ -104,6 +111,9 @@ enum Op {
     /// breakpoint and a watch to be able to land on one node, and every control
     /// kind above is control-only while every valued kind above is pure.
     Stage(i64),
+    /// R1912 — `(Go: control, Whole: Pair, Loose: Bag) -> Out: Pair`. The one
+    /// kind that makes every arm of the split question reachable.
+    Carry,
 }
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
@@ -139,8 +149,23 @@ impl NodeKind for Op {
             Self::Blend => "Blend",
             Self::Bundle => "Bundle",
             Self::Stage(_) => "Stage",
+            Self::Carry => "Carry",
         }
         .to_owned()
+    }
+
+    /// R1912 — one composite type and one container of it, so the three arms
+    /// are all reachable and a proof can tell the two refusals apart.
+    fn composition(ty: &Ty) -> pinion_node_graph::Composition<Ty, Val> {
+        use pinion_node_graph::Composition;
+        match ty {
+            Ty::Pair => Composition::Members(vec![
+                Port::new("Left", Ty::Number).with_default(Val::Number(0)),
+                Port::new("Right", Ty::Number).with_default(Val::Number(0)),
+            ]),
+            Ty::Bag => Composition::Container,
+            Ty::Number | Ty::Text => Composition::Atom,
+        }
     }
 
     fn inputs(&self) -> Vec<Port<Ty, Val>> {
@@ -167,6 +192,11 @@ impl NodeKind for Op {
             Self::Blend => vec![
                 Port::new("Base", Ty::Number).with_default(Val::Number(0)),
                 Port::new("Bias", Ty::Number).with_default(Val::Number(0)),
+            ],
+            Self::Carry => vec![
+                Port::control("Go"),
+                Port::new("Whole", Ty::Pair),
+                Port::new("Loose", Ty::Bag),
             ],
         }
     }
@@ -209,6 +239,7 @@ impl NodeKind for Op {
             Self::Choose | Self::Blend => vec![Port::new("Out", Ty::Number)],
             Self::Sink | Self::Sequence => Vec::new(),
             Self::Stage(_) => vec![Port::control("Then"), Port::new("Cost", Ty::Number)],
+            Self::Carry => vec![Port::new("Out", Ty::Pair)],
         }
     }
 
@@ -218,12 +249,21 @@ impl NodeKind for Op {
     /// need exactly this asymmetry, and it was R1593's subject.
     fn conversion(from: &Ty, to: &Ty) -> Conversion<Val> {
         match (from, to) {
-            (Ty::Number, Ty::Number) | (Ty::Text, Ty::Text) => Conversion::Direct,
+            // R1912 — the composite and its container join the identity arm:
+            // each is DIRECT to itself and reaches nothing else.
+            (Ty::Number, Ty::Number)
+            | (Ty::Text, Ty::Text)
+            | (Ty::Pair, Ty::Pair)
+            | (Ty::Bag, Ty::Bag) => Conversion::Direct,
             (Ty::Number, Ty::Text) => Conversion::Converted(|value| match value {
                 Val::Number(n) => Some(Val::Text(n.to_string())),
                 text @ Val::Text(_) => Some(text),
             }),
-            (Ty::Text, Ty::Number) => Conversion::Refused,
+            // ⚠ Written out rather than as `_`, so a type added next is a
+            // compile error here — the rule this match already followed.
+            (Ty::Text, Ty::Number)
+            | (Ty::Pair | Ty::Bag, _)
+            | (Ty::Number | Ty::Text, Ty::Pair | Ty::Bag) => Conversion::Refused,
         }
     }
 
@@ -250,6 +290,9 @@ impl NodeKind for Op {
             // Slot 0 is the control output and carries nothing: control is not
             // a value, which is why watching that port is refused.
             Self::Stage(cost) => vec![None, Some(Val::Number(*cost))],
+            // R1912 — this kind exists for the split QUESTION, not for
+            // evaluation; its composite input passes straight out.
+            Self::Carry => vec![inputs.get(1).cloned().flatten()],
             // R1632 — `inputs` is as long as the NODE's resolved signature, so
             // a variadic kind reads the run it declared instead of a fixed
             // arity. That is the whole reason `evaluate` needed no new
@@ -606,6 +649,7 @@ fn engine_proofs() -> Vec<Proof> {
         ),
         // ★★★★★ R1912 — the three the census filed under struct-pin SPLITTING
         // and which are hiding, measured in the engine's own editor source.
+        proof("engine", "node::CanSplitPin", engine_node_can_split_pin),
         proof(
             "engine",
             "GraphEditor::RemoveThisStructVarPin",
@@ -1819,6 +1863,57 @@ fn dcc_collapse_hide_unused_toggle() {
     let ports = chain.document.visible_ports(ROOT, lonely).unwrap();
     assert!(ports.inputs.is_empty());
     assert_eq!(ports.hidden_inputs, vec![0, 1]);
+}
+
+/// ★★★★★ R1912 — the engine's *can this pin be split*, answered with a REASON.
+///
+/// Measured in the engine's node source, that predicate is a conjunction of
+/// five conditions — the pin belongs to this node, it is connectable, **nothing
+/// is linked to it**, and its type is a struct, with the base class answering
+/// `false` so a kind opts in — and its schema adds a sixth at the moment of
+/// splitting: the type must not be a container. One boolean comes back, so its
+/// own editor can only grey a menu entry out.
+///
+/// Here each condition is a named arm, because each wants a different repair,
+/// and the members come back with the answer so a caller that asked does not
+/// derive it a second way to draw it.
+#[test]
+fn engine_node_can_split_pin() {
+    let mut chain = chain();
+    let carry = node(&mut chain.document, Op::Carry);
+
+    let members = chain
+        .document
+        .splittable(ROOT, carry, Side::Input, 1)
+        .expect("`Whole` carries the composite type");
+    assert_eq!(members.len(), 2, "one port per member, in order");
+
+    assert_eq!(
+        chain
+            .document
+            .splittable(ROOT, carry, Side::Input, 0)
+            .unwrap_err(),
+        NotSplittable::Control,
+    );
+    assert_eq!(
+        chain
+            .document
+            .splittable(ROOT, carry, Side::Input, 2)
+            .unwrap_err(),
+        NotSplittable::Container,
+        "a container of a splittable element, told apart from an atom",
+    );
+    assert_eq!(
+        chain
+            .document
+            .splittable(ROOT, chain.add, Side::Input, 0)
+            .unwrap_err(),
+        NotSplittable::Wired {
+            side: Side::Input,
+            index: 0
+        },
+        "the reference's own `LinkedTo.Num() == 0`",
+    );
 }
 
 /// ★★★★★ R1912 — the DCC's socket-hide toggle: a hand puts a node's unwired

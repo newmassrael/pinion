@@ -2733,10 +2733,10 @@
       "verdict": "absent"
     },
     "node::CanSplitPin": {
-      "covered_by": "STRUCT PINS: a composite value port split into one port per member, and recombined. Measured R1912: the parent is HIDDEN rather than removed, each member port takes the parent's direction and its own default, the names are derived from the parent's, and the parent's authored value is distributed across the members. It NESTS — recombining walks into a member's own members — so the shape is a TREE, and the verb is addressable from either end. Refused when the port's type is a container even of a splittable element. What is missing here is a kind being askable what a type is MADE OF: the taxonomy trait publishes twelve associated items and the two that speak about a type answer what type a value has and whether one type reaches another — neither decomposes one, and neither decomposes a VALUE, which the member defaults need. The variadic run is NOT the shape: it repeats a template the kind fixes and needs no knowledge of a type at all",
+      "covered_by": "CAN this port be split, and when not, WHICH of six reasons. The reference answers a conjunction of five conditions as one boolean — the pin is this node's, it is connectable, NOTHING IS LINKED TO IT, its type is a struct, and the base class says no so a kind opts in — with a sixth in its schema at the moment of splitting: not a container. Each wants a different repair, so each is a named arm here, and the member ports come back with the answer. The ACT is still absent: see the four rows beside this one",
       "mechanism": "graph-node",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_node_can_split_pin",
+      "verdict": "have"
     },
     "node::CanUserDeleteNode": {
       "covered_by": "a node cannot refuse an edit; there is no per-node permission surface",

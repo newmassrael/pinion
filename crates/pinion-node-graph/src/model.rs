@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::appearance::Appearance;
 use crate::items::{Items, Variadic, resolve};
+use crate::split::Composition;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
@@ -694,6 +695,35 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
     /// pass-through node that happened to grow a third port.
     fn ports_are_the_node(&self) -> bool {
         false
+    }
+
+    /// ★★★★★ R1912 — **what a value type is made of**, which decides whether a
+    /// port carrying it can be split into one port per member
+    /// ([`Document::splittable`](crate::Document::splittable)).
+    ///
+    /// An associated function and not a method, for [`conversion`]'s reason:
+    /// what a type contains is a fact about the taxonomy, not about the node
+    /// that happens to carry it. Two nodes of different kinds asking about one
+    /// type must get one answer, and a `&self` hook makes that a coincidence.
+    ///
+    /// The default is [`Composition::Atom`], so a taxonomy with no composite
+    /// type writes nothing.
+    ///
+    /// # What forced it, measured
+    ///
+    /// Nothing on this trait could answer it. Counted at R1912, the trait
+    /// published twelve associated items and the two that speak about a type
+    /// answer *what type does this value have* and *does this type reach that
+    /// one*. A run of repeated ports ([`Variadic`]) is not the shape either —
+    /// it repeats a template the KIND fixes and never looks at a type, where a
+    /// split's member list is a property of the type the port carries. The
+    /// campaign that tracks this axis had recorded the opposite since R1632,
+    /// and the measurement is what overturned it.
+    ///
+    /// [`conversion`]: NodeKind::conversion
+    fn composition(ty: &Self::Type) -> Composition<Self::Type, Self::Value> {
+        let _ = ty;
+        Composition::Atom
     }
 
     /// Compute every output from the already-resolved inputs.
