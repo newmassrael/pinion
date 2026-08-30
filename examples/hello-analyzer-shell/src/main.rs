@@ -1747,7 +1747,15 @@ impl ShellState {
             cursors: RefCell::new(
                 spec::FOCUS_RING
                     .iter()
-                    .filter_map(|stop| stop.cursor.map(|spec| (stop.tag, Roving::new(spec))))
+                    // ★ R1910 — through `roster()`, which is the one arm that
+                    // has a declaration to build a `Roving` from. The spatial
+                    // arm has a cursor and no roster, so it correctly builds
+                    // none here and answers its active descendant elsewhere.
+                    .filter_map(|stop| {
+                        stop.interior
+                            .roster()
+                            .map(|spec| (stop.tag, Roving::new(spec)))
+                    })
                     .collect(),
             ),
             float_grab: Signal::new(None),
@@ -12010,8 +12018,25 @@ fn spec_json() -> serde_json::Value {
         // WHAT each stop holds. The last column is the part a tag cannot carry:
         // an agent reading this learns that landing on `shell.rail` puts it
         // among the tool's destinations rather than on one of them.
+        // ★★★★★ R1910 — and `interior`, which is WHAT THE ARROWS DO here.
+        //
+        // Its absence is what cost three published rounds of red CI. A client
+        // walking this ring could see that a stop published no roster and had
+        // no way to learn whether that meant *the cursor here is spatial, ask
+        // the active descendant* or *this stop is a single control and owes
+        // nothing*. The sweep's `r1698` demo guessed the first, correctly for
+        // the one stop that existed, and R1903 added a stop of the second kind.
+        //
+        // ⇒ a self-describing surface that leaves a client GUESSING is not
+        // self-describing; the guess is a rule, and rules break silently when
+        // the population grows. `owes_cursor` is published beside the word
+        // rather than left for a client to derive from it, so the two cursor
+        // arms answer one question the same way without every client
+        // re-deriving which arms those are.
         "focus_ring": spec::FOCUS_RING.iter().map(|stop| serde_json::json!({
             "tag": stop.tag, "holds": stop.holds, "at": where_word(stop.at),
+            "interior": stop.interior.wire(),
+            "owes_cursor": stop.interior.owes_an_active_descendant(),
         })).collect::<Vec<_>>(),
         // ★★ R1697 — what this screen can be ASKED to do, published so an
         // agent reads the operations rather than discovering them by trying.

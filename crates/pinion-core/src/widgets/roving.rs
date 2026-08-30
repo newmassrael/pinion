@@ -262,6 +262,85 @@ impl RovingSpec {
     }
 }
 
+/// ★★★★★ R1910 — **what a Tab stop holds INSIDE it**, in three arms, because
+/// two of them had been sharing one.
+///
+/// # The failure this closes
+///
+/// A focus ring's stops used to declare `Option<RovingSpec>`, and `None` was
+/// documented as *a single control, with nothing inside for a cursor to move
+/// between*. It was never only that. A screen's board declares `None` too, for
+/// the opposite reason: its cursor is SPATIAL — the arrows move to the
+/// neighbouring card in a direction rather than to the next item in a list —
+/// so it has no roster and very much has a cursor.
+///
+/// Two different facts, one value, and nothing said which. A client walking
+/// the ring could only guess, and the guess held exactly as long as there was
+/// one `None` in the table. Measured at R1910: the moment a second stop
+/// declared `None` — a button that puts a panel away — the guess broke, and a
+/// demo asserting *"no roster, so it must be the spatial one; it still names
+/// its cursor"* went red and stayed red for three published rounds.
+///
+/// ⇒ ★★★★★ *an `Option` whose `None` means two things is a type that cannot be
+/// read.* Three arms make the confusion unrepresentable, which is stronger
+/// than the sentence in the doc comment that was supposed to prevent it — and
+/// that sentence had been WRONG about one of its own two cases the whole time.
+///
+/// # Why not a bool beside the option
+///
+/// Because `Some(spec)` + `spatial: true` would be a state nobody means, and a
+/// reader would have to know which field wins. Every combination of these
+/// three arms is a thing an author can point at on a screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StopInterior {
+    /// A linear roster: the arrows walk its members, in order, under this
+    /// declaration.
+    Roster(RovingSpec),
+    /// A cursor the arrows move that is **not** a list — a board's is spatial,
+    /// moving to the neighbouring card in the direction pressed. There is no
+    /// member order to declare, and there IS a cursor: such a stop still
+    /// reports the member it rests on as its active descendant.
+    Spatial,
+    /// Nothing inside. The stop **is** the control, so no arrow does anything
+    /// here and no active descendant is owed.
+    Single,
+}
+
+impl StopInterior {
+    /// The word a client reads. One per arm, so a reader never has to infer an
+    /// arm from the absence of a key.
+    #[must_use]
+    pub const fn wire(self) -> &'static str {
+        match self {
+            Self::Roster(_) => "roster",
+            Self::Spatial => "spatial",
+            Self::Single => "single",
+        }
+    }
+
+    /// The roster declaration, for the one arm that has one.
+    #[must_use]
+    pub const fn roster(self) -> Option<RovingSpec> {
+        match self {
+            Self::Roster(spec) => Some(spec),
+            Self::Spatial | Self::Single => None,
+        }
+    }
+
+    /// Whether a reader standing here should be told which member the cursor
+    /// is on.
+    ///
+    /// ★ TRUE for both cursor-bearing arms, and that is the predicate the demo
+    /// could not ask for. A roster reports the member the arrows last reached;
+    /// a spatial cursor reports the card it is over. Only [`Single`](Self::Single)
+    /// owes nothing — and owing nothing is a claim, checkable in the same
+    /// sweep as the other two rather than an exemption from it.
+    #[must_use]
+    pub const fn owes_an_active_descendant(self) -> bool {
+        matches!(self, Self::Roster(_) | Self::Spatial)
+    }
+}
+
 /// One member of a composite, in cursor order.
 ///
 /// `enabled` is **not** whether the cursor may rest here — it always may — but
@@ -1265,5 +1344,58 @@ mod tests {
         );
         assert_ne!(Ends::Stop.wire(), Ends::Wrap.wire());
         assert_ne!(Activation::Follows.wire(), Activation::Explicit.wire());
+    }
+
+    /// ★★★★★ R1910 — **the two cursor-bearing arms are one answer to "is a
+    /// cursor owed" and two answers to "is there a roster"**, and it is the
+    /// pair of questions that the old `Option` could not tell apart.
+    ///
+    /// Asserted as a partition rather than three spot checks: every arm is
+    /// classified by both predicates, and the two predicates disagree on
+    /// exactly one arm. A fourth arm added later has to be given an answer
+    /// here, which is the point — an unclassified arm is a red, not a pass.
+    #[test]
+    fn r1910_a_stops_interior_answers_two_questions_and_they_differ() {
+        let roster = StopInterior::Roster(RovingSpec::new(Axis::Vertical));
+        let all = [roster, StopInterior::Spatial, StopInterior::Single];
+
+        // Every arm has its own word — a client never infers an arm from a
+        // missing key, which is precisely what the `Option` forced.
+        let words: std::collections::BTreeSet<&str> = all.iter().map(|i| i.wire()).collect();
+        assert_eq!(words.len(), all.len(), "one word per arm: {words:?}");
+
+        // Question one: is there a roster to walk?
+        assert!(roster.roster().is_some());
+        assert!(StopInterior::Spatial.roster().is_none());
+        assert!(StopInterior::Single.roster().is_none());
+
+        // Question two: is an active descendant owed? ★ The answers SPLIT the
+        // arms differently, which is the whole reason three arms exist.
+        assert!(roster.owes_an_active_descendant());
+        assert!(
+            StopInterior::Spatial.owes_an_active_descendant(),
+            "★ a spatial cursor has no roster and still rests on a member — \
+             the case the old `None` shared with a plain button, and the case a \
+             demo asserted about a button for three published rounds"
+        );
+        assert!(
+            !StopInterior::Single.owes_an_active_descendant(),
+            "★ a single control owes nothing, and that is a CLAIM checked in \
+             the same sweep as the other two rather than an exemption from it"
+        );
+
+        // The two questions genuinely differ: exactly one arm answers them
+        // differently, so neither predicate is the other under another name.
+        let split: Vec<&str> = all
+            .iter()
+            .filter(|i| i.roster().is_some() != i.owes_an_active_descendant())
+            .map(|i| i.wire())
+            .collect();
+        assert_eq!(
+            split,
+            vec!["spatial"],
+            "★ if no arm split them, one predicate would be redundant and the \
+             `Option` would have been enough after all"
+        );
     }
 }

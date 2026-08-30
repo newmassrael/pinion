@@ -42,7 +42,7 @@ use pinion_core::widgets::chip_group::Choice;
 use pinion_core::widgets::destination::{
     Destination, Destinations, Required, RosterSpec, SeatSpec,
 };
-pub use pinion_core::widgets::roving::{Activation, Axis, Ends, RovingSpec};
+pub use pinion_core::widgets::roving::{Activation, Axis, Ends, RovingSpec, StopInterior};
 pub use pinion_core::widgets::severity::SeverityScale;
 
 /// The window the screen is specified at.
@@ -722,9 +722,23 @@ pub struct StopSpec {
     /// presses that moved nothing, and an active descendant that was `None`
     /// everywhere. That is half of WAI-ARIA's composite pattern.
     ///
-    /// `None` for a stop that is a single control rather than a composite —
-    /// there is nothing inside it for a cursor to move between.
-    pub cursor: Option<RovingSpec>,
+    /// 🟥🟥🟥★★★★★ R1910 — this was `Option<RovingSpec>`, and the doc said
+    /// *"`None` for a stop that is a single control rather than a composite"*.
+    /// **That sentence was false about one of its own two cases from the day it
+    /// was written**: the board declares no roster because its cursor is
+    /// SPATIAL, not because it is a control, and it reports an active
+    /// descendant the whole time.
+    ///
+    /// One value, two facts, and a client walking the ring could only guess
+    /// which. The guess survived exactly as long as the table held one `None`:
+    /// R1903 added a second — the button that puts the palette away — and the
+    /// sweep's `r1698` demo, which asserts *"no roster, so it must be the
+    /// spatial one; it still names its cursor"*, went red and **stayed red for
+    /// three published rounds** while three consecutive rounds pushed over it.
+    ///
+    /// ⇒ [`StopInterior`] has three arms, so the two cases cannot share one
+    /// again, and the wire publishes the arm — see `focus_ring` in `main.rs`.
+    pub interior: StopInterior,
 }
 
 /// The ring, in Tab order — which is paint order.
@@ -735,10 +749,15 @@ pub const FOCUS_RING: &[StopSpec] = &[
         at: Where::At("dashboard"),
         // ★ The board's cursor is SPATIAL — the arrows move to the neighbouring
         // card in that direction, not to the next one in a list — so it is not
-        // a linear roster and declares none. It has had that cursor since
-        // R1662 and published it to nobody; this round makes it the active
-        // descendant, which is the half it was missing.
-        cursor: None,
+        // a linear roster. It has had that cursor since R1662 and published it
+        // to nobody; R1698 made it the active descendant, which is the half it
+        // was missing.
+        //
+        // ★★★★★ R1910 — and it now SAYS SO. This read `cursor: None`, sharing
+        // one value with "there is nothing in here at all"; a client could not
+        // tell the two apart and the sweep's demo guessed wrong the moment a
+        // second `None` appeared.
+        interior: StopInterior::Spatial,
     },
     // ★★★★★ R1721 — the filter card's saved-filter bar, and the first stop this
     // screen has ever had **inside a card**. Measured before this round by driving
@@ -754,14 +773,23 @@ pub const FOCUS_RING: &[StopSpec] = &[
         tag: "card.filter#3.chips",
         holds: "the filter card's saved filters",
         at: Where::At("dashboard"),
-        cursor: FILTER_ROW.cursor(),
+        // ★ R1910 — still DERIVED from `FILTER_ROW`, so the ring census and the
+        // widget cannot disagree about the arrows; the match is what turns that
+        // derivation's `Option` into the arm this table now declares. A
+        // `Choice::Any` group makes each chip its own Tab stop, so the bar
+        // would not be a stop at all — hence `Single` on that leg rather than a
+        // silent fallthrough.
+        interior: match FILTER_ROW.cursor() {
+            Some(spec) => StopInterior::Roster(spec),
+            None => StopInterior::Single,
+        },
     },
     StopSpec {
         tag: "shell.appbar",
         holds: "the application bar's views, source, capture and search",
         at: Where::Chrome,
         // A bar of peers with no meaningful last one, so it wraps.
-        cursor: Some(
+        interior: StopInterior::Roster(
             RovingSpec::new(Axis::Horizontal)
                 .with_ends(Ends::Wrap)
                 .with_activation(Activation::Explicit),
@@ -778,7 +806,7 @@ pub const FOCUS_RING: &[StopSpec] = &[
         // tab list has no way to say this: measured, it changes the current
         // tab on every arrow and exposes no property that would let an author
         // ask for anything else.
-        cursor: Some(
+        interior: StopInterior::Roster(
             RovingSpec::new(Axis::Vertical)
                 .with_ends(Ends::Wrap)
                 .with_activation(Activation::Explicit),
@@ -788,7 +816,7 @@ pub const FOCUS_RING: &[StopSpec] = &[
         tag: "shell.subbar",
         holds: "the layout preset and the two board verbs",
         at: Where::At("dashboard"),
-        cursor: Some(
+        interior: StopInterior::Roster(
             RovingSpec::new(Axis::Horizontal)
                 .with_ends(Ends::Wrap)
                 .with_activation(Activation::Explicit),
@@ -803,7 +831,7 @@ pub const FOCUS_RING: &[StopSpec] = &[
         // wrapping would take away. Its members are the thirteen entries and
         // NOT its accessibility children, which are three section groups and
         // two status readouts — the distinction `Roving` exists to keep.
-        cursor: Some(RovingSpec::new(Axis::Vertical).with_ends(Ends::Stop)),
+        interior: StopInterior::Roster(RovingSpec::new(Axis::Vertical).with_ends(Ends::Stop)),
     },
     // ★★★★★ R1903 — the control that puts the palette away.
     //
@@ -822,7 +850,14 @@ pub const FOCUS_RING: &[StopSpec] = &[
         holds: "the control that puts the palette away",
         at: Where::At("dashboard"),
         // One button: nothing to move between.
-        cursor: None,
+        //
+        // ★★★★★ R1910 — and this arm is what the round is about. Written as
+        // `cursor: None` it was indistinguishable from the board's declaration
+        // above, which means the OPPOSITE thing, and the sweep's demo read it
+        // as the board's: it demanded an active descendant from a button and
+        // was red for three published rounds. `Single` is the claim that
+        // nothing is owed here — checkable, rather than inferred from a gap.
+        interior: StopInterior::Single,
     },
 ];
 

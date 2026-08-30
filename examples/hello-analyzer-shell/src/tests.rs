@@ -1516,7 +1516,7 @@ fn r1698_every_declared_composite_has_a_cursor_its_arrows_move() {
         let state = use_shell_state();
         let mut checked = 0;
         for stop in spec::FOCUS_RING {
-            let Some(declared) = stop.cursor else {
+            let Some(declared) = stop.interior.roster() else {
                 continue;
             };
             let roving = state
@@ -1579,7 +1579,7 @@ fn r1698_every_declared_composite_has_a_cursor_its_arrows_move() {
             checked,
             spec::FOCUS_RING
                 .iter()
-                .filter(|s| s.cursor.is_some())
+                .filter(|s| s.interior.roster().is_some())
                 .count(),
             "every declared cursor was driven"
         );
@@ -1655,7 +1655,7 @@ fn r1698_the_tree_publishes_the_cursor_and_the_roster_it_walks() {
             nodes.iter().map(|n| (n.tag.as_str(), n)).collect();
 
         for stop in spec::FOCUS_RING {
-            let Some(declared) = stop.cursor else {
+            let Some(declared) = stop.interior.roster() else {
                 continue;
             };
             let Some(node) = by_tag.get(stop.tag) else {
@@ -1732,7 +1732,7 @@ fn r1698_the_focus_target_names_the_member_the_cursor_is_on() {
         let state = use_shell_state();
         let mut checked = 0;
         for stop in spec::FOCUS_RING {
-            let Some(declared) = stop.cursor else {
+            let Some(declared) = stop.interior.roster() else {
                 continue;
             };
             let target =
@@ -1791,7 +1791,7 @@ fn r1698_the_focus_target_names_the_member_the_cursor_is_on() {
 #[test]
 fn r1698_no_stop_on_this_screen_chooses_by_arriving() {
     for stop in spec::FOCUS_RING {
-        if let Some(cursor) = stop.cursor {
+        if let Some(cursor) = stop.interior.roster() {
             assert_eq!(
                 cursor.activation,
                 spec::Activation::Explicit,

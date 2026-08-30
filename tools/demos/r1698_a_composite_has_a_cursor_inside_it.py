@@ -44,6 +44,17 @@ from rpc_verify import RpcSubprocess, assert_eq, run_demo  # noqa: E402
 EXT = "/external"
 CHECKS: list[str] = []
 
+# ★★★★★ R1910 — the three things a Tab stop can hold, as the screen names them.
+#
+# Written here rather than derived from whatever the screen answers, on purpose:
+# a client that accepted any word would pass on a screen that published a
+# spelling nobody implemented, which is the failure this list exists to catch.
+# A new arm added upstream turns this demo RED until somebody decides what it
+# means for a keyboard — which is the right time to decide it.
+KINDS = {"roster", "spatial", "single"}
+# The two that carry a cursor. `single` is the stop that IS the control.
+CURSOR_KINDS = {"roster", "spatial"}
+
 
 def banner(text: str) -> None:
     print(f"\n=== {text} ===")
@@ -105,10 +116,39 @@ def dashboard(app: RpcSubprocess) -> None:
         app.tick(16)
         nodes, _ = tree(app)
         nav = nodes[stop].get("navigation")
-        if nav is None:
-            # The board's cursor is spatial rather than a linear roster, so it
-            # declares none — and still reports the card it is on.
-            ok(f"B: {stop} has no roster and still names its cursor", cursor(app) is not None)
+        # ★★★★★ R1910 — the stop's KIND is READ, not inferred from the absence
+        # of a roster.
+        #
+        # This branch used to say "no roster, so it is the board's spatial
+        # cursor; it still names the card it is on". That was a guess, correct
+        # while the ring held exactly one rosterless stop — and R1903 added a
+        # second of the opposite kind (the button that puts the palette away).
+        # The guess then demanded an active descendant from a button, and this
+        # demo was RED for three published rounds while three rounds pushed
+        # over it with the stop-the-line override.
+        #
+        # The screen now publishes which arm each stop is, so the client asks.
+        row = declared.get(stop)
+        ok(f"B: {stop} is declared in the ring the surface publishes", row is not None)
+        kind = (row or {}).get("interior")
+        owes = (row or {}).get("owes_cursor")
+        ok(f"B: {stop} says what its arrows do ({kind})", kind in KINDS)
+        ok(
+            f"B: {stop}: the published kind and the published obligation agree",
+            owes == (kind in CURSOR_KINDS),
+        )
+        # And the declaration matches what the tree actually carries: a stop
+        # that publishes `roster` must have one, and the other two must not.
+        assert_eq(
+            nav is not None,
+            kind == "roster",
+            f"B: {stop} publishes kind {kind!r} and the tree {'has' if nav else 'lacks'} a roster",
+        )
+        if kind != "roster":
+            ok(
+                f"B: {stop} ({kind}) names its cursor exactly when it owes one",
+                (cursor(app) is not None) == owes,
+            )
             continue
         checked += 1
         ok(f"B: {stop} publishes its members", len(nav["members"]) >= 2)
