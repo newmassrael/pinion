@@ -3546,12 +3546,24 @@ fn r1912_a_port_that_cannot_be_put_away_says_so() {
             .is_ok(),
         "`Shout` is one-in one-out too and does not declare itself its ports",
     );
+}
 
-    // ★★★★★ AND THE ONE THIS CRATE DOES NOT REFUSE, which is a measurement
-    // rather than an omission: the DCC's bulk operator hides EVERY unwired
-    // socket, so on a node nothing is wired to it reaches exactly this state.
-    // A first draft refused it; refusing what a reference does is a divergence,
-    // not superiority. What is superior is that the state can be SAID.
+/// ★★★★★ R1912 — **the one this crate does NOT refuse, and that is a
+/// measurement rather than an omission.**
+///
+/// The DCC's bulk operator hides every unwired socket, so on a node nothing is
+/// wired to it reaches exactly the state where nothing is drawn. A first draft
+/// of this round refused that, reasoning that a node with no port on the frame
+/// cannot be wired to or from — and shipped a test asserting the floor was
+/// checked against the state a call would PRODUCE.
+///
+/// ⇒ refusing what a reference does is a divergence, not superiority. What is
+/// superior is that the state can be SAID, which is what neither reference can
+/// do, and that it is reversible in one call.
+#[test]
+fn r1912_a_node_may_end_up_with_nothing_drawn_and_says_so() {
+    use crate::appearance::PutAway;
+
     let mut f = fixture();
     assert_eq!(
         f.document
