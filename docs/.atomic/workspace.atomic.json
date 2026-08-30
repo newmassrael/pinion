@@ -74684,6 +74684,40 @@
         "⚠ The two cases are now testing a SYNTHETIC gap while the census has none. That is the right trade — the alternative is not testing them — but it means the rules about gaps are no longer exercised against a real row. If a `gap` returns, nothing needs changing; `_as_gap` overwrites the first row either way."
       ]
     },
+    "R1916.5": {
+      "decision_summary": "R1916.5 — THE PUSH GATE LEARNS RUSTDOC AGAIN, SCOPED. ⚠ THIS CHANGE WAS NOT WRITTEN BY THIS SESSION. It appeared uncommitted in the shared worktree, carrying R1916's own number, while this session was closing R1916 — the second writer this tree has (`a-concurrent-loop-run-commits-into-this-same-worktree`). It is committed here rather than left because `round_verdict.py` refuses to call a round closed with an uncommitted tree, and because it was READ and VERIFIED first, which is the condition this workspace puts on publishing anything a session did not write.\n\nWHAT IT DOES, in its own words: R1779 moved the intra-doc link gate to CI and R1782 left it there alone on one number — a full-workspace `cargo doc` at 394.6s. Three consecutive rounds then published a broken link — R1911.1 in one crate, R1913.1 and R1914.1 in another — each one line, none visible to the loop because the only gate that looks was on the far side of the push. ⇒ the hook now docs only the crates the push TOUCHES: measured 6s for one crate against 394.6s for the workspace, so the price was `--workspace`, not rustdoc.\n\n★★★★★ AND THIS SESSION IS THE EVIDENCE FOR IT. R1915 and R1916 EACH published a broken intra-doc link and each was caught by running the gate by hand afterwards — R1915's was R1914's own last edit, R1916's was a method inserted between a doc block and its link definition. Two in two rounds, both one line, both invisible to every gate that runs before a push.",
+      "changes_bullets": [
+        "`.githooks/pre-push` — `cargo doc` over the crates in the pushed range, without CI's vello feature (cargo rejects a feature of a package a `-p` selection does not contain).",
+        "`tools/test_hooks.sh` — the arrangement assertion moves with it: rustdoc now runs in BOTH places and deliberately NOT flag for flag, so the check asserts each side still runs at all and that the hook's form is the SCOPED one rather than a second full-workspace pass nobody would wait for."
+      ],
+      "verification_bullets": [
+        "READ BEFORE COMMITTING, both files, in full diff — the condition this workspace puts on publishing what a session did not write.",
+        "`bash tools/test_hooks.sh` — **250 passed, 0 failed**, run in this session against the change as it stands.",
+        "AND IT WAS ALREADY LOAD-BEARING: this session's last two pushes ran through this very hook (the working tree's copy), 27 steps each, exit 0 — so the gate it adds has published twice under observation before being committed."
+      ],
+      "impact_refs": [
+        "6.3"
+      ],
+      "carry_forward_bullets": [
+        "⚠ THE SHARED WORKTREE IS A STANDING HAZARD, and this is the second time it has reached a round's close: R1916 also found a debt row appear in `docs/analyzer-debts.json` that this session did not open. The rule that keeps it safe is the one followed here — read the diff, run what tests it, and say in the entry that the work is not this session's."
+      ],
+      "publishable_decision_summary": "R1916.5 — THE PUSH GATE LEARNS RUSTDOC AGAIN, SCOPED. ⚠ THIS CHANGE WAS NOT WRITTEN BY THIS SESSION. It appeared uncommitted in the shared worktree, carrying R1916's own number, while this session was closing R1916 — the second writer this tree has (`a-concurrent-loop-run-commits-into-this-same-worktree`). It is committed here rather than left because `round_verdict.py` refuses to call a round closed with an uncommitted tree, and because it was READ and VERIFIED first, which is the condition this workspace puts on publishing anything a session did not write.\n\nWHAT IT DOES, in its own words: R1779 moved the intra-doc link gate to CI and R1782 left it there alone on one number — a full-workspace `cargo doc` at 394.6s. Three consecutive rounds then published a broken link — R1911.1 in one crate, R1913.1 and R1914.1 in another — each one line, none visible to the loop because the only gate that looks was on the far side of the push. ⇒ the hook now docs only the crates the push TOUCHES: measured 6s for one crate against 394.6s for the workspace, so the price was `--workspace`, not rustdoc.\n\n★★★★★ AND THIS SESSION IS THE EVIDENCE FOR IT. R1915 and R1916 EACH published a broken intra-doc link and each was caught by running the gate by hand afterwards — R1915's was R1914's own last edit, R1916's was a method inserted between a doc block and its link definition. Two in two rounds, both one line, both invisible to every gate that runs before a push.",
+      "publishable_changes_bullets": [
+        "`.githooks/pre-push` — `cargo doc` over the crates in the pushed range, without CI's vello feature (cargo rejects a feature of a package a `-p` selection does not contain).",
+        "`tools/test_hooks.sh` — the arrangement assertion moves with it: rustdoc now runs in BOTH places and deliberately NOT flag for flag, so the check asserts each side still runs at all and that the hook's form is the SCOPED one rather than a second full-workspace pass nobody would wait for."
+      ],
+      "publishable_verification_bullets": [
+        "READ BEFORE COMMITTING, both files, in full diff — the condition this workspace puts on publishing what a session did not write.",
+        "`bash tools/test_hooks.sh` — **250 passed, 0 failed**, run in this session against the change as it stands.",
+        "AND IT WAS ALREADY LOAD-BEARING: this session's last two pushes ran through this very hook (the working tree's copy), 27 steps each, exit 0 — so the gate it adds has published twice under observation before being committed."
+      ],
+      "publishable_impact_refs": [
+        "6.3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "⚠ THE SHARED WORKTREE IS A STANDING HAZARD, and this is the second time it has reached a round's close: R1916 also found a debt row appear in `docs/analyzer-debts.json` that this session did not open. The rule that keeps it safe is the one followed here — read the diff, run what tests it, and say in the entry that the work is not this session's."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
