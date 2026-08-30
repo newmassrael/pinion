@@ -122,7 +122,7 @@
     {
       "name": "debt-a-gate-can-write-into-the-persons-own-data-dir",
       "substituted": false,
-      "blocked_by": "",
+      "blocked_by": "buildable",
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
