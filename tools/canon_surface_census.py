@@ -520,9 +520,16 @@ def selftest() -> int:
         "a `have` with no proof is reported",
         any("not a measurement" in one for one in evidence(lambda c: _blank(c, "have", "proven_by"))),
     )
+    # ★ R1916.2 — a debt the register really holds, so the two gap cases below
+    # keep testing what they say. Sorted so the choice does not depend on a set's
+    # iteration order, and taken from the register rather than written here.
+    a_real_debt = sorted(known_debts(DEBTS.read_text(encoding="utf-8")))[0]
     check(
         "a `gap` with no debt is reported",
-        any("names no debt" in one for one in evidence(lambda c: _blank(c, "gap", "owed_by"))),
+        any(
+            "names no debt" in one
+            for one in evidence(lambda c: _blank(_as_gap(c, a_real_debt), "gap", "owed_by"))
+        ),
     )
     check(
         "a `beyond` with no proof is reported",
@@ -534,7 +541,8 @@ def selftest() -> int:
     check(
         "a gap naming an unregistered debt is reported",
         check_debts(
-            mutate(lambda c: _set(c, "gap", "owed_by", "debt-nobody-wrote-this"))["rows"],
+            mutate(lambda c: _set(_as_gap(c, a_real_debt), "gap", "owed_by", "debt-nobody-wrote-this"))
+            ["rows"],
             known_debts(DEBTS.read_text(encoding="utf-8")),
         )
         != [],
@@ -604,6 +612,31 @@ def selftest() -> int:
 
     print(f"canon surface census selftest: {len(cases) + 24} assertion(s) {'OK' if ok else 'FAILED'}")
     return 0 if ok else 1
+
+
+def _as_gap(clone: dict, owed_by: str) -> dict:
+    """★★★★★ R1916.2 — make the first row a `gap`, so the rules ABOUT gaps stay
+    testable on a pin that has none.
+
+    🟥 What forced it, and it is the shape this project asks every terminating
+    predicate about: the census reached **zero owed rows**, and the two
+    mutations that check a gap's rules stopped testing anything. `_blank` and
+    `_set` refuse that rather than passing quietly — which is right, and is why
+    this was a push-blocking red rather than a silent hole — but the repair is
+    NOT to skip those cases when no gap exists. A rule that is only checked
+    while somebody happens to owe something is a rule that stops being checked
+    exactly when the census is healthiest.
+
+    So the selftest builds its own gap. `owed_by` is a debt the register really
+    holds, chosen from it rather than written here, because one of these cases
+    asserts that an UNREGISTERED name is reported and a hard-coded name would
+    make the pair test the same thing the day that debt closed.
+    """
+    row = clone["rows"][0]
+    row["verdict"] = "gap"
+    row["owed_by"] = owed_by
+    row["proven_by"] = "a test that measures the absence"
+    return clone
 
 
 def _blank(clone: dict, verdict: str, field: str) -> None:

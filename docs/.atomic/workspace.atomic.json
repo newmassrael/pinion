@@ -74654,6 +74654,36 @@
         "⚠ CI: the sweep has not been judged since R1912.5. Read the newest run THAT JUDGED IT, not the newest completed run."
       ]
     },
+    "R1916.4": {
+      "decision_summary": "R1916.4 — THE CENSUS'S OWN SELFTEST BROKE WHEN THE CENSUS BECAME HEALTHY, AND REFUSED RATHER THAN PASSING. R1916.2 took the canon surface census to zero owed rows. Its selftest checks the rules ABOUT gap rows by mutating one — blanking a gap's `owed_by`, or pointing it at an unregistered debt — and with no gap left, those two cases had nothing to mutate.\n\n★★★★★ THE TOOL WAS BUILT FOR THIS AND SAID SO: `_blank` and `_set` raise `the pin holds no 'gap' row, so this case tests nothing` rather than quietly finding nothing and passing. So the push was REFUSED, which is the outcome this workspace's rule about escape hatches asks for — an unclassified case is RED, not a pass.\n\n⇒ AND THE REPAIR IS NOT TO SKIP THOSE CASES WHEN NO GAP EXISTS. A rule checked only while somebody happens to owe something stops being checked exactly when the census is healthiest, which is the moment a wrong `gap` row would do the most damage on its way back in. The selftest builds its own gap instead.\n\n⇒ ★★★★★ THE GENERAL SHAPE, and this round met it twice: ask a terminating count whether zero is REACHABLE, and then ask what stops working when it arrives. `CANON_GAPS` reaching empty was fine — the test asserts the set equals the census's gap rows, so empty is a statement. The selftest's fixtures reaching empty was not, and only running it found out.",
+      "changes_bullets": [
+        "`tools/canon_surface_census.py` — `_as_gap(clone, owed_by)` makes the first row a gap so the rules about gaps stay testable on a pin that has none, and the two gap cases apply it first. `owed_by` is taken from the debt register (sorted, so the choice does not depend on a set's iteration order) rather than written into the tool: one of the two cases asserts that an UNREGISTERED name is reported, and a hard-coded name would make the pair test the same thing the day that debt closed."
+      ],
+      "verification_bullets": [
+        "`python3 tools/canon_surface_census.py --selftest` — 24 assertion(s) OK, exit 0. Before the repair it raised `AssertionError: the pin holds no 'gap' row, so this case tests nothing` and `pre-push` refused the publish, which is how this was found: the gate that caught it is the one this round had just made healthy.",
+        "`python3 tools/canon_surface_census.py` — the assembled tool answers 9 of the canon's 9 interaction surfaces, 0 owed; 10 of 10 rows name a test that measures them."
+      ],
+      "impact_refs": [
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "⚠ The two cases are now testing a SYNTHETIC gap while the census has none. That is the right trade — the alternative is not testing them — but it means the rules about gaps are no longer exercised against a real row. If a `gap` returns, nothing needs changing; `_as_gap` overwrites the first row either way."
+      ],
+      "publishable_decision_summary": "R1916.4 — THE CENSUS'S OWN SELFTEST BROKE WHEN THE CENSUS BECAME HEALTHY, AND REFUSED RATHER THAN PASSING. R1916.2 took the canon surface census to zero owed rows. Its selftest checks the rules ABOUT gap rows by mutating one — blanking a gap's `owed_by`, or pointing it at an unregistered debt — and with no gap left, those two cases had nothing to mutate.\n\n★★★★★ THE TOOL WAS BUILT FOR THIS AND SAID SO: `_blank` and `_set` raise `the pin holds no 'gap' row, so this case tests nothing` rather than quietly finding nothing and passing. So the push was REFUSED, which is the outcome this workspace's rule about escape hatches asks for — an unclassified case is RED, not a pass.\n\n⇒ AND THE REPAIR IS NOT TO SKIP THOSE CASES WHEN NO GAP EXISTS. A rule checked only while somebody happens to owe something stops being checked exactly when the census is healthiest, which is the moment a wrong `gap` row would do the most damage on its way back in. The selftest builds its own gap instead.\n\n⇒ ★★★★★ THE GENERAL SHAPE, and this round met it twice: ask a terminating count whether zero is REACHABLE, and then ask what stops working when it arrives. `CANON_GAPS` reaching empty was fine — the test asserts the set equals the census's gap rows, so empty is a statement. The selftest's fixtures reaching empty was not, and only running it found out.",
+      "publishable_changes_bullets": [
+        "`tools/canon_surface_census.py` — `_as_gap(clone, owed_by)` makes the first row a gap so the rules about gaps stay testable on a pin that has none, and the two gap cases apply it first. `owed_by` is taken from the debt register (sorted, so the choice does not depend on a set's iteration order) rather than written into the tool: one of the two cases asserts that an UNREGISTERED name is reported, and a hard-coded name would make the pair test the same thing the day that debt closed."
+      ],
+      "publishable_verification_bullets": [
+        "`python3 tools/canon_surface_census.py --selftest` — 24 assertion(s) OK, exit 0. Before the repair it raised `AssertionError: the pin holds no 'gap' row, so this case tests nothing` and `pre-push` refused the publish, which is how this was found: the gate that caught it is the one this round had just made healthy.",
+        "`python3 tools/canon_surface_census.py` — the assembled tool answers 9 of the canon's 9 interaction surfaces, 0 owed; 10 of 10 rows name a test that measures them."
+      ],
+      "publishable_impact_refs": [
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "⚠ The two cases are now testing a SYNTHETIC gap while the census has none. That is the right trade — the alternative is not testing them — but it means the rules about gaps are no longer exercised against a real row. If a `gap` returns, nothing needs changing; `_as_gap` overwrites the first row either way."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
