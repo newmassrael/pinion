@@ -27,21 +27,29 @@ walk about the distinction rather than about a constant: a card's wired pin
 answers `wired` and an unwired one answers `atom`. One boolean cannot tell
 them apart; a client offering "split this" needs to.
 
-# What the tool owes beyond this, measured and NOT faked here
+# ⚠ What R1914 changed here, and why this walk moved rather than being deleted
 
-The act itself — the member ports, the parent hiding, the value distributed
-across them, and the TREE the reference's recombine walks — needs an ADDRESS
-this crate does not have: a socket is a node and a port INDEX, so nothing can
-name member 1 of port 2, and a member port is a place a wire lands. That is
-recorded on the four census rows rather than half-built here.
+This round asserted that `atom` occurs on this screen — "this screen's types
+have no members" — which was measured and true when written. **R1914 made it
+false on purpose**: it gave the lab's socket type an inside (a locator is a
+host and a service), because the split ACT it built needs a screen with
+something to split. The walk went red, correctly, and what it now asserts is
+the fact that replaced the old one: `yes` occurs, and it occurs on the pins
+that are not wired.
+
+The pre-R1914 sentence, kept because it is what this round measured: the act
+itself needed an ADDRESS the crate did not have — a socket was a node and a
+port INDEX, so nothing could name member 1 of port 2. R1914's `PortPath` is
+that address.
 
 # What this walk holds
 
   (A) the assembled tool mounts the lab, and every card publishes for each pin
       whether it splits — a WORD, from the model's own vocabulary.
   (B) the words are ones the model can produce: no screen-side spelling.
-  (C) BOTH reachable reasons actually occur on this screen, so the walk is
-      about the distinction rather than about a constant.
+  (C) MORE THAN ONE answer actually occurs on this screen, so the walk is
+      about the distinction rather than about a constant — and both of the two
+      that matter are there: `wired`, and (since R1914) `yes`.
   (D) the reason tracks the WIRING: the pins that answer `wired` are exactly
       the pins the tool reports as wired, which is the reference's own
       condition and the one a reading of the split alone would miss.
@@ -144,9 +152,10 @@ def body() -> None:
             "wired" in seen,
         )
         ok(
-            "C: as is `atom` — this screen's types have no members, and that "
-            "is a DIFFERENT answer from a wire being in the way",
-            "atom" in seen,
+            "C: as is `yes` — R1914 gave this screen's socket type an inside, "
+            "so a pin that CAN come apart is a DIFFERENT answer from a wire "
+            "being in the way",
+            "yes" in seen,
         )
 
         banner("D — the reason tracks the wiring the tool reports")

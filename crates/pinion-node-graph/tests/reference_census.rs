@@ -46,9 +46,9 @@ use serde::{Deserialize, Serialize};
 use pinion_node_graph::{
     Align, Appearance, Axis, Command, Conversion, Crossings, Definitions, Direction, Distribute,
     Document, Edge, EditPath, Extent, Fragment, Grow, Hidden, Instance, InterfaceSide, Item,
-    ItemError, LinkId, Machine, Node, NodeBody, NodeId, NodeKind, NodeSite, NotSplittable, Port,
-    PortRef, PortSite, PutAway, ROOT, Reach, Session, Sharing, Side, Socket, Stack, Straighten,
-    Stride, TreeId, Variadic, WatchError,
+    ItemError, LinkId, Machine, Node, NodeBody, NodeId, NodeKind, NodeSite, NotRecombinable,
+    NotSplittable, Port, PortPath, PortRef, PortSite, PutAway, ROOT, Reach, Session, Sharing, Side,
+    Socket, Stack, Straighten, Stride, TreeId, Variadic, WatchError,
 };
 
 // ---------------------------------------------------------------- taxonomy
@@ -168,6 +168,39 @@ impl NodeKind for Op {
         }
     }
 
+    /// R1913/R1914 — a pair is written `left|right`, so taking it apart is a
+    /// split on the bar and putting it back is a join.
+    ///
+    /// Declared here as well as in the crate's own fixture because these are
+    /// two different populations: this one exercises the reference census
+    /// through the **public API only**, and a `have` verdict proved against an
+    /// internal fixture is a verdict proved against something a consumer cannot
+    /// reach.
+    fn explode(ty: &Ty, value: &Val) -> Vec<Option<Val>> {
+        match (ty, value) {
+            (Ty::Pair, Val::Text(written)) => written
+                .split('|')
+                .map(|part| part.trim().parse::<i64>().ok().map(Val::Number))
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    fn implode(ty: &Ty, members: &[Option<Val>]) -> Option<Val> {
+        if *ty != Ty::Pair || members.len() != 2 {
+            return None;
+        }
+        let part = |slot: &Option<Val>| match slot {
+            Some(Val::Number(n)) => Some(n.to_string()),
+            _ => None,
+        };
+        Some(Val::Text(format!(
+            "{}|{}",
+            part(&members[0])?,
+            part(&members[1])?
+        )))
+    }
+
     fn inputs(&self) -> Vec<Port<Ty, Val>> {
         match self {
             // `Bundle` is here for the same reason the sources are: its members
@@ -195,8 +228,18 @@ impl NodeKind for Op {
             ],
             Self::Carry => vec![
                 Port::control("Go"),
-                Port::new("Whole", Ty::Pair),
+                // ★ R1914 — a resting value, so a split has something to share
+                // out and a recombine has something to put back. Without one,
+                // the act would be provable only in its shape.
+                Port::new("Whole", Ty::Pair).with_default(Val::Text("3|4".to_owned())),
                 Port::new("Loose", Ty::Bag),
+                // ★ R1914 — a port AFTER the composite one that can hold a
+                // value, so "everything after the split moves, with what was
+                // authored on it" is assertable. `Loose` cannot: no `Val`
+                // classifies as `Bag`, which is deliberate elsewhere and
+                // exactly why the fixture needed a fourth port rather than a
+                // cleverer assertion about the third.
+                Port::new("Tail", Ty::Number).with_default(Val::Number(0)),
             ],
         }
     }
@@ -650,6 +693,27 @@ fn engine_proofs() -> Vec<Proof> {
         // ★★★★★ R1912 — the three the census filed under struct-pin SPLITTING
         // and which are hiding, measured in the engine's own editor source.
         proof("engine", "node::CanSplitPin", engine_node_can_split_pin),
+        // ★★★★★ R1914 — the ACT, which R1912 and R1913 built the question and
+        // the value half of. Four rows and four proofs, because the reference
+        // spells them as four commands and each says something the others do
+        // not: the schema pair is the model's, the editor pair is what a
+        // gesture reaches.
+        proof("engine", "schema::SplitPin", engine_schema_split_pin),
+        proof(
+            "engine",
+            "schema::RecombinePin",
+            engine_schema_recombine_pin,
+        ),
+        proof(
+            "engine",
+            "GraphEditor::SplitStructPin",
+            engine_graph_editor_split_struct_pin,
+        ),
+        proof(
+            "engine",
+            "GraphEditor::RecombineStructPin",
+            engine_graph_editor_recombine_struct_pin,
+        ),
         proof(
             "engine",
             "GraphEditor::RemoveThisStructVarPin",
@@ -1913,6 +1977,283 @@ fn engine_node_can_split_pin() {
             index: 0
         },
         "the reference's own `LinkedTo.Num() == 0`",
+    );
+}
+
+/// ★★★★★ R1914 — the engine's `SplitPin`: **a composite value port becomes one
+/// port per member, and the parent's value is shared out across them.**
+///
+/// Measured in its schema at R1913: it sets the parent `bHidden = true`, refuses
+/// a container, makes one sub-pin per member with a name derived from the
+/// parent's, and **parses the parent's authored value into per-member
+/// defaults** — the half a split that knew only the members' types would leave
+/// a reader to fill in again.
+///
+/// Past the reference in two ways this asserts:
+///
+/// * the parent's hiding has a **reason** ([`Hidden::Split`]), where the
+///   reference sets a flag whose cause is recoverable only by noticing the pin
+///   has sub-pins;
+/// * the split says **what it did** — the member addresses, the ports that
+///   moved, and where each piece of the value landed. Its command answers
+///   `void`.
+#[test]
+fn engine_schema_split_pin() {
+    let mut chain = chain();
+    let carry = node(&mut chain.document, Op::Carry);
+    let whole = PortPath::root(1);
+
+    let apart = chain
+        .document
+        .split_port(ROOT, carry, Side::Input, &whole)
+        .expect("`Whole` carries the composite type and nothing is wired to it");
+
+    assert_eq!(
+        apart.members,
+        [PortPath::root(1).then(0), PortPath::root(1).then(1)],
+        "one address per member, in declaration order",
+    );
+    let names: Vec<String> = chain
+        .document
+        .signature(ROOT, carry)
+        .expect("the node is there")
+        .inputs
+        .into_iter()
+        .map(|port| port.name)
+        .collect();
+    assert_eq!(
+        names,
+        ["Go", "Whole", "Left", "Right", "Loose", "Tail"],
+        "★ the members take the parent's place and the parent keeps its own — \
+         the reference's order, and everything after it moved by two",
+    );
+    assert_eq!(
+        apart.moved,
+        [
+            (PortRef::input(2), PortRef::input(4)),
+            (PortRef::input(3), PortRef::input(5)),
+        ],
+        "★ the ports with no visual cue: they had nothing to do with the split",
+    );
+
+    let seen = chain
+        .document
+        .visible_ports(ROOT, carry)
+        .expect("the node is there");
+    assert_eq!(
+        seen.why_hidden(Side::Input, 1),
+        Some(Hidden::Split),
+        "★★★★★ hidden with a REASON, which the reference's flag has nowhere to \
+         carry",
+    );
+    assert!(!seen.inputs.contains(&1));
+
+    // ★★★★★ The value came apart. `Whole` rests at `3|4`, so the members rest
+    // at 3 and 4 rather than at the type's declared zeroes.
+    let resting: Vec<Option<Val>> = chain
+        .document
+        .resolved_ports(ROOT, carry, Side::Input)
+        .into_iter()
+        .map(|(_, port)| port.flow.default_value().cloned())
+        .collect();
+    assert_eq!(resting[2], Some(Val::Number(3)));
+    assert_eq!(resting[3], Some(Val::Number(4)));
+
+    assert_eq!(
+        chain
+            .document
+            .split_port(ROOT, carry, Side::Input, &whole)
+            .unwrap_err(),
+        NotSplittable::AlreadySplit,
+        "★ already done and cannot be done are opposite repairs; the reference \
+         answers both with one `false`",
+    );
+}
+
+/// ★★★★★ R1914 — the engine's `RecombinePin`: **the members go back into the
+/// parent, and their value goes with them.**
+///
+/// ⚠ This is where the reference is **wrong**, measured at R1913 rather than
+/// assumed: its recombine re-composes a parent's value with a hand-written
+/// `if`-chain over four named struct types, one of which uses a *different
+/// member order* from its own split's chain (there is a comment in the source
+/// saying so), and every other composite type keeps whatever the parent had.
+///
+/// Here both directions are declared on the taxonomy that owns the type, so the
+/// pair is one author's and [`round_trips`](pinion_node_graph::round_trips) is
+/// a law any consumer can run. This asserts the consequence: an edit made on a
+/// member arrives on the parent.
+#[test]
+fn engine_schema_recombine_pin() {
+    let mut chain = chain();
+    let carry = node(&mut chain.document, Op::Carry);
+    let whole = PortPath::root(1);
+
+    chain
+        .document
+        .split_port(ROOT, carry, Side::Input, &whole)
+        .expect("`Whole` splits");
+    chain
+        .document
+        .set_port_value(ROOT, carry, PortRef::input(3), Val::Number(9))
+        .expect("`Right` is a value port");
+
+    let folded = chain
+        .document
+        .recombine_port(ROOT, carry, Side::Input, &whole)
+        .expect("`Whole` is split");
+    assert_eq!(
+        folded.composed,
+        Some(Val::Text("3|9".to_owned())),
+        "★★★★★ the edit on the member reached the parent — the half the \
+         reference has for four named types and no others",
+    );
+    assert_eq!(
+        chain.document.port_value(ROOT, carry, PortRef::input(1)),
+        Some(&Val::Text("3|9".to_owned())),
+    );
+    assert!(
+        folded.discarded.is_empty(),
+        "★ a value folded INTO the parent is not a value lost",
+    );
+    assert_eq!(
+        chain
+            .document
+            .visible_ports(ROOT, carry)
+            .expect("the node is there")
+            .why_hidden(Side::Input, 1),
+        None,
+        "and the parent is drawn again",
+    );
+}
+
+/// ★★★★★ R1914 — the editor's `SplitStructPin`, which is the **gesture**: it
+/// reaches a pin by the index the canvas drew, and everything after that pin
+/// moves.
+///
+/// A separate proof from the schema's because it exercises a separate fact.
+/// The reference makes sub-pins real pins, so a wire on a later port has to
+/// travel; its own blend-list node ships the mirror-image defect as a `@TODO`
+/// ("need to handle moving pins below up correctly"). Every edit here goes
+/// through one correspondence, so the wires and the authored values cannot get
+/// out of step with each other.
+#[test]
+fn engine_graph_editor_split_struct_pin() {
+    let mut chain = chain();
+    let carry = node(&mut chain.document, Op::Carry);
+    let downstream = node(&mut chain.document, Op::Carry);
+
+    // A value authored on the port that will move, and a wire on the side the
+    // split does not touch. The second is the one with teeth: `remap_ports`
+    // severs every link whose port it cannot find, so a split that forgot to
+    // say the other side was unchanged would cut this.
+    chain
+        .document
+        .set_port_value(ROOT, carry, PortRef::input(3), Val::Number(7))
+        .expect("`Tail` is a value port");
+    wire(&mut chain.document, carry, 0, downstream, 1);
+
+    // The gesture arrives with the index the canvas drew, and the verb takes
+    // an address — so this is the conversion an editor makes on the way in.
+    let path = chain
+        .document
+        .path_of(ROOT, carry, Side::Input, 1)
+        .expect("the canvas drew a pin at index 1");
+    let apart = chain
+        .document
+        .split_port(ROOT, carry, Side::Input, &path)
+        .expect("that pin splits");
+
+    assert!(
+        apart.severed.is_empty() && apart.discarded.is_empty(),
+        "★ nothing was lost: {} wire(s) cut, {} value(s) dropped",
+        apart.severed.len(),
+        apart.discarded.len(),
+    );
+    assert_eq!(
+        chain.document.port_value(ROOT, carry, PortRef::input(5)),
+        Some(&Val::Number(7)),
+        "★★★★★ the value followed `Tail` from index 3 to index 5 — the \
+         re-indexing the reference's own blend-list node carries a `@TODO` for",
+    );
+    assert_eq!(
+        chain.document.port_value(ROOT, carry, PortRef::input(3)),
+        None,
+        "and it is not ALSO where it was",
+    );
+    let leaving: Vec<u32> = chain
+        .document
+        .tree(ROOT)
+        .expect("the tree is there")
+        .links()
+        .iter()
+        .filter(|link| link.from.node == carry)
+        .map(|link| link.from.port)
+        .collect();
+    assert_eq!(
+        leaving,
+        [0],
+        "★ the untouched side kept its wire: a port left out of the \
+         correspondence is a port severed",
+    );
+    assert_eq!(
+        chain.document.index_of(ROOT, carry, Side::Input, &path),
+        Some(1),
+        "and the parent's own address still answers where it is",
+    );
+}
+
+/// ★★★★★ R1914 — the editor's `RecombineStructPin`, which is **catchable at
+/// either end** and folds a whole tree.
+///
+/// The reference delegates a parent's command to its first sub-pin and walks a
+/// sub-pin's up to its parent, so both ends reach the same place. What it
+/// cannot do is say which pin it folded or how many splits went with it — and
+/// the second matters because the shape is a tree: a member that was itself
+/// split stops being a port.
+#[test]
+fn engine_graph_editor_recombine_struct_pin() {
+    let mut chain = chain();
+    let carry = node(&mut chain.document, Op::Carry);
+    let whole = PortPath::root(1);
+
+    assert_eq!(
+        chain
+            .document
+            .recombine_port(ROOT, carry, Side::Input, &whole)
+            .unwrap_err(),
+        NotRecombinable::NotSplit,
+        "★ nothing to fold, which a greyed-out menu entry cannot say",
+    );
+
+    chain
+        .document
+        .split_port(ROOT, carry, Side::Input, &whole)
+        .expect("`Whole` splits");
+
+    // Asked at a MEMBER, not at the parent — the far end of the reference's
+    // own parent-pin walk.
+    let folded = chain
+        .document
+        .recombine_port(ROOT, carry, Side::Input, &whole.clone().then(1))
+        .expect("`Right` is a member of a split port");
+    assert_eq!(
+        folded.parent, whole,
+        "★★★★★ asking at a member folds the port that member belongs to",
+    );
+    assert_eq!(folded.folded, 1);
+    let names: Vec<String> = chain
+        .document
+        .signature(ROOT, carry)
+        .expect("the node is there")
+        .inputs
+        .into_iter()
+        .map(|port| port.name)
+        .collect();
+    assert_eq!(
+        names,
+        ["Go", "Whole", "Loose", "Tail"],
+        "and the node is as it was",
     );
 }
 

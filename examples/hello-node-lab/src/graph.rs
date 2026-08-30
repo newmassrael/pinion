@@ -11,7 +11,9 @@
 //! an **accept** pin of the same transport. That single rule is what makes the
 //! canvas's three pin appearances mean something rather than decorate.
 
-use pinion_node_graph::{Admission, Conversion, NodeKind, Port, Refusal, Side, Variadic};
+use pinion_node_graph::{
+    Admission, Composition, Conversion, NodeKind, Port, Refusal, Side, Variadic,
+};
 use serde::{Deserialize, Serialize};
 
 /// A transport a link can be carried over.
@@ -56,6 +58,43 @@ impl Transport {
     pub fn of_locator(locator: &str) -> Option<Self> {
         let (scheme, _) = locator.split_once('/')?;
         Self::ALL.into_iter().find(|t| t.word() == scheme)
+    }
+}
+
+/// ★★★★★ R1914 — **what a pin carries**: a whole locator, or one half of one.
+///
+/// The socket type, and it grew an inside this round because the split ACT
+/// needed one. A locator on this screen is already two things — the model says
+/// so itself, in [`Transport::of_locator`], which splits one on the `/` — and
+/// until now nothing could ask *what is this made of*, so a pin was an atom and
+/// the split question answered `atom` on every card.
+///
+/// [`Transport`] is kept whole rather than folded in here: it is what the
+/// palette's legend lists and what the canvas colours a pin by, and a legend
+/// that had to skip two of its own entries would be a legend that lies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum Endpoint {
+    /// A whole locator over this transport — `scheme/host:service`.
+    Locator(Transport),
+    /// The host half of a locator: where to reach it.
+    Host,
+    /// The service half: which port on that host.
+    Service,
+}
+
+impl Endpoint {
+    /// The transport this endpoint speaks, or `None` for a half of one.
+    ///
+    /// A half carries no transport, and that is not an omission: a host name is
+    /// the same host name whether it is dialled over a stream or a datagram, so
+    /// giving the halves a transport would have invented a fact for the canvas
+    /// to colour a pin by wrongly.
+    #[must_use]
+    pub const fn transport(self) -> Option<Transport> {
+        match self {
+            Self::Locator(transport) => Some(transport),
+            Self::Host | Self::Service => None,
+        }
     }
 }
 
@@ -331,7 +370,9 @@ impl Revisions {
 }
 
 impl NodeKind for LabNode {
-    type Type = Transport;
+    /// ★ R1914 — an [`Endpoint`], not a [`Transport`]: a pin carries a whole
+    /// locator or one half of one, and the split act needs the difference.
+    type Type = Endpoint;
     /// A locator: what a pin hands the pin it is wired to.
     type Value = String;
 
@@ -352,7 +393,7 @@ impl NodeKind for LabNode {
     /// The dial pin. Every role has one — even a store dials the router it
     /// registers with.
     fn outputs(&self) -> Vec<Port<Self::Type, Self::Value>> {
-        vec![Port::new("dial", self.transport)]
+        vec![Port::new("dial", Endpoint::Locator(self.transport))]
     }
 
     /// **The accept pin repeats.**
@@ -367,9 +408,13 @@ impl NodeKind for LabNode {
     /// choosing which slot to land in.
     fn variadic(&self, side: Side) -> Option<Variadic<Self::Type, Self::Value>> {
         match side {
-            Side::Input if self.role.accepts() => {
-                Some(Variadic::at(0, vec![Port::new("accept", self.transport)]).at_least(1))
-            }
+            Side::Input if self.role.accepts() => Some(
+                Variadic::at(
+                    0,
+                    vec![Port::new("accept", Endpoint::Locator(self.transport))],
+                )
+                .at_least(1),
+            ),
             _ => None,
         }
     }
@@ -392,6 +437,67 @@ impl NodeKind for LabNode {
         } else {
             Conversion::Refused
         }
+    }
+
+    /// ★★★★★ R1914 — **a locator is made of a host and a service.**
+    ///
+    /// The model already said so — [`Transport::of_locator`] takes a locator
+    /// apart on the `/` to read its scheme — and this is the same fact declared
+    /// where the crate can ask it, which is what lets a pin on this screen come
+    /// apart into the two things an analyst actually edits.
+    ///
+    /// The halves are atoms: a host name has no inside, and neither does a
+    /// service number. So the tree here is one level deep, and that is a
+    /// property of this taxonomy rather than of the model — the crate's own
+    /// fixture carries a depth-2 type, because the reference's recombine
+    /// recurses and a model that could not would be the wrong shape.
+    fn composition(ty: &Self::Type) -> Composition<Self::Type, Self::Value> {
+        match ty {
+            Endpoint::Locator(_) => Composition::Members(vec![
+                Port::new("host", Endpoint::Host).with_default("localhost".to_owned()),
+                Port::new("service", Endpoint::Service).with_default("7447".to_owned()),
+            ]),
+            Endpoint::Host | Endpoint::Service => Composition::Atom,
+        }
+    }
+
+    /// ★★★★★ R1914 — take a locator apart into its host and its service.
+    ///
+    /// The scheme is **dropped rather than shared out**, and that is the right
+    /// answer rather than a shortcut: which transport a pin speaks is the
+    /// PORT'S TYPE here, not a piece of its value, so a member port carrying
+    /// the scheme would be a second place the same fact lived. [`implode`]
+    /// puts it back from the type, which is why the round trip holds.
+    ///
+    /// [`implode`]: NodeKind::implode
+    fn explode(ty: &Self::Type, value: &Self::Value) -> Vec<Option<Self::Value>> {
+        if ty.transport().is_none() {
+            return Vec::new();
+        }
+        let rest = value.split_once('/').map_or(value.as_str(), |(_, r)| r);
+        let (host, service) = rest
+            .rsplit_once(':')
+            .map_or((rest, ""), |(host, service)| (host, service));
+        vec![
+            (!host.is_empty()).then(|| host.to_owned()),
+            (!service.is_empty()).then(|| service.to_owned()),
+        ]
+    }
+
+    /// ★★★★★ R1914 — put a host and a service back into a locator, **with the
+    /// scheme the port's type names**.
+    ///
+    /// The half the reference does not have for any type outside a
+    /// hand-written chain of four. Here it is one line and it cannot disagree
+    /// with [`explode`](NodeKind::explode), because both are declared on the
+    /// taxonomy that owns the type and `round_trips` is a law a consumer can
+    /// run over them.
+    fn implode(ty: &Self::Type, members: &[Option<Self::Value>]) -> Option<Self::Value> {
+        let transport = ty.transport()?;
+        let [Some(host), Some(service)] = members else {
+            return None;
+        };
+        Some(format!("{}/{host}:{service}", transport.word()))
     }
 
     /// Two peers may be wired when they can negotiate a wire revision (R1885).
@@ -432,7 +538,7 @@ impl NodeKind for LabNode {
 
 #[cfg(test)]
 mod tests {
-    use super::{Implementation, LabNode, Revisions, Role, Stack, Transport};
+    use super::{Endpoint, Implementation, LabNode, Revisions, Role, Stack, Transport};
     use pinion_node_graph::{Admission, NodeKind, Side};
 
     #[test]
@@ -461,8 +567,9 @@ mod tests {
     #[test]
     fn r1651_a_link_across_two_transports_is_refused_by_the_taxonomy() {
         // The legend's rule, and the reason an accept pin is coloured.
+        let locator = Endpoint::Locator;
         assert!(
-            !LabNode::conversion(&Transport::Tcp, &Transport::Tcp).is_refused(),
+            !LabNode::conversion(&locator(Transport::Tcp), &locator(Transport::Tcp)).is_refused(),
             "same transport crosses"
         );
         for other in Transport::ALL {
@@ -470,11 +577,56 @@ mod tests {
                 continue;
             }
             assert!(
-                LabNode::conversion(&Transport::Tcp, &other).is_refused(),
+                LabNode::conversion(&locator(Transport::Tcp), &locator(other)).is_refused(),
                 "tcp must not reach {}",
                 other.word()
             );
         }
+        // ★ R1914 — and the halves of a locator do not cross into a whole one,
+        // which is what keeps a split pin from being wired to an unsplit one.
+        assert!(
+            LabNode::conversion(&Endpoint::Host, &locator(Transport::Tcp)).is_refused(),
+            "a host name is not a locator",
+        );
+        assert!(
+            !LabNode::conversion(&Endpoint::Host, &Endpoint::Host).is_refused(),
+            "a host reaches a host",
+        );
+    }
+
+    /// ★★★★★ R1914 — the taxonomy's own round-trip law, run over its one
+    /// composite type.
+    ///
+    /// The check the reference cannot be given: its two halves are chains in an
+    /// editor's schema with nothing that owns the pair. Here both are declared
+    /// on the taxonomy, so this screen can hold itself to them — and it is the
+    /// screen's own types the law runs over, not the crate's fixture.
+    #[test]
+    fn r1914_a_locator_comes_apart_and_goes_back_together() {
+        use pinion_node_graph::{RoundTrip, round_trips};
+
+        for transport in Transport::ALL {
+            let ty = Endpoint::Locator(transport);
+            let locator = format!("{}/10.0.0.4:7447", transport.word());
+            assert_eq!(
+                round_trips::<LabNode>(&ty, &locator),
+                RoundTrip::Holds,
+                "{locator} must survive being taken apart and put back",
+            );
+        }
+        assert_eq!(
+            LabNode::explode(
+                &Endpoint::Locator(Transport::Tcp),
+                &"tcp/host:7447".to_owned()
+            ),
+            vec![Some("host".to_owned()), Some("7447".to_owned())],
+        );
+        // ★ A half is an atom, so the law reports it was never exercised
+        // rather than answering "fine" — the escape hatch the crate refuses.
+        assert_eq!(
+            round_trips::<LabNode>(&Endpoint::Host, &"host".to_owned()),
+            RoundTrip::NotComposite,
+        );
     }
 
     #[test]

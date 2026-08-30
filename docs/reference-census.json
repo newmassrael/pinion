@@ -2043,10 +2043,10 @@
       "verdict": "app-content"
     },
     "GraphEditor::RecombineStructPin": {
-      "covered_by": "STRUCT PINS, THE ACT: a composite value port becomes one port per member and is recombined. Measured R1912-R1913 — the parent is HIDDEN rather than removed; each member port takes the parent's direction, its own resting value and a name derived from the parent's; it NESTS, so the shape is a TREE and recombining walks into a member's own members; and the verb is addressable from either end. Two of the three pieces exist here now: the QUESTION is answered with a reason per condition, and the taxonomy takes a composite value apart and puts it back with a law any consumer can run. WHAT IS STILL MISSING IS AN ADDRESS: a socket is a node and a port INDEX, so nothing can name member 1 of port 2, and a member port is a place a wire lands. Until a port address can carry a path, the act has nowhere to put what it makes",
+      "covered_by": "STRUCT PINS, THE ACT: a composite value port becomes one port per member and is recombined. Built R1914 on R1912's question and R1913's value half. The parent is HIDDEN rather than removed and the hiding has a REASON (Hidden::Split) the reference's own flag has nowhere to carry; the members are spliced into the resolved signature immediately after it, each carrying its share of the parent's value; every port after them moves with its wires and its authored values through ONE correspondence; the shape is a TREE, so a member that is itself composite splits again and folding a parent folds everything under it; and the verb is catchable at either end. The ADDRESS R1913 said was missing is PortPath — a declaration address that holds still while the resolved index it names moves, with Document::index_of and Document::path_of as the correspondence in both directions. Past the reference: the split reports what it made, what moved and where each piece of the value landed, where its own command answers void; and the recombine composes the members back with NodeKind::implode for EVERY composite type, where the reference re-composes for four named struct types with two hand-written chains that disagree about member order for one of them",
       "mechanism": "GraphEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_graph_editor_recombine_struct_pin",
+      "verdict": "have"
     },
     "GraphEditor::ReconstructNodes": {
       "covered_by": "the signature is DERIVED from the kind, so it cannot go stale",
@@ -2127,10 +2127,10 @@
       "verdict": "have"
     },
     "GraphEditor::SplitStructPin": {
-      "covered_by": "STRUCT PINS, THE ACT: a composite value port becomes one port per member and is recombined. Measured R1912-R1913 — the parent is HIDDEN rather than removed; each member port takes the parent's direction, its own resting value and a name derived from the parent's; it NESTS, so the shape is a TREE and recombining walks into a member's own members; and the verb is addressable from either end. Two of the three pieces exist here now: the QUESTION is answered with a reason per condition, and the taxonomy takes a composite value apart and puts it back with a law any consumer can run. WHAT IS STILL MISSING IS AN ADDRESS: a socket is a node and a port INDEX, so nothing can name member 1 of port 2, and a member port is a place a wire lands. Until a port address can carry a path, the act has nowhere to put what it makes",
+      "covered_by": "STRUCT PINS, THE ACT: a composite value port becomes one port per member and is recombined. Built R1914 on R1912's question and R1913's value half. The parent is HIDDEN rather than removed and the hiding has a REASON (Hidden::Split) the reference's own flag has nowhere to carry; the members are spliced into the resolved signature immediately after it, each carrying its share of the parent's value; every port after them moves with its wires and its authored values through ONE correspondence; the shape is a TREE, so a member that is itself composite splits again and folding a parent folds everything under it; and the verb is catchable at either end. The ADDRESS R1913 said was missing is PortPath — a declaration address that holds still while the resolved index it names moves, with Document::index_of and Document::path_of as the correspondence in both directions. Past the reference: the split reports what it made, what moved and where each piece of the value landed, where its own command answers void; and the recombine composes the members back with NodeKind::implode for EVERY composite type, where the reference re-composes for four named struct types with two hand-written chains that disagree about member order for one of them",
       "mechanism": "GraphEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_graph_editor_split_struct_pin",
+      "verdict": "have"
     },
     "GraphEditor::StackNodesHorizontally": {
       "covered_by": "pinion_node_graph::arrange — Stack::along(Axis::Horizontal, gap). R1631.",
@@ -2733,7 +2733,7 @@
       "verdict": "absent"
     },
     "node::CanSplitPin": {
-      "covered_by": "CAN this port be split, and when not, WHICH of six reasons. The reference answers a conjunction of five conditions as one boolean — the pin is this node's, it is connectable, NOTHING IS LINKED TO IT, its type is a struct, and the base class says no so a kind opts in — with a sixth in its schema at the moment of splitting: not a container. Each wants a different repair, so each is a named arm here, and the member ports come back with the answer. The ACT is still absent: see the four rows beside this one",
+      "covered_by": "CAN this port be split, and when not, WHICH of six reasons. The reference answers a conjunction of five conditions as one boolean — the pin is this node's, it is connectable, NOTHING IS LINKED TO IT, its type is a struct, and the base class says no so a kind opts in — with a sixth in its schema at the moment of splitting: not a container. Each wants a different repair, so each is a named arm here, and the member ports come back with the answer. R1914 built the ACT (Document::split_port / recombine_port) and added a SEVENTH arm the reference cannot reach: already split, which its own predicate answers with the same `false` as cannot-be-split though the repairs are opposite. The address form is Document::splittable_at, which asks the same question of a member",
       "mechanism": "graph-node",
       "proven_by": "pinion-node-graph::engine_node_can_split_pin",
       "verdict": "have"
@@ -3699,10 +3699,10 @@
       "verdict": "host-framework"
     },
     "schema::RecombinePin": {
-      "covered_by": "STRUCT PINS, THE ACT: a composite value port becomes one port per member and is recombined. Measured R1912-R1913 — the parent is HIDDEN rather than removed; each member port takes the parent's direction, its own resting value and a name derived from the parent's; it NESTS, so the shape is a TREE and recombining walks into a member's own members; and the verb is addressable from either end. Two of the three pieces exist here now: the QUESTION is answered with a reason per condition, and the taxonomy takes a composite value apart and puts it back with a law any consumer can run. WHAT IS STILL MISSING IS AN ADDRESS: a socket is a node and a port INDEX, so nothing can name member 1 of port 2, and a member port is a place a wire lands. Until a port address can carry a path, the act has nowhere to put what it makes",
+      "covered_by": "STRUCT PINS, THE ACT: a composite value port becomes one port per member and is recombined. Built R1914 on R1912's question and R1913's value half. The parent is HIDDEN rather than removed and the hiding has a REASON (Hidden::Split) the reference's own flag has nowhere to carry; the members are spliced into the resolved signature immediately after it, each carrying its share of the parent's value; every port after them moves with its wires and its authored values through ONE correspondence; the shape is a TREE, so a member that is itself composite splits again and folding a parent folds everything under it; and the verb is catchable at either end. The ADDRESS R1913 said was missing is PortPath — a declaration address that holds still while the resolved index it names moves, with Document::index_of and Document::path_of as the correspondence in both directions. Past the reference: the split reports what it made, what moved and where each piece of the value landed, where its own command answers void; and the recombine composes the members back with NodeKind::implode for EVERY composite type, where the reference re-composes for four named struct types with two hand-written chains that disagree about member order for one of them",
       "mechanism": "graph-schema",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_schema_recombine_pin",
+      "verdict": "have"
     },
     "schema::ReconstructNode": {
       "covered_by": "the signature is derived from the kind, and set_kind names everything that did not survive",
@@ -3783,10 +3783,10 @@
       "verdict": "app-content"
     },
     "schema::SplitPin": {
-      "covered_by": "STRUCT PINS, THE ACT: a composite value port becomes one port per member and is recombined. Measured R1912-R1913 — the parent is HIDDEN rather than removed; each member port takes the parent's direction, its own resting value and a name derived from the parent's; it NESTS, so the shape is a TREE and recombining walks into a member's own members; and the verb is addressable from either end. Two of the three pieces exist here now: the QUESTION is answered with a reason per condition, and the taxonomy takes a composite value apart and puts it back with a law any consumer can run. WHAT IS STILL MISSING IS AN ADDRESS: a socket is a node and a port INDEX, so nothing can name member 1 of port 2, and a member port is a place a wire lands. Until a port address can carry a path, the act has nowhere to put what it makes",
+      "covered_by": "STRUCT PINS, THE ACT: a composite value port becomes one port per member and is recombined. Built R1914 on R1912's question and R1913's value half. The parent is HIDDEN rather than removed and the hiding has a REASON (Hidden::Split) the reference's own flag has nowhere to carry; the members are spliced into the resolved signature immediately after it, each carrying its share of the parent's value; every port after them moves with its wires and its authored values through ONE correspondence; the shape is a TREE, so a member that is itself composite splits again and folding a parent folds everything under it; and the verb is catchable at either end. The ADDRESS R1913 said was missing is PortPath — a declaration address that holds still while the resolved index it names moves, with Document::index_of and Document::path_of as the correspondence in both directions. Past the reference: the split reports what it made, what moved and where each piece of the value landed, where its own command answers void; and the recombine composes the members back with NodeKind::implode for EVERY composite type, where the reference re-composes for four named struct types with two hand-written chains that disagree about member order for one of them",
       "mechanism": "graph-schema",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_schema_split_pin",
+      "verdict": "have"
     },
     "schema::SupportsDropPinOnNode": {
       "covered_by": "dragging a pin onto a node and having the node grow one",

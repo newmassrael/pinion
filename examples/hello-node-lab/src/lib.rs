@@ -101,8 +101,8 @@ use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::widgets::wheel::WheelDirection;
 use pinion_core::{CellKind, Frame, Modifiers, Scene, WidgetCore, edit_field_keymap};
 use pinion_node_graph::{
-    Camera, Document, Extent, Fit, Item, LinkId, LinkLayer, Margin, Node, NodeBody, NodeId, ROOT,
-    Relinked, Side, Socket, Violation, ZoomRange,
+    Camera, Document, Extent, Fit, Item, LinkId, LinkLayer, Margin, Node, NodeBody, NodeId,
+    PortPath, PortRef, ROOT, Relinked, Side, Socket, Violation, ZoomRange,
 };
 use pinion_platform_storage::AppStorage;
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
@@ -3036,6 +3036,43 @@ fn seed_links(
             .is_err()
         {
             doc.remove_item(ROOT, b, Side::Input, port).ok();
+        }
+    }
+    // ★★★★★ R1914 — **the slot nobody has dialled still knows what it listens
+    // on**, and that is a fact about the card rather than about the wire.
+    //
+    // `open_slot_in` gives a slot the address the link that opened it dials, so
+    // every WIRED accept pin carries one. The floor slot — the one the run's
+    // `at_least(1)` keeps on a card nothing has reached yet — had none, so the
+    // only pins carrying an address were exactly the pins the reference refuses
+    // to split. Measured at R1914 on the running screen: splitting produced a
+    // host and a service holding the taxonomy's declared defaults rather than
+    // this card's own address, which is the state the reference's own split
+    // avoids by parsing the parent's value on the way down.
+    for (&node, form) in forms {
+        let listening = form
+            .field("listen.endpoints")
+            .map(|f| f.value().trim().to_owned())
+            .filter(|v| !v.is_empty());
+        let (Some(listening), Some(signature)) = (listening, doc.signature(ROOT, node)) else {
+            continue;
+        };
+        for index in 0..u32::try_from(signature.inputs.len()).unwrap_or(0) {
+            let at = PortRef::input(index);
+            if doc.port_value(ROOT, node, at).is_none() {
+                let _ = doc.set_port_value(ROOT, node, at, listening.clone());
+            }
+        }
+        // ★ And the DIAL pin's resting value is this card's own address, which
+        // is what the taxonomy's `evaluate` already implies: a node hands on
+        // the locator it was reached by, so a node nobody has reached yet hands
+        // on its own. R1594's rule — a source node's resting constant lives on
+        // its output port — read for the one source every card is.
+        for index in 0..u32::try_from(signature.outputs.len()).unwrap_or(0) {
+            let at = PortRef::output(index);
+            if doc.port_value(ROOT, node, at).is_none() {
+                let _ = doc.set_port_value(ROOT, node, at, listening.clone());
+            }
         }
     }
     selected_link
@@ -8619,8 +8656,70 @@ fn canvas_pins(state: &LabState, node: NodeId, card: Rect, role: Role, ink: Ink)
                 PIN / 2,
             ));
         }
+        // ★★★★★ R1914 — the pins a SPLIT put there, under the parent's place.
+        //
+        // The parent is hidden by `shows` above (the model answers
+        // `Hidden::Split` for it), so without this a split would take a pin off
+        // the frame and put nothing back — which is a picture that says the
+        // gesture destroyed something. The reference draws its sub-pins in the
+        // parent's place for the same reason.
+        //
+        // The member word comes from the model's own port name, so the tag a
+        // client presses and the address `split_pin` accepts are the same
+        // spelling by construction.
+        for (side, dial) in [(Side::Output, true), (Side::Input, false)] {
+            for (ordinal, (path, port)) in member_pins(state, node, side).into_iter().enumerate() {
+                children.push(box_at(
+                    &format!(
+                        "lab.pin.{name}.{}.{}",
+                        if dial { "dial" } else { "accept" },
+                        port.name,
+                    ),
+                    member_pin_rect(state, card, dial, ordinal),
+                    ink.surface,
+                    Some(if path.depth() > 1 {
+                        ink.text_3
+                    } else {
+                        transport_ink(transport)
+                    }),
+                    PIN / 2,
+                ));
+            }
+        }
     }
     children
+}
+
+/// R1914 — the member ports a split put on one side of `node`, in draw order.
+///
+/// Asked of the model rather than derived from the appearance, because the
+/// model is where the expansion lives: a screen that walked the split
+/// declaration itself would be a second expansion, free to disagree with the
+/// one the signature was spliced by.
+fn member_pins(
+    state: &LabState,
+    node: NodeId,
+    side: Side,
+) -> Vec<(PortPath, pinion_node_graph::Port<graph::Endpoint, String>)> {
+    state
+        .doc
+        .borrow()
+        .resolved_ports(ROOT, node, side)
+        .into_iter()
+        .filter(|(path, _)| path.depth() > 0)
+        .collect()
+}
+
+/// R1914 — where the `ordinal`-th member pin of a split sits.
+///
+/// Under the pin it came out of, one pin's height apart. The parent's own
+/// place is left empty, which is what makes a split READ as one: the pin that
+/// was there is gone and the things it came apart into are where it was.
+fn member_pin_rect(state: &LabState, card: Rect, dial: bool, ordinal: usize) -> Rect {
+    let seat = pin_rect(state, card, dial);
+    let step = seat.h + seat.h / 2;
+    let down = u32::try_from(ordinal).unwrap_or(0) * step;
+    Rect::new(seat.x, seat.y + down, seat.w, seat.h)
 }
 
 /// The two things that float over the canvas: the launch gate and the gesture
@@ -9065,6 +9164,39 @@ const PIN_SCOPES: [&str; 6] = [
     "accept",
     "others:dial",
     "others:accept",
+];
+
+/// ★★★★★ R1914 — the closed set of words `split_pin` accepts.
+///
+/// The pin to act on, and — for a pin already split — the **member** of it. The
+/// engine has four commands here (`SplitPin` / `RecombinePin` on its schema,
+/// `SplitStructPin` / `RecombineStructPin` on its editor) and they are one
+/// question in two directions about one address, so this is one verb with an
+/// address and a direction rather than four entry points.
+///
+/// ⚠ The member words are the taxonomy's own, and **a `const` cannot project
+/// them**: `NodeKind::composition` allocates a `Vec<Port>` with `String` names,
+/// so there is nothing const-evaluable to build this from. Written out, and
+/// then held to the taxonomy by `r1914_the_published_pin_addresses_are_the_
+/// taxonomys_members` — which is the shape this project reaches for when a
+/// derivation is not available: compare against the derivation's OUTPUT rather
+/// than re-spell the rule and hope.
+const PIN_PARTS: [&str; 2] = ["host", "service"];
+
+/// The addresses `split_pin` will act on, as a client reads them.
+///
+/// `dial` and `accept` are the two pins this card draws; `accept.host` is the
+/// host member of the accept pin once it has come apart. A dotted address and
+/// not a second argument, because it is ONE address — the crate's
+/// [`PortPath`] — and giving it two spellings on the wire is how a client comes
+/// to believe there are two things.
+const PIN_ADDRESSES: [&str; 6] = [
+    "dial",
+    "accept",
+    "dial.host",
+    "dial.service",
+    "accept.host",
+    "accept.service",
 ];
 
 /// The closed set of fault arms the `inject` verb accepts.
@@ -10307,6 +10439,23 @@ const FIELDS: &[SchemaField] = &{
                 ]
             },
         ),
+        // ★★★★★ R1914 — take a pin apart into its members, or put it back. The
+        // address vocabulary is CLOSED and the pin names and member names are
+        // both in it, so an agent is offered `accept.host` rather than left to
+        // infer that a dot means something. A leading `-` folds instead of
+        // splitting: one verb, one address, two directions — which is what the
+        // engine's four commands are.
+        SchemaField::action_with(
+            "split_pin",
+            "string",
+            ArgForm::Delimited(','),
+            const {
+                &[
+                    SchemaArg::key("node", "string", "nodes"),
+                    SchemaArg::one_of("address", "string", &PIN_ADDRESSES),
+                ]
+            },
+        ),
         // ★★★★★ R1885 — put a card on another build. The build comes from a
         // CLOSED vocabulary and it is built from `Stack::ALL` rather than
         // spelled here, so the words an agent is offered cannot drift from the
@@ -11194,6 +11343,17 @@ impl ExternalIntrospect for LabOracle {
                 })?;
                 let node = Self::card(&state, name.trim())?;
                 put_away_pins(&state, node, which.trim()).map(IntrospectValue::Text)
+            }
+            // ★★★★★ R1914 — `<card>,<address>`, the same two-part shape, with
+            // a leading `-` on the address to fold rather than split. The
+            // address is the model's `PortPath` spelled for a reader.
+            "split_pin" => {
+                let raw = Self::text(&args)?;
+                let (name, address) = raw.split_once(',').ok_or_else(|| {
+                    InvokeError::rejected(format!("{raw:?} is not <card>,<address>"))
+                })?;
+                let node = Self::card(&state, name.trim())?;
+                split_pin(&state, node, address.trim()).map(IntrospectValue::Text)
             }
             // ★ R1681 — either layer, told apart by the `>`. A reported link
             // has no id to name it by, so the pair is the name; refusing to let
@@ -12100,9 +12260,10 @@ fn endpoint_at(state: &LabState, socket: Socket) -> Option<String> {
 fn open_slot_in(doc: &mut Document<LabNode>, to: NodeId, endpoint: Option<&str>) -> Option<u32> {
     let arity = u32::try_from(doc.signature(ROOT, to)?.inputs.len()).unwrap_or(0);
     let item = match endpoint {
-        Some(one) => Item::plain()
-            .named(one)
-            .typed(0, Transport::of_locator(one).unwrap_or(Transport::Tcp)),
+        Some(one) => Item::plain().named(one).typed(
+            0,
+            graph::Endpoint::Locator(Transport::of_locator(one).unwrap_or(Transport::Tcp)),
+        ),
         None => Item::plain(),
     };
     doc.insert_item(ROOT, to, Side::Input, arity, item).ok()?;
@@ -12117,6 +12278,17 @@ fn open_slot_in(doc: &mut Document<LabNode>, to: NodeId, endpoint: Option<&str>)
         if doc.remove_item(ROOT, to, Side::Input, dead).is_ok() && dead < port {
             port -= 1;
         }
+    }
+    // ★★★★★ R1914 — the slot carries the address it accepts as an AUTHORED
+    // VALUE, not only as a label.
+    //
+    // The label is what the canvas draws; the value is what the model can take
+    // apart. Until this round a locator on this screen lived only in a name, so
+    // splitting the pin would have produced a host and a service with nothing
+    // in them — which is exactly the state the reference's split avoids by
+    // parsing the parent's value on the way down.
+    if let Some(one) = endpoint {
+        let _ = doc.set_port_value(ROOT, to, PortRef::input(port), one.to_owned());
     }
     Some(port)
 }
@@ -12987,6 +13159,93 @@ fn put_away_pins(state: &Rc<LabState>, node: NodeId, which: &str) -> Result<Stri
     Ok(said)
 }
 
+/// ★★★★★ R1914 — the pin address a client wrote, as the model's own
+/// [`PortPath`].
+///
+/// `dial` / `accept` name the two pins this card draws; a dotted suffix names a
+/// member of one. The refusal says which half was wrong and lists what it will
+/// take, because a caller told only "no" cannot tell a pin it does not have
+/// from a member word it spelled differently.
+fn pin_address(word: &str) -> Result<(Side, PortPath), InvokeError> {
+    let (pin, member) = word
+        .split_once('.')
+        .map_or((word, None), |(p, m)| (p, Some(m)));
+    let side = match pin {
+        "dial" => Side::Output,
+        "accept" => Side::Input,
+        other => {
+            return Err(InvokeError::rejected(format!(
+                "{other:?} is not a pin of this card; it draws `dial` and `accept`"
+            )));
+        }
+    };
+    let path = PortPath::root(0);
+    let Some(member) = member else {
+        return Ok((side, path));
+    };
+    let at = PIN_PARTS
+        .iter()
+        .position(|part| *part == member)
+        .ok_or_else(|| {
+            InvokeError::rejected(format!(
+                "{member:?} is not a member of a locator; it is made of {}",
+                PIN_PARTS.join(" and ")
+            ))
+        })?;
+    Ok((side, path.then(u32::try_from(at).unwrap_or(0))))
+}
+
+/// ★★★★★ R1914 — **take a pin apart into its members, or put it back.**
+///
+/// The engine's four commands (`SplitPin` / `RecombinePin` on its schema,
+/// `SplitStructPin` / `RecombineStructPin` on its editor) reached as one verb
+/// over one address, because that is what they are: two directions of one
+/// question about one pin.
+///
+/// Three things this says that the reference's own commands cannot:
+///
+/// * **why not**, in the model's words — a wired pin, a pin already split, a
+///   member word this taxonomy does not have. The reference greys a menu entry
+///   out and the reason is nowhere.
+/// * **what moved** — the ports that changed index, which is what an undo and
+///   an editor's own bookkeeping both need. Its command answers `void`.
+/// * **what the value became** — a recombine composes the members back with
+///   [`NodeKind::implode`](pinion_node_graph::NodeKind::implode), and says so.
+fn split_pin(state: &Rc<LabState>, node: NodeId, address: &str) -> Result<String, InvokeError> {
+    let name = state.name_of(node);
+    let (word, folding) = address
+        .strip_prefix('-')
+        .map_or((address, false), |rest| (rest, true));
+    let (side, path) = pin_address(word.trim())?;
+
+    let said = {
+        let mut doc = state.doc.borrow_mut();
+        if folding {
+            let back = doc
+                .recombine_port(ROOT, node, side, &path)
+                .map_err(|why| InvokeError::rejected(why.to_string()))?;
+            let became = back
+                .composed
+                .map_or_else(|| "nothing".to_owned(), |value| format!("{value:?}"));
+            format!(
+                "{name}: {word} back together from {} split(s), now {became}",
+                back.folded
+            )
+        } else {
+            let apart = doc
+                .split_port(ROOT, node, side, &path)
+                .map_err(|why| InvokeError::rejected(why.to_string()))?;
+            format!(
+                "{name}: {word} apart into {} pin(s), {} pin(s) moved",
+                apart.members.len(),
+                apart.moved.len()
+            )
+        }
+    };
+    state.say(Utterance::done(said.clone()));
+    Ok(said)
+}
+
 /// Whether any of `node`'s pins are away, read from a document already borrowed.
 fn pins_are_away_in(doc: &pinion_node_graph::Document<graph::LabNode>, node: NodeId) -> bool {
     doc.visible_ports(ROOT, node)
@@ -13042,6 +13301,57 @@ fn pins_json(doc: &pinion_node_graph::Document<graph::LabNode>, node: NodeId) ->
         doc.splittable(ROOT, node, side, index)
             .map_or_else(|why| why.wire_word(), |_| "yes")
     };
+    // ★★★★★ R1914 — and what each pin has COME APART INTO, if anything: one
+    // entry per resolved port that is a member, giving its address, the name
+    // it draws under, and the value it carries.
+    //
+    // Published as a list of ADDRESSES rather than as indices, because an index
+    // here moves whenever a pin before it splits and an address does not — the
+    // whole reason the model carries both. A client that stored an index would
+    // be re-pointed by the next split it did not perform.
+    let members = |side: Side| -> Vec<serde_json::Value> {
+        doc.resolved_ports(ROOT, node, side)
+            .into_iter()
+            .filter(|(path, _)| path.depth() > 0)
+            .map(|(path, port)| {
+                let at = doc.index_of(ROOT, node, side, &path);
+                serde_json::json!({
+                    "address": format!(
+                        "{}.{}",
+                        if side == Side::Output { "dial" } else { "accept" },
+                        path.members
+                            .iter()
+                            .map(|m| PIN_PARTS.get(*m as usize).copied().unwrap_or("?"))
+                            .collect::<Vec<_>>()
+                            .join("."),
+                    ),
+                    "name": port.name,
+                    "at": at,
+                    "carries": at
+                        .and_then(|index| doc.port_value(ROOT, node, PortRef { side, index }).cloned())
+                        .or_else(|| port.flow.default_value().cloned()),
+                })
+            })
+            .collect()
+    };
+    // ★★★★★ R1914 — the address each pin CARRIES, published beside the members
+    // it comes apart into.
+    //
+    // Without it a reader cannot check the split against anything: the member
+    // values and the taxonomy's declared defaults are both plausible strings,
+    // and on the opening graph they happened to be the SAME two — so a walk
+    // asserting "the members carry something" passed while the parent's value
+    // was not being shared out at all. Measured at R1914, and the repair is to
+    // publish the fact the comparison needs rather than to assert harder.
+    let carries = |side: Side| -> Option<String> {
+        doc.port_value(ROOT, node, PortRef { side, index: 0 })
+            .cloned()
+            .or_else(|| {
+                doc.resolved_ports(ROOT, node, side)
+                    .first()
+                    .and_then(|(_, port)| port.flow.default_value().cloned())
+            })
+    };
     serde_json::json!({
         "dial": word(Side::Output, 0),
         "accept": word(Side::Input, 0),
@@ -13049,6 +13359,14 @@ fn pins_json(doc: &pinion_node_graph::Document<graph::LabNode>, node: NodeId) ->
         "splits": {
             "dial": splits(Side::Output, 0),
             "accept": splits(Side::Input, 0),
+        },
+        "carries": {
+            "dial": carries(Side::Output),
+            "accept": carries(Side::Input),
+        },
+        "members": {
+            "dial": members(Side::Output),
+            "accept": members(Side::Input),
         },
         // ★ The fact neither reference can be asked for: this card has nothing
         // on the frame to wire to or from. Published rather than refused —
@@ -15302,6 +15620,21 @@ fn wire_access(state: &LabState) -> Vec<AccessNode> {
                 AccessNode::new(format!("lab.pin.{name}.accept"), AriaRole::Button)
                     .with_name(format!("{name} accept pin — drop a link here")),
             );
+        }
+        // ★★★★★ R1914 — a member pin a split put on the frame is a thing on
+        // the frame, so it is announced. A pin that is drawn and not announced
+        // is a pin a reader who does not look at pixels cannot know exists —
+        // and the split is exactly the gesture that makes new ones appear.
+        for (side, word) in [(Side::Output, "dial"), (Side::Input, "accept")] {
+            for (_, port) in member_pins(state, node, side) {
+                nodes.push(
+                    AccessNode::new(
+                        format!("lab.pin.{name}.{word}.{}", port.name),
+                        AriaRole::Button,
+                    )
+                    .with_name(format!("{name} {word} pin — its {} half", port.name)),
+                );
+            }
         }
     }
     nodes

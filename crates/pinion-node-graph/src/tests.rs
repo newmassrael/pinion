@@ -15,10 +15,11 @@ use crate::{
     EditError, EditPath, Extent, ExtractError, Fit, ForceError, Fragment, GroupError, Grow, Halt,
     InsertError, Instance, InterfaceSide, Item, ItemError, Layered, LinkId, LinkLayer, Machine,
     Margin, Multiplicity, NestError, Node, NodeBody, NodeId, NodeKind, NodeSite, ObserveError,
-    Occurrence, Organic, Orphaned, ParentError, PathError, Port, PortRef, PortSite, PortValueError,
-    ROOT, Reach, Relabelled, RelinkError, RepartitionError, Route, RunError, SelectError, Session,
-    Severed, Sharing, Side, Socket, Stack, Standing, Stop, Straighten, Stride, Tick, Timeline,
-    TreeId, UngroupError, Unreadable, Violation, WatchError, Watches, ZoomRange, crossing,
+    Occurrence, Organic, Orphaned, ParentError, PathError, Port, PortPath, PortRef, PortSite,
+    PortValueError, ROOT, Reach, Relabelled, RelinkError, RepartitionError, Route, RunError,
+    SelectError, Session, Severed, Sharing, Side, Socket, Stack, Standing, Stop, Straighten,
+    Stride, Tick, Timeline, TreeId, UngroupError, Unreadable, Violation, WatchError, Watches,
+    ZoomRange, crossing,
 };
 
 /// The test taxonomy: two socket types, so type disagreement is reachable.
@@ -36,6 +37,14 @@ enum Ty {
     /// (`!Pin->PinType.IsContainer()`). It exists so "container" and "atom" can
     /// be told apart by a test rather than collapsing into one `None`.
     Bag,
+    /// ★★★★★ R1914 — a composite whose FIRST member is itself composite.
+    ///
+    /// The fixture's depth-2 type, and it is not decoration: R1912.5 read the
+    /// reference's recombine to the end and found it recurses, so a split model
+    /// built one level deep is the wrong shape. Nothing in this taxonomy could
+    /// have shown that — [`Ty::Pair`]'s members are both atoms — so a test of
+    /// the tree needed a type with a tree in it.
+    Nest,
 }
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
@@ -90,6 +99,20 @@ enum Op {
     /// what the kind DECLARES and not from its port count, and that is only
     /// falsifiable if some other kind has the same count and is allowed.
     Relay,
+    /// ★★★★★ R1914 — `(Deep: Nest, Plain: Number) -> (Out: Number, Tag: Text)`.
+    ///
+    /// The shape the split ACT needed and no earlier kind had, in three
+    /// respects at once, each of which makes a different mistake visible:
+    ///
+    /// * its first input is **depth-2 composite**, so a split of a split is
+    ///   reachable and a one-level model is falsifiable;
+    /// * a **fixed port follows** it, so an index that must move when the
+    ///   split lands has somewhere to be wrong — the same property `Choose`'s
+    ///   `Index` gives the variadic tests;
+    /// * it has **two outputs**, so a split on the input side can be shown not
+    ///   to disturb the other side, which `remap_ports` severs everything on
+    ///   if a caller forgets to say it is unchanged.
+    Bundle,
     Sink,
 }
 
@@ -127,6 +150,7 @@ impl NodeKind for Op {
             Self::Blend => "Blend",
             Self::Carry => "Carry",
             Self::Relay => "Relay",
+            Self::Bundle => "Bundle",
             Self::Sink => "Sink",
         }
         .to_owned()
@@ -146,6 +170,12 @@ impl NodeKind for Op {
                 Port::new("Left", Ty::Number).with_default(Val::Number(0)),
                 Port::new("Right", Ty::Number).with_default(Val::Number(0)),
             ]),
+            // ★ R1914 — the head is a `Pair`, so splitting a `Nest` produces a
+            // port that splits again. That is the tree, declared.
+            Ty::Nest => Composition::Members(vec![
+                Port::new("Head", Ty::Pair).with_default(Val::Text("0|0".to_owned())),
+                Port::new("Tail", Ty::Number).with_default(Val::Number(0)),
+            ]),
             Ty::Bag => Composition::Container,
             Ty::Number | Ty::Text => Composition::Atom,
         }
@@ -162,6 +192,16 @@ impl NodeKind for Op {
                 .split('|')
                 .map(|part| part.trim().parse::<i64>().ok().map(Val::Number))
                 .collect(),
+            // ★ R1914 — `head;tail`, where the head is itself a `Pair`'s
+            // written form. The head comes back as TEXT rather than as a
+            // number, which is what lets it be exploded again.
+            (Ty::Nest, Val::Text(written)) => {
+                let (head, tail) = written.split_once(';').unwrap_or((written, ""));
+                vec![
+                    Some(Val::Text(head.to_owned())),
+                    tail.trim().parse::<i64>().ok().map(Val::Number),
+                ]
+            }
             _ => Vec::new(),
         }
     }
@@ -171,18 +211,20 @@ impl NodeKind for Op {
     /// for one of its four types, which is the defect `round_trips` exists to
     /// catch.
     fn implode(ty: &Ty, members: &[Option<Val>]) -> Option<Val> {
-        if *ty != Ty::Pair || members.len() != 2 {
+        if members.len() != 2 {
             return None;
         }
         let part = |slot: &Option<Val>| match slot {
             Some(Val::Number(n)) => Some(n.to_string()),
-            _ => None,
+            Some(Val::Text(t)) => Some(t.clone()),
+            None => None,
         };
-        Some(Val::Text(format!(
-            "{}|{}",
-            part(&members[0])?,
-            part(&members[1])?
-        )))
+        let (head, tail) = (part(&members[0])?, part(&members[1])?);
+        match ty {
+            Ty::Pair => Some(Val::Text(format!("{head}|{tail}"))),
+            Ty::Nest => Some(Val::Text(format!("{head};{tail}"))),
+            Ty::Number | Ty::Text | Ty::Bag => None,
+        }
     }
 
     fn inputs(&self) -> Vec<Port<Ty, Val>> {
@@ -221,6 +263,13 @@ impl NodeKind for Op {
                 Port::new("Loose", Ty::Bag),
             ],
             Self::Relay => vec![Port::new("In", Ty::Number)],
+            // ★ R1914 — `Plain` is the port with no visual cue: its index is 1
+            // until `Deep` splits and then it is 3, and nothing on the node
+            // says so.
+            Self::Bundle => vec![
+                Port::new("Deep", Ty::Nest).with_default(Val::Text("1|2;3".to_owned())),
+                Port::new("Plain", Ty::Number).with_default(Val::Number(9)),
+            ],
             Self::Sink => vec![Port::new("Result", Ty::Number)],
         }
     }
@@ -264,6 +313,10 @@ impl NodeKind for Op {
             ],
             Self::Carry => vec![Port::new("Out", Ty::Pair)],
             Self::Relay => vec![Port::new("Out", Ty::Number)],
+            Self::Bundle => vec![
+                Port::new("Out", Ty::Number),
+                Port::new("Tag", Ty::Text).with_default(Val::Text("tag".to_owned())),
+            ],
             Self::Sink => Vec::new(),
         }
     }
@@ -320,6 +373,14 @@ impl NodeKind for Op {
             // R1912 — this kind exists for the split QUESTION, not for
             // evaluation; it hands its composite input straight out.
             Self::Carry => vec![inputs.get(1).cloned().flatten()],
+            // ★ R1914 — reads its LAST input, which is the one whose index
+            // moves when the first splits. A kind that read index 1 by number
+            // would keep computing the same answer after a split and the test
+            // would pass for the wrong reason.
+            Self::Bundle => vec![
+                inputs.last().cloned().flatten(),
+                Some(Val::Text("tag".to_owned())),
+            ],
             Self::Sink => Vec::new(),
         }
     }
@@ -3326,6 +3387,12 @@ fn what_a_node_looks_like_cannot_change_what_the_graph_computes() {
             // serialise the same whether or not the field survived.
             put_away_inputs: vec![0],
             put_away_outputs: vec![1],
+            // ★ R1914 — non-empty for the same reason, and NESTED for one
+            // more: a path is a root plus a list, so a fixture whose lists
+            // were empty would serialise identically whether or not the
+            // member half survived the round trip.
+            split_inputs: vec![PortPath::root(2).then(1)],
+            split_outputs: vec![PortPath::root(0)],
         },
     ];
     for look in looks {
@@ -3713,7 +3780,7 @@ fn r1912_a_node_may_end_up_with_nothing_drawn_and_says_so() {
 /// away in its schema's split, where a caller never sees it at all.
 #[test]
 fn r1912_a_port_says_whether_it_splits_and_why_not() {
-    use crate::split::NotSplittable;
+    use crate::split::{NoSuchMember, NotSplittable};
 
     let mut f = fixture();
     let carry = f
@@ -3758,11 +3825,15 @@ fn r1912_a_port_says_whether_it_splits_and_why_not() {
         f.document
             .splittable(ROOT, carry, Side::Input, 9)
             .unwrap_err(),
-        NotSplittable::NoSuchPort {
+        // ★ R1914 — the arm moved into the ADDRESS error, which carries the
+        // same three fields. Two spellings of one fact is what this crate
+        // refuses, and the address walk is now the only place either is
+        // derived, so the wire word `no_such_port` is unchanged.
+        NotSplittable::Address(NoSuchMember::NoSuchPort {
             side: Side::Input,
             index: 9,
             of: 3
-        },
+        }),
     );
     assert_eq!(
         f.document
@@ -3874,6 +3945,530 @@ fn r1913_a_composite_value_comes_apart_and_goes_back_together() {
         RoundTrip::WrongArity { got: 0, want: 2 },
         "a value of the wrong shape comes apart into nothing, and the law says \
          so by ARITY rather than by losing it -- two different repairs",
+    );
+}
+
+/// A `Bundle` node standing alone, for the R1914 split act.
+fn bundled() -> (Document<Op>, NodeId) {
+    let mut document = Document::new("root");
+    let node = document
+        .add_node(ROOT, NodeBody::Kind(Op::Bundle), 0, 0)
+        .unwrap();
+    (document, node)
+}
+
+/// The names of one side's resolved ports, which is what a renderer draws.
+fn port_names(document: &Document<Op>, node: NodeId, side: Side) -> Vec<String> {
+    document
+        .resolved_ports(ROOT, node, side)
+        .into_iter()
+        .map(|(_, port)| port.name)
+        .collect()
+}
+
+/// ★★★★★ R1914 — **the act**: a composite port comes apart into one port per
+/// member, in the parent's place, each carrying its share of the parent's
+/// value.
+///
+/// The engine's `SplitPin` / `SplitStructPin`, and the four things this asserts
+/// are the four the reference's own command does without being able to say it
+/// did: the members appear, the parent is **hidden rather than removed**, the
+/// value is **shared out**, and every port after the split **moves**.
+#[test]
+fn r1914_a_composite_port_comes_apart_into_one_port_per_member() {
+    let (mut document, node) = bundled();
+    let deep = PortPath::root(0);
+
+    assert_eq!(
+        port_names(&document, node, Side::Input),
+        ["Deep", "Plain"],
+        "before the split the node presents what its kind declares",
+    );
+
+    let change = document
+        .split_port(ROOT, node, Side::Input, &deep)
+        .expect("`Deep` carries a composite type and nothing is wired to it");
+
+    assert_eq!(
+        port_names(&document, node, Side::Input),
+        ["Deep", "Head", "Tail", "Plain"],
+        "★ the members take the parent's place, in declaration order, and the \
+         parent keeps its own -- which is the reference's order (`bHidden` on \
+         the parent, sub-pins appended after it)",
+    );
+    assert_eq!(change.parent, deep);
+    assert_eq!(
+        change.members,
+        [PortPath::root(0).then(0), PortPath::root(0).then(1)],
+    );
+    assert_eq!(change.added, [PortRef::input(1), PortRef::input(2)]);
+
+    // ★★★★★ The port with no visual cue. `Plain` had nothing to do with this
+    // split and its index moved by two.
+    assert_eq!(change.moved, [(PortRef::input(1), PortRef::input(3))]);
+    assert!(
+        change.is_lossless(),
+        "nothing was wired and nothing authored"
+    );
+
+    // ★ The parent is HIDDEN, not removed, and the reason is sayable — which
+    // is the half the reference has no field for.
+    let visible = document
+        .visible_ports(ROOT, node)
+        .expect("the node is there");
+    assert_eq!(visible.inputs, [1, 2, 3]);
+    assert_eq!(visible.hidden_inputs, [0]);
+    assert_eq!(visible.split_inputs, [0]);
+    assert_eq!(
+        visible.why_hidden(Side::Input, 0),
+        Some(crate::Hidden::Split),
+    );
+    assert_eq!(crate::Hidden::Split.wire_word(), "split");
+
+    // ★★★★★ The parent's value is SHARED OUT. `Deep` rests at `1|2;3`, so the
+    // head rests at `1|2` and the tail at `3` -- ports a reader does not have
+    // to fill in again.
+    let resting: Vec<Option<Val>> = document
+        .resolved_ports(ROOT, node, Side::Input)
+        .into_iter()
+        .map(|(_, port)| port.flow.default_value().cloned())
+        .collect();
+    assert_eq!(
+        resting,
+        [
+            Some(Val::Text("1|2;3".to_owned())),
+            Some(Val::Text("1|2".to_owned())),
+            Some(Val::Number(3)),
+            Some(Val::Number(9)),
+        ],
+    );
+}
+
+/// ★★★★★ R1914 — **the shape is a tree**: a member that is itself composite
+/// splits again.
+///
+/// R1912.5 read the reference's recombine to the end and found it recurses at
+/// two sites, so a model built one level deep would have been the wrong shape.
+/// This is the test that would fail if it were.
+#[test]
+fn r1914_a_member_that_is_composite_splits_again() {
+    let (mut document, node) = bundled();
+    document
+        .split_port(ROOT, node, Side::Input, &PortPath::root(0))
+        .unwrap();
+
+    let head = PortPath::root(0).then(0);
+    assert_eq!(
+        document.index_of(ROOT, node, Side::Input, &head),
+        Some(1),
+        "the head sits immediately after its parent",
+    );
+
+    let change = document
+        .split_port(ROOT, node, Side::Input, &head)
+        .expect("the head carries a `Pair`, which has members of its own");
+
+    assert_eq!(
+        port_names(&document, node, Side::Input),
+        ["Deep", "Head", "Left", "Right", "Tail", "Plain"],
+        "★ depth two: the head's own members land in the head's place, and \
+         everything after them moves again",
+    );
+    assert_eq!(change.parent, head);
+    assert_eq!(
+        change.members,
+        [
+            PortPath::root(0).then(0).then(0),
+            PortPath::root(0).then(0).then(1),
+        ],
+    );
+    assert_eq!(change.parent.depth(), 1);
+    assert_eq!(change.members[0].depth(), 2);
+
+    // ★ Both parents are hidden, at their own resolved indices.
+    let visible = document
+        .visible_ports(ROOT, node)
+        .expect("the node is there");
+    assert_eq!(visible.split_inputs, [0, 1]);
+    assert_eq!(visible.inputs, [2, 3, 4, 5]);
+
+    // ★ The value went two levels down: `1|2;3` -> head `1|2` -> `1` and `2`.
+    let resting: Vec<Option<Val>> = document
+        .resolved_ports(ROOT, node, Side::Input)
+        .into_iter()
+        .map(|(_, port)| port.flow.default_value().cloned())
+        .collect();
+    assert_eq!(resting[2], Some(Val::Number(1)));
+    assert_eq!(resting[3], Some(Val::Number(2)));
+}
+
+/// ★★★★★ R1914 — **an address is stable while a resolved index moves.**
+///
+/// The whole reason there are two addressing schemes. `Plain` is at index 1
+/// before any split and at index 5 after two, and its address never changes —
+/// which is what lets a split be DECLARED without the declaration re-pointing
+/// itself.
+#[test]
+fn r1914_an_address_holds_still_while_the_index_it_names_moves() {
+    let (mut document, node) = bundled();
+    let plain = PortPath::root(1);
+
+    assert_eq!(document.index_of(ROOT, node, Side::Input, &plain), Some(1));
+    assert_eq!(
+        document.path_of(ROOT, node, Side::Input, 1),
+        Some(plain.clone())
+    );
+
+    document
+        .split_port(ROOT, node, Side::Input, &PortPath::root(0))
+        .unwrap();
+    assert_eq!(document.index_of(ROOT, node, Side::Input, &plain), Some(3));
+
+    document
+        .split_port(ROOT, node, Side::Input, &PortPath::root(0).then(0))
+        .unwrap();
+    assert_eq!(
+        document.index_of(ROOT, node, Side::Input, &plain),
+        Some(5),
+        "★ two splits before it, four member ports, and the address is the \
+         same three numbers it always was",
+    );
+    assert_eq!(document.path_of(ROOT, node, Side::Input, 5), Some(plain));
+
+    // ★ And the correspondence is a bijection over the ports that exist: every
+    // resolved index answers an address that answers it back.
+    for index in 0..6 {
+        let path = document
+            .path_of(ROOT, node, Side::Input, index)
+            .expect("six ports");
+        assert_eq!(
+            document.index_of(ROOT, node, Side::Input, &path),
+            Some(index),
+        );
+    }
+    assert_eq!(document.path_of(ROOT, node, Side::Input, 6), None);
+}
+
+/// ★★★★★ R1914 — **a split carries the wires and the authored values with it**,
+/// on both sides.
+///
+/// The corruption class the item edits document at length, reached the other
+/// way: `remap_ports` severs every link whose port it cannot find, so a split
+/// that forgot to say the OTHER side was unchanged would cut every wire on it.
+/// The `Bundle` kind has two outputs precisely so that is falsifiable.
+#[test]
+fn r1914_a_split_moves_the_wires_and_the_values_after_it() {
+    let (mut document, node) = bundled();
+    let feed = document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(7)), -200, 0)
+        .unwrap();
+    let sink = document
+        .add_node(ROOT, NodeBody::Kind(Op::Sink), 200, 0)
+        .unwrap();
+
+    // A wire INTO the port that will move, and a wire OUT of the side the
+    // split does not touch.
+    document
+        .connect(ROOT, Socket::new(feed, 0), Socket::new(node, 1))
+        .expect("`Plain` takes a number");
+    document
+        .connect(ROOT, Socket::new(node, 0), Socket::new(sink, 0))
+        .expect("`Out` gives a number");
+    document
+        .set_port_value(ROOT, node, PortRef::input(1), Val::Number(42))
+        .expect("`Plain` is a value port");
+
+    let change = document
+        .split_port(ROOT, node, Side::Input, &PortPath::root(0))
+        .expect("nothing is wired to `Deep`");
+
+    assert!(
+        change.severed.is_empty() && change.discarded.is_empty(),
+        "★ nothing was lost: the split reports {:?} severed and {:?} dropped",
+        change.severed.len(),
+        change.discarded.len(),
+    );
+    assert_eq!(
+        document.port_value(ROOT, node, PortRef::input(3)),
+        Some(&Val::Number(42)),
+        "★ the authored value came with the port it was on",
+    );
+    assert_eq!(document.port_value(ROOT, node, PortRef::input(1)), None);
+
+    let landed: Vec<u32> = document
+        .tree(ROOT)
+        .unwrap()
+        .links()
+        .iter()
+        .filter(|link| link.to.node == node)
+        .map(|link| link.to.port)
+        .collect();
+    assert_eq!(landed, [3], "★ the wire followed its port from 1 to 3");
+    assert_eq!(
+        document
+            .tree(ROOT)
+            .unwrap()
+            .links()
+            .iter()
+            .filter(|link| link.from.node == node)
+            .count(),
+        1,
+        "★★★★★ the OUTPUT side was not touched, and saying so is what keeps \
+         `remap_ports` from severing it: a map that omits a port severs it",
+    );
+}
+
+/// ★★★★★ R1914 — **recombine is catchable at either end**, and folding a parent
+/// folds everything under it.
+///
+/// The reference delegates a parent's command to its first sub-pin and walks a
+/// member's up to its parent; both arrive at the same place, and so do these.
+/// What it cannot do is say which port it folded or how many went with it.
+#[test]
+fn r1914_recombine_is_catchable_at_either_end() {
+    let deep = PortPath::root(0);
+    let head = PortPath::root(0).then(0);
+
+    // Asked at the PARENT.
+    let (mut document, node) = bundled();
+    document.split_port(ROOT, node, Side::Input, &deep).unwrap();
+    document.split_port(ROOT, node, Side::Input, &head).unwrap();
+    let folded = document
+        .recombine_port(ROOT, node, Side::Input, &deep)
+        .expect("`Deep` is split");
+    assert_eq!(folded.parent, deep);
+    assert_eq!(
+        folded.folded, 2,
+        "★ the head was split too, and a member that is not a port cannot stay \
+         split -- the tree folds whole",
+    );
+    assert_eq!(port_names(&document, node, Side::Input), ["Deep", "Plain"]);
+
+    // Asked at a MEMBER of a member: the same fold, reached from the far end.
+    let (mut document, node) = bundled();
+    document.split_port(ROOT, node, Side::Input, &deep).unwrap();
+    document.split_port(ROOT, node, Side::Input, &head).unwrap();
+    let folded = document
+        .recombine_port(ROOT, node, Side::Input, &head.clone().then(1))
+        .expect("`Right` is a member of a split port");
+    assert_eq!(
+        folded.parent, head,
+        "★ asking at `Right` folds the port `Right` is a member of, not the \
+         root -- the nearest split ancestor, which is what the reference's \
+         own parent-pin walk reaches",
+    );
+    assert_eq!(folded.folded, 1);
+    assert_eq!(
+        port_names(&document, node, Side::Input),
+        ["Deep", "Head", "Tail", "Plain"],
+        "one level came back, and the outer split stayed",
+    );
+}
+
+/// ★★★★★ R1914 — **the members' values are composed back onto the parent**,
+/// which is the half the reference does not have.
+///
+/// Measured at R1913: its recombine re-composes for four named struct types
+/// with a hand-written chain, and every other composite type simply keeps
+/// whatever the parent had. Here the taxonomy owns both directions, so a value
+/// edited on a member survives the fold.
+#[test]
+fn r1914_a_recombine_puts_the_edited_members_back_together() {
+    let (mut document, node) = bundled();
+    let deep = PortPath::root(0);
+    document.split_port(ROOT, node, Side::Input, &deep).unwrap();
+
+    // Edit the TAIL, which is a member port and not the parent.
+    document
+        .set_port_value(ROOT, node, PortRef::input(2), Val::Number(8))
+        .expect("`Tail` is a value port");
+
+    let folded = document
+        .recombine_port(ROOT, node, Side::Input, &deep)
+        .expect("`Deep` is split");
+    assert_eq!(
+        folded.composed,
+        Some(Val::Text("1|2;8".to_owned())),
+        "★★★★★ the edit on the member reached the parent -- the head kept its \
+         resting `1|2` and the tail carried the 8 a hand wrote",
+    );
+    assert_eq!(
+        document.port_value(ROOT, node, PortRef::input(0)),
+        Some(&Val::Text("1|2;8".to_owned())),
+        "and it was written onto the parent, at the parent's index",
+    );
+    assert!(
+        folded.discarded.is_empty(),
+        "★ a value folded INTO the parent is not a value lost, and reporting \
+         it as one would be a lie an editor shows an author",
+    );
+
+    // ★ Depth two composes depth first: an edit two levels down still arrives.
+    let (mut document, node) = bundled();
+    let head = PortPath::root(0).then(0);
+    document.split_port(ROOT, node, Side::Input, &deep).unwrap();
+    document.split_port(ROOT, node, Side::Input, &head).unwrap();
+    document
+        .set_port_value(ROOT, node, PortRef::input(3), Val::Number(5))
+        .expect("`Right` is a value port");
+    let folded = document
+        .recombine_port(ROOT, node, Side::Input, &deep)
+        .expect("`Deep` is split");
+    assert_eq!(
+        folded.composed,
+        Some(Val::Text("1|5;3".to_owned())),
+        "★★★★★ the inner level was composed BEFORE the outer one read it -- \
+         composing outward first would have read a slot nothing had filled",
+    );
+}
+
+/// ★★★★★ R1914 — every refusal the act adds, each a different repair.
+#[test]
+fn r1914_the_split_act_says_why_it_will_not() {
+    use crate::split::{NoSuchMember, NotRecombinable, NotSplittable};
+
+    let (mut document, node) = bundled();
+    let deep = PortPath::root(0);
+
+    assert_eq!(
+        document
+            .recombine_port(ROOT, node, Side::Input, &deep)
+            .unwrap_err(),
+        NotRecombinable::NotSplit,
+        "★ nothing to fold, which is not the same as not allowed to -- the \
+         reference's greyed-out entry cannot tell a caller which",
+    );
+    assert_eq!(NotRecombinable::NotSplit.wire_word(), "not_split");
+
+    document.split_port(ROOT, node, Side::Input, &deep).unwrap();
+    assert_eq!(
+        document
+            .split_port(ROOT, node, Side::Input, &deep)
+            .unwrap_err(),
+        NotSplittable::AlreadySplit,
+        "★★★★★ already done and cannot be done are opposite repairs, and the \
+         reference answers both with one `false`",
+    );
+    assert_eq!(NotSplittable::AlreadySplit.wire_word(), "already_split");
+
+    // ★ An address that goes past the end of a member list, and one that goes
+    // through an atom -- two different levels failing for two different
+    // reasons, each naming the level.
+    assert_eq!(
+        document
+            .splittable_at(ROOT, node, Side::Input, &PortPath::root(0).then(9))
+            .unwrap_err(),
+        NotSplittable::Address(NoSuchMember::NoSuchIndex {
+            at: 0,
+            member: 9,
+            of: 2,
+        }),
+    );
+    assert_eq!(
+        document
+            .splittable_at(ROOT, node, Side::Input, &PortPath::root(1).then(0))
+            .unwrap_err(),
+        NotSplittable::Address(NoSuchMember::ThroughAtom { at: 0, member: 0 }),
+        "`Plain` is a number, and a number has no members to walk into",
+    );
+    assert_eq!(
+        document
+            .splittable_at(ROOT, node, Side::Input, &PortPath::root(0).then(1))
+            .unwrap_err(),
+        NotSplittable::Atom,
+        "the tail IS a port -- it simply has nothing to come apart into",
+    );
+
+    // ★ And the recombine's address error is the same vocabulary, because it
+    // is the same walk.
+    assert_eq!(
+        document
+            .recombine_port(ROOT, node, Side::Input, &PortPath::root(7))
+            .unwrap_err()
+            .wire_word(),
+        "no_such_port",
+    );
+
+    // ★★★★★ An ABSENT NODE is not an absent port, and the verbs say so
+    // themselves because the address walk cannot: a node that is not there has
+    // no ports, so `port_at` answers exactly what a node with none would. The
+    // repairs differ -- there is nothing to look at, against look elsewhere on
+    // this node -- which is why the check is in front of the walk in all three.
+    let ghost = NodeId(404);
+    assert_eq!(
+        document
+            .port_at(ROOT, ghost, Side::Input, &deep)
+            .unwrap_err(),
+        NoSuchMember::NoSuchPort {
+            side: Side::Input,
+            index: 0,
+            of: 0,
+        },
+        "the walk covers two facts here, which is why nothing asks it this",
+    );
+    for refused in [
+        document
+            .splittable(ROOT, ghost, Side::Input, 0)
+            .unwrap_err()
+            .wire_word(),
+        document
+            .splittable_at(ROOT, ghost, Side::Input, &deep)
+            .unwrap_err()
+            .wire_word(),
+    ] {
+        assert_eq!(refused, "no_such_node");
+    }
+    assert_eq!(
+        document
+            .recombine_port(ROOT, ghost, Side::Input, &deep)
+            .unwrap_err(),
+        NotRecombinable::NoSuchNode {
+            tree: ROOT,
+            node: ghost,
+        },
+    );
+}
+
+/// ★★★★★ R1914 — **the round-trip law is what the act rests on**, and this is
+/// the test that says so with the act rather than with the taxonomy.
+///
+/// A split followed by a recombine that touched nothing must give the parent
+/// back what it had. The reference cannot state this: its two halves live in an
+/// editor's schema with no one place the pair belongs to, and for one of its
+/// four types they disagree about member order.
+#[test]
+fn r1914_a_split_and_a_recombine_that_touched_nothing_give_the_value_back() {
+    let (mut document, node) = bundled();
+    let deep = PortPath::root(0);
+    document
+        .set_port_value(ROOT, node, PortRef::input(0), Val::Text("4|5;6".to_owned()))
+        .expect("`Deep` is a value port");
+
+    let change = document
+        .split_port(ROOT, node, Side::Input, &deep)
+        .expect("`Deep` splits");
+    assert_eq!(
+        change.shared_out,
+        [
+            (PortRef::input(1), Val::Text("4|5".to_owned())),
+            (PortRef::input(2), Val::Number(6)),
+        ],
+        "★ the AUTHORED value was shared out too, not only the resting one -- \
+         and the split says where each piece landed, which the reference's \
+         `void` command cannot",
+    );
+
+    let folded = document
+        .recombine_port(ROOT, node, Side::Input, &deep)
+        .expect("`Deep` is split");
+    assert_eq!(
+        folded.composed,
+        Some(Val::Text("4|5;6".to_owned())),
+        "★★★★★ apart and back again gave the value back, through the ACT",
+    );
+    assert_eq!(
+        document.port_value(ROOT, node, PortRef::input(0)),
+        Some(&Val::Text("4|5;6".to_owned())),
     );
 }
 

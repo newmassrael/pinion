@@ -276,7 +276,10 @@ pub use relink::{RelinkError, Relinked};
 pub use run::{Run, RunError, Step, Stop};
 pub use select::{Grow, Grown, Reach, SelectError};
 pub use sighted::{Sighted, SightedTopology, Sighting, Vantage};
-pub use split::{Composition, NotSplittable, RoundTrip, Splittable, round_trips};
+pub use split::{
+    AddressedPort, Composition, NoSuchMember, NotRecombinable, NotSplittable, PortPath, Recombined,
+    RoundTrip, SplitChange, Splittable, round_trips,
+};
 pub use swap::{Carried, Swapped};
 pub use view::{Camera, Fit, Fitted, Margin, ZoomRange};
 

@@ -1795,8 +1795,27 @@ impl<K: NodeKind> Document<K> {
     /// The one place the four node bodies are turned into ports, so nothing
     /// downstream — paint, hit-test, evaluation, introspection — re-derives it
     /// and gets a different answer.
+    ///
+    /// ★★★★★ R1914 — **a split is spliced in here**, after the node's variadic
+    /// items and for the same reason: it is a per-node declaration that changes
+    /// how many ports the node presents. A split port keeps its place and its
+    /// member ports follow it, so an index after a split moves — which is why
+    /// the declaration is written in [`PortPath`](crate::PortPath)s and the
+    /// verbs report what moved.
     #[must_use]
     pub fn signature(&self, tree: TreeId, node: NodeId) -> Option<Signature<K>> {
+        let mut signature = self.declared_signature(tree, node)?;
+        self.splice_splits(tree, node, &mut signature);
+        Some(signature)
+    }
+
+    /// R1914 — the signature **before any split is spliced in**.
+    ///
+    /// What a [`PortPath`](crate::PortPath)'s root index counts against, and
+    /// therefore the one reading that does not move when a neighbouring port
+    /// comes apart. Every caller outside the split machinery wants
+    /// [`signature`](Document::signature) instead.
+    pub(crate) fn declared_signature(&self, tree: TreeId, node: NodeId) -> Option<Signature<K>> {
         let host = self.tree(tree)?;
         let node = host.node(node)?;
         Some(match &node.body {

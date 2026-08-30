@@ -108,6 +108,37 @@ pub struct Appearance {
     /// [`put_away_inputs`](Appearance::put_away_inputs).
     #[serde(default)]
     pub put_away_outputs: Vec<u32>,
+    /// ★★★★★ R1914 — the input addresses a hand **split** into one port per
+    /// member, ascending.
+    ///
+    /// A set of [`PortPath`]s and not a list of indices, and the two reasons
+    /// are the reasons the whole split model is shaped this way:
+    ///
+    /// * **it nests** — a member that is itself composite splits again, which
+    ///   the reference's own recombine walks recursively, so a flat list would
+    ///   have modelled one level of a tree;
+    /// * **it is stable** — a resolved index moves whenever a port before it
+    ///   splits, so a declaration written in resolved indices would silently
+    ///   re-point itself. [`Document::index_of`] converts when a resolved index
+    ///   is what a caller needs.
+    ///
+    /// The invariant, held by [`Document::split_port`] and
+    /// [`Document::recombine_port`]: every ancestor of a path here is also
+    /// here. A member cannot be split before its parent is, because until then
+    /// it is not a port.
+    ///
+    /// ⚠ Ports are hidden by this and not removed, which is the reference's own
+    /// behaviour (`bHidden = true` at the top of its split) and the reason
+    /// [`Hidden`] gained a third arm rather than this becoming a fourth
+    /// mechanism.
+    ///
+    /// [`PortPath`]: crate::PortPath
+    #[serde(default)]
+    pub split_inputs: Vec<crate::PortPath>,
+    /// The output addresses a hand split. See
+    /// [`split_inputs`](Appearance::split_inputs).
+    #[serde(default)]
+    pub split_outputs: Vec<crate::PortPath>,
 }
 
 impl Default for Appearance {
@@ -123,6 +154,8 @@ impl Default for Appearance {
             height: None,
             put_away_inputs: Vec::new(),
             put_away_outputs: Vec::new(),
+            split_inputs: Vec::new(),
+            split_outputs: Vec::new(),
         }
     }
 }
@@ -158,6 +191,19 @@ pub struct VisiblePorts {
     /// Of [`hidden_outputs`](VisiblePorts::hidden_outputs), the ones a hand put
     /// away by name.
     pub put_away_outputs: Vec<u32>,
+    /// ★★★★★ R1914 — of [`hidden_inputs`](VisiblePorts::hidden_inputs), the
+    /// ones hidden because they are **split**: their member ports are drawn in
+    /// their place, immediately after them.
+    ///
+    /// A third reason, published as its own subset for R1912's reason — the
+    /// repair differs. A put-away port comes back with
+    /// [`Document::restore_ports`]; a split one comes back with
+    /// [`Document::recombine_port`], which also takes its member ports away
+    /// again and puts their values back together.
+    pub split_inputs: Vec<u32>,
+    /// Of [`hidden_outputs`](VisiblePorts::hidden_outputs), the ones hidden
+    /// because they are split.
+    pub split_outputs: Vec<u32>,
 }
 
 impl VisiblePorts {
@@ -179,14 +225,30 @@ impl VisiblePorts {
     /// by wiring the port or by turning the node's rule off.
     #[must_use]
     pub fn why_hidden(&self, side: Side, index: u32) -> Option<Hidden> {
-        let (hidden, put_away) = match side {
-            Side::Input => (&self.hidden_inputs, &self.put_away_inputs),
-            Side::Output => (&self.hidden_outputs, &self.put_away_outputs),
+        let (hidden, put_away, split) = match side {
+            Side::Input => (
+                &self.hidden_inputs,
+                &self.put_away_inputs,
+                &self.split_inputs,
+            ),
+            Side::Output => (
+                &self.hidden_outputs,
+                &self.put_away_outputs,
+                &self.split_outputs,
+            ),
         };
         if !hidden.contains(&index) {
             return None;
         }
-        Some(if put_away.contains(&index) {
+        // ★ R1914 — split is asked FIRST, and the order is a decision rather
+        // than a convenience: a split port whose parent a hand had also put
+        // away is still, to a person looking at the picture, split — its
+        // members are on the frame. Restoring it would put a port back that is
+        // already there twice over, so the repair a caller must be told about
+        // is the recombine.
+        Some(if split.contains(&index) {
+            Hidden::Split
+        } else if put_away.contains(&index) {
             Hidden::PutAway
         } else {
             Hidden::Unused
@@ -235,6 +297,14 @@ pub enum Hidden {
     /// The node asks for unwired ports to be hidden and nothing is wired to
     /// this one. Restored by wiring it, or by turning the node's rule off.
     Unused,
+    /// ★★★★★ R1914 — this port is **split**: one port per member of its type
+    /// is drawn immediately after it, carrying its share of its value.
+    /// Restored by [`Document::recombine_port`].
+    ///
+    /// The reference sets exactly this state (`bHidden = true` on the parent at
+    /// the top of its split) and has no way to report it: its pin is hidden,
+    /// and *why* is recoverable only by noticing the pin has sub-pins.
+    Split,
 }
 
 impl Hidden {
@@ -244,6 +314,7 @@ impl Hidden {
         match self {
             Self::PutAway => "put_away",
             Self::Unused => "unused",
+            Self::Split => "split",
         }
     }
 }
@@ -349,15 +420,26 @@ impl<K: NodeKind> Document<K> {
         let signature = self.signature(tree, node)?;
         let hide = appearance.collapsed || appearance.hide_unused_ports;
 
+        // ★ R1914 — the resolved indices of the ports a split hid, derived from
+        // the same expansion the signature above was spliced by. Asking the
+        // splice rather than re-deriving from the declaration is what keeps a
+        // hidden index and a drawn index from being two different answers.
+        let split_in = self.split_parents(tree, node, Side::Input);
+        let split_out = self.split_parents(tree, node, Side::Output);
+
         let mut visible = VisiblePorts::default();
         for index in 0..signature.inputs.len() {
             let port = u32::try_from(index).unwrap_or(u32::MAX);
             let wired = host.link_into(crate::Socket::new(node, port)).is_some();
             let put_away = appearance.put_away_inputs.contains(&port);
+            let split = split_in.contains(&port);
             if put_away {
                 visible.put_away_inputs.push(port);
             }
-            if put_away || (hide && !wired) {
+            if split {
+                visible.split_inputs.push(port);
+            }
+            if split || put_away || (hide && !wired) {
                 visible.hidden_inputs.push(port);
             } else {
                 visible.inputs.push(port);
@@ -370,10 +452,14 @@ impl<K: NodeKind> Document<K> {
                 .iter()
                 .any(|l| l.from == crate::Socket::new(node, port));
             let put_away = appearance.put_away_outputs.contains(&port);
+            let split = split_out.contains(&port);
             if put_away {
                 visible.put_away_outputs.push(port);
             }
-            if put_away || (hide && !wired) {
+            if split {
+                visible.split_outputs.push(port);
+            }
+            if split || put_away || (hide && !wired) {
                 visible.hidden_outputs.push(port);
             } else {
                 visible.outputs.push(port);

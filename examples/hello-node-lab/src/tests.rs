@@ -3920,3 +3920,185 @@ fn r1885_the_opening_graph_is_heterogeneous_and_still_negotiates() {
         );
     });
 }
+
+/// ★★★★★ R1914 — **the published address vocabulary IS the taxonomy's member
+/// list**, compared against the derivation's output rather than re-spelled.
+///
+/// `PIN_PARTS` and `PIN_ADDRESSES` are written out because
+/// `NodeKind::composition` allocates and a `const` cannot project from it. That
+/// makes them a second statement of a fact the taxonomy already owns, and a
+/// second statement is a thing that drifts — so this compares them with what
+/// the taxonomy actually answers. Adding a third member to a locator without
+/// touching the declaration fails here.
+#[test]
+fn r1914_the_published_pin_addresses_are_the_taxonomys_members() {
+    use crate::graph::{Endpoint, LabNode, Transport};
+    use pinion_node_graph::{Composition, NodeKind};
+
+    let Composition::Members(members) = LabNode::composition(&Endpoint::Locator(Transport::Tcp))
+    else {
+        panic!("a locator is composite -- that is what makes this screen splittable");
+    };
+    let named: Vec<String> = members.iter().map(|port| port.name.clone()).collect();
+    assert_eq!(
+        named,
+        super::PIN_PARTS,
+        "★ the words `split_pin` accepts must be the members the taxonomy \
+         declares, in the same ORDER -- the address `accept.host` resolves by \
+         position, so a reordering here would silently address the other half",
+    );
+
+    // ★ And the published address list is exactly the two pins plus every
+    // member of each, which is what an agent enumerates.
+    let mut want: Vec<String> = vec!["dial".to_owned(), "accept".to_owned()];
+    for pin in ["dial", "accept"] {
+        for part in &named {
+            want.push(format!("{pin}.{part}"));
+        }
+    }
+    let mut published: Vec<String> = super::PIN_ADDRESSES
+        .iter()
+        .map(|a| (*a).to_owned())
+        .collect();
+    published.sort();
+    want.sort();
+    assert_eq!(published, want);
+}
+
+/// ★★★★★ R1914 — **a pin on this screen comes apart and goes back**, through
+/// the verb an agent actually calls.
+///
+/// The engine's four commands, met on the assembled tool's own card. What this
+/// asserts beyond "it did something" is the three facts neither reference
+/// publishes: the parent is hidden with a REASON, the member ports carry the
+/// halves of the address the pin was accepting, and folding puts the address
+/// back together from them.
+#[test]
+fn r1914_a_pin_on_a_card_comes_apart_into_host_and_service() {
+    use pinion_node_graph::{Hidden, PortPath, Side};
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = std::rc::Rc::new(state());
+        // ★★★★★ BOTH halves are required, and asking for only one is how an
+        // earlier draft of this test came to pass while proving nothing: a pin
+        // that splits but carries no address cannot show a value being shared
+        // out, and every pin on the opening graph that carried one was WIRED —
+        // which the reference refuses to split. The dial pin is the
+        // intersection, and finding it by asking rather than by naming a card
+        // is what keeps this true when the opening graph changes.
+        let found = state
+            .cards()
+            .into_iter()
+            .find_map(|node| {
+                let doc = state.doc.borrow();
+                doc.splittable(ROOT, node, Side::Output, 0).ok()?;
+                let carries = doc
+                    .port_value(ROOT, node, pinion_node_graph::PortRef::output(0))
+                    .cloned()?;
+                Some((node, carries))
+            })
+            .expect("★ some card has an unwired dial pin carrying an address");
+        let (card, accepting) = found;
+        let (_scheme, rest) = accepting.split_once('/').expect("a locator has a scheme");
+        let (want_host, want_service) = rest.rsplit_once(':').expect("and an address");
+
+        let said = super::split_pin(&state, card, "dial").expect("it splits");
+        assert!(
+            said.contains("apart into 2 pin(s)"),
+            "★ a locator has two members, and the verb says how many: {said}",
+        );
+
+        let doc = state.doc.borrow();
+        let seen = doc.visible_ports(ROOT, card).expect("the card is there");
+        assert_eq!(
+            seen.why_hidden(Side::Output, 0),
+            Some(Hidden::Split),
+            "★ the parent is HIDDEN and the reason is sayable -- the reference \
+             sets the same flag and has no field to report it from",
+        );
+        assert_eq!(seen.split_outputs, [0]);
+
+        let members: Vec<(String, Option<String>)> = doc
+            .resolved_ports(ROOT, card, Side::Output)
+            .into_iter()
+            .filter(|(path, _)| path.depth() > 0)
+            .map(|(path, port)| {
+                let carried = doc
+                    .index_of(ROOT, card, Side::Output, &path)
+                    .and_then(|index| {
+                        doc.port_value(ROOT, card, pinion_node_graph::PortRef::output(index))
+                            .cloned()
+                    })
+                    .or_else(|| port.flow.default_value().cloned());
+                (port.name, carried)
+            })
+            .collect();
+        assert_eq!(members.len(), 2);
+        assert_eq!(members[0].0, "host");
+        assert_eq!(members[1].0, "service");
+
+        // ★★★★★ The pieces are the ADDRESS this pin was carrying, taken
+        // apart -- not two declared defaults a reader has to fill in again.
+        assert_eq!(
+            (members[0].1.as_deref(), members[1].1.as_deref()),
+            (Some(want_host), Some(want_service)),
+            "★ from {accepting:?}",
+        );
+        drop(doc);
+
+        // ★ And back again, at the OTHER end: asked at a member, the fold
+        // reaches the pin that member belongs to.
+        let said = super::split_pin(&state, card, "-dial.service").expect("it folds");
+        assert!(
+            said.contains("from 1 split(s)"),
+            "★ one split went away, and the verb says how many: {said}",
+        );
+        let doc = state.doc.borrow();
+        assert!(
+            doc.split_paths(ROOT, card, Side::Output).is_empty(),
+            "nothing is split any more",
+        );
+        assert_eq!(
+            doc.port_value(ROOT, card, pinion_node_graph::PortRef::output(0)),
+            Some(&accepting),
+            "★★★★★ the address came back together -- the half the reference \
+             has for four named types and nothing else",
+        );
+        assert_eq!(
+            doc.path_of(ROOT, card, Side::Output, 0),
+            Some(PortPath::root(0))
+        );
+    });
+}
+
+/// ★★★★★ R1914 — the verb's refusals, in the model's words.
+#[test]
+fn r1914_the_split_verb_says_why_it_will_not() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = std::rc::Rc::new(state());
+        let card = state.cards()[0];
+
+        let why = super::split_pin(&state, card, "handle")
+            .expect_err("this card draws no pin called `handle`");
+        assert!(
+            format!("{why:?}").contains("dial"),
+            "★ the refusal names what the card DOES draw: {why:?}",
+        );
+
+        let why = super::split_pin(&state, card, "accept.scheme")
+            .expect_err("a locator has no member called `scheme`");
+        assert!(
+            format!("{why:?}").contains("host"),
+            "★ and it names the members a locator IS made of: {why:?}",
+        );
+
+        let why = super::split_pin(&state, card, "-dial")
+            .expect_err("nothing is split, so there is nothing to fold");
+        assert!(
+            format!("{why:?}").contains("split"),
+            "★ nothing to fold is not the same as not allowed to fold: {why:?}",
+        );
+    });
+}

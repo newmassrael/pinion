@@ -493,7 +493,20 @@ const STORAGE_KEY: &str = "node_graph.state";
 // file, what it is DOING does not — and a person's decision about which ports
 // they want to see is the first kind: a fold that evaporated when the file
 // closed would be a hide, which is the distinction the whole axis is built on.
-const PERSISTED_SCHEMA_VERSION: u32 = 13;
+//
+// R1914 -> 14: a `Node`'s appearance gained the addresses a hand **split**, one
+// list per side. The same argument as 13 twice over — it is a declaration, and
+// both fields carry `serde(default)` so an old blob still LOADS and reads every
+// port as whole, which is what they were.
+//
+// ★ What is NOT in the file is the split's consequences: the member ports, the
+// values shared out across them, and the resolved indices everything after them
+// moved to. Those are DERIVED (`Document::signature` splices them, R1914), so
+// saving them would be saving an answer beside the question it comes from — the
+// second-fact-that-can-disagree this crate spends its item edits avoiding. A
+// blob written by this build therefore says only *this address is split*, and
+// the reader works out what that means with the taxonomy it has.
+const PERSISTED_SCHEMA_VERSION: u32 = 14;
 
 /// R1599 — the append-only `(version, digest)` ledger the persistence gate
 /// reads. See `pinion_core::test_fixtures::assert_persisted_shape` for why it
@@ -509,6 +522,7 @@ const PERSISTED_SHAPE_HISTORY: &[(u32, u64)] = &[
     (11, 0x1c11_f72e_7c2e_d6c6),
     (12, 0xc793_c323_d2ba_3cac),
     (13, 0x0c39_8b88_0572_c1d0),
+    (14, 0x4da8_c072_7b08_208c),
 ];
 
 /// R849 — where a newly added node first lands, and the per-add cascade step
