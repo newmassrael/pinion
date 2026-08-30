@@ -1770,10 +1770,19 @@ ok "the push gate consults the keepalive" \
 # once, by hand. Nothing re-performs it, so an edit to either file can delete a
 # gate while both files still look deliberate.
 #
-# R1782 then split the pair back apart on measurement, which leaves the two
-# lint gates in DIFFERENT places — clippy in both `pre-push` and CI, rustdoc in
-# CI alone. That arrangement is exactly the kind a reader cannot verify by
-# looking at one file, so it gets a check instead of a sentence.
+# R1782 then split the pair back apart on measurement, which left the two lint
+# gates in DIFFERENT places — clippy in both `pre-push` and CI, rustdoc in CI
+# alone. That arrangement is exactly the kind a reader cannot verify by looking
+# at one file, so it gets a check instead of a sentence.
+#
+# ★ R1916 changed it again, and the check moves with it: rustdoc now runs in
+# BOTH, but not the same way. CI docs the WHOLE workspace with the vello
+# feature; the hook docs only the crates a push touches, without that feature
+# (cargo rejects a feature of a package the `-p` selection does not contain).
+# So the two are deliberately NOT flag-for-flag — unlike clippy, which is — and
+# asserting equality here would be asserting the wrong thing. What each side
+# owes is that it still runs at all, and that the hook's form is the SCOPED one
+# rather than a second full-workspace pass nobody would wait for.
 #
 # Reads the two files; runs nothing.
 hook_clippy="$(sed -n 's/^if ! \(car[g]o clippy [^;]*\); then$/\1/p' \
@@ -1789,10 +1798,24 @@ ci_doc="$(sed -n 's/^ *run: \(car[g]o doc .*\)$/\1/p' \
 ok "the push gate runs clippy at all" "${hook_clippy:+present}" "present"
 ok "CI runs clippy at all" "${ci_clippy:+present}" "present"
 ok "and both run the SAME clippy, flag for flag" "$hook_clippy" "$ci_clippy"
-# Rustdoc has exactly one home. Before R1214 it had none, and ~1000 broken
-# links accreted from ~R683 unseen because the gate ran clippy and never
-# rustdoc. One home is enough; zero is how that happened.
-ok "rustdoc still runs in CI, its only home" "${ci_doc:+present}" "present"
+# Before R1214 rustdoc had NO home, and ~1000 broken links accreted from ~R683
+# unseen because the gate ran clippy and never rustdoc. Zero homes is how that
+# happened, so both presences are asserted — and separately, because they are
+# different runs.
+hook_doc="$(sed -n 's/^ *if ! \(car[g]o doc [^;]*\); then$/\1/p' \
+    "$repo_root/.githooks/pre-push" | head -1)"
+ok "rustdoc runs in CI over the whole workspace" "${ci_doc:+present}" "present"
+ok "rustdoc also runs at the push gate" "${hook_doc:+present}" "present"
+# ★ The hook's form is the load-bearing part: scoped to the pushed crates. A
+# `--workspace` here would be 394.6s (R1782) and would be removed again within
+# the week, which is how this gate came to have one home in the first place.
+case "$hook_doc" in
+    *--workspace*) hook_doc_scoped="workspace — too slow, will be removed again" ;;
+    *doc_crates*) hook_doc_scoped="scoped" ;;
+    *) hook_doc_scoped="neither: $hook_doc" ;;
+esac
+ok "and the push gate's rustdoc is SCOPED to the pushed crates" \
+   "$hook_doc_scoped" "scoped"
 
 # ── R1791: the impact-ref guard is itself guarded ───────────────────────────
 #

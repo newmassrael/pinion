@@ -692,11 +692,52 @@ else
     echo "pre-push: statechart emit — no chart, emit, generator or pin in this push" >&2
 fi
 
-# R1214's intra-doc link gate moved to CI with clippy in R1779 — see the note
-# above, and `pre-commit` for why the two are one unit. The history is worth
-# keeping either way: nothing ran rustdoc until R1214, which is how ~1000 broken
-# links accreted from ~R683 unseen. A lint that is configured is not a lint that
-# is run.
+# ── R1916: rustdoc is back at this gate, scoped to the crates the push TOUCHES
+#
+# R1214 added the intra-doc link gate; R1779 moved it to CI with clippy; R1782
+# returned clippy and left this in CI alone, on one number — a full-workspace
+# `cargo doc` measured 394.6s, too much for every push.
+#
+# ★★★★★ WHAT REVERSED THAT: three consecutive rounds published a broken link
+# and went red in CI — R1911.1 (`pinion-screen`), R1913.1 and R1914.1
+# (`pinion-node-graph`, `redundant_explicit_links` then `unresolved link to
+# Hidden::Split`). Each was one line. The loop could not see any of them,
+# because the only gate that looks was on the far side of the push.
+#
+# ⚠⚠ AND THE RED IS NOT THE WHOLE COST — the CI comment beside `cargo doc`
+# already says so: `demo-sweep` and `gpu-tests` both `needs: lint-and-test`, so
+# this failing SKIPS them, and a skipped job is indistinguishable from a passing
+# one in the run list. Measured across those three rounds: the demo sweep never
+# ran, so a 32-walk repair sat unverified the whole time. R1470 recorded 99
+# pushes of exactly that shape.
+#
+# ★ WHY THIS IS AFFORDABLE NOW, and it is a measurement, not a hope: the failing
+# crate is always the one the round touched, so this docs only the crates in
+# `$tmp_paths`. Measured on this host at R1916: `cargo doc -p pinion-node-graph
+# --no-deps --document-private-items` = **6s**, and it caught a live unresolved
+# link on the first run. 394.6s was the price of `--workspace`, not of rustdoc.
+#
+# ⚠ The feature flag CI passes (`--features pinion-runtime/vello`) is NOT passed
+# here: with `-p <crate>` cargo rejects a feature of a package the selection
+# does not contain, and most crates here do not depend on pinion-runtime. CI
+# still runs the full workspace form, so the flagged surface keeps its gate —
+# this one is the fast subset, not a replacement. Both homes, on purpose.
+doc_crates=()
+while IFS= read -r c; do
+    [[ -n "$c" ]] && doc_crates+=(-p "$c")
+done < <(sed -n 's|^crates/\([^/]*\)/.*\.rs$|\1|p' "$tmp_paths" | sort -u)
+if [[ ${#doc_crates[@]} -gt 0 ]]; then
+    step "intra-doc links (${#doc_crates[@]} crate(s) this push touches)"
+    if ! cargo doc "${doc_crates[@]}" --no-deps --document-private-items; then
+        echo "pre-push: a doc link above does not resolve. Fix it here — the same" >&2
+        echo "pre-push: gate runs in CI over the WHOLE workspace, and when it fails" >&2
+        echo "pre-push: there it also SKIPS the demo sweep and the pixel tests," >&2
+        echo "pre-push: which then look passing rather than unrun." >&2
+        exit 1
+    fi
+else
+    echo "pre-push: intra-doc links — this push touches no crate source" >&2
+fi
 
 # 3. validate-code-refs — hallucination-class citation gate (unconditional;
 #    push validates the publishable state). Output captured, surfaced only on
