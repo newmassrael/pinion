@@ -109,6 +109,33 @@ pub fn built(regions: &PaintedRegions, surface: &str) -> Built {
     if let Some(why) = below_the_width_this_screen_lays_out_at(regions) {
         return Built::away(why);
     }
+    // ★★★★★ R1909 — **the pane all three of these surfaces live in is folded**,
+    // which is a state the screen is in and can point at.
+    //
+    // From R1909 the inspector OPENS folded, so this is the arrangement a
+    // reader arrives at rather than an exotic one. Without this the three
+    // surfaces still reported away — the rows are genuinely not on screen — but
+    // each gave a reason that was FALSE: "no card is selected", "the roster is
+    // shut", "no selected card carries the row". A card was selected and the
+    // roster's state was not the point; the pane was put away. Measured through
+    // the assembled tool's own walk, which failed carrying all three sentences.
+    //
+    // ⇒ ★★★★★ R1742's rule, hit from a new direction: *an away condition must
+    // be a state the screen can NAME, not the condition under which I failed.*
+    // A true verdict with a false reason is worse than a refusal, because a
+    // reader acts on the reason.
+    //
+    // ⚠ Read from the STRIP, which is what a folded panel paints — this file
+    // reads the frame and holds no model, and that discipline is what makes its
+    // verdicts about the screen. A folded pane is not an absence here: it draws
+    // something, and that something is its name.
+    if regions.rect_of(&folded_inspector_strip()).is_some() {
+        return Built::away(
+            "the inspector is folded to its strip, so it draws no rows to judge — \
+             which is how this screen OPENS, and a press on the strip is what \
+             brings it back",
+        );
+    }
     match surface {
         "enum_row" => {
             let parts = regions.parts_of(FORM, spec::ENUM_KEY);
@@ -250,6 +277,17 @@ fn below_the_width_this_screen_lays_out_at(regions: &PaintedRegions) -> Option<S
 /// Where the roster's option boxes are addressed.
 fn roster_stem() -> String {
     format!("{FORM}option.{}.", spec::ENUM_KEY)
+}
+
+/// The tag a folded inspector paints, derived from the pane's own name rather
+/// than written out.
+///
+/// ★ R1909 — one spelling, because the painter builds it the same way
+/// (`format!("{}.strip", which.tag())`) and a second literal here would be free
+/// to drift from it. The pane is named by the specification, so a rename moves
+/// both.
+fn folded_inspector_strip() -> String {
+    format!("{}.strip", spec::PANES[3].tag)
 }
 
 /// Whether the enumeration row's roster is standing over it.

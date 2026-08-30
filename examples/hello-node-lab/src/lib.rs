@@ -1667,6 +1667,58 @@ fn reset_lab_state() {
     STATE.with(|slot| *slot.borrow_mut() = None);
 }
 
+/// ★★★★★ R1909 — **a gate declaring that it examines an OPEN inspector**, and
+/// putting the panel back when it is done.
+///
+/// The specification opens this pane folded from R1909 on, so every check that
+/// asks about the pane's contents — where a form row is, which control answers
+/// a press, whether a grip is offered — now has to say which state it is asking
+/// about. This is that sentence, spelled once.
+///
+/// # Why a guard rather than a call
+///
+/// Because [`use_lab_state`] hands back a `thread_local` that OUTLIVES the
+/// owner: a test that unfolds the inspector and returns has changed the screen
+/// for every later test on that thread, and the two R1889 grip gates would then
+/// pass or fail on their position in the run order. The gates in this file that
+/// move a panel already put it back by hand, which is a rule; a guard that
+/// restores on drop is the same discipline made unforgettable — and it restores
+/// through the panel's own handle rather than by clearing the `thread_local`,
+/// which is the mistake that once cost this file a diagnosis (see
+/// `r1802_a_folded_panel_leaves_a_strip_the_canvas_does_not_take`).
+///
+/// ⚠ It restores to the SPECIFICATION's opening placement, not to whatever was
+/// there before. That is deliberate and is what a test wants: a gate must not
+/// be able to hand the next one a state a previous one invented.
+#[cfg(test)]
+#[must_use = "the guard restores the panel when it is dropped; binding it to `_` \
+              drops it immediately and unfolds nothing"]
+struct WithTheInspectorOpen;
+
+#[cfg(test)]
+impl WithTheInspectorOpen {
+    /// Unfold the inspector, through the same rule a press goes through.
+    fn now(state: &LabState) -> Self {
+        place_panel(state, SidePanel::Inspector, PlaceAsk::Fold(false))
+            .expect("the inspector declares that it folds, so it unfolds");
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for WithTheInspectorOpen {
+    fn drop(&mut self) {
+        // Through the handle the layout reads, so the restore lands where the
+        // next test looks. Not `place_panel`: this must succeed while a test is
+        // panicking, and a policy refusal during unwind would abort.
+        STATE.with(|slot| {
+            if let Some(state) = slot.borrow().as_ref() {
+                state.inspector_at.set(inspector_opens_at());
+            }
+        });
+    }
+}
+
 /// The scroll state a pane body tag names, or `None` for a tag that is not a
 /// pane body.
 ///
@@ -4685,6 +4737,11 @@ fn rail_seat(n: usize) -> Rect {
 /// and half a derivation is stable exactly until somebody uses the half that
 /// moved.
 fn palette_body_origin() -> (u32, u32) {
+    // ★ R1909 — asked through the width, so the two derivations of "is there a
+    // body" cannot disagree: an origin inside a strip is as meaningless as a
+    // width of it, and a caller that got one but not the other would place
+    // children into a pane that is not drawn.
+    let _ = palette_body_w();
     let rect = palette_rect();
     let inside = side_panel_content(rect);
     (rect.x + inside.x, rect.y + inside.y)
@@ -4700,7 +4757,25 @@ const PAL_BODY_TOP: u32 = 56;
 
 /// How wide a row of the palette's body is.
 fn palette_body_w() -> u32 {
-    palette_rect().w.saturating_sub(PAD * 2)
+    palette_body_across().unwrap_or_else(|| {
+        panic!(
+            "the palette is folded to its strip and has no body, so there is no \
+             width here to derive from. `side_panel` builds a folded panel's \
+             body on no path at all, so reaching this is a caller measuring a \
+             pane that draws nothing"
+        )
+    })
+}
+
+/// The palette's body width, or `None` while it is folded to its strip.
+///
+/// ★ R1909 — the palette's half of the [`EdgePlacement::content_extent`]
+/// adoption. See [`inspector_body_across`] for what the `Option` is protecting
+/// against and what a saturating subtraction cost when it was not there.
+fn palette_body_across() -> Option<u32> {
+    let (at, _) = placements();
+    at.content_extent()?;
+    Some(palette_rect().w.saturating_sub(PAD * 2))
 }
 
 /// ★★★★★ R1889 — how wide a row of the INSPECTOR's body is, and the half of
@@ -4718,7 +4793,43 @@ fn palette_body_w() -> u32 {
 /// BEFORE the grip exists, because the alternative is shipping a drag that
 /// moves the panel and leaves its contents at the opening width.
 fn inspector_body_w() -> u32 {
-    inspector_rect().w.saturating_sub(PAD * 2)
+    inspector_body_across().unwrap_or_else(|| {
+        panic!(
+            "the inspector is folded to its strip and has no body, so there is \
+             no width here to derive from. `side_panel` builds a folded panel's \
+             body on no path at all, so reaching this is a caller measuring a \
+             pane that draws nothing"
+        )
+    })
+}
+
+/// The inspector's body width, or `None` while it is folded to its strip.
+///
+/// ★★★★★ R1909 — through [`EdgePlacement::content_extent`], which is what
+/// separates *this panel takes eighteen pixels* from *this panel has a body
+/// eighteen pixels wide*. The strip is a real number and the arithmetic went
+/// through: `inspector_rect().w.saturating_sub(PAD * 2)` answered **0** for a
+/// folded pane, and one row deriving `body - 20` from that underflowed.
+/// This screen's gates failed in a heap at that one line the first time a pane
+/// here was declared to open folded, all of them asking about a body that was
+/// not there.
+///
+/// ⚠ No count is given, and that is deliberate: the number this comment
+/// originally carried was inherited from a run that had already repaired half
+/// of it, so it could not be re-measured. *A figure nobody in this round could
+/// reproduce is worse than no figure* — see the round's own ledger entry for
+/// the counts that WERE measured here.
+///
+/// ⚠ `saturating_sub` is why it was quiet. A saturating operator turns *this
+/// question has no answer* into a plausible number, which is the failure a
+/// `None` exists to make impossible — the reason the framework's answer is an
+/// `Option` and not a smaller `u32`.
+fn inspector_body_across() -> Option<u32> {
+    let (_, at) = placements();
+    // The panel's own answer first: whether there is a body at all is not a
+    // question about the rectangle, which is the strip either way.
+    at.content_extent()?;
+    Some(inspector_rect().w.saturating_sub(PAD * 2))
 }
 
 fn palette_row(n: usize) -> Rect {
@@ -5414,6 +5525,60 @@ pub(crate) fn in_toolbar_overflow(tag: &str) -> bool {
         .iter()
         .flat_map(|group| group.tags())
         .any(|moved| moved == tag)
+}
+
+/// ★★★★★ R1909 — **the pane that holds this declared element**, from the
+/// specification's own [`spec::PaneSpec::holds`] lists.
+///
+/// One lookup, so "which pane is this in" is answered in the same place for
+/// every caller instead of by a prefix each of them writes. `None` for a tag no
+/// pane claims, which is a state the census below is what refuses — an
+/// unclassified element is not an excused one.
+///
+/// ⚠ Longest prefix wins, because the lists are allowed to nest: the canvas
+/// claims `lab.canvas` and the panes each claim their own tag, and a screen
+/// that later names something `lab.canvas.overlay.inspector` must not be
+/// claimed by whichever list happens to be checked first.
+pub(crate) fn pane_holding(tag: &str) -> Option<&'static spec::PaneSpec> {
+    spec::PANES
+        .iter()
+        .filter(|pane| pane.holds.iter().any(|prefix| tag.starts_with(prefix)))
+        .max_by_key(|pane| {
+            pane.holds
+                .iter()
+                .filter(|prefix| tag.starts_with(*prefix))
+                .map(|prefix| prefix.len())
+                .max()
+                .unwrap_or(0)
+        })
+}
+
+/// ★★★★★ R1909 — whether this declared element is inside a pane that is
+/// **currently folded**, and therefore correctly not painted.
+///
+/// The peer of [`in_toolbar_overflow`] below and excused the same way and for
+/// the same reason: a control the screen has put away is not a control the
+/// screen lost. The difference is that a folded pane's contents are not
+/// reachable either — folding is not scrolling — so this excuse is the stronger
+/// one, and it is checked in BOTH directions by
+/// `r1909_a_folded_pane_hides_exactly_what_it_holds`: everything under a folded
+/// pane's prefixes must be gone, and everything under an open one's must be
+/// back. An excuse list that only ever excused would be the escape hatch that
+/// disables its own gate.
+pub(crate) fn in_folded_pane(tag: &str) -> bool {
+    let Some(pane) = pane_holding(tag) else {
+        return false;
+    };
+    SidePanel::ALL
+        .into_iter()
+        .find(|which| which.tag() == pane.tag)
+        .is_some_and(|which| {
+            STATE.with(|slot| {
+                slot.borrow()
+                    .as_ref()
+                    .map_or(pane.opens.folded, |state| which.at(state).folded)
+            })
+        })
 }
 
 /// ★★★★★ R1791 — a seat whose group the row gave up: where it is now, or
@@ -6778,8 +6943,33 @@ fn in_palette_body(r: Rect) -> Rect {
     Rect::new(r.x.saturating_sub(x), r.y.saturating_sub(y), r.w, r.h)
 }
 
+/// ★★★★★ R1909 — the panel FIRST, its body inside the closure, exactly as
+/// [`inspector`] does.
+///
+/// The twin of the split next door, and it is here because a repair adopted
+/// once is a proposal and adopted twice is a demonstration. This function used
+/// to build the whole pane — headings, eight role cards, a legend — and hand it
+/// to [`side_panel`], which threw it away when the palette was folded. What
+/// kept that from being a defect rather than merely waste was a `folded` check
+/// at this function's own CALL SITE: a rule, written in one place, that the
+/// inspector's caller did not follow and that nothing made either of them
+/// follow.
+///
+/// Taking the body as a closure retires the rule for both panels: a folded
+/// panel does not build its body because there is no path on which the closure
+/// is called. That is what makes [`palette_body_origin`] safe to panic on a
+/// folded panel — which is the strongest statement available that a body is not
+/// there, and one no caller can forget to check.
 fn palette(state: &LabState, ink: Ink) -> Scene {
     let rect = palette_rect();
+    side_panel(SidePanel::Palette, state, rect, &ink, || {
+        palette_body(state, ink, rect)
+    })
+}
+
+/// What an OPEN palette holds. Called only through [`side_panel`]'s closure, so
+/// nothing here has to ask whether the panel is folded.
+fn palette_body(state: &LabState, ink: Ink, rect: Rect) -> Scene {
     let local = in_palette_body;
 
     // ★ R1874 — the pane's usable width, named once. The three headings and the
@@ -6882,24 +7072,18 @@ fn palette(state: &LabState, ink: Ink) -> Scene {
     // derived from `children` by the pane rather than declared here, so it
     // cannot go stale as rows are added
     // ([[debt-the-node-lab-panes-do-not-scroll]]).
-    side_panel(
-        SidePanel::Palette,
-        state,
-        rect,
-        &ink,
-        quiet(
-            scroll_pane(
-                &state.palette_scroll,
-                side_panel_content(rect),
-                (0, PAD),
-                // Every press on this screen belongs to the one root `External`
-                // that does the screen's own hit test, so the pane must be
-                // invisible to the router (R1655).
-                PanePointer::PassesThrough,
-                children,
-            ),
-            Silence::layout("scrolls the palette; the pane above it is what a reader lands on"),
+    quiet(
+        scroll_pane(
+            &state.palette_scroll,
+            side_panel_content(rect),
+            (0, PAD),
+            // Every press on this screen belongs to the one root `External`
+            // that does the screen's own hit test, so the pane must be
+            // invisible to the router (R1655).
+            PanePointer::PassesThrough,
+            children,
         ),
+        Silence::layout("scrolls the palette; the pane above it is what a reader lands on"),
     )
 }
 
@@ -6925,7 +7109,29 @@ fn palette(state: &LabState, ink: Ink) -> Scene {
 /// one affordance, which is what makes a fold reversible by the person who did
 /// it. The floor has no fold at all — its nearest gesture removes the panel
 /// from the layout, leaving nothing to press to bring it back.
-fn side_panel(which: SidePanel, state: &LabState, rect: Rect, ink: &Ink, body: Scene) -> Scene {
+/// ★★★★★ R1909 — **`body` arrives UNBUILT**, and that is what makes the fold
+/// safe rather than a rule every caller has to remember.
+///
+/// It used to be a `Scene`, so a caller built the whole panel body and this
+/// function then threw it away when the panel was folded. That is waste while
+/// the body is merely expensive, and a DEFECT the moment a body's geometry is
+/// derived from the panel's live width: a folded inspector's content width is
+/// zero, and one row's `inspector_body_w() - 20` overflowed — measured at
+/// R1909, the round that first made a pane of this screen open folded.
+///
+/// Taking the body as a closure means a folded panel does not build its body
+/// because there is no path on which the closure is called. ⇒ *a rule nobody
+/// can forget is one that cannot be written down.* Both panels go through it,
+/// which is what lets [`palette_body_w`] and [`inspector_body_w`] panic rather
+/// than saturate: reaching them under a fold is now unreachable rather than
+/// merely discouraged.
+fn side_panel(
+    which: SidePanel,
+    state: &LabState,
+    rect: Rect,
+    ink: &Ink,
+    body: impl FnOnce() -> Scene,
+) -> Scene {
     let at = which.at(state);
     if at.folded {
         // The whole strip is the affordance: eighteen pixels is not room for a
@@ -7007,7 +7213,7 @@ fn side_panel(which: SidePanel, state: &LabState, rect: Rect, ink: &Ink, body: S
                 Some(ink.outline),
                 4,
             ),
-            body,
+            body(),
         ]
         .into_iter()
         .chain(chrome)
@@ -8609,8 +8815,32 @@ fn canvas(state: &LabState, ink: Ink) -> Scene {
     )
 }
 
+/// ★★★★★ R1909 — the panel FIRST, its body inside the closure.
+///
+/// The two `side_panel` calls this function used to make were reached only
+/// after the body had been built, so a folded inspector built a body whose
+/// widths derive from a panel that is now a strip. One row's
+/// `inspector_body_w() - 20` underflowed the moment this screen's inspector was
+/// declared to open folded.
+///
+/// Calling `side_panel` at the top makes the fold the OUTER decision, which is
+/// what it is: whether there is a body at all comes before what the body says.
 fn inspector(state: &LabState, field: (TextFieldState, u32), theme: &Theme, ink: Ink) -> Scene {
     let rect = inspector_rect();
+    side_panel(SidePanel::Inspector, state, rect, &ink, || {
+        inspector_body(state, field, theme, ink, rect)
+    })
+}
+
+/// What an OPEN inspector holds. Called only through [`side_panel`]'s closure,
+/// so nothing here has to ask whether the panel is folded.
+fn inspector_body(
+    state: &LabState,
+    field: (TextFieldState, u32),
+    theme: &Theme,
+    ink: Ink,
+    rect: Rect,
+) -> Scene {
     let mut children = vec![label(
         spec::PANES[3].title,
         Rect::new(PAD, 14, 180, 16),
@@ -8629,23 +8859,15 @@ fn inspector(state: &LabState, field: (TextFieldState, u32), theme: &Theme, ink:
         // about the palette, and this is the pane state a reader sizing the
         // tool up is most likely to be looking at.
         children.extend(inspector_reach(ink));
-        return side_panel(
-            SidePanel::Inspector,
-            state,
-            rect,
-            &ink,
-            quiet(
-                scroll_pane(
-                    &state.inspector_scroll,
-                    side_panel_content(rect),
-                    (0, PAD),
-                    PanePointer::PassesThrough,
-                    children,
-                ),
-                Silence::layout(
-                    "scrolls the inspector; the pane above it is what a reader lands on",
-                ),
+        return quiet(
+            scroll_pane(
+                &state.inspector_scroll,
+                side_panel_content(rect),
+                (0, PAD),
+                PanePointer::PassesThrough,
+                children,
             ),
+            Silence::layout("scrolls the inspector; the pane above it is what a reader lands on"),
         );
     };
     children.extend(inspector_identity(state, node, ink));
@@ -9408,24 +9630,20 @@ fn inspector_pane(
     // ★★ R1684 — the field goes ON TOP of the form, because it now stands over
     // a form row.
     children.extend(inspector_field(state, field, theme));
-    side_panel(
-        SidePanel::Inspector,
-        state,
-        rect,
-        &ink,
-        quiet(
-            scroll_pane(
-                &state.inspector_scroll,
-                side_panel_content(rect),
-                (0, PAD),
-                // Every press on this screen belongs to the one root `External`
-                // that does the screen's own hit test, so the pane must be
-                // invisible to the router (R1655).
-                PanePointer::PassesThrough,
-                children,
-            ),
-            Silence::layout("scrolls the inspector; the pane above it is what a reader lands on"),
+    // ★ R1909 — the panel wrapper moved to `inspector`, which now calls
+    // `side_panel` BEFORE any of this is built. What this returns is the body.
+    quiet(
+        scroll_pane(
+            &state.inspector_scroll,
+            side_panel_content(rect),
+            (0, PAD),
+            // Every press on this screen belongs to the one root `External`
+            // that does the screen's own hit test, so the pane must be
+            // invisible to the router (R1655).
+            PanePointer::PassesThrough,
+            children,
         ),
+        Silence::layout("scrolls the inspector; the pane above it is what a reader lands on"),
     )
 }
 
@@ -14525,7 +14743,22 @@ impl WidgetA11y for NodeLabView {
         nodes.extend(palette_access(&state));
         nodes.extend(canvas_access(&state));
         nodes.extend(gate_access(&state));
-        nodes.extend(fault_access(&state));
+        // ★★★★★ R1909 — the fault panel is DRAWN INSIDE the inspector and
+        // announced from out here, which is a split the paint does not have:
+        // the pane builds its body behind a closure, so folding it removes the
+        // panel from the screen and left this announcement standing. The sweep
+        // reported it as `lab.faults (ghost)` — a region a reader is told about
+        // and a pointer cannot reach — the same failure R1887.1 found under a
+        // folded palette.
+        //
+        // Asked of the SPECIFICATION rather than of `SidePanel::Inspector`
+        // directly: `spec::PANES[3].holds` is where "the fault panel is inside
+        // the inspector" is written down, and a condition spelled here would be
+        // a second copy of that fact — free to disagree with the one the paint
+        // gates read.
+        if !in_folded_pane(spec::FAULT_PANEL.tag) {
+            nodes.extend(fault_access(&state));
+        }
         nodes.extend(toolbar_access(&state));
         nodes.extend(inspector_access(&state));
         nodes
@@ -14948,6 +15181,33 @@ fn toolbar_access(state: &LabState) -> Vec<AccessNode> {
 /// The inspector: the pane, the chrome that says which card is selected, the
 /// three acts on that card, and the form rows.
 fn inspector_access(state: &LabState) -> Vec<AccessNode> {
+    // ★★★★★ R1909 — **the inspector's half of R1887.1's repair**, and it is a
+    // latent defect coming due rather than a new one.
+    //
+    // That round found twelve GHOSTS under a folded palette — regions the
+    // accessibility tree announced and nothing painted — and wrote the rule
+    // down: *an announcement is a claim about the paint, and a panel with two
+    // paint branches needs two announcement branches.* It then built the
+    // branch for ONE of the two panels. Nothing was wrong yet, because no
+    // specification opened a panel folded and the sweep folded only the
+    // palette; the inspector's missing branch was a defect with a date, and
+    // R1909 — the round that declares this pane opens folded — is the date.
+    //
+    // Measured here: ghosts under a folded inspector — `lab.faults` and the
+    // form's `add` chips among them — and no count, because the pane's own
+    // `inspector_body_w()` PANICKED partway through the census. A form row's
+    // rectangle is derived from a body that is not there, so the sweep never
+    // reached the end of the list it was building.
+    //
+    // ⇒ ★★★★★ *a rule stated for a population and applied to one member of it
+    // is not applied* — the same shape as the measurement this round overturned
+    // one file over, at the other end of the same campaign.
+    if SidePanel::Inspector.at(state).folded {
+        let mut folded =
+            vec![AccessNode::new("lab.inspector", AriaRole::Group).with_name(spec::PANES[3].title)];
+        folded.extend(side_panel_access(state, SidePanel::Inspector));
+        return folded;
+    }
     let mut nodes =
         vec![AccessNode::new("lab.inspector", AriaRole::Group).with_name(spec::PANES[3].title)];
     nodes.extend(side_panel_access(state, SidePanel::Inspector));

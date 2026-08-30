@@ -129,6 +129,39 @@ impl EdgePlacement {
         if self.folded { strip } else { self.extent }
     }
 
+    /// ★★★★★ (R1909) How much room this placement gives its **body**, or
+    /// `None` when it has no body at all.
+    ///
+    /// The distinction [`thickness`](Self::thickness) deliberately collapses. A
+    /// folded panel still occupies its strip, so `thickness` is right to answer
+    /// a number — but *nothing is drawn inside it*, and a caller deriving a
+    /// content rectangle from that number is measuring a body that does not
+    /// exist.
+    ///
+    /// # Why an `Option` rather than zero
+    ///
+    /// Because zero is a width, and widths are subtracted from. Measured at
+    /// R1909, the round that first made a pane of a real screen open folded:
+    /// the node lab's inspector derived one row's width as `body - 20`, which
+    /// under a folded panel's strip is an underflow, and that screen's gates
+    /// failed in a heap at the one line. Every one of them was asking a
+    /// question about a body that was not there.
+    ///
+    /// `None` is not a smaller number — it is a different answer, and the type
+    /// makes "the body of a folded panel" unrepresentable rather than merely
+    /// wrong. That is the discipline R1891 recorded one axis over: *a type that
+    /// makes a state impossible is stronger than a rule saying two things must
+    /// agree.*
+    ///
+    /// ⚠ It answers about the panel's **own** axis. A left or right panel's
+    /// body extent is a width and a top or bottom panel's is a height, exactly
+    /// as [`extent`](Self::extent) is — [`is_horizontal`](Self::is_horizontal)
+    /// is what tells them apart.
+    #[must_use]
+    pub const fn content_extent(self) -> Option<u32> {
+        if self.folded { None } else { Some(self.extent) }
+    }
+
     /// Whether this placement lies along the horizontal axis (left or right),
     /// which is what decides whether `extent` is a width or a height.
     #[must_use]
@@ -617,13 +650,66 @@ mod tests {
 
     const SIDES: &[ChromeEdge] = &[ChromeEdge::Left, ChromeEdge::Right];
 
+    /// ★★★★★ R1909 — **a folded panel occupies a strip and has no body**, and
+    /// those are two different questions that one number cannot answer.
+    ///
+    /// Both directions are asserted, because the failure this closes was a
+    /// caller taking `thickness` for a content width: the strip is a real
+    /// number, so the arithmetic went through and produced a body derived from
+    /// a panel that is drawing nothing.
+    #[test]
+    fn r1909_a_folded_panel_takes_room_and_offers_no_body() {
+        let strip = 18;
+        let open = EdgePlacement::open(ChromeEdge::Right, 312);
+        let put_away = EdgePlacement::folded_at(ChromeEdge::Right, 312);
+
+        assert_eq!(open.thickness(strip), 312);
+        assert_eq!(open.content_extent(), Some(312));
+
+        assert_eq!(
+            put_away.thickness(strip),
+            strip,
+            "★ folded is not hidden: the strip is what a person grabs to bring \
+             it back, so the layout must still spend it"
+        );
+        assert_eq!(
+            put_away.content_extent(),
+            None,
+            "★ and there is no body inside that strip — NOT a body of width \
+             zero, which is a number a caller would go on subtracting from"
+        );
+
+        // The two placements differ in exactly one field, so this is the
+        // fold's own effect and not two unrelated values compared.
+        assert_eq!(
+            EdgePlacement {
+                folded: false,
+                ..put_away
+            },
+            open,
+            "the pair under test differ only by the fold"
+        );
+        assert_eq!(
+            put_away.extent, open.extent,
+            "★ and the fold KEPT the extent, which is why `content_extent` can \
+             answer `Some(312)` the moment it is unfolded"
+        );
+    }
+
     /// ★★★★★ R1908 — **a remembered arrangement comes back, and it is judged.**
     ///
-    /// This is what makes [`EdgePlacement::folded_at`] reachable at all: no
-    /// specification in this tree opens a panel folded — the behaviour canon
-    /// opens its palette showing and R1902 measured that opening folded would
-    /// un-reproduce it — so a folded OPENING placement is not where a folded
-    /// panel comes from. It comes from a person who folded one and came back.
+    /// One of the two ways [`EdgePlacement::folded_at`] is reached: a person
+    /// folded a panel and came back to it.
+    ///
+    /// 🟥 R1909 — this note used to say that was the *only* way, "because no
+    /// specification in this tree opens a panel folded". That was true when
+    /// written and is not a property of anything: R1902's measurement was that
+    /// the behaviour canon's DASHBOARD drawer opens showing, and R1908 turned
+    /// it into a claim about every panel of every screen. The node lab's
+    /// inspector opens folded from R1909 on, by specification, because its
+    /// subject is a selected node and nothing is selected on a screen nobody
+    /// has touched. ⇒ *a measurement about one subject, asserted over a
+    /// population, is no longer a measurement.*
     #[test]
     fn r1908_a_remembered_fold_comes_back_and_is_believed() {
         let policy = EdgePolicy::movable(SIDES).resizable(180, 420);

@@ -69,8 +69,51 @@ use pinion_core::{Frame, Scene};
 
 use super::{
     Applies, Hit, LabState, Role, Source, WIN_H, WIN_W, canvas_rect, inspector_rect, palette_rect,
-    rail_rect, spec, toolbar_rect, use_lab_state,
+    rail_rect, spec, toolbar_rect,
 };
+
+/// ★★★★★ R1909 — **this file's screen: every pane SHOWING**, declared once.
+///
+/// Deliberately shadows [`super::use_lab_state`], which hands back the screen
+/// the specification opens — and from R1909 that screen has its inspector
+/// folded to its strip.
+///
+/// # Why the base state of this file is not the specification's
+///
+/// Because `spec::VOICE`, `spec::ELEMENT_*` and the operation tables these
+/// sweeps compare the paint against are statements about **what this screen is
+/// made of**, not about the arrangement a reader first sees. R1887.1 already
+/// wrote the distinction down for the palette's strip — *"this table lists the
+/// regions of the OPENING screen, and the dynamic ones are deliberately
+/// absent"* — and a folded OPENING placement is exactly what makes the two
+/// readings of "opening" come apart. Measured at R1909, declaring one pane
+/// folded turned sixty-two declared regions into regions "the screen does not
+/// paint" and took thirty-one gates red, none of which had found a defect.
+///
+/// # Why here and not inside the painter
+///
+/// Because a gate derives rectangles from the live placement BEFORE it paints —
+/// `rename_row_seats()` is taken on the first line and the painter runs in a
+/// loop below it. Unfolding inside the painter (the first draft of this repair)
+/// left the seats measured in one arrangement and the runs painted in another,
+/// and the failure was SILENT: a run outside every seat is simply not selected,
+/// so the gate reported `0 run(s)` and was caught only by its own population
+/// floor. Doing it where the state is HANDED OUT puts every derivation after it.
+///
+/// ⚠ The folded arrangements are not lost — they are swept as their own
+/// [`STATES`] entries, one per panel, which is the shape R1887.1 established.
+/// Those entries are applied to a state already taken from here, so they still
+/// win: this hands the screen out, it does not police it.
+fn use_lab_state() -> std::rc::Rc<LabState> {
+    let state = super::use_lab_state();
+    super::place_panel(
+        &state,
+        super::SidePanel::Inspector,
+        super::PlaceAsk::Fold(false),
+    )
+    .expect("the inspector declares that it folds, so it unfolds");
+    state
+}
 
 /// The states the screen is swept in.
 ///
@@ -88,7 +131,35 @@ use super::{
 type SweptState = (&'static str, fn(&std::rc::Rc<LabState>));
 
 const STATES: &[SweptState] = &[
-    ("as it opens", |_| {}),
+    // ★★★★★ R1909 — **the inspector brought back from its strip**, which is
+    // what "opening" means for every check that follows and did not have to be
+    // said until this round.
+    //
+    // The specification opens this pane FOLDED now. That is a decision about
+    // the screen a person arrives at; it is NOT a decision about what this
+    // screen is made of, and `spec::VOICE` — the table these sweeps compare the
+    // paint against — is the second kind of statement. R1887.1 wrote that
+    // distinction down for the palette's strip ("this table lists the regions
+    // of the OPENING screen, and the dynamic ones are deliberately absent"),
+    // and a folded OPENING placement is what makes the two readings of
+    // "opening" come apart: measured at R1909, sixty-two declared regions and
+    // thirty-one gates were suddenly asking about a pane drawing nothing.
+    //
+    // So the base state of the sweep is the screen with every pane showing —
+    // the arrangement the tables describe — and the folded arrangements are
+    // ADDED states, one per panel, exactly as R1887.1 added the palette's.
+    //
+    // ⚠ Reached through the same `place_panel` a press goes through, not by
+    // seeding the placement: a state a test invents can be one the screen
+    // cannot reach.
+    ("as it opens, with the inspector brought back", |state| {
+        super::place_panel(
+            state,
+            super::SidePanel::Inspector,
+            super::PlaceAsk::Fold(false),
+        )
+        .expect("the inspector declares that it folds, so it unfolds");
+    }),
     ("with a node added from the palette", |state| {
         super::add_node(state, Role::Responder);
     }),
@@ -311,6 +382,29 @@ const STATES: &[SweptState] = &[
             }
         },
     ),
+    // ★★★★★ R1909 — **the inspector back in its strip: the arrangement the
+    // specification actually opens in.**
+    //
+    // LAST, and that is the point of putting it here rather than first. The
+    // states compose, so this one arrives with a graph that has been edited,
+    // dragged, overflowed and scrolled — which is the hardest screen to fold a
+    // pane on and the one where a strip is most likely to be drawn over. Every
+    // general check in this file — containment, overlap, reach, voice, "nothing
+    // painted is unclassified" — runs here.
+    //
+    // ⚠ It is the mirror of R1887.1's palette entry, and both are needed for
+    // the same reason from opposite directions: that round's panel could be
+    // folded and never was, this round's opens folded and would never be seen
+    // OPEN if the base state were left as the specification's. Neither fold is
+    // reachable by the sweep without an entry that reaches it.
+    ("with the inspector back in its strip", |state| {
+        super::place_panel(
+            state,
+            super::SidePanel::Inspector,
+            super::PlaceAsk::Fold(true),
+        )
+        .expect("the inspector declares that it folds");
+    }),
 ];
 
 /// The window sizes the screen is swept at.
@@ -447,7 +541,15 @@ fn painted_at(state: &std::rc::Rc<LabState>, size: (u32, u32)) -> (Painted, Scen
     );
     let shot = Painted::of(&scene, size);
     assert!(
-        std::rc::Rc::ptr_eq(state, &use_lab_state()),
+        // ★★★★★ R1909 — `super::`, deliberately. This asks whether the caller's
+        // handle is the screen's, which is an IDENTITY question; the shadow at
+        // the top of this file is a state-HANDING-OUT function that unfolds the
+        // inspector, so asking it here would put the panel back on every paint
+        // — including the last swept state, whose whole subject is a folded
+        // inspector. Measured: the folded state's thirty-six excused elements
+        // came back as failures and the excuse looked broken when it was the
+        // probe that was.
+        std::rc::Rc::ptr_eq(state, &super::use_lab_state()),
         "the sweep must drive the state the view reads"
     );
     (shot, scene)
@@ -950,6 +1052,15 @@ fn assert_forward(when: &str, state: &LabState, shot: &Painted, size: (u32, u32)
         // painted nor behind the control is still a failure, which is the half
         // this must not swallow.
         .filter(|tag| !super::in_toolbar_overflow(tag))
+        // ★★★★★ R1909 — an element inside a FOLDED pane, which is the third
+        // grant of the same shape and the strongest of the three: the two above
+        // excuse an element the reader can still get to, this one excuses an
+        // element the screen has deliberately put away. What keeps it from
+        // swallowing a real absence is that it is checked the other way round
+        // too — `r1909_a_folded_pane_hides_exactly_what_it_holds` asserts that
+        // everything under a folded pane's prefixes is gone AND that all of it
+        // comes back when the pane opens.
+        .filter(|tag| !super::in_folded_pane(tag))
         .collect();
     assert!(
         absent.is_empty(),
@@ -4035,6 +4146,24 @@ fn r1684_the_centre_of_every_control_answers_a_press() {
                 .keys()
                 .filter_map(|tag| tag.strip_prefix("lab.form.control.").map(str::to_owned))
                 .collect();
+            // ★★★★★ R1909 — a folded inspector is JUDGED here, not skipped.
+            //
+            // The form lives inside the inspector, so a state that folds it
+            // paints no control — and the honest thing to assert about that
+            // state is the OPPOSITE of the floor below, not an exemption from
+            // it. An exemption would let a real emptying of the form hide
+            // behind "the pane might be folded"; asserting the empty makes the
+            // state carry its own claim, and a screen that painted a form row
+            // into a strip would be caught here rather than nowhere.
+            if super::SidePanel::Inspector.at(&survey).folded {
+                assert!(
+                    controls.is_empty(),
+                    "{when}: the inspector is folded and the form still paints \
+                     {} control(s) — a row drawn inside a strip: {controls:?}",
+                    controls.len()
+                );
+                continue;
+            }
             assert!(
                 !controls.is_empty(),
                 "{when}: the settings form paints no control at all"
@@ -5311,10 +5440,29 @@ fn r1691_every_addressable_region_is_classified_in_every_state() {
                 );
                 // Not vacuous: a screen that painted nothing addressable would
                 // pass the line above.
+                //
+                // ★★★★★ R1909 — TWO floors, because a folded pane takes its
+                // contents with it and the two arrangements are two different
+                // claims. 100 is what this screen announces with every pane
+                // showing; a state that folds one announces fewer, and holding
+                // it to the same number would either fail honestly or force the
+                // number down until it stopped protecting the open screen.
+                //
+                // ⚠ The folded floor is not an exemption. It says the thing
+                // worth saying about that state — *folding a pane does not make
+                // this screen mute* — and a fold that took the announcement
+                // count to nothing would fail here rather than pass quietly.
+                // Which floor applies is read off the placement, so a state
+                // that folds a pane cannot claim the lower one by accident.
+                let anything_folded = super::SidePanel::ALL
+                    .into_iter()
+                    .any(|which| which.at(&state).folded);
+                let floor = if anything_folded { 80 } else { 100 };
                 assert!(
-                    census.count(pinion_core::voice::Voice::Announced) >= 100,
-                    "{when} at {size:?}: only {} regions announce — the census \
-                     is passing on an empty population",
+                    census.count(pinion_core::voice::Voice::Announced) >= floor,
+                    "{when} at {size:?}: only {} regions announce, floor {floor} \
+                     (a pane is folded: {anything_folded}) — the census is \
+                     passing on an empty population",
                     census.count(pinion_core::voice::Voice::Announced),
                 );
             }
@@ -6912,6 +7060,17 @@ fn r1859_the_rename_row_holds_its_text_and_centres_it() {
     let owner = Owner::new();
     owner.run(|| {
         let state = use_lab_state();
+        // ★★★★★ R1909 — the rename row lives INSIDE the inspector, so this gate
+        // examines the open panel and says so before deriving anything.
+        //
+        // ⚠ And it must come before `rename_row_seats`, not inside the loop: the
+        // seats are derived from the panel's live width, so a guard taken after
+        // them would compare runs painted in one arrangement against seats
+        // measured in another — and the failure is SILENT, because a run outside
+        // every seat is simply not selected. The first draft of this repair put
+        // the unfold inside the painter and the gate reported `0 run(s)`, caught
+        // only by its own population floor.
+        let _open = super::WithTheInspectorOpen::now(&state);
         let seats = super::rename_row_seats();
         let mut judged = 0usize;
         let mut short: Vec<(String, u32, u32)> = Vec::new();
@@ -7136,6 +7295,211 @@ fn r1862_a_legend_row_shares_one_centre_and_holds_its_text() {
             apart.is_empty(),
             "★ legend run(s) do not share a centre with the sample beside them \
              (content, size, run centre, sample centre): {apart:?}",
+        );
+    });
+}
+
+/// ★★★★★ R1909 — **a folded pane hides exactly what it declares it holds**,
+/// and an open one shows all of it.
+///
+/// # What this is for
+///
+/// [`spec::PaneSpec::holds`] is an EXCUSE LIST: `assert_forward` uses it to
+/// forgive a declared element the screen does not paint, on the grounds that
+/// the pane holding it is folded. An excuse list nothing checks is the escape
+/// hatch that disables its own gate — a prefix widened by one character would
+/// quietly forgive half the screen, and every sweep would go on passing.
+///
+/// So it is checked in BOTH directions, which is what makes it a claim rather
+/// than a permission:
+///
+/// * **folded ⇒ gone.** Nothing under the pane's prefixes is painted. A screen
+///   that drew a form row inside an eighteen-pixel strip fails here.
+/// * **open ⇒ back.** Everything the folded arrangement excused is on the
+///   screen once the pane opens. A prefix naming elements the pane does not
+///   actually hold fails here, because those are absent in BOTH arrangements
+///   and only this half notices.
+///
+/// The second half is what gives the list its teeth: widening a prefix makes
+/// the first assertion easier and the second one impossible.
+#[test]
+fn r1909_a_folded_pane_hides_exactly_what_it_holds() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let mut judged = 0usize;
+        for which in [super::SidePanel::Palette, super::SidePanel::Inspector] {
+            super::reset_lab_state();
+            let state = use_lab_state();
+            let pane = which.spec();
+
+            // What this pane claims, out of everything the specification
+            // declares — derived, so a row added to any table joins this gate.
+            let claimed: Vec<String> = declared_tags(&state)
+                .into_iter()
+                .filter(|tag| super::pane_holding(tag).is_some_and(|held| held.tag == pane.tag))
+                // ⚠ NOT the pane's own tag. A folded pane keeps its strip, so
+                // that tag is painted in both arrangements — it is the pane,
+                // not something the pane holds, and the assertion below is what
+                // is about it. The gate's own first run caught this.
+                .filter(|tag| tag != pane.tag)
+                .collect();
+            assert!(
+                claimed.len() >= 3,
+                "★ {} claims {} declared element(s); a prefix list claiming \
+                 almost nothing makes both halves below vacuous",
+                pane.tag,
+                claimed.len()
+            );
+
+            // OPEN: all of it is on the screen. Reachable counts — a pane's
+            // body scrolls, and R1662's grant applies here for its reason.
+            super::place_panel(&state, which, super::PlaceAsk::Fold(false))
+                .expect("both side panels declare that they fold");
+            let open = painted(&state);
+            let missing: Vec<&String> = claimed
+                .iter()
+                .filter(|tag| !open.tags.contains_key(*tag) && !open.reachable.contains_key(*tag))
+                .collect();
+            assert!(
+                missing.is_empty(),
+                "★ {} is OPEN and {} of the element(s) its `holds` claims are \
+                 not on the screen at all: {missing:?}. A prefix naming elements \
+                 this pane does not hold would forgive them under a fold, and is \
+                 caught exactly here",
+                pane.tag,
+                missing.len()
+            );
+
+            // FOLDED: none of it is.
+            super::place_panel(&state, which, super::PlaceAsk::Fold(true))
+                .expect("both side panels declare that they fold");
+            let shut = painted(&state);
+            let still_drawn: Vec<&String> = claimed
+                .iter()
+                .filter(|tag| shut.tags.contains_key(*tag))
+                .collect();
+            assert!(
+                still_drawn.is_empty(),
+                "★ {} is FOLDED to its strip and still paints {} of its own \
+                 element(s): {still_drawn:?} — rows drawn inside a strip",
+                pane.tag,
+                still_drawn.len()
+            );
+            // ⚠ And the pane itself is still there, or this would be `hide`
+            // rather than `fold` and the assertion above would be satisfied by
+            // a panel that vanished.
+            assert!(
+                shut.tags.contains_key(pane.tag),
+                "★ the folded pane keeps its own strip on the screen: folding is \
+                 not hiding, and a strip is what a person grabs to come back"
+            );
+            judged += 1;
+        }
+        assert_eq!(judged, 2, "both side panels were judged");
+    });
+}
+
+/// ★★★★★ R1909 — **the inspector opens folded, and a press brings it back.**
+///
+/// The campaign's order step 3 as a property of the running screen rather than
+/// of the specification: `r1902_every_pane_opens_where_its_own_policy_admits`
+/// reads the declaration, and this drives it.
+///
+/// # Why a press and not the wire verb
+///
+/// Because the fold has to be REVERSIBLE BY THE PERSON LOOKING AT IT, and that
+/// is the whole difference between folding and hiding. A pane declared folded
+/// that a reader cannot reopen is a pane that is simply missing, and the wire
+/// verb — which an agent has and a person does not — cannot tell the two apart.
+///
+/// ⚠ The probe must be inside the window, and that is not pedantry: R1903
+/// measured a first repair of exactly this shape PASSING on a strip of width
+/// ZERO, because a probe at the panel's edge fell outside the window and
+/// `Hit::at` answered anyway. *A reachability check satisfied by a point off
+/// the screen is not a check.* So the width is asserted positive, the probe is
+/// asserted inside the window, and only then is the hit test asked.
+#[test]
+fn r1909_the_inspector_opens_folded_and_a_press_brings_it_back() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        // ⚠ Through `super::`, NOT this file's shadow: the shadow hands out the
+        // screen with the panes showing, which is the arrangement the sweeps
+        // need and the exact opposite of what this gate is about.
+        let state = super::use_lab_state();
+
+        // ── the specification opens it away ──────────────────────────────
+        let at = state.inspector_at.get();
+        assert!(
+            at.folded,
+            "★ the node lab's inspector opens FOLDED: its subject is a selected \
+             card, and nothing is selected on a screen nobody has touched"
+        );
+        assert_eq!(
+            at.extent,
+            spec::PANES[3].width,
+            "★ and it kept its width, so opening it gives back a pane worth \
+             having. A fold that forgot its extent would be a hide"
+        );
+        assert!(
+            !super::SidePanel::Palette.at(&state).folded,
+            "★ the palette opens SHOWING — the asymmetry is the point: one panel \
+             answers a question the reader arrives with, the other answers one \
+             about a card they have not picked yet"
+        );
+
+        // ── the strip is really on the screen ────────────────────────────
+        let strip = inspector_rect();
+        assert_eq!(
+            strip.w,
+            super::PANEL_STRIP_W,
+            "the folded pane is its strip"
+        );
+        assert!(
+            strip.w > 0,
+            "★ a strip of width zero is a HIDE wearing a fold's name, and every \
+             probe below would then be satisfied by a point off the screen"
+        );
+        let (win_w, win_h) = super::window_size();
+        let probe = (strip.x + strip.w / 2, strip.y + strip.h / 2);
+        assert!(
+            probe.0 < win_w && probe.1 < win_h,
+            "★ the probe is INSIDE the window ({probe:?} in {win_w}x{win_h}), or \
+             the hit test below is being asked about a point nobody can click"
+        );
+
+        // ── and the canvas took the room, but not the strip ──────────────
+        let canvas = canvas_rect();
+        assert!(
+            canvas.x + canvas.w <= strip.x,
+            "★ the canvas stops short of the strip: canvas {canvas:?}, strip \
+             {strip:?}. A canvas that swallowed it would leave nothing to press"
+        );
+
+        // ── a press brings it back ───────────────────────────────────────
+        super::move_cursor(&state, probe.0, probe.1);
+        super::press(&state);
+        super::release(&state);
+
+        let back = state.inspector_at.get();
+        assert!(!back.folded, "★ the press unfolded it: {back:?}");
+        assert_eq!(
+            back.extent,
+            spec::PANES[3].width,
+            "★ and it came back at the width it kept, not at a default"
+        );
+        assert_eq!(
+            inspector_rect().w,
+            spec::PANES[3].width,
+            "★ which the layout agrees with — the placement and the rectangle \
+             are one fact"
+        );
+        // ★ The specification is unchanged: `opens` is where it OPENS, and a
+        // person unfolding it does not rewrite that. Two facts, one bit — which
+        // is what `opens` beside `at` exists to publish.
+        assert!(
+            spec::PANES[3].opens.folded,
+            "★ unfolding changed the placement, not the declaration"
         );
     });
 }

@@ -6436,6 +6436,12 @@ fn r1838_the_mounted_labs_diagram_survives_maximise_and_detach() {
     owner.run(|| {
         let state = use_shell_state();
         state.go("lab").expect("`lab` is an open destination");
+        // ★ R1909 — with the lab's panes showing, which is what this gate is
+        // about: it measures whether the MOUNTED screen reflows, and a folded
+        // pane both removes marks from the population and takes 294 px out of
+        // the reflow. Measured when the inspector first opened folded: 28 of
+        // 112 marks moved where the floor wants a third.
+        crate::tests::open_whatever_arrived_folded(&state);
 
         let (opening, at_opening) = {
             let (shot, scene) = painted_at((WIN_W, WIN_H));

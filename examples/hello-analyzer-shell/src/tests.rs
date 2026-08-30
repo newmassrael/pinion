@@ -3632,6 +3632,49 @@ fn probe_faded_ink() -> pinion_core::style::Color {
 /// quietly: a mounted screen whose paint-root tag is missing from the recording
 /// is painted, judged, and reported as reproducing nothing, for a reason that
 /// has nothing to do with the screen.
+/// ★★★★★ R1909 — open every pane the arrived section is showing as folded,
+/// through the verb that section publishes.
+///
+/// What a person does on finding a panel put away. See the call site in
+/// [`walk_the_application`] for why a walk has to do it and why it is derived
+/// from each screen's own `spec` rather than written for one of them.
+///
+/// ⚠ A refusal is NOT swallowed. A pane the surface reports folded is one its
+/// own policy admitted a fold on, so `unfold` must be admitted too — a refusal
+/// here would mean a panel a reader can see put away and cannot bring back,
+/// which is precisely the `hide`/`fold` confusion this campaign is about.
+pub(crate) fn open_whatever_arrived_folded(state: &std::rc::Rc<super::ShellState>) {
+    use pinion_core::external::IntrospectValue;
+
+    let mut externals = state.screens.externals(&state.journey.get());
+    for external in &mut externals {
+        let Some(surface) = external.handle.introspect_mut() else {
+            continue;
+        };
+        let Ok(spec) = surface.query("spec") else {
+            continue;
+        };
+        let Some(panes) = as_json(spec)["panes"].as_array().cloned() else {
+            continue;
+        };
+        let folded: Vec<String> = panes
+            .iter()
+            .filter(|pane| pane["at"]["folded"] == serde_json::Value::Bool(true))
+            .filter_map(|pane| pane["name"].as_str().map(ToOwned::to_owned))
+            .collect();
+        for name in folded {
+            surface
+                .invoke("place", IntrospectValue::Text(format!("{name},unfold")))
+                .unwrap_or_else(|why| {
+                    panic!(
+                        "a pane this surface reports FOLDED refused to unfold: \
+                         {name} — {why:?}. A fold a reader cannot undo is a hide"
+                    )
+                });
+        }
+    }
+}
+
 fn walk_the_application(state: &std::rc::Rc<super::ShellState>) -> pinion_screen::TourReport {
     let tour = pinion_screen::Tour::of(&state.screens).also_recording(super::VIEW_TAG);
     let surfaces = tour.surfaces();
@@ -3648,6 +3691,21 @@ fn walk_the_application(state: &std::rc::Rc<super::ShellState>) -> pinion_screen
         // and record its surfaces. How many times this runs is the roster's
         // answer, not a number written here.
         |key, _pose| {
+            // ★★★★★ R1909 — **a walk opens what the section arrived folded.**
+            //
+            // A person who reaches a screen and finds a panel put away opens
+            // it; a walk that did not would report every surface inside that
+            // panel as never having stood, which is a statement about the walk
+            // rather than about the application. R1909 is the round that makes
+            // this reachable at all — the node lab's inspector opens folded now
+            // — and it took the three surfaces that pane draws to `stood: none`
+            // and the whole walk to non-conforming.
+            //
+            // ⚠ DERIVED, not written for the lab. Each arrived external is
+            // asked which of its panes are folded and told to unfold those, so
+            // a section that grows a folded pane later joins this without the
+            // walk being edited — and a section with none is untouched.
+            open_whatever_arrived_folded(state);
             let mut scene = super::view(ScreenState::default(), pinion_core::Frame::default());
             let mut cache = pinion_runtime::LayoutCache::new();
             pinion_runtime::compute_layout(&mut scene, &mut cache, super::WIN_W, super::WIN_H);
@@ -3887,6 +3945,12 @@ fn survey_the_application(
             state.journey.get()
         },
         |_key, _pose| {
+            // ★ R1909 — the same opening the conformance walk does, and for the
+            // same reason: this survey counts the captions the APPLICATION has,
+            // and a pane put away carries its captions out of the count. The
+            // ratchet fell 16 -> 10 the moment one pane opened folded, reporting
+            // a repair as having been undone.
+            open_whatever_arrived_folded(state);
             let mut scene = super::view(ScreenState::default(), pinion_core::Frame::default());
             let mut cache = pinion_runtime::LayoutCache::new();
             pinion_runtime::compute_layout(&mut scene, &mut cache, super::WIN_W, super::WIN_H);
@@ -6232,4 +6296,188 @@ fn r1907_every_control_a_detached_header_offers_is_drawn_and_pressable() {
             "two slots answer the same control: {answered:?}"
         );
     });
+}
+
+/// ★★★★★ R1909 — **the assembled tool's node lab opens with its inspector put
+/// away, and a client can bring it back.**
+///
+/// The campaign's order step 3, asserted where the standing rule says it has to
+/// be: on the screen a reader actually runs. A gate inside `hello_node_lab`
+/// proves the screen; this proves the TOOL — the lab is a mounted guest, and a
+/// test reaching into the guest's own state would pass on an application that
+/// never mounted it.
+///
+/// # What it reads, and why both facts
+///
+/// `opens` and `at` are the same bit and different facts, which is exactly what
+/// R1902 published them side by side for:
+///
+/// * `opens.folded` is the DECLARATION — *this pane is put away when you
+///   arrive.* A client restoring a session, or offering "put it back", needs
+///   it.
+/// * `at.folded` is WHERE IT IS. Equal to `opens` here is the claim that the
+///   declaration reached the screen, which is not implied by declaring it: R1902
+///   measured that until then a pane's opening placement went through no policy
+///   at all and could contradict everything else it said.
+///
+/// And the PALETTE is read in the same breath, because a gate that only looked
+/// at the folded pane could not tell "this screen opens one panel away" from
+/// "this screen opens with no panels".
+///
+/// # Why the edit goes through `place`
+///
+/// It is the verb the surface publishes, so this is the round trip a client
+/// actually has: read where it is, ask for it back, read again. The refusal is
+/// driven too — asking a pane that does not fold to unfold must say so by name,
+/// or a client cannot tell a rejected request from one that did nothing.
+#[test]
+fn r1909_the_walk_reaches_a_lab_whose_inspector_opens_put_away() {
+    use pinion_core::external::IntrospectValue;
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+
+        // ★★★★★ ORDER IS THE POINT, and it is the opposite of every other walk
+        // in this file. The arrangement is read BEFORE the walk, because the
+        // walk itself opens whatever it finds folded — that is what a person
+        // does, and `open_whatever_arrived_folded` is why the surfaces inside
+        // this pane can stand at all. Reading afterwards would be asking about
+        // a screen the walk had already changed, and the assertion that the
+        // inspector opens put away would be unfalsifiable.
+        state.go("lab").expect("the node lab section is open");
+        let mut externals = state.screens.externals(&state.journey.get());
+        let tags: Vec<String> = externals.iter().map(|e| e.tag.to_string()).collect();
+        let lab = externals
+            .iter_mut()
+            .filter_map(|e| e.handle.introspect_mut())
+            .find(|it| it.query("gate").is_ok())
+            .unwrap_or_else(|| {
+                panic!("no external of the lab section answers for the lab: {tags:?}")
+            });
+
+        let opening = as_json(lab.query("spec").expect("a slot"));
+        let panes = opening["panes"]
+            .as_array()
+            .expect("the surface publishes its panes")
+            .clone();
+        let pane = |name: &str| -> serde_json::Value {
+            panes
+                .iter()
+                .find(|p| p["name"] == name)
+                .unwrap_or_else(|| panic!("{name} is a pane this surface publishes"))
+                .clone()
+        };
+
+        // ── the declaration, and the screen agreeing with it ──────────────
+        let inspector = pane("inspector");
+        assert_eq!(
+            inspector["opens"]["folded"],
+            serde_json::Value::Bool(true),
+            "★ the assembled tool DECLARES its inspector opens put away: {inspector}"
+        );
+        assert_eq!(
+            inspector["at"]["folded"],
+            serde_json::Value::Bool(true),
+            "★ and it really is — `opens` reaching `at` is the claim, not the \
+             declaration on its own: {inspector}"
+        );
+        assert_eq!(
+            inspector["at"]["extent"], inspector["opens"]["extent"],
+            "★ folded KEPT its extent, so bringing it back gives a pane worth \
+             having. A fold that forgot its width would be a hide: {inspector}"
+        );
+
+        // ★ The asymmetry, which is what makes this a decision rather than an
+        // application that opens with nothing on it.
+        let palette = pane("palette");
+        assert_eq!(
+            palette["opens"]["folded"],
+            serde_json::Value::Bool(false),
+            "★ the palette opens SHOWING: 'what can I place' is the question a \
+             reader arrives with. One panel away and one showing is the point: \
+             {palette}"
+        );
+        assert_eq!(
+            palette["at"]["folded"],
+            serde_json::Value::Bool(false),
+            "★ and it is showing: {palette}"
+        );
+
+        // ── the client brings it back, through the published verb ─────────
+        let said = lab
+            .invoke(
+                "place",
+                IntrospectValue::Text("inspector,unfold".to_owned()),
+            )
+            .expect("`place` is a declared action of this screen and this pane folds");
+        println!("the screen said: {said:?}");
+
+        let after = pane_of(&as_json(lab.query("spec").expect("a slot")), "inspector");
+        let refused = lab
+            .invoke("place", IntrospectValue::Text("rail,fold".to_owned()))
+            .expect_err("the rail declares that it does not fold");
+        let sentence = format!("{refused:?}");
+        assert!(
+            sentence.contains("rail") || sentence.contains("fold"),
+            "★ a refusal names what was asked, or a client cannot act on it: \
+             {sentence}"
+        );
+        drop(externals);
+        assert_eq!(
+            after["at"]["folded"],
+            serde_json::Value::Bool(false),
+            "★ the pane is showing now: {after}"
+        );
+        assert_eq!(
+            after["at"]["extent"], inspector["opens"]["extent"],
+            "★ at the width it had kept, not at a default: {after}"
+        );
+        // ★★ And the DECLARATION did not move. Unfolding changes where the pane
+        // IS, never where it OPENS — which is the whole reason the surface
+        // publishes two fields for one bit, and a client offering "restore the
+        // default arrangement" reads the one that stayed still.
+        assert_eq!(
+            after["opens"]["folded"],
+            serde_json::Value::Bool(true),
+            "★ `opens` is a property of the build, not a record of what somebody \
+             just did: {after}"
+        );
+
+        // ── and the whole application still walks ─────────────────────────
+        //
+        // Last, and it is the half that makes this a claim about the TOOL. The
+        // three surfaces the inspector draws are judged over the walk, so a
+        // pane that opened folded and could not be opened would take them to
+        // `stood: none` and this to non-conforming — which is exactly what a
+        // first draft of this round did before `open_whatever_arrived_folded`
+        // existed.
+        let report = walk_the_application(&state);
+        assert!(
+            report.conforms(),
+            "the application did not reproduce its specification over the walk: {}",
+            report.why().unwrap_or_default()
+        );
+        assert!(
+            report.itinerary().iter().any(|key| key == "lab"),
+            "the walk must stand in the node lab: {:?}",
+            report.itinerary()
+        );
+    });
+}
+
+/// One published pane, by the word the `place` verb takes.
+///
+/// A peer of [`placed_panel`] that answers the WHOLE row rather than its `at`,
+/// because R1909's walk compares `at` against `opens` and needs both halves of
+/// the same row — reading them through two lookups would let a future edit
+/// answer them from two different reads of the surface.
+fn pane_of(spec: &serde_json::Value, name: &str) -> serde_json::Value {
+    spec["panes"]
+        .as_array()
+        .expect("the surface publishes its panes")
+        .iter()
+        .find(|pane| pane["name"] == name)
+        .unwrap_or_else(|| panic!("{name} is a pane this surface publishes"))
+        .clone()
 }

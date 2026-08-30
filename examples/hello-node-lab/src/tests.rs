@@ -2211,6 +2211,13 @@ fn r1687_the_toolbars_declared_width_covers_what_it_paints() {
         pinion_core::reactive::VIEWPORT_SIZE
             .resolve(&owner)
             .set((MIN_W, super::MIN_H));
+        // ★★★★★ R1909 — with the inspector OPEN, which is what this floor is
+        // about. `MIN_W` is the narrowest window in which every pane fits
+        // BESIDE the others, so it is a claim about the widest arrangement the
+        // screen can be in; measured against a folded inspector the toolbar
+        // simply takes the 294 px the fold gave up and the equality reads 886
+        // against 592 — a true statement about a different question.
+        let _open = super::WithTheInspectorOpen::now(&use_lab_state());
         let bar = super::toolbar_rect();
         assert_eq!(
             bar.w,
@@ -2855,16 +2862,40 @@ fn r1902_every_pane_opens_where_its_own_policy_admits() {
         "every declared pane was judged; judged {checked}"
     );
     assert_eq!(checked, 4, "this screen declares four panes");
-    // ★★★★★ NO pane of this screen opens folded, and that is the canon's
-    // arrangement rather than an omission — re-measured at R1902 by extracting
-    // the behaviour canon: its palette state initialises OPEN. Asserted rather
-    // than left implicit, because the campaign's own prescription said the
-    // opposite and a reader arriving at that sentence needs to find the
-    // measurement that overturned it.
+    // 🟥🟥🟥★★★★★ R1909 — this assertion was `folded_open == 0`, justified as
+    // "the canon opens its palette open; a pane that starts folded here would
+    // be a second-pass change that un-reproduces it".
+    //
+    // **The measurement was right and the generalisation was not.** What R1902
+    // extracted is that the canon's DASHBOARD SHELL initialises `paletteOpen:
+    // true` — and that drawer lives beside `state.widgets`, which is the
+    // dashboard's model. The canon has NO OPINION about this screen's panes:
+    // no state, no toggle, nothing. So "the canon opens it open" is a fact
+    // about a different panel, and turning it into a floor over ALL FOUR panes
+    // here made a second-pass improvement unbuildable by assertion — which is
+    // exactly what happened for six rounds.
+    //
+    // ⇒ ★★★★★ *a measurement about one subject, asserted over a population, is
+    // no longer a measurement.* The population it covers is the population it
+    // was taken from.
+    //
+    // What is asserted instead is the property that actually protects this
+    // screen, and it is stronger: a pane that opens folded must be one a reader
+    // can bring BACK. A fold whose panel declares it does not fold is a panel
+    // gone with no strip to grab, which is the `hide`/`fold` distinction this
+    // whole axis is built on — and that check is in the loop above, applied to
+    // every pane that opens folded rather than to a count of them.
+    assert!(
+        spec::PANES.iter().any(|p| !p.opens.folded),
+        "at least one pane opens showing, or this screen opens as a bare canvas \
+         with nothing to say what it is"
+    );
     assert_eq!(
-        folded_open, 0,
-        "the canon opens its palette open; a pane that starts folded here would \
-         be a second-pass change that un-reproduces it"
+        folded_open, 1,
+        "exactly one pane opens folded: the inspector, whose subject — a \
+         selected node — does not exist on a screen nobody has touched. The \
+         palette opens showing because 'what can I place' is the question a \
+         reader arrives with"
     );
 }
 
@@ -3109,6 +3140,10 @@ fn r1889_dragging_the_grip_resizes_the_panel_and_every_derivation_follows() {
     owner.run(|| {
         super::reset_lab_state();
         let state = use_lab_state();
+        // ★ R1909 — a folded panel offers no grip: its whole strip is one
+        // affordance, and that is the state's own gate next door rather than a
+        // hole in this one. This gate is about the grip, so it says so.
+        let _open = super::WithTheInspectorOpen::now(&state);
 
         let opening = state.inspector_at.get().extent;
         let opening_canvas = canvas_rect();
@@ -3192,6 +3227,12 @@ fn r1889_every_pane_that_declares_a_resize_offers_a_grip_and_no_other_does() {
     owner.run(|| {
         super::reset_lab_state();
         let state = use_lab_state();
+        // ★ R1909 — the census is over panels that are SHOWING. A folded panel
+        // offering no grip is correct and is asserted next door; counted here
+        // it would make this equality say "a pane that declares a resize offers
+        // a grip unless it happens to be folded", which is not a rule anybody
+        // could act on.
+        let _open = super::WithTheInspectorOpen::now(&state);
 
         let mut draggable = 0usize;
         let mut fixed = 0usize;

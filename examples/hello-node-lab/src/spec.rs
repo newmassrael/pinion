@@ -75,6 +75,37 @@ pub struct PaneSpec {
     ///
     /// The gate is `r1902_every_pane_opens_where_its_own_policy_admits`.
     pub opens: EdgePlacement,
+    /// ★★★★★ R1909 — **which declared elements this pane HOLDS**, as tag
+    /// prefixes, so a folded pane's contents can be told from the rest of the
+    /// screen without asking the paint.
+    ///
+    /// # Why this had to be declared
+    ///
+    /// Because folding a pane makes its contents disappear, and until R1909 no
+    /// pane of this screen opened folded, so the question "which of the
+    /// declared elements just went away?" had never been asked. The tables
+    /// elsewhere in this file — the voice census, the operation roster — list
+    /// what this screen is MADE OF; they cannot also say what is showing right
+    /// now, and a folded pane is precisely the case where those two answers
+    /// differ. Measured at R1909, declaring one pane folded reported thirty-six
+    /// declared elements as "the screen does not paint", every one of them a
+    /// correct consequence and none of them a defect.
+    ///
+    /// # Why prefixes rather than a rectangle
+    ///
+    /// Because a rectangle would be derived from the paint, and this has to be
+    /// readable when there is no paint to read: the whole point is to excuse an
+    /// element that is ABSENT. A prefix is a claim about the screen's naming
+    /// that a gate can check in both directions — see
+    /// `r1909_a_folded_pane_hides_exactly_what_it_holds`, which asserts that
+    /// everything under these prefixes really does vanish when the pane folds
+    /// AND really does come back when it opens. An excuse list nothing checks
+    /// is the escape hatch that disables its own gate.
+    ///
+    /// ⚠ Empty for a pane that holds no declared element of its own, which is a
+    /// statement and not a gap — the rail's seats are declared under its own
+    /// tag, so its prefix list is exactly that tag.
+    pub holds: &'static [&'static str],
 }
 
 /// The four panes, left to right.
@@ -94,6 +125,8 @@ pub const PANES: &[PaneSpec] = &[
         // its policy admits nothing, so this says "there is nowhere else" twice
         // — which is what makes the gate below non-vacuous for it too.
         opens: EdgePlacement::open(ChromeEdge::Left, 54),
+        // Its seats are named under its own tag, and it does not fold.
+        holds: &["lab.rail"],
     },
     PaneSpec {
         tag: "lab.palette",
@@ -125,6 +158,9 @@ pub const PANES: &[PaneSpec] = &[
         // there IS one: it is now checked against this pane's own policy, which
         // nothing did before.
         opens: EdgePlacement::open(ChromeEdge::Left, 230),
+        // Everything this panel draws is named under its own tag: the chips,
+        // the pin legend, the discovery switch and its caption.
+        holds: &["lab.palette"],
     },
     PaneSpec {
         tag: "lab.canvas",
@@ -139,6 +175,14 @@ pub const PANES: &[PaneSpec] = &[
         // Width 0 above: the canvas takes what the flanking panes leave, so its
         // opening extent is not a number anybody chose.
         opens: EdgePlacement::open(ChromeEdge::Left, 0),
+        // ⚠ The graph's cards and wires are named `lab.node.*` / `lab.wire.*`,
+        // not under this tag. Listed because they ARE what the canvas holds,
+        // and a prefix list that named only `lab.canvas` would be describing
+        // the pane's frame rather than its contents. The canvas does not fold,
+        // so nothing here is ever excused — which is the point of writing it
+        // down anyway: the gate can then check that the four lists PARTITION
+        // the screen rather than merely covering the folding panes.
+        holds: &["lab.canvas", "lab.node.", "lab.wire."],
     },
     PaneSpec {
         tag: "lab.inspector",
@@ -149,24 +193,61 @@ pub const PANES: &[PaneSpec] = &[
         // content: this pane holds a form with labelled rows and a three-across
         // action strip, where the palette holds a single column of chips.
         policy: EdgePolicy::movable(SIDES).resizable(240, 520),
-        // Showing, on the right, as the reference's properties region is.
+        // ★★★★★ R1909 — **FOLDED, on the right, as the reference editor's own
+        // properties region is.** The campaign's order step 3, actually built.
         //
-        // 🟥 R1908 — this comment used to end "the asymmetry with the palette is
-        // the reference's own and is the point: one side panel starts out of the
-        // way and one does not", and there IS no asymmetry: both panels open
-        // showing, and did from the moment R1902 reverted the folded palette
-        // after measuring that the behaviour canon opens its own drawer.
-        // The sentence survived the revert three rounds and described a screen
-        // that never existed.
+        // 🟥 The comment that stood here claimed an asymmetry with the palette
+        // that did not exist — both panels opened showing, and had since R1902
+        // reverted its folded palette. Now the asymmetry is REAL, and it is the
+        // one the reference draws:
         //
-        // ⇒ the reference's tool region is hidden by default and this one is
-        // not, deliberately: the reproduction target for this screen is the
-        // behaviour canon, whose whole vocabulary of open-and-shut is
-        // `paletteOpen: true`, a menu and a popover — it has no panel that opens
-        // folded at all. Opening folded here would un-reproduce it, which is the
-        // standing order rule's named error. What a person folds is remembered
-        // instead (R1908), which is where `EdgePlacement::folded_at` belongs.
-        opens: EdgePlacement::open(ChromeEdge::Right, 312),
+        // * the PALETTE opens showing, because "what can I put on the canvas"
+        //   is the question a reader arrives with, and the behaviour canon's own
+        //   drawer initialises `paletteOpen: true`.
+        // * the INSPECTOR opens folded, because "what are the properties of the
+        //   selected node" has no subject yet — nothing is selected on a screen
+        //   nobody has touched, so the pane would open onto its own empty state
+        //   and take 312 px to say so.
+        //
+        // ⚠ Why this does NOT un-reproduce the behaviour canon, which is the
+        // objection R1902 raised and answered: that canon has `togglePalette`
+        // beside `state.widgets` — it is the DASHBOARD shell's drawer — and no
+        // opinion whatever about this screen's panels. A second-pass improvement
+        // is legitimate exactly where the canon is silent, and the standing rule
+        // it would break is *skipping a reproduction because our way looks
+        // better*, which is not this: there is nothing here to reproduce.
+        //
+        // 🟥🟥🟥★★★★★ R1908 declined this on a stronger-sounding claim — "the
+        // canon has NO panel that opens folded, so opening one folded here
+        // un-reproduces it" — and it was measured over **one line** of the
+        // canon: the line its opening state is written on. Re-measured at R1909
+        // over the WHOLE document, that canon opens with a node of its own graph
+        // ALREADY COLLAPSED and another already muted, seeded in its opening
+        // state and restored by its own reset. So *a thing this tool opens with
+        // put away* is in the canon's vocabulary after all — it is a node rather
+        // than a panel, which is exactly why the canon's silence about panels is
+        // silence and not a prohibition.
+        //
+        // ⇒ ★★★★★ *the population a measurement covers is the population it was
+        // taken from* — twice over here, once for the subject (a drawer, not
+        // this panel) and once for the extent of the reading (one line, not the
+        // document).
+        //
+        // ⚠ And it is a PLACEMENT, not an act somebody performed before the
+        // reader arrived: `EdgePlacement::folded_at` keeps the extent, so the
+        // strip opens to 312 px rather than to nothing. `EdgePolicy` admits it
+        // because `movable` is foldable — the gate
+        // `r1902_every_pane_opens_where_its_own_policy_admits` is what checks
+        // that rather than this comment.
+        opens: EdgePlacement::folded_at(ChromeEdge::Right, 312),
+        // ★★★★★ R1909 — THREE prefixes, and that is the finding this field
+        // exists to record: the inspector's contents are not all named after
+        // it. The settings form is `lab.form.*` and the fault panel is
+        // `lab.faults*`, both drawn inside this pane, so a reader asking "what
+        // goes away when the inspector folds" could not have answered it from
+        // the tag alone — which is why this is declared rather than derived
+        // from a prefix match on `tag`.
+        holds: &["lab.inspector", "lab.faults", "lab.form."],
     },
 ];
 
