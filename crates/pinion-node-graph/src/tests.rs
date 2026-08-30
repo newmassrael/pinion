@@ -161,6 +161,21 @@ impl NodeKind for Op {
         matches!(self, Self::Relay)
     }
 
+    /// ★ R1916 — what a value of each type IS, so the composition has a type
+    /// half to compose. `Bag` deliberately says nothing: a taxonomy that
+    /// describes some of its types and not others is the ordinary case, and a
+    /// fixture where every type spoke could not tell a missing half from a
+    /// present one.
+    fn type_description(ty: &Ty) -> Option<String> {
+        match ty {
+            Ty::Number => Some("a whole number".to_owned()),
+            Ty::Text => Some("a line of text".to_owned()),
+            Ty::Pair => Some("two numbers written `left|right`".to_owned()),
+            Ty::Nest => Some("a pair and a number, written `head;tail`".to_owned()),
+            Ty::Bag => None,
+        }
+    }
+
     /// R1912 — this taxonomy has exactly one composite type and one container
     /// of it, so the three arms are all reachable and a test can tell the two
     /// refusals apart.
@@ -173,8 +188,15 @@ impl NodeKind for Op {
             // ★ R1914 — the head is a `Pair`, so splitting a `Nest` produces a
             // port that splits again. That is the tree, declared.
             Ty::Nest => Composition::Members(vec![
-                Port::new("Head", Ty::Pair).with_default(Val::Text("0|0".to_owned())),
-                Port::new("Tail", Ty::Number).with_default(Val::Number(0)),
+                // ★ R1916 — a MEMBER port carries its own sentence, so a split
+                // produces ports that can say what they are for. The reference
+                // makes sub-pins real pins and has nowhere for this either.
+                Port::new("Head", Ty::Pair)
+                    .with_default(Val::Text("0|0".to_owned()))
+                    .describing("the pair at the front"),
+                Port::new("Tail", Ty::Number)
+                    .with_default(Val::Number(0))
+                    .describing("the number after it"),
             ]),
             Ty::Bag => Composition::Container,
             Ty::Number | Ty::Text => Composition::Atom,
@@ -267,7 +289,13 @@ impl NodeKind for Op {
             // until `Deep` splits and then it is 3, and nothing on the node
             // says so.
             Self::Bundle => vec![
-                Port::new("Deep", Ty::Nest).with_default(Val::Text("1|2;3".to_owned())),
+                Port::new("Deep", Ty::Nest)
+                    .with_default(Val::Text("1|2;3".to_owned()))
+                    // ★ R1916 — the PORT's own sentence, which is a different
+                    // fact from the type's: two ports of one type can be for
+                    // different things, and the reference's arrangement has
+                    // nowhere for this to live.
+                    .describing("the bundle this node unpacks"),
                 Port::new("Plain", Ty::Number).with_default(Val::Number(9)),
             ],
             Self::Sink => vec![Port::new("Result", Ty::Number)],
@@ -4426,6 +4454,112 @@ fn r1914_the_split_act_says_why_it_will_not() {
             tree: ROOT,
             node: ghost,
         },
+    );
+}
+
+/// ★★★★★ R1916 — **a port says what it is for, and the sentence is composed
+/// from pieces a consumer can also read separately.**
+///
+/// Measured in the reference this round: it has two hooks and neither owns the
+/// sentence. A node answers `GetPinHoverText`; a schema answers
+/// `ConstructBasicPinTooltip(Pin, PinDescription, out)` — the description
+/// arrives from OUTSIDE, and the base implementation is `TooltipOut =
+/// PinDescription.ToString()` while its own comment promises it adds "things
+/// like the pin's type". ⇒ the composition the documentation describes does not
+/// happen, and there is nowhere to check it from.
+#[test]
+fn r1916_a_port_says_what_it_is_for() {
+    let (document, node) = bundled();
+
+    let deep = document
+        .port_tooltip(ROOT, node, Side::Input, &PortPath::root(0))
+        .expect("`Deep` is a port");
+    assert_eq!(deep.name, "Deep");
+    assert_eq!(
+        deep.carries.as_deref(),
+        Some("a pair and a number, written `head;tail`"),
+        "★ the TYPE's half, which the reference's base implementation drops",
+    );
+    assert_eq!(
+        deep.says.as_deref(),
+        Some("the bundle this node unpacks"),
+        "★ and the PORT's own half, which is a different fact — two ports of \
+         one type can be for different things",
+    );
+    assert_eq!(deep.side, Side::Input);
+    assert_eq!(deep.multiplicity, Multiplicity::One);
+    assert!(!deep.wired);
+    assert_eq!(deep.member_of, None);
+
+    // ★★★★★ The rendering is DERIVED from the pieces, so a consumer reading
+    // one and a consumer reading the other cannot disagree.
+    let said = deep.sentence();
+    for piece in [
+        "Deep",
+        "a pair and a number",
+        "the bundle this node unpacks",
+        "accepts",
+        "Nothing is wired",
+    ] {
+        assert!(said.contains(piece), "★ {piece:?} is missing from {said:?}");
+    }
+
+    // ★ A CONTROL port has no type to describe, and the sentence says control
+    // rather than inventing one.
+    let mut chain = fixture();
+    let carry = chain
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Carry), 0, 500)
+        .unwrap();
+    let go = chain
+        .document
+        .port_tooltip(ROOT, carry, Side::Input, &PortPath::root(0))
+        .expect("`Go` is a port");
+    assert_eq!(go.carries, None);
+    assert!(go.sentence().contains("control"), "{:?}", go.sentence());
+
+    // ★ A type the taxonomy says nothing about answers `None` rather than an
+    // empty string — absent and blank are different, and collapsing them is
+    // the escape hatch this workspace refuses.
+    let loose = chain
+        .document
+        .port_tooltip(ROOT, carry, Side::Input, &PortPath::root(2))
+        .expect("`Loose` is a port");
+    assert_eq!(loose.carries, None, "the fixture's `Bag` describes nothing");
+}
+
+/// ★★★★★ R1916 — **a member port a split made says what IT is for**, and says
+/// that it is a half.
+///
+/// The reference cannot: its sub-pins are pins, so a tooltip on one reads
+/// exactly like a tooltip on a whole pin, and nothing in the string says the
+/// reader is looking at part of something.
+#[test]
+fn r1916_a_member_port_says_it_is_a_half() {
+    let (mut document, node) = bundled();
+    document
+        .split_port(ROOT, node, Side::Input, &PortPath::root(0))
+        .expect("`Deep` splits");
+
+    let head = document
+        .port_tooltip(ROOT, node, Side::Input, &PortPath::root(0).then(0))
+        .expect("the head is a port");
+    assert_eq!(head.name, "Head");
+    assert_eq!(
+        head.says.as_deref(),
+        Some("the pair at the front"),
+        "★ the member carries its own sentence, declared on the composition",
+    );
+    assert_eq!(
+        head.carries.as_deref(),
+        Some("two numbers written `left|right`"),
+        "and the type half is the MEMBER's type, not the parent's",
+    );
+    assert_eq!(head.member_of, Some(PortPath::root(0).then(0)));
+    assert!(
+        head.sentence().contains("split"),
+        "★ and the rendering says the reader is looking at a half: {:?}",
+        head.sentence(),
     );
 }
 

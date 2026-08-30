@@ -138,10 +138,10 @@
       "surface": "resting on a control shows a sentence about it that the control has no room to print",
       "probes": [{ "in": "markup", "attribute": "title" }],
       "canon": 25,
-      "verdict": "gap",
-      "covered_by": "the framework has the widget; no section of this tool mounts one, so the canon's twenty-five explanations have no counterpart on any screen a reader opens",
-      "owed_by": "debt-the-assembled-tool-mounts-no-tooltip",
-      "proven_by": "hello-analyzer-shell::painted::r1886_every_surface_the_canon_census_owes_is_still_owed"
+      "verdict": "have",
+      "covered_by": "R1916 — a mark carries a sentence (pinion_core::describe::Descriptions) and one derivation says which one a reader is being shown, from hover OR focus in one call. The node lab's pins are the first consumer: resting on one draws the sentence beside it and announces it, with the pin pointing at the region through aria-describedby so nothing dangles. What the framework had was a tooltip that was its OWN anchor -- R695's module docs name 'attach a tooltip to an arbitrary existing widget' as a future axis, which is why the widget existed and no screen mounted one. Past the canon: the sentence is COMPOSED by the model (Document::port_tooltip joins what the type says it carries with what the port says it is for) rather than authored per control, and a split member says which half it is. The canon's own twenty-five are static title attributes on one screen's controls; the pins are the first of ours and the remaining screens are debt-a-described-mark-exists-only-on-the-node-lab",
+      "owed_by": "",
+      "proven_by": "tools/demos/r1916_a_pin_says_what_it_is_for.py + hello-node-lab::tests::r1916_resting_on_a_pin_shows_what_it_is_for"
     },
     {
       "id": "affordance.hover",

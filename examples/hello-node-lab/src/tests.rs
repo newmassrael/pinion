@@ -4237,6 +4237,96 @@ fn r1915_a_wire_on_a_member_is_cut_by_the_fold_and_named() {
     });
 }
 
+/// ★★★★★ R1916 — **resting on a pin shows a sentence about it**, on the frame
+/// and in the accessibility tree.
+///
+/// The canon puts a `title` on 25 of its controls and the assembled tool
+/// mounted NONE — measured at R1886, and the reason was structural rather than
+/// forgetful: the framework's tooltip had been its own anchor since R695, whose
+/// own module docs name "attach a tooltip to an arbitrary existing widget" as a
+/// future axis. `pinion_core::describe` is that axis, and this is its first
+/// consumer.
+#[test]
+fn r1916_resting_on_a_pin_shows_what_it_is_for() {
+    use pinion_a11y::AriaRole;
+    use pinion_node_graph::{PortPath, Side};
+
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+        crate::painted::render_so_a_press_can_be_asked(&state);
+
+        // ★ The control: with the cursor nowhere near a pin, nothing is shown.
+        // Without it this test would pass on a screen that shows a tooltip
+        // always, which is not what a tooltip is.
+        assert_eq!(
+            super::pin_description_shown(&state),
+            None,
+            "★ a tooltip nobody is resting on is not shown",
+        );
+        assert_eq!(
+            super::wire_access(&state)
+                .iter()
+                .filter(|n| n.role == AriaRole::Tooltip)
+                .count(),
+            0,
+        );
+
+        let card = state.cards()[0];
+        let name = state.name_of(card);
+        let box_of = card_rect(&state, card).expect("a card");
+        let seat = pin_rect(&state, box_of, true);
+        let at = super::content_to_window(
+            &state,
+            i64::from(seat.x + seat.w / 2),
+            i64::from(seat.y + seat.h / 2),
+        )
+        .expect("on screen");
+        // ★ Through the screen's own `move_cursor`, not by setting the signal:
+        // a leave clears `pointer_inside` and only a move sets it again, so a
+        // test that wrote the position directly would be testing a state the
+        // application cannot reach.
+        super::move_cursor(&state, at.0, at.1);
+
+        let (tag, sentence) =
+            super::pin_description_shown(&state).expect("★ resting on the dial pin shows one");
+        assert_eq!(tag, format!("lab.pin.{name}.dial"));
+        // ★★★★★ The sentence is the SUBSTRATE's composition — the type's half
+        // and the port's own half — not a string this screen wrote. The
+        // reference's base implementation hands the description straight back
+        // and adds neither half to it.
+        let tip = state
+            .doc
+            .borrow()
+            .port_tooltip(ROOT, card, Side::Output, &PortPath::root(0))
+            .expect("the pin is a port");
+        assert_eq!(sentence, tip.sentence());
+        assert!(sentence.contains("address"), "the TYPE's half: {sentence}");
+        assert!(sentence.contains("hands on"), "the PORT's half: {sentence}");
+
+        // ★ And it reaches a reader who does not look at pixels, through
+        // `aria-describedby` rather than as a floating node nothing points at.
+        let nodes = super::wire_access(&state);
+        let tips: Vec<_> = nodes
+            .iter()
+            .filter(|n| n.role == AriaRole::Tooltip)
+            .collect();
+        assert_eq!(tips.len(), 1, "one description region, for the one shown");
+        assert_eq!(tips[0].name.as_deref(), Some(sentence.as_str()));
+        let anchor = nodes
+            .iter()
+            .find(|n| n.tag == format!("lab.pin.{name}.dial"))
+            .expect("the pin is announced");
+        assert_eq!(
+            anchor.described_by.as_deref(),
+            Some(tips[0].tag.as_str()),
+            "★ the mark POINTS AT its description — a region nothing references \
+             is a region an AT never reads out",
+        );
+    });
+}
+
 /// ★★★★★ R1914 — the verb's refusals, in the model's words.
 #[test]
 fn r1914_the_split_verb_says_why_it_will_not() {

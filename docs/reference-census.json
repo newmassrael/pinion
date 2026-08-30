@@ -2913,10 +2913,10 @@
       "verdict": "have"
     },
     "node::GetPinHoverText": {
-      "covered_by": "a port and a node carry a name and no description",
+      "covered_by": "R1916 — a PORT carries a sentence about what it is for (Port::description), so it travels with the thing it describes: a member port a split makes carries its own, and a variadic run's template carries one for every item it will produce. The reference's hook is on the NODE (GetPinHoverText(Pin, out HoverText)), so the sentence is a node's opinion of one of its pins, fetched on demand and stored nowhere — a node would have to recognise each sub-pin by name to answer differently for it. Past the reference: a port with nothing to add answers None rather than an empty string, and a member says it is a half",
       "mechanism": "graph-node",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_node_get_pin_hover_text",
+      "verdict": "have"
     },
     "node::GetPinMetaData": {
       "covered_by": "a port and a node carry a name and no description",
@@ -3315,10 +3315,10 @@
       "verdict": "have"
     },
     "schema::ConstructBasicPinTooltip": {
-      "covered_by": "a port and a node carry a name and no description",
+      "covered_by": "R1916 — Document::port_tooltip is the ONE composition: what the type says a value of it IS (NodeKind::type_description) joined with what the port says it is for, plus the facts a single string loses — which way it faces, how many links it may hold, whether anything is on it, and whether it is a half a split made. ⚠ MEASURED IN THE REFERENCE THIS ROUND AND IT DOES NOT DO WHAT ITS COMMENT SAYS: its signature takes the description from OUTSIDE (ConstructBasicPinTooltip(Pin, PinDescription, out Tooltip)) with nothing in the model saying where from, and its base implementation is the single line `TooltipOut = PinDescription.ToString()` while the comment above it promises it 'tacks on any other data important to the schema (things like the pin's type, etc.)'. Past the reference: the result is STRUCTURED rather than joined, so a client draws the pieces its own way, and PortTooltip::sentence is derived from those pieces so the two readings cannot disagree",
       "mechanism": "graph-schema",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_schema_construct_basic_pin_tooltip",
+      "verdict": "have"
     },
     "schema::CopyPinLinks": {
       "covered_by": "copying one port's links onto another port",

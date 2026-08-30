@@ -46,9 +46,9 @@ use serde::{Deserialize, Serialize};
 use pinion_node_graph::{
     Align, Appearance, Axis, Command, Conversion, Crossings, Definitions, Direction, Distribute,
     Document, Edge, EditPath, Extent, Fragment, Grow, Hidden, Instance, InterfaceSide, Item,
-    ItemError, LinkId, Machine, Node, NodeBody, NodeId, NodeKind, NodeSite, NotRecombinable,
-    NotSplittable, Port, PortPath, PortRef, PortSite, PutAway, ROOT, Reach, Session, Sharing, Side,
-    Socket, Stack, Straighten, Stride, TreeId, Variadic, WatchError,
+    ItemError, LinkId, Machine, Multiplicity, Node, NodeBody, NodeId, NodeKind, NodeSite,
+    NotRecombinable, NotSplittable, Port, PortPath, PortRef, PortSite, PutAway, ROOT, Reach,
+    Session, Sharing, Side, Socket, Stack, Straighten, Stride, TreeId, Variadic, WatchError,
 };
 
 // ---------------------------------------------------------------- taxonomy
@@ -168,6 +168,19 @@ impl NodeKind for Op {
         }
     }
 
+    /// ★ R1916 — what a value of each type IS. `Bag` says nothing on purpose:
+    /// a taxonomy that describes some of its types and not others is the
+    /// ordinary case, and a fixture where every type spoke could not tell a
+    /// missing half from a present one.
+    fn type_description(ty: &Ty) -> Option<String> {
+        match ty {
+            Ty::Number => Some("a whole number".to_owned()),
+            Ty::Text => Some("a line of text".to_owned()),
+            Ty::Pair => Some("two numbers written `left|right`".to_owned()),
+            Ty::Bag => None,
+        }
+    }
+
     /// R1913/R1914 — a pair is written `left|right`, so taking it apart is a
     /// split on the bar and putting it back is a join.
     ///
@@ -231,7 +244,13 @@ impl NodeKind for Op {
                 // ★ R1914 — a resting value, so a split has something to share
                 // out and a recombine has something to put back. Without one,
                 // the act would be provable only in its shape.
-                Port::new("Whole", Ty::Pair).with_default(Val::Text("3|4".to_owned())),
+                // ★ R1916 — and a sentence of its own, which is a different
+                // fact from what its TYPE says: two ports of one type can be
+                // for different things, and the reference has nowhere for the
+                // distinction to live.
+                Port::new("Whole", Ty::Pair)
+                    .with_default(Val::Text("3|4".to_owned()))
+                    .describing("the pair this node carries"),
                 Port::new("Loose", Ty::Bag),
                 // ★ R1914 — a port AFTER the composite one that can hold a
                 // value, so "everything after the split moves, with what was
@@ -512,6 +531,7 @@ fn proofs() -> Vec<Proof> {
     all.extend(engine_schema_hook_proofs());
     all.extend(engine_variadic_proofs());
     all.extend(engine_debug_proofs());
+    all.extend(engine_description_proofs());
     all.extend(dcc_item_proofs());
     all
 }
@@ -1978,6 +1998,140 @@ fn engine_node_can_split_pin() {
         },
         "the reference's own `LinkedTo.Num() == 0`",
     );
+}
+
+/// ★★★★★ R1916 — the DESCRIPTION cluster: the two hooks that make a port able
+/// to SAY what it is for.
+///
+/// Its own list for the reason the others have one — `engine_proofs` is past
+/// the length this project lets a function have — and the two belong together:
+/// the reference splits them between the node and the schema, and each half is
+/// a different claim. One is that the sentence exists at all; the other is that
+/// it is COMPOSED with what the type says, which is the half the reference's
+/// own base implementation does not do.
+fn engine_description_proofs() -> Vec<Proof> {
+    vec![
+        proof(
+            "engine",
+            "node::GetPinHoverText",
+            engine_node_get_pin_hover_text,
+        ),
+        proof(
+            "engine",
+            "schema::ConstructBasicPinTooltip",
+            engine_schema_construct_basic_pin_tooltip,
+        ),
+    ]
+}
+
+/// ★★★★★ R1916 — the engine's `GetPinHoverText`: **a port carries a sentence
+/// about what it is for.**
+///
+/// Its shape there is a **node-side hook taking a pin and filling in a string**
+/// — so the sentence is the node's opinion of one of its pins, asked for on
+/// demand and stored nowhere.
+///
+/// Here the sentence is the PORT's, which is what lets it travel with the thing
+/// it describes: a member port a split makes carries its own, and a variadic
+/// run's template carries one for every item it will produce. A node-side hook
+/// would have had to be re-asked for each of those and given the same answer by
+/// hand.
+#[test]
+fn engine_node_get_pin_hover_text() {
+    let mut chain = chain();
+    let carry = node(&mut chain.document, Op::Carry);
+
+    let said = chain
+        .document
+        .port_tooltip(ROOT, carry, Side::Input, &PortPath::root(1))
+        .expect("`Whole` is a port");
+    assert_eq!(said.says.as_deref(), Some("the pair this node carries"));
+
+    // ★ A port with nothing to add says `None` rather than an empty string.
+    // Absent and blank are different answers and collapsing them is the escape
+    // hatch this workspace refuses at the door.
+    let go = chain
+        .document
+        .port_tooltip(ROOT, carry, Side::Input, &PortPath::root(0))
+        .expect("`Go` is a port");
+    assert_eq!(go.says, None);
+
+    // ★★★★★ And a MEMBER a split made carries its own, which the reference
+    // cannot reach: its sub-pins are pins, so the node would have to recognise
+    // each one by name to answer differently for it.
+    chain
+        .document
+        .split_port(ROOT, carry, Side::Input, &PortPath::root(1))
+        .expect("`Whole` splits");
+    let left = chain
+        .document
+        .port_tooltip(ROOT, carry, Side::Input, &PortPath::root(1).then(0))
+        .expect("the left half is a port");
+    assert_eq!(left.name, "Left");
+    assert_eq!(
+        left.member_of,
+        Some(PortPath::root(1).then(0)),
+        "★ and it says it is a half",
+    );
+}
+
+/// ★★★★★ R1916 — the engine's `ConstructBasicPinTooltip`: **the sentence is
+/// composed with what the TYPE says.**
+///
+/// ⚠ This is where the reference is wrong, measured this round rather than
+/// assumed. It is a **schema-side hook taking a pin, a description GIVEN TO IT,
+/// and a string to fill in** — so the description arrives from outside, with
+/// nothing in the model saying where from — and its base implementation is one
+/// line that hands that description straight back unchanged, while the comment
+/// directly above it promises the hook "tacks on any other data important to
+/// the schema (things like the pin's type, etc.)".
+///
+/// ⇒ the composition the documentation describes does not happen, and there is
+/// no one place it could be checked from.
+///
+/// Here `Document::port_tooltip` IS that place, and this is the check.
+#[test]
+fn engine_schema_construct_basic_pin_tooltip() {
+    let mut chain = chain();
+    let carry = node(&mut chain.document, Op::Carry);
+
+    let said = chain
+        .document
+        .port_tooltip(ROOT, carry, Side::Input, &PortPath::root(1))
+        .expect("`Whole` is a port");
+    assert_eq!(
+        said.carries.as_deref(),
+        Some("two numbers written `left|right`"),
+        "★ the TYPE's half is present, which is the half the reference's base \
+         implementation drops",
+    );
+
+    // ★★★★★ BOTH halves reach the rendering, and the rendering is DERIVED from
+    // the pieces rather than stored beside them — so a consumer reading the
+    // fields and a consumer reading the sentence cannot disagree.
+    let sentence = said.sentence();
+    assert!(sentence.contains("two numbers written"), "{sentence}");
+    assert!(
+        sentence.contains("the pair this node carries"),
+        "{sentence}"
+    );
+    assert!(sentence.contains("Whole"), "{sentence}");
+
+    // ★ And the facts the reference's single string loses: which way it faces,
+    // how many links it may hold, and whether anything is on it.
+    assert_eq!(said.side, Side::Input);
+    assert_eq!(said.multiplicity, Multiplicity::One);
+    assert!(!said.wired);
+    assert!(sentence.contains("accepts one"), "{sentence}");
+
+    // ★ A type that says nothing composes to a sentence that says nothing
+    // about the type — not to one with a hole in it.
+    let loose = chain
+        .document
+        .port_tooltip(ROOT, carry, Side::Input, &PortPath::root(2))
+        .expect("`Loose` is a port");
+    assert_eq!(loose.carries, None);
+    assert!(!loose.sentence().contains("  "), "{:?}", loose.sentence());
 }
 
 /// ★★★★★ R1914 — the engine's `SplitPin`: **a composite value port becomes one

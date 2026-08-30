@@ -374,6 +374,33 @@ pub struct Port<T, V> {
     /// whole extension point.
     #[serde(default = "yes")]
     pub passthrough: bool,
+    /// ★★★★★ R1916 — **what this port is FOR**, in a sentence, or `None` when
+    /// its name is the whole of what can be said.
+    ///
+    /// # What forced it, measured in the reference this round
+    ///
+    /// The reference has two hooks here and neither of them OWNS the sentence.
+    /// A node answers `GetPinHoverText(Pin, out HoverText)`, and a schema
+    /// answers `ConstructBasicPinTooltip(Pin, PinDescription, out Tooltip)` —
+    /// note the second argument: **the description arrives from outside**, and
+    /// nothing in the model says where it came from. Read to the end, the base
+    /// schema's implementation is one line:
+    ///
+    /// ```text
+    /// TooltipOut = PinDescription.ToString();
+    /// ```
+    ///
+    /// while its own comment promises it "tacks on any other data important to
+    /// the schema (things like the pin's type, etc.)". ⇒ **the composition the
+    /// documentation describes does not happen by default**, and the sentence
+    /// it composes has no home.
+    ///
+    /// Here the sentence is the PORT's, so it travels with the thing it
+    /// describes — a member port a split makes carries its own, a variadic
+    /// run's template carries one for every item it produces, and
+    /// [`Document::port_tooltip`] is the one place the composition happens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 /// `serde` needs a function to default a `bool` to `true`.
@@ -388,7 +415,15 @@ impl<T, V> Port<T, V> {
             name: name.into(),
             flow: Flow::Value { ty, default: None },
             passthrough: true,
+            description: None,
         }
+    }
+
+    /// ★ R1916 — the sentence this port carries about itself.
+    #[must_use]
+    pub fn describing(mut self, sentence: impl Into<String>) -> Self {
+        self.description = Some(sentence.into());
+        self
     }
 
     /// A **control** port with a name (R1599).
@@ -402,6 +437,7 @@ impl<T, V> Port<T, V> {
             name: name.into(),
             flow: Flow::Control,
             passthrough: true,
+            description: None,
         }
     }
 
@@ -724,6 +760,28 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
     fn composition(ty: &Self::Type) -> Composition<Self::Type, Self::Value> {
         let _ = ty;
         Composition::Atom
+    }
+
+    /// ★★★★★ R1916 — **what a value of this type IS**, in a sentence, or
+    /// `None` when the type's own name is the whole of what can be said.
+    ///
+    /// An associated function and not a method, for
+    /// [`composition`](NodeKind::composition)'s reason: what a type is does not
+    /// depend on the node that happens to carry it, and two ports of one type
+    /// must not be able to disagree about it.
+    ///
+    /// This is the half the reference's `ConstructBasicPinTooltip` promises in
+    /// its comment — "things like the pin's type" — and does not do: read this
+    /// round, its base implementation hands the description straight back
+    /// unchanged. [`Document::port_tooltip`](crate::Document::port_tooltip)
+    /// composes this WITH the port's own sentence, in one place, so a consumer
+    /// cannot get a tooltip that knows the port and not the type.
+    ///
+    /// The default is `None`, so a taxonomy that has nothing to add writes
+    /// nothing.
+    fn type_description(ty: &Self::Type) -> Option<String> {
+        let _ = ty;
+        None
     }
 
     /// ★★★★★ R1913 — **take a composite value apart**, one slot per member of

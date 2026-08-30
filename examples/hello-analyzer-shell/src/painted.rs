@@ -8757,35 +8757,14 @@ type CanonProbe = fn(&std::rc::Rc<ShellState>) -> Option<String>;
 /// published accessibility tree for the role, not the paint for a tag spelled
 /// `tooltip`; a tag-name search would answer `absent` for a tooltip somebody
 /// named something else, which is how an absence census lies.
-const CANON_GAPS: &[(&str, CanonProbe)] = &[
-    ("affordance.tooltip", |state| {
-        use pinion_a11y::WidgetA11y;
-        let mut seen = Vec::new();
-        for seat in spec::RAIL
-            .iter()
-            .filter(|s| matches!(s.seat, spec::Seat::Page))
-        {
-            state
-                .go(seat.key)
-                .unwrap_or_else(|why| panic!("{} is open and refused: {why:?}", seat.key));
-            let _ = painted_at((WIN_W, WIN_H));
-            for node in super::AnalyzerShellView::access_node(&ScreenState::default(), None) {
-                if node.role == pinion_a11y::AriaRole::Tooltip {
-                    seen.push(format!("{} at {}", node.tag, seat.key));
-                }
-            }
-        }
-        (!seen.is_empty()).then(|| seen.join(", "))
-    }),
-    ("affordance.hover", |state| {
-        let shot = painted();
-        let (x, y) = aim(&shot, "card.packet#0.grip");
-        let before = format!("{:?}", painted_at((WIN_W, WIN_H)).1);
-        ShellOracle::move_cursor(state, x, y);
-        let after = format!("{:?}", painted_at((WIN_W, WIN_H)).1);
-        (before != after).then(|| "the frame changed under a resting cursor".to_owned())
-    }),
-];
+const CANON_GAPS: &[(&str, CanonProbe)] = &[("affordance.hover", |state| {
+    let shot = painted();
+    let (x, y) = aim(&shot, "card.packet#0.grip");
+    let before = format!("{:?}", painted_at((WIN_W, WIN_H)).1);
+    ShellOracle::move_cursor(state, x, y);
+    let after = format!("{:?}", painted_at((WIN_W, WIN_H)).1);
+    (before != after).then(|| "the frame changed under a resting cursor".to_owned())
+})];
 
 /// ★★★★★ R1886 — **every surface the canon census records as OWED is still
 /// owed**, measured on the assembled tool rather than asserted.

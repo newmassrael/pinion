@@ -217,6 +217,7 @@ mod arrange;
 mod bypass;
 mod debug;
 mod deploy;
+mod describe;
 mod eval;
 mod fragment;
 mod frame;
@@ -249,6 +250,7 @@ pub use debug::{
     PortSite, Reading, Session, Stride, Timeline, WatchError, Watches,
 };
 pub use deploy::{Bringup, Configured, Deployed, Placed, Plan, Uncarried, Unplannable};
+pub use describe::PortTooltip;
 pub use eval::{Descent, Evaluator};
 pub use fragment::{
     Crossings, Definitions, DuplicateError, ExtractError, Fragment, InsertError, Inserted, Severed,

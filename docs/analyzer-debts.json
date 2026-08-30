@@ -109,6 +109,17 @@
       ]
     },
     {
+      "name": "debt-a-described-mark-exists-only-on-the-node-lab",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links analyzer-behaviour-canon-is-the-standalone-prototype, analyzer-debt-repayment-loop, debt-canon-gui-surface-census"
+      ]
+    },
+    {
       "name": "debt-a-fragment-run-arrives-backwards-in-the-capture",
       "substituted": false,
       "blocked_by": "buildable",
@@ -308,17 +319,6 @@
       "closed_because": "rule:analyzer-debt-repayment-loop",
       "why": [
         "links debt-canon-gui-surface-census"
-      ]
-    },
-    {
-      "name": "debt-the-assembled-tool-mounts-no-tooltip",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links analyzer-behaviour-canon-is-the-standalone-prototype, debt-canon-gui-surface-census"
       ]
     },
     {

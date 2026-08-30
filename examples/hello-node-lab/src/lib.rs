@@ -68,6 +68,7 @@ use pinion_a11y::{
 };
 use pinion_core::availability::Unavailable;
 use pinion_core::containment::{band_in, line_box, line_rect_in};
+use pinion_core::describe::{Descriptions, Resting};
 use pinion_core::edge_panel::EdgePlacement;
 use pinion_core::external::{
     ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
@@ -1589,6 +1590,16 @@ struct LabState {
     /// is on the canvas.
     discovery: Signal<bool>,
     cursor: Signal<(u32, u32)>,
+    /// ★★★★★ R1916 — whether the pointer is in the window at all.
+    ///
+    /// A second signal beside `cursor` and not an `Option` inside it, because
+    /// the two answer different questions and both have callers: every gesture
+    /// that reads `cursor` wants *the last place the pointer was*, which is
+    /// still the right answer while it is away (a drag released outside the
+    /// window commits where it left), and only the hover derivations want *is
+    /// anybody pointing at anything*. Folding them would have made every
+    /// existing reader handle an absence it does not care about.
+    pointer_inside: Signal<bool>,
     drag: Signal<Option<Drag>>,
     pressed: RefCell<Option<Hit>>,
     /// ★★★★★ R1719 — the last thing this screen SAID, and what kind of thing
@@ -1947,6 +1958,10 @@ impl LabState {
             baseline: RefCell::new(None),
             discovery: Signal::new(false),
             cursor: Signal::new((0, 0)),
+            // ★ False on the opening frame, and that is the honest state: a
+            // screen nobody has pointed at yet has no pointer in it. The first
+            // `move_cursor` sets it.
+            pointer_inside: Signal::new(false),
             drag: Signal::new(None),
             pressed: RefCell::new(None),
             // ★ R1778 — silent at open, which every screen of this tool now
@@ -8857,8 +8872,73 @@ fn canvas_overlays(state: &LabState, ink: Ink) -> Vec<Scene> {
     ));
 
     children.extend(canvas_toast(state, ink));
+    children.extend(pin_tip(state, ink, rect));
 
     children
+}
+
+/// ★★★★★ R1916 — the description of the pin a reader is resting on, drawn
+/// beside it.
+///
+/// The canon puts a `title` on 25 of its controls; the assembled tool mounted
+/// none, because the framework's tooltip was its own anchor and nothing could
+/// say *that mark over there has a sentence*. `Descriptions` is that, and this
+/// is the first thing to draw what it answers.
+///
+/// ⚠ It is placed beside the DESCRIBED MARK rather than at the cursor, and that
+/// is WCAG 1.4.13's *hoverable* obligation read honestly: a body that follows
+/// the pointer is a body the pointer can never reach. The anchor is the pin's
+/// own rectangle, so the two are contiguous.
+fn pin_tip(state: &LabState, ink: Ink, canvas: Rect) -> Vec<Scene> {
+    let Some((tag, sentence)) = pin_description_shown(state) else {
+        return Vec::new();
+    };
+    let Some(anchor) =
+        pinion_core::painted::painted_regions(VIEW_TAG).and_then(|marks| marks.rect_of(&tag))
+    else {
+        return Vec::new();
+    };
+    let face = 10;
+    let pad = 6;
+    // ★ The width is DERIVED from the face and the sentence's length rather
+    // than pinned, the same shape `line_box` is for the other axis: a floor
+    // that over-reserves. Nothing in this tree measures a real font's advance,
+    // and inventing a constant here would have been a number nobody re-derives.
+    let w = (u32::try_from(sentence.chars().count()).unwrap_or(u32::MAX) * face * 6 / 10).max(60)
+        + pad * 2;
+    let h = pinion_core::containment::line_box(face) + pad;
+    // Below and to the right of the pin, clamped inside the canvas so the
+    // sentence is never drawn where nothing can read it.
+    let x = anchor
+        .x
+        .saturating_add(anchor.w)
+        .min(canvas.x + canvas.w.saturating_sub(w));
+    let y = anchor
+        .y
+        .saturating_add(anchor.h)
+        .min(canvas.y + canvas.h.saturating_sub(h));
+    let box_rect = Rect::new(x.saturating_sub(canvas.x), y.saturating_sub(canvas.y), w, h);
+    vec![
+        box_at(TOOLTIP_TAG, box_rect, ink.surface, Some(ink.outline_2), 6),
+        quiet(
+            tagged_label(
+                "lab.tip.text",
+                sentence,
+                Rect::new(
+                    box_rect.x + pad,
+                    box_rect.y + pad / 2,
+                    box_rect.w.saturating_sub(pad * 2),
+                    h.saturating_sub(pad / 2),
+                ),
+                face,
+                ink.text_2,
+            ),
+            // The box IS the description region in the accessibility tree, and
+            // the run inside it is its whole content — so the run defers to it
+            // rather than announcing the same sentence twice.
+            Silence::name_of(TOOLTIP_TAG),
+        ),
+    ]
 }
 
 /// The bullet's colour, which is what a sighted reader learns the tone from.
@@ -11791,6 +11871,18 @@ impl ExternalIntrospect for LabOracle {
                     "PointerLeave" | "PointerCancel" => {
                         state.pressed.borrow_mut().take();
                         state.drag.set(None);
+                        // ★★★★★ R1916 — and the POINTER IS GONE, which is a
+                        // different fact from where it last was. Measured this
+                        // round on the running shell: a description shown under
+                        // a resting pointer stayed on the frame after the
+                        // pointer left the window, because the cursor signal
+                        // kept the last position it had been given and nothing
+                        // said it was no longer anybody's.
+                        //
+                        // A leave is not a move to somewhere else, so a screen
+                        // that only cleared on a move would leave a sentence
+                        // hanging over a window nobody is pointing at.
+                        state.pointer_inside.set(false);
                     }
                     "WheelUp" | "WheelDown" => {
                         let now = state.zoom.get();
@@ -13721,6 +13813,8 @@ fn panel_width_under(state: &LabState, which: SidePanel, px: u32) -> u32 {
 
 fn move_cursor(state: &Rc<LabState>, px: u32, py: u32) {
     state.cursor.set((px, py));
+    // ★ R1916 — a move is what says the pointer is here again after a leave.
+    state.pointer_inside.set(true);
     let Some(drag) = state.drag.get() else {
         return;
     };
@@ -15827,7 +15921,110 @@ fn wire_access(state: &LabState) -> Vec<AccessNode> {
             }
         }
     }
+    // ★★★★★ R1916 — and the DESCRIPTION a reader is being shown, wired to the
+    // mark it belongs to through `aria-describedby`.
+    //
+    // The substrate's `describedby_region` owns the gating, so the link is
+    // present exactly while the region is — a dangling reference to an absent
+    // node is an AT defect rather than a style choice. Before this round the
+    // assembled tool published ZERO nodes of this role across six pages while
+    // the framework had carried the widget since R695; what it did not have was
+    // a way to say *that mark over there has a sentence*.
+    if let Some(shown) = pin_description_shown(state) {
+        let anchor = nodes.iter().position(|n| n.tag == shown.0);
+        let control = match anchor {
+            Some(at) => nodes.remove(at),
+            None => AccessNode::new(shown.0.clone(), AriaRole::Button),
+        };
+        nodes.extend(pinion_a11y::describedby_region(
+            control,
+            TOOLTIP_TAG,
+            AriaRole::Tooltip,
+            Some(shown.1),
+            true,
+        ));
+    }
     nodes
+}
+
+/// The tag the description region is painted and announced under.
+const TOOLTIP_TAG: &str = "lab.tip";
+
+/// ★★★★★ R1916 — the sentences this screen's PINS carry, by paint tag.
+///
+/// Built from `Document::port_tooltip`, which is the substrate's one
+/// composition of the type's half and the port's own half — so the sentence a
+/// reader sees on the canvas and the one an agent reads over the wire are the
+/// same derivation rather than two spellings.
+///
+/// ⚠ Only the ports the node actually DRAWS. A hidden port has no mark for a
+/// pointer to rest on, so describing it would put a sentence in the register
+/// that nothing can ever show — and a census counting described marks would
+/// then count marks that are not there.
+fn pin_descriptions(state: &LabState) -> Descriptions {
+    let mut described = Descriptions::new();
+    let doc = state.doc.borrow();
+    for node in state.cards() {
+        let name = state.name_of(node);
+        let Some(seen) = doc.visible_ports(ROOT, node) else {
+            continue;
+        };
+        for side in [Side::Output, Side::Input] {
+            let drawn = match side {
+                Side::Output => &seen.outputs,
+                Side::Input => &seen.inputs,
+            };
+            for (index, (path, _)) in doc.resolved_ports(ROOT, node, side).into_iter().enumerate() {
+                let index = u32::try_from(index).unwrap_or(u32::MAX);
+                if !drawn.contains(&index) {
+                    continue;
+                }
+                if let Some(tip) = doc.port_tooltip(ROOT, node, side, &path) {
+                    described.describe(
+                        format!("lab.pin.{name}.{}", pin_word(side, &path)),
+                        tip.sentence(),
+                    );
+                }
+            }
+        }
+    }
+    described
+}
+
+/// ★★★★★ R1916 — the pin description a reader is being shown right now, as
+/// `(tag, sentence)`.
+///
+/// The screen does NOT carry `hovered == tag` itself: it hands the substrate
+/// where the reader's attention is and is handed back what to show. That is the
+/// shape the debt this closes named as the thing to avoid — this tree has paid
+/// for screens hand-rolling one state before.
+fn pin_description_shown(state: &LabState) -> Option<(String, String)> {
+    let described = pin_descriptions(state);
+    let cursor = state.cursor.get();
+    // ★★★★★ Where the pointer LAST WAS is not where it IS. A description shown
+    // under a pointer that has since left the window is a sentence hanging over
+    // a window nobody is pointing at, which is the state R1916 measured on the
+    // running shell before this guard existed.
+    let hovered = match Hit::at(state, cursor.0, cursor.1) {
+        Hit::Pin { node, side, at } if state.pointer_inside.get() => Some(format!(
+            "lab.pin.{}.{}",
+            state.name_of(node),
+            pin_word(side, &at)
+        )),
+        _ => None,
+    };
+    // ★★★★★ The KEYBOARD reader's half, and it is not decoration. The behaviour
+    // canon this screen reproduces has ZERO key bindings, so reproducing it
+    // exactly is how a keyboard affordance quietly stops existing — the debt
+    // that opened this said so in as many words. The focus is the shell's, read
+    // from the substrate rather than mirrored into a field here.
+    let focused = pinion_core::focus_state::focused();
+    let shown = described.shown(&Resting {
+        hovered: hovered.as_deref(),
+        focused: focused.as_deref(),
+        dismissed: false,
+    })?;
+    Some((shown.tag.to_owned(), shown.sentence.to_owned()))
 }
 
 /// The launch gate panel and the gesture hint: the two things that float over

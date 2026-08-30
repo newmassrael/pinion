@@ -393,7 +393,10 @@ impl NodeKind for LabNode {
     /// The dial pin. Every role has one — even a store dials the router it
     /// registers with.
     fn outputs(&self) -> Vec<Port<Self::Type, Self::Value>> {
-        vec![Port::new("dial", Endpoint::Locator(self.transport))]
+        vec![
+            Port::new("dial", Endpoint::Locator(self.transport))
+                .describing("the address this node hands on to whatever it reaches"),
+        ]
     }
 
     /// **The accept pin repeats.**
@@ -411,7 +414,10 @@ impl NodeKind for LabNode {
             Side::Input if self.role.accepts() => Some(
                 Variadic::at(
                     0,
-                    vec![Port::new("accept", Endpoint::Locator(self.transport))],
+                    vec![
+                        Port::new("accept", Endpoint::Locator(self.transport))
+                            .describing("an address this node listens on"),
+                    ],
                 )
                 .at_least(1),
             ),
@@ -454,11 +460,37 @@ impl NodeKind for LabNode {
     fn composition(ty: &Self::Type) -> Composition<Self::Type, Self::Value> {
         match ty {
             Endpoint::Locator(_) => Composition::Members(vec![
-                Port::new("host", Endpoint::Host).with_default("localhost".to_owned()),
-                Port::new("service", Endpoint::Service).with_default("7447".to_owned()),
+                // ★ R1916 — each member says what IT is for. The reference's
+                // sub-pins are pins and have nowhere to carry this.
+                Port::new("host", Endpoint::Host)
+                    .with_default("localhost".to_owned())
+                    .describing("where to reach it"),
+                Port::new("service", Endpoint::Service)
+                    .with_default("7447".to_owned())
+                    .describing("which port on that host"),
             ]),
             Endpoint::Host | Endpoint::Service => Composition::Atom,
         }
+    }
+
+    /// ★★★★★ R1916 — what a value of this socket type IS.
+    ///
+    /// The half the reference's `ConstructBasicPinTooltip` promises in its
+    /// comment ("things like the pin's type") and does not do — read this
+    /// round, its base implementation hands the description straight back
+    /// unchanged. Here it is the taxonomy's, so every port carrying the type
+    /// gets it and none of them can disagree about it.
+    fn type_description(ty: &Self::Type) -> Option<String> {
+        Some(match ty {
+            Endpoint::Locator(transport) => {
+                format!(
+                    "a {} address, written `scheme/host:service`",
+                    transport.word()
+                )
+            }
+            Endpoint::Host => "a host name or address".to_owned(),
+            Endpoint::Service => "a service port number".to_owned(),
+        })
     }
 
     /// ★★★★★ R1914 — take a locator apart into its host and its service.

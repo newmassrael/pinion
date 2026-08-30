@@ -41,6 +41,7 @@ pub mod containment;
 pub mod contrast;
 pub mod crossing;
 pub mod derivation;
+pub mod describe;
 pub mod detach;
 pub mod directory;
 pub mod display;
