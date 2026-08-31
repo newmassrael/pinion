@@ -122,11 +122,23 @@ impl<K: NodeKind> Document<K> {
                 // a validator that accepts everything, carrying the same
                 // copy-pasted remark about duplicates being allowed. A point on
                 // a wire is not somewhere a value is addressed from.
-                NodeBody::Frame | NodeBody::Reroute => Naming::Free,
+                // ★ R1935 — an ECHO joins them, and a BEACON does not, which
+                // is the whole distinction between the two halves: a beacon's
+                // name is the address a value crosses the canvas to, so two of
+                // them answering to one name would make that address
+                // ambiguous. An echo has no name of its own at all — it shows
+                // the beacon's — so there is nothing here to be unique.
+                NodeBody::Frame | NodeBody::Reroute | NodeBody::Echo(_) => Naming::Free,
                 // An interface end, a group instance and a delay are all
                 // addressed by name somewhere — the tree they belong to is the
-                // scope, which is the supplied answer.
-                NodeBody::Group(_) | NodeBody::Interface(_) | NodeBody::Delay(_) => Naming::InTree,
+                // scope, which is the supplied answer. R1935's BEACON shares
+                // the arm because it shares the answer, and it is named first
+                // because it is the one whose name is the *whole point*: a
+                // value crosses the canvas TO it.
+                NodeBody::Beacon
+                | NodeBody::Group(_)
+                | NodeBody::Interface(_)
+                | NodeBody::Delay(_) => Naming::InTree,
             },
             None => Naming::InTree,
         }

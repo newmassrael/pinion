@@ -893,6 +893,28 @@ pub enum Violation {
         /// The link.
         link: LinkId,
     },
+    /// ★★★★★ R1935 — a far end of a name whose named endpoint is **gone**.
+    ///
+    /// A [`NodeBody::Echo`] holds the id of the [`NodeBody::Beacon`] it shows,
+    /// and deleting
+    /// that beacon is an ordinary edit that knows nothing about echoes — so the
+    /// state is representable and this is what makes it *reported*.
+    ///
+    /// ★ The reference leaves the same question to a predicate an editor may
+    /// call and nothing obliges anyone to; a fact that is only true when
+    /// someone asks is the shape R1888 recorded. Here it is in the standing
+    /// check, so a document says it about itself.
+    ///
+    /// Its own arm rather than a [`Self::DanglingLink`] because the repairs are
+    /// different: a dangling link is removed, and this is repaired by pointing
+    /// the echo at a beacon or by removing it — and a screen offering the wrong
+    /// one of those is offering to delete work.
+    DanglingEcho {
+        /// The tree it is in.
+        tree: TreeId,
+        /// The far end left naming nothing.
+        node: NodeId,
+    },
     /// A socket holds more links than its [`Multiplicity`] allows (R1599).
     ///
     /// Which sockets those are is not a fixed side: a **value input** takes at
@@ -1068,12 +1090,20 @@ pub enum Violation {
 /// not, so a consumer reporting one reached for `{:?}` and put Rust syntax in
 /// front of a person. It is the type most likely to be shown to one, because
 /// the documents that break invariants are the ones that came from a file.
+/// The word a person reads for a side of a node's signature.
+///
+/// Lifted out of [`Violation`]'s `Display` at R1935 rather than `allow`-ing the
+/// length lint the new arm tipped over: a sentence fragment two arms share is a
+/// thing with a name, and the lint asking for it was right.
+const fn side_word(side: Side) -> &'static str {
+    match side {
+        Side::Input => "input",
+        Side::Output => "output",
+    }
+}
+
 impl fmt::Display for Violation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let side = |side: Side| match side {
-            Side::Input => "input",
-            Side::Output => "output",
-        };
         match self {
             Self::DanglingLink { tree, link } => {
                 write!(
@@ -1081,6 +1111,14 @@ impl fmt::Display for Violation {
                     "link {link} in tree {tree} names a socket that is not there"
                 )
             }
+            // R1935 — says which node and what a repair would be, because the
+            // two repairs are opposite and a reader who cannot tell them apart
+            // may delete work. R1924's rule: the sentence a person reads is the
+            // one that has to be right.
+            Self::DanglingEcho { tree, node } => write!(
+                f,
+                "node {node} in tree {tree} shows a name whose endpoint is not there"
+            ),
             Self::Overlinked {
                 tree,
                 socket,
@@ -1088,7 +1126,7 @@ impl fmt::Display for Violation {
             } => write!(
                 f,
                 "{} socket {socket} in tree {tree} holds more links than it may",
-                side(*which)
+                side_word(*which)
             ),
             Self::TypeMismatch { tree, link } => write!(
                 f,
@@ -1107,7 +1145,7 @@ impl fmt::Display for Violation {
                 "link {link} in tree {tree} joins two nodes that may not be wired: {} \
                  (change its {})",
                 refusal.because,
-                side(refusal.end)
+                side_word(refusal.end)
             ),
             Self::Cycle { tree, nodes } => write!(
                 f,
@@ -1168,7 +1206,7 @@ impl fmt::Display for Violation {
             } => write!(
                 f,
                 "node {node} in tree {tree} has more {} items than its kind allows",
-                side(*which)
+                side_word(*which)
             ),
         }
     }
@@ -1316,6 +1354,26 @@ impl<K: NodeKind> Document<K> {
         }
     }
 
+    /// ★★★★★ R1935 — the breaches a walk over LINKS cannot see, because they
+    /// are about a name.
+    ///
+    /// A far end reaches its named endpoint by name, so deleting the endpoint
+    /// leaves nothing for a link check to trip over. The reading is
+    /// [`Document::dangling_echoes`], called rather than re-implemented, so the
+    /// diagnosis and the naming module cannot drift apart.
+    ///
+    /// Its own function because [`validate`](Self::validate) was already at its
+    /// length limit, and because *what has no link to be found by* is a
+    /// legitimate section of that check rather than a line inside the link
+    /// loop.
+    #[must_use]
+    fn naming_breaches(&self, tree: TreeId) -> Vec<Violation> {
+        self.dangling_echoes(tree)
+            .into_iter()
+            .map(|node| Violation::DanglingEcho { tree, node })
+            .collect()
+    }
+
     /// Every way this document breaks its own rules, in tree order.
     ///
     /// Empty for any document built through this crate's API.
@@ -1323,6 +1381,8 @@ impl<K: NodeKind> Document<K> {
     pub fn validate(&self) -> Vec<Violation> {
         let mut found = Vec::new();
         for tree in self.trees() {
+            // ★ R1935 — before the links, because this defect has none.
+            found.extend(self.naming_breaches(tree.id));
             let mut fed: BTreeMap<(Socket, Side), usize> = BTreeMap::new();
             for link in tree.links() {
                 let (Some(source), Some(sink)) = (

@@ -18,7 +18,7 @@
 //!   it is there "to prevent `PropagatePinType` from infinitely recursing if
 //!   you manage to create a loop of knots".
 //!
-//! Deriving it makes both unnecessary: [`Document::reroute_flow`] answers from
+//! Deriving it makes both unnecessary: [`Document::passing_flow`] answers from
 //! the links that exist *now*, so there is no stored copy to disagree with them
 //! and no pass to forget to run. The recursion guard becomes a visited set,
 //! which is a property of the walk rather than a field on the node.
@@ -171,23 +171,29 @@ impl std::fmt::Display for RerouteError {
 impl std::error::Error for RerouteError {}
 
 impl<K: NodeKind> Document<K> {
-    /// ★★★★★ R1934 — **what a reroute's two ports carry**, derived from the
-    /// chain it belongs to.
+    /// ★★★★★ R1934, widened R1935 — **what a transparent node's ports carry**,
+    /// derived from the chain it belongs to.
     ///
     /// [`Flow::Undecided`] when nothing in the chain touches a decided port.
     /// See the module header for the rule and for what each reference does
     /// instead.
     ///
-    /// Answers `Undecided` for a node that is not a reroute as well — asking
-    /// what a chain carries when there is no chain has no better answer, and
-    /// every caller in this crate reaches it through the
-    /// [`NodeBody::Reroute`] arm of the signature.
+    /// Answers `Undecided` for a node that is not a transparent one as well —
+    /// asking what a chain carries when there is no chain has no better answer,
+    /// and every caller in this crate reaches it through the signature.
+    ///
+    /// ★ R1935 renamed this from `reroute_flow`, because the chain stopped
+    /// being made only of reroutes: a [`NodeBody::Beacon`] and its
+    /// [`NodeBody::Echo`]s are on it too, joined by name rather than by link
+    /// (see `passing_chain`). A name that had become
+    /// half-false is worth the rename — this crate has paid for the other
+    /// choice repeatedly.
     #[must_use]
-    pub fn reroute_flow(&self, tree: TreeId, node: NodeId) -> Flow<K::Type, K::Value> {
+    pub fn passing_flow(&self, tree: TreeId, node: NodeId) -> Flow<K::Type, K::Value> {
         let Some(host) = self.tree(tree) else {
             return Flow::Undecided;
         };
-        let chain = self.reroute_chain(tree, node);
+        let chain = self.passing_chain(tree, node);
         // Ordered maps, so the winner is the least address rather than
         // whichever link happens to be earliest in the tree's link list. That
         // is the DCC's `RerouteTargetPriority` rule over this crate's own
@@ -219,27 +225,53 @@ impl<K: NodeKind> Document<K> {
             .map_or(Flow::Undecided, resting)
     }
 
-    /// Every reroute reachable from `node` by links that stay among reroutes,
+    /// Every transparent node reachable from `node` without leaving them,
     /// `node` included when it is one.
     ///
     /// The visited set is what the engine needs a recursion guard field for: a
-    /// loop of reroutes terminates here because a node already in the set is
-    /// not walked again.
-    fn reroute_chain(&self, tree: TreeId, node: NodeId) -> BTreeSet<NodeId> {
+    /// loop of them terminates here because a node already in the set is not
+    /// walked again.
+    ///
+    /// # ★★★★★ R1935 — a chain is joined by LINKS *and* by NAMES
+    ///
+    /// R1934 walked links between reroutes. A [`NodeBody::Beacon`] and its
+    /// [`NodeBody::Echo`]s are transparent in exactly the same way and are
+    /// joined by neither a link nor a wire — the whole point of them is that a
+    /// value crosses the canvas with no edge — so the walk steps across that
+    /// naming too.
+    ///
+    /// ⚠ **This is not a nicety, it is what keeps the derivation finite.**
+    /// Were the two kinds of chain separate, a beacon wired to a reroute would
+    /// make each ask the other for its flow: `passing_flow(reroute)` reads the
+    /// beacon's port, which resolves the beacon's signature, which derives the
+    /// beacon's flow, which reads the reroute's port… One chain covering both
+    /// makes that pair a single connected component with a single answer, so
+    /// the recursion has nowhere to happen. It is the same argument R1934 made
+    /// for deriving rather than storing, one level up.
+    fn passing_chain(&self, tree: TreeId, node: NodeId) -> BTreeSet<NodeId> {
         let mut chain = BTreeSet::new();
         let Some(host) = self.tree(tree) else {
             return chain;
         };
-        if !matches!(host.node(node).map(|n| &n.body), Some(NodeBody::Reroute)) {
+        let transparent = |id: NodeId| {
+            matches!(
+                host.node(id).map(|n| &n.body),
+                Some(NodeBody::Reroute | NodeBody::Beacon | NodeBody::Echo(_))
+            )
+        };
+        if !transparent(node) {
             return chain;
         }
-        let is_reroute =
-            |id: NodeId| matches!(host.node(id).map(|n| &n.body), Some(NodeBody::Reroute));
         let mut pending = vec![node];
         while let Some(here) = pending.pop() {
             if !chain.insert(here) {
                 continue;
             }
+            let step_to = |next: NodeId, chain: &BTreeSet<NodeId>, pending: &mut Vec<NodeId>| {
+                if transparent(next) && !chain.contains(&next) {
+                    pending.push(next);
+                }
+            };
             for link in host.links() {
                 let step = if link.from.node == here {
                     link.to.node
@@ -248,9 +280,21 @@ impl<K: NodeKind> Document<K> {
                 } else {
                     continue;
                 };
-                if is_reroute(step) && !chain.contains(&step) {
-                    pending.push(step);
+                step_to(step, &chain, &mut pending);
+            }
+            // The naming steps, both directions: an echo reaches its beacon,
+            // and a beacon reaches every echo of it. A dangling echo names a
+            // node that is gone and simply steps nowhere.
+            match host.node(here).map(|n| &n.body) {
+                Some(NodeBody::Echo(beacon)) => step_to(*beacon, &chain, &mut pending),
+                Some(NodeBody::Beacon) => {
+                    for other in host.nodes() {
+                        if matches!(other.body, NodeBody::Echo(named) if named == here) {
+                            step_to(other.id, &chain, &mut pending);
+                        }
+                    }
                 }
+                _ => {}
             }
         }
         chain
@@ -273,13 +317,34 @@ impl<K: NodeKind> Document<K> {
             .map(|port| port.flow.clone())
     }
 
-    /// ★★★★★ R1934 — **the signature of a reroute**: one port in, one out, both
-    /// carrying what [`reroute_flow`](Self::reroute_flow) derived.
-    pub(crate) fn reroute_signature(&self, tree: TreeId, node: NodeId) -> Signature<K> {
-        let flow = self.reroute_flow(tree, node);
+    /// ★★★★★ R1934 — **the signature of a node a wire passes through**: one
+    /// port in, one out, both carrying what
+    /// [`passing_flow`](Self::passing_flow) derived.
+    ///
+    /// R1935 — a [`NodeBody::Beacon`] has exactly this shape too, and for the
+    /// same reason, so it reads the same derivation rather than a second copy
+    /// of it. An [`NodeBody::Echo`] does NOT: it has no way in, which is what
+    /// makes the value's crossing edgeless, so it gets
+    /// [`echo_signature`](Self::echo_signature) — the OUTPUT half of this one.
+    pub(crate) fn passing_signature(&self, tree: TreeId, node: NodeId) -> Signature<K> {
+        let flow = self.passing_flow(tree, node);
         Signature {
             inputs: vec![Port::with_flow("In", flow.clone())],
             outputs: vec![Port::with_flow("Out", flow)],
+        }
+    }
+
+    /// ★★★★★ R1935 — **the signature of an echo**: one output, nothing in.
+    ///
+    /// The output carries what the whole chain carries, which is the beacon's
+    /// answer reached by name. Deliberately not `passing_signature` with the
+    /// input dropped afterwards: the shape difference IS the capability, and a
+    /// caller that built one and trimmed it would be one edit away from an
+    /// echo a wire could be run into.
+    pub(crate) fn echo_signature(&self, tree: TreeId, node: NodeId) -> Signature<K> {
+        Signature {
+            inputs: Vec::new(),
+            outputs: vec![Port::with_flow("Out", self.passing_flow(tree, node))],
         }
     }
 
@@ -299,9 +364,29 @@ impl<K: NodeKind> Document<K> {
     pub fn passing(&self, tree: TreeId, node: NodeId) -> Option<Passing> {
         let held = self.tree(tree)?.node(node)?;
         match &held.body {
-            NodeBody::Reroute => Some(Passing::ENDS),
+            // R1935 — a beacon has the same two ends as a bend and is drawn as
+            // an ordinary card; what makes it different is that its OTHER end
+            // is reachable by name, which is not what this question asks.
+            NodeBody::Reroute | NodeBody::Beacon => Some(Passing::ENDS),
+            // ⚠ And an echo answers `None` even though it is on the same chain
+            // and carries the same flow. That is not an oversight: this
+            // question is "which two PORTS are the way in and the way out", and
+            // an echo has no way in — the value reaches it by name. A caller
+            // handed `Passing::ENDS` here would index an input port that is not
+            // there. Being on a chain and having two ends are two facts, and
+            // R1935 is where they stopped coinciding.
+            // ★ Enumerated rather than swept into a wildcard, and clippy asking
+            // for the wildcard back is what made the choice explicit: an echo's
+            // `None` is a DECISION this round had to make, and a body that
+            // answers it by falling through is a body nobody decided about.
+            // Listing every arm also puts the compiler back in the position of
+            // asking the next round what a new body answers here.
+            NodeBody::Echo(_)
+            | NodeBody::Frame
+            | NodeBody::Group(_)
+            | NodeBody::Interface(_)
+            | NodeBody::Delay(_) => None,
             NodeBody::Kind(kind) => kind.passing(),
-            _ => None,
         }
     }
 

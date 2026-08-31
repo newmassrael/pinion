@@ -1418,7 +1418,7 @@ pub enum NodeBody<K: NodeKind> {
     ///
     /// [`Delay`](Self::Delay) holds the type it stores; this holds nothing,
     /// because **its type is derived rather than authored** —
-    /// [`Document::reroute_flow`] reads it off the chain the reroute belongs
+    /// [`Document::passing_flow`] reads it off the chain the reroute belongs
     /// to. Storing it would be a second copy of a fact the links already
     /// answer, free to disagree with them after any edit.
     ///
@@ -1456,6 +1456,66 @@ pub enum NodeBody<K: NodeKind> {
     /// `IsNodeSafeToIgnore() == true`, and an `ExpandNode` that splices its two
     /// pin nets together and deletes itself before compilation.
     Reroute,
+    /// ★★★★★ R1935 — **a named endpoint**: what arrives here is reachable from
+    /// anywhere in this tree by NAME, so a value crosses the canvas with no
+    /// edge at all.
+    ///
+    /// The other half is [`Echo`](Self::Echo). Together they are the engine's
+    /// named-reroute pair, and the reason they are two arms rather than one
+    /// with a role field is that their **shapes differ**: this one takes a wire
+    /// in and gives one out, exactly like [`Reroute`](Self::Reroute), while an
+    /// echo has no way in at all.
+    ///
+    /// # Why this is not a [`Reroute`](Self::Reroute) with a name
+    ///
+    /// A reroute is [`Naming::Free`](crate::Naming::Free) *because* a point on
+    /// a wire is not an address; this one is an address, and that is the whole
+    /// of what it is for. So it answers
+    /// [`Naming::InTree`](crate::Naming::InTree) and the existing uniqueness
+    /// axis (R1932) is what keeps two of them from answering to one name.
+    ///
+    /// ★ That is one place this crate is stronger than the reference, and it
+    /// is measured rather than argued: there a clash is repaired by **silently
+    /// renaming** — a private routine walks the tree appending an index until
+    /// the name is free — so the name a person typed is not necessarily the
+    /// name they get, and nothing tells them. Here the clash is refused and the
+    /// refusal says which node already answers to it.
+    ///
+    /// # Identity is not the name
+    ///
+    /// An [`Echo`](Self::Echo) names this node by [`NodeId`], not by string.
+    /// The reference does the same and says why in a field comment — it keeps a
+    /// stable id beside the name "to support copy across graphs" — so the name
+    /// is what a person reads and the id is what the graph resolves. Renaming a
+    /// beacon therefore cannot orphan its echoes, which is a property, not an
+    /// accident.
+    Beacon,
+    /// ★★★★★ R1935 — **the far end of a name**: this node's output is whatever
+    /// the [`Beacon`](Self::Beacon) it names carries, and **no wire runs
+    /// between them**.
+    ///
+    /// It has one port, an output, and no way in — which is the shape that
+    /// makes the value's crossing edgeless. The reference's own code says the
+    /// same thing twice, in a comment beside the one pin it indexes.
+    ///
+    /// # It is still a passing node
+    ///
+    /// Both halves derive their flow from the beacon's input, so a beacon and
+    /// every echo of it carry ONE flow — the chain rule of
+    /// [`Reroute`](Self::Reroute) with the chain no longer made of links. The
+    /// reference reaches this by deriving both from the same base class, whose
+    /// only job is finding the declaration by id.
+    ///
+    /// # A dangling echo is representable, and is therefore diagnosed
+    ///
+    /// Deleting a beacon leaves its echoes naming a node that is gone. The type
+    /// cannot forbid it — the beacon is deleted by a verb that knows nothing of
+    /// echoes — so this crate does the next strongest thing and makes
+    /// [`Document::validate`] report it. ★ The reference leaves it to a
+    /// predicate an editor may call (`IsDeclarationValid`), which is a question
+    /// nobody is obliged to ask; a fact that is only true when someone asks is
+    /// the shape R1888 recorded.
+    Echo(NodeId),
 }
 
 /// Which side of a node's own signature a port sits on (R1594).
@@ -1928,6 +1988,16 @@ impl<K: NodeKind> Node<K> {
             // DCC's node type is named "Reroute" and the engine's knot node
             // titles itself "Reroute Node".
             NodeBody::Reroute => "Reroute".to_owned(),
+            // R1935 — a beacon almost always HAS a label, because its name is
+            // its whole purpose; this is what an unnamed one shows, and it
+            // reads as the invitation it is.
+            NodeBody::Beacon => "Named".to_owned(),
+            // ⚠ An echo shows the beacon's name and not its own, which no arm
+            // here can do — `display_name` is a method on the node and an echo
+            // has to reach the document. `Document::echo_display_name` is the
+            // reading that resolves it; this is the fallback for a dangling
+            // one, and it says so rather than showing a blank card.
+            NodeBody::Echo(_) => "Echo".to_owned(),
         }
     }
 
@@ -2474,8 +2544,15 @@ impl<K: NodeKind> Document<K> {
             // R1934 — one in, one out, both carrying what the chain this
             // reroute belongs to decided. Derived and not authored, which is
             // why this arm needs the whole document where `Delay` needed only
-            // the body: see [`Document::reroute_flow`].
-            NodeBody::Reroute => self.reroute_signature(tree, node.id),
+            // the body: see [`Document::passing_flow`].
+            //
+            // R1935 — a beacon is the same shape for the same reason, and
+            // shares the arm rather than copying the derivation.
+            NodeBody::Reroute | NodeBody::Beacon => self.passing_signature(tree, node.id),
+            // R1935 — an echo has NO input: the value reaches it by name, and
+            // an input port would be a place to wire one, which is precisely
+            // the edge this body exists to do without.
+            NodeBody::Echo(_) => self.echo_signature(tree, node.id),
         })
     }
 
@@ -3762,12 +3839,33 @@ impl<K: NodeKind> Document<K> {
             if self.cuts_dependency(tree, current) {
                 continue;
             }
-            for link in host
+            // ★★★★★ R1935 — the steps out of `current` are its outgoing DATA
+            // links **and**, when it is a beacon, every echo of it. A value
+            // reaching a named endpoint reaches every far end of that name, and
+            // it does so with no edge — which is the whole capability, and
+            // therefore exactly the dependency a walk over links alone cannot
+            // see.
+            //
+            // Without this step `connect` accepts a wire closing a ring through
+            // a name: beacon -> echo -> … -> beacon. That is R1934's ring of
+            // reroutes with the ring drawn in the one ink this walk was blind
+            // to, and its lesson applies unchanged — a cycle that becomes real
+            // later is the state the refusal exists to make unrepresentable.
+            let named: Vec<NodeId> = match host.node(current).map(|held| &held.body) {
+                Some(NodeBody::Beacon) => host
+                    .nodes()
+                    .filter(|held| matches!(held.body, NodeBody::Echo(end) if end == current))
+                    .map(|held| held.id)
+                    .collect(),
+                _ => Vec::new(),
+            };
+            let steps = host
                 .links
                 .iter()
                 .filter(|l| l.from.node == current && !self.link_is_control(tree, l))
-            {
-                let next = link.to.node;
+                .map(|l| l.to.node)
+                .chain(named);
+            for next in steps {
                 if next == goal {
                     let mut path = vec![goal, current];
                     let mut cursor = current;

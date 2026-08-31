@@ -708,11 +708,15 @@ impl<K: NodeKind> Document<K> {
             NodeBody::Kind(kind) => kind.variadic(side).filter(|run| !run.is_empty()),
             // R1934 — a reroute's two ports are derived from the chain it sits
             // on, so there is no run for an item to be added to.
+            // R1935 — a beacon and an echo derive their ports from the same
+            // chain, so neither has a run either.
             NodeBody::Group(_)
             | NodeBody::Interface(_)
             | NodeBody::Frame
             | NodeBody::Delay(_)
-            | NodeBody::Reroute => None,
+            | NodeBody::Reroute
+            | NodeBody::Beacon
+            | NodeBody::Echo(_) => None,
         }
     }
 

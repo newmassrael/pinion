@@ -9,16 +9,16 @@ use pinion_graph::Sugiyama;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Admission, AdoptError, Align, Appearance, Archive, Axis, BreakError, Breakpoints, Bringup,
-    Camera, Carried, Carrying, Command, Composition, ConnectError, Control, Conversion, Crossings,
-    Definitions, Direction, Discovery, Distribute, Document, Dropped, DuplicateError, Edge,
-    EditError, EditPath, Extent, ExtractError, Fit, Flow, ForceError, Fragment, GroupError, Grow,
-    Halt, InsertError, Instance, InterfaceSide, Item, ItemError, Layered, LinkId, LinkLayer,
+    Admission, AdoptError, Align, Appearance, Archive, Axis, BeaconError, BreakError, Breakpoints,
+    Bringup, Camera, Carried, Carrying, Command, Composition, ConnectError, Control, Conversion,
+    Crossings, Definitions, Direction, Discovery, Distribute, Document, Dropped, DuplicateError,
+    Edge, EditError, EditPath, Extent, ExtractError, Fit, Flow, ForceError, Fragment, GroupError,
+    Grow, Halt, InsertError, Instance, InterfaceSide, Item, ItemError, Layered, LinkId, LinkLayer,
     Machine, Margin, Multiplicity, Naming, NestError, Node, NodeBody, NodeId, NodeKind, NodeSite,
-    ObserveError, Occurrence, Organic, Orphaned, ParentError, PathError, Port, PortPath, PortRef,
-    PortSite, PortValueError, ROOT, Reach, Relabelled, RelinkError, RepartitionError, Route,
-    RunError, SectionId, SelectError, Session, Severed, Sharing, Side, Socket, Stack, Standing,
-    Stop, Straighten, Stride, SwitchRefusal, Tick, Timeline, Tint, TreeId, UngroupError,
+    ObserveError, Occurrence, Organic, Orphaned, ParentError, Passing, PathError, Port, PortPath,
+    PortRef, PortSite, PortValueError, ROOT, Reach, Relabelled, RelinkError, RepartitionError,
+    Route, RunError, SectionId, SelectError, Session, Severed, Sharing, Side, Socket, Stack,
+    Standing, Stop, Straighten, Stride, SwitchRefusal, Tick, Timeline, Tint, TreeId, UngroupError,
     Unreadable, Violation, WatchError, Watches, ZoomRange, crossing,
 };
 
@@ -16299,5 +16299,514 @@ fn r1934_an_undecided_port_wears_the_taxonomys_resting_colour() {
             .expect("a bend has one port each side")
             .is_silent(),
         "and the silence survives the derivation too"
+    );
+}
+
+/// ★★★★★ R1935 — **a value crosses the canvas with no edge**, which is the
+/// whole of what a named endpoint is for.
+///
+/// The assertion that makes it that claim rather than a weaker one is the link
+/// COUNT: the value arrives at the far end while the document holds exactly the
+/// one wire that feeds the endpoint. A test that only checked the value would
+/// pass just as well over an ordinary bend.
+#[test]
+fn r1935_a_value_crosses_the_canvas_with_no_edge() {
+    let mut doc: Document<LOp> = Document::new("lattice");
+    let source = doc
+        .add_node(ROOT, NodeBody::Kind(LOp::Level(7)), 0, 0)
+        .unwrap();
+    let beacon = doc.add_node(ROOT, NodeBody::Beacon, 100, 0).unwrap();
+    let echo = doc.add_node(ROOT, NodeBody::Echo(beacon), 400, 0).unwrap();
+    doc.connect(ROOT, Socket::new(source, 0), Socket::new(beacon, 0))
+        .expect("a scalar reaches an undecided end");
+
+    assert_eq!(
+        doc.evaluate(ROOT, echo),
+        vec![Some(LVal::Scalar(7))],
+        "★ the far end carries what arrived at the endpoint"
+    );
+    assert_eq!(
+        doc.tree(ROOT).unwrap().links().len(),
+        1,
+        "★★★★★ and it did so over ONE wire — the one feeding the endpoint. \
+         Nothing joins the endpoint to its far end, which is the capability"
+    );
+    // And the flow crossed too: the far end's only port carries the source's
+    // type, derived rather than stored.
+    assert_eq!(
+        doc.signature(ROOT, echo).unwrap().outputs[0]
+            .flow
+            .value_type(),
+        Some(&LTy::Scalar),
+    );
+    assert!(
+        doc.signature(ROOT, echo).unwrap().inputs.is_empty(),
+        "★ and a far end has no way IN — an input port would be a place to wire \
+         one, which is the edge this body exists to do without"
+    );
+}
+
+/// ★★★★★ R1935 — **the two directions answer different SHAPES**, which is what
+/// the census sentence "the other direction of a named reroute" hid.
+///
+/// Measured on the reference: from a far end the answer is one node and its
+/// operator moves the selection there and fits the view; from the endpoint the
+/// answer is many and its operator *clears* the selection and hands the list to
+/// a search panel. Two different affordances, so two different types.
+#[test]
+fn r1935_the_two_directions_answer_different_shapes() {
+    let mut doc: Document<LOp> = Document::new("lattice");
+    let beacon = doc.add_node(ROOT, NodeBody::Beacon, 0, 0).unwrap();
+    let first = doc.add_node(ROOT, NodeBody::Echo(beacon), 100, 0).unwrap();
+    let second = doc.add_node(ROOT, NodeBody::Echo(beacon), 100, 50).unwrap();
+
+    assert_eq!(doc.beacon_of(ROOT, first), Some(beacon));
+    assert_eq!(doc.beacon_of(ROOT, second), Some(beacon));
+    assert_eq!(
+        doc.echoes_of(ROOT, beacon),
+        vec![first, second],
+        "★ many, ascending"
+    );
+    // The endpoint is not a far end and a far end is not an endpoint, and each
+    // question answers its own emptiness rather than the other's answer.
+    assert_eq!(doc.beacon_of(ROOT, beacon), None);
+    assert!(doc.echoes_of(ROOT, first).is_empty());
+    // A beacon nothing names yet is an ordinary state, not a defect.
+    let lonely = doc.add_node(ROOT, NodeBody::Beacon, 0, 200).unwrap();
+    assert!(doc.echoes_of(ROOT, lonely).is_empty());
+    assert!(doc.validate().is_empty());
+}
+
+/// ★★★★★ R1935 — **spreading a bend is a FAN-OUT**: one far end per outgoing
+/// wire, stacked in the order of the nodes they feed.
+///
+/// All four measured behaviours of the reference's operator in one walk: one
+/// far end per wire, the wires **kept and re-pointed** rather than remade, the
+/// stack ordered by the drawn Y of each consumer, and the endpoint one offset
+/// to the other side.
+#[test]
+fn r1935_spreading_a_bend_makes_one_far_end_per_wire() {
+    let mut doc: Document<LOp> = Document::new("lattice");
+    let source = doc
+        .add_node(ROOT, NodeBody::Kind(LOp::Level(3)), 0, 0)
+        .unwrap();
+    let bend = doc.add_node(ROOT, NodeBody::Reroute, 200, 100).unwrap();
+    // Two consumers, and the LOWER one is added FIRST — so an answer that came
+    // out in creation order would be the other way round from the answer that
+    // came out in drawn order, and the assertion can tell them apart.
+    let lower = doc
+        .add_node(ROOT, NodeBody::Kind(LOp::Wash), 400, 900)
+        .unwrap();
+    let upper = doc
+        .add_node(ROOT, NodeBody::Kind(LOp::Wash), 400, 10)
+        .unwrap();
+    let feed = doc
+        .connect(ROOT, Socket::new(source, 0), Socket::new(bend, 0))
+        .unwrap()
+        .link;
+    let to_lower = doc
+        .connect(ROOT, Socket::new(bend, 0), Socket::new(lower, 0))
+        .unwrap()
+        .link;
+    let to_upper = doc
+        .connect(ROOT, Socket::new(bend, 0), Socket::new(upper, 0))
+        .unwrap()
+        .link;
+
+    let spread = doc.spread_reroute(ROOT, bend).expect("a bend spreads");
+    assert_eq!(spread.echoes.len(), 2, "★ one far end per outgoing wire");
+    let mut kept = spread.carried.clone();
+    kept.sort_unstable();
+    let mut wires = vec![feed, to_lower, to_upper];
+    wires.sort_unstable();
+    assert_eq!(
+        kept, wires,
+        "★ every wire KEPT and re-pointed, so a caller holding a link id still \
+         holds the same link and an undo has one thing to put back"
+    );
+    // ★ The order is the consumers' drawn Y, not the order they were made in.
+    let first_feeds = doc
+        .tree(ROOT)
+        .unwrap()
+        .links()
+        .iter()
+        .find(|link| link.from.node == spread.echoes[0])
+        .map(|link| link.to.node);
+    assert_eq!(
+        first_feeds,
+        Some(upper),
+        "★★★★★ the first far end feeds the node drawn HIGHEST, though it was \
+         created second — the stack is ordered by the document, not by history"
+    );
+    // The endpoint took the bend's place, one offset to the left, and the value
+    // still reaches both consumers.
+    let held = doc.tree(ROOT).unwrap().node(spread.beacon).unwrap();
+    assert_eq!((held.x, held.y), (150, 100));
+    assert_eq!(doc.evaluate(ROOT, upper), doc.evaluate(ROOT, lower));
+    assert_eq!(
+        doc.evaluate(ROOT, spread.echoes[0]),
+        vec![Some(LVal::Scalar(3))]
+    );
+    assert!(doc.validate().is_empty(), "{:?}", doc.validate());
+}
+
+/// ★★★★★ R1935 — **a round trip puts the bend back where it started**, and the
+/// fold accepts EITHER half.
+///
+/// The two offsets are equal in the reference and that is what makes this true
+/// there as well; asserting it is what would catch a later edit that changed
+/// one of them, which would walk a bend across the canvas one conversion at a
+/// time and be invisible to every other test here.
+#[test]
+fn r1935_a_round_trip_puts_the_bend_back_where_it_started() {
+    let mut doc: Document<LOp> = Document::new("lattice");
+    let source = doc
+        .add_node(ROOT, NodeBody::Kind(LOp::Level(5)), 0, 0)
+        .unwrap();
+    let bend = doc.add_node(ROOT, NodeBody::Reroute, 220, 60).unwrap();
+    let sink = doc
+        .add_node(ROOT, NodeBody::Kind(LOp::Wash), 400, 60)
+        .unwrap();
+    doc.connect(ROOT, Socket::new(source, 0), Socket::new(bend, 0))
+        .unwrap();
+    doc.connect(ROOT, Socket::new(bend, 0), Socket::new(sink, 0))
+        .unwrap();
+
+    let spread = doc.spread_reroute(ROOT, bend).expect("a bend spreads");
+    // ★ Fold from the FAR END, not from the endpoint — the reference accepts
+    // either, and the far ends are the halves scattered across the canvas, so
+    // requiring the endpoint would mean finding it first, which is the very
+    // thing the name exists to avoid.
+    let gathered = doc
+        .gather_beacon(ROOT, spread.echoes[0])
+        .expect("a far end folds the pair it belongs to");
+    let mut expected = vec![spread.beacon];
+    expected.extend(spread.echoes.iter().copied());
+    expected.sort_unstable();
+    assert_eq!(gathered.gone, expected, "the endpoint and every far end");
+    let held = doc.tree(ROOT).unwrap().node(gathered.reroute).unwrap();
+    assert_eq!(
+        (held.x, held.y),
+        (220, 60),
+        "★★★★★ back where the bend began"
+    );
+    assert_eq!(
+        doc.evaluate(ROOT, gathered.reroute),
+        vec![Some(LVal::Scalar(5))],
+        "and the value still runs through the folded bend"
+    );
+    assert_eq!(
+        doc.evaluator().inputs(ROOT, sink),
+        vec![Some(LVal::Scalar(5))],
+        "★ reaching the consumer, which is what the wires were for"
+    );
+    assert!(doc.validate().is_empty(), "{:?}", doc.validate());
+    // And the two refusals are separate words, because the repairs are
+    // opposite: this node is now a bend, so folding it is the wrong direction.
+    assert_eq!(
+        doc.gather_beacon(ROOT, gathered.reroute),
+        Err(BeaconError::NotNamed(gathered.reroute))
+    );
+}
+
+/// ★★★★★ R1935 — **two endpoints may not answer to one name**, and the refusal
+/// says which node already does.
+///
+/// ★ The reference repairs the clash by SILENTLY RENAMING — a private routine
+/// walks the tree appending an index until the name is free — so a person who
+/// types a name that is taken gets a different one and is not told. This is the
+/// existing uniqueness axis (R1932) doing the work, which is why the beacon
+/// answers `Naming::InTree` and the bend does not.
+#[test]
+fn r1935_two_endpoints_may_not_answer_to_one_name() {
+    let mut doc: Document<LOp> = Document::new("lattice");
+    let first = doc.add_node(ROOT, NodeBody::Beacon, 0, 0).unwrap();
+    let second = doc.add_node(ROOT, NodeBody::Beacon, 0, 100).unwrap();
+    assert_eq!(doc.naming(ROOT, first), Naming::InTree);
+    doc.relabel(ROOT, first, Some("Tempo")).expect("a name");
+
+    let refused = doc.relabel(ROOT, second, Some("Tempo"));
+    assert!(
+        matches!(refused, Err(EditError::LabelTaken { .. })),
+        "★ refused, not silently indexed: {refused:?}"
+    );
+    // ⚠ And the counterpart, which is the half a uniqueness test usually
+    // forgets: a BEND still takes any name, because a point on a wire is not an
+    // address. Were both `InTree` this test would pass for the wrong reason.
+    let bend = doc.add_node(ROOT, NodeBody::Reroute, 0, 200).unwrap();
+    assert_eq!(doc.naming(ROOT, bend), Naming::Free);
+}
+
+/// ★★★★★ R1935 — **a far end shows a name it does not own**, and says nothing
+/// of its own.
+#[test]
+fn r1935_a_far_end_shows_a_name_it_does_not_own() {
+    let mut doc: Document<LOp> = Document::new("lattice");
+    let beacon = doc.add_node(ROOT, NodeBody::Beacon, 0, 0).unwrap();
+    let echo = doc.add_node(ROOT, NodeBody::Echo(beacon), 100, 0).unwrap();
+    doc.relabel(ROOT, beacon, Some("Tempo")).expect("a name");
+
+    assert_eq!(
+        doc.echo_display_name(ROOT, echo).as_deref(),
+        Some("Tempo"),
+        "★ the far end shows the endpoint's name"
+    );
+    assert_eq!(
+        doc.naming(ROOT, echo),
+        Naming::Free,
+        "★ and has none of its own to be unique — so two far ends of one name \
+         are not a clash, which is the ordinary case"
+    );
+    let second = doc.add_node(ROOT, NodeBody::Echo(beacon), 100, 60).unwrap();
+    assert_eq!(
+        doc.echo_display_name(ROOT, second).as_deref(),
+        Some("Tempo")
+    );
+    // ⚠ Renaming the endpoint moves both, because the far end holds an ID and
+    // not a string. The reference keeps a stable id beside the name for exactly
+    // this reason and says so in a field comment.
+    doc.relabel(ROOT, beacon, Some("Cadence"))
+        .expect("a rename");
+    assert_eq!(
+        doc.echo_display_name(ROOT, echo).as_deref(),
+        Some("Cadence"),
+        "★ renaming cannot orphan a far end: the reference is by id"
+    );
+}
+
+/// ★★★★★ R1935 — **a ring closed through a NAME is refused**, which R1934's
+/// walk over links alone could not see.
+///
+/// This is R1934's ring of reroutes drawn in the one ink the dependency walk was
+/// blind to. Its lesson applies unchanged: a cycle that becomes real later is
+/// the state the refusal exists to make unrepresentable.
+#[test]
+fn r1935_a_ring_closed_through_a_name_is_refused() {
+    let mut doc: Document<LOp> = Document::new("lattice");
+    let beacon = doc.add_node(ROOT, NodeBody::Beacon, 0, 0).unwrap();
+    let echo = doc.add_node(ROOT, NodeBody::Echo(beacon), 200, 0).unwrap();
+    // ⚠ `Sum` and not `Wash`: the return leg has to be TYPE-LEGAL, or the
+    // refusal below arrives as a `TypeMismatch` and this test never exercises
+    // the cycle walk at all. Measured — the first draft used `Wash`
+    // (`Scalar -> Vector`) and was refused for the wrong reason, which is a
+    // green light for a gate that is not running.
+    let through = doc
+        .add_node(ROOT, NodeBody::Kind(LOp::Sum), 400, 0)
+        .unwrap();
+    doc.connect(ROOT, Socket::new(echo, 0), Socket::new(through, 0))
+        .expect("a far end feeds an ordinary node");
+
+    // Closing the ring: that node's output back into the endpoint's input.
+    let refused = doc.connect(ROOT, Socket::new(through, 0), Socket::new(beacon, 0));
+    assert!(
+        matches!(refused, Err(ConnectError::WouldCycle { .. })),
+        "★★★★★ the value would reach the endpoint it came from, with the return \
+         leg carried by a NAME rather than by a wire: {refused:?}"
+    );
+    // ⚠ The counterfactual this pins: the same graph with the naming removed is
+    // NOT a cycle, so the refusal above is about the name and not about the two
+    // wires. Without this the assertion would hold for a walk that refused
+    // everything.
+    let mut other: Document<LOp> = Document::new("lattice");
+    let loose = other.add_node(ROOT, NodeBody::Beacon, 0, 0).unwrap();
+    let orphan = other.add_node(ROOT, NodeBody::Reroute, 200, 0).unwrap();
+    let node = other
+        .add_node(ROOT, NodeBody::Kind(LOp::Sum), 400, 0)
+        .unwrap();
+    other
+        .connect(ROOT, Socket::new(orphan, 0), Socket::new(node, 0))
+        .unwrap();
+    other
+        .connect(ROOT, Socket::new(node, 0), Socket::new(loose, 0))
+        .expect("★ with no name joining them there is no ring to close");
+}
+
+/// ★★★★★ R1935 — **a far end whose endpoint is gone is REPORTED**, and it is
+/// not a node a wire passes through.
+///
+/// ★ The reference leaves the same question to a predicate an editor may call
+/// and nothing obliges anyone to. A fact that is only true when someone asks is
+/// the shape R1888 recorded, so here it is in the standing check.
+#[test]
+fn r1935_a_far_end_whose_endpoint_is_gone_is_reported() {
+    let mut doc: Document<LOp> = Document::new("lattice");
+    let beacon = doc.add_node(ROOT, NodeBody::Beacon, 0, 0).unwrap();
+    let echo = doc.add_node(ROOT, NodeBody::Echo(beacon), 100, 0).unwrap();
+    assert!(doc.validate().is_empty(), "sound to begin with");
+
+    doc.remove_node(ROOT, beacon).expect("an ordinary delete");
+    assert_eq!(
+        doc.validate(),
+        vec![Violation::DanglingEcho {
+            tree: ROOT,
+            node: echo
+        }],
+        "★ the standing check says so, with no wire to have noticed it by"
+    );
+    assert!(
+        doc.validate()[0]
+            .to_string()
+            .contains("endpoint is not there"),
+        "★ and it says so in words a person reads: {}",
+        doc.validate()[0]
+    );
+    assert_eq!(doc.beacon_of(ROOT, echo), None);
+    assert_eq!(doc.evaluate(ROOT, echo), vec![None], "no value, no panic");
+    assert_eq!(
+        doc.gather_beacon(ROOT, echo),
+        Err(BeaconError::Dangling(echo)),
+        "★ and folding it is refused with its own word rather than answering done"
+    );
+}
+
+/// ★★★★★ R1935 — **the far ends of a name are found FROM the endpoint**, and
+/// there are as many of them as there were wires.
+///
+/// The other direction of [`Document::beacon_of`], and the reason it is its own
+/// test rather than a line in the shapes one: this is the reading a person
+/// reaches for after spreading a bend — *where did all of that go?* — and it
+/// has to agree with what the spread reported. Two answers about one fact that
+/// nothing compares is the drift this asserts away.
+#[test]
+fn r1935_the_far_ends_of_a_name_are_found_from_the_endpoint() {
+    let mut doc: Document<LOp> = Document::new("lattice");
+    let source = doc
+        .add_node(ROOT, NodeBody::Kind(LOp::Level(2)), 0, 0)
+        .unwrap();
+    let bend = doc.add_node(ROOT, NodeBody::Reroute, 200, 0).unwrap();
+    doc.connect(ROOT, Socket::new(source, 0), Socket::new(bend, 0))
+        .unwrap();
+    for row in 0..3 {
+        let sink = doc
+            .add_node(ROOT, NodeBody::Kind(LOp::Wash), 400, row * 100)
+            .unwrap();
+        doc.connect(ROOT, Socket::new(bend, 0), Socket::new(sink, 0))
+            .unwrap();
+    }
+
+    let spread = doc.spread_reroute(ROOT, bend).expect("a bend spreads");
+    let mut reported = spread.echoes.clone();
+    reported.sort_unstable();
+    assert_eq!(
+        doc.echoes_of(ROOT, spread.beacon),
+        reported,
+        "★ the reading from the endpoint agrees with what the spread reported"
+    );
+    assert_eq!(
+        doc.echoes_of(ROOT, spread.beacon).len(),
+        3,
+        "★★★★★ MANY — which is why this direction answers a list and the other \
+         answers at most one. Navigating is not a thing you can do to three \
+         nodes at once, and the reference's own operator says so by clearing \
+         the selection and handing the list to a search panel instead"
+    );
+    // ⚠ And every one of them is reached by name: the wires that remain are the
+    // three feeding the consumers plus the one feeding the endpoint, and NONE
+    // of them joins the endpoint to a far end.
+    let joins_pair = doc
+        .tree(ROOT)
+        .unwrap()
+        .links()
+        .iter()
+        .any(|link| link.from.node == spread.beacon && spread.echoes.contains(&link.to.node));
+    assert!(!joins_pair, "★ nothing wires the endpoint to its far ends");
+    assert!(doc.validate().is_empty(), "{:?}", doc.validate());
+}
+
+/// ★★★★★ R1935 — **a name with no source is decided by what its FAR ENDS
+/// feed**, which is the only thing that needs the naming step to run in both
+/// directions.
+///
+/// ⚠ This test exists because a counterfactual PASSED. Breaking the
+/// endpoint-to-far-end half of `passing_chain` left the whole suite green, and
+/// the cause was not a weak assertion but an **empty population**: every other
+/// fixture here wires a source into the endpoint, and a source decides the
+/// chain without anyone having to look at the far ends at all. The reachable
+/// half is enough whenever a source exists, so the missing half is invisible
+/// until a graph has none.
+///
+/// ★ And this is also where this crate is stronger than the reference, which
+/// takes the endpoint's own input type and has nowhere to get an answer from
+/// when nothing is wired to it.
+#[test]
+fn r1935_a_name_with_no_source_is_decided_by_what_its_far_ends_feed() {
+    let mut doc: Document<LOp> = Document::new("lattice");
+    let beacon = doc.add_node(ROOT, NodeBody::Beacon, 0, 0).unwrap();
+    let echo = doc.add_node(ROOT, NodeBody::Echo(beacon), 200, 0).unwrap();
+    // Nothing feeds the endpoint. The only decided port anywhere on this chain
+    // is the one the FAR END feeds, and it is reached from the endpoint only by
+    // stepping along the naming.
+    assert_eq!(
+        doc.passing_flow(ROOT, beacon),
+        Flow::Undecided,
+        "with nothing attached at all, the chain is undecided"
+    );
+    let sink = doc
+        .add_node(ROOT, NodeBody::Kind(LOp::Wash), 400, 0)
+        .unwrap();
+    doc.connect(ROOT, Socket::new(echo, 0), Socket::new(sink, 0))
+        .expect("an undecided end is taken by everything");
+
+    assert_eq!(
+        doc.passing_flow(ROOT, beacon).value_type(),
+        Some(&LTy::Scalar),
+        "★★★★★ the ENDPOINT now carries what its far end feeds — an answer that \
+         exists only if the endpoint can reach its far ends"
+    );
+    assert_eq!(
+        doc.signature(ROOT, beacon).unwrap().inputs[0]
+            .flow
+            .value_type(),
+        Some(&LTy::Scalar),
+        "★ and it is on the endpoint's own port, so a wire arriving there is \
+         vetted against the type the name already carries"
+    );
+    // ⚠ The counterpart that keeps this about the naming rather than about
+    // links: the far end reaches the endpoint too, and always did — so a
+    // one-directional walk answers this one correctly and the assertion above
+    // is the only one that can tell the two apart.
+    assert_eq!(
+        doc.passing_flow(ROOT, echo).value_type(),
+        Some(&LTy::Scalar)
+    );
+    assert!(doc.validate().is_empty(), "{:?}", doc.validate());
+}
+
+/// ★★★★★ R1935 — **being on a chain and having two ends are two facts**, and
+/// this is the round where they stopped coinciding.
+///
+/// A far end carries the same flow as the endpoint — it is on the chain — and
+/// answers `None` to "which two ports are the way in and the way out", because
+/// it has no way in. A caller handed `Passing::ENDS` here would index an input
+/// port that is not there.
+#[test]
+fn r1935_a_far_end_is_on_the_chain_without_having_two_ends() {
+    let mut doc: Document<LOp> = Document::new("lattice");
+    let source = doc
+        .add_node(ROOT, NodeBody::Kind(LOp::Swatch([1, 2, 3])), 0, 0)
+        .unwrap();
+    let beacon = doc.add_node(ROOT, NodeBody::Beacon, 100, 0).unwrap();
+    let echo = doc.add_node(ROOT, NodeBody::Echo(beacon), 300, 0).unwrap();
+    let bend = doc.add_node(ROOT, NodeBody::Reroute, 50, 0).unwrap();
+    doc.connect(ROOT, Socket::new(source, 0), Socket::new(bend, 0))
+        .unwrap();
+    doc.connect(ROOT, Socket::new(bend, 0), Socket::new(beacon, 0))
+        .unwrap();
+
+    // ★ One chain, one flow — and the chain is joined by a LINK at one end and
+    // by a NAME at the other, which is what keeps the derivation finite.
+    for node in [bend, beacon, echo] {
+        assert_eq!(
+            doc.passing_flow(ROOT, node).value_type(),
+            Some(&LTy::Vector),
+            "every node on the chain carries the source's type"
+        );
+    }
+    assert_eq!(doc.passing(ROOT, bend), Some(Passing::ENDS));
+    assert_eq!(doc.passing(ROOT, beacon), Some(Passing::ENDS));
+    assert_eq!(
+        doc.passing(ROOT, echo),
+        None,
+        "★★★★★ on the chain, and with no way in"
     );
 }

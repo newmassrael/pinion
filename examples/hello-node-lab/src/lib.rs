@@ -11009,6 +11009,34 @@ const FIELDS: &[SchemaField] = &{
         // client drawing a bend has to tell an undecided one from a decided
         // one, and because the ends are what a drag needs to pick from.
         SchemaField::new("passing", "json"),
+        // ★★★★★ R1935 — give a bend a NAME, so what it carries can be reached
+        // from anywhere on the canvas with no wire. One card names it, because
+        // this is the FAN-OUT: the bend's outgoing wires each become a far end
+        // of that name, so there is nothing else for a caller to choose.
+        SchemaField::action_with(
+            "name_bend",
+            "string",
+            ArgForm::Scalar,
+            const { &[SchemaArg::key("node", "string", "nodes")] },
+        ),
+        // ★★★★★ R1935 — take the name away again, and EITHER half may be
+        // named. That is the reference's own behaviour and it is the reachable
+        // one: the far ends are the halves scattered across the canvas, so
+        // requiring the endpoint would mean finding it first — the very thing
+        // the name exists to avoid.
+        SchemaField::action_with(
+            "unname_bend",
+            "string",
+            ArgForm::Scalar,
+            const { &[SchemaArg::key("node", "string", "nodes")] },
+        ),
+        // ★★★★★ R1935 — the names on this canvas, each with the far ends that
+        // show it. Published as ONE reading with two shapes inside it, because
+        // the two directions differ in the shape of their answer: from a far
+        // end there is at most one endpoint, and from an endpoint there are
+        // many far ends. A client that navigates on the first and lists on the
+        // second is doing what the reference's two operators do.
+        SchemaField::new("names", "json"),
         // ★★★★★ R1885 — put a card on another build. The build comes from a
         // CLOSED vocabulary and it is built from `Stack::ALL` rather than
         // spelled here, so the words an agent is offered cannot drift from the
@@ -11157,6 +11185,7 @@ impl ExternalIntrospect for LabOracle {
             "naming" => Ok(IntrospectValue::Json(naming_wire(state))),
             "admits" => Ok(IntrospectValue::Json(admits_wire(state))),
             "passing" => Ok(IntrospectValue::Json(passing_wire(state))),
+            "names" => Ok(IntrospectValue::Json(names_wire(state))),
             // ★ R1742 — the SAME value the host publishes for this section, so
             // "one build, two placements" is a fact a client can check rather
             // than a claim this file makes.
@@ -12025,6 +12054,16 @@ impl ExternalIntrospect for LabOracle {
                 })?;
                 let node = Self::card(&state, name.trim())?;
                 insert_reroute(&state, node, address.trim()).map(IntrospectValue::Text)
+            }
+            "name_bend" => {
+                let raw = Self::text(&args)?;
+                let node = Self::card(&state, raw.trim())?;
+                name_bend(&state, node).map(IntrospectValue::Text)
+            }
+            "unname_bend" => {
+                let raw = Self::text(&args)?;
+                let node = Self::card(&state, raw.trim())?;
+                unname_bend(&state, node).map(IntrospectValue::Text)
             }
             // ★ R1681 — either layer, told apart by the `>`. A reported link
             // has no id to name it by, so the pair is the name; refusing to let
@@ -17074,6 +17113,10 @@ fn insert_reroute(
         .first()
         .ok_or_else(|| InvokeError::rejected("nothing was cut".to_owned()))?;
     let count = made.rerouted.len();
+    // R1935 — label it, so the name this screen is about to publish for it is a
+    // name that can be handed back. See `fresh_label` for the defect.
+    let minted = fresh_label(&doc, "bend");
+    let _ = doc.relabel(ROOT, point, Some(&minted));
     drop(doc);
     let called = state.name_of(point);
     let said = format!("{count} wire(s) leaving {name}.{address} now bend at {called}");
@@ -17090,6 +17133,134 @@ fn insert_reroute(
 /// alignment. So what a client needs published is the pair of ends, and
 /// `carries` beside it — because a bend that has not been decided yet is a real
 /// state and a client drawing it has to be able to tell it from a decided one.
+/// ★★★★★ R1935 — **a name this canvas does not already use**, built from a
+/// stem.
+///
+/// ⚠ Why this exists is a defect the round's own walk found, and it is R1928's
+/// shape: **a card this screen MADE could not be reached by the name this
+/// screen PUBLISHED for it.** Every verb here takes a card by name and
+/// `node_of` resolves a name through the document's LABEL, but a body with no
+/// label falls back to the body's own word — so `passing` reported a bend as
+/// `"Reroute"` and `insert_reroute`'s own sentence called it that, and handing
+/// either back answered *no node is called "Reroute"*. An agent could make a
+/// bend and then not name it.
+///
+/// So every card this screen makes is labelled, and the label is unique here
+/// even for bodies the model leaves free to repeat: free means the MODEL does
+/// not require uniqueness, not that a screen may publish an ambiguous address.
+fn fresh_label(doc: &Document<LabNode>, stem: &str) -> String {
+    for index in 1.. {
+        let candidate = format!("{stem}-{index:02}");
+        if doc.node_labelled(ROOT, &candidate).is_none() {
+            return candidate;
+        }
+    }
+    unreachable!("the range is unbounded")
+}
+
+/// ★★★★★ R1935 — **give a bend a name**, and let what it carries be reached
+/// with no wire.
+///
+/// The fan-out: one far end per wire that was leaving the bend. The refusal is
+/// this round's own word — handed a named endpoint it says *convert the other
+/// way* rather than saying nothing, because the two repairs are opposite and a
+/// screen that cannot tell them apart is offering to delete work.
+fn name_bend(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError> {
+    let was = state.name_of(node);
+    let mut doc = state.doc.borrow_mut();
+    let spread = doc
+        .spread_reroute(ROOT, node)
+        .map_err(|why| InvokeError::rejected(why.to_string()))?;
+    let count = spread.echoes.len();
+    // R1935 — both halves are labelled, for `fresh_label`'s reason. The
+    // endpoint's name is the ADDRESS the value crosses to, so it is the one a
+    // person renames; the far ends are labelled only so this screen's own
+    // register publishes an address that can be handed back.
+    let minted = fresh_label(&doc, "name");
+    let _ = doc.relabel(ROOT, spread.beacon, Some(&minted));
+    for &echo in &spread.echoes {
+        let tag = fresh_label(&doc, "far");
+        let _ = doc.relabel(ROOT, echo, Some(&tag));
+    }
+    drop(doc);
+    let called = state.name_of(spread.beacon);
+    let said =
+        format!("{was} is now the name {called}, reached by {count} far end(s) over no wire");
+    state.say(Utterance::done(said.clone()));
+    Ok(said)
+}
+
+/// ★★★★★ R1935 — **take a name away**, from either half.
+fn unname_bend(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError> {
+    let was = state.name_of(node);
+    let mut doc = state.doc.borrow_mut();
+    let gathered = doc
+        .gather_beacon(ROOT, node)
+        .map_err(|why| InvokeError::rejected(why.to_string()))?;
+    let folded = gathered.gone.len();
+    let minted = fresh_label(&doc, "bend");
+    let _ = doc.relabel(ROOT, gathered.reroute, Some(&minted));
+    drop(doc);
+    let called = state.name_of(gathered.reroute);
+    let said = format!("{folded} card(s) around {was} fold back into the bend {called}");
+    state.say(Utterance::done(said.clone()));
+    Ok(said)
+}
+
+/// ★★★★★ R1935 — **the names on this canvas**, and the far ends that show each
+/// one.
+///
+/// Two shapes in one reading, because the two directions differ in the shape of
+/// their answer: `endpoint` is at most one per far end, and `reaches` is a list
+/// per endpoint. A client navigating on the first and listing on the second is
+/// doing exactly what the reference's two operators do — and `dangling` is the
+/// state the reference leaves to a predicate nobody is obliged to call.
+fn names_wire(state: &Rc<LabState>) -> serde_json::Value {
+    let doc = state.doc.borrow();
+    let every: Vec<NodeId> = doc
+        .tree(ROOT)
+        .map(|host| host.nodes().map(|held| held.id).collect())
+        .unwrap_or_default();
+    let mut endpoints = Vec::new();
+    let mut far = Vec::new();
+    for node in every {
+        let reaches = doc.echoes_of(ROOT, node);
+        if !reaches.is_empty()
+            || matches!(
+                doc.tree(ROOT)
+                    .and_then(|host| host.node(node))
+                    .map(|held| &held.body),
+                Some(pinion_node_graph::NodeBody::Beacon)
+            )
+        {
+            endpoints.push(serde_json::json!({
+                "card": state.name_of(node),
+                "reaches": reaches
+                    .iter()
+                    .map(|&echo| state.name_of(echo))
+                    .collect::<Vec<_>>(),
+            }));
+        }
+        if let Some(shown) = doc.echo_display_name(ROOT, node) {
+            far.push(serde_json::json!({
+                "card": state.name_of(node),
+                "shows": shown,
+                "endpoint": doc.beacon_of(ROOT, node).map(|end| state.name_of(end)),
+            }));
+        }
+    }
+    let dangling: Vec<String> = doc
+        .dangling_echoes(ROOT)
+        .into_iter()
+        .map(|node| state.name_of(node))
+        .collect();
+    serde_json::json!({
+        "endpoints": endpoints,
+        "far": far,
+        "dangling": dangling,
+    })
+}
+
 fn passing_wire(state: &Rc<LabState>) -> serde_json::Value {
     let doc = state.doc.borrow();
     let every: Vec<NodeId> = doc

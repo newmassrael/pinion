@@ -285,7 +285,35 @@ impl<K: NodeKind> Evaluator<'_, K> {
                 // The engine reaches the same result by deleting the node
                 // before compilation (`ExpandNode` splices its two pin nets
                 // together); the DCC's evaluator likewise never sees one.
-                NodeBody::Reroute => self.passed_through(descent, node, depth, &signature),
+                // R1935 — a beacon is transparent in exactly the same way, and
+                // shares the arm.
+                NodeBody::Reroute | NodeBody::Beacon => {
+                    self.passed_through(descent, node, depth, &signature)
+                }
+                // ★★★★★ R1935 — an echo has no input to pass through, so it
+                // reads the beacon's OUTPUT directly. That is the value
+                // crossing the canvas with no edge, and this is the one place
+                // in the evaluator where a step is taken along something other
+                // than a link.
+                //
+                // A cycle through a name is a cycle: if the beacon's own input
+                // depends on this echo, the `visiting` set above stops the walk
+                // and the honest answer is no value — the same guard that
+                // catches a cyclic document from elsewhere. `Document::connect`
+                // refuses to BUILD one (see `cuts_dependency`), so reaching
+                // this needs a document this crate did not make.
+                //
+                // A dangling echo answers no value rather than panicking: the
+                // beacon it names is gone, and `Document::validate` is where
+                // that is reported as the defect it is.
+                NodeBody::Echo(beacon) => {
+                    let mut from = self.node_outputs(descent, beacon, depth + 1);
+                    vec![if from.is_empty() {
+                        None
+                    } else {
+                        from.swap_remove(0)
+                    }]
+                }
                 NodeBody::Group(definition) => {
                     let bindings = self.node_inputs(descent, node, depth);
                     let inner = Descent {

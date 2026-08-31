@@ -215,6 +215,7 @@ mod admitted;
 mod appearance;
 mod archive;
 mod arrange;
+mod beacon;
 mod bypass;
 mod debug;
 mod deploy;
@@ -253,6 +254,7 @@ pub use archive::{Archive, Dropped, Opening, REVISION, Unreadable, Unwritable};
 pub use arrange::{
     Align, ArrangePass, ArrangeTail, Axis, Distribute, Edge, Stack, Straighten, Straightened,
 };
+pub use beacon::{BeaconError, Gathered, Spread};
 pub use bypass::{Bridge, Passthrough, Rewired, Route};
 pub use debug::{
     BreakError, Breakpoints, Command, Direction, Halt, Landing, NodeSite, Occurrence, Paused,

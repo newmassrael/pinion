@@ -2229,10 +2229,10 @@
       "verdict": "absent"
     },
     "MaterialEditor::ConvertNamedRerouteToReroute": {
-      "covered_by": "a NAMED reroute is absent, so there is no conversion between the two forms. ⚠ Half of this row's pre-R1934 reason ('reroutes, named and not, are both absent') stopped being true in R1934, which built the plain one (NodeBody::Reroute) — corrected by the round that falsified it rather than left for the next census to trip over",
+      "covered_by": "Document::gather_beacon, R1935. The FOLD, and measured behaviour for behaviour: it accepts EITHER half as the thing you started from (handed a far end it walks to the endpoint first), the far ends' outgoing wires are re-pointed at one bend rather than remade, the endpoint and every far end are removed, and the bend lands one offset to the other side so a spread followed by a gather puts it back exactly where it began",
       "mechanism": "MaterialEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_material_editor_convert_named_reroute_to_reroute",
+      "verdict": "have"
     },
     "MaterialEditor::ConvertObjects": {
       "covered_by": "converts material expressions to parameters",
@@ -2241,10 +2241,10 @@
       "verdict": "app-content"
     },
     "MaterialEditor::ConvertRerouteToNamedReroute": {
-      "covered_by": "a NAMED reroute is absent, so there is no conversion between the two forms. ⚠ Half of this row's pre-R1934 reason ('reroutes, named and not, are both absent') stopped being true in R1934, which built the plain one (NodeBody::Reroute) — corrected by the round that falsified it rather than left for the next census to trip over",
+      "covered_by": "Document::spread_reroute, R1935. The FAN-OUT rather than a rename: a bend with N outgoing wires becomes one named endpoint and N far ends, one per wire, the wires KEPT and re-pointed rather than remade, the far ends stacked by the drawn Y of the node each one feeds and centred on the bend's own Y, and the endpoint one offset to the other side",
       "mechanism": "MaterialEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_material_editor_convert_reroute_to_named_reroute",
+      "verdict": "have"
     },
     "MaterialEditor::ConvertToConstant": {
       "covered_by": "material parameter to constant expression",
@@ -2469,16 +2469,16 @@
       "verdict": "have"
     },
     "MaterialEditor::SelectNamedRerouteDeclaration": {
-      "covered_by": "a NAMED reroute — a wire endpoint referenced by name from elsewhere in the graph, so a value crosses the canvas without an edge. ⚠ Its second clause said `add_reroute` was absent too; R1934 built that one, so what remains here is the stronger form ALONE: the plain reroute is a node on the wire, and this is a node that is on no wire at all and is reached by NAME — which R1934's NodeBody::Reroute deliberately cannot be, being Naming::Free precisely because a point on a wire is not an address",
+      "covered_by": "Document::beacon_of, R1935 — from a far end to the named endpoint it shows. NodeBody::Beacon and NodeBody::Echo are the pair, and a value crosses the canvas between them with NO edge, which is asserted by the link count rather than only by the value. The answer here is at most ONE, which is why it is an Option: the reference's operator moves the selection there and fits the view, an affordance that only exists for a single answer",
       "mechanism": "MaterialEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_material_editor_select_named_reroute_declaration",
+      "verdict": "have"
     },
     "MaterialEditor::SelectNamedRerouteUsages": {
-      "covered_by": "the other direction of a named reroute",
+      "covered_by": "Document::echoes_of, R1935 — the other direction, and ⚠ NOT merely the same walk reversed, which is what this row's own pre-R1935 reason ('the other direction of a named reroute') hid. The answer is MANY, so it is a Vec; measured on the reference, its operator CLEARS the selection and hands the list to the search-results panel instead of navigating, because navigation is not a thing you can do to many nodes at once. The shape of the answer is the capability",
       "mechanism": "MaterialEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_material_editor_select_named_reroute_usages",
+      "verdict": "have"
     },
     "MaterialEditor::SelectPreviewMeshMaterialSlots": {
       "covered_by": "the preview mesh's material slots",

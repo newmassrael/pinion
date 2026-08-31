@@ -652,6 +652,7 @@ fn proofs() -> Vec<Proof> {
     all.extend(dcc_item_proofs());
     all.extend(dcc_r1933_proofs());
     all.extend(r1934_reroute_proofs());
+    all.extend(r1935_named_reroute_proofs());
     all
 }
 
@@ -1364,6 +1365,34 @@ fn r1934_reroute_proofs() -> Vec<Proof> {
             "engine",
             "node::ShouldDrawNodeAsControlPointOnly",
             engine_node_should_draw_node_as_control_point_only,
+        ),
+    ]
+}
+
+/// R1935 — the NAMED pair. Four rows, and reading all four is what showed they
+/// are not four spellings of one thing: the two directions differ in the SHAPE
+/// of their answer, and the two conversions are a fan-out and a fold.
+fn r1935_named_reroute_proofs() -> Vec<Proof> {
+    vec![
+        proof(
+            "engine",
+            "MaterialEditor::SelectNamedRerouteDeclaration",
+            engine_material_editor_select_named_reroute_declaration,
+        ),
+        proof(
+            "engine",
+            "MaterialEditor::SelectNamedRerouteUsages",
+            engine_material_editor_select_named_reroute_usages,
+        ),
+        proof(
+            "engine",
+            "MaterialEditor::ConvertRerouteToNamedReroute",
+            engine_material_editor_convert_reroute_to_named_reroute,
+        ),
+        proof(
+            "engine",
+            "MaterialEditor::ConvertNamedRerouteToReroute",
+            engine_material_editor_convert_named_reroute_to_reroute,
         ),
     ]
 }
@@ -2175,6 +2204,296 @@ fn dcc_add_reroute() {
     assert_eq!(
         chain.document.tree(ROOT).unwrap().node_count(),
         nodes_before
+    );
+}
+
+/// ★★★★★ R1935 — **from a far end to the named endpoint it shows**, and the
+/// value crossing the canvas with no edge between them.
+///
+/// The reference's operator navigates: it moves the selection to the one answer
+/// and fits the view. Navigation is an affordance that only exists for a SINGLE
+/// answer, which is why this reading is an `Option` — see its sibling below.
+#[test]
+fn engine_material_editor_select_named_reroute_declaration() {
+    let mut chain = chain();
+    let beacon = chain
+        .document
+        .add_node(ROOT, NodeBody::Beacon, 200, 0)
+        .expect("a named endpoint");
+    let echo = chain
+        .document
+        .add_node(ROOT, NodeBody::Echo(beacon), 600, 0)
+        .expect("a far end of it");
+    let wires_before = chain.document.tree(ROOT).unwrap().links().len();
+    wire(&mut chain.document, chain.add, 0, beacon, 0);
+
+    assert_eq!(
+        chain.document.beacon_of(ROOT, echo),
+        Some(beacon),
+        "★ the far end names the endpoint it shows"
+    );
+    // ★★★★★ And the value got there over NO wire. The count is what makes this
+    // the capability rather than an ordinary bend: one wire was added, the one
+    // feeding the endpoint.
+    assert_eq!(
+        chain.document.tree(ROOT).unwrap().links().len(),
+        wires_before + 1,
+        "nothing joins the endpoint to its far end"
+    );
+    let mut evaluator = chain.document.evaluator();
+    assert_eq!(
+        evaluator.outputs(ROOT, echo),
+        vec![Some(Val::Number(5))],
+        "★ what `add` computed reaches the far end by NAME"
+    );
+    // The reading is honest about the two absences it can have: a node that is
+    // not a far end, and one whose endpoint has gone.
+    assert_eq!(chain.document.beacon_of(ROOT, chain.add), None);
+    chain
+        .document
+        .remove_node(ROOT, beacon)
+        .expect("an ordinary delete knows nothing of far ends");
+    assert_eq!(chain.document.beacon_of(ROOT, echo), None);
+    assert!(
+        chain
+            .document
+            .validate()
+            .iter()
+            .any(|breach| breach.to_string().contains("endpoint is not there")),
+        "★ and the standing check reports it, with no wire to have noticed it by"
+    );
+}
+
+/// ★★★★★ R1935 — **the other direction, and NOT merely the same walk
+/// reversed**: from the named endpoint to every far end of it.
+///
+/// The census row's own pre-R1935 reason — "the other direction of a named
+/// reroute" — is what hid the finding. Measured on the reference, this operator
+/// **clears** the selection and hands the list to the search-results panel,
+/// because navigating is not a thing you can do to many nodes at once. So the
+/// answer is a list where the other is at most one, and the shape IS the
+/// capability.
+#[test]
+fn engine_material_editor_select_named_reroute_usages() {
+    let mut chain = chain();
+    let beacon = chain
+        .document
+        .add_node(ROOT, NodeBody::Beacon, 200, 0)
+        .expect("a named endpoint");
+    wire(&mut chain.document, chain.add, 0, beacon, 0);
+
+    // A beacon nothing names yet answers an empty list — an ordinary state, not
+    // a defect, since a name is useful the moment it exists.
+    assert!(chain.document.echoes_of(ROOT, beacon).is_empty());
+    assert!(chain.document.validate().is_empty());
+
+    let mut made = Vec::new();
+    for row in 0..3 {
+        made.push(
+            chain
+                .document
+                .add_node(ROOT, NodeBody::Echo(beacon), 600, row * 80)
+                .expect("a far end"),
+        );
+    }
+    made.sort_unstable();
+    assert_eq!(
+        chain.document.echoes_of(ROOT, beacon),
+        made,
+        "★ MANY, ascending — the list an editor hands to a search panel"
+    );
+    // ★ Each of the three carries the value, and none of them is wired to the
+    // endpoint: three answers reached over zero edges.
+    let joined = chain
+        .document
+        .tree(ROOT)
+        .unwrap()
+        .links()
+        .iter()
+        .filter(|link| link.from.node == beacon)
+        .count();
+    assert_eq!(joined, 0, "nothing leaves the endpoint by wire");
+    let mut evaluator = chain.document.evaluator();
+    for &echo in &made {
+        assert_eq!(evaluator.outputs(ROOT, echo), vec![Some(Val::Number(5))]);
+    }
+    // ⚠ And the question is asked of the right half: a far end is not an
+    // endpoint, so it names none of its own.
+    assert!(chain.document.echoes_of(ROOT, made[0]).is_empty());
+}
+
+/// ★★★★★ R1935 — **giving a bend a name is a FAN-OUT**, not a rename: one far
+/// end per outgoing wire.
+///
+/// All four measured behaviours of the reference's operator: one far end per
+/// wire, the wires **kept and re-pointed** rather than remade, the far ends
+/// stacked by the drawn Y of the node each one feeds, and the endpoint placed
+/// one offset to the other side of where the bend was.
+#[test]
+fn engine_material_editor_convert_reroute_to_named_reroute() {
+    let mut chain = chain();
+    let before = arrives(&chain.document, Socket::new(chain.sink, 0));
+    // A second reader, so the fan-out has something to fan.
+    let watch = node(&mut chain.document, Op::Double);
+    // The second reader is drawn LOW and the sink stays HIGH, so an answer in
+    // creation order and an answer in drawn order are distinguishable.
+    chain
+        .document
+        .translate(ROOT, watch, 0, 900)
+        .expect("the second reader moves down the canvas");
+    let cut: Vec<LinkId> = chain
+        .document
+        .tree(ROOT)
+        .unwrap()
+        .links()
+        .iter()
+        .filter(|link| link.from == Socket::new(chain.add, 0))
+        .map(|link| link.id)
+        .collect();
+    wire(&mut chain.document, chain.add, 0, watch, 0);
+    let made = chain
+        .document
+        .insert_reroutes(ROOT, &[(cut[0], 300, 100)])
+        .expect("a wire was cut");
+    let bend = made.made[0];
+    wire(&mut chain.document, bend, 0, watch, 0);
+
+    let wires_before: Vec<LinkId> = chain
+        .document
+        .tree(ROOT)
+        .unwrap()
+        .links()
+        .iter()
+        .map(|link| link.id)
+        .collect();
+    let spread = chain
+        .document
+        .spread_reroute(ROOT, bend)
+        .expect("a bend takes a name");
+
+    assert_eq!(
+        spread.echoes.len(),
+        2,
+        "★ one far end per outgoing wire: {spread:?}"
+    );
+    let wires_after: Vec<LinkId> = chain
+        .document
+        .tree(ROOT)
+        .unwrap()
+        .links()
+        .iter()
+        .map(|link| link.id)
+        .collect();
+    assert_eq!(
+        wires_after, wires_before,
+        "★★★★★ every wire KEPT and re-pointed, none remade — so a caller \
+         holding a link id still holds the same link and an undo has one thing \
+         to put back"
+    );
+    // ★ The stack is ordered by the DOCUMENT — the drawn Y of each consumer —
+    // and the sink was moved above the second reader, so it comes first.
+    let feeds = |echo: NodeId| {
+        chain
+            .document
+            .tree(ROOT)
+            .unwrap()
+            .links()
+            .iter()
+            .find(|link| link.from.node == echo)
+            .map(|link| link.to.node)
+    };
+    assert_eq!(
+        feeds(spread.echoes[0]),
+        Some(chain.sink),
+        "★ the first far end feeds the node drawn highest"
+    );
+    assert_eq!(feeds(spread.echoes[1]), Some(watch));
+    // ★★★★★ AND THE GRAPH STILL COMPUTES WHAT IT COMPUTED — over a canvas the
+    // value now crosses by name.
+    assert_eq!(
+        arrives(&chain.document, Socket::new(chain.sink, 0)),
+        before,
+        "a named pair is transparent to evaluation"
+    );
+    assert!(chain.document.validate().is_empty());
+    // ⚠ And the refusal is its own word: a bend is what this takes, so handing
+    // it the endpoint it just made says *convert the other way* rather than
+    // saying nothing.
+    assert!(chain.document.spread_reroute(ROOT, spread.beacon).is_err());
+}
+
+/// ★★★★★ R1935 — **taking the name away**: the endpoint and every far end fold
+/// back into one bend, and the fold accepts EITHER half.
+///
+/// ★ Accepting a far end is worth reproducing rather than tidying away: the far
+/// ends are the halves scattered across the canvas, and requiring the endpoint
+/// would mean finding it first — the very thing the name exists to avoid.
+#[test]
+fn engine_material_editor_convert_named_reroute_to_reroute() {
+    let mut chain = chain();
+    let before = arrives(&chain.document, Socket::new(chain.sink, 0));
+    let cut: Vec<LinkId> = chain
+        .document
+        .tree(ROOT)
+        .unwrap()
+        .links()
+        .iter()
+        .filter(|link| link.from == Socket::new(chain.add, 0))
+        .map(|link| link.id)
+        .collect();
+    let made = chain
+        .document
+        .insert_reroutes(ROOT, &[(cut[0], 300, 100)])
+        .expect("a wire was cut");
+    let bend = made.made[0];
+    let placed = chain.document.tree(ROOT).unwrap().node(bend).unwrap();
+    let (was_x, was_y) = (placed.x, placed.y);
+
+    let spread = chain
+        .document
+        .spread_reroute(ROOT, bend)
+        .expect("a bend takes a name");
+    // ★ Folded from the FAR END, which the reference accepts and which is the
+    // half a person is likely to be looking at.
+    let gathered = chain
+        .document
+        .gather_beacon(ROOT, spread.echoes[0])
+        .expect("a far end folds the pair it belongs to");
+
+    let mut expected = vec![spread.beacon];
+    expected.extend(spread.echoes.iter().copied());
+    expected.sort_unstable();
+    assert_eq!(
+        gathered.gone, expected,
+        "★ the endpoint and every far end of it"
+    );
+    let back = chain
+        .document
+        .tree(ROOT)
+        .unwrap()
+        .node(gathered.reroute)
+        .unwrap();
+    assert_eq!(
+        (back.x, back.y),
+        (was_x, was_y),
+        "★★★★★ the round trip put the bend back where it began — the two \
+         offsets are equal, which is what stops a conversion pair from walking \
+         a node across the canvas"
+    );
+    assert_eq!(back.body, NodeBody::Reroute, "and it is a plain bend again");
+    assert_eq!(
+        arrives(&chain.document, Socket::new(chain.sink, 0)),
+        before,
+        "★ and the graph still computes what it computed"
+    );
+    assert!(chain.document.validate().is_empty());
+    // ⚠ The two refusals are separate words because the repairs are opposite:
+    // this is now a bend, so folding it is the wrong direction.
+    assert!(
+        chain
+            .document
+            .gather_beacon(ROOT, gathered.reroute)
+            .is_err()
     );
 }
 

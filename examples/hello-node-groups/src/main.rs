@@ -977,6 +977,11 @@ fn body_name(body: &NodeBody<Op>) -> String {
         NodeBody::Frame => "frame".to_owned(),
         NodeBody::Delay(ty) => format!("delay:{ty:?}"),
         NodeBody::Reroute => "reroute".to_owned(),
+        // R1935 — the two halves of a NAME. Told apart here because they are
+        // two shapes and not two spellings: one takes a wire in, the other has
+        // no way in at all.
+        NodeBody::Beacon => "named".to_owned(),
+        NodeBody::Echo(end) => format!("far:{}", end.0),
     }
 }
 
@@ -1004,7 +1009,11 @@ fn node_scene(
         // R1600 — a register joins the group instance in the container role:
         // both are structural bodies this crate owns, and what each one is is a
         // fact about the graph rather than about this taxonomy.
-        NodeBody::Group(_) | NodeBody::Delay(_) => ColorRole::SurfaceContainerHighest,
+        // R1935 — a NAMED endpoint joins them: its name is the address a value
+        // crosses the canvas to, so it is a card with something to read.
+        NodeBody::Group(_) | NodeBody::Delay(_) | NodeBody::Beacon => {
+            ColorRole::SurfaceContainerHighest
+        }
         // A frame is not a card: it is drawn by `frame_scene`, behind
         // everything, at an extent DERIVED from what it contains (R1589), so
         // the canvas loop never reaches this arm for one.
@@ -1012,7 +1021,9 @@ fn node_scene(
         // card, so it is drawn in the recessive role for the reason a frame is.
         // This demo has no gesture that makes one, so the arm is reached only
         // by a document loaded from elsewhere.
-        NodeBody::Interface(_) | NodeBody::Frame | NodeBody::Reroute => {
+        // R1935 — a FAR END is drawn recessively with the bend, because what it
+        // shows is the endpoint's name rather than its own.
+        NodeBody::Interface(_) | NodeBody::Frame | NodeBody::Reroute | NodeBody::Echo(_) => {
             ColorRole::SurfaceContainerLow
         }
         NodeBody::Kind(_) => ColorRole::SurfaceContainerHigh,
