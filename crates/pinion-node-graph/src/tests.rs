@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     Admission, Admits, AdoptError, Align, Appearance, Archive, Axis, BeaconError, BreakError,
     Breakpoints, Bringup, Camera, Carried, Carrying, Command, Composition, ConnectError, Container,
-    Control, Conversion, Crossings, Definitions, Direction, Discovery, Distribute, Document,
+    Control, Conversion, Crossings, Definitions, Direction, Discovery, Distribute, Document, Drawn,
     Dropped, DuplicateError, Edge, EditError, EditPath, Extent, ExtractError, Fit, Flow,
     ForceError, Fragment, GroupError, Grow, Halt, InsertError, Instance, InterfaceSide, Item,
     ItemError, Layered, LinkId, LinkLayer, Machine, Margin, Multiplicity, Naming, NestError, Node,
@@ -16828,6 +16828,60 @@ fn r1935_a_far_end_is_on_the_chain_without_having_two_ends() {
 ///
 /// ⚠ The empty answer is READABLE either way: `wants()` says so in a sentence,
 /// which is what a screen shows beside a free field.
+/// ★★★★★ R1940 — **the DEFAULT answer to "what is this node drawn as" is
+/// that the kind says nothing**, asserted on a taxonomy that takes it.
+///
+/// Written BEFORE a counterfactual asked for it, as R1938's and R1939's were
+/// and for the same reason: a default is an escape hatch, the census fixture
+/// overrides these hooks, and what most applications get is therefore the thing
+/// nothing checks. `LOp` declares neither this nor a type colour, which is what
+/// makes it the witness for BOTH ends of the fallback.
+///
+/// ★ And the answer is `None` rather than a colour, all the way down: an
+/// unstated kind draws nothing, and — the case a single assertion would miss —
+/// a kind that DOES answer, by naming a type nobody coloured, also draws
+/// nothing. Two different statements reaching one outcome, which is exactly
+/// the pair a screen must not be asked to tell apart by looking at the colour.
+#[test]
+fn r1940_the_default_node_is_drawn_however_the_application_likes() {
+    let mut document: Document<LOp> = Document::new("lattice");
+    let sum = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Sum), 0, 0)
+        .expect("root tree");
+    assert_eq!(
+        LOp::Sum.drawn_as(),
+        Drawn::Unstated,
+        "the trait's supplied answer is that the kind says nothing"
+    );
+    assert_eq!(
+        document.faces(ROOT, sum),
+        None,
+        "★ so the document draws no faces for it, rather than a black nobody chose"
+    );
+    // ★★★★★ And an AUTHORED colour still wins over the silence, which is what
+    // makes the ranking in `Document::faces` observable on this taxonomy at
+    // all — without this, "the kind said nothing" and "the ranking is broken"
+    // would look the same.
+    document
+        .tree_mut(ROOT)
+        .and_then(|tree| tree.node_mut(sum))
+        .expect("the node is there")
+        .appearance
+        .tint = Some(Tint::rgb(200, 30, 30));
+    assert_eq!(
+        document.faces(ROOT, sum).map(|faces| faces.title),
+        Some(Tint::rgb(200, 30, 30)),
+        "★ what a person authored is drawn, and it is the TITLE face"
+    );
+    assert_eq!(
+        document.faces(ROOT, sum).map(|faces| faces.title_text),
+        Some(Tint::rgb(255, 255, 255)),
+        "★ and the other three faces are derived from it, unchanged by R1940"
+    );
+    // ⚠ A node that is not there answers nothing rather than a default.
+    assert_eq!(document.faces(ROOT, NodeId(9999)), None);
+}
+
 #[test]
 fn r1939_the_default_port_takes_anything_of_its_type() {
     let mut document: Document<LOp> = Document::new("lattice");

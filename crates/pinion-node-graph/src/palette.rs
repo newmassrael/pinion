@@ -184,4 +184,56 @@ impl<K: NodeKind> Document<K> {
             .get(port.index as usize)
             .map(|held| palette_of::<K>(&held.flow))
     }
+
+    /// ★★★★★ R1940 — **the faces this node is actually drawn with**, or `None`
+    /// when neither the person nor the kind has said.
+    ///
+    /// The one place the two sources are ranked, and that ranking is the whole
+    /// of what this function decides:
+    ///
+    /// 1. **What a person authored wins** ([`Appearance::tint`]). A colour
+    ///    somebody chose is not a suggestion, and a kind that recomputed over
+    ///    the top of it would make the author's gesture silently ineffective.
+    /// 2. **Else what the kind says** ([`NodeKind::drawn_as`]) — its own
+    ///    colour, or the colour of a type, resolved through the same
+    ///    [`type_colour`](NodeKind::type_colour) a PORT of that type is drawn
+    ///    with.
+    /// 3. **Else nothing**, which the application draws however it draws a
+    ///    node. `None` and not a black: a colour nobody chose is not a colour,
+    ///    and the reference's port-colour hook is measured returning an actual
+    ///    black for exactly this case, where *nobody coloured this* and
+    ///    *somebody chose black* become one answer.
+    ///
+    /// ⚠ ★ Ranked HERE and not at each drawing site, which is the difference
+    /// from the reference: there, the choose-the-override-else-the-fixed-class
+    /// expression is written out at BOTH of its consumers, and the authored
+    /// colour is a third path again — three places that can disagree about what
+    /// a node looks like. One function is what makes "the register a screen
+    /// reads and the colour it paints cannot differ" a property rather than a
+    /// habit.
+    ///
+    /// ⚠ A **structural** body has no kind to ask — a group instance, a frame,
+    /// an interface end, a delay — so it reaches step 3 unless a person
+    /// authored a colour. Stated rather than left implicit, because a group
+    /// instance is precisely where the reference's own third implementation
+    /// does something (it reads the colour tag of the definition the instance
+    /// stands for), and this crate does not yet carry a colour on a definition
+    /// to read.
+    ///
+    /// [`Appearance::tint`]: crate::Appearance::tint
+    #[must_use]
+    pub fn faces(&self, tree: TreeId, node: NodeId) -> Option<crate::Faces> {
+        let held = self.tree(tree)?.node(node)?;
+        if let Some(authored) = held.appearance.tint {
+            return Some(crate::Faces::of(authored));
+        }
+        match &held.body {
+            crate::NodeBody::Kind(kind) => match kind.drawn_as() {
+                crate::Drawn::Unstated => None,
+                crate::Drawn::In(tint) => Some(crate::Faces::of(tint)),
+                crate::Drawn::LikeType(ty) => K::type_colour(&ty).map(crate::Faces::of),
+            },
+            _ => None,
+        }
+    }
 }

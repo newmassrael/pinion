@@ -1087,6 +1087,58 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
         None
     }
 
+    /// ★★★★★ R1940 — **what is THIS node drawn as**, when nobody has authored
+    /// a colour for it.
+    ///
+    /// `&self` and not an associated function, which is the whole point and the
+    /// difference from [`type_colour`](NodeKind::type_colour): the answer may
+    /// depend on what this particular node is doing, so two nodes of one kind
+    /// can be drawn differently.
+    ///
+    /// The supplied answer is [`Drawn::Unstated`]: a kind that says nothing
+    /// leaves the node to whatever the application draws a node as, which is
+    /// what this crate did before the question could be asked.
+    ///
+    /// # What forced it, measured in the reference this round
+    ///
+    /// A node type there may supply an optional override of the CLASS its
+    /// header is drawn from, answered per node — and the class then selects a
+    /// themed colour. Three things were measured about it:
+    ///
+    /// * **All three implementations DERIVE the class from the node's own
+    ///   authored state**, and none of them stores anything: one reads the
+    ///   colour tag of the definition its group instance stands for, and two
+    ///   read the node's chosen data type and answer *vector operation* or
+    ///   *colour operation* where they would otherwise answer *converter*. So
+    ///   the capability is not "a colour per node" — a person authoring a
+    ///   colour is a different, already-built axis ([`Appearance::tint`]) — it
+    ///   is **a kind saying what its node currently IS**.
+    /// * **The fallback is a SECOND declaration of the same fact.** A type that
+    ///   supplies the override also declares a fixed class, consulted when the
+    ///   override is absent; both of the two data-type implementations answer
+    ///   exactly that fixed class in their own default branch. The same fact is
+    ///   written twice, in two places, and **nothing in that tree checks that
+    ///   the two agree** — measured by searching its sources and tests for any
+    ///   assertion relating them, which finds none. Here there is one
+    ///   declaration, because a kind IS the node's state (R1937), so there is
+    ///   nothing to keep in step.
+    /// * **Both consumers carry their own copy of the choosing expression** —
+    ///   the header-drawing code and the colour-tag query each spell *use the
+    ///   override if there is one, else the fixed class*. Here that lives in
+    ///   [`Document::faces`], once.
+    ///
+    /// ⇒ the answer is a three-arm [`Drawn`], whose third arm says *drawn like
+    /// this TYPE* and reaches the very palette a port of that type is drawn
+    /// with. That correspondence is the thing the reference cannot state: its
+    /// classes and its socket types are separate vocabularies.
+    ///
+    /// [`Appearance::tint`]: crate::Appearance::tint
+    /// [`Drawn`]: crate::Drawn
+    /// [`Drawn::Unstated`]: crate::Drawn::Unstated
+    fn drawn_as(&self) -> crate::Drawn<Self::Type> {
+        crate::Drawn::Unstated
+    }
+
     /// ★★★★★ R1934 — **does a wire pass straight through this node**, and by
     /// which two ports?
     ///

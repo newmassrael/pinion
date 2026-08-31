@@ -249,7 +249,9 @@ mod view;
 mod warning;
 
 pub use admitted::Admitted;
-pub use appearance::{Appearance, Faces, Hidden, PutAway, PutAwayRefusal, Tint, VisiblePorts};
+pub use appearance::{
+    Appearance, Drawn, Faces, Hidden, PutAway, PutAwayRefusal, Tint, VisiblePorts,
+};
 pub use archive::{Archive, Dropped, Opening, REVISION, Unreadable, Unwritable};
 pub use arrange::{
     Align, ArrangePass, ArrangeTail, Axis, Distribute, Edge, Stack, Straighten, Straightened,

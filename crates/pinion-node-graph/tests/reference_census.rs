@@ -45,7 +45,7 @@ use serde::{Deserialize, Serialize};
 
 use pinion_node_graph::{
     Act, Admits, Admitted, Align, Appearance, Axis, Carrying, Command, ConnectError, Container,
-    Conversion, Crossings, Definitions, Described, Direction, Distribute, Document, Edge,
+    Conversion, Crossings, Definitions, Described, Direction, Distribute, Document, Drawn, Edge,
     EditError, EditPath, Extent, Faces, Fragment, Grow, Hidden, Instance, InterfacePort,
     InterfaceSide, Item, ItemError, LandError, Landfall, LinkId, Machine, Matched, Multiplicity,
     Node, NodeBody, NodeId, NodeKind, NodeSite, NotRecombinable, NotSplittable, Passing, Port,
@@ -339,6 +339,30 @@ impl NodeKind for Op {
             Ty::Number => Some(Self::Num(0)),
             Ty::Text => Some(Self::Word(String::new())),
             _ => None,
+        }
+    }
+
+    /// R1940 — what each node is drawn as, when nobody authored a colour.
+    ///
+    /// All three arms are reachable here, and the two that reach the SAME
+    /// outcome by different statements are both present on purpose:
+    ///
+    /// * The two CONSTANTS are drawn like the type they produce — an answer
+    ///   derived from the node's own state, so R1937's retype gesture recolours
+    ///   the node it retypes. `Number` has a colour and `Text` deliberately
+    ///   does not, so *the kind said nothing* and *the kind named a type nobody
+    ///   coloured* are two statements a proof can tell apart at the hook while
+    ///   they agree at the screen.
+    /// * `Sink` names a colour of its own: an end-of-graph node is not about a
+    ///   type, and a taxonomy must be able to say so without inventing one.
+    /// * Everything else is unstated, so an assertion cannot pass by condemning
+    ///   the whole taxonomy.
+    fn drawn_as(&self) -> Drawn<Ty> {
+        match self {
+            Self::Num(_) => Drawn::LikeType(Ty::Number),
+            Self::Word(_) => Drawn::LikeType(Ty::Text),
+            Self::Sink => Drawn::In(Tint::rgb(0x33, 0x33, 0x3A)),
+            _ => Drawn::Unstated,
         }
     }
 
@@ -886,6 +910,9 @@ fn dcc_proofs() -> Vec<Proof> {
             "node::GetPinMetaData",
             engine_node_get_pin_meta_data,
         ),
+        // R1940 — what a node is drawn as, answered per NODE and derived from
+        // what that node currently is.
+        proof("dcc", "node::ui_class", dcc_node_ui_class),
         proof("dcc", "swap_empty_group", dcc_swap_empty_group),
         proof("dcc", "options_toggle", dcc_options_toggle),
         proof("dcc", "parent_set", dcc_parent_set),
@@ -2055,6 +2082,139 @@ fn engine_node_get_pin_meta_data() {
             }),
         "★★★★★ the standing check reports it: {:?}",
         document.validate(),
+    );
+}
+
+/// ★★★★★ R1940 — **what a node is drawn as, answered per NODE**, and derived
+/// from what that node currently is.
+///
+/// # The measurement
+///
+/// The reference lets a node type supply an optional override of the CLASS its
+/// header is drawn from, asked of the node rather than of the type. Three
+/// implementations exist and **all three DERIVE**: one reads the colour tag of
+/// the definition its group instance stands for, and two read the node's chosen
+/// data type and answer *vector operation* or *colour operation* where they
+/// would otherwise answer *converter*. None stores a colour — a person
+/// authoring one is a separate, already-built axis here (`Appearance::tint`).
+///
+/// Two further measurements shaped what is built:
+///
+/// * **The fallback is a second declaration of the same fact.** A type
+///   supplying the override ALSO declares a fixed class for when it is absent,
+///   and both data-type implementations answer exactly that fixed class in
+///   their own default branch — the same fact written twice, with **nothing in
+///   that tree checking the two agree** (searched: no test, assertion or
+///   validator relates them). Here a kind IS the node's state, so there is one
+///   declaration and nothing to keep in step.
+/// * **Both consumers carry their own copy of the choosing expression.** The
+///   header-drawing code and the colour-tag query each spell *the override if
+///   there is one, else the fixed class*, and the authored colour is a third
+///   path again. Here [`Document::faces`] ranks all of it, once.
+#[test]
+fn dcc_node_ui_class() {
+    let mut document: Document<Op> = Document::new("root");
+    let constant = document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(7)), 0, 0)
+        .expect("root tree");
+    let doubler = document
+        .add_node(ROOT, NodeBody::Kind(Op::Double), 40, 0)
+        .expect("root tree");
+    let sink = document
+        .add_node(ROOT, NodeBody::Kind(Op::Sink), 80, 0)
+        .expect("root tree");
+
+    // (A) A kind that says nothing is drawn as nothing — not as a black the
+    // caller cannot tell from a chosen one.
+    assert_eq!(Op::Double.drawn_as(), Drawn::Unstated);
+    assert_eq!(
+        document.faces(ROOT, doubler),
+        None,
+        "★ the neighbour declares nothing, so this proof cannot pass by \
+         condemning the whole taxonomy"
+    );
+
+    // (B) A kind that names a TYPE is drawn in that type's colour — the same
+    // colour a PORT of that type is drawn in, reached through one declaration.
+    let number = <Op as NodeKind>::type_colour(&Ty::Number).expect("the fixture colours Number");
+    assert_eq!(
+        document.faces(ROOT, constant).map(|faces| faces.title),
+        Some(number),
+        "★★★★★ the node's header is the type's own colour, not a second \
+         vocabulary that happens to agree"
+    );
+    // ★ And it IS the same declaration a port reads, driven rather than
+    // asserted in prose: the constant's own output port answers the same.
+    assert_eq!(
+        document
+            .port_palette(ROOT, constant, PortRef::output(0))
+            .and_then(|palette| palette.own()),
+        Some(number),
+    );
+
+    // (C) ★★★★★ THE CAPABILITY: the answer is per NODE, so R1937's retype
+    // gesture recolours the node it retypes. Same kind family, different state,
+    // different drawing — which is what "one appearance per kind" cannot do.
+    document
+        .set_kind(ROOT, constant, Op::Word("hi".to_owned()))
+        .expect("a constant may be retyped");
+    assert_eq!(
+        document.faces(ROOT, constant),
+        None,
+        "★ now drawn like Text, which this taxonomy deliberately leaves \
+         uncoloured — the kind SPOKE and the outcome is still nothing"
+    );
+    // ⚠ And that is a different STATEMENT from the silence in (A), which is
+    // why the hook is asserted and not only the faces: a screen cannot tell
+    // these apart by looking at the colour, and a model that collapsed them
+    // would lose the difference entirely.
+    assert_eq!(
+        document
+            .tree(ROOT)
+            .and_then(|tree| tree.node(constant))
+            .map(|held| match &held.body {
+                NodeBody::Kind(kind) => kind.drawn_as(),
+                _ => Drawn::Unstated,
+            }),
+        Some(Drawn::LikeType(Ty::Text)),
+    );
+
+    // (D) A kind may name a colour of its own, for a node that is not about a
+    // type at all.
+    assert_eq!(
+        document.faces(ROOT, sink).map(|faces| faces.title),
+        Some(Tint::rgb(0x33, 0x33, 0x3A)),
+    );
+
+    // (E) ★★★★★ AND WHAT A PERSON AUTHORED WINS, which is the ranking the
+    // reference spreads across three code paths. Authored on the node whose
+    // kind has the STRONGEST opinion, so this cannot pass by the kind having
+    // said nothing.
+    document
+        .tree_mut(ROOT)
+        .and_then(|tree| tree.node_mut(sink))
+        .expect("the node is there")
+        .appearance
+        .tint = Some(Tint::rgb(0xE0, 0x10, 0x10));
+    let faces = document.faces(ROOT, sink).expect("authored");
+    assert_eq!(faces.title, Tint::rgb(0xE0, 0x10, 0x10));
+    assert_eq!(
+        faces.title_text,
+        Tint::rgb(255, 255, 255),
+        "★ and the other faces are still DERIVED from whichever colour won, so \
+         one ranking feeds one derivation"
+    );
+    // ★ Clearing it hands the node back to its kind, rather than to nothing —
+    // the half a one-way test would miss.
+    document
+        .tree_mut(ROOT)
+        .and_then(|tree| tree.node_mut(sink))
+        .expect("the node is there")
+        .appearance
+        .tint = None;
+    assert_eq!(
+        document.faces(ROOT, sink).map(|faces| faces.title),
+        Some(Tint::rgb(0x33, 0x33, 0x3A)),
     );
 }
 

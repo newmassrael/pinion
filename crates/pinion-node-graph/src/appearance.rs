@@ -138,6 +138,51 @@ impl Faces {
     }
 }
 
+/// ★★★★★ R1940 — **what a node's KIND says the node is drawn as**, when
+/// nobody has authored a colour for it.
+///
+/// See [`NodeKind::drawn_as`](crate::NodeKind::drawn_as) for the measurement
+/// that shaped this. In short: the reference lets a node type override, per
+/// INSTANCE, the class its header is drawn from, and all three of its
+/// overriders DERIVE that class from the node's own authored state rather than
+/// storing a colour on it.
+///
+/// Three arms and not an `Option<Tint>`, for R1928's reason — there are three
+/// answers a taxonomy genuinely gives:
+///
+/// * [`Unstated`](Self::Unstated) — this kind says nothing, and the
+///   application draws the node however it draws a node. A real answer, not a
+///   hole: most kinds in most taxonomies have no opinion, and saying so is what
+///   lets a screen show its own default without inferring one.
+/// * [`In`](Self::In) — this colour, chosen by the kind.
+/// * [`LikeType`](Self::LikeType) — ★ whatever colour THIS TYPE is drawn in.
+///
+/// # Why the third arm, and why it is the one that matters
+///
+/// The reference's class is a fixed enumeration, separate from its socket
+/// types, and the correspondence between the two is a coincidence its model
+/// cannot state: the node that answers "I am a vector operation" and the socket
+/// that carries a vector reach two unrelated palettes. Here a kind can say *I
+/// am drawn like the type I work on*, and the answer comes from the same
+/// [`type_colour`](crate::NodeKind::type_colour) a port of that type is drawn
+/// with — so a taxonomy that recolours a type recolours the nodes that work on
+/// it, and the two cannot drift apart.
+///
+/// ⚠ `LikeType` can still resolve to nothing: a type whose colour is `None` is
+/// a type nobody coloured, and a node drawn like it is drawn like it. That
+/// collapses to the same outcome as `Unstated` and is deliberately NOT the same
+/// STATEMENT — one says *this kind has no opinion*, the other *this kind's
+/// opinion is that type's, which is itself unstated*.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Drawn<T> {
+    /// This kind says nothing about how its nodes are drawn.
+    Unstated,
+    /// Drawn in this colour.
+    In(Tint),
+    /// Drawn in whatever colour this **type** is drawn in.
+    LikeType(T),
+}
+
 /// A node's view state.
 ///
 /// Held in the document rather than in a side table keyed by [`NodeId`], for the

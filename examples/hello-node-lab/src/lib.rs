@@ -102,9 +102,9 @@ use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::widgets::wheel::WheelDirection;
 use pinion_core::{CellKind, Frame, Modifiers, Scene, WidgetCore, edit_field_keymap};
 use pinion_node_graph::{
-    Act, Camera, Document, Extent, Faces, Fit, Found, Item, Judged, LandError, Landfall, LinkId,
-    LinkLayer, Margin, NameSource, Node, NodeBody, NodeId, PortPath, PortRef, ROOT, Relinked, Side,
-    Socket, Tint, Violation, ZoomRange, palette_of, type_palette,
+    Act, Camera, Document, Drawn, Extent, Faces, Fit, Found, Item, Judged, LandError, Landfall,
+    LinkId, LinkLayer, Margin, NameSource, Node, NodeBody, NodeId, NodeKind, PortPath, PortRef,
+    ROOT, Relinked, Side, Socket, Tint, Violation, ZoomRange, palette_of, type_palette,
 };
 use pinion_platform_storage::AppStorage;
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
@@ -8729,8 +8729,8 @@ fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
         // they sit on, never authored. That is the half the reference leaves to
         // each subclass, and leaving it there is how a title becomes
         // unreadable; `Faces::title_text` makes that unreachable.
-        let ink_for_name = card_tint(state, node).map_or(ink.text, |tint| {
-            let letters = Faces::of(tint).title_text;
+        let ink_for_name = card_faces(state, node).map_or(ink.text, |faces| {
+            let letters = faces.title_text;
             Color::rgba(letters.r, letters.g, letters.b, 255)
         });
         parts.push(quiet(
@@ -8820,8 +8820,8 @@ fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
         // so `title` is the face it wears, and the walk holds the contrast
         // against whatever fill it finds rather than against the one this
         // comment claims.
-        let fill = card_tint(state, node).map_or(ink.surface, |tint| {
-            let title = Faces::of(tint).title;
+        let fill = card_faces(state, node).map_or(ink.surface, |faces| {
+            let title = faces.title;
             Color::rgba(title.r, title.g, title.b, 255)
         });
         let mut style = BoxStyle::filled(fill).with_corner_radius(9);
@@ -18044,7 +18044,24 @@ fn parse_tint(raw: &str) -> Result<Option<Tint>, InvokeError> {
     Ok(Some(Tint::rgb(channel(0), channel(2), channel(4))))
 }
 
+/// ★★★★★ R1940 — **the faces this card is actually drawn with**, from the one
+/// place that ranks what a person authored against what the kind says.
+///
+/// ⚠ This used to read `appearance.tint` directly, which was the authored
+/// colour and nothing else — so a card whose KIND had an opinion was drawn as
+/// though it had none. Asking `Document::faces` is what makes the ranking a
+/// property of the document rather than of each of the three sites below that
+/// paint with it.
+fn card_faces(state: &LabState, node: NodeId) -> Option<Faces> {
+    state.doc.borrow().faces(ROOT, node)
+}
+
 /// ★★★★★ R1921 — the colour a person gave this card, if any.
+///
+/// ⚠ NOT the same question as what the card is DRAWN in, which is R1940's
+/// [`card_faces`]: a card with no authored colour is still drawn, in whatever
+/// its kind says. Kept apart because the wire publishes both, and a client
+/// needs to tell "nobody chose" from "this is what it looks like".
 fn card_tint(state: &LabState, node: NodeId) -> Option<Tint> {
     state
         .doc
@@ -18052,6 +18069,36 @@ fn card_tint(state: &LabState, node: NodeId) -> Option<Tint> {
         .tree(ROOT)
         .and_then(|host| host.node(node))
         .and_then(|held| held.appearance.tint)
+}
+
+/// ★★★★★ R1940 — **what this card's KIND says it is drawn as**, in a sentence.
+///
+/// Published beside the faces rather than folded into them, because the two
+/// answer different questions and a screen needs both: the faces say what
+/// colour to paint, and this says WHY — which is the difference between *no
+/// card said anything* and *this card named a transport whose colour is
+/// unstated*. The reference publishes neither; its class override is readable
+/// only by drawing the node.
+fn drawn_wire(state: &Rc<LabState>, node: NodeId) -> serde_json::Value {
+    let doc = state.doc.borrow();
+    let said = doc
+        .tree(ROOT)
+        .and_then(|host| host.node(node))
+        .map(|held| match &held.body {
+            NodeBody::Kind(kind) => kind.drawn_as(),
+            _ => Drawn::Unstated,
+        });
+    match said {
+        Some(Drawn::LikeType(endpoint)) => serde_json::json!({
+            "says": "like_type",
+            "type": format!("{endpoint:?}"),
+        }),
+        Some(Drawn::In(tint)) => serde_json::json!({
+            "says": "in",
+            "colour": hex_of(tint),
+        }),
+        Some(Drawn::Unstated) | None => serde_json::json!({ "says": "unstated" }),
+    }
 }
 
 /// ★★★★★ R1921 — every card's authored colour and the faces it derives.
@@ -18066,20 +18113,28 @@ fn tints_wire(state: &Rc<LabState>) -> serde_json::Value {
         .into_iter()
         .map(|node| {
             let tint = card_tint(state, node);
-            let faces = tint.map(Faces::of);
+            // ★★★★★ R1940 — the faces come from the DOCUMENT's ranking, not
+            // from the authored colour above: what this register publishes and
+            // what the canvas paints are now the same call.
+            let faces = card_faces(state, node);
             serde_json::json!({
                 "node": state.name_of(node),
-                "tint": tint.map(|t| format!("#{:02x}{:02x}{:02x}", t.r, t.g, t.b)),
+                // ⚠ R1940 — written by `hex_of`, like every other colour on
+                // this wire. It was `{:02x}` here and `{:02X}` there, so ONE
+                // colour had two spellings and a client comparing a card with
+                // the pin it takes its colour from would have found them
+                // unequal. Found by writing exactly that comparison.
+                "tint": tint.map(hex_of),
+                // ★ What the KIND says, published beside the outcome so a
+                // client can tell "nobody said" from "the kind said, and what
+                // it named has no colour" — two statements the faces alone
+                // cannot distinguish.
+                "drawn": drawn_wire(state, node),
                 "faces": faces.map(|f| serde_json::json!({
-                    "title": format!("#{:02x}{:02x}{:02x}", f.title.r, f.title.g, f.title.b),
-                    "body": format!("#{:02x}{:02x}{:02x}", f.body.r, f.body.g, f.body.b),
-                    "comment": format!(
-                        "#{:02x}{:02x}{:02x}", f.comment.r, f.comment.g, f.comment.b
-                    ),
-                    "title_text": format!(
-                        "#{:02x}{:02x}{:02x}",
-                        f.title_text.r, f.title_text.g, f.title_text.b
-                    ),
+                    "title": hex_of(f.title),
+                    "body": hex_of(f.body),
+                    "comment": hex_of(f.comment),
+                    "title_text": hex_of(f.title_text),
                 })),
             })
         })

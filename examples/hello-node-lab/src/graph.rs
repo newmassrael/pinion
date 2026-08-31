@@ -12,8 +12,8 @@
 //! canvas's three pin appearances mean something rather than decorate.
 
 use pinion_node_graph::{
-    Admission, Admits, Composition, Conversion, NodeKind, Port, PortName, PortRef, Refusal, Side,
-    Tint, Variadic,
+    Admission, Admits, Composition, Conversion, Drawn, NodeKind, Port, PortName, PortRef, Refusal,
+    Side, Tint, Variadic,
 };
 use serde::{Deserialize, Serialize};
 
@@ -711,6 +711,27 @@ impl NodeKind for LabNode {
             // Which port on it.
             Endpoint::Service => Tint::rgb(0xD1, 0x6A, 0x5A),
         })
+    }
+
+    /// ★★★★★ R1940 — **a card is drawn in the colour of the transport it
+    /// speaks.**
+    ///
+    /// `LikeType` and not a colour written out here, which is the whole reason
+    /// that arm exists: the transport palette is already declared once, for
+    /// PINS ([`type_colour`](NodeKind::type_colour)), and a card naming its own
+    /// copy would be a second vocabulary free to disagree with the legend the
+    /// same screen draws. Recolour a transport and the pins AND the cards that
+    /// speak it move together, because there is one declaration.
+    ///
+    /// ⚠ Answered from `self`, so this is per CARD and not per kind: R1937's
+    /// verb gives one card another transport, and its colour follows the same
+    /// turn. That is the capability the reference spells as a per-node class
+    /// override, and it is why an authored colour has to outrank this rather
+    /// than the other way round — a person who chose a colour did not choose it
+    /// to be recomputed under them ([`Document::faces`](
+    /// pinion_node_graph::Document::faces)).
+    fn drawn_as(&self) -> Drawn<Self::Type> {
+        Drawn::LikeType(Endpoint::Locator(self.transport))
     }
 
     /// ★★★★★ R1916 — what a value of this socket type IS.
