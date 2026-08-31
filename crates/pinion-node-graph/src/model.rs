@@ -1946,6 +1946,12 @@ pub struct Tree<K: NodeKind> {
     nodes: BTreeMap<NodeId, Node<K>>,
     links: Vec<Link>,
     interface: Interface<K>,
+    /// ★★★★★ R1933 — the socket types this tree admits on its interface.
+    ///
+    /// `Anything` by default and by `serde` default, so every document written
+    /// before this field existed reads back as the unrestricted tree it was.
+    #[serde(default = "crate::Admitted::default")]
+    pub(crate) admitted: crate::Admitted<K::Type>,
     next_node: u32,
     next_link: u32,
 }
@@ -2096,6 +2102,7 @@ impl<K: NodeKind> Document<K> {
                 nodes: BTreeMap::new(),
                 links: Vec::new(),
                 interface: Interface::default(),
+                admitted: crate::Admitted::Anything,
                 next_node: 0,
                 next_link: 0,
             }],
@@ -2185,6 +2192,7 @@ impl<K: NodeKind> Document<K> {
             nodes: BTreeMap::new(),
             links: Vec::new(),
             interface: Interface::default(),
+            admitted: crate::Admitted::Anything,
             next_node: 0,
             next_link: 0,
         });
@@ -3718,6 +3726,20 @@ impl<K: NodeKind> Document<K> {
             .trees
             .get_mut(tree.0 as usize)
             .ok_or(EditError::NoSuchTree(tree))?;
+        // ★★★★★ R1933 — the tree's own declaration, asked here because this is
+        // where a type ARRIVES on an interface. The DCC refuses in exactly the
+        // two places that do the same thing (make an interface socket, retype
+        // one), and its third consumer only OFFERS — which is
+        // `Document::offered_types`, derived from this same list so the offer
+        // and the refusal cannot disagree.
+        if let Flow::Value { ty, .. } = &port.flow
+            && !host.admitted.admits(ty)
+        {
+            return Err(EditError::TypeNotAdmitted {
+                tree,
+                ty: format!("{ty:?}"),
+            });
+        }
         let ports = host.interface.side_mut(side);
         ports.push(port);
         Ok(u32::try_from(ports.len() - 1).unwrap_or(u32::MAX))
@@ -4294,6 +4316,20 @@ pub enum EditError {
         /// The node that would have been left showing nothing.
         node: NodeId,
     },
+    /// ★★★★★ R1933 — a socket type the tree does not admit on its interface.
+    ///
+    /// ⚠ `ty` is the type's `Debug` spelling and that is a deliberate, stated
+    /// compromise: this enum is not generic over the taxonomy's socket type, so
+    /// the alternative is a refusal that names no type at all. A taxonomy whose
+    /// `Debug` reads badly to a person will read badly here — which is a reason
+    /// for an application to catch this arm and re-word it, the same seam
+    /// `LandError::NoRoom` names in R1930.
+    TypeNotAdmitted {
+        /// The tree that refused it.
+        tree: TreeId,
+        /// The type, spelled as the taxonomy debugs it.
+        ty: String,
+    },
 }
 
 impl fmt::Display for EditError {
@@ -4404,6 +4440,9 @@ impl fmt::Display for EditError {
                 "node {} in tree {} would be left showing no name at all",
                 node.0, tree.0
             ),
+            Self::TypeNotAdmitted { tree, ty } => {
+                write!(f, "tree {} does not admit {ty} on its interface", tree.0)
+            }
         }
     }
 }

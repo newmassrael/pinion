@@ -543,7 +543,8 @@ impl From<EditError> for ItemError {
                 | EditError::WouldContainItself { tree, .. }
                 | EditError::BypassWouldCycle { tree, .. }
                 | EditError::LabelTaken { tree, .. }
-                | EditError::LabelEmpty { tree, .. } => tree,
+                | EditError::LabelEmpty { tree, .. }
+                | EditError::TypeNotAdmitted { tree, .. } => tree,
             }),
         }
     }

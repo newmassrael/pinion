@@ -1914,6 +1914,27 @@ impl LabState {
     /// the specification cannot disagree about what it holds.
     fn opening() -> Self {
         let mut doc: Document<LabNode> = Document::new(spec::GRAPH_NAME);
+        // ★★★★★ R1933 — **what this graph will admit on its own face**, declared
+        // once and read by both the refusal and the offer.
+        //
+        // The whole addresses, and not the halves a split makes. A locator can
+        // be dialled; a bare host or a bare service cannot, so putting one on
+        // the face would publish something no peer could connect to — the same
+        // judgement the reference's shader tree makes when it lists the nine
+        // socket types a shader graph may carry. `Endpoint::all()` is not used
+        // here precisely because it INCLUDES the halves; this list is derived
+        // from `Transport::ALL` so a transport added later joins the face
+        // without anyone editing this.
+        doc.set_admitted(
+            ROOT,
+            pinion_node_graph::Admitted::These(
+                graph::Transport::ALL
+                    .into_iter()
+                    .map(graph::Endpoint::Locator)
+                    .collect(),
+            ),
+        )
+        .expect("the root tree exists");
         let mut ids = BTreeMap::new();
         let mut frames = BTreeMap::new();
         let mut frame_ids: BTreeMap<&str, NodeId> = BTreeMap::new();
@@ -10947,6 +10968,27 @@ const FIELDS: &[SchemaField] = &{
                 ]
             },
         ),
+        // ★★★★★ R1933 — put a card's pin on this graph's own FACE, so a
+        // sub-graph of this tool can be dialled from outside it. The address
+        // vocabulary is `split_pin`'s, because a pin is a pin whichever verb
+        // reaches for it — and the refusal is where this round's rule lives: a
+        // whole address may go on the face, a HALF of one may not.
+        SchemaField::action_with(
+            "expose_pin",
+            "string",
+            ArgForm::Delimited(','),
+            const {
+                &[
+                    SchemaArg::key("node", "string", "nodes"),
+                    SchemaArg::one_of("address", "string", &PIN_ADDRESSES),
+                ]
+            },
+        ),
+        // ★★★★★ R1933 — what socket types this graph will admit on its face, and
+        // the list a chooser should offer. ONE declaration published once: the
+        // refusal `expose_pin` makes and the list below are the same fact, so a
+        // client cannot be offered a type the edit would turn away.
+        SchemaField::new("admits", "json"),
         // ★★★★★ R1885 — put a card on another build. The build comes from a
         // CLOSED vocabulary and it is built from `Stack::ALL` rather than
         // spelled here, so the words an agent is offered cannot drift from the
@@ -11093,6 +11135,7 @@ impl ExternalIntrospect for LabOracle {
             "wrong" => Ok(IntrospectValue::Json(wrong_wire(state))),
             "port_names" => Ok(IntrospectValue::Json(port_names_wire(state))),
             "naming" => Ok(IntrospectValue::Json(naming_wire(state))),
+            "admits" => Ok(IntrospectValue::Json(admits_wire(state))),
             // ★ R1742 — the SAME value the host publishes for this section, so
             // "one build, two placements" is a fact a client can check rather
             // than a claim this file makes.
@@ -11945,6 +11988,14 @@ impl ExternalIntrospect for LabOracle {
                 })?;
                 let node = Self::card(&state, name.trim())?;
                 split_pin(&state, node, address.trim()).map(IntrospectValue::Text)
+            }
+            "expose_pin" => {
+                let raw = Self::text(&args)?;
+                let (name, address) = raw.split_once(',').ok_or_else(|| {
+                    InvokeError::rejected(format!("{raw:?} is not <card>,<address>"))
+                })?;
+                let node = Self::card(&state, name.trim())?;
+                expose_pin(&state, node, address.trim()).map(IntrospectValue::Text)
             }
             // ★ R1681 — either layer, told apart by the `>`. A reported link
             // has no id to name it by, so the pair is the name; refusing to let
@@ -16862,6 +16913,79 @@ fn accepts_wire(state: &Rc<LabState>) -> serde_json::Value {
         })
         .collect();
     serde_json::json!({ "bodies": rows })
+}
+
+/// ★★★★★ R1933 — **put one of a card's pins on this graph's own face.**
+///
+/// The address vocabulary is `split_pin`'s, because a pin is a pin whichever
+/// verb reaches for it. What is this round's is the refusal: this tool's face
+/// admits WHOLE addresses and not the halves a split makes, so exposing
+/// `accept.host` is turned away by the crate's own declaration rather than by a
+/// rule written here.
+///
+/// ⚠ The crate's refusal names the type as the taxonomy debugs it, which reads
+/// as `Host` — good enough to keep, and the seam where an application would
+/// re-word it is the same one `LandError::NoRoom` names.
+fn expose_pin(state: &Rc<LabState>, node: NodeId, address: &str) -> Result<String, InvokeError> {
+    let name = state.name_of(node);
+    let (side, path) = pin_address(address.trim())?;
+    let mut doc = state.doc.borrow_mut();
+    let port = doc
+        .resolved_ports(ROOT, node, side)
+        .into_iter()
+        .find(|(at, _)| *at == path)
+        .map(|(_, port)| port)
+        .ok_or_else(|| InvokeError::rejected(format!("{name} has no pin at {address:?}")))?;
+    let face = match side {
+        Side::Input => pinion_node_graph::InterfaceSide::Input,
+        Side::Output => pinion_node_graph::InterfaceSide::Output,
+    };
+    let at = doc
+        .expose(ROOT, face, port)
+        .map_err(|why| InvokeError::rejected(why.to_string()))?;
+    drop(doc);
+    let said = format!("{name}.{address} is on the face at {at}");
+    state.say(Utterance::done(said.clone()));
+    Ok(said)
+}
+
+/// ★★★★★ R1933 — **what socket types this graph admits on its own face**, and
+/// the list a chooser should offer for it.
+///
+/// ONE declaration, published once. `offers` is the crate's
+/// [`Document::offered_types`] and `admits` judges with the same list, so a
+/// client cannot be shown a type `expose_pin` would turn away — which is
+/// exactly the pair the two references keep as two separate mechanisms.
+///
+/// `unadmitted` is what a narrowing would have left behind: empty here, and
+/// published anyway, because a register that only appeared when something was
+/// wrong could not be checked when nothing was.
+fn admits_wire(state: &Rc<LabState>) -> serde_json::Value {
+    let doc = state.doc.borrow();
+    let offers: Option<Vec<String>> = doc
+        .offered_types(ROOT)
+        .map(|these| these.iter().map(|ty| ty.wire_word()).collect());
+    let every: Vec<serde_json::Value> = graph::Endpoint::all()
+        .into_iter()
+        .map(|ty| {
+            serde_json::json!({
+                "type": ty.wire_word(),
+                "admitted": doc.admits_type(ROOT, &ty),
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "offers": offers,
+        "types": every,
+        "unadmitted": doc
+            .unadmitted_ports(ROOT)
+            .into_iter()
+            .map(|(side, index)| serde_json::json!({
+                "side": if side == pinion_node_graph::InterfaceSide::Input { "in" } else { "out" },
+                "index": index,
+            }))
+            .collect::<Vec<_>>(),
+    })
 }
 
 /// ★★★★★ R1932 — **what each thing on the canvas requires of its own name.**

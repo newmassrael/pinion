@@ -541,7 +541,12 @@ const STORAGE_KEY: &str = "node_graph.state";
 // but *what the face looks like when a section is folded* is not — that is a
 // function of the fold and the members, and writing it would be the
 // answer-beside-its-question this list has now refused four times.
-const PERSISTED_SCHEMA_VERSION: u32 = 17;
+// ★★★★★ R1933 — 17 -> 18. A tree now carries the socket types it admits on its
+// interface (`Admitted`, defaulting to `Anything`), and that is a field in every
+// saved graph. The default means an old blob READS correctly; the version is
+// what tells a person their file predates the field rather than leaving them to
+// find out from a value that was never written.
+const PERSISTED_SCHEMA_VERSION: u32 = 18;
 
 /// R1599 — the append-only `(version, digest)` ledger the persistence gate
 /// reads. See `pinion_core::test_fixtures::assert_persisted_shape` for why it
@@ -561,6 +566,7 @@ const PERSISTED_SHAPE_HISTORY: &[(u32, u64)] = &[
     (15, 0x66ea_2118_9854_494f),
     (16, 0x8c78_2add_a365_ce63),
     (17, 0x0aac_91b1_399b_e776),
+    (18, 0x89f1_0dbb_ca3b_4019),
 ];
 
 /// R849 — where a newly added node first lands, and the per-add cascade step

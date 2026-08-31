@@ -211,6 +211,7 @@
 //! assert!(doc.validate().is_empty());
 //! ```
 
+mod admitted;
 mod appearance;
 mod archive;
 mod arrange;
@@ -245,6 +246,7 @@ mod tests;
 mod view;
 mod warning;
 
+pub use admitted::Admitted;
 pub use appearance::{Appearance, Faces, Hidden, PutAway, PutAwayRefusal, Tint, VisiblePorts};
 pub use archive::{Archive, Dropped, Opening, REVISION, Unreadable, Unwritable};
 pub use arrange::{

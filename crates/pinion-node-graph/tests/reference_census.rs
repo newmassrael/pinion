@@ -44,12 +44,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use pinion_node_graph::{
-    Act, Align, Appearance, Axis, Command, ConnectError, Conversion, Crossings, Definitions,
-    Described, Direction, Distribute, Document, Edge, EditError, EditPath, Extent, Faces, Fragment,
-    Grow, Hidden, Instance, InterfacePort, InterfaceSide, Item, ItemError, LandError, Landfall,
-    LinkId, Machine, Matched, Multiplicity, Node, NodeBody, NodeId, NodeKind, NodeSite,
-    NotRecombinable, NotSplittable, Port, PortName, PortPath, PortRef, PortSite, PutAway, ROOT,
-    Reach, RelinkError, SectionId, Session, Sharing, Side, Socket, Stack, Straighten, Stride,
+    Act, Admitted, Align, Appearance, Axis, Command, ConnectError, Conversion, Crossings,
+    Definitions, Described, Direction, Distribute, Document, Edge, EditError, EditPath, Extent,
+    Faces, Fragment, Grow, Hidden, Instance, InterfacePort, InterfaceSide, Item, ItemError,
+    LandError, Landfall, LinkId, Machine, Matched, Multiplicity, Node, NodeBody, NodeId, NodeKind,
+    NodeSite, NotRecombinable, NotSplittable, Port, PortName, PortPath, PortRef, PortSite, PutAway,
+    ROOT, Reach, RelinkError, SectionId, Session, Sharing, Side, Socket, Stack, Straighten, Stride,
     SwitchRefusal, Tint, TreeId, Variadic, WatchError, palette_of, type_palette,
 };
 
@@ -617,6 +617,7 @@ fn proofs() -> Vec<Proof> {
     all.extend(engine_debug_proofs());
     all.extend(engine_description_proofs());
     all.extend(dcc_item_proofs());
+    all.extend(dcc_r1933_proofs());
     all
 }
 
@@ -1307,6 +1308,17 @@ fn engine_hook_proofs() -> Vec<Proof> {
     ]
 }
 
+/// The DCC proofs this round adds, kept beside the engine's rather than folded
+/// in: the census addresses a row by TREE and a proof list that mixed them would
+/// make a mis-filed row look filed.
+fn dcc_r1933_proofs() -> Vec<Proof> {
+    vec![proof(
+        "dcc",
+        "node_tree::valid_socket_type",
+        dcc_node_tree_valid_socket_type,
+    )]
+}
+
 /// And the schema's half of it — what the engine asks a GRAPH to decide.
 fn engine_schema_hook_proofs() -> Vec<Proof> {
     vec![
@@ -1900,6 +1912,116 @@ fn dcc_node_poll() {
         "the document itself is well-formed, so none of the above is an artefact \
          of an already-broken fixture: {:?}",
         chain.document.validate()
+    );
+}
+
+// ====================================== R1933 — what a tree will admit
+
+/// ★★★★★ R1933 — a tree says which socket types it will admit, and the offer is
+/// derived from the refusal.
+///
+/// The two references' two hooks are two READINGS of one fact — the DCC refuses
+/// and offers, the engine only offers — so the three things asserted here are:
+///
+/// * a declared set REFUSES what it excludes, at the place a type arrives on an
+///   interface;
+/// * the OFFER is the same list, so a chooser cannot show what the edit would
+///   turn away;
+/// * and `Anything` is a value, distinct from a set that happens to be empty.
+#[test]
+fn dcc_node_tree_valid_socket_type() {
+    let mut document: Document<Op> = Document::new("root");
+    let definition = document.add_definition("typed");
+
+    // ★ The supplied answer first: a tree that says nothing admits everything,
+    // and it SAYS so rather than answering an empty offer.
+    assert_eq!(document.admitted(definition), Admitted::Anything);
+    assert!(document.admits_type(definition, &Ty::Text));
+    assert_eq!(
+        document.offered_types(definition),
+        None,
+        "a tree that restricts nothing has no list to offer — asking the \
+         taxonomy is the caller's job, and an empty vector would be a lie"
+    );
+    document
+        .expose(
+            definition,
+            InterfaceSide::Input,
+            Port::new("free", Ty::Text),
+        )
+        .expect("anything goes before a restriction is declared");
+
+    // ★★★★★ A DECLARED set refuses what it excludes, where the type arrives.
+    document
+        .set_admitted(definition, Admitted::These(vec![Ty::Number, Ty::Flag]))
+        .expect("the tree is there");
+    assert!(document.admits_type(definition, &Ty::Number));
+    assert!(!document.admits_type(definition, &Ty::Text));
+    let why = document
+        .expose(
+            definition,
+            InterfaceSide::Input,
+            Port::new("word", Ty::Text),
+        )
+        .expect_err("Text is not admitted");
+    assert!(
+        matches!(why, EditError::TypeNotAdmitted { tree, .. } if tree == definition),
+        "and the refusal names the tree: {why}"
+    );
+    assert!(
+        why.to_string().contains("Text"),
+        "and says which type: {why}"
+    );
+    // ★ And an admitted one still goes through, so the rule is a filter rather
+    // than a wall — without this the assertion above would hold for a tree that
+    // refused everything.
+    document
+        .expose(
+            definition,
+            InterfaceSide::Input,
+            Port::new("count", Ty::Number),
+        )
+        .expect("Number is admitted");
+
+    // ★★★★★ THE OFFER IS THE SAME LIST. This is the whole of what the two
+    // references have as two separate mechanisms.
+    let offered = document
+        .offered_types(definition)
+        .expect("a restricted tree offers a list");
+    assert_eq!(offered, vec![Ty::Number, Ty::Flag]);
+    for ty in &offered {
+        assert!(
+            document.admits_type(definition, ty),
+            "every offered type is one the edit would take: {ty:?}"
+        );
+    }
+    assert!(
+        !offered.contains(&Ty::Text),
+        "and the one it refuses is not offered"
+    );
+
+    // ⚠ An EMPTY set is a real answer and a different one from `Anything`: this
+    // tree admits nothing at all, and says so rather than reading as
+    // unrestricted.
+    let shut = document.add_definition("shut");
+    document
+        .set_admitted(shut, Admitted::These(Vec::new()))
+        .expect("the tree is there");
+    assert_eq!(document.offered_types(shut), Some(Vec::new()));
+    assert!(!document.admits_type(shut, &Ty::Number));
+    assert_ne!(document.admitted(shut), document.admitted(ROOT));
+
+    // ★ A narrowing does not delete what is already there — it REPORTS it, so
+    // whoever narrowed the set decides what to do about the links.
+    let left = document.unadmitted_ports(definition);
+    assert_eq!(
+        left,
+        vec![(InterfaceSide::Input, 0)],
+        "the Text port exposed before the restriction is still there and named: {left:?}"
+    );
+    assert!(
+        document.unadmitted_ports(ROOT).is_empty(),
+        "and an unrestricted tree has none by construction"
     );
 }
 

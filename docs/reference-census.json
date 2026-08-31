@@ -1027,10 +1027,10 @@
       "verdict": "have"
     },
     "node_tree::valid_socket_type": {
-      "covered_by": "no per-tree restriction on which socket types may appear",
+      "covered_by": "Document::set_admitted declares it and Document::expose refuses against it (R1933). ★ The covering sentence was RIGHT this time, which is worth recording after seven rounds of it being wrong: this hook really is the per-tree restriction, four tree types implement it (a shader tree answers a nine-member whitelist), and it is consumed in three places — making an interface socket, retyping one, and an operator FINDING a type it may offer. ★★★★★ Here the offer is DERIVED from the refusal: Document::offered_types answers the same list admits_type judges against, so a chooser cannot show a type the edit would turn away — where the reference has a hook and a separate operator that loops over every registered socket type asking it. Two more measured differences: Anything is a VALUE (the reference spells 'no restriction' as a null function pointer that all three consumers must remember to check), and the restriction is per TREE rather than per tree type, so a definition may admit a narrower set than the root",
       "mechanism": "tree-type",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::dcc_node_tree_valid_socket_type",
+      "verdict": "have"
     },
     "node_tree::validate_link": {
       "covered_by": "NodeKind::conversion, declared once AS the conversion, so legality and what arrives cannot disagree",
@@ -3795,10 +3795,10 @@
       "verdict": "have"
     },
     "schema::SupportsPinType": {
-      "covered_by": "no per-tree restriction on which socket types may appear",
+      "covered_by": "Document::offered_types answers this, and cites the same proof because it is the SAME declaration read the other way (R1933). ⚠ The pair was NOT one mechanism and the two rows had to be measured apart: this one is asked with a schema ACTION and a pin type, is supplied `true`, has ZERO overriders across the whole engine source, and its single consumer is the pin-type SELECTOR widget filtering the list a person picks from. So it is an OFFER where its DCC neighbour is a REFUSAL — two readings of one fact, which is why one declaration serves both and writing the rule twice would be the two-oracle defect R1924 and R1930 each paid for",
       "mechanism": "graph-schema",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::dcc_node_tree_valid_socket_type",
+      "verdict": "have"
     },
     "schema::SupportsPinTypeContainer": {
       "covered_by": "CONTAINER socket types: an array, set or map of a type",
