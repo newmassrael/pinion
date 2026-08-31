@@ -102,9 +102,9 @@ use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::widgets::wheel::WheelDirection;
 use pinion_core::{CellKind, Frame, Modifiers, Scene, WidgetCore, edit_field_keymap};
 use pinion_node_graph::{
-    Act, Camera, Document, Extent, Faces, Fit, Found, Item, LinkId, LinkLayer, Margin, NameSource,
-    Node, NodeBody, NodeId, PortPath, PortRef, ROOT, Relinked, Side, Socket, Tint, Violation,
-    ZoomRange, palette_of, type_palette,
+    Act, Camera, Document, Extent, Faces, Fit, Found, Item, LandError, Landfall, LinkId, LinkLayer,
+    Margin, NameSource, Node, NodeBody, NodeId, PortPath, PortRef, ROOT, Relinked, Side, Socket,
+    Tint, Violation, ZoomRange, palette_of, type_palette,
 };
 use pinion_platform_storage::AppStorage;
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
@@ -14251,13 +14251,19 @@ fn choose_endpoint(state: &Rc<LabState>, n: usize) -> Result<String, InvokeError
 /// runs every gate the act runs, in the act's order, and the act begins by
 /// asking it.
 ///
-/// # Why the crate half is asked on a COPY
+/// # ★★★★★ R1930 — the crate half is `Document::may_land` now, and the COPY
+/// moved into it
 ///
-/// The answer depends on the slot the drop would open: [`move_end`] opens one
-/// and then moves the end, so a question asked about the ports that exist right
-/// now would refuse for a port the drop itself creates. The copy runs the same
-/// function the drop runs, on the same inputs, so the port it names is the port
-/// the drop will use — §2 #3's dry run rather than a second rule about landing.
+/// R1924 wrote this function's crate half here: clone the document, open a slot
+/// in the clone, ask `may_relink` about the port that appeared. That is exactly
+/// [`Document::may_land`], and this screen having its own copy of it was one
+/// derivation living in two places — so the clone, the slot and the dry run are
+/// the crate's now, and this function keeps only what is genuinely the screen's:
+/// the domain rule that a dialler may not take every endpoint of one peer.
+///
+/// The answer it returns is richer for the move: [`Landfall`] says whether an
+/// existing pin takes the wire or a NEW one appears for it, which this canvas
+/// could not say before because opening a slot was unconditional.
 ///
 /// The refusal sentence is the crate's own, so a hand over a card that would
 /// close a cycle is told **which path** closes it rather than that it did not
@@ -14282,14 +14288,33 @@ fn would_take(state: &LabState, link: LinkId, to: NodeId) -> Result<Option<Strin
             state.name_of(held.from.node)
         )
     })?;
-    let mut scratch = state.doc.borrow().clone();
-    let Some(port) = open_slot_in(&mut scratch, to, endpoint.as_deref()) else {
-        return Err(format!("{name} has no accept pin"));
-    };
-    scratch
-        .may_relink(ROOT, link, Side::Input, Socket::new(to, port))
-        .map(|()| endpoint)
-        .map_err(|why| Utterance::refused(&why).into_clause())
+    would_land(state, link, to).map(|_| endpoint)
+}
+
+/// ★★★★★ R1930 — **what the crate says releasing this wire on that card would
+/// do**: an existing pin takes it, or one appears for it.
+///
+/// The screen's own domain gate is [`would_take`]'s and runs first; this is the
+/// model's half, and it is one call because [`Document::may_land`] absorbed the
+/// clone-and-open-a-slot dance this file used to do itself.
+fn would_land(state: &LabState, link: LinkId, to: NodeId) -> Result<Landfall, String> {
+    state
+        .doc
+        .borrow()
+        .may_land(ROOT, link, Side::Input, to)
+        .map_err(|why| match why {
+            // ⚠ R1930 — the ONE arm this screen re-words, and the crate's own
+            // header says so. Every other refusal names something the model
+            // knows better than this file — a type, an arity, the path a wire
+            // would close — and is carried whole for R1924's reason. This one
+            // names a node id and a side; the card has a NAME here, and the
+            // first walk to read the crate's version of this sentence reported
+            // `node 3` where `Q-01` was available.
+            LandError::NoRoom { .. } => {
+                format!("{} has no accept pin", state.name_of(to))
+            }
+            other => Utterance::refused(&other).into_clause(),
+        })
 }
 
 /// ★★★★★ R1924 — what one card would do with the wire being re-aimed.
@@ -14309,8 +14334,16 @@ fn would_take(state: &LabState, link: LinkId, to: NodeId) -> Result<Option<Strin
 enum Landing {
     /// Where the wire already is. A drop here moves nothing.
     Standing,
-    /// It would go there.
+    /// A pin that is already there would take it.
     Takes,
+    /// ★★★★★ R1930 — a pin would APPEAR for it, and the wire would land on that.
+    ///
+    /// The fourth answer, and it is a different thing to tell a hand: *this pin
+    /// takes it* and *this card will grow one* are the two things the reference
+    /// spells with three hard-coded strings in an out-parameter its own header
+    /// calls an error channel. Here the crate answers a [`Landfall`] and this is
+    /// the word for its second arm.
+    Grows,
     /// It would not, and this is the crate's own reason.
     Refuses(String),
 }
@@ -14321,16 +14354,23 @@ impl Landing {
         match self {
             Self::Standing => "standing",
             Self::Takes => "takes",
+            Self::Grows => "grows",
             Self::Refuses(_) => "refuses",
         }
     }
 
-    /// The sentence, for the two answers that are not a refusal — `None`,
-    /// because a reason beside a yes is a reason nobody can act on.
+    /// Whether a drop here would land the wire — either onto a pin that is
+    /// there or onto one that appears.
+    const fn lands(&self) -> bool {
+        matches!(self, Self::Takes | Self::Grows)
+    }
+
+    /// The sentence, for the answers that are not a refusal — `None`, because a
+    /// reason beside a yes is a reason nobody can act on.
     fn because(self) -> Option<String> {
         match self {
             Self::Refuses(why) => Some(why),
-            Self::Standing | Self::Takes => None,
+            Self::Standing | Self::Takes | Self::Grows => None,
         }
     }
 }
@@ -14344,7 +14384,11 @@ fn landing_for(state: &LabState, link: LinkId, card: NodeId) -> Landing {
     if standing == Some(card) {
         return Landing::Standing;
     }
-    match would_take(state, link, card) {
+    // ★★★★★ R1930 — the screen's domain gate first (it is `would_take`'s), then
+    // the crate's answer, and the crate's answer is now RICHER than a yes: it
+    // says whether a pin is there or one appears.
+    match would_take(state, link, card).and_then(|_| would_land(state, link, card)) {
+        Ok(fall) if fall.is_new() => Landing::Grows,
         Ok(_) => Landing::Takes,
         Err(why) => Landing::Refuses(why),
     }
@@ -14371,17 +14415,30 @@ fn rewire_targets_of(state: &LabState, link: LinkId) -> BTreeSet<NodeId> {
         .unwrap_or_default();
     cards
         .into_iter()
-        .filter(|card| matches!(landing_for(state, link, *card), Landing::Takes))
+        // ★ R1930 — a card that would GROW a pin is lit too: what the hand is
+        // being told is *release here and the wire lands*, and whether the pin
+        // is already there is the sentence beside it, not the lighting.
+        .filter(|card| landing_for(state, link, *card).lands())
         .collect()
 }
 
-/// The one arithmetic behind re-aiming a link and re-choosing its endpoint: a
-/// slot is opened for where it is going, the crate moves the end, and whichever
-/// slot is now empty is closed (R1681).
+/// Re-aim a link's consuming end at `to`, on the endpoint `endpoint` names.
 ///
-/// One function because the two operations differ only in whether the node on
-/// the far end changes, and two copies of the open/move/close dance would be
-/// two places for the run's bookkeeping to drift.
+/// ★★★★★ R1930 — **the open / move / close-on-the-way-out dance is gone.**
+/// Until this round the screen opened a slot in the real document, asked the
+/// crate to move the end onto it, and — when the crate refused — closed the slot
+/// again. That undo path is exactly what the reference's own drop does not have
+/// and what a person pays for when it is forgotten: a port nobody asked for,
+/// left behind by a refusal.
+///
+/// [`Document::land`] is one act. It decides whether a pin that is there takes
+/// the end or one has to appear, does the whole thing to a copy, and takes the
+/// copy only on success — so a refusal leaves the document equal to what it was,
+/// by construction rather than by this function remembering to tidy up.
+///
+/// The slot the end LEFT is still closed here, because that is not an undo: the
+/// wire really did leave, and an accept run that kept a seat per wire it once
+/// had would grow forever.
 fn move_end(
     state: &Rc<LabState>,
     link: LinkId,
@@ -14394,30 +14451,55 @@ fn move_end(
         .tree(ROOT)
         .and_then(|t| t.link(link).map(|l| l.to))
         .ok_or_else(|| InvokeError::rejected(format!("no link {} is drawn", link.0)))?;
-    let Some(port) = open_slot(state, to, endpoint) else {
-        return Err(InvokeError::rejected(format!(
-            "{} has no accept pin",
-            state.name_of(to)
-        )));
+    // What a grown pin would carry: the address this wire dials, as a label the
+    // canvas draws AND an authored value the model can take apart (R1914).
+    // Ignored when an existing pin takes the end, which is the crate's answer
+    // and not this screen's to make.
+    let item = match endpoint {
+        Some(one) => Item::plain().named(one).typed(
+            0,
+            graph::Endpoint::Locator(Transport::of_locator(one).unwrap_or(Transport::Tcp)),
+        ),
+        None => Item::plain(),
     };
     let done = state
         .doc
         .borrow_mut()
-        .relink(ROOT, link, Side::Input, Socket::new(to, port));
+        .land(ROOT, link, Side::Input, to, item);
     match done {
-        Ok(done) => {
+        Ok(landed) => {
+            if let Some(one) = endpoint {
+                set_port_address(state, landed.relinked.now, one);
+            }
             // The old slot last: closing it re-points what is past it, and the
             // link has already left it.
             close_slot(state, was.node, was.port);
-            Ok(done)
+            Ok(landed.relinked)
         }
         Err(why) => {
-            close_slot(state, to, port);
+            // ⚠ No undo here, and that is the point: nothing was changed.
             let said = Utterance::refused(&why);
             state.say(said.clone());
             Err(InvokeError::rejected(said.into_clause()))
         }
     }
+}
+
+/// Give the pin the end landed on the address it dials, as an authored value.
+///
+/// ★ R1930 — needed because [`Document::land`] may answer `Takes`, and a pin
+/// that was already there does not carry this wire's address yet. The label the
+/// item holds is the crate's; the VALUE on the port is what this screen's split
+/// and inspector read, and R1914 measured what a locator that lives only in a
+/// name costs when the pin comes apart.
+fn set_port_address(state: &LabState, socket: Socket, endpoint: &str) {
+    let mut doc = state.doc.borrow_mut();
+    let _ = doc.set_port_value(
+        ROOT,
+        socket.node,
+        PortRef::input(socket.port),
+        endpoint.to_owned(),
+    );
 }
 
 /// ★★★★★ R1889 — the width a panel would have if its outer boundary were at
@@ -14545,6 +14627,14 @@ fn move_cursor(state: &Rc<LabState>, px: u32, py: u32) {
                     }
                     Landing::Takes => {
                         state.say(Utterance::unchanged(format!("{name} will take it")));
+                    }
+                    // ★★★★★ R1930 — a different sentence, because it is a
+                    // different thing to be told: nothing on that card is
+                    // waiting for this wire, and releasing it makes a pin.
+                    Landing::Grows => {
+                        state.say(Utterance::unchanged(format!(
+                            "{name} will grow a pin for it"
+                        )));
                     }
                     Landing::Refuses(why) => state.say(Utterance::new(Tone::Refused, why)),
                 }

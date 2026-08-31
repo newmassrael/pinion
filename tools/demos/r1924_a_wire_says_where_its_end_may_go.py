@@ -147,7 +147,12 @@ def body() -> None:
         for name, row in sorted(rows.items()):
             ok(
                 f"A: {name} answers with a known word — {row['verdict']!r}",
-                row["verdict"] in {"standing", "takes", "refuses"},
+                # ⚠ R1930 added a FOURTH word, `grows` — a card with no free
+                # pin that would make one — and this assertion caught it on the
+                # first run of that round. The vocabulary is closed on purpose:
+                # a screen that invented a word would answer something no reader
+                # here knows how to act on.
+                row["verdict"] in {"standing", "takes", "grows", "refuses"},
             )
             if row["verdict"] == "refuses":
                 ok(
@@ -168,7 +173,12 @@ def body() -> None:
         )
 
         banner("B — at least one card TAKES it")
-        takers = sorted(n for n, r in rows.items() if r["verdict"] == "takes")
+        # R1930 — either way of landing counts as "would take the wire" here:
+        # this section is about a destination existing at all, and whether the
+        # pin is already there is that round's question, not this one's.
+        takers = sorted(
+            n for n, r in rows.items() if r["verdict"] in ("takes", "grows")
+        )
         ok(
             f"B: ★ {takers} would take the wire — without this a screen that "
             "refused everything would pass (A) and (C) at once",
@@ -251,7 +261,7 @@ def body() -> None:
             ok(
                 f"D: ★ {row['card']} is drawn {'lit' if changed else 'as it was'} "
                 f"and the rule says {row['verdict']}",
-                changed == (row["verdict"] == "takes"),
+                changed == (row["verdict"] in ("takes", "grows")),
             )
             (marked if changed else unmarked).append(row["card"])
         ok(
@@ -264,7 +274,7 @@ def body() -> None:
             ok(
                 f"D: the screen's own `lit` agrees with its verdict for "
                 f"{row['card']}",
-                row["lit"] == (row["verdict"] == "takes"),
+                row["lit"] == (row["verdict"] in ("takes", "grows")),
             )
 
         banner("E — ★★★★★ the reason is SAID before the hand lets go")
@@ -285,9 +295,19 @@ def body() -> None:
         taker = takers[0]
         app.hover(at=centre(app, pin_of[taker]))
         app.tick_ms(16)
+        # R1930 — the sentence depends on WHICH way the wire lands, and both
+        # sentences are a yes: a pin that is there takes it, and a card with
+        # none grows one. Asserted against the card's own published verdict
+        # rather than against one of the two spellings, so the check cannot
+        # drift from the rule the screen is deriving from.
+        heard_over_taker = said(app, surface)
+        expected = (
+            "will take it" if rows[taker]["verdict"] == "takes" else "will grow a pin"
+        )
         ok(
-            f"E: ★ and passing over {taker} says it will take it — {said(app, surface)!r}",
-            "will take it" in said(app, surface),
+            f"E: ★ and passing over {taker} says so — {heard_over_taker!r}, and "
+            f"its verdict is {rows[taker]['verdict']!r}",
+            expected in heard_over_taker,
         )
 
         banner("F — the drop agrees with the question")

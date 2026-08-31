@@ -223,6 +223,7 @@ mod fragment;
 mod frame;
 mod group;
 mod items;
+mod landing;
 mod layout;
 mod machine;
 mod model;
@@ -265,6 +266,7 @@ pub use group::{
     Violation,
 };
 pub use items::{Item, ItemChange, ItemEdit, ItemEditTail, ItemError, Items, Variadic};
+pub use landing::{LandError, Landed, Landfall};
 pub use layout::{Extent, Layered, Organic, Placement, Quality};
 pub use machine::{Committed, ForceError, Machine, Tick};
 pub use model::{

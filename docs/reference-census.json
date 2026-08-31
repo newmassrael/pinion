@@ -3375,10 +3375,10 @@
       "verdict": "have"
     },
     "schema::DropPinOnNode": {
-      "covered_by": "MEASURED R1929 at the reference's own header, its ONE consumer (the drag-connection handler) and its two overriders, and the pre-R1929 reason was half false in the direction that hides work: GROWING A PORT is not what is absent — Document::insert_item has done it since R1632, and its ItemChange names every link that moved. What is absent is the DROP as one act. Measured, the reference's verb (a) takes the source pin's NAME and TYPE and creates a port of the OPPOSITE direction, (b) answers WHICH port it made, and the consumer immediately wires the dragged link to it, and (c) may grow a port on a DIFFERENT node than the one under the pointer — dropping an output on a function entry finds or creates that function's result node and grows the port there. So the missing capability is a gesture that grows a port and lands the wire on it in one transaction, not the growing",
+      "covered_by": "Document::land — a wire released on a node's BODY: an existing port takes the end, or the node grows one and the end lands there, in ONE act (R1930). ★ R1929 measured that GROWING a port was never what was absent (Document::insert_item, R1632); the drop as one act was. ★★★★★ And this passes the reference on atomicity, which its own consumer does not have: there the verb creates the pin and the caller THEN attempts the connection, so a refused connection leaves a port nobody asked for. Here the whole act runs on a copy (§2 #3 dry run) and is taken only on success, so a refusal leaves the document EQUAL to what it was — asserted whole, not as a port count",
       "mechanism": "graph-schema",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_schema_drop_pin_on_node",
+      "verdict": "have"
     },
     "schema::DroppedAssetsOnGraph": {
       "covered_by": "the engine's visual script/asset subject matter",
@@ -3789,10 +3789,10 @@
       "verdict": "have"
     },
     "schema::SupportsDropPinOnNode": {
-      "covered_by": "MEASURED R1929: this is the QUESTION half of the pair beside it, asked while the hand still holds the wire — R1924's shape on another axis, and the crate has may_relink for RELINKING and nothing for dropping on a node's body. ★ Its out-parameter is NOT an error channel, whatever its header says: the header documents it as 'only filled with an error if there is pin add support but there is an error with the pin type', and the implementation fills it on SUCCESS too, with the sentence the hover shows — 'Add Pin to Node', 'Add Pin to Result Node', 'Add Pin to Entry Node'. So the reference's own doc comment and its own code disagree about what that argument carries, and the consumer displays whatever is in it. What a port-growing question owes here is therefore what R1924 built for relinking: one call that says whether, and says what WOULD happen, in words a hand can read before it lets go",
+      "covered_by": "Document::may_land — the QUESTION half, asked while the hand still holds the wire, and it cites the same proof because it is the same planner Document::land runs (R1930). ★★★★★ It answers WHAT WOULD HAPPEN as a TYPE — Landfall::Takes(socket) or Landfall::Grows(socket), naming the pin that is about to appear — where the reference answers a bool plus an out-parameter its own header calls an error channel and its own code fills on SUCCESS with one of three hard-coded strings ('Add Pin to Node', 'Add Pin to Result Node', 'Add Pin to Entry Node'). Doc comment and code disagree there about what that argument carries; here a screen reads an arm instead of parsing a sentence, and refusals stay typed (LandError::NoRoom is a different problem from a refused wire and is fixed by a different action)",
       "mechanism": "graph-schema",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_schema_drop_pin_on_node",
+      "verdict": "have"
     },
     "schema::SupportsPinType": {
       "covered_by": "no per-tree restriction on which socket types may appear",

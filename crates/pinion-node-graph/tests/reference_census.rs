@@ -46,11 +46,11 @@ use serde::{Deserialize, Serialize};
 use pinion_node_graph::{
     Act, Align, Appearance, Axis, Command, ConnectError, Conversion, Crossings, Definitions,
     Described, Direction, Distribute, Document, Edge, EditError, EditPath, Extent, Faces, Fragment,
-    Grow, Hidden, Instance, InterfacePort, InterfaceSide, Item, ItemError, LinkId, Machine,
-    Matched, Multiplicity, Node, NodeBody, NodeId, NodeKind, NodeSite, NotRecombinable,
-    NotSplittable, Port, PortName, PortPath, PortRef, PortSite, PutAway, ROOT, Reach, RelinkError,
-    SectionId, Session, Sharing, Side, Socket, Stack, Straighten, Stride, SwitchRefusal, Tint,
-    TreeId, Variadic, WatchError, palette_of, type_palette,
+    Grow, Hidden, Instance, InterfacePort, InterfaceSide, Item, ItemError, LandError, Landfall,
+    LinkId, Machine, Matched, Multiplicity, Node, NodeBody, NodeId, NodeKind, NodeSite,
+    NotRecombinable, NotSplittable, Port, PortName, PortPath, PortRef, PortSite, PutAway, ROOT,
+    Reach, RelinkError, SectionId, Session, Sharing, Side, Socket, Stack, Straighten, Stride,
+    SwitchRefusal, Tint, TreeId, Variadic, WatchError, palette_of, type_palette,
 };
 
 // ---------------------------------------------------------------- taxonomy
@@ -1285,6 +1285,14 @@ fn engine_hook_proofs() -> Vec<Proof> {
             "node::GetPinNameOverride",
             engine_node_get_pin_name_override,
         ),
+        // ★★★★★ R1930 — the DROP pair. One proof, because they are one act
+        // here: the question is the planner the verb runs, so a second proof
+        // for the guard would be a second name for one mechanism.
+        proof(
+            "engine",
+            "schema::DropPinOnNode",
+            engine_schema_drop_pin_on_node,
+        ),
     ]
 }
 
@@ -1882,6 +1890,258 @@ fn dcc_node_poll() {
          of an already-broken fixture: {:?}",
         chain.document.validate()
     );
+}
+
+// ============================================ R1930 — landing on a body
+
+/// ★★★★★ R1930 — a wire released on a node's BODY: an existing port takes it, or
+/// the node grows one and it lands there, in one act.
+///
+/// The reference's pair, and the three ways this passes it are asserted rather
+/// than claimed:
+///
+/// * **one act, and a refusal changes nothing** — asserted over the WHOLE
+///   document, not over a port count, because the reference's own consumer
+///   leaves a pin behind when the connection it then attempts is refused;
+/// * **the question answers what WOULD happen, as a type** — `Takes` and
+///   `Grows` are different arms, where the reference has one bool and a string;
+/// * **the question is the first half of the act** — what `may_land` says is
+///   what `land` does, over every case here.
+#[test]
+fn engine_schema_drop_pin_on_node() {
+    a_free_port_takes_the_end(&mut chain());
+    a_full_node_grows_a_port_for_it(&mut chain());
+    a_grown_port_lands_where_the_run_puts_it(&mut chain());
+    a_refusal_leaves_the_document_as_it_was(&mut chain());
+    a_node_that_cannot_grow_says_so(&mut chain());
+}
+
+/// ★ The ORDINARY case: a port that is already free takes the end, and no port
+/// appears. Growing one here would litter a node every time a wire is re-aimed.
+fn a_free_port_takes_the_end(chain: &mut Chain) {
+    let choose = node(&mut chain.document, Op::Choose);
+    let link = chain
+        .document
+        .tree(ROOT)
+        .and_then(|tree| tree.links().last().map(|held| held.id))
+        .expect("the chain has links");
+    let was = chain
+        .document
+        .signature(ROOT, choose)
+        .expect("a signature")
+        .inputs
+        .len();
+
+    let fall = chain
+        .document
+        .may_land(ROOT, link, Side::Input, choose)
+        .expect("a node with free ports takes it");
+    assert_eq!(fall, Landfall::Takes(Socket::new(choose, 0)));
+    assert!(!fall.is_new(), "nothing has to appear for this");
+
+    let done = chain
+        .document
+        .land(ROOT, link, Side::Input, choose, Item::plain())
+        .expect("and the act agrees with the question");
+    assert_eq!(done.fall, fall, "the question IS the first half of the act");
+    assert_eq!(done.relinked.now, Socket::new(choose, 0));
+    assert_eq!(
+        chain
+            .document
+            .signature(ROOT, choose)
+            .expect("a signature")
+            .inputs
+            .len(),
+        was,
+        "and the node has exactly the ports it had"
+    );
+}
+
+/// ★★★★★ Every port taken, so the run has to grow one — the capability the
+/// census row names, reached through the public API only.
+fn a_full_node_grows_a_port_for_it(chain: &mut Chain) {
+    let choose = node(&mut chain.document, Op::Choose);
+    // `Choose` opens with two option ports and one fixed `Index`. Fill every
+    // one of them, so the only way to take another end is to grow.
+    let filled = fill_every_input(&mut chain.document, choose);
+    assert!(filled >= 3, "the fixture filled {filled} port(s)");
+    let link = wire_from_a_fresh_source(&mut chain.document, chain.sink);
+
+    let fall = chain
+        .document
+        .may_land(ROOT, link, Side::Input, choose)
+        .expect("the run may grow");
+    assert!(fall.is_new(), "a full node has to grow one: {fall:?}");
+    let grown = fall.socket();
+
+    let before = chain.document.clone();
+    let done = chain
+        .document
+        .land(
+            ROOT,
+            link,
+            Side::Input,
+            choose,
+            Item::plain().named("extra"),
+        )
+        .expect("and the act does it");
+    assert_eq!(done.fall, fall, "the question IS the first half of the act");
+    assert_eq!(done.relinked.now, grown, "the end is on the port that grew");
+    assert_ne!(chain.document, before, "and the document did change");
+    assert_eq!(
+        chain
+            .document
+            .port_label(ROOT, choose, PortRef::input(grown.port)),
+        Some(pinion_node_graph::Labelled {
+            text: Some("extra".to_owned()),
+            source: pinion_node_graph::NameSource::Item,
+        }),
+        "the item the caller described is the one that grew"
+    );
+}
+
+/// ★★★★★ The grown port sits where the RUN puts it, not at the end of the list.
+///
+/// `Blend` declares two fixed inputs with its run spliced BETWEEN them and two
+/// ports per item, so the socket is `start + ordinal * stride` and a landing
+/// that dropped either half of that arithmetic would still be right on every
+/// other kind in this taxonomy — R1928 measured exactly that trap on the naming
+/// axis, and this is the same arithmetic reached by a different verb.
+fn a_grown_port_lands_where_the_run_puts_it(chain: &mut Chain) {
+    let blend = node(&mut chain.document, Op::Blend);
+    fill_every_input(&mut chain.document, blend);
+    let link = wire_from_a_fresh_source(&mut chain.document, chain.sink);
+
+    let fall = chain
+        .document
+        .may_land(ROOT, link, Side::Input, blend)
+        .expect("the run may grow");
+    // start 1, one item already there, stride 2 -> the second item's first port.
+    assert_eq!(
+        fall,
+        Landfall::Grows(Socket::new(blend, 3)),
+        "the run starts at 1 and each item is two ports wide: {fall:?}"
+    );
+    let done = chain
+        .document
+        .land(ROOT, link, Side::Input, blend, Item::plain())
+        .expect("and it lands");
+    assert_eq!(done.relinked.now, Socket::new(blend, 3));
+    // ⚠ And the fixed port the insert displaced kept its wire, which is what
+    // makes this a splice rather than an append.
+    assert!(
+        chain
+            .document
+            .tree(ROOT)
+            .expect("the root tree")
+            .links()
+            .iter()
+            .any(|held| held.to == Socket::new(blend, 5)),
+        "the port past the run moved and took its link with it"
+    );
+}
+
+/// ★★★★★ A refusal leaves the document EQUAL to what it was — asserted whole,
+/// because the reference's own consumer leaves the pin it made behind when the
+/// connection it then attempts is refused.
+fn a_refusal_leaves_the_document_as_it_was(chain: &mut Chain) {
+    let shout = node(&mut chain.document, Op::Shout);
+    let word = node(&mut chain.document, Op::Word("hi".to_owned()));
+    wire(&mut chain.document, word, 0, shout, 0);
+    let text = chain
+        .document
+        .tree(ROOT)
+        .and_then(|tree| tree.links().last().map(|held| held.id))
+        .expect("the text wire");
+    let choose = node(&mut chain.document, Op::Choose);
+
+    let before = chain.document.clone();
+    let why = chain
+        .document
+        .land(ROOT, text, Side::Input, choose, Item::plain())
+        .expect_err("a text wire cannot land on a number run");
+    assert!(
+        matches!(why, LandError::Refused(_)),
+        "and the refusal is the wire's own, carried whole: {why}"
+    );
+    assert_eq!(
+        chain.document, before,
+        "★★★★★ the whole document is what it was — no port was grown and left"
+    );
+    // ⚠ And the question answered the same refusal, so nothing was learned by
+    // trying that asking would not have said.
+    assert!(
+        chain
+            .document
+            .may_land(ROOT, text, Side::Input, choose)
+            .is_err()
+    );
+}
+
+/// ★ A node with no room and no run says so in its own arm, which is a different
+/// problem from a refused wire and is fixed by a different action.
+fn a_node_that_cannot_grow_says_so(chain: &mut Chain) {
+    let double = node(&mut chain.document, Op::Double);
+    fill_every_input(&mut chain.document, double);
+    let link = wire_from_a_fresh_source(&mut chain.document, chain.sink);
+
+    let why = chain
+        .document
+        .may_land(ROOT, link, Side::Input, double)
+        .expect_err("a full node with no run has nowhere to put it");
+    assert_eq!(
+        why,
+        LandError::NoRoom {
+            node: double,
+            side: Side::Input
+        }
+    );
+    assert!(
+        why.to_string().contains("cannot grow one"),
+        "and it says so in words: {why}"
+    );
+    // ⚠ A node that is not there is a THIRD answer, not this one.
+    assert!(matches!(
+        chain
+            .document
+            .may_land(ROOT, link, Side::Input, NodeId(9999))
+            .expect_err("no such node"),
+        LandError::NoSuchNode { .. }
+    ));
+}
+
+/// Wire a fresh number source into every free input of `node`, and answer how
+/// many were filled.
+fn fill_every_input(document: &mut Document<Op>, node: NodeId) -> usize {
+    let count = document
+        .signature(ROOT, node)
+        .map_or(0, |signature| signature.inputs.len());
+    let mut filled = 0;
+    for index in 0..count {
+        let source = num(document, i64::try_from(index).unwrap_or(0));
+        if document
+            .connect(
+                ROOT,
+                Socket::new(source, 0),
+                Socket::new(node, u32::try_from(index).unwrap_or(0)),
+            )
+            .is_ok()
+        {
+            filled += 1;
+        }
+    }
+    filled
+}
+
+/// A new link with a spare end, so a landing has something to move.
+fn wire_from_a_fresh_source(document: &mut Document<Op>, into: NodeId) -> LinkId {
+    let source = num(document, 41);
+    let spare = node(document, Op::Double);
+    let _ = into;
+    document
+        .connect(ROOT, Socket::new(source, 0), Socket::new(spare, 0))
+        .expect("a number reaches a double")
+        .link
 }
 
 // ================================================== R1928 — port naming
