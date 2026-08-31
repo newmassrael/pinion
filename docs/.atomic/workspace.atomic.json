@@ -77250,6 +77250,114 @@
         "verbs on one axis is a seam worth closing when something forces it."
       ]
     },
+    "R1931": {
+      "decision_summary": "Paying off the red R1927 published, as its own round.\n\nWHAT WENT RED. R1927's CI run failed the full demo sweep with two node-lab\ndemos:\n\n  * `r1651_the_node_lab_matches_the_reference` — the screen paints four tags the\n    specification does not declare: `lab.node.<card>.issue`, R1927's new mark;\n  * `r1688_where_the_canvas_is_pointed` — its repair loop can no longer reach\n    zero findings.\n\nBoth are real, and both are R1927's.\n\n★★★★★ AND THE REASON FOUR ROUNDS DID NOT SEE THEM IS A HABIT OF THIS SESSION,\nnot a gap in the gates. The per-round regression sweep was run with\n`PINION_ASSUME_BUILT=1`. That is correct for `hello-analyzer-shell`, which every\nround rebuilds — and WRONG for the fifty-one demos that drive `hello-node-lab`\nas its own binary, which had not been rebuilt since before the mark existed. The\nsweep was asserting about a screen from four rounds ago, and passing.\n\n⇒ `PINION_ASSUME_BUILT` is an assertion about WHICH binary is current, and a\nsweep that spans two of them may only use it for the one that was just built.\n\n★★★★★ THE SECOND FAILURE IS THE MORE INTERESTING. `r1688` repairs every gate\nfinding through the wire and asserts the list reaches empty. R1927's finding is\nretired by a LINK and not by a field — and giving a card somewhere to listen\nRETIRES *nothing is listening* while RAISING *nothing on this canvas dials it*.\nA loop that only edited forms could therefore never reach zero, and did not.\n\nThat is the same one-edit-two-findings pair R1927's own crate test had to\nassert, met again one layer up by a demo written before it existed.",
+      "changes_bullets": [
+        "* `tools/demos/r1651_the_node_lab_matches_the_reference.py` — the issue mark",
+        "is declared, on the BACKWARD allow-list only. Not widened forward: a card",
+        "wears it exactly when the gate names that card, and requiring it of every",
+        "card would demand a canvas where everything is wrong.",
+        "* `tools/demos/r1688_where_the_canvas_is_pointed.py` — the repair loop gains a",
+        "third arm, which draws a LINK, because that is what retires R1927's finding.",
+        "* `docs/phase-b-rounds.tsv` — one row, declared `none`: no axis advanced.",
+        "No crate or screen source changed. The defects were in what the demos DECLARE",
+        "and in what they know how to repair, which is where they should be: the screen",
+        "was right both times."
+      ],
+      "verification_bullets": [
+        "Everything below was produced in the turn that claims it.",
+        "THE FINDING IS ITSELF A MEASUREMENT. Both demos PASS on this machine under",
+        "`PINION_ASSUME_BUILT=1` and FAIL the moment they are allowed to build their own",
+        "binary — that difference is the stale-binary defect, reproduced rather than",
+        "argued.",
+        "* `r1651` with a fresh build, before the repair: FAIL, naming four tags —",
+        "`lab.node.{P-01,S-01,P-02,T-02}.issue`.",
+        "* `r1688` with a fresh build, before the repair: FAIL, three findings left",
+        "standing, one of them R1927's own sentence.",
+        "* Both PASS after the repairs.",
+        "AND THE WHOLE POPULATION WAS RE-RUN, not the two that were reported: all",
+        "FIFTY-ONE demos that drive `hello-node-lab` PASS against the rebuilt binary. A",
+        "sweep that had been asserting about a stale screen owes the entire set a re-run,",
+        "because any of them could have been passing for the same reason.",
+        "⚠ NOT RUN, and stated rather than implied: no mutation plan, no clippy, no",
+        "rustdoc, no crate suite. Nothing under `crates/` or `examples/` changed — the",
+        "repairs are in two demos' own declarations — so those gates have nothing to",
+        "judge that they did not judge an hour ago."
+      ],
+      "impact_refs": [
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "CAMPAIGN UNCHANGED — `debt-node-system-coverage-campaign`, 51 rows owed, cohort",
+        "`loop` stays 1. Next slice still *no name-validation surface: a label is free",
+        "text* (`node::MakeNameValidator`, `schema::GetNameValidator`).",
+        "THE HABIT THIS ROUND CORRECTS, for whoever runs the next sweep: the regression",
+        "demos span TWO binaries. `hello-analyzer-shell` is rebuilt every round and may",
+        "be swept with `PINION_ASSUME_BUILT=1`; the fifty-one that drive",
+        "`hello-node-lab` may not, unless that binary was built in the same turn. The",
+        "cheapest correct habit is to build BOTH and then sweep.",
+        "WHAT THIS ROUND DID NOT DO.",
+        "* It did not close the process gap underneath — the demo sweep still does not",
+        "gate a push, so a screen-level regression is found by CI one round later.",
+        "That is the standing item R1470, R1850 and R1855 each measured, and it is",
+        "what made this red survive four rounds rather than one.",
+        "* `r1688`'s new arm dials from one particular card. A repair loop that chose",
+        "its dialler from the graph would be better and is not needed yet."
+      ],
+      "publishable_decision_summary": "Paying off the red R1927 published, as its own round.\n\nWHAT WENT RED. R1927's CI run failed the full demo sweep with two node-lab\ndemos:\n\n  * `r1651_the_node_lab_matches_the_reference` — the screen paints four tags the\n    specification does not declare: `lab.node.<card>.issue`, R1927's new mark;\n  * `r1688_where_the_canvas_is_pointed` — its repair loop can no longer reach\n    zero findings.\n\nBoth are real, and both are R1927's.\n\n★★★★★ AND THE REASON FOUR ROUNDS DID NOT SEE THEM IS A HABIT OF THIS SESSION,\nnot a gap in the gates. The per-round regression sweep was run with\n`PINION_ASSUME_BUILT=1`. That is correct for `hello-analyzer-shell`, which every\nround rebuilds — and WRONG for the fifty-one demos that drive `hello-node-lab`\nas its own binary, which had not been rebuilt since before the mark existed. The\nsweep was asserting about a screen from four rounds ago, and passing.\n\n⇒ `PINION_ASSUME_BUILT` is an assertion about WHICH binary is current, and a\nsweep that spans two of them may only use it for the one that was just built.\n\n★★★★★ THE SECOND FAILURE IS THE MORE INTERESTING. `r1688` repairs every gate\nfinding through the wire and asserts the list reaches empty. R1927's finding is\nretired by a LINK and not by a field — and giving a card somewhere to listen\nRETIRES *nothing is listening* while RAISING *nothing on this canvas dials it*.\nA loop that only edited forms could therefore never reach zero, and did not.\n\nThat is the same one-edit-two-findings pair R1927's own crate test had to\nassert, met again one layer up by a demo written before it existed.",
+      "publishable_changes_bullets": [
+        "* `tools/demos/r1651_the_node_lab_matches_the_reference.py` — the issue mark",
+        "is declared, on the BACKWARD allow-list only. Not widened forward: a card",
+        "wears it exactly when the gate names that card, and requiring it of every",
+        "card would demand a canvas where everything is wrong.",
+        "* `tools/demos/r1688_where_the_canvas_is_pointed.py` — the repair loop gains a",
+        "third arm, which draws a LINK, because that is what retires R1927's finding.",
+        "* `docs/phase-b-rounds.tsv` — one row, declared `none`: no axis advanced.",
+        "No crate or screen source changed. The defects were in what the demos DECLARE",
+        "and in what they know how to repair, which is where they should be: the screen",
+        "was right both times."
+      ],
+      "publishable_verification_bullets": [
+        "Everything below was produced in the turn that claims it.",
+        "THE FINDING IS ITSELF A MEASUREMENT. Both demos PASS on this machine under",
+        "`PINION_ASSUME_BUILT=1` and FAIL the moment they are allowed to build their own",
+        "binary — that difference is the stale-binary defect, reproduced rather than",
+        "argued.",
+        "* `r1651` with a fresh build, before the repair: FAIL, naming four tags —",
+        "`lab.node.{P-01,S-01,P-02,T-02}.issue`.",
+        "* `r1688` with a fresh build, before the repair: FAIL, three findings left",
+        "standing, one of them R1927's own sentence.",
+        "* Both PASS after the repairs.",
+        "AND THE WHOLE POPULATION WAS RE-RUN, not the two that were reported: all",
+        "FIFTY-ONE demos that drive `hello-node-lab` PASS against the rebuilt binary. A",
+        "sweep that had been asserting about a stale screen owes the entire set a re-run,",
+        "because any of them could have been passing for the same reason.",
+        "⚠ NOT RUN, and stated rather than implied: no mutation plan, no clippy, no",
+        "rustdoc, no crate suite. Nothing under `crates/` or `examples/` changed — the",
+        "repairs are in two demos' own declarations — so those gates have nothing to",
+        "judge that they did not judge an hour ago."
+      ],
+      "publishable_impact_refs": [
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "CAMPAIGN UNCHANGED — `debt-node-system-coverage-campaign`, 51 rows owed, cohort",
+        "`loop` stays 1. Next slice still *no name-validation surface: a label is free",
+        "text* (`node::MakeNameValidator`, `schema::GetNameValidator`).",
+        "THE HABIT THIS ROUND CORRECTS, for whoever runs the next sweep: the regression",
+        "demos span TWO binaries. `hello-analyzer-shell` is rebuilt every round and may",
+        "be swept with `PINION_ASSUME_BUILT=1`; the fifty-one that drive",
+        "`hello-node-lab` may not, unless that binary was built in the same turn. The",
+        "cheapest correct habit is to build BOTH and then sweep.",
+        "WHAT THIS ROUND DID NOT DO.",
+        "* It did not close the process gap underneath — the demo sweep still does not",
+        "gate a push, so a screen-level regression is found by CI one round later.",
+        "That is the standing item R1470, R1850 and R1855 each measured, and it is",
+        "what made this red survive four rounds rather than one.",
+        "* `r1688`'s new arm dials from one particular card. A repair loop that chose",
+        "its dialler from the graph would be better and is not needed yet."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

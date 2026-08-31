@@ -445,6 +445,19 @@ def body() -> None:
         for node in spec["nodes"]:
             for suffix in ("", ".id", ".badge"):
                 declared.add(f"lab.node.{node['id']}{suffix}")
+            # ★★★★★ R1927's issue dot, declared here at R1931 — and it is
+            # declared BACKWARD only, deliberately. A card wears it exactly when
+            # the gate names that card, so it is not in the forward list above:
+            # requiring it on every card would demand a canvas where everything
+            # is wrong. This side is an allow-list, and what it says is that the
+            # mark is a thing the specification knows about rather than chrome
+            # the screen invented.
+            #
+            # ⚠ It went undeclared for four rounds and CI caught it, not this
+            # machine, because the regression sweep here was being run with
+            # `PINION_ASSUME_BUILT=1` against a `hello-node-lab` binary that
+            # predated the mark.
+            declared.add(f"lab.node.{node['id']}.issue")
             declared.add(f"lab.pin.{node['id']}.dial")
             declared.add(f"lab.pin.{node['id']}.accept")
         for field in spec["fields"]:

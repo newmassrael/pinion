@@ -365,9 +365,20 @@ def body() -> None:
             if not lines:
                 break
             sentence = lines[0]["sentence"]
-            tf.invoke(f"{EXT}/select", sentence.split(" ")[0])
+            card = sentence.split(" ")[0]
+            tf.invoke(f"{EXT}/select", card)
             if "discovery" in sentence:
                 tf.invoke(f"{EXT}/set_field", "discovery.multicast.enabled=false")
+            elif "nothing on this canvas dials it" in sentence:
+                # ★★★★★ R1927's finding, and its repair is a LINK rather than a
+                # field — which is why this loop needed a third arm at R1931.
+                # Giving a card somewhere to listen retires *nothing is
+                # listening* and RAISES this one in the same edit: the card now
+                # offers a service the drawing shows nobody using. A repair loop
+                # that only edited forms could therefore never reach zero, and
+                # it did not — CI found it, because the sweep here was being run
+                # against a stale binary.
+                tf.invoke(f"{EXT}/connect", f"T-01,{card}")
             else:
                 tf.invoke(f"{EXT}/set_field", f"listen.endpoints=tcp/0.0.0.0:{port}")
             repaired += 1
