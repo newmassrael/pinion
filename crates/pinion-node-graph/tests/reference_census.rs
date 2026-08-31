@@ -44,14 +44,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use pinion_node_graph::{
-    Act, Admitted, Align, Appearance, Axis, Carrying, Command, ConnectError, Container, Conversion,
-    Crossings, Definitions, Described, Direction, Distribute, Document, Edge, EditError, EditPath,
-    Extent, Faces, Fragment, Grow, Hidden, Instance, InterfacePort, InterfaceSide, Item, ItemError,
-    LandError, Landfall, LinkId, Machine, Matched, Multiplicity, Node, NodeBody, NodeId, NodeKind,
-    NodeSite, NotRecombinable, NotSplittable, Passing, Port, PortName, PortPath, PortRef, PortSite,
-    PutAway, ROOT, Reach, RelinkError, RetypeError, SectionId, Session, Sharing, Side, Socket,
-    Stack, Straighten, Stride, SwapError, SwitchRefusal, Tint, TreeId, Variadic, WatchError,
-    palette_of, type_palette,
+    Act, Admits, Admitted, Align, Appearance, Axis, Carrying, Command, ConnectError, Container,
+    Conversion, Crossings, Definitions, Described, Direction, Distribute, Document, Edge,
+    EditError, EditPath, Extent, Faces, Fragment, Grow, Hidden, Instance, InterfacePort,
+    InterfaceSide, Item, ItemError, LandError, Landfall, LinkId, Machine, Matched, Multiplicity,
+    Node, NodeBody, NodeId, NodeKind, NodeSite, NotRecombinable, NotSplittable, Passing, Port,
+    PortName, PortPath, PortRef, PortSite, PortValueError, PutAway, ROOT, Reach, RelinkError,
+    RetypeError, SectionId, Session, Sharing, Side, Socket, Stack, Straighten, Stride, SwapError,
+    SwitchRefusal, Tint, TreeId, Variadic, Violation, WatchError, palette_of, type_palette,
 };
 
 // ---------------------------------------------------------------- taxonomy
@@ -287,6 +287,36 @@ impl NodeKind for Op {
         match (ty, held) {
             (Ty::Pair, Container::Array) => Some(Ty::Bag),
             _ => None,
+        }
+    }
+
+    /// R1939 — what a port takes as its RESTING value, narrowed past the type.
+    ///
+    /// Two declarations and no more, one of each shape, so a proof can tell a
+    /// declaration from a blanket yes:
+    ///
+    /// * `Add`'s **Addend** takes a whole number from 0 to 100 — a rule, whose
+    ///   repair is a clamp. Its sibling `Augend` declares nothing, so the same
+    ///   node has one narrowed port and one open one and an assertion cannot
+    ///   pass by condemning the kind.
+    /// * `Shout`'s **Phrase** takes one of two words — a closed set, whose
+    ///   repair is the first of them.
+    ///
+    /// ★ Neither is expressible in the reference, whose equivalent is a string
+    /// keyed by a string: there a range is two unparsed strings under two keys
+    /// no compiler relates, and the closed set is a *function name* the editor
+    /// looks up at draw time.
+    fn takes(&self, at: PortRef, ty: &Ty) -> Admits<Val> {
+        match (self, at.side, at.index, ty) {
+            (Self::Add, Side::Input, 1, Ty::Number) => Admits::Shaped {
+                wants: "a whole number from 0 to 100".to_owned(),
+                nearest: |value| value.number().map(|n| Val::Number(n.clamp(0, 100))),
+            },
+            (Self::Shout, Side::Input, 0, Ty::Text) => Admits::OneOf(vec![
+                Val::Text("hello".to_owned()),
+                Val::Text("goodbye".to_owned()),
+            ]),
+            _ => Admits::Anything,
         }
     }
 
@@ -848,6 +878,13 @@ fn dcc_proofs() -> Vec<Proof> {
             "engine",
             "schema::SupportsPinTypeContainer",
             engine_schema_supports_pin_type_container,
+        ),
+        // R1939 — what a port takes as its RESTING value: the capability the
+        // reference spells as an open key-value bag hung on a pin.
+        proof(
+            "engine",
+            "node::GetPinMetaData",
+            engine_node_get_pin_meta_data,
         ),
         proof("dcc", "swap_empty_group", dcc_swap_empty_group),
         proof("dcc", "options_toggle", dcc_options_toggle),
@@ -1865,6 +1902,159 @@ fn engine_schema_supports_pin_type_container() {
         Container::ALL.map(Container::word),
         ["array", "set", "map"],
         "the words a wire uses, from the one list"
+    );
+}
+
+/// ★★★★★ R1939 — **what a port will TAKE as its resting value**, said as a
+/// declaration a screen can read and enforced by the edit that writes one.
+///
+/// # The measurement that changed this row's verdict
+///
+/// The reference's hook takes a pin name AND A KEY and answers a string, and
+/// read from that signature alone it is an open bag of untyped metadata — which
+/// is why this row's own recorded reason called the absence deliberate. Read
+/// from its **consumers** it is not a bag: twenty-one call sites ask eighteen
+/// distinct keys and every one asks the same question — *what may rest at this
+/// port, and how should an editor offer it?* Four want a numeric range, nine a
+/// filter on what may be picked, one a closed list, four how to present the
+/// field.
+///
+/// All eleven overriders reach the SAME lookup: from the pin to the
+/// DECLARATION it was generated from, falling back to its parent. ⚠ Not all by
+/// CHAINING — nine call up, the tenth IS that lookup, and the eleventh chains
+/// to nothing and runs the same lookup against its own model. Four add a case
+/// of their own beside it — three a fixed string for one pin-and-key pair, one
+/// built from the graph — and only TWO of those sit AHEAD of the lookup, the
+/// other two being a fallback taken only when it answered empty. Not one of the
+/// eleven reads a store hung on the port, so nobody authors that metadata on a
+/// port, which is why the declaration lives on the kind here.
+///
+/// ★ Those two qualifications are R1939 correcting its OWN sentence before
+/// publishing it: measured clause by clause, the first draft's "all eleven
+/// CHAIN" and "four add a case ahead" were each half false — and each was
+/// wrong in the direction that STRENGTHENS the conclusion, which is why
+/// nothing would have prompted a reader to check. Absence is spelled as the empty string, so *no such key*
+/// and *the key says nothing* are one value. And one shipped overrider ignores
+/// the key it is asked for, answering one fixed key's value for every question
+/// put to it — a defect nothing there can catch, because a string key is
+/// checked against nothing.
+///
+/// ⇒ the bag is not built; the capability is, typed, with the refusal carrying
+/// the value the same declaration would have taken.
+#[test]
+fn engine_node_get_pin_meta_data() {
+    let mut document: Document<Op> = Document::new("root");
+    let sum = document
+        .add_node(ROOT, NodeBody::Kind(Op::Add), 0, 0)
+        .expect("root tree");
+
+    // (A) The declaration is READABLE without being handed a value first —
+    // which is the half a predicate cannot answer, and what an editor needs
+    // before it can offer a field at all.
+    assert_eq!(
+        document
+            .takes(ROOT, sum, PortRef::input(1))
+            .as_ref()
+            .map(Admits::wants),
+        Some("a whole number from 0 to 100".to_owned()),
+    );
+    assert_eq!(
+        document
+            .takes(ROOT, sum, PortRef::input(0))
+            .as_ref()
+            .map(Admits::wants),
+        Some("any value of this port's type".to_owned()),
+        "★ the SIBLING port declares nothing, so this cannot pass by condemning \
+         the whole kind"
+    );
+
+    // (B) The edit enforces it, and the refusal carries the value the same
+    // declaration WOULD have taken — R1938's rule, that a permission and the
+    // result of taking it are one answer.
+    assert_eq!(
+        document.set_port_value(ROOT, sum, PortRef::input(1), Val::Number(400)),
+        Err(PortValueError::NotAdmitted {
+            port: PortRef::input(1),
+            wants: "a whole number from 0 to 100".to_owned(),
+            instead: Some(Val::Number(100)),
+        }),
+    );
+    // ★ And the repair the refusal offered is one the same declaration takes,
+    // driven rather than asserted in prose.
+    assert!(
+        document
+            .set_port_value(ROOT, sum, PortRef::input(1), Val::Number(100))
+            .is_ok(),
+    );
+    // ★ The open sibling still takes the value its neighbour refused.
+    assert!(
+        document
+            .set_port_value(ROOT, sum, PortRef::input(0), Val::Number(400))
+            .is_ok(),
+    );
+
+    // (C) The TYPE is judged first, and reported as its own refusal: a
+    // wrong-typed value is repaired by writing a value of another type, and
+    // naming the narrower rule about it would send an author to fix the wrong
+    // thing.
+    assert!(matches!(
+        document.set_port_value(ROOT, sum, PortRef::input(1), Val::Text("400".into())),
+        Err(PortValueError::WrongType { .. }),
+    ));
+
+    // (D) A closed set is the other shape, and its repair is the first offer.
+    let shout = document
+        .add_node(ROOT, NodeBody::Kind(Op::Shout), 40, 0)
+        .expect("root tree");
+    assert_eq!(
+        document.takes(ROOT, shout, PortRef::input(0)),
+        Some(Admits::OneOf(vec![
+            Val::Text("hello".to_owned()),
+            Val::Text("goodbye".to_owned()),
+        ])),
+    );
+    assert_eq!(
+        document.set_port_value(ROOT, shout, PortRef::input(0), Val::Text("hi".into())),
+        Err(PortValueError::NotAdmitted {
+            port: PortRef::input(0),
+            wants: "one of Text(\"hello\"), Text(\"goodbye\")".to_owned(),
+            instead: Some(Val::Text("hello".to_owned())),
+        }),
+    );
+
+    // (E) ★★★★★ And the rule can go out from under a value that was admitted
+    // when it was written, which is why this is also a standing check rather
+    // than only a gate on the edit. `Mul`'s second port declares nothing, so
+    // 400 is authored legitimately; swapping the kind for one whose second port
+    // is ranged carries the value across and leaves the document saying
+    // something it would now refuse.
+    let mul = document
+        .add_node(ROOT, NodeBody::Kind(Op::Mul), 80, 0)
+        .expect("root tree");
+    document
+        .set_port_value(ROOT, mul, PortRef::input(1), Val::Number(400))
+        .expect("an open port takes it");
+    assert!(
+        document.validate().is_empty(),
+        "and the document is clean while the rule still admits it"
+    );
+    document.set_kind(ROOT, mul, Op::Add).expect("a kind swap");
+    assert_eq!(
+        document.port_value(ROOT, mul, PortRef::input(1)),
+        Some(&Val::Number(400)),
+        "the swap carried the authored value across, which is what makes the \
+         state reachable at all"
+    );
+    assert!(
+        document
+            .validate()
+            .contains(&Violation::InadmissiblePortValue {
+                tree: ROOT,
+                node: mul,
+                port: PortRef::input(1),
+            }),
+        "★★★★★ the standing check reports it: {:?}",
+        document.validate(),
     );
 }
 

@@ -541,6 +541,147 @@ impl<T, V> Port<T, V> {
     }
 }
 
+/// ★★★★★ R1939 — **what a port will admit as its resting value**, beyond the
+/// type it carries.
+///
+/// See [`NodeKind::takes`] for the measurement that shaped this: the reference
+/// spells the same capability as an open key-value store hung on a port, whose
+/// consumers all ask one question and whose answers are unchecked strings.
+///
+/// Three arms and not an `Option`, because there are three answers a taxonomy
+/// genuinely gives (R1928's rule): *the type is the whole constraint*, *these
+/// exact values*, and *a rule*. The first is a real answer a screen can show —
+/// "anything of this type" is what an editor needs to know to offer a free
+/// field — rather than a hole it has to infer.
+#[derive(Clone, PartialEq)]
+pub enum Admits<V> {
+    /// Any value of the port's type: the type is the whole constraint.
+    Anything,
+    /// Exactly these values, in the order an editor should offer them.
+    ///
+    /// An **empty** list is a real answer and not a mistake: it says this port
+    /// takes no value at all right now, which a taxonomy whose options depend
+    /// on the document can legitimately reach. It is not the same statement as
+    /// a control port, which has no value *by construction*
+    /// ([`Flow::Control`]).
+    OneOf(Vec<V>),
+    /// A rule the declaration applies, said in a sentence and able to produce
+    /// the value it would take.
+    Shaped {
+        /// What this rule wants, in a sentence a screen can show and a refusal
+        /// can quote.
+        wants: String,
+        /// The value this port would take in place of the one it is given: the
+        /// value ITSELF when it stands, another when there is a repair, and
+        /// `None` when there is none.
+        ///
+        /// ★ One function and not a predicate beside a repair, for R1938's
+        /// reason: a permission and the result of taking it cannot disagree
+        /// when they are one answer. A screen offering "use 65535 instead"
+        /// cannot offer a value the same declaration would then refuse.
+        ///
+        /// A plain `fn` pointer rather than a boxed closure, as
+        /// [`Conversion::Converted`] is: the rule is a property of the port's
+        /// declaration and captures nothing. A kind whose rule varies by socket
+        /// type returns a different pointer per type, which its own `match`
+        /// makes exhaustive.
+        nearest: fn(&V) -> Option<V>,
+    },
+}
+
+impl<V: fmt::Debug> fmt::Debug for Admits<V> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Anything => f.write_str("Anything"),
+            Self::OneOf(values) => f.debug_tuple("OneOf").field(values).finish(),
+            // The pointer is not printed: its address says nothing a reader can
+            // use, and it would make two equal declarations print differently
+            // between runs.
+            Self::Shaped { wants, .. } => f.debug_struct("Shaped").field("wants", wants).finish(),
+        }
+    }
+}
+
+impl<V: Clone + PartialEq + fmt::Debug> Admits<V> {
+    /// Whether `value` may rest at this port, and what it would take instead.
+    ///
+    /// The whole judgement in one call, so a caller cannot ask the permission
+    /// and the repair separately and get answers from two declarations.
+    #[must_use]
+    pub fn judge(&self, value: &V) -> Judged<V> {
+        match self {
+            Self::Anything => Judged::Stands,
+            Self::OneOf(values) => {
+                if values.contains(value) {
+                    Judged::Stands
+                } else {
+                    Judged::Refused {
+                        wants: self.wants(),
+                        instead: values.first().cloned(),
+                    }
+                }
+            }
+            Self::Shaped { nearest, .. } => match nearest(value) {
+                Some(near) if near == *value => Judged::Stands,
+                near => Judged::Refused {
+                    wants: self.wants(),
+                    instead: near,
+                },
+            },
+        }
+    }
+
+    /// What this port wants, in a sentence.
+    ///
+    /// Derived from the declaration rather than written a second time, so a
+    /// refusal a person reads cannot describe a rule other than the one that
+    /// refused them.
+    #[must_use]
+    pub fn wants(&self) -> String {
+        match self {
+            Self::Anything => "any value of this port's type".to_owned(),
+            Self::OneOf(values) if values.is_empty() => "no value at all, here".to_owned(),
+            Self::OneOf(values) => format!(
+                "one of {}",
+                values
+                    .iter()
+                    .map(|value| format!("{value:?}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            Self::Shaped { wants, .. } => wants.clone(),
+        }
+    }
+}
+
+/// ★★★★★ R1939 — the judgement [`Admits::judge`] makes about one value.
+///
+/// Named apart from [`Admission`], which answers whether two **nodes** may be
+/// wired (R1885): the two questions refuse for unrelated reasons and are
+/// repaired differently, and one word for both would make a screen's refusal
+/// text ambiguous about what the author must change.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Judged<V> {
+    /// The value stands as it is.
+    Stands,
+    /// The port will not take it.
+    Refused {
+        /// What the port wants, in a sentence — [`Admits::wants`].
+        wants: String,
+        /// The nearest value the same declaration WOULD take, when there is
+        /// one. `None` is a real answer: not every refusal has a repair.
+        instead: Option<V>,
+    },
+}
+
+impl<V> Judged<V> {
+    /// Whether the value stands.
+    #[must_use]
+    pub const fn stands(&self) -> bool {
+        matches!(self, Self::Stands)
+    }
+}
+
 /// Whether and how a value crosses from an output into an input (R1593).
 ///
 /// A node system's type relation is **directed**: a scalar feeds a colour by
@@ -1062,6 +1203,71 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
     fn port_name(&self, at: crate::PortRef, declared: &str) -> crate::PortName {
         let _ = (at, declared);
         crate::PortName::Declared
+    }
+
+    /// ★★★★★ R1939 — **what the port at `at` will TAKE as its RESTING
+    /// VALUE**, given the socket type it carries.
+    ///
+    /// Named apart from [`Self::admits`], which is R1885's question about
+    /// whether two **nodes** may be wired at all: this one is about a value
+    /// nobody wired, resting on a port.
+    ///
+    /// The supplied answer is [`Admits::Anything`]: a kind that says nothing
+    /// leaves the port's TYPE as the whole constraint, which is what this crate
+    /// did before the question could be asked.
+    ///
+    /// # What forced it, measured in the reference this round
+    ///
+    /// The reference hangs an OPEN key-value store off a port — a node is asked
+    /// for a pin name AND A KEY and answers a string — and read from that
+    /// signature alone it is a bag of untyped strings, which is why this row's
+    /// own recorded reason called the absence deliberate. Read from its
+    /// **consumers** it is not a bag at all: twenty-one call sites ask eighteen
+    /// distinct keys, and every one of them is the same question — *what may
+    /// rest at this port, and how should an editor offer it?* Four ask for a
+    /// numeric range, nine for a filter on what may be picked, one for a closed
+    /// list of options, four for how to present the editor.
+    ///
+    /// Three further measurements decided the shape here:
+    ///
+    /// * **Nobody authors that metadata on a port.** All eleven overriders
+    ///   reach the SAME lookup: from the pin to the declaration it was
+    ///   generated from — a struct's field, a function's parameter, the
+    ///   function itself — falling back to its parent. ⚠ Not all of them by
+    ///   CHAINING, which is this round's own sentence corrected before it was
+    ///   published: nine call up, the tenth IS that lookup, and the eleventh
+    ///   chains to nothing and runs the same lookup against its own model.
+    ///   Four add a case of their own beside it — three a fixed string for one
+    ///   pin-and-key pair, one built from the graph — and only TWO of those
+    ///   sit AHEAD of the lookup; the other two are a fallback behind it,
+    ///   taken only when it answered empty. Not one of the eleven reads a
+    ///   store hung on the port, so the constraint is a fact about the
+    ///   DECLARATION, which is why it lives on the kind here and not on the
+    ///   stored node.
+    /// * **Absence is spelled as the empty string**, so *no such key*, *the key
+    ///   says nothing* and *the key says ""* are one value; its consumers test
+    ///   emptiness to mean "not declared". The R1928 ambiguity again, on
+    ///   another axis.
+    /// * **And one shipped overrider ignores the key it is asked for**,
+    ///   answering one fixed key's value for every question put to it. Nothing
+    ///   in that tree can catch it, because a string key is checked against
+    ///   nothing. That is the cost of the bag, stated as a measured defect
+    ///   rather than as a preference.
+    ///
+    /// ⇒ the bag is not built. The CAPABILITY is, as a declaration that says
+    /// what it wants and produces the value it would have taken instead.
+    ///
+    /// `&self` and not an associated function, for [`Self::port_name`]'s
+    /// reason: the reference's own lookups reach the node's authored state (the
+    /// function it calls, the variable it names), so this is a judgement about
+    /// THIS node.
+    ///
+    /// A **control** port is never asked: control is not a value, so there is
+    /// nothing for it to admit, and [`Document::set_port_value`] refuses one
+    /// before the taxonomy is consulted at all.
+    fn takes(&self, at: crate::PortRef, ty: &Self::Type) -> Admits<Self::Value> {
+        let _ = (at, ty);
+        Admits::Anything
     }
 
     /// ★★★★★ R1927 — **whether this node is in a questionable state, and what
@@ -3391,6 +3597,36 @@ impl<K: NodeKind> Document<K> {
         self.tree(tree)?.node(node)?.port_value(port)
     }
 
+    /// ★★★★★ R1939 — **what this node's port will TAKE as a resting value.**
+    ///
+    /// `None` when the tree, the node or the port is not there, and
+    /// [`Admits::Anything`] when the port carries **control** — a control port
+    /// takes no value at all, which [`Document::set_port_value`] refuses on its
+    /// own arm before the taxonomy is asked, so this does not restate it.
+    ///
+    /// The register a screen reads before it offers an editor: it says what the
+    /// port wants without being handed a value first, which is the half a
+    /// predicate cannot answer.
+    #[must_use]
+    pub fn takes(&self, tree: TreeId, node: NodeId, port: PortRef) -> Option<Admits<K::Value>> {
+        let signature = self.signature(tree, node)?;
+        let ports = match port.side {
+            Side::Input => &signature.inputs,
+            Side::Output => &signature.outputs,
+        };
+        let declared = ports.get(port.index as usize)?;
+        let ty = declared.value_type()?;
+        match &self.tree(tree)?.node(node)?.body {
+            NodeBody::Kind(kind) => Some(kind.takes(port, ty)),
+            // ⚠ A structural body has no kind to ask: a group instance's ports
+            // come from the definition's boundary, and a frame, an interface
+            // end and a delay are this CRATE's. Their type is the whole
+            // constraint, and saying so here is what keeps `Anything` from
+            // reading as an omission.
+            _ => Some(Admits::Anything),
+        }
+    }
+
     /// Author a value on one of a node's ports, answering what it replaced.
     ///
     /// The value a port *carries* is not the same question: see
@@ -3415,7 +3651,7 @@ impl<K: NodeKind> Document<K> {
         node: NodeId,
         port: PortRef,
         value: K::Value,
-    ) -> Result<Option<K::Value>, PortValueError<K::Type>> {
+    ) -> PortValueResult<K> {
         let signature = self
             .signature(tree, node)
             .ok_or(PortValueError::NoSuchNode(node))?;
@@ -3442,6 +3678,22 @@ impl<K: NodeKind> Document<K> {
                 port,
                 expected: declared_ty.clone(),
                 found,
+            });
+        }
+        // ★★★★★ R1939 — and then what the DECLARATION admits, which is the
+        // narrower question: a value may be of the port's type and still not be
+        // one this port takes. Asked after the type, because a wrong-typed
+        // value is a different repair and reporting the narrower rule about it
+        // would send an author to fix the wrong thing.
+        if let Judged::Refused { wants, instead } = self
+            .takes(tree, node, port)
+            .unwrap_or(Admits::Anything)
+            .judge(&value)
+        {
+            return Err(PortValueError::NotAdmitted {
+                port,
+                wants,
+                instead,
             });
         }
         // The signature resolved, so both the tree and the node are there.
@@ -4509,10 +4761,29 @@ pub struct Connected {
     pub displaced: Option<Link>,
 }
 
+/// ★ R1939 — what [`Document::set_port_value`] answers: the value it replaced,
+/// or why the port would not take the new one.
+///
+/// A named type rather than the shape spelled inline, because R1939 gave
+/// [`PortValueError`] a second parameter — the refusal carries the value the
+/// declaration WOULD have taken — and a signature carrying two associated-type
+/// projections is one a reader parses instead of reads.
+///
+/// ⚠ Measured, and NOT a de-duplication: this alias has exactly ONE use in this
+/// tree, the function that returns it. It is an API-surface decision — the
+/// alias is keyed on the taxonomy and exported, so a DOWNSTREAM caller can name
+/// what `set_port_value` answers without spelling `<K as NodeKind>::Value`
+/// twice. Saying so is the point: R1939's own changes list first claimed it
+/// stopped a repetition "at every call", and there is no every-call.
+pub type PortValueResult<K> = Result<
+    Option<<K as NodeKind>::Value>,
+    PortValueError<<K as NodeKind>::Type, <K as NodeKind>::Value>,
+>;
+
 /// Why a value could not be authored on a port (R1594).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum PortValueError<T> {
+pub enum PortValueError<T, V> {
     /// No such node in that tree.
     NoSuchNode(NodeId),
     /// The node has no such port, and the arity says how far it goes.
@@ -4541,9 +4812,28 @@ pub enum PortValueError<T> {
         /// The port.
         port: PortRef,
     },
+    /// ★★★★★ R1939 — the value is of the port's type and the port's own
+    /// declaration will not take it ([`NodeKind::takes`]).
+    ///
+    /// Its own arm rather than a [`Self::WrongType`] because the repairs are
+    /// different, which is [`Violation::Incompatible`](crate::Violation::Incompatible)'s
+    /// reason: a wrong-typed value is fixed by writing a value of another type,
+    /// and this is fixed by writing another value of the SAME type — or by
+    /// taking the one this arm hands back.
+    NotAdmitted {
+        /// The port.
+        port: PortRef,
+        /// What that port wants, in a sentence — [`Admits::wants`].
+        wants: String,
+        /// The nearest value the same declaration WOULD have taken, when there
+        /// is one. Carried rather than left to a second call, so a caller
+        /// offering the repair cannot offer one a re-read of the declaration
+        /// would refuse.
+        instead: Option<V>,
+    },
 }
 
-impl<T: fmt::Debug> fmt::Display for PortValueError<T> {
+impl<T: fmt::Debug, V: fmt::Debug> fmt::Display for PortValueError<T, V> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NoSuchNode(node) => write!(f, "no node {}", node.0),
@@ -4561,11 +4851,19 @@ impl<T: fmt::Debug> fmt::Display for PortValueError<T> {
             Self::NotAValuePort { port } => {
                 write!(f, "port {port} carries control, which is not a value")
             }
+            Self::NotAdmitted {
+                port,
+                wants,
+                instead,
+            } => match instead {
+                Some(near) => write!(f, "port {port} wants {wants}, such as {near:?}"),
+                None => write!(f, "port {port} wants {wants}"),
+            },
         }
     }
 }
 
-impl<T: fmt::Debug> std::error::Error for PortValueError<T> {}
+impl<T: fmt::Debug, V: fmt::Debug> std::error::Error for PortValueError<T, V> {}
 
 /// Why a structural edit could not be performed.
 #[derive(Debug, Clone, PartialEq, Eq)]

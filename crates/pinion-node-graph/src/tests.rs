@@ -9,14 +9,14 @@ use pinion_graph::Sugiyama;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Admission, AdoptError, Align, Appearance, Archive, Axis, BeaconError, BreakError, Breakpoints,
-    Bringup, Camera, Carried, Carrying, Command, Composition, ConnectError, Container, Control,
-    Conversion, Crossings, Definitions, Direction, Discovery, Distribute, Document, Dropped,
-    DuplicateError, Edge, EditError, EditPath, Extent, ExtractError, Fit, Flow, ForceError,
-    Fragment, GroupError, Grow, Halt, InsertError, Instance, InterfaceSide, Item, ItemError,
-    Layered, LinkId, LinkLayer, Machine, Margin, Multiplicity, Naming, NestError, Node, NodeBody,
-    NodeId, NodeKind, NodeSite, ObserveError, Occurrence, Organic, Orphaned, ParentError, Passing,
-    PathError, Port, PortPath, PortRef, PortSite, PortValueError, ROOT, Reach, Relabelled,
+    Admission, Admits, AdoptError, Align, Appearance, Archive, Axis, BeaconError, BreakError,
+    Breakpoints, Bringup, Camera, Carried, Carrying, Command, Composition, ConnectError, Container,
+    Control, Conversion, Crossings, Definitions, Direction, Discovery, Distribute, Document,
+    Dropped, DuplicateError, Edge, EditError, EditPath, Extent, ExtractError, Fit, Flow,
+    ForceError, Fragment, GroupError, Grow, Halt, InsertError, Instance, InterfaceSide, Item,
+    ItemError, Layered, LinkId, LinkLayer, Machine, Margin, Multiplicity, Naming, NestError, Node,
+    NodeBody, NodeId, NodeKind, NodeSite, ObserveError, Occurrence, Organic, Orphaned, ParentError,
+    Passing, PathError, Port, PortPath, PortRef, PortSite, PortValueError, ROOT, Reach, Relabelled,
     RelinkError, RepartitionError, RetypeError, Route, RunError, SectionId, SelectError, Session,
     Severed, Sharing, Side, Socket, Stack, Standing, Stop, Straighten, Stride, SwapError,
     SwitchRefusal, Tick, Timeline, Tint, TreeId, UngroupError, Unreadable, Violation, WatchError,
@@ -16809,6 +16809,57 @@ fn r1935_a_far_end_is_on_the_chain_without_having_two_ends() {
         doc.passing(ROOT, echo),
         None,
         "★★★★★ on the chain, and with no way in"
+    );
+}
+
+/// ★★★★★ R1939 — **the DEFAULT answer to "what will this port take" is
+/// anything of its type**, asserted on a taxonomy that takes it.
+///
+/// Written BEFORE a counterfactual asked for it, as R1938's was and for the
+/// same reason: a default is an escape hatch, the census fixture overrides
+/// these hooks, and what most applications get is therefore the thing nothing
+/// checks. `LOp` declares nothing here, which is what makes it the witness.
+///
+/// ★ And the default is a PERMISSION where R1937's and R1938's are refusals,
+/// which is not an inconsistency but the measurement: a port's TYPE is already
+/// a constraint, so a taxonomy that says nothing further has not failed to opt
+/// in — it has said the type is the whole of it. Opting in to *being allowed a
+/// value at all* would make every existing taxonomy's ports unwritable.
+///
+/// ⚠ The empty answer is READABLE either way: `wants()` says so in a sentence,
+/// which is what a screen shows beside a free field.
+#[test]
+fn r1939_the_default_port_takes_anything_of_its_type() {
+    let mut document: Document<LOp> = Document::new("lattice");
+    let sum = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Sum), 0, 0)
+        .expect("root tree");
+    let declared = document
+        .takes(ROOT, sum, PortRef::input(0))
+        .expect("the port is there");
+    assert_eq!(declared, Admits::Anything);
+    assert_eq!(
+        declared.wants(),
+        "any value of this port's type",
+        "★ and the empty answer is a sentence rather than a hole"
+    );
+    assert!(
+        declared.judge(&LVal::Vector([9, 9, 9])).stands(),
+        "the trait's default admits any value of the port's type"
+    );
+    // ★ Which is not the same as admitting any value: the TYPE still refuses,
+    // on its own arm, so the permissive default does not become an escape
+    // hatch out of the check that was already there.
+    assert!(matches!(
+        document.set_port_value(ROOT, sum, PortRef::input(0), LVal::Scalar(3)),
+        Err(PortValueError::WrongType { .. }),
+    ));
+    // ⚠ A CONTROL port is never asked at all — control is not a value, and
+    // that refusal comes before the taxonomy is consulted.
+    assert_eq!(
+        document.takes(ROOT, sum, PortRef::input(99)),
+        None,
+        "and a port that is not there answers nothing rather than `Anything`"
     );
 }
 

@@ -144,7 +144,65 @@ VALUE_FLAGS = (
     "--profile",
 )
 
+#: ★★★★★ R1939 — the vocabularies a gate reports a failure in, keyed by the
+#: HARNESS that speaks each one.
+#:
+#: A gate here is whatever the plan names, and this tree has four kinds. Until
+#: R1939 only `cargo test` was known, so every walk-gated case reported its
+#: catch as a bare `exit 1` — the verdict right and UNREADABLE, which is the
+#: class [[debt-a-checkers-verdict-is-unreadable-more-often-than-it-is-wrong]]
+#: names.
+#:
+#: ⚠ Keyed by harness rather than flattened into one list, because what goes
+#: stale here is a HARNESS nobody taught it, and a flat list cannot be asked
+#: which one is missing. R1939 shipped this knowing TWO and was caught by its
+#: own new refusal not knowing a third: the first mutation run against
+#: [`selftest`] reported UNREADABLE rather than CAUGHT, because a tool's own
+#: `--selftest` is a harness too and this driver is one of twenty.
+#:
+#: ⚠ A marker earns its place by being the line that NAMES the failure, not by
+#: appearing in a failing run. `[demo] FAIL:` carries the assertion's own
+#: sentence; `[demo]` alone would match the banner too.
+#:
+#: ⚠⚠ ★★★★★ The harnesses must be DISJOINT, and a `^` prefix anchors a marker
+#: to the start of the line so they can be. R1939 first wrote this table with
+#: an unanchored `FAIL: ` for the hook harness and a comment saying overlap was
+#: harmless. It is not: `FAIL: ` also matches `[demo] FAIL: `, so a
+#: counterfactual that deleted the WHOLE walk vocabulary left the gate GREEN —
+#: the hook harness answered for the walk harness, and the per-harness table
+#: became decorative. `selftest` now asserts that each harness is the only
+#: thing that reads its own failure line.
+FAILURE_MARKERS_BY_HARNESS = {
+    # The per-test stdout header, and the summary list.
+    "cargo test": ("---- ", " FAILED"),
+    # A demo walk through `tools/rpc_verify.run_demo`: an assertion, a dead
+    # peer, anything else.
+    "demo walk": ("[demo] FAIL:", "[demo] RPC ERROR:", "[demo] UNEXPECTED:"),
+    # A tool's own `--selftest`, in the three spellings this tree uses.
+    "python --selftest": ("selftest: FAIL", "selftest FAIL", "SELFTEST FAIL"),
+    # `tools/test_hooks.sh`'s `ok`, which is what gates the hook libraries.
+    # Anchored: unanchored it would swallow the walk harness's line too.
+    "test_hooks.sh": ("^FAIL: ",),
+}
+
+#: Flattened, for the reader that only needs "does this line name a failure".
+FAILURE_MARKERS = tuple(
+    marker
+    for markers in FAILURE_MARKERS_BY_HARNESS.values()
+    for marker in markers
+)
+
 CAUGHT, PASSED, BROKEN, NOT_APPLIED = "CAUGHT", "PASSED", "BROKEN", "NOT-APPLIED"
+
+#: ★★★★★ R1939 — the gate went red and NOTHING in its output says what failed.
+#:
+#: Its own verdict rather than a `CAUGHT` with a thin detail, because a catch
+#: nobody can read is not evidence: it cannot be told from a gate that fell over
+#: for an unrelated reason, and the next person cannot act on it. Standing rule
+#: (6) is the general form — an unclassified result is RED, not a pass — and
+#: this is where this driver had its escape hatch: the detail fell back to
+#: `exit N` and the case still counted toward `caught`.
+UNREADABLE = "UNREADABLE"
 
 
 @dataclass
@@ -172,6 +230,38 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def names_a_failure(row: str, marker: str) -> bool:
+    """Whether `row` names a failure under `marker`.
+
+    A marker beginning `^` anchors to the start of the stripped line — see
+    [`FAILURE_MARKERS_BY_HARNESS`] for the measurement that made anchoring
+    necessary rather than tidy.
+    """
+    row = row.strip()
+    return row.startswith(marker[1:]) if marker.startswith("^") else marker in row
+
+
+def failing_lines(blob: str, markers: tuple[str, ...] = ()) -> list[str]:
+    """The lines of a gate's output that NAME what failed.
+
+    ★ R1939 — one function and not the same comprehension written twice.
+    `classify` and `check_baseline` both need this, and before R1939 each
+    carried its own copy of the cargo-test vocabulary, so teaching one about a
+    harness would have left the other blind. A reader of the baseline refusal
+    and a reader of a case's detail must be shown the same sentences.
+
+    `markers` defaults to every harness's; it is a parameter so [`selftest`]
+    can ask what ONE harness's absence would cost, which is the only way to
+    show that each entry in the table is load-bearing.
+    """
+    markers = markers or FAILURE_MARKERS
+    return [
+        row.strip()
+        for row in blob.splitlines()
+        if any(names_a_failure(row, marker) for marker in markers)
+    ]
+
+
 def classify(completed: subprocess.CompletedProcess) -> tuple[str, str]:
     """Property 3: a compile error is its own verdict, and it is a failure."""
     blob = (completed.stdout or "") + (completed.stderr or "")
@@ -183,12 +273,18 @@ def classify(completed: subprocess.CompletedProcess) -> tuple[str, str]:
             return BROKEN, line.strip()[:200]
     if completed.returncode == 0:
         return PASSED, "the gate stayed green with the mechanism broken"
-    failing = [
-        row.strip()
-        for row in blob.splitlines()
-        if row.strip().startswith("---- ") or " FAILED" in row
-    ]
-    return CAUGHT, "; ".join(failing[:3])[:300] or f"exit {completed.returncode}"
+    failing = failing_lines(blob)
+    if not failing:
+        # ★★★★★ R1939 — the gate is red and its output names nothing. NOT a
+        # catch with a thin detail: an unreadable verdict cannot be told from a
+        # gate that fell over for an unrelated reason, so it is reported as its
+        # own failure and does not count toward `caught`.
+        return UNREADABLE, (
+            f"exit {completed.returncode}, and no line of the gate's output "
+            f"names what failed — known harnesses: "
+            f"{', '.join(FAILURE_MARKERS_BY_HARNESS)}"
+        )
+    return CAUGHT, "; ".join(failing[:3])[:300]
 
 
 def check_gate(gate: list[str]) -> None:
@@ -235,11 +331,7 @@ def check_baseline(root: Path, gate: list[str]) -> None:
     )
     if completed.returncode != 0:
         blob = (completed.stdout or "") + (completed.stderr or "")
-        failing = [
-            row.strip()
-            for row in blob.splitlines()
-            if row.strip().startswith("---- ") or " FAILED" in row
-        ]
+        failing = failing_lines(blob)
         raise SystemExit(
             "counterfactual: the gate is ALREADY RED before any case ran, so "
             "every case would report CAUGHT for the wrong reason. Fix the "
@@ -292,13 +384,168 @@ def run_case(root: Path, gate: list[str], case: Case) -> Outcome:
     return Outcome(case, verdict, detail, hits)
 
 
+def selftest() -> int:
+    """★★★★★ R1939 — assert the CLASSIFIER, which had no test of its own.
+
+    This driver is a gate on other gates, and standing rule (7) says a gate
+    lives only where a mutation shows it going red. Its verdicts had no such
+    demonstration: the vocabulary that reads a failure was a comprehension
+    inline in two functions, and nothing anywhere exercised it.
+
+    Each assertion below names the property, not the implementation, so a
+    rewrite of `classify` keeps them meaningful.
+    """
+    failures: list[str] = []
+
+    def held(what: str, condition: bool) -> None:
+        if not condition:
+            failures.append(what)
+
+    def ran(returncode: int, out: str) -> tuple[str, str]:
+        return classify(
+            subprocess.CompletedProcess(["gate"], returncode, out, "")
+        )
+
+    # (1) Each harness's own vocabulary is READ, and the detail quotes the
+    # sentence that names the failure rather than an exit code.
+    verdict, detail = ran(101, "---- tests::a_thing stdout ----\npanicked")
+    held("a cargo-test failure is CAUGHT", verdict == CAUGHT)
+    held("and its detail names the test", "tests::a_thing" in detail)
+
+    verdict, detail = ran(1, "[demo] r1939\n[demo] FAIL: the pin took it anyway")
+    held("a demo walk's failure is CAUGHT", verdict == CAUGHT)
+    held(
+        "★★★★★ and its detail carries the WALK'S OWN sentence, which is the "
+        "half a bare exit code cannot say",
+        "the pin took it anyway" in detail,
+    )
+
+    verdict, detail = ran(1, "counterfactual selftest: FAIL (1 failure(s))")
+    held("a tool's own --selftest failure is CAUGHT", verdict == CAUGHT)
+    held(
+        "★ and a tool that names the failing case is quoted with it",
+        "the escape hatch"
+        in ran(1, "selftest: FAIL — the escape hatch is back")[1],
+    )
+
+    verdict, detail = ran(1, "FAIL: a hook library said the wrong thing")
+    held("a test_hooks.sh failure is CAUGHT", verdict == CAUGHT)
+    held(
+        "★ and its detail carries the assertion's description",
+        "a hook library" in detail,
+    )
+
+    # ★★★★★ The population, not just the members: every harness this table
+    # claims to know must actually contribute a marker. A key with an empty
+    # tuple would read as coverage and provide none — the empty-population
+    # failure this project keeps meeting.
+    held(
+        "★★★★★ every declared harness contributes at least one marker",
+        all(FAILURE_MARKERS_BY_HARNESS.values()),
+    )
+    held(
+        "★ and the flat view is exactly the union, so a harness added to the "
+        "table reaches the classifier without a second edit",
+        set(FAILURE_MARKERS)
+        == {
+            marker
+            for markers in FAILURE_MARKERS_BY_HARNESS.values()
+            for marker in markers
+        },
+    )
+
+    # ★★★★★ And every harness must be NEEDED, which is the assertion the
+    # earlier draft could not make. Remove one harness's markers and its own
+    # failure line must stop being read; if another harness still reads it, the
+    # per-harness table is decorative and deleting a whole vocabulary leaves the
+    # gate green. Measured R1939: an unanchored `FAIL: ` did exactly that to the
+    # walk harness, and the counterfactual that removed the walk vocabulary
+    # reported PASSED.
+    samples = {
+        "cargo test": "---- tests::a_thing stdout ----",
+        "demo walk": "[demo] FAIL: the pin took it anyway",
+        "python --selftest": "counterfactual selftest: FAIL (1 failure(s))",
+        "test_hooks.sh": "FAIL: a hook library said the wrong thing",
+    }
+    held(
+        "★ the sample table names every declared harness, so no harness is "
+        "exempt from the check below by being left out of it",
+        set(samples) == set(FAILURE_MARKERS_BY_HARNESS),
+    )
+    for harness, sample in samples.items():
+        held(
+            f"★ {harness!r}'s own failure line IS read while it is declared",
+            failing_lines(sample),
+        )
+        without = tuple(
+            marker
+            for name, markers in FAILURE_MARKERS_BY_HARNESS.items()
+            if name != harness
+            for marker in markers
+        )
+        held(
+            f"★★★★★ {harness!r} is the ONLY thing that reads its own failure "
+            "line, so deleting it cannot leave the gate green",
+            not failing_lines(sample, without),
+        )
+
+    # (2) ★★★★★ The escape hatch: red with nothing readable is its own verdict.
+    verdict, detail = ran(1, "some tool that says nothing about what broke\n")
+    held(
+        "★★★★★ an unreadable red is UNREADABLE and not CAUGHT",
+        verdict == UNREADABLE,
+    )
+    held(
+        "and it says which harnesses it DOES know, so the repair is named",
+        all(name in detail for name in FAILURE_MARKERS_BY_HARNESS),
+    )
+    held(
+        "★ and it does not count as a catch",
+        not Outcome(Case("x", "f", "a", "b"), verdict, detail).ok,
+    )
+
+    # (3) The verdicts that were already here still hold, so this test speaks
+    # for the whole classifier rather than only for what R1939 added.
+    held("a green gate is PASSED", ran(0, "test result: ok")[0] == PASSED)
+    held(
+        "a compile error is BROKEN and not a catch",
+        ran(101, "error[E0599]: no method named `takes`")[0] == BROKEN,
+    )
+
+    # (4) ★ One vocabulary, two readers: the baseline refusal and a case's
+    # detail must be able to quote the same line.
+    blob = "[demo] FAIL: the sentence"
+    held(
+        "★ the baseline reader and the case reader share one extractor",
+        failing_lines(blob) and failing_lines(blob)[0] in ran(1, blob)[1],
+    )
+
+    for one in failures:
+        print(f"selftest: FAIL — {one}")
+    print(f"counterfactual selftest: {'FAIL' if failures else 'PASS'} "
+          f"({len(failures)} failure(s))")
+    return 1 if failures else 0
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("plan", type=Path, help="the plan JSON")
+    parser.add_argument(
+        "plan", type=Path, nargs="?", help="the plan JSON"
+    )
+    parser.add_argument(
+        "--selftest",
+        action="store_true",
+        help="assert this driver's own classifier and exit",
+    )
     parser.add_argument(
         "--root", type=Path, default=Path.cwd(), help="workspace root"
     )
     args = parser.parse_args(argv)
+
+    if args.selftest:
+        return selftest()
+    if args.plan is None:
+        raise SystemExit("counterfactual: a plan is required (or --selftest)")
 
     plan = json.loads(args.plan.read_text())
     gate: list[str] = plan["gate"]
@@ -326,6 +573,11 @@ def main(argv: list[str]) -> int:
             print(f"[cf] ✗ {one.case.name!r} did not compile, so it tested NOTHING")
         elif one.verdict == NOT_APPLIED:
             print(f"[cf] ✗ {one.case.name!r} was never applied")
+        elif one.verdict == UNREADABLE:
+            print(
+                f"[cf] ✗ {one.case.name!r} went red and the gate said nothing "
+                "readable — teach FAILURE_MARKERS this harness's vocabulary"
+            )
     return 0 if caught == len(outcomes) else 1
 
 

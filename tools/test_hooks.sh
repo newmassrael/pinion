@@ -1838,6 +1838,34 @@ PY
 )"
 ok "and it refuses the prose form of an invariant" "$impact_prose" "refused"
 
+# ── R1939: the counterfactual driver's own classifier is asserted ───────────
+#
+# ★★★★★ `tools/counterfactual.py` is the gate every round's evidence is made
+# with, and until R1939 nothing exercised the part that says WHAT was caught.
+# Its vocabulary knew `cargo test` only, so every walk-gated case reported its
+# catch as a bare `exit 1` — right, and unreadable.
+#
+# ⚠ The measurement that shaped the repair: an unclassified red used to fall
+# back to `exit N` and still count as a catch, which is standing rule (6)'s
+# escape hatch. It is now its own verdict (`UNREADABLE`) and does not count.
+# And the per-harness table has to be DISJOINT or it is decorative — an
+# unanchored `FAIL: ` let the hook harness answer for the walk harness, so
+# deleting the whole walk vocabulary left the gate green.
+cf_self="$(python3 "$repo_root/tools/counterfactual.py" --selftest 2>&1 || true)"
+ok "the counterfactual driver passes its own selftest" \
+   "$(grep -c 'counterfactual selftest: PASS (0 failure(s))' <<<"$cf_self")" \
+   "1"
+# ★ And it still knows the walk harness, which is the vocabulary whose absence
+# is silent: a walk-gated case would go on being CAUGHT, just unreadable.
+cf_walk="$(python3 - "$repo_root" <<'PY' 2>&1 || true
+import sys
+sys.path.insert(0, sys.argv[1] + "/tools")
+from counterfactual import FAILURE_MARKERS_BY_HARNESS, failing_lines
+print("read" if failing_lines("[demo] FAIL: a walk said so") else "silent")
+PY
+)"
+ok "and a demo walk's own failure sentence is readable" "$cf_walk" "read"
+
 # ── R1892: the round verdict leads with a word a driver can read ────────────
 #
 # ★★★★★ An independent checker watches this repository's repayment loop and its

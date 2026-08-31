@@ -12,8 +12,8 @@
 //! canvas's three pin appearances mean something rather than decorate.
 
 use pinion_node_graph::{
-    Admission, Composition, Conversion, NodeKind, Port, PortName, PortRef, Refusal, Side, Tint,
-    Variadic,
+    Admission, Admits, Composition, Conversion, NodeKind, Port, PortName, PortRef, Refusal, Side,
+    Tint, Variadic,
 };
 use serde::{Deserialize, Serialize};
 
@@ -414,6 +414,88 @@ impl Revisions {
     }
 }
 
+/// The **host** and **service** halves of a locator, with or without a scheme.
+///
+/// One splitter, shared by [`NodeKind::explode`] and R1939's repairs, so a
+/// locator the split takes apart and a locator a refusal repairs cannot come
+/// apart along different seams.
+///
+/// ⚠ The tail is a service only when it is all digits, and that guard is not
+/// decoration: an IPv6 host is written `[::]`, whose last colon is INSIDE the
+/// host — before R1939 the bare form came apart as host `[:` and service `]`,
+/// which no test had ever asked, because a split always ran on a whole locator
+/// where the trailing `:7447` masked it.
+fn halves(value: &str) -> (&str, &str) {
+    let rest = value.split_once('/').map_or(value, |(_, rest)| rest);
+    match rest.rsplit_once(':') {
+        Some((host, service))
+            if !service.is_empty() && service.bytes().all(|b| b.is_ascii_digit()) =>
+        {
+            (host, service)
+        }
+        _ => (rest, ""),
+    }
+}
+
+/// R1939 — the locator `transport` would take in place of `value`, or `None`
+/// when there is nothing near enough to offer.
+///
+/// A host with no service, a service that is not a number, and a host carrying
+/// a stray `/` are all refused with no repair: inventing a service number or
+/// dropping part of a host would hand a person a value they did not write and
+/// could not tell from one they did.
+fn relocated(transport: Transport, value: &str) -> Option<String> {
+    let (host, service) = halves(value);
+    if host.is_empty() || host.contains('/') || service.is_empty() {
+        return None;
+    }
+    let number: u32 = service.parse().ok()?;
+    Some(format!(
+        "{}/{host}:{}",
+        transport.word(),
+        number.clamp(1, 65535)
+    ))
+}
+
+/// R1939 — [`relocated`] for one transport, as a plain function pointer.
+///
+/// A `match` and not a captured closure: [`Admits::Shaped`] holds a `fn`
+/// pointer for [`Conversion::Converted`]'s reason, and the exhaustive match is
+/// what makes a transport added later a COMPILE error here rather than a
+/// silently unrepairable pin.
+const fn relocating(transport: Transport) -> fn(&String) -> Option<String> {
+    match transport {
+        Transport::Tcp => |value| relocated(Transport::Tcp, value),
+        Transport::Tls => |value| relocated(Transport::Tls, value),
+        Transport::Quic => |value| relocated(Transport::Quic, value),
+        Transport::Udp => |value| relocated(Transport::Udp, value),
+        Transport::Ws => |value| relocated(Transport::Ws, value),
+    }
+}
+
+/// R1939 — the host a [`Endpoint::Host`] pin would take in place of `value`.
+///
+/// A whole locator pasted onto a host pin is repaired to its host half, which
+/// is [`NodeKind::explode`]'s answer for the same string — the repair a person
+/// almost always meant.
+fn host_of(value: &str) -> Option<String> {
+    let (host, _) = halves(value);
+    (!host.is_empty() && !host.contains('/')).then(|| host.to_owned())
+}
+
+/// R1939 — the service a [`Endpoint::Service`] pin would take in place of
+/// `value`.
+///
+/// Out of range is CLAMPED and not refused, because the number a person typed
+/// says which end they meant; text that is not a number at all has no nearest
+/// service and is refused with none.
+fn service_of(value: &str) -> Option<String> {
+    let (_, service) = halves(value);
+    let text = if service.is_empty() { value } else { service };
+    let number: u32 = text.trim().parse().ok()?;
+    Some(number.clamp(1, 65535).to_string())
+}
+
 impl NodeKind for LabNode {
     /// ★ R1914 — an [`Endpoint`], not a [`Transport`]: a pin carries a whole
     /// locator or one half of one, and the split act needs the difference.
@@ -651,6 +733,42 @@ impl NodeKind for LabNode {
         })
     }
 
+    /// ★★★★★ R1939 — **what this pin will TAKE as its resting locator.**
+    ///
+    /// Every socket type this taxonomy has answers, and each answer is a rule
+    /// that produces the value the pin would have taken — so a screen offering
+    /// a repair cannot offer one the same declaration would then refuse.
+    ///
+    /// ⚠ The scheme is part of the rule, and that is the point rather than
+    /// strictness: a pin's TYPE is the endpoint it carries (R1937), and the
+    /// canvas colours the pin by that transport (R1926), so a pin drawn as one
+    /// transport while resting on another transport's address is a card saying
+    /// two things. The repair re-schemes rather than refusing outright, because
+    /// the address a person pasted is almost always the right host and service.
+    ///
+    /// ★ The halves come from the SAME splitter [`explode`](NodeKind::explode)
+    /// uses, so a locator this repairs and a locator the split takes apart
+    /// cannot come apart along different seams.
+    fn takes(&self, _at: PortRef, ty: &Self::Type) -> Admits<Self::Value> {
+        match ty {
+            Endpoint::Locator(transport) => Admits::Shaped {
+                wants: format!(
+                    "an address this pin can speak, like `{}/host:service`",
+                    transport.word()
+                ),
+                nearest: relocating(*transport),
+            },
+            Endpoint::Host => Admits::Shaped {
+                wants: "a host on its own, with no scheme and no service".to_owned(),
+                nearest: |value| host_of(value),
+            },
+            Endpoint::Service => Admits::Shaped {
+                wants: "a service number from 1 to 65535".to_owned(),
+                nearest: |value| service_of(value),
+            },
+        }
+    }
+
     /// ★★★★★ R1914 — take a locator apart into its host and its service.
     ///
     /// The scheme is **dropped rather than shared out**, and that is the right
@@ -664,10 +782,7 @@ impl NodeKind for LabNode {
         if ty.transport().is_none() {
             return Vec::new();
         }
-        let rest = value.split_once('/').map_or(value.as_str(), |(_, r)| r);
-        let (host, service) = rest
-            .rsplit_once(':')
-            .map_or((rest, ""), |(host, service)| (host, service));
+        let (host, service) = halves(value);
         vec![
             (!host.is_empty()).then(|| host.to_owned()),
             (!service.is_empty()).then(|| service.to_owned()),
@@ -728,8 +843,144 @@ impl NodeKind for LabNode {
 
 #[cfg(test)]
 mod tests {
-    use super::{Endpoint, Implementation, LabNode, Revisions, Role, Stack, Transport};
-    use pinion_node_graph::{Admission, NodeKind, Side};
+    use super::{Endpoint, Implementation, LabNode, Revisions, Role, Stack, Transport, halves};
+    use pinion_node_graph::{Admission, Judged, NodeKind, PortRef, Side};
+
+    /// A node of one transport, for the R1939 assertions below.
+    fn speaking(transport: Transport) -> LabNode {
+        LabNode {
+            role: Role::ALL[0],
+            transport,
+            listening: true,
+            implementation: Implementation::default(),
+        }
+    }
+
+    /// ★★★★★ R1939 — **every socket type this taxonomy has says what its pin
+    /// will take, and the rule carries the pin's own transport.**
+    ///
+    /// The population is `Endpoint::all()` and `Transport::ALL` rather than a
+    /// chosen pair, so a type or a transport added later joins this assertion
+    /// without anyone remembering it — the escape hatch a hand-written list is.
+    #[test]
+    fn r1939_every_socket_type_says_what_its_pin_will_take() {
+        for transport in Transport::ALL {
+            let node = speaking(transport);
+            for ty in Endpoint::all() {
+                let declared = node.takes(PortRef::output(0), &ty);
+                let wants = declared.wants();
+                assert!(
+                    !wants.is_empty(),
+                    "★ {ty:?} says nothing about what it will take"
+                );
+                if let Endpoint::Locator(carried) = ty {
+                    assert!(
+                        wants.contains(&format!("{}/host:service", carried.word())),
+                        "★★★★★ the sentence names the transport the PIN carries, \
+                         not the one the node was built with: {wants:?}"
+                    );
+                    // ★ And the rule and the sentence agree, which is what a
+                    // second statement could not guarantee: a well-formed
+                    // address of ANOTHER transport is refused, and the repair
+                    // is the same address under this one.
+                    let other = if carried == Transport::Tcp {
+                        Transport::Udp
+                    } else {
+                        Transport::Tcp
+                    };
+                    let wrong = format!("{}/10.0.0.4:7447", other.word());
+                    assert_eq!(
+                        declared.judge(&wrong),
+                        Judged::Refused {
+                            wants: wants.clone(),
+                            instead: Some(format!("{}/10.0.0.4:7447", carried.word())),
+                        },
+                        "★ {carried:?} refuses {wrong:?} and offers its own scheme"
+                    );
+                    assert!(
+                        declared
+                            .judge(&format!("{}/10.0.0.4:7447", carried.word()))
+                            .stands(),
+                        "★ and the address it offered is one it takes"
+                    );
+                }
+            }
+        }
+    }
+
+    /// ★★★★★ R1939 — the two HALVES of a locator take what a split produces
+    /// and refuse the whole, offering the half.
+    ///
+    /// ⚠ The service is CLAMPED and the host is not: a number out of range says
+    /// which end a person meant, and a host with a stray `/` says nothing about
+    /// what they meant, so inventing one would hand back a value they cannot
+    /// tell from their own.
+    #[test]
+    fn r1939_the_halves_take_a_half_and_offer_one_for_a_whole() {
+        let node = speaking(Transport::Quic);
+        let host = node.takes(PortRef::input(0), &Endpoint::Host);
+        assert!(host.judge(&"10.0.0.4".to_owned()).stands());
+        assert_eq!(
+            host.judge(&"quic/10.0.0.4:7447".to_owned()),
+            Judged::Refused {
+                wants: host.wants(),
+                instead: Some("10.0.0.4".to_owned()),
+            },
+            "★ a whole locator on a host pin is repaired to its host half"
+        );
+        assert!(
+            matches!(
+                host.judge(&String::new()),
+                Judged::Refused { instead: None, .. }
+            ),
+            "★ and an empty host has no nearest, which is a real answer"
+        );
+
+        let service = node.takes(PortRef::input(0), &Endpoint::Service);
+        assert!(service.judge(&"7447".to_owned()).stands());
+        assert_eq!(
+            service.judge(&"99999".to_owned()),
+            Judged::Refused {
+                wants: service.wants(),
+                instead: Some("65535".to_owned()),
+            },
+            "★ out of range is clamped rather than refused outright"
+        );
+        assert!(
+            matches!(
+                service.judge(&"not-a-number".to_owned()),
+                Judged::Refused { instead: None, .. }
+            ),
+            "★ and text that is no number at all has no nearest service"
+        );
+    }
+
+    /// ★★★★★ R1939 — the splitter treats a colon as a service separator only
+    /// when what follows it is a NUMBER.
+    ///
+    /// ⚠ This is a latent defect R1939 found and repaired rather than a new
+    /// rule: an IPv6 host is written `[::]`, whose last colon is inside the
+    /// host, and before this the bare form came apart as host `[:` and service
+    /// `]`. No test had ever asked, because a split always ran on a WHOLE
+    /// locator, where the trailing `:7447` masked it.
+    #[test]
+    fn r1939_a_colon_inside_a_host_is_not_a_service_separator() {
+        assert_eq!(halves("[::]"), ("[::]", ""));
+        assert_eq!(halves("[::]:7447"), ("[::]", "7447"));
+        assert_eq!(halves("quic/[::]:7447"), ("[::]", "7447"));
+        assert_eq!(halves("10.0.0.4:7447"), ("10.0.0.4", "7447"));
+        assert_eq!(
+            halves("tcp/10.0.0.4:7447/x"),
+            ("10.0.0.4:7447/x", ""),
+            "trailing rubbish leaves no service, so the repair refuses"
+        );
+        // ★ And the split agrees with it, because they share the one splitter.
+        assert_eq!(
+            LabNode::explode(&Endpoint::Locator(Transport::Quic), &"[::]".to_owned()),
+            vec![Some("[::]".to_owned()), None],
+            "★★★★★ the host survives whole, which is what the guard is for"
+        );
+    }
 
     #[test]
     fn r1651_a_role_that_never_listens_has_no_accept_pin_at_all() {

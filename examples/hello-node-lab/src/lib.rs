@@ -102,9 +102,9 @@ use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::widgets::wheel::WheelDirection;
 use pinion_core::{CellKind, Frame, Modifiers, Scene, WidgetCore, edit_field_keymap};
 use pinion_node_graph::{
-    Act, Camera, Document, Extent, Faces, Fit, Found, Item, LandError, Landfall, LinkId, LinkLayer,
-    Margin, NameSource, Node, NodeBody, NodeId, PortPath, PortRef, ROOT, Relinked, Side, Socket,
-    Tint, Violation, ZoomRange, palette_of, type_palette,
+    Act, Camera, Document, Extent, Faces, Fit, Found, Item, Judged, LandError, Landfall, LinkId,
+    LinkLayer, Margin, NameSource, Node, NodeBody, NodeId, PortPath, PortRef, ROOT, Relinked, Side,
+    Socket, Tint, Violation, ZoomRange, palette_of, type_palette,
 };
 use pinion_platform_storage::AppStorage;
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
@@ -11100,6 +11100,27 @@ const FIELDS: &[SchemaField] = &{
         // answer is what lets a client rule the shape out instead of
         // discovering it by failing.
         SchemaField::new("containers", "json"),
+        // ★★★★★ R1939 — what every pin will TAKE as its resting address, what
+        // it rests at now, and whether that still stands. The sentence beside
+        // the field, the value in it, and the repair when the two disagree —
+        // all from the ONE declaration the edit below enforces.
+        SchemaField::new("takes", "json"),
+        // ★★★★★ R1939 — give one pin the address it rests at. The locator is
+        // deliberately an OPEN argument: the point of the round is that the pin
+        // judges it and says what it wants, so a closed vocabulary here would
+        // make the refusal unreachable and the sentence untestable.
+        SchemaField::action_with(
+            "set_pin_locator",
+            "string",
+            ArgForm::Delimited(','),
+            const {
+                &[
+                    SchemaArg::key("node", "string", "nodes"),
+                    SchemaArg::one_of("address", "string", &PIN_ADDRESSES),
+                    SchemaArg::open("locator", "string"),
+                ]
+            },
+        ),
         // ★★★★★ R1885 — put a card on another build. The build comes from a
         // CLOSED vocabulary and it is built from `Stack::ALL` rather than
         // spelled here, so the words an agent is offered cannot drift from the
@@ -11252,6 +11273,7 @@ impl ExternalIntrospect for LabOracle {
             "standing_for" => Ok(IntrospectValue::Json(standing_for_wire(state))),
             "choosable" => Ok(IntrospectValue::Json(choosable_wire(state))),
             "containers" => Ok(IntrospectValue::Json(containers_wire(state))),
+            "takes" => Ok(IntrospectValue::Json(takes_wire(state))),
             // ★ R1742 — the SAME value the host publishes for this section, so
             // "one build, two placements" is a fact a client can check rather
             // than a claim this file makes.
@@ -12148,6 +12170,25 @@ impl ExternalIntrospect for LabOracle {
                 };
                 let node = Self::card(&state, name.trim())?;
                 set_pin_transport(&state, node, address.trim(), word.trim())
+                    .map(IntrospectValue::Text)
+            }
+            // ★★★★★ R1939 — the locator is taken WHOLE and untrimmed of its
+            // own commas' worth: `splitn(3, ',')` leaves everything after the
+            // second comma in the value, so an address a person typed reaches
+            // the declaration exactly as they typed it and the refusal is
+            // about what they wrote.
+            "set_pin_locator" => {
+                let raw = Self::text(&args)?;
+                let mut parts = raw.splitn(3, ',');
+                let (Some(name), Some(address), Some(locator)) =
+                    (parts.next(), parts.next(), parts.next())
+                else {
+                    return Err(InvokeError::rejected(format!(
+                        "{raw:?} is not <card>,<address>,<locator>"
+                    )));
+                };
+                let node = Self::card(&state, name.trim())?;
+                set_pin_locator(&state, node, address.trim(), locator.trim())
                     .map(IntrospectValue::Text)
             }
             // ★ R1681 — either layer, told apart by the `>`. A reported link
@@ -17407,6 +17448,112 @@ fn set_pin_transport(
         format!("{name}.{address} now speaks {word}, and {lost} wire(s) could not cross with it");
     state.say(Utterance::done(said.clone()));
     Ok(said)
+}
+
+/// ★★★★★ R1939 — **give one pin the address it rests at**, and be told what
+/// the pin wants when it will not take it.
+///
+/// The reference's equivalent capability is an open key-value bag hung on a
+/// pin, read by each pin widget to decide what it may offer. Here the pin's
+/// declaration is typed, the edit is what enforces it, and the refusal carries
+/// the value the SAME declaration would have taken — so the sentence a person
+/// reads and the repair a client offers cannot come from two places.
+fn set_pin_locator(
+    state: &Rc<LabState>,
+    node: NodeId,
+    address: &str,
+    locator: &str,
+) -> Result<String, InvokeError> {
+    let name = state.name_of(node);
+    let (side, path) = pin_address(address)?;
+    let mut doc = state.doc.borrow_mut();
+    let index = doc
+        .index_of(ROOT, node, side, &path)
+        .ok_or_else(|| InvokeError::rejected(format!("{name} has no pin at {address:?}")))?;
+    let port = match side {
+        Side::Input => PortRef::input(index),
+        Side::Output => PortRef::output(index),
+    };
+    let written = doc.set_port_value(ROOT, node, port, locator.to_owned());
+    drop(doc);
+    match written {
+        Ok(_) => {
+            let said = format!("{name}.{address} now rests at {locator:?}");
+            state.say(Utterance::done(said.clone()));
+            Ok(said)
+        }
+        // ⚠ No undo and no partial write: the edit refused, so nothing changed.
+        // The refusal quotes the pin's own sentence and, when the declaration
+        // has one, the value it would have taken — which is what makes this
+        // actionable rather than a bare no.
+        Err(why) => {
+            let said = Utterance::refused(&why.to_string());
+            state.say(said.clone());
+            Err(InvokeError::rejected(said.into_clause()))
+        }
+    }
+}
+
+/// ★★★★★ R1939 — **what every pin on this canvas will TAKE as its resting
+/// address**, what it rests at now, and whether that still stands.
+///
+/// Three facts in one register because a client needs all three to act: the
+/// sentence to show beside the field, the value to put in it, and — when the
+/// two disagree — the value the declaration would take instead. Published
+/// per pin rather than per type, because the type is only half of what decides
+/// it: a pin's rule is asked of the node, so two cards of different transports
+/// want different addresses at the same pin address.
+fn takes_wire(state: &Rc<LabState>) -> serde_json::Value {
+    let doc = state.doc.borrow();
+    let rows: Vec<serde_json::Value> = doc
+        .tree(ROOT)
+        .map(|host| {
+            host.nodes()
+                .filter(|held| matches!(held.body, NodeBody::Kind(_)))
+                .flat_map(|held| {
+                    let card = state.name_of(held.id);
+                    let (ins, outs) = doc
+                        .signature(ROOT, held.id)
+                        .map_or((0, 0), |s| (s.inputs.len(), s.outputs.len()));
+                    let ports: Vec<(Side, u32)> = (0..ins)
+                        .map(|i| (Side::Input, u32::try_from(i).unwrap_or(0)))
+                        .chain((0..outs).map(|i| (Side::Output, u32::try_from(i).unwrap_or(0))))
+                        .collect();
+                    ports
+                        .into_iter()
+                        .filter_map(|(side, index)| {
+                            let port = match side {
+                                Side::Input => PortRef::input(index),
+                                Side::Output => PortRef::output(index),
+                            };
+                            let declared = doc.takes(ROOT, held.id, port)?;
+                            let carries = doc.port_value(ROOT, held.id, port).cloned();
+                            // ★ The judgement is the DECLARATION's, asked here
+                            // rather than re-derived, so what this register says
+                            // and what the edit does cannot disagree.
+                            let judged = carries.as_ref().map(|value| declared.judge(value));
+                            Some(serde_json::json!({
+                                "card": card.clone(),
+                                "pin": match side {
+                                    Side::Input => "accept",
+                                    Side::Output => "dial",
+                                },
+                                "index": index,
+                                "wants": declared.wants(),
+                                "carries": carries,
+                                "stands": judged.as_ref().is_none_or(Judged::stands),
+                                "instead": judged.and_then(|verdict| match verdict {
+                                    Judged::Refused { instead, .. } => instead,
+                                    Judged::Stands => None,
+                                }),
+                            }))
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    serde_json::json!({ "pins": rows })
 }
 
 /// ★★★★★ R1938 — **which container shapes this screen's socket types may be

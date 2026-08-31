@@ -125,6 +125,33 @@ impl fmt::Display for GroupError {
 
 impl std::error::Error for GroupError {}
 
+/// ★ R1939 — the sentence the THREE faults about a value authored on one port
+/// share, with only the clause that distinguishes them passed in.
+///
+/// They are a family and their own docs say so: a value on a port that is not
+/// there ([`Violation::StrayPortValue`]), one the port cannot hold
+/// ([`Violation::MistypedPortValue`]), and one the port's declaration will not
+/// admit ([`Violation::InadmissiblePortValue`]). They carry the same address
+/// and differ only in the reason, so writing the address three times let the
+/// three drift — and a fourth would have been written in whatever shape its
+/// author happened to pick.
+///
+/// Extracted because adding the third arm pushed [`Violation`]'s `Display` past
+/// the length this workspace lints for, and the lint was RIGHT: the repair is
+/// one named function for the property the three share, not an `allow`.
+fn port_value_fault(
+    f: &mut fmt::Formatter<'_>,
+    tree: TreeId,
+    node: NodeId,
+    port: PortRef,
+    because: &str,
+) -> fmt::Result {
+    write!(
+        f,
+        "node {node} in tree {tree} has a value on port {port}, {because}"
+    )
+}
+
 /// Why a group instance could not be inlined.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -1060,6 +1087,31 @@ pub enum Violation {
         /// would reach every consumer of every other variant.
         port: PortRef,
     },
+    /// ★★★★★ R1939 — a node has authored a value of the port's own type that
+    /// the port's DECLARATION will not admit
+    /// ([`NodeKind::takes`]).
+    ///
+    /// Distinct from [`Violation::MistypedPortValue`], which is a value of the
+    /// wrong type: this one type-checks and is still not a value this port
+    /// takes — a service number outside the range, a word outside the closed
+    /// set. `Document::set_port_value` refuses exactly this, so like its
+    /// neighbour it can only reach a document that came from a file or a peer,
+    /// **or one whose kind's rule changed under a value authored when it was
+    /// still admitted.** That second route is why this is reported rather than
+    /// made impossible, and it is the route the neighbouring arms do not have.
+    ///
+    /// The sentence and the repair are deliberately NOT carried, for
+    /// [`Violation::MistypedPortValue`]'s recorded reason: this enum is not
+    /// generic over the taxonomy, and an address is enough to ask
+    /// [`Document::admits`](crate::Document::admits) for both.
+    InadmissiblePortValue {
+        /// The tree it is in.
+        tree: TreeId,
+        /// The node holding it.
+        node: NodeId,
+        /// The port it names.
+        port: PortRef,
+    },
     /// A node's variadic run holds more items than its kind declared a ceiling
     /// for (R1632).
     ///
@@ -1209,14 +1261,15 @@ impl fmt::Display for Violation {
             Self::ContainmentCycle { tree, node } => {
                 write!(f, "node {node} in tree {tree} contains itself")
             }
-            Self::StrayPortValue { tree, node, port } => write!(
-                f,
-                "node {node} in tree {tree} has a value on port {port}, which it does not have"
-            ),
-            Self::MistypedPortValue { tree, node, port } => write!(
-                f,
-                "node {node} in tree {tree} has a value port {port} cannot hold"
-            ),
+            Self::StrayPortValue { tree, node, port } => {
+                port_value_fault(f, *tree, *node, *port, "which it does not have")
+            }
+            Self::MistypedPortValue { tree, node, port } => {
+                port_value_fault(f, *tree, *node, *port, "which that port cannot hold")
+            }
+            Self::InadmissiblePortValue { tree, node, port } => {
+                port_value_fault(f, *tree, *node, *port, "which that port will not admit")
+            }
             Self::TooManyItems {
                 tree,
                 node,
@@ -1307,6 +1360,21 @@ impl<K: NodeKind> Document<K> {
                             tree: tree.id,
                             node: node.id,
                             port: *port,
+                        })
+                        // ★★★★★ R1939 — and when the TYPE is right, whether the
+                        // port's own declaration admits the value. Only when
+                        // the type check passed: a mistyped value would be
+                        // judged by a rule written for the type it is not, and
+                        // two findings about one value send an author to fix it
+                        // twice.
+                        .or_else(|| {
+                            self.takes(tree.id, node.id, *port)
+                                .is_some_and(|admits| !admits.judge(value).stands())
+                                .then_some(Violation::InadmissiblePortValue {
+                                    tree: tree.id,
+                                    node: node.id,
+                                    port: *port,
+                                })
                         }),
                 }
             })
