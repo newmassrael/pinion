@@ -1423,16 +1423,16 @@
       "verdict": "have"
     },
     "swap_empty_group": {
-      "covered_by": "no verb changes which definition an instance stands for",
+      "covered_by": "Document::set_new_definition, R1936 — a node becomes an instance of a FRESH empty definition, keeping its NodeId, and the answer names the definition it made. Measured on the reference's operator, it is exactly a composition (build an empty group, call the node swap, point the result at it) and it is written as one here so the two cannot disagree about what a swap is; there they can, because the operator reaches back in and overwrites the swapped node's tree afterwards. ★ An empty face can answer no port, so every wire is severed — and each one is NAMED in the report, where the reference loses them inside three swallowed exceptions. A refused swap makes no definition, checked by count",
       "mechanism": "python-core",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::dcc_swap_empty_group",
+      "verdict": "have"
     },
     "swap_group_asset": {
-      "covered_by": "no verb changes which definition an instance stands for",
+      "covered_by": "Document::set_definition, R1936 — this node stands for that definition, keeping the wires it can and KEEPING ITS NodeId. ⚠ This row's pre-R1936 reason named only re-pointing an existing instance; measured, the reference's operator accepts any swappable node, so becoming a group and being re-pointed at another definition are ONE edit there and one verb here. ★ And re-pointing is not ungroup-then-nest, which is why it needs a verb: that pair destroys the instance and makes another, so the id dies and with it every selection, layout, held reference and undo record keyed by it. What cannot cross the new face is reported by the same correspondence set_kind uses (R1598), lifted rather than copied",
       "mechanism": "cpp",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::dcc_swap_group_asset",
+      "verdict": "have"
     },
     "swap_node": {
       "covered_by": "Document::set_kind (R1598)",

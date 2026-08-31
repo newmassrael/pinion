@@ -18,8 +18,8 @@ use crate::{
     ObserveError, Occurrence, Organic, Orphaned, ParentError, Passing, PathError, Port, PortPath,
     PortRef, PortSite, PortValueError, ROOT, Reach, Relabelled, RelinkError, RepartitionError,
     Route, RunError, SectionId, SelectError, Session, Severed, Sharing, Side, Socket, Stack,
-    Standing, Stop, Straighten, Stride, SwitchRefusal, Tick, Timeline, Tint, TreeId, UngroupError,
-    Unreadable, Violation, WatchError, Watches, ZoomRange, crossing,
+    Standing, Stop, Straighten, Stride, SwapError, SwitchRefusal, Tick, Timeline, Tint, TreeId,
+    UngroupError, Unreadable, Violation, WatchError, Watches, ZoomRange, crossing,
 };
 
 /// ★★★★★ R1925 — **an application that declares no two-state socket type is
@@ -16808,5 +16808,90 @@ fn r1935_a_far_end_is_on_the_chain_without_having_two_ends() {
         doc.passing(ROOT, echo),
         None,
         "★★★★★ on the chain, and with no way in"
+    );
+}
+
+/// ★★★★★ R1936 — **every body this crate owns refuses to stand for a
+/// definition**, and the population is the list rather than one example.
+///
+/// ⚠ This test exists because a counterfactual PASSED: narrowing
+/// [`Document::set_definition`]'s refusal to frames alone left the whole suite
+/// green, and the cause was an empty population — the only refusal anyone
+/// exercised was [`Document::set_new_definition`]'s own, which is a second
+/// check in front of this one. So the verb's guard had no test at all while
+/// looking covered by the verb built on top of it.
+///
+/// The repair is the population: every owned body, listed here, so a guard that
+/// stops covering one of them is red. ★ And the list is what the error is named
+/// for — R1935 added two bodies to it, and a test naming only the ones that
+/// existed when it was written goes quietly out of date the same way an error
+/// message would.
+#[test]
+fn r1936_every_body_this_crate_owns_refuses_to_stand_for_a_definition() {
+    let mut doc: Document<LOp> = Document::new("lattice");
+    let definition = doc.add_definition("Elsewhere");
+    let beacon = doc.add_node(ROOT, NodeBody::Beacon, 0, 300).unwrap();
+    let owned = [
+        (
+            "a frame",
+            doc.add_node(ROOT, NodeBody::Frame, 0, 0).unwrap(),
+        ),
+        (
+            "a register",
+            doc.add_node(ROOT, NodeBody::Delay(LTy::Scalar), 0, 60)
+                .unwrap(),
+        ),
+        (
+            "a bend",
+            doc.add_node(ROOT, NodeBody::Reroute, 0, 120).unwrap(),
+        ),
+        ("a named endpoint", beacon),
+        (
+            "a far end of a name",
+            doc.add_node(ROOT, NodeBody::Echo(beacon), 0, 360).unwrap(),
+        ),
+    ];
+    for (what, node) in owned {
+        assert_eq!(
+            doc.set_definition(ROOT, node, definition),
+            Err(SwapError::NotSwappable { tree: ROOT, node }),
+            "★ {what} is a body this crate owns and is not the application's to \
+             overwrite"
+        );
+        assert_eq!(
+            doc.set_new_definition(ROOT, node, "Never"),
+            Err(SwapError::NotSwappable { tree: ROOT, node }),
+            "★ and the verb built on it refuses the same way, for {what}"
+        );
+    }
+    // ⚠ An INTERFACE END is the sixth owned body and it cannot live in the
+    // root — measured, `add_node` answers `RootHasNoOutside`, which is R1933's
+    // fact about this face — so it is asked inside a definition instead. Left
+    // out of the loop rather than dropped from the population: a body that
+    // needs a different tree still needs the guard.
+    let elsewhere = doc.add_definition("Inside");
+    let end = doc
+        .add_node(elsewhere, NodeBody::Interface(InterfaceSide::Input), 0, 0)
+        .expect("a definition has an outside");
+    assert_eq!(
+        doc.set_definition(elsewhere, end, definition),
+        Err(SwapError::NotSwappable {
+            tree: elsewhere,
+            node: end
+        }),
+        "★ an interface end is a body this crate owns too"
+    );
+
+    // ⚠ The counterpart that keeps this from passing vacuously: the two bodies
+    // that MAY be swapped are, so the guard is a distinction rather than a
+    // blanket refusal.
+    let kind = doc
+        .add_node(ROOT, NodeBody::Kind(LOp::Sink), 200, 0)
+        .unwrap();
+    assert!(doc.set_definition(ROOT, kind, definition).is_ok());
+    assert!(
+        doc.set_definition(ROOT, kind, definition).is_ok(),
+        "★ and a node that is already an instance may be RE-POINTED, which is \
+         the edit the census row was named for"
     );
 }

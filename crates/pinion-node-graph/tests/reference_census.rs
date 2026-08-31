@@ -50,7 +50,7 @@ use pinion_node_graph::{
     LandError, Landfall, LinkId, Machine, Matched, Multiplicity, Node, NodeBody, NodeId, NodeKind,
     NodeSite, NotRecombinable, NotSplittable, Passing, Port, PortName, PortPath, PortRef, PortSite,
     PutAway, ROOT, Reach, RelinkError, SectionId, Session, Sharing, Side, Socket, Stack,
-    Straighten, Stride, SwitchRefusal, Tint, TreeId, Variadic, WatchError, palette_of,
+    Straighten, Stride, SwapError, SwitchRefusal, Tint, TreeId, Variadic, WatchError, palette_of,
     type_palette,
 };
 
@@ -789,6 +789,10 @@ fn dcc_proofs() -> Vec<Proof> {
         proof("dcc", "links_mute", dcc_links_mute),
         proof("dcc", "mute_toggle", dcc_mute_toggle),
         proof("dcc", "new_node_tree", dcc_new_node_tree),
+        // R1936 — the two group swaps. One capability with the definition
+        // arriving from two places: an existing one, and a fresh empty one.
+        proof("dcc", "swap_group_asset", dcc_swap_group_asset),
+        proof("dcc", "swap_empty_group", dcc_swap_empty_group),
         proof("dcc", "options_toggle", dcc_options_toggle),
         proof("dcc", "parent_set", dcc_parent_set),
         proof("dcc", "preview_toggle", dcc_preview_toggle),
@@ -1755,6 +1759,181 @@ fn dcc_group_separate() {
         arrives(&chain.document, Socket::new(chain.sink, 0)),
         before,
         "the value that used to cross the boundary was reconnected"
+    );
+}
+
+/// ★★★★★ R1936 — **make this node stand for that definition**, keeping the
+/// wires it can, and KEEPING ITS IDENTITY.
+///
+/// The DCC's group-asset swap. ★ Measured on its operator rather than on its
+/// name: it accepts any swappable node, not only a group instance, so becoming
+/// a group and being re-pointed at another definition are one edit there — and
+/// they are one verb here for the same reason.
+///
+/// ★★★★★ And re-pointing is NOT ungroup-then-nest, which is why it needs a verb
+/// at all: that pair destroys the instance and makes another, so the `NodeId`
+/// dies and with it every selection, layout, held reference and undo record
+/// keyed by it. The identity assertion below is what makes this a swap.
+#[test]
+fn dcc_swap_group_asset() {
+    let mut chain = chain();
+    // Two definitions with the same face, so a re-point can carry every wire
+    // and the assertion is about WHICH definition rather than about loss.
+    let first = chain.document.group(ROOT, &[chain.add], "Sum").unwrap();
+    let instance = first.node;
+    let second = chain.document.group(ROOT, &[instance], "Again").unwrap();
+    // Descend and take the inner instance, which stands for `first`.
+    let inner = chain
+        .document
+        .tree(second.definition)
+        .unwrap()
+        .nodes()
+        .find(|held| matches!(held.body, NodeBody::Group(inner) if inner == first.definition))
+        .map(|held| held.id)
+        .expect("the collapsed instance is inside the new definition");
+
+    let before = arrives(&chain.document, Socket::new(chain.sink, 0));
+    let third = chain.document.add_definition("Elsewhere");
+    let swapped = chain
+        .document
+        .set_definition(second.definition, inner, third)
+        .expect("an instance may be re-pointed");
+
+    // ★★★★★ The identity survived: same node, different definition.
+    let held = chain
+        .document
+        .tree(second.definition)
+        .unwrap()
+        .node(inner)
+        .expect("★ the node is still there — this is a swap, not a replace");
+    assert_eq!(held.body, NodeBody::Group(third));
+    // ★ And what it cost is REPORTED rather than swallowed. The new definition
+    // has an empty face, so every port went — and the report names each one,
+    // every wire that touched it, and every authored value that was on it.
+    assert!(
+        !swapped.lossless(),
+        "an empty face cannot answer the old ports: {swapped:?}"
+    );
+    assert_eq!(
+        swapped.carried.len(),
+        0,
+        "nothing to carry across an empty face"
+    );
+    assert!(
+        !swapped.dropped.is_empty(),
+        "★ and the ports that went are NAMED — the reference drops them inside \
+         three swallowed exceptions, so there 'the swap worked' and 'the swap \
+         worked and cost you two wires' are the same outcome"
+    );
+    // ⚠ And the loss REACHES OUT: the outer graph fed from what that instance
+    // produced, so emptying it empties the sink too. Asserted rather than
+    // asserted away — the first draft of this test claimed the outer graph was
+    // untouched, and it is not: a definition's face is the instance's
+    // signature, so re-pointing one instance is visible everywhere its value
+    // went. That is the fact a caller needs, and it is why `Swapped` names what
+    // it cost instead of answering a bare "done".
+    assert_eq!(before, Some(Val::Number(5)), "the fixture computed 2 + 3");
+    assert_eq!(
+        arrives(&chain.document, Socket::new(chain.sink, 0)),
+        None,
+        "★ an empty definition produces nothing, and the graph says so"
+    );
+
+    // ★ The refusals are their own words. The root is the document, not a
+    // definition; and a definition that would contain itself is the same guard
+    // `nest` applies, asked here rather than re-derived.
+    assert_eq!(
+        chain
+            .document
+            .set_definition(second.definition, inner, ROOT),
+        Err(SwapError::NotADefinition(ROOT))
+    );
+    let recursive = chain
+        .document
+        .set_definition(second.definition, inner, second.definition);
+    assert!(
+        matches!(recursive, Err(SwapError::Recursion { .. })),
+        "a definition may not stand for the tree it is in: {recursive:?}"
+    );
+}
+
+/// ★★★★★ R1936 — **make this node stand for a NEW, empty definition**, and
+/// answer which one.
+///
+/// The DCC's empty-group swap, and measured it is exactly a composition: it
+/// builds an empty group with an input end and an output end, calls its own
+/// node swap, and then points the result at the group it made. Written as a
+/// composition here too, so the two cannot disagree about what a swap is —
+/// there they can, because the operator reaches back in and overwrites the
+/// swapped node's tree afterwards.
+#[test]
+fn dcc_swap_empty_group() {
+    let mut chain = chain();
+    let before_trees = chain.document.tree_count();
+    let wires_before = chain.document.tree(ROOT).unwrap().links().len();
+
+    let (definition, swapped) = chain
+        .document
+        .set_new_definition(ROOT, chain.add, "Empty")
+        .expect("a kind node becomes an empty group");
+
+    assert_eq!(chain.document.tree_count(), before_trees + 1);
+    assert!(
+        chain
+            .document
+            .tree(definition)
+            .unwrap()
+            .interface()
+            .is_empty(),
+        "★ the definition it made is EMPTY, which is what the operator is named for"
+    );
+    assert_eq!(
+        chain
+            .document
+            .tree(ROOT)
+            .unwrap()
+            .node(chain.add)
+            .unwrap()
+            .body,
+        NodeBody::Group(definition),
+        "★ and the node kept its id while becoming an instance of it"
+    );
+    // ★★★★★ Nothing could survive an empty face, and the report SAYS SO — three
+    // wires gone, each named, where the reference loses them silently.
+    assert!(swapped.carried.is_empty());
+    assert_eq!(
+        swapped.severed.len(),
+        wires_before,
+        "★ every wire on the node is named as severed: {swapped:?}"
+    );
+    assert_eq!(
+        chain.document.tree(ROOT).unwrap().links().len(),
+        0,
+        "and the graph agrees with the report"
+    );
+
+    // ⚠ A REFUSED swap leaves no orphan definition behind. Measured by count,
+    // because the tempting order — make the definition, then check — is one
+    // early return away from littering the document with definitions nobody
+    // asked for and nothing points at.
+    let trees = chain.document.tree_count();
+    let bend = chain
+        .document
+        .add_node(ROOT, NodeBody::Reroute, 0, 0)
+        .unwrap();
+    let refused = chain.document.set_new_definition(ROOT, bend, "Never");
+    assert_eq!(
+        refused,
+        Err(SwapError::NotSwappable {
+            tree: ROOT,
+            node: bend
+        }),
+        "a body this crate owns is not the application's to overwrite"
+    );
+    assert_eq!(
+        chain.document.tree_count(),
+        trees,
+        "★ and the refusal made no definition"
     );
 }
 

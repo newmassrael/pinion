@@ -11037,6 +11037,22 @@ const FIELDS: &[SchemaField] = &{
         // many far ends. A client that navigates on the first and lists on the
         // second is doing what the reference's two operators do.
         SchemaField::new("names", "json"),
+        // ★★★★★ R1936 — make this card stand for a NEW, empty definition,
+        // keeping the card. One card names it: the definition is made by the
+        // verb, so there is nothing else for a caller to choose. ⚠ An empty
+        // face answers no port, so every wire on the card is severed — and the
+        // answer SAYS how many, rather than reporting a bare success.
+        SchemaField::action_with(
+            "regroup",
+            "string",
+            ArgForm::Scalar,
+            const { &[SchemaArg::key("node", "string", "nodes")] },
+        ),
+        // ★★★★★ R1936 — what each card on this canvas STANDS FOR: its own kind,
+        // or a definition it is an instance of. Published because "this node is
+        // another graph" is not visible from its title, and because a client
+        // offering the swap has to know which cards are already instances.
+        SchemaField::new("standing_for", "json"),
         // ★★★★★ R1885 — put a card on another build. The build comes from a
         // CLOSED vocabulary and it is built from `Stack::ALL` rather than
         // spelled here, so the words an agent is offered cannot drift from the
@@ -11186,6 +11202,7 @@ impl ExternalIntrospect for LabOracle {
             "admits" => Ok(IntrospectValue::Json(admits_wire(state))),
             "passing" => Ok(IntrospectValue::Json(passing_wire(state))),
             "names" => Ok(IntrospectValue::Json(names_wire(state))),
+            "standing_for" => Ok(IntrospectValue::Json(standing_for_wire(state))),
             // ★ R1742 — the SAME value the host publishes for this section, so
             // "one build, two placements" is a fact a client can check rather
             // than a claim this file makes.
@@ -12064,6 +12081,11 @@ impl ExternalIntrospect for LabOracle {
                 let raw = Self::text(&args)?;
                 let node = Self::card(&state, raw.trim())?;
                 unname_bend(&state, node).map(IntrospectValue::Text)
+            }
+            "regroup" => {
+                let raw = Self::text(&args)?;
+                let node = Self::card(&state, raw.trim())?;
+                regroup(&state, node).map(IntrospectValue::Text)
             }
             // ★ R1681 — either layer, told apart by the `>`. A reported link
             // has no id to name it by, so the pair is the name; refusing to let
@@ -17259,6 +17281,64 @@ fn names_wire(state: &Rc<LabState>) -> serde_json::Value {
         "far": far,
         "dangling": dangling,
     })
+}
+
+/// ★★★★★ R1936 — **make this card stand for a new, empty definition**, keeping
+/// the card.
+///
+/// The DCC's empty-group swap. What makes it worth a verb rather than a
+/// delete-and-add is that the card KEEPS ITS ID: every selection, layout and
+/// held reference keyed by it survives. And what it COSTS is said out loud —
+/// an empty face answers no port, so the wires go, and the sentence names how
+/// many rather than reporting a bare success.
+fn regroup(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError> {
+    let name = state.name_of(node);
+    let mut doc = state.doc.borrow_mut();
+    let minted = fresh_label(&doc, "def");
+    let (definition, swapped) = doc
+        .set_new_definition(ROOT, node, minted.clone())
+        .map_err(|why| InvokeError::rejected(why.to_string()))?;
+    let lost = swapped.severed.len();
+    drop(doc);
+    let said = format!(
+        "{name} now stands for the empty definition {minted} (tree {}), and {lost} wire(s) went with the ports it lost",
+        definition.0
+    );
+    state.say(Utterance::done(said.clone()));
+    Ok(said)
+}
+
+/// ★★★★★ R1936 — **what each card stands for**: its own kind, or a definition.
+///
+/// "This node is another graph" is not visible from a card's title, and a
+/// client offering the swap has to know which cards are already instances —
+/// which is the same question from the other side.
+fn standing_for_wire(state: &Rc<LabState>) -> serde_json::Value {
+    let doc = state.doc.borrow();
+    let rows: Vec<serde_json::Value> = doc
+        .tree(ROOT)
+        .map(|host| {
+            host.nodes()
+                .map(|held| {
+                    let (what, definition) = match &held.body {
+                        NodeBody::Kind(_) => ("kind", None),
+                        NodeBody::Group(inner) => ("definition", Some(inner.0)),
+                        NodeBody::Frame => ("frame", None),
+                        NodeBody::Reroute => ("bend", None),
+                        NodeBody::Beacon => ("name", None),
+                        NodeBody::Echo(_) => ("far-end", None),
+                        _ => ("other", None),
+                    };
+                    serde_json::json!({
+                        "card": state.name_of(held.id),
+                        "stands_for": what,
+                        "definition": definition,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    serde_json::json!({ "cards": rows })
 }
 
 fn passing_wire(state: &Rc<LabState>) -> serde_json::Value {

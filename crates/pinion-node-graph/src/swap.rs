@@ -18,10 +18,101 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::items::Items;
 use crate::model::{
-    Document, EditError, KindPort, Link, NodeBody, NodeId, NodeKind, Port, PortRef, Side, TreeId,
-    crossing,
+    Document, EditError, KindPort, Link, NodeBody, NodeId, NodeKind, Port, PortRef, ROOT, Side,
+    Signature, TreeId, crossing,
 };
+
+/// Why a node could not be made to stand for a definition (R1936).
+///
+/// Its own type rather than an arm on [`EditError`] because every one of these
+/// is about the SWAP — what the node is, what the definition is, and whether
+/// the two would nest inside each other — and a caller repairing one of them
+/// does something different for each.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SwapError {
+    /// The tree is not in this document.
+    NoSuchTree(TreeId),
+    /// That node is not in the tree.
+    NoSuchNode {
+        /// The tree asked about.
+        tree: TreeId,
+        /// The node asked about.
+        node: NodeId,
+    },
+    /// A body this crate owns and an application may not overwrite: a frame, an
+    /// interface end, a register, a bend, or either half of a name.
+    ///
+    /// Named for what is refused rather than for one of the bodies, because the
+    /// list grows: R1935 added two to it, and an error naming only the ones
+    /// that existed when it was written goes quietly out of date.
+    NotSwappable {
+        /// The tree it is in.
+        tree: TreeId,
+        /// The node whose body may not be overwritten.
+        node: NodeId,
+    },
+    /// The root tree is the document, not a definition, so nothing can stand
+    /// for it.
+    NotADefinition(TreeId),
+    /// No such definition.
+    NoSuchDefinition(TreeId),
+    /// The swap would make a definition contain itself, along this chain.
+    Recursion {
+        /// The existing containment chain the swap would close.
+        chain: Vec<TreeId>,
+    },
+}
+
+impl std::fmt::Display for SwapError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoSuchTree(tree) => write!(f, "no tree {}", tree.0),
+            Self::NoSuchNode { tree, node } => {
+                write!(f, "no node {} in tree {}", node.0, tree.0)
+            }
+            Self::NotSwappable { tree, node } => write!(
+                f,
+                "node {} in tree {} is a body this crate owns and cannot be made to stand for a definition",
+                node.0, tree.0
+            ),
+            Self::NotADefinition(tree) => {
+                write!(f, "tree {} is the root and cannot be stood for", tree.0)
+            }
+            Self::NoSuchDefinition(tree) => write!(f, "no definition {}", tree.0),
+            Self::Recursion { chain } => {
+                f.write_str("that would nest a group inside itself: ")?;
+                for (i, tree) in chain.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(" contains ")?;
+                    }
+                    write!(f, "{}", tree.0)?;
+                }
+                f.write_str(", which would then contain the first")
+            }
+        }
+    }
+}
+
+impl std::error::Error for SwapError {}
+
+/// ★ R1936 — **what is about to go where**: the signature a node is leaving
+/// and the two correspondences that answer it.
+///
+/// One type rather than three arguments because they are one fact and always
+/// travel together — the arity a report counts against comes from `before`, and
+/// reading it from anywhere else is how the two halves of a swap come to
+/// disagree. Clippy asked for this by refusing an eight-argument function, and
+/// it was right: a parameter list that long is usually a type nobody has named.
+struct Plan<K: NodeKind> {
+    /// The signature the node had.
+    before: Signature<K>,
+    /// Where each input went, or that it went nowhere.
+    inputs: Correspondence,
+    /// Where each output went, or that it went nowhere.
+    outputs: Correspondence,
+}
 
 /// One port of the old signature answered by one port of the new one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -237,10 +328,36 @@ impl<K: NodeKind> Document<K> {
         let inputs = Correspondence::build(&before.inputs, &after_signature.inputs, &crosses);
         let outputs = Correspondence::build(&before.outputs, &after_signature.outputs, &crosses);
 
+        let plan = Plan {
+            before,
+            inputs,
+            outputs,
+        };
+        Ok(self.respecify(tree, node, &plan, NodeBody::Kind(kind), items))
+    }
+
+    /// ★★★★★ R1936 — the half of a swap that does not care WHAT the node is
+    /// becoming: build the report from a correspondence, put the new body in,
+    /// and move the wires and the authored values along it.
+    ///
+    /// Lifted out at R1936 rather than copied, because the round added a second
+    /// verb that changes a node's body — [`set_definition`](Self::set_definition)
+    /// — and two copies of *what survives a swap* is exactly the drift this
+    /// crate keeps paying for. The reference makes the same split and does not:
+    /// its `swap_empty_group` calls its `swap_node` and then reaches back in to
+    /// fix the result up, so the two disagree about what a swap is.
+    fn respecify(
+        &mut self,
+        tree: TreeId,
+        node: NodeId,
+        plan: &Plan<K>,
+        body: NodeBody<K>,
+        items: Items<K::Type>,
+    ) -> Swapped<K> {
         let mut swapped = Swapped::<K>::default();
         for (side, map, arity) in [
-            (Side::Input, &inputs, before.inputs.len()),
-            (Side::Output, &outputs, before.outputs.len()),
+            (Side::Input, &plan.inputs, plan.before.inputs.len()),
+            (Side::Output, &plan.outputs, plan.before.outputs.len()),
         ] {
             for index in 0..u32::try_from(arity).unwrap_or(u32::MAX) {
                 let from = PortRef { side, index };
@@ -261,12 +378,147 @@ impl<K: NodeKind> Document<K> {
         let moved: BTreeMap<PortRef, PortRef> =
             swapped.carried.iter().map(|c| (c.from, c.to)).collect();
         if let Some(slot) = self.tree_mut(tree).and_then(|t| t.node_mut(node)) {
-            slot.body = NodeBody::Kind(kind);
+            slot.body = body;
             slot.items = items;
         }
         let (severed, discarded) = self.remap_ports(tree, node, &moved);
         swapped.severed = severed;
         swapped.discarded = discarded;
-        Ok(swapped)
+        swapped
+    }
+
+    /// ★★★★★ R1936 — **make this node stand for that definition**, keeping the
+    /// wires it can.
+    ///
+    /// The DCC's two group swaps in one verb, because measured they are one
+    /// capability with the definition arriving from two places: `swap_group_asset`
+    /// takes an existing group, and `swap_empty_group` makes a fresh empty one
+    /// first and then does exactly this — see
+    /// [`set_new_definition`](Self::set_new_definition), which is that second
+    /// spelling.
+    ///
+    /// # It is one verb for two edits a reader would call different
+    ///
+    /// A node that is not yet a group instance BECOMES one; a node that already
+    /// is one is RE-POINTED at another definition. The census sentence named
+    /// only the second — *no verb changes which definition an instance stands
+    /// for* — and reading the reference's operator showed the first: it accepts
+    /// any swappable node, not only a group. They are one verb here because the
+    /// edit is identical: the signature changes, and everything that can be
+    /// carried across is.
+    ///
+    /// ★ And re-pointing is **not** ungroup-then-nest, which is why it needs a
+    /// verb at all: that pair destroys the instance and makes another, so the
+    /// [`NodeId`] dies and with it every selection, saved layout, held
+    /// reference and undo record keyed by it. Here the node keeps its identity
+    /// and only what it stands for changes — the same argument R1598 made for
+    /// [`set_kind`](Self::set_kind).
+    ///
+    /// # Errors
+    ///
+    /// [`SwapError::NotSwappable`] for a body this crate owns and an
+    /// application may not overwrite — a frame, an interface end, a register, a
+    /// bend or either half of a name. [`SwapError::NotADefinition`] for the
+    /// root tree, which is the document rather than a definition, and
+    /// [`SwapError::Recursion`] when the node would make a definition contain
+    /// itself — the same guard [`instantiate`](Self::instantiate) applies,
+    /// asked here rather than re-derived.
+    pub fn set_definition(
+        &mut self,
+        tree: TreeId,
+        node: NodeId,
+        definition: TreeId,
+    ) -> Result<Swapped<K>, SwapError> {
+        let Some(before) = self.signature(tree, node) else {
+            return Err(if self.tree(tree).is_none() {
+                SwapError::NoSuchTree(tree)
+            } else {
+                SwapError::NoSuchNode { tree, node }
+            });
+        };
+        let held = self
+            .tree(tree)
+            .and_then(|t| t.node(node))
+            .ok_or(SwapError::NoSuchNode { tree, node })?;
+        if !matches!(held.body, NodeBody::Kind(_) | NodeBody::Group(_)) {
+            return Err(SwapError::NotSwappable { tree, node });
+        }
+        if definition == ROOT {
+            return Err(SwapError::NotADefinition(definition));
+        }
+        let Some(inner) = self.tree(definition) else {
+            return Err(SwapError::NoSuchDefinition(definition));
+        };
+        let face = inner.interface();
+        let after: Signature<K> = Signature {
+            inputs: face.inputs().to_vec(),
+            outputs: face.outputs().to_vec(),
+        };
+        // The same guard `nest` applies, asked rather than re-derived: a node
+        // standing for a definition that (transitively) contains this tree
+        // would make the tree contain itself.
+        if let Some(chain) = crate::group::nesting_cycle(self, tree, definition) {
+            return Err(SwapError::Recursion { chain });
+        }
+
+        let crosses = |from: &KindPort<K>, to: &KindPort<K>| crossing::<K>(from, to).is_allowed();
+        let inputs = Correspondence::build(&before.inputs, &after.inputs, &crosses);
+        let outputs = Correspondence::build(&before.outputs, &after.outputs, &crosses);
+        let plan = Plan {
+            before,
+            inputs,
+            outputs,
+        };
+        Ok(self.respecify(
+            tree,
+            node,
+            &plan,
+            NodeBody::Group(definition),
+            Items::default(),
+        ))
+    }
+
+    /// ★★★★★ R1936 — **make this node stand for a NEW, empty definition**, and
+    /// answer which one.
+    ///
+    /// The reference's `swap_empty_group`, and measured it is exactly this
+    /// composition: it builds an empty group with an input end and an output
+    /// end, calls its own node swap, and then points the result at the group it
+    /// made. Written as a composition here too, so the two cannot disagree
+    /// about what a swap is — there they can, because the operator reaches back
+    /// in and overwrites the swapped node's tree afterwards.
+    ///
+    /// ⚠ The new definition's interface is EMPTY, so nothing on the node
+    /// survives: every port is dropped and every wire on it is severed. That is
+    /// the honest outcome and it is reported rather than hidden — which is the
+    /// whole difference from the reference, where the same swap drops the wires
+    /// inside three swallowed exceptions. A caller that wants to keep them
+    /// should build the definition first and use
+    /// [`set_definition`](Self::set_definition).
+    ///
+    /// # Errors
+    ///
+    /// As [`set_definition`](Self::set_definition), minus the two that cannot
+    /// happen: a definition this call just made is neither the root nor able to
+    /// contain anything.
+    pub fn set_new_definition(
+        &mut self,
+        tree: TreeId,
+        node: NodeId,
+        name: impl Into<String>,
+    ) -> Result<(TreeId, Swapped<K>), SwapError> {
+        // Refuse BEFORE making the definition, or a refused swap leaves an
+        // orphan definition behind that nothing points at and nobody asked for.
+        let held = self
+            .tree(tree)
+            .ok_or(SwapError::NoSuchTree(tree))?
+            .node(node)
+            .ok_or(SwapError::NoSuchNode { tree, node })?;
+        if !matches!(held.body, NodeBody::Kind(_) | NodeBody::Group(_)) {
+            return Err(SwapError::NotSwappable { tree, node });
+        }
+        let definition = self.add_definition(name);
+        let swapped = self.set_definition(tree, node, definition)?;
+        Ok((definition, swapped))
     }
 }

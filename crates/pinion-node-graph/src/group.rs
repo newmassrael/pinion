@@ -635,15 +635,8 @@ impl<K: NodeKind> Document<K> {
         if self.tree(definition).is_none() {
             return Err(NestError::NoSuchDefinition(definition));
         }
-        if let Some(chain) =
-            boundary::Nesting::cycle(&self.containment(), tree.0 as usize, definition.0 as usize)
-        {
-            return Err(NestError::Recursion {
-                chain: chain
-                    .into_iter()
-                    .map(|t| TreeId(u32::try_from(t).unwrap_or(u32::MAX)))
-                    .collect(),
-            });
+        if let Some(chain) = nesting_cycle(self, tree, definition) {
+            return Err(NestError::Recursion { chain });
         }
         self.add_node(tree, NodeBody::Group(definition), x, y)
             .map_err(|_| NestError::NoSuchTree(tree))
@@ -1090,6 +1083,31 @@ pub enum Violation {
 /// not, so a consumer reporting one reached for `{:?}` and put Rust syntax in
 /// front of a person. It is the type most likely to be shown to one, because
 /// the documents that break invariants are the ones that came from a file.
+/// ★★★★★ R1936 — **would putting `definition` inside `tree` close a
+/// containment cycle?**, answering the chain it would close.
+///
+/// Lifted out of [`Document::instantiate`] at R1936 because a second verb needs
+/// the same guard — [`Document::set_definition`], which points an existing node
+/// at a definition and can close exactly the same cycle. Asked rather than
+/// re-derived, so the two verbs cannot come to disagree about what nests.
+pub(crate) fn nesting_cycle<K: NodeKind>(
+    document: &Document<K>,
+    tree: TreeId,
+    definition: TreeId,
+) -> Option<Vec<TreeId>> {
+    boundary::Nesting::cycle(
+        &document.containment(),
+        tree.0 as usize,
+        definition.0 as usize,
+    )
+    .map(|chain| {
+        chain
+            .into_iter()
+            .map(|t| TreeId(u32::try_from(t).unwrap_or(u32::MAX)))
+            .collect()
+    })
+}
+
 /// The word a person reads for a side of a node's signature.
 ///
 /// Lifted out of [`Violation`]'s `Display` at R1935 rather than `allow`-ing the
