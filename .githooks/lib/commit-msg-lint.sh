@@ -189,6 +189,7 @@ lint_commit_message() {
 #
 # `feat(rpc): R1757 a burst ...` -> `R1757`
 # `fix(runtime): R1753.1 a count ...` -> `R1753.1`
+# `docs(mnemosyne): R1366.8.1 override corrects ...` -> `R1366.8.1`
 #
 # A CONTINUATION IS A DIFFERENT TOKEN FROM ITS PARENT, deliberately and by
 # construction: 106 commits in this history are `.N` follow-ups to a round
@@ -196,10 +197,22 @@ lint_commit_message() {
 # would refuse every one of them. Comparing whole tokens keeps continuations
 # legal without a special case.
 #
+# ★★★★★ R1939.3 — AND THE SUFFIX REPEATS, which this pattern used to deny with
+# `(\.[0-9]+)?`. The argument above applies unchanged one level down, and the
+# evidence is this tree's own: `git log --all --format=%s | grep -cE
+# '\bR[0-9]+\.[0-9]+\.[0-9]+'` answers 69 — `R1366.8.1`, `R1366.2.1` and their
+# kind. A single optional group read `R1366.8.1` as `R1366.8`, so a second
+# continuation collided with the first and was refused.
+#
+# ⚠ It was found the only way it could be: the refusal this gate prints NAMES
+# `R<N>.<M>.1` as the way out, and taking that advice was refused by the same
+# gate. A suggestion its own parser cannot read is worse than none, because it
+# sends the reader in a circle.
+#
 # Pure — takes the subject as an argument and calls no git — so
 # `tools/test_hooks.sh` drives every arm.
 round_token_of() {
-    grep -oE '\bR[0-9]+(\.[0-9]+)?\b' <<<"${1:-}" | head -1 || true
+    grep -oE '\bR[0-9]+(\.[0-9]+)*\b' <<<"${1:-}" | head -1 || true
 }
 
 # R1760 — is `token` already carried by a commit subject in `history`?

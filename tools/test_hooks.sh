@@ -1697,6 +1697,13 @@ ok "the round token is read off a subject" \
    "$(round_token_of 'feat(rpc): R1757 a burst of keys arrives together')" "R1757"
 ok "a continuation keeps its suffix" \
    "$(round_token_of 'fix(runtime): R1753.1 a count in a comment was never true')" "R1753.1"
+# ★★★★★ R1939.3 — AND THE SUFFIX REPEATS. 69 commits in this history carry a
+# second one (`git log --all --format=%s | grep -cE '\bR[0-9]+\.[0-9]+\.[0-9]+'`
+# — `R1366.8.1`, `R1366.2.1`), and a pattern allowing only ONE read them as
+# their parent, so a second continuation collided with the first and the gate
+# refused the very token its own refusal message recommends.
+ok "a second continuation keeps BOTH suffixes" \
+   "$(round_token_of 'docs(mnemosyne): R1366.8.1 override corrects R1366.7')" "R1366.8.1"
 ok "a subject with no round declares none" \
    "$(round_token_of 'chore: tidy the imports')" ""
 # The token is the FIRST one: a subject mentioning another round in its prose
@@ -1717,6 +1724,19 @@ ok "a fresh round is allowed" "$(taken R1760)" "free"
 # would refuse every one.
 ok "a continuation of a committed round is allowed" "$(taken R1757.1)" "free"
 ok "an already-used continuation is refused" "$(taken R1753.1)" "taken"
+# ★★★★★ R1939.3 — and a SECOND continuation of a taken one is free, which is
+# the way out the refusal message itself names.
+#
+# ⚠ Asserted through the WHOLE PATH — subject, then reader, then duplicate
+# check — and not by handing `round_token_taken` a token directly. That was the
+# first draft and it could not fail: this gate's two halves are only wrong
+# TOGETHER, because a reader that truncates `R1753.1.1` to `R1753.1` is what
+# makes the duplicate check answer about the parent. Given the token whole, the
+# check is right on its own and a broken reader goes unseen — which is exactly
+# how the defect survived: `round_token_taken` was never the faulty half.
+ok "a second continuation of a taken round is allowed" \
+   "$(taken "$(round_token_of 'docs(mnemosyne): R1753.1.1 the continuation of a continuation')")" \
+   "free"
 # ...and the parent of a committed continuation is NOT thereby taken, because
 # `R1753` itself has not been used as a subject token here.
 ok "a continuation does not reserve its parent" "$(taken R1753)" "free"
