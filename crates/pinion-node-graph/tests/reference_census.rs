@@ -761,10 +761,10 @@ fn engine_permission_proofs() -> Vec<Proof> {
 /// gesture cut into a start gate, a hover verdict and a commit.
 ///
 /// Its own registry because the three are one capability and because reading
-/// them apart is how R1924 found that only *one* of them was ever missing: the
-/// commit has been [`Document::relink`] since R1681, and the census carried all
-/// three as absent for 243 rounds because nobody measured the row's clauses
-/// separately from its title.
+/// them apart is how R1924 found that only *two* of them were ever missing.
+/// The commit has been [`Document::relink`] since R1681, so its row had been
+/// wrong for 243 rounds — carried under a title that covered all three, which
+/// is why nobody measured the clauses separately from it.
 fn engine_relink_proofs() -> Vec<Proof> {
     vec![
         proof(
