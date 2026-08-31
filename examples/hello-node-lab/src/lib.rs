@@ -58,7 +58,7 @@ mod scenario;
 mod settings;
 mod spec;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
@@ -1609,6 +1609,23 @@ struct LabState {
     /// existing reader handle an absence it does not care about.
     pointer_inside: Signal<bool>,
     drag: Signal<Option<Drag>>,
+    /// ★★★★★ R1924 — the cards that would take the wire being re-aimed, worked
+    /// out once when it is picked up.
+    ///
+    /// A set of CARDS rather than of sockets, because a drop opens the slot it
+    /// lands on — the port a socket would name does not exist until the wire
+    /// arrives. Empty while nothing is being re-aimed, which is also the honest
+    /// answer for a wire that has nowhere else to go.
+    ///
+    /// Computed at pick-up rather than per frame because the document cannot
+    /// change while a pointer is down, and re-deriving it on every pointer move
+    /// would clone the document once per pixel. It is filled in the same
+    /// statement that sets `drag`, and `drag` is the signal the canvas already
+    /// re-reads, so this holds no reactivity of its own.
+    rewire_targets: RefCell<BTreeSet<NodeId>>,
+    /// ★ R1924 — the card the verdict was last said about, so a drag says it
+    /// once on arrival rather than on every pixel of travel across the card.
+    rewire_over: Cell<Option<NodeId>>,
     pressed: RefCell<Option<Hit>>,
     /// ★★★★★ R1719 — the last thing this screen SAID, and what kind of thing
     /// it was.
@@ -1972,6 +1989,8 @@ impl LabState {
             // `move_cursor` sets it.
             pointer_inside: Signal::new(false),
             drag: Signal::new(None),
+            rewire_targets: RefCell::new(BTreeSet::new()),
+            rewire_over: Cell::new(None),
             pressed: RefCell::new(None),
             // ★ R1778 — silent at open, which every screen of this tool now
             // spells the same way: a holder with nothing said yet.
@@ -8757,11 +8776,22 @@ fn canvas_pins(state: &LabState, node: NodeId, card: Rect, role: Role, ink: Ink)
             ));
         }
         if role.accepts() && shows(Side::Input, 0) {
+            // ★★★★★ R1924 — a card that would take the wire being re-aimed
+            // wears the accent while the hand is carrying it.
+            //
+            // The BORDER, because that is the property a pin's identity lives
+            // in here — R1919 measured the cost of asserting a rectangle when
+            // the change is an edge. The set is the crate's answer, so a card
+            // is lit exactly when `may_relink` would say yes: there is no
+            // second rule on this side deciding what "will take it" means.
+            let lit = state.rewire_targets.borrow().contains(&node);
             children.push(box_at(
                 &format!("lab.pin.{name}.accept"),
                 pin_rect(state, card, false),
                 ink.surface,
-                Some(if listening {
+                Some(if lit {
+                    ink.accent
+                } else if listening {
                     transport_ink(transport)
                 } else {
                     ink.text_3
@@ -10302,6 +10332,11 @@ const FIELDS: &[SchemaField] = &{
         // ★★★★★ R1923 — what each card says about itself, and WHICH of its two
         // sources said it, which is what the reference's bare string cannot say.
         SchemaField::new("notes", "json"),
+        // ★★★★★ R1924 — for the picked link's consuming end, which cards would
+        // take it and, for each that would not, the crate's own reason. Asked
+        // BEFORE the hand lets go, which is the whole difference from finding
+        // out by dropping.
+        SchemaField::new("rewire", "json"),
         // ★★★★★ R1742 — how much of the inspector specification this build is
         // showing, published beside the specification itself. `json` rather
         // than the `string` its neighbours use because it is the framework's
@@ -10816,6 +10851,9 @@ impl ExternalIntrospect for LabOracle {
             "accepts" => Ok(IntrospectValue::Json(accepts_wire(state))),
             // ★★★★★ R1923 — what each card says about itself, and who said it.
             "notes" => Ok(IntrospectValue::Json(notes_wire(state))),
+            // ★★★★★ R1924 — where the picked wire's end may be re-aimed, and
+            // why each card that refuses it does.
+            "rewire" => Ok(IntrospectValue::Json(rewire_wire(state))),
             // ★ R1742 — the SAME value the host publishes for this section, so
             // "one build, two placements" is a fact a client can check rather
             // than a claim this file makes.
@@ -13869,28 +13907,30 @@ fn disable_card(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeErro
 /// buys here is visible: the selection does not have to be repaired afterwards,
 /// because the thing that was selected is the thing that moved.
 fn relink_to(state: &Rc<LabState>, link: LinkId, to: NodeId) -> Result<String, InvokeError> {
-    let held = state
+    let name = state.name_of(to);
+    // ★★★★★ R1924 — the act BEGINS by asking the question, which is the same
+    // shape `Document::relink` takes inside the crate. Before this round the
+    // two gates below lived here and the question knew only one of them, so a
+    // drag could be told *it will take it* by a screen that then refused the
+    // drop. One decision now, asked at two moments.
+    let endpoint = match would_take(state, link, to) {
+        Ok(endpoint) => endpoint,
+        Err(why) => {
+            let said = Utterance::refused(&why);
+            state.say(said.clone());
+            return Err(InvokeError::rejected(said.into_clause()));
+        }
+    };
+    let source = state
         .doc
         .borrow()
         .tree(ROOT)
-        .and_then(|t| t.link(link).copied())
-        .ok_or_else(|| InvokeError::rejected(format!("no link {} is drawn", link.0)))?;
-    let name = state.name_of(to);
-    let Ok(endpoint) = landing_endpoint(
-        &state.doc.borrow(),
-        &state.forms.borrow(),
-        held.from.node,
-        to,
-    ) else {
-        let said = Utterance::refused(&format!(
-            "{} already dials every endpoint of {name}",
-            state.name_of(held.from.node)
-        ));
-        state.say(said.clone());
-        return Err(InvokeError::rejected(said.into_clause()));
-    };
+        .and_then(|t| t.link(link).map(|l| l.from.node));
     move_end(state, link, to, endpoint.as_deref()).map(|_| {
-        let word = format!("{} -> {name}", state.name_of(held.from.node));
+        let word = match source {
+            Some(from) => format!("{} -> {name}", state.name_of(from)),
+            None => name.clone(),
+        };
         state.say(Utterance::done(format!("moved {word}")));
         word
     })
@@ -13950,6 +13990,144 @@ fn choose_endpoint(state: &Rc<LabState>, n: usize) -> Result<String, InvokeError
         state.say(Utterance::done(format!("on {endpoint}")));
         endpoint
     })
+}
+
+/// ★★★★★ R1924 — **would this card take the wire being re-aimed, and if not,
+/// why?** — asked before the hand lets go, and answering with the address the
+/// drop would dial.
+///
+/// # ★★★★★ This IS the first half of [`relink_to`], not a prediction of it
+///
+/// Which is the whole design, and it was learned the expensive way inside this
+/// round: the first draft asked the crate alone, so the canvas said *P-02 will
+/// take it* and the drop then refused with *P-01 already dials every endpoint
+/// of P-02* — a **screen-level** rule the question had never heard of. Two
+/// oracles, one gesture, and the hand was told the wrong one. So the question
+/// runs every gate the act runs, in the act's order, and the act begins by
+/// asking it.
+///
+/// # Why the crate half is asked on a COPY
+///
+/// The answer depends on the slot the drop would open: [`move_end`] opens one
+/// and then moves the end, so a question asked about the ports that exist right
+/// now would refuse for a port the drop itself creates. The copy runs the same
+/// function the drop runs, on the same inputs, so the port it names is the port
+/// the drop will use — §2 #3's dry run rather than a second rule about landing.
+///
+/// The refusal sentence is the crate's own, so a hand over a card that would
+/// close a cycle is told **which path** closes it rather than that it did not
+/// work.
+fn would_take(state: &LabState, link: LinkId, to: NodeId) -> Result<Option<String>, String> {
+    let held = state
+        .doc
+        .borrow()
+        .tree(ROOT)
+        .and_then(|t| t.link(link).copied())
+        .ok_or_else(|| format!("no link {} is drawn", link.0))?;
+    let name = state.name_of(to);
+    let endpoint = landing_endpoint(
+        &state.doc.borrow(),
+        &state.forms.borrow(),
+        held.from.node,
+        to,
+    )
+    .map_err(|()| {
+        format!(
+            "{} already dials every endpoint of {name}",
+            state.name_of(held.from.node)
+        )
+    })?;
+    let mut scratch = state.doc.borrow().clone();
+    let Some(port) = open_slot_in(&mut scratch, to, endpoint.as_deref()) else {
+        return Err(format!("{name} has no accept pin"));
+    };
+    scratch
+        .may_relink(ROOT, link, Side::Input, Socket::new(to, port))
+        .map(|()| endpoint)
+        .map_err(|why| Utterance::refused(&why).into_clause())
+}
+
+/// ★★★★★ R1924 — what one card would do with the wire being re-aimed.
+///
+/// **Three** answers and not two, and the third is why this is a type. The card
+/// the wire is already on is neither a destination nor a refusal: dropping it
+/// back there is a success that moves nothing, which is what the crate answers
+/// and what this canvas has said since R1681.
+///
+/// ⚠ Folding that third state into *takes* is the defect this round's own
+/// first draft shipped, and the walk caught it: the published verdict said
+/// `takes` for the standing card while the canvas did not light it, because the
+/// lit set and the published row were computed from two different populations
+/// and nothing could notice they disagreed. There is one derivation now and
+/// every reader takes it — the canvas lights [`Landing::Takes`], the wire
+/// publishes the word, and the drag says the sentence.
+enum Landing {
+    /// Where the wire already is. A drop here moves nothing.
+    Standing,
+    /// It would go there.
+    Takes,
+    /// It would not, and this is the crate's own reason.
+    Refuses(String),
+}
+
+impl Landing {
+    /// The word this goes onto the wire as.
+    const fn word(&self) -> &'static str {
+        match self {
+            Self::Standing => "standing",
+            Self::Takes => "takes",
+            Self::Refuses(_) => "refuses",
+        }
+    }
+
+    /// The sentence, for the two answers that are not a refusal — `None`,
+    /// because a reason beside a yes is a reason nobody can act on.
+    fn because(self) -> Option<String> {
+        match self {
+            Self::Refuses(why) => Some(why),
+            Self::Standing | Self::Takes => None,
+        }
+    }
+}
+
+fn landing_for(state: &LabState, link: LinkId, card: NodeId) -> Landing {
+    let standing = state
+        .doc
+        .borrow()
+        .tree(ROOT)
+        .and_then(|t| t.link(link).map(|l| l.to.node));
+    if standing == Some(card) {
+        return Landing::Standing;
+    }
+    match would_take(state, link, card) {
+        Ok(_) => Landing::Takes,
+        Err(why) => Landing::Refuses(why),
+    }
+}
+
+fn clear_rewire_marks(state: &LabState) {
+    state.rewire_targets.borrow_mut().clear();
+    state.rewire_over.set(None);
+}
+
+/// Every card on this canvas the wire's consuming end could move to (R1924).
+///
+/// Derived by asking [`landing_for`] of each card rather than by a rule about
+/// which cards accept: the reference's *may relinking start here* is one bit
+/// per pin, and this is that bit's whole content — the ports that will take the
+/// wire, so the canvas can light them instead of leaving the hand to find out
+/// by dropping.
+fn rewire_targets_of(state: &LabState, link: LinkId) -> BTreeSet<NodeId> {
+    let cards: Vec<NodeId> = state
+        .doc
+        .borrow()
+        .tree(ROOT)
+        .map(|t| t.nodes().map(|n| n.id).collect())
+        .unwrap_or_default();
+    cards
+        .into_iter()
+        .filter(|card| matches!(landing_for(state, link, *card), Landing::Takes))
+        .collect()
 }
 
 /// The one arithmetic behind re-aiming a link and re-choosing its endpoint: a
@@ -14087,9 +14265,49 @@ fn move_cursor(state: &Rc<LabState>, px: u32, py: u32) {
                 slot.y = cy;
             }
         }
-        // Both follow the cursor and neither changes the document until
-        // release: what the canvas draws mid-drag comes from `cursor`.
-        Drag::Wire { .. } | Drag::Rewire { .. } => {}
+        // ★★★★★ R1924 — a wire being re-aimed says, as it passes over a card,
+        // whether that card will take it and why not.
+        //
+        // Before the hand lets go: that is the point, and it is what the
+        // reference's hover response is for. The document is untouched — the
+        // verdict is `may_relink` asked on a copy — so this is a reading, not a
+        // rehearsal that has to be undone.
+        Drag::Rewire { link, .. } => {
+            let over = match Hit::at(state, px, py) {
+                Hit::Pin {
+                    node,
+                    side: Side::Input,
+                    ..
+                }
+                | Hit::Node(node) => Some(node),
+                _ => None,
+            };
+            // Said once on arrival. Without this the same sentence would be
+            // pushed onto the toast on every pixel of travel across one card,
+            // which is a screen shouting rather than a screen answering.
+            if state.rewire_over.get() == over {
+                return;
+            }
+            state.rewire_over.set(over);
+            if let Some(card) = over {
+                let name = state.name_of(card);
+                // The same derivation the canvas lights from and the wire
+                // publishes, so the picture, the sentence and the answer an
+                // agent reads cannot be three opinions.
+                match landing_for(state, link, card) {
+                    Landing::Standing => {
+                        state.say(Utterance::unchanged("the link is already there"));
+                    }
+                    Landing::Takes => {
+                        state.say(Utterance::unchanged(format!("{name} will take it")));
+                    }
+                    Landing::Refuses(why) => state.say(Utterance::new(Tone::Refused, why)),
+                }
+            }
+        }
+        // Follows the cursor and changes nothing until release: what the canvas
+        // draws mid-drag comes from `cursor`.
+        Drag::Wire { .. } => {}
     }
 }
 
@@ -14155,6 +14373,13 @@ fn press(state: &Rc<LabState>) {
                     .and_then(|t| t.link(link).map(|l| l.from.node));
                 if let Some(from) = source {
                     state.selected_link.set(Some(LinkPick::Authored(link)));
+                    // ★★★★★ R1924 — what would take it, worked out the moment
+                    // it leaves the pin. The canvas lights those, and the
+                    // reference's per-pin `may relinking start here` boolean is
+                    // this set being non-empty.
+                    let lit = rewire_targets_of(state, link);
+                    *state.rewire_targets.borrow_mut() = lit;
+                    state.rewire_over.set(None);
                     state.drag.set(Some(Drag::Rewire { link, from }));
                 }
             }
@@ -14326,6 +14551,10 @@ fn release(state: &Rc<LabState>) {
     let was = state.pressed.borrow_mut().take();
     let drag = state.drag.get();
     state.drag.set(None);
+    // ★ R1924 — the lit ports go out with the gesture that lit them. Cleared
+    // here rather than in `finish_drag` so that every way a drag ends clears
+    // them, which is the same reason `drag` itself is cleared here.
+    clear_rewire_marks(state);
 
     if let Some(drag) = drag {
         finish_drag(state, drag, &now);
@@ -16260,6 +16489,53 @@ fn accepts_wire(state: &Rc<LabState>) -> serde_json::Value {
         })
         .collect();
     serde_json::json!({ "bodies": rows })
+}
+
+/// ★★★★★ R1924 — for the picked wire's consuming end, every card on this
+/// canvas and whether it would take it.
+///
+/// One row per card and not only the ones that refuse, because "which of these
+/// will take it" and "why will that one not" are the same question asked of
+/// different cards, and a reader that had to infer the yes from an absence
+/// could not tell a card that accepts from a card the screen forgot.
+///
+/// `carried` says whether the wire is in a hand right now. The rows are the
+/// same either way — a question about a picked link does not need the pointer
+/// to be down — which is what lets an agent ask it without miming a drag.
+fn rewire_wire(state: &Rc<LabState>) -> serde_json::Value {
+    let picked = state.selected_link.get().and_then(LinkPick::authored);
+    let Some(link) = picked else {
+        return serde_json::json!({
+            "picked": serde_json::Value::Null,
+            "carried": false,
+            "cards": [],
+        });
+    };
+    let cards: Vec<NodeId> = state
+        .doc
+        .borrow()
+        .tree(ROOT)
+        .map(|t| t.nodes().map(|n| n.id).collect())
+        .unwrap_or_default();
+    let rows: Vec<serde_json::Value> = cards
+        .into_iter()
+        .map(|card| {
+            let asked = landing_for(state, link, card);
+            serde_json::json!({
+                "card": state.name_of(card),
+                "verdict": asked.word(),
+                "because": asked.because(),
+                // What the canvas is LIGHTING, so a client can check the
+                // picture against the rule rather than trusting that they agree.
+                "lit": state.rewire_targets.borrow().contains(&card),
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "picked": link.0,
+        "carried": matches!(state.drag.get(), Some(Drag::Rewire { .. })),
+        "cards": rows,
+    })
 }
 
 /// ★★★★★ R1921 — `#rrggbb`, or the word for having no colour at all.

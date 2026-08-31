@@ -13458,6 +13458,340 @@ fn r1681_a_move_of_a_link_that_is_not_there_names_which_is_missing() {
     );
 }
 
+/// ★★★★★ R1924 — the question and the verb cannot disagree, over **every**
+/// socket both ends could be aimed at.
+///
+/// Not a sample. The population is the whole product — each link, each end,
+/// each node, each port on that end's side — and for each the question is asked
+/// of one document and the verb is run on a *clone*, so what is compared is two
+/// answers to the same state rather than two states.
+///
+/// This is what makes the shared decision a property and not a promise: the
+/// only way to pass is for `may_relink` to be running the same rule. A copy of
+/// the rule that had drifted anywhere in the vet — a type, an arity, a cycle,
+/// an admission — is red here on the socket where it drifted.
+#[test]
+fn r1924_may_relink_answers_exactly_what_relink_would_over_every_socket() {
+    let fixture = fixture();
+    let word = {
+        let mut extra = self::fixture();
+        let word = extra
+            .document
+            .add_node(ROOT, NodeBody::Kind(Op::Word("hi".into())), 0, 240)
+            .unwrap();
+        let shout = extra
+            .document
+            .add_node(ROOT, NodeBody::Kind(Op::Shout), 200, 240)
+            .unwrap();
+        extra
+            .document
+            .connect(ROOT, Socket::new(word, 0), Socket::new(shout, 0))
+            .unwrap();
+        extra.document
+    };
+
+    let mut asked = 0_usize;
+    let mut refused = 0_usize;
+    for document in [fixture.document, word] {
+        let links: Vec<LinkId> = document
+            .tree(ROOT)
+            .unwrap()
+            .links()
+            .iter()
+            .map(|l| l.id)
+            .collect();
+        let nodes: Vec<NodeId> = document.tree(ROOT).unwrap().nodes().map(|n| n.id).collect();
+        for link in links {
+            for end in [Side::Input, Side::Output] {
+                for node in &nodes {
+                    let signature = document.signature(ROOT, *node).unwrap();
+                    let arity = match end {
+                        Side::Input => signature.inputs.len(),
+                        Side::Output => signature.outputs.len(),
+                    };
+                    // One past the end too: a socket that is not there is a
+                    // refusal both have to reach the same way.
+                    for port in 0..=u32::try_from(arity).unwrap() {
+                        let socket = Socket::new(*node, port);
+                        let question = document.may_relink(ROOT, link, end, socket);
+                        let mut acting = document.clone();
+                        let verb = acting.relink(ROOT, link, end, socket);
+                        asked += 1;
+                        match (&question, &verb) {
+                            (Ok(()), Ok(_)) => {}
+                            (Err(asked_why), Err(did_why)) => {
+                                assert_eq!(
+                                    asked_why, did_why,
+                                    "{link:?} {end:?} -> {socket:?}: the question and the \
+                                     verb refuse for different reasons"
+                                );
+                                refused += 1;
+                            }
+                            _ => panic!(
+                                "{link:?} {end:?} -> {socket:?}: asked {question:?}, did {verb:?}"
+                            ),
+                        }
+                        if question.is_err() {
+                            assert_eq!(
+                                acting, document,
+                                "a refused move left the document changed"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        asked > 100,
+        "the sweep is a population, not a sample: {asked}"
+    );
+    assert!(
+        refused > 0 && refused < asked,
+        "★ and it reaches BOTH answers — {refused} refused of {asked}, and a \
+         sweep that only ever refused would pass the agreement vacuously"
+    );
+}
+
+/// ★★★★★ R1924 — a refused move touches nothing, and that is now structural.
+///
+/// Before this round the refusal path lifted the link out, found the graph
+/// would not take it, and put it back; the assertion anyone could make was
+/// about that bookkeeping. The decision is taken before anything moves now, so
+/// the assertion is about the **document**: byte for byte the one that went in.
+///
+/// `Document` is `PartialEq`, so this compares the whole of it — every tree,
+/// every node, every position, the link order and the id counter — rather than
+/// the links list the R1681 tests could reach.
+#[test]
+fn r1924_a_refused_relink_leaves_the_document_untouched() {
+    let mut fixture = fixture();
+    let word = fixture
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Word("hi".into())), 0, 240)
+        .unwrap();
+    let shout = fixture
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Shout), 200, 240)
+        .unwrap();
+    let text = fixture
+        .document
+        .connect(ROOT, Socket::new(word, 0), Socket::new(shout, 0))
+        .unwrap()
+        .link;
+    let before = fixture.document.clone();
+
+    // Three different refusals, one after another, on the same document.
+    for (link, end, socket) in [
+        (text, Side::Input, Socket::new(fixture.sink, 0)),
+        (text, Side::Input, Socket::new(fixture.two, 0)),
+        (text, Side::Output, Socket::new(fixture.sink, 9)),
+    ] {
+        assert!(
+            fixture.document.relink(ROOT, link, end, socket).is_err(),
+            "{end:?} -> {socket:?} is meant to be refused"
+        );
+        assert_eq!(
+            fixture.document, before,
+            "★ the whole document, unchanged — not merely the links list"
+        );
+        assert!(
+            fixture
+                .document
+                .may_relink(ROOT, link, end, socket)
+                .is_err()
+        );
+        assert_eq!(
+            fixture.document, before,
+            "★ and asking changes nothing either, which is what lets a screen \
+             ask on every pointer move"
+        );
+    }
+}
+
+/// ★★★★★ R1924 — where else an end may go is DERIVED, and it can be empty.
+///
+/// The reference answers *may relinking start at this pin* with one bit. This
+/// answers the list, and the bit is `!list.is_empty()` — so the two questions
+/// are one derivation rather than two rules.
+///
+/// The empty case is the one that has to be reachable, or the list could never
+/// say the thing a hand needs it to say. A number wired into the sink's only
+/// input has nowhere else in this graph to be consumed, and that is measured
+/// here rather than asserted.
+#[test]
+fn r1924_relink_targets_are_derived_and_can_be_empty() {
+    let mut fixture = fixture();
+    let out = fixture.document.tree(ROOT).unwrap().links()[2].id;
+
+    // `add -> sink.0`. Its consuming end may go to either of `add`'s own
+    // inputs? No — that would be a self-link. So the list is exactly the ports
+    // this graph would take, and every one of them is checked both ways.
+    let targets = fixture
+        .document
+        .relink_targets(ROOT, out, Side::Input)
+        .unwrap();
+    assert!(
+        !targets.contains(&Socket::new(fixture.sink, 0)),
+        "the socket it is ON is not somewhere ELSE it may go"
+    );
+    for socket in &targets {
+        assert!(
+            fixture
+                .document
+                .may_relink(ROOT, out, Side::Input, *socket)
+                .is_ok(),
+            "{socket:?} is listed and refused"
+        );
+    }
+    // And the complement: every socket NOT listed is refused, so the list is
+    // the whole answer and not a convenient subset of it.
+    let nodes: Vec<NodeId> = fixture
+        .document
+        .tree(ROOT)
+        .unwrap()
+        .nodes()
+        .map(|n| n.id)
+        .collect();
+    let mut left_out = 0_usize;
+    for node in nodes {
+        let arity = fixture.document.signature(ROOT, node).unwrap().inputs.len();
+        for port in 0..u32::try_from(arity).unwrap() {
+            let socket = Socket::new(node, port);
+            if targets.contains(&socket) || socket == Socket::new(fixture.sink, 0) {
+                continue;
+            }
+            left_out += 1;
+            assert!(
+                fixture
+                    .document
+                    .may_relink(ROOT, out, Side::Input, socket)
+                    .is_err(),
+                "{socket:?} is left out of the list and would be accepted"
+            );
+        }
+    }
+    assert!(
+        left_out > 0,
+        "the complement is not empty, so it is a check"
+    );
+
+    // ★★★★★ The reachable zero. `two -> add.0`: strip the graph down to that
+    // one link and there is no other number input anywhere, so its consuming
+    // end is stuck — and `relink_targets` says so instead of an editor finding
+    // out by trying every port.
+    let held = fixture.document.tree(ROOT).unwrap().links()[0].id;
+    fixture.document.remove_node(ROOT, fixture.sink).unwrap();
+    fixture.document.remove_node(ROOT, fixture.three).unwrap();
+    let stuck = fixture
+        .document
+        .relink_targets(ROOT, held, Side::Output)
+        .unwrap();
+    assert!(
+        stuck.is_empty(),
+        "★ nowhere else for the producing end to come from: {stuck:?}"
+    );
+    // Its consuming end is not stuck — `add` has a second input — which is what
+    // says the emptiness above is about THIS end and not about the graph being
+    // too small for the question to mean anything.
+    assert_eq!(
+        fixture
+            .document
+            .relink_targets(ROOT, held, Side::Input)
+            .unwrap(),
+        vec![Socket::new(fixture.add, 1)]
+    );
+}
+
+/// ★★★★★ R1924 — the refusal SAYS ITSELF, because a person now reads it.
+///
+/// Found by the walk and not by a test: the drag says why a card will not take
+/// the wire, and the first hand to see that sentence read
+/// `SelfLink(NodeId(4))` — this type's `Display` had been formatting the inner
+/// refusal with `{:?}`, while [`ConnectError`] had *node 4 cannot feed itself*
+/// ready to say. It survived because until R1924 nothing but a test ever read
+/// the string, which is the point: **a sentence with no reader is a sentence
+/// nobody checks.**
+///
+/// The absence is asserted as well as the presence. A `Debug` spelling is
+/// recognisable — a variant name and a tuple-struct wrapper — so the check can
+/// be about the class rather than about this one refusal.
+#[test]
+fn r1924_a_relink_refusal_says_itself_rather_than_its_debug_spelling() {
+    let fixture = fixture();
+    let held = fixture.document.tree(ROOT).unwrap().links()[0].id;
+    // `two -> add.0`. Aim its consuming end back at its own producer.
+    let port = fixture
+        .document
+        .signature(ROOT, fixture.two)
+        .unwrap()
+        .inputs
+        .len();
+    let why = fixture
+        .document
+        .may_relink(
+            ROOT,
+            held,
+            Side::Input,
+            Socket::new(fixture.two, u32::try_from(port).unwrap()),
+        )
+        .unwrap_err();
+    let sentence = format!("{why}");
+    assert!(
+        sentence.contains("cannot feed itself") || sentence.contains("names port"),
+        "the refusal reads as a sentence: {sentence}"
+    );
+    for spelling in ["SelfLink", "NoSuchPort", "NodeId(", "Socket {"] {
+        assert!(
+            !sentence.contains(spelling),
+            "★ {spelling:?} is Rust syntax in front of a person: {sentence}"
+        );
+    }
+}
+
+/// R1924 — the two ways there is nothing to ask about, on the question side.
+#[test]
+fn r1924_the_question_names_which_of_the_two_is_missing() {
+    let mut fixture = fixture();
+    let held = fixture.document.tree(ROOT).unwrap().links()[0].id;
+    let absent = TreeId(97);
+    assert_eq!(
+        fixture
+            .document
+            .may_relink(absent, held, Side::Input, Socket::new(fixture.sink, 0))
+            .unwrap_err(),
+        RelinkError::NoSuchTree(absent)
+    );
+    assert_eq!(
+        fixture
+            .document
+            .relink_targets(absent, held, Side::Input)
+            .unwrap_err(),
+        RelinkError::NoSuchTree(absent)
+    );
+    fixture.document.disconnect(ROOT, held).unwrap();
+    assert_eq!(
+        fixture
+            .document
+            .may_relink(ROOT, held, Side::Input, Socket::new(fixture.sink, 0))
+            .unwrap_err(),
+        RelinkError::NoSuchLink {
+            tree: ROOT,
+            link: held
+        }
+    );
+    assert_eq!(
+        fixture
+            .document
+            .relink_targets(ROOT, held, Side::Input)
+            .unwrap_err(),
+        RelinkError::NoSuchLink {
+            tree: ROOT,
+            link: held
+        }
+    );
+}
+
 // ------------------------------------------------------------- switching off
 
 /// R1682 — ★★ the whole reason this is not [`Document::set_bypassed`]: the two

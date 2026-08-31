@@ -3291,10 +3291,10 @@
       "verdict": "absent"
     },
     "schema::CanRelinkConnectionToPin": {
-      "covered_by": "RELINKING: moving an existing wire's end to another port",
+      "covered_by": "Document::may_relink asks the vet WITHOUT moving anything, and answers the refusal itself — the two types, or the port and its arity, or the path that would close — where the reference hands back a response object carrying one sentence. It is not a prediction of the verb: Document::relink calls it, so the two cannot disagree. R1924",
       "mechanism": "graph-schema",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_schema_can_relink_connection_to_pin",
+      "verdict": "have"
     },
     "schema::CanShowDataTooltipForPin": {
       "covered_by": "a PERMISSION and not a description: measured from the signature, a schema is handed a pin and asked whether a data tooltip may be SHOWN for it — the same permission-versus-possession seam that split R1920's slice. A port here carries its own sentence (R1916) and nothing decides whether showing it is allowed; that would belong beside Document::may rather than beside the description. R1923",
@@ -3609,10 +3609,10 @@
       "verdict": "app-content"
     },
     "schema::IsConnectionRelinkingAllowed": {
-      "covered_by": "RELINKING: moving an existing wire's end to another port",
+      "covered_by": "Document::relink_targets answers WHERE ELSE this end may go, and the reference's per-pin boolean is that list being non-empty — one derivation rather than two rules. Empty is reachable and is what says the end is stuck, so an editor can light the ports that will take the wire instead of letting a hand find out port by port. R1924",
       "mechanism": "graph-schema",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_schema_is_connection_relinking_allowed",
+      "verdict": "have"
     },
     "schema::IsDelegateCategory": {
       "covered_by": "the engine's visual script/asset subject matter",
@@ -3819,10 +3819,10 @@
       "verdict": "absent"
     },
     "schema::TryRelinkConnectionTarget": {
-      "covered_by": "RELINKING: moving an existing wire's end to another port",
+      "covered_by": "Document::relink has moved one end of a standing link since R1681, keeping its id, its mute and its place in the order, and naming what it displaced. NOT new in R1924: the group's title covered three members and only two were ever missing, and four rounds carried the whole of it as absent because nobody measured its clauses apart — R1827's rule, met a third time. R1924",
       "mechanism": "graph-schema",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_schema_try_relink_connection_target",
+      "verdict": "have"
     },
     "schema::TryRenameGraph": {
       "covered_by": "a tree's name is fixed at add_definition",

@@ -44,12 +44,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use pinion_node_graph::{
-    Act, Align, Appearance, Axis, Command, Conversion, Crossings, Definitions, Described,
-    Direction, Distribute, Document, Edge, EditError, EditPath, Extent, Faces, Fragment, Grow,
-    Hidden, Instance, InterfaceSide, Item, ItemError, LinkId, Machine, Matched, Multiplicity, Node,
-    NodeBody, NodeId, NodeKind, NodeSite, NotRecombinable, NotSplittable, Port, PortPath, PortRef,
-    PortSite, PutAway, ROOT, Reach, Session, Sharing, Side, Socket, Stack, Straighten, Stride,
-    Tint, TreeId, Variadic, WatchError,
+    Act, Align, Appearance, Axis, Command, ConnectError, Conversion, Crossings, Definitions,
+    Described, Direction, Distribute, Document, Edge, EditError, EditPath, Extent, Faces, Fragment,
+    Grow, Hidden, Instance, InterfaceSide, Item, ItemError, LinkId, Machine, Matched, Multiplicity,
+    Node, NodeBody, NodeId, NodeKind, NodeSite, NotRecombinable, NotSplittable, Port, PortPath,
+    PortRef, PortSite, PutAway, ROOT, Reach, RelinkError, Session, Sharing, Side, Socket, Stack,
+    Straighten, Stride, Tint, TreeId, Variadic, WatchError,
 };
 
 // ---------------------------------------------------------------- taxonomy
@@ -526,6 +526,7 @@ fn proofs() -> Vec<Proof> {
     all.extend(dcc_hook_proofs());
     all.extend(engine_proofs());
     all.extend(engine_permission_proofs());
+    all.extend(engine_relink_proofs());
     all.extend(colour_proofs());
     all.extend(admission_proofs());
     all.extend(description_proofs());
@@ -754,6 +755,34 @@ fn engine_permission_proofs() -> Vec<Proof> {
         "node::CanUserDeleteNode",
         engine_node_can_user_delete_node,
     )]
+}
+
+/// ★★★★★ R1924 — the RELINKING cluster: the engine's three, which are one
+/// gesture cut into a start gate, a hover verdict and a commit.
+///
+/// Its own registry because the three are one capability and because reading
+/// them apart is how R1924 found that only *one* of them was ever missing: the
+/// commit has been [`Document::relink`] since R1681, and the census carried all
+/// three as absent for 243 rounds because nobody measured the row's clauses
+/// separately from its title.
+fn engine_relink_proofs() -> Vec<Proof> {
+    vec![
+        proof(
+            "engine",
+            "schema::IsConnectionRelinkingAllowed",
+            engine_schema_is_connection_relinking_allowed,
+        ),
+        proof(
+            "engine",
+            "schema::CanRelinkConnectionToPin",
+            engine_schema_can_relink_connection_to_pin,
+        ),
+        proof(
+            "engine",
+            "schema::TryRelinkConnectionTarget",
+            engine_schema_try_relink_connection_target,
+        ),
+    ]
 }
 
 fn engine_proofs() -> Vec<Proof> {
@@ -1960,6 +1989,285 @@ fn engine_node_can_user_delete_node() {
         refusals > 0,
         "and some are REFUSED — {refusals} of {} asked",
         allowed + refusals
+    );
+}
+
+/// ★★★★★ R1924 — **may this wire's end be picked up at all**, asked before the
+/// drag starts.
+///
+/// The engine asks this of a pin and answers one bit; its base class answers
+/// `false`, so relinking is a thing a schema opts into. Here the answer is the
+/// **list** of sockets that end may be re-aimed at, and the bit is
+/// `!list.is_empty()` — one derivation rather than two rules, and the half a
+/// hand actually needs: an editor can light what will take the wire instead of
+/// letting the hand find out port by port.
+///
+/// The proof has to reach the empty list, or the surface says nothing: a
+/// question that can only answer yes is a question nobody has to ask.
+#[test]
+fn engine_schema_is_connection_relinking_allowed() {
+    let mut chain = chain();
+    let into_add = chain
+        .document
+        .tree(ROOT)
+        .unwrap()
+        .links()
+        .iter()
+        .find(|link| link.from.node == chain.two)
+        .map(|link| link.id)
+        .expect("the chain wires the first constant into the adder");
+
+    // `two -> add.0`. Its consuming end may move to `add.1`, and to the sink's
+    // input, and nowhere else in this graph.
+    let targets = chain
+        .document
+        .relink_targets(ROOT, into_add, Side::Input)
+        .expect("the link is there");
+    assert_eq!(
+        targets,
+        vec![Socket::new(chain.add, 1), Socket::new(chain.sink, 0)],
+        "every socket that would take it, and only those"
+    );
+    assert!(
+        !targets.contains(&Socket::new(chain.add, 0)),
+        "★ where it already is is not somewhere ELSE it may go — a list that \
+         always held the current socket could never be empty"
+    );
+
+    // ★★★★★ THE EMPTY ANSWER, which is what the engine's `false` means and what
+    // makes this surface non-vacuous. Take the other consumers away and the
+    // producing end of that link has nowhere in this graph to come from.
+    chain.document.remove_node(ROOT, chain.sink).unwrap();
+    chain.document.remove_node(ROOT, chain.three).unwrap();
+    assert_eq!(
+        chain
+            .document
+            .relink_targets(ROOT, into_add, Side::Output)
+            .expect("the link is still there"),
+        Vec::new(),
+        "★ the gesture would not start: this end is stuck"
+    );
+    // And the other end of the SAME link is not stuck, so the emptiness above
+    // is about that end rather than about the graph having become too small for
+    // the question to mean anything.
+    assert_eq!(
+        chain
+            .document
+            .relink_targets(ROOT, into_add, Side::Input)
+            .unwrap(),
+        vec![Socket::new(chain.add, 1)]
+    );
+
+    // The two ways there is nothing to ask about are named rather than folded
+    // into a false.
+    assert_eq!(
+        chain
+            .document
+            .relink_targets(TreeId(77), into_add, Side::Input)
+            .unwrap_err(),
+        RelinkError::NoSuchTree(TreeId(77))
+    );
+}
+
+/// ★★★★★ R1924 — **would this end be taken on that port?**, answered with the
+/// reason, without moving anything.
+///
+/// The engine's question hands back a response object whose payload is a
+/// sentence; its base class answers "not implemented by this schema". Here the
+/// answer is the refusal itself, so a hand hovering a port that will not take
+/// the wire is told the two types, or the port and its arity, or the path that
+/// would close.
+#[test]
+fn engine_schema_can_relink_connection_to_pin() {
+    let mut chain = chain();
+    let word = chain
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Word("hi".into())), 0, 240)
+        .unwrap();
+    let shout = chain
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Shout), 200, 240)
+        .unwrap();
+    let text = chain
+        .document
+        .connect(ROOT, Socket::new(word, 0), Socket::new(shout, 0))
+        .unwrap()
+        .link;
+    let before = chain.document.clone();
+
+    // A yes, and it is a real one: the adder's number output reads as text
+    // through this taxonomy's directed conversion, so this end really could be
+    // moved there.
+    assert_eq!(
+        chain
+            .document
+            .may_relink(ROOT, text, Side::Output, Socket::new(chain.add, 0)),
+        Ok(())
+    );
+
+    // ★ And the no, on the relation's other direction — text does not read back
+    // as a number. The refusal names BOTH sockets and BOTH types, where the
+    // reference hands back one sentence.
+    assert_eq!(
+        chain
+            .document
+            .may_relink(ROOT, text, Side::Input, Socket::new(chain.add, 0)),
+        Err(RelinkError::Refused(ConnectError::TypeMismatch {
+            from: Socket::new(word, 0),
+            from_type: Ty::Text,
+            to: Socket::new(chain.add, 0),
+            to_type: Ty::Number,
+        })),
+    );
+
+    // A port that is not there says its arity, so a caller knows how far the
+    // node actually goes rather than only that it did not reach.
+    match chain
+        .document
+        .may_relink(ROOT, text, Side::Input, Socket::new(shout, 4))
+        .unwrap_err()
+    {
+        RelinkError::Refused(ConnectError::NoSuchPort { socket, arity }) => {
+            assert_eq!(socket, Socket::new(shout, 4));
+            assert_eq!(arity, 1);
+        }
+        other => panic!("expected the port refusal, not {other:?}"),
+    }
+
+    // ★★★★★ ASKING MOVES NOTHING — which is the whole difference from finding
+    // out by trying, and what lets a screen ask on every pointer move.
+    assert_eq!(
+        chain.document, before,
+        "the document is the one that went in"
+    );
+
+    // ★★★★★ AND THE ANSWER IS THE VERB'S OWN. Not a prediction agreeing with
+    // it: `relink` calls this, so the pair below cannot come apart. Driven over
+    // every link, every end and every socket the graph has, with the verb run
+    // on a clone so both are answering the same state.
+    let links: Vec<LinkId> = chain
+        .document
+        .tree(ROOT)
+        .unwrap()
+        .links()
+        .iter()
+        .map(|link| link.id)
+        .collect();
+    let nodes: Vec<NodeId> = chain
+        .document
+        .tree(ROOT)
+        .unwrap()
+        .nodes()
+        .map(|node| node.id)
+        .collect();
+    let (mut yes, mut no) = (0_usize, 0_usize);
+    for link in links {
+        for end in [Side::Input, Side::Output] {
+            for node in &nodes {
+                let signature = chain.document.signature(ROOT, *node).unwrap();
+                let arity = match end {
+                    Side::Input => signature.inputs.len(),
+                    Side::Output => signature.outputs.len(),
+                };
+                for port in 0..u32::try_from(arity).unwrap() {
+                    let socket = Socket::new(*node, port);
+                    let asked = chain.document.may_relink(ROOT, link, end, socket);
+                    let mut acting = chain.document.clone();
+                    let done = acting.relink(ROOT, link, end, socket);
+                    assert_eq!(
+                        asked.is_ok(),
+                        done.is_ok(),
+                        "{link:?} {end:?} -> {socket:?}: asked and did disagree"
+                    );
+                    if let (Err(why), Err(did)) = (&asked, &done) {
+                        assert_eq!(why, did, "and they refuse for the same reason");
+                    }
+                    if asked.is_ok() { yes += 1 } else { no += 1 }
+                }
+            }
+        }
+    }
+    // Both counts: a surface that answered one way for everything would satisfy
+    // the agreement above without saying anything.
+    assert!(yes > 0 && no > 0, "{yes} allowed, {no} refused");
+}
+
+/// ★★★★★ R1924 — **the move itself**, which this crate has had since R1681 and
+/// the census carried as absent until it was measured.
+///
+/// The engine's commit takes the wire's source pin, the pin it is on and the
+/// pin it is going to, and answers a bool. What it cannot do is keep the wire's
+/// identity: it has no move, so a relink there is a break and a re-make and
+/// everything holding the old wire is holding a dangling name.
+///
+/// R1924's own finding, and why this proof exists at all: the row's title —
+/// *moving an existing wire's end to another port* — covered three engine
+/// members, and only two of them were ever missing. Four rounds carried the
+/// whole group as absent because nobody measured its clauses apart. That is
+/// R1827's rule and R1923's recurrence of it, met a third time.
+#[test]
+fn engine_schema_try_relink_connection_target() {
+    let mut chain = chain();
+    let held = chain
+        .document
+        .tree(ROOT)
+        .unwrap()
+        .links()
+        .iter()
+        .find(|link| link.from.node == chain.two)
+        .map(|link| link.id)
+        .expect("the chain wires the first constant into the adder");
+    assert_eq!(
+        arrives(&chain.document, Socket::new(chain.sink, 0)).and_then(|v| v.number()),
+        Some(5)
+    );
+
+    let done = chain
+        .document
+        .relink(ROOT, held, Side::Input, Socket::new(chain.sink, 0))
+        .expect("the sink takes a number");
+    assert_eq!(
+        done.link, held,
+        "★ the wire is the SAME wire — its id is intact"
+    );
+    assert_eq!(done.was, Socket::new(chain.add, 0));
+    assert_eq!(done.now, Socket::new(chain.sink, 0));
+    assert!(done.moved());
+    // What it displaced, named rather than silently dropped: the sink takes one
+    // producer and already had `add`.
+    assert_eq!(
+        done.displaced.map(|link| link.from),
+        Some(Socket::new(chain.add, 0)),
+        "the wire it pushed off is answered, so an editor can undo the whole act"
+    );
+    // The graph really changed underneath: the sink now sees the constant.
+    assert_eq!(
+        arrives(&chain.document, Socket::new(chain.sink, 0)).and_then(|v| v.number()),
+        Some(2)
+    );
+
+    // Moving an end to where it already is is a SUCCESS that moved nothing —
+    // the caller asked for a state and the state holds — and it says so.
+    let same = chain
+        .document
+        .relink(ROOT, held, Side::Input, Socket::new(chain.sink, 0))
+        .expect("asking for a state that holds is not a refusal");
+    assert!(!same.moved());
+
+    // ★★★★★ AND A REFUSAL MOVES NOTHING AT ALL. R1924 took the decision above
+    // the lift, so the refusal path has no undo in it to get wrong — where
+    // before it lifted the wire out and leaned on putting it back.
+    let before = chain.document.clone();
+    assert!(
+        chain
+            .document
+            .relink(ROOT, held, Side::Output, Socket::new(chain.sink, 0))
+            .is_err()
+    );
+    assert_eq!(
+        chain.document, before,
+        "the whole document, unchanged — every tree, every position, the link \
+         order and the id counter"
     );
 }
 
