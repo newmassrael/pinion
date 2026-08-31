@@ -141,7 +141,7 @@ impl Faces {
 /// ★★★★★ R1940 — **what a node's KIND says the node is drawn as**, when
 /// nobody has authored a colour for it.
 ///
-/// See [`NodeKind::drawn_as`](crate::NodeKind::drawn_as) for the measurement
+/// See [`NodeKind::drawn_as`] for the measurement
 /// that shaped this. In short: the reference lets a node type override, per
 /// INSTANCE, the class its header is drawn from, and all three of its
 /// overriders DERIVE that class from the node's own authored state rather than
