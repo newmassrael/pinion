@@ -3375,7 +3375,7 @@
       "verdict": "have"
     },
     "schema::DropPinOnNode": {
-      "covered_by": "dragging a pin onto a node and having the node grow one",
+      "covered_by": "MEASURED R1929 at the reference's own header, its ONE consumer (the drag-connection handler) and its two overriders, and the pre-R1929 reason was half false in the direction that hides work: GROWING A PORT is not what is absent — Document::insert_item has done it since R1632, and its ItemChange names every link that moved. What is absent is the DROP as one act. Measured, the reference's verb (a) takes the source pin's NAME and TYPE and creates a port of the OPPOSITE direction, (b) answers WHICH port it made, and the consumer immediately wires the dragged link to it, and (c) may grow a port on a DIFFERENT node than the one under the pointer — dropping an output on a function entry finds or creates that function's result node and grows the port there. So the missing capability is a gesture that grows a port and lands the wire on it in one transaction, not the growing",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "absent"
@@ -3789,7 +3789,7 @@
       "verdict": "have"
     },
     "schema::SupportsDropPinOnNode": {
-      "covered_by": "dragging a pin onto a node and having the node grow one",
+      "covered_by": "MEASURED R1929: this is the QUESTION half of the pair beside it, asked while the hand still holds the wire — R1924's shape on another axis, and the crate has may_relink for RELINKING and nothing for dropping on a node's body. ★ Its out-parameter is NOT an error channel, whatever its header says: the header documents it as 'only filled with an error if there is pin add support but there is an error with the pin type', and the implementation fills it on SUCCESS too, with the sentence the hover shows — 'Add Pin to Node', 'Add Pin to Result Node', 'Add Pin to Entry Node'. So the reference's own doc comment and its own code disagree about what that argument carries, and the consumer displays whatever is in it. What a port-growing question owes here is therefore what R1924 built for relinking: one call that says whether, and says what WOULD happen, in words a hand can read before it lets go",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "absent"
