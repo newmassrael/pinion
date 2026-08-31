@@ -44,9 +44,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use pinion_node_graph::{
-    Act, Admitted, Align, Appearance, Axis, Carrying, Command, ConnectError, Conversion, Crossings,
-    Definitions, Described, Direction, Distribute, Document, Edge, EditError, EditPath, Extent,
-    Faces, Fragment, Grow, Hidden, Instance, InterfacePort, InterfaceSide, Item, ItemError,
+    Act, Admitted, Align, Appearance, Axis, Carrying, Command, ConnectError, Container, Conversion,
+    Crossings, Definitions, Described, Direction, Distribute, Document, Edge, EditError, EditPath,
+    Extent, Faces, Fragment, Grow, Hidden, Instance, InterfacePort, InterfaceSide, Item, ItemError,
     LandError, Landfall, LinkId, Machine, Matched, Multiplicity, Node, NodeBody, NodeId, NodeKind,
     NodeSite, NotRecombinable, NotSplittable, Passing, Port, PortName, PortPath, PortRef, PortSite,
     PutAway, ROOT, Reach, RelinkError, RetypeError, SectionId, Session, Sharing, Side, Socket,
@@ -270,6 +270,22 @@ impl NodeKind for Op {
     fn passing(&self) -> Option<Passing> {
         match self {
             Self::Relay => Some(Passing::ENDS),
+            _ => None,
+        }
+    }
+
+    /// R1938 — this taxonomy has exactly ONE container: a `Bag` is an ARRAY of
+    /// `Pair`, and nothing else is a container of anything.
+    ///
+    /// Deliberately narrow in all three directions so a proof can tell a
+    /// declaration from a blanket yes: one element type, one shape, and no
+    /// nesting (a `Bag` of `Bag`s does not exist here). ★ That narrowness is
+    /// what the reference cannot express — its equivalent defaults to *every
+    /// type in every shape*, and its one overrider answers the same, so nothing
+    /// in that tree ever refuses through it.
+    fn contained(ty: &Ty, held: Container) -> Option<Ty> {
+        match (ty, held) {
+            (Ty::Pair, Container::Array) => Some(Ty::Bag),
             _ => None,
         }
     }
@@ -825,6 +841,13 @@ fn dcc_proofs() -> Vec<Proof> {
             "engine",
             "node::PinTypeChanged",
             engine_node_pin_type_changed,
+        ),
+        // R1938 — the schema's half of the same selector: which container
+        // shapes a type may be held in.
+        proof(
+            "engine",
+            "schema::SupportsPinTypeContainer",
+            engine_schema_supports_pin_type_container,
         ),
         proof("dcc", "swap_empty_group", dcc_swap_empty_group),
         proof("dcc", "options_toggle", dcc_options_toggle),
@@ -1793,6 +1816,55 @@ fn dcc_group_separate() {
         arrives(&chain.document, Socket::new(chain.sink, 0)),
         before,
         "the value that used to cross the boundary was reconnected"
+    );
+}
+
+/// ★★★★★ R1938 — **which container shapes a type may be held in**, answered
+/// with the type each one produces.
+///
+/// The engine asks its schema this, and the measurement is what shaped the
+/// answer here: the hook's default body is `return true` — every type in every
+/// shape — and its ONE overrider in the whole tree answers `None || Array ||
+/// Set || Map`, the same four. So the declaration exists and **nothing in that
+/// tree ever refuses through it**, while its two consumers are both the pin
+/// type selector filtering a menu that is never filtered.
+///
+/// Here the default is a refusal and the answer is the TYPE, so a chooser that
+/// may offer a shape also knows what offering it produces — the permission and
+/// the result are one value rather than two that can disagree.
+#[test]
+fn engine_schema_supports_pin_type_container() {
+    let document: Document<Op> = Document::new("root");
+
+    // ★ The taxonomy declares exactly one container, and the answer carries the
+    // type it makes.
+    assert_eq!(
+        document.containers_of(&Ty::Pair),
+        vec![(Container::Array, Ty::Bag)],
+        "★ a bag is an ARRAY of pairs, and the answer says so"
+    );
+    // ★★★★★ And it REFUSES the rest, which is what the reference cannot do:
+    // other shapes of the same type, and every other type.
+    for ty in [Ty::Number, Ty::Text, Ty::Flag, Ty::Bag] {
+        assert!(
+            document.containers_of(&ty).is_empty(),
+            "★ {ty:?} is in no container here — including `Bag`, so nesting is \
+             refused rather than assumed"
+        );
+    }
+    // ⚠ Per (type, SHAPE) rather than per type: the same type that has an array
+    // has no set and no map, and a caller that asked only "is this
+    // containerisable" would offer two shapes that do not exist.
+    assert_eq!(Op::contained(&Ty::Pair, Container::Set), None);
+    assert_eq!(Op::contained(&Ty::Pair, Container::Map), None);
+    assert_eq!(Op::contained(&Ty::Pair, Container::Array), Some(Ty::Bag));
+
+    // ★ The vocabulary is closed and derived: every shape has a word, and the
+    // list is `Container::ALL` rather than a second list somewhere.
+    assert_eq!(
+        Container::ALL.map(Container::word),
+        ["array", "set", "map"],
+        "the words a wire uses, from the one list"
     );
 }
 

@@ -856,6 +856,41 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
         None
     }
 
+    /// ★★★★★ R1937 — **the type that is MANY of this one, held that way**, or
+    /// `None` when this taxonomy has no such type.
+    ///
+    /// The engine asks its schema whether a pin type may be put in a container
+    /// shape; this answers the same question and answers it with the TYPE, so a
+    /// caller that may offer the shape also knows what offering it produces.
+    ///
+    /// # ★ Why the default is a refusal, and the reference's is not
+    ///
+    /// Measured: there the hook's default body is `return true` — every type
+    /// may be put in every container — and its ONE overrider in the whole tree
+    /// answers `None || Array || Set || Map`, which is the same four. So the
+    /// declaration exists and **nothing in that tree ever refuses through it**;
+    /// its two consumers are both the pin type selector, filtering a menu that
+    /// is never actually filtered. A hook whose refusal is never taken is a
+    /// hook nobody has had to think about.
+    ///
+    /// Here `None` is the default, so a taxonomy has containers exactly when it
+    /// says it does. That is the same choice R1937 made for
+    /// [`retyped`](Self::retyped) and for the same reason: what most
+    /// applications get should be the answer that cannot be wrong.
+    ///
+    /// # Why it answers a TYPE rather than a bool
+    ///
+    /// Because a `bool` leaves the caller to find the container type somewhere
+    /// else, and *somewhere else* is a second statement free to disagree with
+    /// this one. A selector that may offer "array of Number" wants the type
+    /// that is an array of Number, and here the permission and the answer are
+    /// the same value.
+    #[must_use]
+    fn contained(ty: &Self::Type, held: Container) -> Option<Self::Type> {
+        let _ = (ty, held);
+        None
+    }
+
     /// ★★★★★ R1926 — **what colour a value of this type is drawn in**, or
     /// `None` when the taxonomy gives it none.
     ///
@@ -1338,6 +1373,56 @@ pub fn crossing<K: NodeKind>(from: &KindPort<K>, to: &KindPort<K>) -> Conversion
 /// link exists, and `Document::reroute_flow` re-derives them.
 const fn decided_by_the_link<V>() -> Conversion<V> {
     Conversion::Direct
+}
+
+/// ★★★★★ R1938 — **the shapes a port may hold MANY of a type in.**
+///
+/// The engine's own three, and they are three rather than one because they
+/// differ in what a consumer may assume: an array has an order and repeats, a
+/// set has neither, and a map is keyed. A model that offered only "many" would
+/// make those three indistinguishable at the port, which is where the
+/// difference has to be visible — it is what decides whether wiring one into
+/// the other is a conversion or a mistake.
+///
+/// ⚠ *Not* a container is deliberately absent from this enum rather than being
+/// a fourth arm. The reference spells it `None` and then has to carry that
+/// arm everywhere a container type is mentioned; here the absence is
+/// [`Option::None`] from [`NodeKind::contained`], so "this is not a container"
+/// and "this taxonomy has no such container" are one answer instead of two that
+/// can disagree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum Container {
+    /// Ordered, and repeats are kept.
+    Array,
+    /// Unordered, and repeats collapse.
+    Set,
+    /// Keyed by another value.
+    Map,
+}
+
+impl Container {
+    /// Every shape, in a fixed order.
+    ///
+    /// Derived vocabularies are built from this rather than listed, so a shape
+    /// added later joins every register without anyone remembering a second
+    /// list — the rule this workspace applies to every closed vocabulary.
+    pub const ALL: [Self; 3] = [Self::Array, Self::Set, Self::Map];
+
+    /// The word the wire uses for this shape.
+    #[must_use]
+    pub const fn word(self) -> &'static str {
+        match self {
+            Self::Array => "array",
+            Self::Set => "set",
+            Self::Map => "map",
+        }
+    }
+}
+
+impl std::fmt::Display for Container {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.word())
+    }
 }
 
 /// Which half of its tree's interface an interface node materialises.

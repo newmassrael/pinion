@@ -10,16 +10,17 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Admission, AdoptError, Align, Appearance, Archive, Axis, BeaconError, BreakError, Breakpoints,
-    Bringup, Camera, Carried, Carrying, Command, Composition, ConnectError, Control, Conversion,
-    Crossings, Definitions, Direction, Discovery, Distribute, Document, Dropped, DuplicateError,
-    Edge, EditError, EditPath, Extent, ExtractError, Fit, Flow, ForceError, Fragment, GroupError,
-    Grow, Halt, InsertError, Instance, InterfaceSide, Item, ItemError, Layered, LinkId, LinkLayer,
-    Machine, Margin, Multiplicity, Naming, NestError, Node, NodeBody, NodeId, NodeKind, NodeSite,
-    ObserveError, Occurrence, Organic, Orphaned, ParentError, Passing, PathError, Port, PortPath,
-    PortRef, PortSite, PortValueError, ROOT, Reach, Relabelled, RelinkError, RepartitionError,
-    RetypeError, Route, RunError, SectionId, SelectError, Session, Severed, Sharing, Side, Socket,
-    Stack, Standing, Stop, Straighten, Stride, SwapError, SwitchRefusal, Tick, Timeline, Tint,
-    TreeId, UngroupError, Unreadable, Violation, WatchError, Watches, ZoomRange, crossing,
+    Bringup, Camera, Carried, Carrying, Command, Composition, ConnectError, Container, Control,
+    Conversion, Crossings, Definitions, Direction, Discovery, Distribute, Document, Dropped,
+    DuplicateError, Edge, EditError, EditPath, Extent, ExtractError, Fit, Flow, ForceError,
+    Fragment, GroupError, Grow, Halt, InsertError, Instance, InterfaceSide, Item, ItemError,
+    Layered, LinkId, LinkLayer, Machine, Margin, Multiplicity, Naming, NestError, Node, NodeBody,
+    NodeId, NodeKind, NodeSite, ObserveError, Occurrence, Organic, Orphaned, ParentError, Passing,
+    PathError, Port, PortPath, PortRef, PortSite, PortValueError, ROOT, Reach, Relabelled,
+    RelinkError, RepartitionError, RetypeError, Route, RunError, SectionId, SelectError, Session,
+    Severed, Sharing, Side, Socket, Stack, Standing, Stop, Straighten, Stride, SwapError,
+    SwitchRefusal, Tick, Timeline, Tint, TreeId, UngroupError, Unreadable, Violation, WatchError,
+    Watches, ZoomRange, crossing,
 };
 
 /// ★★★★★ R1925 — **an application that declares no two-state socket type is
@@ -16808,6 +16809,45 @@ fn r1935_a_far_end_is_on_the_chain_without_having_two_ends() {
         doc.passing(ROOT, echo),
         None,
         "★★★★★ on the chain, and with no way in"
+    );
+}
+
+/// ★★★★★ R1938 — **the DEFAULT answer to "what containers hold this type" is
+/// none**, asserted on a taxonomy that takes it.
+///
+/// Written BEFORE a counterfactual asked for it, because R1937's did and the
+/// lesson is now three rounds old: a default is an escape hatch, the census
+/// fixture overrides these hooks, and what most applications get is therefore
+/// the thing nothing checks. `LOp` declares nothing here, which is what makes
+/// it the witness.
+///
+/// ★ And the default is the opposite of the reference's, which is the whole
+/// point: there the body is `return true` and the one overrider answers the
+/// same, so nothing in that tree ever refuses. A taxonomy has containers here
+/// exactly when it says so.
+#[test]
+fn r1938_the_default_taxonomy_has_no_containers() {
+    let doc: Document<LOp> = Document::new("lattice");
+    for ty in [LTy::Scalar, LTy::Vector] {
+        for held in Container::ALL {
+            assert_eq!(
+                LOp::contained(&ty, held),
+                None,
+                "★ the trait's default refuses {ty:?} in a {held}"
+            );
+        }
+        assert!(
+            doc.containers_of(&ty).is_empty(),
+            "★★★★★ and the reading a chooser makes is empty, which is the answer \
+             for every taxonomy that has not opted in"
+        );
+    }
+    // ⚠ The vocabulary is closed and every shape has a word, so a register
+    // built from it cannot silently omit one.
+    assert_eq!(Container::ALL.len(), 3);
+    assert_eq!(
+        Container::ALL.map(|held| held.to_string()),
+        ["array", "set", "map"]
     );
 }
 

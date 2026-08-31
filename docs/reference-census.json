@@ -3801,10 +3801,10 @@
       "verdict": "have"
     },
     "schema::SupportsPinTypeContainer": {
-      "covered_by": "CONTAINER socket types: an array, set or map of a type",
+      "covered_by": "NodeKind::contained + Document::containers_of, R1938 — which container shapes a type may be held in, answered with THE TYPE each one produces rather than a bool, so a chooser that may offer a shape also knows what offering it makes. ★ The measurement that shaped this: the reference's hook defaults to `return true` (every type in every shape) and its ONE overrider in the whole tree answers `None || Array || Set || Map`, the same four — so the declaration exists and nothing there ever refuses through it, while both consumers are the pin type selector filtering a menu that is never filtered. Here the default is a REFUSAL, so a taxonomy has containers exactly when it says so; and `Container` has no not-a-container arm, because that absence is Option::None from one declaration rather than a second value that can disagree",
       "mechanism": "graph-schema",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_schema_supports_pin_type_container",
+      "verdict": "have"
     },
     "schema::TryCreateConnection": {
       "covered_by": "Document::connect, which checks four things and names whichever failed",

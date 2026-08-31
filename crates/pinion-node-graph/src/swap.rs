@@ -20,8 +20,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::items::Items;
 use crate::model::{
-    Document, EditError, KindPort, Link, NodeBody, NodeId, NodeKind, Port, PortRef, ROOT, Side,
-    Signature, TreeId, crossing,
+    Container, Document, EditError, KindPort, Link, NodeBody, NodeId, NodeKind, Port, PortRef,
+    ROOT, Side, Signature, TreeId, crossing,
 };
 
 /// Why a node could not be made to stand for a definition (R1936).
@@ -664,6 +664,26 @@ impl<K: NodeKind> Document<K> {
             .ok_or(RetypeError::Refused { tree, node, port })?;
         self.set_kind(tree, node, became)
             .map_err(|_| RetypeError::NoSuchNode { tree, node })
+    }
+
+    /// ★★★★★ R1938 — **the container shapes this type may be held in, and what
+    /// each one produces.**
+    ///
+    /// The list a type chooser offers beside a type, ascending by shape. Empty
+    /// when the taxonomy declares none, which is the default and therefore the
+    /// answer for every taxonomy that has not opted in.
+    ///
+    /// ★ The reference's equivalent answers a `bool` per (type, shape) and its
+    /// default is `true`, so there the menu is filtered by a predicate that —
+    /// measured across its one overrider — never actually refuses. Answering
+    /// the TYPE means the permission and the result are one value, so a chooser
+    /// cannot offer a shape it then has to look up somewhere else.
+    #[must_use]
+    pub fn containers_of(&self, ty: &K::Type) -> Vec<(Container, K::Type)> {
+        Container::ALL
+            .into_iter()
+            .filter_map(|held| K::contained(ty, held).map(|made| (held, made)))
+            .collect()
     }
 
     /// ★★★★★ R1937 — **may a person choose this port's type?**, asked without

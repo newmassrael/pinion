@@ -11092,6 +11092,14 @@ const FIELDS: &[SchemaField] = &{
         // than per pin: the same pin takes a whole locator and refuses half of
         // one.
         SchemaField::new("choosable", "json"),
+        // ★★★★★ R1938 — which container shapes this screen's socket types may be
+        // held in, and what each would produce. ⚠ The answer here is NONE, and
+        // that is a declaration rather than a gap: this taxonomy expresses
+        // "several" as a variadic RUN of ports (R1632/R1928 — one accept per
+        // peer), not as one port carrying a collection. Publishing the empty
+        // answer is what lets a client rule the shape out instead of
+        // discovering it by failing.
+        SchemaField::new("containers", "json"),
         // ★★★★★ R1885 — put a card on another build. The build comes from a
         // CLOSED vocabulary and it is built from `Stack::ALL` rather than
         // spelled here, so the words an agent is offered cannot drift from the
@@ -11243,6 +11251,7 @@ impl ExternalIntrospect for LabOracle {
             "names" => Ok(IntrospectValue::Json(names_wire(state))),
             "standing_for" => Ok(IntrospectValue::Json(standing_for_wire(state))),
             "choosable" => Ok(IntrospectValue::Json(choosable_wire(state))),
+            "containers" => Ok(IntrospectValue::Json(containers_wire(state))),
             // ★ R1742 — the SAME value the host publishes for this section, so
             // "one build, two placements" is a fact a client can check rather
             // than a claim this file makes.
@@ -17398,6 +17407,44 @@ fn set_pin_transport(
         format!("{name}.{address} now speaks {word}, and {lost} wire(s) could not cross with it");
     state.say(Utterance::done(said.clone()));
     Ok(said)
+}
+
+/// ★★★★★ R1938 — **which container shapes this screen's socket types may be
+/// held in**, and what each would produce.
+///
+/// ⚠ The answer is NONE for every type, and it is a declaration rather than a
+/// gap: this taxonomy says "several" with a variadic RUN of ports — one accept
+/// pin per peer (R1632/R1928) — rather than with one pin carrying a collection.
+/// Those are two different models of the same word, and the difference is
+/// visible at the pin: a run gives each peer its own wire and its own address,
+/// where a collection would give them one wire and no addresses at all.
+///
+/// Published because an empty answer a client can READ is worth more than an
+/// absent one it has to infer — the whole reason the reference's equivalent
+/// hook is unsatisfying is that it defaults to yes and is therefore unreadable
+/// as a statement about the application.
+fn containers_wire(state: &Rc<LabState>) -> serde_json::Value {
+    let doc = state.doc.borrow();
+    let rows: Vec<serde_json::Value> = Endpoint::all()
+        .into_iter()
+        .map(|ty| {
+            let held: Vec<serde_json::Value> = doc
+                .containers_of(&ty)
+                .into_iter()
+                .map(|(shape, made)| {
+                    serde_json::json!({ "shape": shape.word(), "makes": format!("{made:?}") })
+                })
+                .collect();
+            serde_json::json!({ "type": format!("{ty:?}"), "held_in": held })
+        })
+        .collect();
+    // ★ The vocabulary is derived, so a shape added upstream joins this register
+    // without anyone remembering a second list.
+    let shapes: Vec<&str> = pinion_node_graph::Container::ALL
+        .into_iter()
+        .map(pinion_node_graph::Container::word)
+        .collect();
+    serde_json::json!({ "types": rows, "shapes": shapes })
 }
 
 /// ★★★★★ R1937 — **which pins may be given a type, and which types each would
