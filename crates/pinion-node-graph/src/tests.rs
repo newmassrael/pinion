@@ -17,10 +17,112 @@ use crate::{
     Margin, Multiplicity, NestError, Node, NodeBody, NodeId, NodeKind, NodeSite, ObserveError,
     Occurrence, Organic, Orphaned, ParentError, PathError, Port, PortPath, PortRef, PortSite,
     PortValueError, ROOT, Reach, Relabelled, RelinkError, RepartitionError, Route, RunError,
-    SelectError, Session, Severed, Sharing, Side, Socket, Stack, Standing, Stop, Straighten,
-    Stride, Tick, Timeline, Tint, TreeId, UngroupError, Unreadable, Violation, WatchError, Watches,
-    ZoomRange, crossing,
+    SectionId, SelectError, Session, Severed, Sharing, Side, Socket, Stack, Standing, Stop,
+    Straighten, Stride, SwitchRefusal, Tick, Timeline, Tint, TreeId, UngroupError, Unreadable,
+    Violation, WatchError, Watches, ZoomRange, crossing,
 };
+
+/// ★★★★★ R1925 — **an application that declares no two-state socket type is
+/// told THAT**, whatever section it names.
+///
+/// The precedence is the whole reason
+/// [`Document::may_new_section_switch`] can be asked by a face that has no
+/// sections yet: a taxonomy with no switchable type can never have a section
+/// switch, so that answer does not depend on the section. Put the section
+/// lookup first and a screen asking *may I switch a section here* gets a
+/// refusal about the wrong thing.
+///
+/// `LOp` is the fixture because it takes the trait's **default**, which is what
+/// almost every application will do — the census fixture declares one, so this
+/// property cannot be seen from there at all.
+#[test]
+fn r1925_a_taxonomy_with_no_switchable_type_is_told_so_first() {
+    let mut doc: Document<LOp> = Document::new("lattice");
+    assert_eq!(LOp::switch_type(), None, "this fixture takes the default");
+    // A section id this face has never handed out — and the answer is still
+    // about the taxonomy, not about the section.
+    assert_eq!(
+        doc.may_new_section_switch(ROOT, SectionId(0)).unwrap_err(),
+        SwitchRefusal::NoSwitchType
+    );
+    // And with a section that really is there, so the arm above cannot be
+    // passing for the section's absence.
+    let section = doc.add_section(ROOT, "Falloff").unwrap();
+    assert_eq!(
+        doc.may_new_section_switch(ROOT, section).unwrap_err(),
+        SwitchRefusal::NoSwitchType
+    );
+    assert_eq!(
+        doc.new_section_switch(ROOT, section).unwrap_err(),
+        SwitchRefusal::NoSwitchType,
+        "the act refuses what the question refused"
+    );
+    // A tree that is not there is still the first thing said, because a
+    // question about no document is not a question about a taxonomy.
+    assert_eq!(
+        doc.may_new_section_switch(TreeId(9), SectionId(0))
+            .unwrap_err(),
+        SwitchRefusal::NoSuchTree(TreeId(9))
+    );
+    // ★ And the section survives the refusal: a refused switch must not leave a
+    // half-made port behind.
+    assert!(doc.tree(ROOT).unwrap().interface().inputs().is_empty());
+    assert!(doc.validate().is_empty());
+}
+
+/// ★★★★★ R1925 — **a port is in at most one section, and that is the writer's
+/// doing rather than a check.**
+///
+/// Found by a counterfactual, which is the only reason it exists: the module
+/// said `assign_section` "removes before it adds, so the state cannot be reached
+/// from here at all", and breaking the removal left the whole suite green.
+/// `Violation::MemberShared` was already written to report the state, so what
+/// was missing was not the diagnosis — it was anything that PERFORMED the
+/// promise. A property nothing runs is a sentence, and R1855's four rounds are
+/// what that costs.
+#[test]
+fn r1925_a_port_moved_between_sections_leaves_the_one_it_was_in() {
+    let mut doc: Document<LOp> = Document::new("lattice");
+    let first = doc.add_section(ROOT, "Transport").unwrap();
+    let second = doc.add_section(ROOT, "Traffic").unwrap();
+    let port = doc
+        .expose(ROOT, InterfaceSide::Input, Port::new("Level", LTy::Scalar))
+        .unwrap();
+    let held = crate::InterfacePort::input(port);
+
+    assert_eq!(doc.assign_section(ROOT, held, Some(first)).unwrap(), None);
+    assert_eq!(
+        doc.assign_section(ROOT, held, Some(second)).unwrap(),
+        Some(first),
+        "and the move says where it came from"
+    );
+
+    let face = doc.tree(ROOT).unwrap().interface();
+    assert_eq!(face.section_of(held), Some(second));
+    assert_eq!(
+        face.section(first).unwrap().members(),
+        [],
+        "★ the section it LEFT no longer lists it — the half a `section_of` \
+         that answers with the first match cannot see"
+    );
+    assert_eq!(face.section(second).unwrap().members(), [held]);
+    assert_eq!(
+        face.sections()
+            .iter()
+            .filter(|s| s.members().contains(&held))
+            .count(),
+        1,
+        "in exactly one, counted over every section rather than found in one"
+    );
+    assert!(doc.validate().is_empty());
+
+    // And taking it out of every section puts it back in the header-less run.
+    assert_eq!(doc.assign_section(ROOT, held, None).unwrap(), Some(second));
+    let face = doc.tree(ROOT).unwrap().interface();
+    assert_eq!(face.section_of(held), None);
+    assert!(face.ungathered().contains(&held));
+    assert!(doc.validate().is_empty());
+}
 
 /// The test taxonomy: two socket types, so type disagreement is reachable.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]

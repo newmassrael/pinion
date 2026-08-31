@@ -9389,6 +9389,14 @@ const PIN_ADDRESSES: [&str; 6] = [
 /// ★ Projected from `DefectKind::ALL` in a `const` block rather than written
 /// out, so a fourth arm is a build failure here instead of a silently short
 /// declaration — R1630's ratchet, applied to a domain this screen publishes.
+/// ★★★★★ R1925 — the `section` verb's command words.
+///
+/// One list, read by the schema declaration and by the refusal a wrong word
+/// meets, so an agent that discovers them by asking and one that discovers them
+/// by being refused learn the same three. Two spellings of a closed set is the
+/// shape R1678 removed for the reset scopes.
+const SECTION_COMMANDS: [&str; 3] = ["add", "fold", "remove"];
+
 const FAULT_KINDS: [&str; fault_injection::DefectKind::ALL.len()] = {
     let mut out = [""; fault_injection::DefectKind::ALL.len()];
     let mut at = 0;
@@ -10337,6 +10345,12 @@ const FIELDS: &[SchemaField] = &{
         // BEFORE the hand lets go, which is the whole difference from finding
         // out by dropping.
         SchemaField::new("rewire", "json"),
+        // ★★★★★ R1925 — the sections this graph's own face is gathered into,
+        // and what the framework answers when this screen asks for a section
+        // switch. Published rather than left to a gesture because this screen
+        // has no pixels for it: a definition's face is not on the reference
+        // mock-up at all, so the honest surface is the one an agent reads.
+        SchemaField::new("sections", "json"),
         // ★★★★★ R1742 — how much of the inspector specification this build is
         // showing, published beside the specification itself. `json` rather
         // than the `string` its neighbours use because it is the framework's
@@ -10513,6 +10527,20 @@ const FIELDS: &[SchemaField] = &{
         // ★★ R1716 — take a row over. Declared beside its twin because they are
         // the two halves of one question: who owns this row's value.
         SchemaField::action("author_field", "string"),
+        // ★★★★★ R1925 — arrange this graph's own face. One verb with a command
+        // word for R1678's reason below, and the vocabulary is DECLARED so an
+        // agent reads the three rather than discovering them by rejection.
+        SchemaField::action_with(
+            "section",
+            "string",
+            ArgForm::Scalar,
+            const {
+                &[
+                    SchemaArg::one_of("command", "string", &SECTION_COMMANDS),
+                    SchemaArg::key("header", "string", "sections"),
+                ]
+            },
+        ),
         // R1678 — the scope vocabulary is published, so an agent reads the five
         // rather than discovering them by rejection.
         SchemaField::action_with(
@@ -10854,6 +10882,7 @@ impl ExternalIntrospect for LabOracle {
             // ★★★★★ R1924 — where the picked wire's end may be re-aimed, and
             // why each card that refuses it does.
             "rewire" => Ok(IntrospectValue::Json(rewire_wire(state))),
+            "sections" => Ok(IntrospectValue::Json(sections_wire(state))),
             // ★ R1742 — the SAME value the host publishes for this section, so
             // "one build, two placements" is a fact a client can check rather
             // than a claim this file makes.
@@ -11873,6 +11902,19 @@ impl ExternalIntrospect for LabOracle {
                 // row leaves a form. This arm used to be the only caller and
                 // said nothing about what it had done.
                 remove_row(&state, node, key.trim()).map(IntrospectValue::Text)
+            }
+            // ★★★★★ R1925 — **arrange this graph's own face**, one verb with a
+            // command word rather than three verbs, for R1678's reason below.
+            //
+            // The wire names a section by its header, which is what a person
+            // would call it; the framework addresses it by an id that survives a
+            // rename. Two sections of one name would make that translation
+            // ambiguous, so this refuses the second — a screen-level policy, not
+            // the framework's, and it is stated in the refusal.
+            "section" => {
+                let raw = Self::text(&args)?;
+                let (word, rest) = raw.trim().split_once(',').unwrap_or((raw.trim(), ""));
+                section_command(&state, word.trim(), rest.trim()).map(IntrospectValue::Text)
             }
             // ★★ R1678 — one action with a scope argument, not five actions.
             // The scopes are a closed set the specification already names, and
@@ -16489,6 +16531,125 @@ fn accepts_wire(state: &Rc<LabState>) -> serde_json::Value {
         })
         .collect();
     serde_json::json!({ "bodies": rows })
+}
+
+/// ★★★★★ R1925 — the agent half of [`sections_wire`]: add, fold and remove a
+/// section of this graph's own face.
+///
+/// A section is named on the wire by its header and by an id inside the
+/// framework, and this is the one place the two meet.
+fn section_command(state: &Rc<LabState>, word: &str, rest: &str) -> Result<String, InvokeError> {
+    let named = |doc: &Document<LabNode>, name: &str| {
+        doc.tree(ROOT)
+            .map(pinion_node_graph::Tree::interface)
+            .and_then(|face| {
+                face.sections()
+                    .iter()
+                    .find(|held| held.name() == name)
+                    .map(pinion_node_graph::Section::id)
+            })
+    };
+    let mut doc = state.doc.borrow_mut();
+    match word {
+        "add" => {
+            if rest.is_empty() {
+                return Err(InvokeError::rejected("a section needs a header"));
+            }
+            if named(&doc, rest).is_some() {
+                return Err(InvokeError::rejected(format!(
+                    "this face already has a section called {rest:?}, and a header \
+                     is how the wire names one"
+                )));
+            }
+            doc.add_section(ROOT, rest)
+                .map_err(|why| InvokeError::rejected(why.to_string()))?;
+            Ok(rest.to_owned())
+        }
+        "fold" | "remove" => {
+            let (name, tail) = rest.split_once(',').unwrap_or((rest, ""));
+            let (name, tail) = (name.trim(), tail.trim());
+            let held = named(&doc, name).ok_or_else(|| {
+                InvokeError::rejected(format!("this face has no section called {name:?}"))
+            })?;
+            if word == "remove" {
+                doc.remove_section(ROOT, held)
+                    .map_err(|why| InvokeError::rejected(why.to_string()))?;
+                return Ok(name.to_owned());
+            }
+            let folded = match tail {
+                "on" => true,
+                "off" => false,
+                other => {
+                    return Err(InvokeError::rejected(format!("{other:?} is not on / off")));
+                }
+            };
+            doc.set_section_folded(ROOT, held, folded)
+                .map_err(|why| InvokeError::rejected(why.to_string()))?;
+            Ok(format!("{name},{tail}"))
+        }
+        other => Err(InvokeError::rejected(format!(
+            "{other:?} is not a section command; they are {}",
+            SECTION_COMMANDS.join(" / ")
+        ))),
+    }
+}
+
+/// ★★★★★ R1925 — **the sections this graph's own face is gathered into**, and
+/// the framework's answer when this screen asks for a section switch.
+///
+/// A definition's face — the ports an instance of this graph would show — has
+/// no pixels on the reference mock-up, and this round did not invent any: what
+/// is not on the canon is not drawn here. What it does do is publish the
+/// register, so an agent that wants to arrange that face can, and so the
+/// question *may this screen make a section switch* has an answer instead of a
+/// silence.
+///
+/// ★ The answer is **no, with a reason**, and the reason is a fact about this
+/// application rather than about the framework: a section switch carries the
+/// taxonomy's own two-state type, and this screen's taxonomy is locators —
+/// [`Endpoint`](crate::graph::Endpoint) has no such member, so
+/// `NodeKind::switch_type` is `None` here. Publishing that is the difference
+/// between a capability an agent can rule out and one it has to discover by
+/// failing.
+fn sections_wire(state: &Rc<LabState>) -> serde_json::Value {
+    let doc = state.doc.borrow();
+    let interface = doc.tree(ROOT).map(pinion_node_graph::Tree::interface);
+    let sections: Vec<serde_json::Value> = interface
+        .map(|face| {
+            face.sections()
+                .iter()
+                .map(|held| {
+                    serde_json::json!({
+                        "name": held.name(),
+                        "folded": held.folded(),
+                        "members": held.members().iter().map(ToString::to_string)
+                            .collect::<Vec<_>>(),
+                        "switch": held.switch(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    // ★ Asked of the framework rather than re-derived here, which is the
+    // difference between one rule and two: the screen must not carry its own
+    // copy of *when a section may be switched*. The section named is whichever
+    // this face has, or the first id an empty face would hand out — and that
+    // choice cannot change the answer, because the taxonomy check comes ahead
+    // of the section lookup for exactly this reason.
+    let named = interface
+        .and_then(|face| face.sections().first().map(pinion_node_graph::Section::id))
+        .unwrap_or(pinion_node_graph::SectionId(0));
+    let asked = doc.may_new_section_switch(ROOT, named);
+    let switchable = <LabNode as pinion_node_graph::NodeKind>::switch_type().is_some();
+    serde_json::json!({
+        "sections": sections,
+        "ports": interface.map_or(0, |face| face.inputs().len()),
+        "switchable": switchable,
+        "because": asked.err().map(|why| serde_json::json!({
+            "word": why.wire_word(),
+            "sentence": why.to_string(),
+        })),
+    })
 }
 
 /// ★★★★★ R1924 — for the picked wire's consuming end, every card on this

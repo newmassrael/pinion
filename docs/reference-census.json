@@ -667,22 +667,22 @@
       "verdict": "have"
     },
     "interface_item_make_panel_toggle": {
-      "covered_by": "interface PANELS: grouping a definition's ports into collapsible sections",
+      "covered_by": "a SECTION SWITCH: one switchable input inside a section stands for the whole section (R1925). Measured from the three operators themselves rather than from the title the group carried — they are the switch, not the grouping, and grouping has no row of its own in this list. Document::make_section_switch, asked first as Document::may_make_section_switch, and the port keeps its authored name where the reference overwrites it with the panel's",
       "mechanism": "python-core",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::dcc_interface_item_make_panel_toggle",
+      "verdict": "have"
     },
     "interface_item_new": {
-      "covered_by": "Document::expose / unexpose",
+      "covered_by": "Document::expose for the INPUT and OUTPUT clauses and Document::add_section for the PANEL one (R1925) — all three members of the operator's own item_type enum. The pre-R1925 sentence read the whole operator as expose, which no expose can create a panel to satisfy",
       "mechanism": "python-core",
       "proven_by": "pinion-node-graph::dcc_interface_item_new",
       "verdict": "have"
     },
     "interface_item_new_panel_toggle": {
-      "covered_by": "interface PANELS: grouping a definition's ports into collapsible sections",
+      "covered_by": "a SECTION SWITCH, made new rather than promoted (R1925): Document::new_section_switch, whose socket type comes from the taxonomy's own NodeKind::switch_type declaration instead of being named in the operator",
       "mechanism": "python-core",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::dcc_interface_item_new_panel_toggle",
+      "verdict": "have"
     },
     "interface_item_remove": {
       "covered_by": "Document::expose / unexpose",
@@ -691,10 +691,10 @@
       "verdict": "have"
     },
     "interface_item_unlink_panel_toggle": {
-      "covered_by": "interface PANELS: grouping a definition's ports into collapsible sections",
+      "covered_by": "a SECTION SWITCH demoted (R1925): Document::unlink_section_switch leaves the port in its section and named as it was, so make-then-unlink is the identity — the reference writes the panel's name over the socket's on both legs, so there it is not",
       "mechanism": "python-core",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::dcc_interface_item_make_panel_toggle",
+      "verdict": "have"
     },
     "join": {
       "covered_by": "Document::enframe",

@@ -526,7 +526,22 @@ const STORAGE_KEY: &str = "node_graph.state";
 // the kind, so writing it would freeze one build's wording into every file and
 // make a later rewording invisible to a reader who opened an old graph. The
 // same line this file draws for split addresses and for derived colour faces.
-const PERSISTED_SCHEMA_VERSION: u32 = 16;
+// R1925 -> 17: a definition's INTERFACE gained sections — named, collapsible
+// runs of its ports, one of which may carry the section's switch — so every
+// saved graph that has a definition changed shape. Both new fields carry
+// `serde(default)`, so an old blob still LOADS and reads its face as one
+// ungathered run, which is what it was, and no archive `REVISION` bump is
+// needed: bumping that would REFUSE the old file rather than read it.
+//
+// ★ This is the first entry on the list that is not a change to the editor's
+// own taxonomy — it is the substrate's, and it still belongs here, because the
+// version this file writes is a statement about the BYTES and the bytes moved.
+//
+// ★ What is NOT saved: which ports a section holds is the section's own list,
+// but *what the face looks like when a section is folded* is not — that is a
+// function of the fold and the members, and writing it would be the
+// answer-beside-its-question this list has now refused four times.
+const PERSISTED_SCHEMA_VERSION: u32 = 17;
 
 /// R1599 — the append-only `(version, digest)` ledger the persistence gate
 /// reads. See `pinion_core::test_fixtures::assert_persisted_shape` for why it
@@ -545,6 +560,7 @@ const PERSISTED_SHAPE_HISTORY: &[(u32, u64)] = &[
     (14, 0x4da8_c072_7b08_208c),
     (15, 0x66ea_2118_9854_494f),
     (16, 0x8c78_2add_a365_ce63),
+    (17, 0x0aac_91b1_399b_e776),
 ];
 
 /// R849 — where a newly added node first lands, and the per-add cascade step

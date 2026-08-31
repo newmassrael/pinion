@@ -46,10 +46,11 @@ use serde::{Deserialize, Serialize};
 use pinion_node_graph::{
     Act, Align, Appearance, Axis, Command, ConnectError, Conversion, Crossings, Definitions,
     Described, Direction, Distribute, Document, Edge, EditError, EditPath, Extent, Faces, Fragment,
-    Grow, Hidden, Instance, InterfaceSide, Item, ItemError, LinkId, Machine, Matched, Multiplicity,
-    Node, NodeBody, NodeId, NodeKind, NodeSite, NotRecombinable, NotSplittable, Port, PortPath,
-    PortRef, PortSite, PutAway, ROOT, Reach, RelinkError, Session, Sharing, Side, Socket, Stack,
-    Straighten, Stride, Tint, TreeId, Variadic, WatchError,
+    Grow, Hidden, Instance, InterfacePort, InterfaceSide, Item, ItemError, LinkId, Machine,
+    Matched, Multiplicity, Node, NodeBody, NodeId, NodeKind, NodeSite, NotRecombinable,
+    NotSplittable, Port, PortPath, PortRef, PortSite, PutAway, ROOT, Reach, RelinkError, SectionId,
+    Session, Sharing, Side, Socket, Stack, Straighten, Stride, SwitchRefusal, Tint, TreeId,
+    Variadic, WatchError,
 };
 
 // ---------------------------------------------------------------- taxonomy
@@ -66,6 +67,12 @@ enum Ty {
     /// reference refuses the container anyway, so this is what lets a proof
     /// tell "container" from "atom" instead of collapsing both into one no.
     Bag,
+    /// ★ R1925 — this taxonomy's **two-state** type, declared through
+    /// [`NodeKind::switch_type`]. Its own member and not a re-use of `Number`,
+    /// because the whole point of the declaration is that only one type may
+    /// switch a section: a fixture where the switchable type were also the
+    /// commonest one could not tell the refusal from the acceptance.
+    Flag,
 }
 
 /// The application's own taxonomy — the half this crate deliberately does not
@@ -165,8 +172,13 @@ impl NodeKind for Op {
                 Port::new("Right", Ty::Number).with_default(Val::Number(0)),
             ]),
             Ty::Bag => Composition::Container,
-            Ty::Number | Ty::Text => Composition::Atom,
+            Ty::Number | Ty::Text | Ty::Flag => Composition::Atom,
         }
+    }
+
+    /// ★ R1925 — the two-state type a section switch carries.
+    fn switch_type() -> Option<Ty> {
+        Some(Ty::Flag)
     }
 
     /// ★ R1916 — what a value of each type IS. `Bag` says nothing on purpose:
@@ -178,6 +190,7 @@ impl NodeKind for Op {
             Ty::Number => Some("a whole number".to_owned()),
             Ty::Text => Some("a line of text".to_owned()),
             Ty::Pair => Some("two numbers written `left|right`".to_owned()),
+            Ty::Flag => Some("on, or off".to_owned()),
             Ty::Bag => None,
         }
     }
@@ -317,7 +330,8 @@ impl NodeKind for Op {
             (Ty::Number, Ty::Number)
             | (Ty::Text, Ty::Text)
             | (Ty::Pair, Ty::Pair)
-            | (Ty::Bag, Ty::Bag) => Conversion::Direct,
+            | (Ty::Bag, Ty::Bag)
+            | (Ty::Flag, Ty::Flag) => Conversion::Direct,
             (Ty::Number, Ty::Text) => Conversion::Converted(|value| match value {
                 Val::Number(n) => Some(Val::Text(n.to_string())),
                 text @ Val::Text(_) => Some(text),
@@ -325,8 +339,8 @@ impl NodeKind for Op {
             // ⚠ Written out rather than as `_`, so a type added next is a
             // compile error here — the rule this match already followed.
             (Ty::Text, Ty::Number)
-            | (Ty::Pair | Ty::Bag, _)
-            | (Ty::Number | Ty::Text, Ty::Pair | Ty::Bag) => Conversion::Refused,
+            | (Ty::Pair | Ty::Bag | Ty::Flag, _)
+            | (Ty::Number | Ty::Text, Ty::Pair | Ty::Bag | Ty::Flag) => Conversion::Refused,
         }
     }
 
@@ -655,6 +669,16 @@ fn dcc_proofs() -> Vec<Proof> {
             dcc_interface_item_duplicate,
         ),
         proof("dcc", "interface_item_new", dcc_interface_item_new),
+        proof(
+            "dcc",
+            "interface_item_new_panel_toggle",
+            dcc_interface_item_new_panel_toggle,
+        ),
+        proof(
+            "dcc",
+            "interface_item_make_panel_toggle",
+            dcc_interface_item_make_panel_toggle,
+        ),
         proof("dcc", "interface_item_remove", dcc_interface_item_remove),
         proof("dcc", "join", dcc_join),
         proof("dcc", "join_nodes", dcc_join_nodes),
@@ -2430,6 +2454,9 @@ fn dcc_interface_item_new() {
             .len(),
         before + 1
     );
+    // ★ R1925 — the operator's other two clauses. It offers INPUT, OUTPUT and
+    // PANEL, and until this round only the first was ever run.
+    interface_item_new_output_and_panel_clauses();
 }
 
 /// Remove one. This is the direction that can invalidate indices, so the links
@@ -2519,6 +2546,421 @@ fn dcc_interface_item_duplicate() {
             .is_none(),
         "and the copy arrives unwired"
     );
+}
+
+// ================================================== R1925 — interface sections
+
+/// ★★★★★ R1925 — the rest of `interface_item_new`, which
+/// [`dcc_interface_item_new`] proves only the first clause of.
+///
+/// Called from that proof rather than registered beside it, because the row owns
+/// one proof and this is the same row: the operator's `item_type` enum has three
+/// members and the pin was carrying all three on a test that reached INPUT.
+fn interface_item_new_output_and_panel_clauses() {
+    let mut chain = chain();
+    let made = chain.document.group(ROOT, &[chain.add], "Sum").unwrap();
+
+    // The OUTPUT clause — true before this round and never run.
+    let outputs = chain
+        .document
+        .tree(made.definition)
+        .unwrap()
+        .interface()
+        .outputs()
+        .len();
+    let emitted = chain
+        .document
+        .expose(
+            made.definition,
+            InterfaceSide::Output,
+            Port::new("Spare", Ty::Number),
+        )
+        .unwrap();
+    assert_eq!(emitted as usize, outputs);
+    assert_eq!(
+        chain
+            .document
+            .signature(ROOT, made.node)
+            .unwrap()
+            .outputs
+            .len(),
+        outputs + 1,
+        "an instance emits what its definition exposes"
+    );
+
+    // ★★★★★ The PANEL clause, which `expose` cannot answer at all: measured at
+    // this round's open the pin read the whole operator as covered by
+    // `Document::expose / unexpose`, so a third of its own enum was carried as
+    // `have` by a proof that never reached it — the direction R1602 says costs a
+    // test, because it inflates the number silently.
+    let section = chain
+        .document
+        .add_section(made.definition, "Falloff")
+        .unwrap();
+    let held = chain
+        .document
+        .expose(
+            made.definition,
+            InterfaceSide::Input,
+            Port::new("Radius", Ty::Number),
+        )
+        .unwrap();
+    chain
+        .document
+        .assign_section(made.definition, InterfacePort::input(held), Some(section))
+        .unwrap();
+
+    let interface = chain.document.tree(made.definition).unwrap().interface();
+    assert_eq!(interface.sections().len(), 1);
+    assert_eq!(interface.section(section).unwrap().name(), "Falloff");
+    assert_eq!(
+        interface.section_of(InterfacePort::input(held)),
+        Some(section),
+        "the port the author put in the section reads back in it"
+    );
+    assert!(
+        !interface.ungathered().contains(&InterfacePort::input(held)),
+        "and is no longer part of the header-less run"
+    );
+    // A section is collapsible, which is what the covering sentence claimed and
+    // nothing here could do: the state is the document's, so a definition that
+    // is copied elsewhere arrives arranged the way it was left.
+    assert!(!interface.section(section).unwrap().folded());
+    assert!(
+        !chain
+            .document
+            .set_section_folded(made.definition, section, true)
+            .unwrap()
+    );
+    assert!(
+        chain
+            .document
+            .tree(made.definition)
+            .unwrap()
+            .interface()
+            .section(section)
+            .unwrap()
+            .folded()
+    );
+    assert!(chain.document.validate().is_empty());
+}
+
+/// ★★★★★ R1925 — `interface_item_new_panel_toggle`: a **new** switchable input
+/// that stands for its section.
+///
+/// The reference makes a boolean socket, moves it to position 0 of the panel and
+/// flags it. Here the type comes from the taxonomy's own declaration, so the
+/// operation cannot invent a socket type this application does not have — and
+/// the switch is listed first without the port's INDEX moving, so no link at any
+/// instance is re-aimed.
+#[test]
+fn dcc_interface_item_new_panel_toggle() {
+    let mut chain = chain();
+    let made = chain.document.group(ROOT, &[chain.add], "Sum").unwrap();
+    let before = chain
+        .document
+        .tree(ROOT)
+        .unwrap()
+        .link_into(Socket::new(made.node, 0))
+        .map(|link| link.id);
+    assert!(before.is_some(), "the instance arrives wired at input 0");
+
+    let section = chain
+        .document
+        .add_section(made.definition, "Falloff")
+        .unwrap();
+    let ordinary = chain
+        .document
+        .expose(
+            made.definition,
+            InterfaceSide::Input,
+            Port::new("Radius", Ty::Number),
+        )
+        .unwrap();
+    chain
+        .document
+        .assign_section(
+            made.definition,
+            InterfacePort::input(ordinary),
+            Some(section),
+        )
+        .unwrap();
+
+    let switch = chain
+        .document
+        .new_section_switch(made.definition, section)
+        .unwrap();
+
+    let interface = chain.document.tree(made.definition).unwrap().interface();
+    assert_eq!(interface.section(section).unwrap().switch(), Some(switch));
+    assert_eq!(
+        interface.inputs()[switch as usize].value_type(),
+        Some(&Ty::Flag),
+        "the new port carries the type the taxonomy declared, not a guess"
+    );
+    assert_eq!(
+        interface.inputs()[switch as usize].name,
+        "Falloff",
+        "a port with no authored name takes the section's — the one place the \
+         reference's naming is right"
+    );
+    assert_eq!(
+        interface.section(section).unwrap().members(),
+        [InterfacePort::input(switch), InterfacePort::input(ordinary)],
+        "the switch is shown first"
+    );
+    assert!(
+        switch > ordinary,
+        "and it is shown first without being INDEXED first — the reference has \
+         to move a socket to get this, and a move re-aims every instance's links"
+    );
+    assert_eq!(
+        chain
+            .document
+            .tree(ROOT)
+            .unwrap()
+            .link_into(Socket::new(made.node, 0))
+            .map(|link| link.id),
+        before,
+        "so the instance's wire at input 0 is the same link it was"
+    );
+
+    // ★ The refusal the reference spells *Panel already has a toggle*, as a
+    // value, before anything is changed.
+    assert_eq!(
+        chain
+            .document
+            .new_section_switch(made.definition, section)
+            .unwrap_err(),
+        SwitchRefusal::SectionHasSwitch {
+            section,
+            port: switch
+        }
+    );
+    // ★ And *Active item is not a panel*: a section id this interface never
+    // handed out.
+    assert_eq!(
+        chain
+            .document
+            .new_section_switch(made.definition, SectionId(9))
+            .unwrap_err()
+            .wire_word(),
+        "no-such-section"
+    );
+    assert!(chain.document.validate().is_empty());
+}
+
+/// ★★★★★ R1925 — `interface_item_make_panel_toggle` and
+/// `interface_item_unlink_panel_toggle`, and the property the reference fails.
+///
+/// Promoting an existing port and demoting it again is the **identity** here.
+/// The reference assigns the socket the panel's name on the way in and the
+/// panel's name again on the way out, so an authored name does not survive the
+/// round trip there; the section carries the header's label and the port keeps
+/// its own.
+///
+/// Both refusals it spells are exercised as values, and both are asked through
+/// [`Document::may_make_section_switch`] as well — the same rule at two moments,
+/// so a screen that lights what it would accept cannot drift from the edit.
+#[test]
+fn dcc_interface_item_make_panel_toggle() {
+    let mut chain = chain();
+    let made = chain.document.group(ROOT, &[chain.add], "Sum").unwrap();
+    let section = chain
+        .document
+        .add_section(made.definition, "Falloff")
+        .unwrap();
+
+    // A number in the section: switchable by position, not by type.
+    let number = chain
+        .document
+        .expose(
+            made.definition,
+            InterfaceSide::Input,
+            Port::new("Radius", Ty::Number),
+        )
+        .unwrap();
+    // A flag OUTSIDE any section: switchable by type, not by position.
+    let loose = chain
+        .document
+        .expose(
+            made.definition,
+            InterfaceSide::Input,
+            Port::new("Use falloff", Ty::Flag),
+        )
+        .unwrap();
+    chain
+        .document
+        .assign_section(made.definition, InterfacePort::input(number), Some(section))
+        .unwrap();
+
+    // ★ *Only boolean input sockets are supported*.
+    assert_eq!(
+        chain
+            .document
+            .may_make_section_switch(made.definition, number)
+            .unwrap_err(),
+        SwitchRefusal::NotSwitchable { index: number }
+    );
+    // ★ *Socket must be in a panel*.
+    assert_eq!(
+        chain
+            .document
+            .may_make_section_switch(made.definition, loose)
+            .unwrap_err(),
+        SwitchRefusal::NotInASection { index: loose }
+    );
+    // The question and the act agree: what the question refuses, the edit
+    // refuses, with the same value.
+    assert_eq!(
+        chain
+            .document
+            .make_section_switch(made.definition, loose)
+            .unwrap_err(),
+        SwitchRefusal::NotInASection { index: loose }
+    );
+
+    chain
+        .document
+        .assign_section(made.definition, InterfacePort::input(loose), Some(section))
+        .unwrap();
+    assert_eq!(
+        chain
+            .document
+            .may_make_section_switch(made.definition, loose)
+            .unwrap(),
+        section,
+        "in the section and of the switchable type, the question says yes"
+    );
+    assert_eq!(
+        chain
+            .document
+            .make_section_switch(made.definition, loose)
+            .unwrap(),
+        section
+    );
+
+    let interface = chain.document.tree(made.definition).unwrap().interface();
+    assert_eq!(interface.section(section).unwrap().switch(), Some(loose));
+    assert_eq!(
+        interface.section(section).unwrap().members().first(),
+        Some(&InterfacePort::input(loose)),
+        "and it moves to the front of what the section shows"
+    );
+    assert_eq!(
+        interface.inputs()[loose as usize].name,
+        "Use falloff",
+        "★ the authored name is untouched — the reference overwrites it here"
+    );
+
+    interface_item_unlink_panel_toggle_leg(&mut chain, made.definition, section, loose);
+}
+
+/// ★★★★★ R1925 — the unlink half of the proof above, which
+/// `interface_item_unlink_panel_toggle` cites.
+///
+/// Split out only because the pair is past this project's line budget for one
+/// function; they are one proof, because *demote* is not a claim that can be
+/// made without a promotion to undo.
+fn interface_item_unlink_panel_toggle_leg(
+    chain: &mut Chain,
+    definition: TreeId,
+    section: SectionId,
+    loose: u32,
+) {
+    // Unlink: no longer the switch, still in the section, still itself.
+    assert_eq!(
+        chain
+            .document
+            .unlink_section_switch(definition, section)
+            .unwrap(),
+        loose
+    );
+    let interface = chain.document.tree(definition).unwrap().interface();
+    assert_eq!(interface.section(section).unwrap().switch(), None);
+    assert_eq!(
+        interface.section_of(InterfacePort::input(loose)),
+        Some(section),
+        "*stand-alone* means no longer the switch, not removed from the section"
+    );
+    assert_eq!(
+        interface.inputs()[loose as usize].name,
+        "Use falloff",
+        "★★★★★ the round trip is the identity — the reference's is not, because \
+         its unlink writes the panel's name over the socket's a second time"
+    );
+
+    // ★ Its own refusal, which the reference reaches by returning false in
+    // silence.
+    assert_eq!(
+        chain
+            .document
+            .unlink_section_switch(definition, section)
+            .unwrap_err(),
+        SwitchRefusal::SectionHasNoSwitch { section }
+    );
+    assert!(chain.document.validate().is_empty());
+}
+
+/// ★★★★★ R1925 — a removal keeps the sections true, and the crate says so
+/// about a document that arrives already broken.
+///
+/// `unexpose` is the only operation here that can shorten a port list, so it is
+/// the only place a member index can go stale. Removing a port below the switch
+/// slides the switch down with it; removing the switch itself clears it.
+#[test]
+fn r1925_removing_a_port_keeps_its_section_true() {
+    let mut chain = chain();
+    let made = chain.document.group(ROOT, &[chain.add], "Sum").unwrap();
+    let section = chain
+        .document
+        .add_section(made.definition, "Falloff")
+        .unwrap();
+    let flag = chain
+        .document
+        .expose(
+            made.definition,
+            InterfaceSide::Input,
+            Port::new("Use falloff", Ty::Flag),
+        )
+        .unwrap();
+    chain
+        .document
+        .assign_section(made.definition, InterfacePort::input(flag), Some(section))
+        .unwrap();
+    chain
+        .document
+        .make_section_switch(made.definition, flag)
+        .unwrap();
+
+    // Remove an interface port BELOW the switch: every member slides down.
+    chain
+        .document
+        .unexpose(made.definition, InterfaceSide::Input, 0)
+        .unwrap();
+    let interface = chain.document.tree(made.definition).unwrap().interface();
+    assert_eq!(
+        interface.section(section).unwrap().switch(),
+        Some(flag - 1),
+        "the switch follows the port it names"
+    );
+    assert_eq!(
+        interface.inputs()[(flag - 1) as usize].name,
+        "Use falloff",
+        "and it still names that port"
+    );
+    assert!(chain.document.validate().is_empty());
+
+    // Remove the switch itself: the section keeps its other members and has
+    // none.
+    chain
+        .document
+        .unexpose(made.definition, InterfaceSide::Input, flag - 1)
+        .unwrap();
+    let interface = chain.document.tree(made.definition).unwrap().interface();
+    assert_eq!(interface.section(section).unwrap().switch(), None);
+    assert!(interface.section(section).unwrap().members().is_empty());
+    assert!(chain.document.validate().is_empty());
 }
 
 /// ★ The pin's reason for this one is that there is **nothing to sync** — the

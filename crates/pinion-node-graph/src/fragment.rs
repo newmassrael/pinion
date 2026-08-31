@@ -1068,6 +1068,14 @@ fn copy_tree_body<K: NodeKind>(
     for port in source.interface().outputs() {
         let _ = destination.expose(target, InterfaceSide::Output, port.clone());
     }
+    // ★ R1925 — and the sections over them. The ports went in above in their own
+    // order into an empty interface, so every member index still names the port
+    // it named. Carrying them is not decoration: `Fragment` compares a carried
+    // definition with the one already there BY ITS INTERFACE, so a paste that
+    // dropped the sections would fork a definition that is otherwise identical.
+    if let Some(carried) = destination.interface_of_mut(target) {
+        carried.adopt_sections(source.interface());
+    }
     for node in source.nodes() {
         destination.put_node(
             target,

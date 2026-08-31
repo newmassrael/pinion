@@ -944,6 +944,15 @@ pub enum Violation {
         /// of order on.
         nodes: Vec<NodeId>,
     },
+    /// ★ R1925 — a section of a tree's interface breaks its own rules.
+    SectionBroken {
+        /// The tree it is in.
+        tree: TreeId,
+        /// The section.
+        section: crate::SectionId,
+        /// What is wrong with it.
+        breach: crate::SectionBreach,
+    },
     /// A group instance names a tree that is not in the document.
     DanglingInstance {
         /// The tree the instance is in.
@@ -1109,6 +1118,11 @@ impl fmt::Display for Violation {
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
+            Self::SectionBroken {
+                tree,
+                section,
+                breach,
+            } => write!(f, "{section} of tree {tree}: {breach}"),
             Self::DanglingInstance {
                 tree,
                 node,
@@ -1381,6 +1395,11 @@ impl<K: NodeKind> Document<K> {
                     });
                 }
             }
+            // ★ R1925 — the interface's sections. Nothing this crate's own
+            // edits can produce: `assign_section` removes before it adds and
+            // `unexpose` keeps the members true, so every arm here is a state a
+            // document arriving from a file can be in and an edit cannot.
+            found.extend(self.section_violations(tree.id));
             // R1596 — one derivation answers both halves: whether there is a
             // cycle at all is whether the localisation is empty, so the two can
             // never disagree about a tree the way a bool beside a node list can.

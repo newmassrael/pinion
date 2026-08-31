@@ -779,6 +779,33 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
         Composition::Atom
     }
 
+    /// ★★★★★ R1925 — **which of this taxonomy's socket types is the two-state
+    /// one**, or `None` when it has none.
+    ///
+    /// The one declaration behind a section switch
+    /// ([`Document::make_section_switch`](crate::Document::make_section_switch)):
+    /// it is the type [`Document::new_section_switch`](crate::Document::new_section_switch)
+    /// *creates*, and it is what an existing port is checked against. Declared
+    /// once and read twice, so "this port may switch a section" and "this is
+    /// what a new switch carries" cannot come apart — the same reason
+    /// [`conversion`](NodeKind::conversion) is the conversion itself rather
+    /// than a predicate beside one.
+    ///
+    /// An associated function for [`composition`](NodeKind::composition)'s
+    /// reason: it is a fact about the taxonomy, not about a node.
+    ///
+    /// The reference cannot express this question at all — it names
+    /// `NodeSocketBool` in the operator, three times, because its socket types
+    /// are a fixed set it owns. A crate whose taxonomy is the application's has
+    /// to ask, and an application that answers `None` (the default) simply has
+    /// no section switches and is told so
+    /// ([`SwitchRefusal::NoSwitchType`](crate::SwitchRefusal::NoSwitchType))
+    /// rather than having any port accepted.
+    #[must_use]
+    fn switch_type() -> Option<Self::Type> {
+        None
+    }
+
     /// ★★★★★ R1916 — **what a value of this type IS**, in a sentence, or
     /// `None` when the type's own name is the whole of what can be said.
     ///
@@ -1719,6 +1746,19 @@ impl<K: NodeKind> Node<K> {
 pub struct Interface<K: NodeKind> {
     inputs: Vec<KindPort<K>>,
     outputs: Vec<KindPort<K>>,
+    /// ★★★★★ R1925 — the named, collapsible runs the ports are gathered into.
+    ///
+    /// `#[serde(default)]` on both of these, and no [`REVISION`](crate::REVISION)
+    /// bump: an archive written before sections existed still opens, and reads
+    /// as a face with none. Bumping would refuse it, which is the opposite of
+    /// what a backwards-compatible addition owes.
+    #[serde(default = "Vec::new")]
+    pub(crate) sections: Vec<crate::section::Section>,
+    /// The next section id to hand out. Kept rather than derived from the list's
+    /// length, so removing a section cannot make the next one collide with a
+    /// member reference that outlived it.
+    #[serde(default)]
+    pub(crate) next_section: u32,
 }
 
 impl<K: NodeKind> Default for Interface<K> {
@@ -1726,6 +1766,8 @@ impl<K: NodeKind> Default for Interface<K> {
         Self {
             inputs: Vec::new(),
             outputs: Vec::new(),
+            sections: Vec::new(),
+            next_section: 0,
         }
     }
 }
@@ -3516,6 +3558,16 @@ impl<K: NodeKind> Document<K> {
         found
     }
 
+    /// A tree's interface, mutably, or `None` when there is no such tree.
+    ///
+    /// The one way [`crate::section`] reaches an interface to change it, so the
+    /// tree lookup that guards every one of those operations is written once.
+    pub(crate) fn interface_of_mut(&mut self, tree: TreeId) -> Option<&mut Interface<K>> {
+        self.trees
+            .get_mut(tree.0 as usize)
+            .map(|host| &mut host.interface)
+    }
+
     /// Append a port to a tree's interface.
     ///
     /// Appending is always safe: it cannot invalidate an existing port index,
@@ -3577,6 +3629,10 @@ impl<K: NodeKind> Document<K> {
             });
         }
         ports.remove(index as usize);
+        // ★ R1925 — the sections are indexed by the same numbers, so this is
+        // where they are kept true. `expose` needs no counterpart: it appends,
+        // and an append cannot move an index that already exists.
+        host.interface.forget_port(side, index);
 
         // Inside the definition, the interface node carrying this side.
         let inside = host.interface_node(side).map(|n| n.id);
@@ -4044,6 +4100,13 @@ pub enum EditError {
         /// The link that is not in it.
         link: LinkId,
     },
+    /// ★ R1925 — that tree's interface has no such section.
+    NoSuchSection {
+        /// The tree whose interface was addressed.
+        tree: TreeId,
+        /// The section asked for.
+        section: crate::section::SectionId,
+    },
     /// The interface has no port at that index on that side.
     NoSuchInterfacePort {
         /// The tree whose interface was addressed.
@@ -4165,6 +4228,9 @@ impl fmt::Display for EditError {
                 tree.0,
                 side.wire_word()
             ),
+            Self::NoSuchSection { tree, section } => {
+                write!(f, "tree {}'s interface has no {section}", tree.0)
+            }
             Self::NoSuchInterfacePort {
                 tree,
                 side,

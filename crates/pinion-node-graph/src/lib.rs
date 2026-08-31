@@ -231,6 +231,7 @@ mod observed;
 mod partition;
 mod relink;
 mod run;
+mod section;
 mod select;
 mod sighted;
 mod split;
@@ -276,6 +277,7 @@ pub use observed::{
 pub use partition::{PortChange, RepartitionError, Repartitioned, Sharing};
 pub use relink::{RelinkError, Relinked};
 pub use run::{Run, RunError, Step, Stop};
+pub use section::{InterfacePort, Section, SectionBreach, SectionId, SwitchRefusal};
 pub use select::{Grow, Grown, Reach, SelectError};
 pub use sighted::{Sighted, SightedTopology, Sighting, Vantage};
 pub use split::{
