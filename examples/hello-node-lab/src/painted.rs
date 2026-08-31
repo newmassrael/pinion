@@ -1552,7 +1552,22 @@ use pinion_core::test_fixtures::screen_ink::{
 /// numbers — the containment gate reported the words 1px past their cards the
 /// moment the boxes grew — so both are derived from `line_box` now. **A box
 /// that respects its face forces the row that holds it to.**
-const SHORT_BOX_BUDGET: usize = 125;
+///
+/// ★★★★★ R1927 — **125 → 75**, and this one was not looked for. The round
+/// added a seventh launch-gate finding; the count rose by exactly the lines
+/// that finding added, and following that `+2` reached the **launch gate
+/// panel**, whose head, verdict and every problem line were authored `13`
+/// pixels tall for faces whose `line_box` is 15 and 18. Every line that panel
+/// has ever drawn was short, and the panel is **50** of the 125 — the second
+/// largest site after the palette body, and invisible until something made it
+/// draw two more lines.
+///
+/// ⇒ ★★★★★ **A backlog number moves when a round ADDS to the population, and
+/// that movement is the only thing that points at the site.** R1874 found the
+/// palette by census; this one was found by a round making a defect bigger.
+/// Both are what an equality pin is for — a ceiling would have absorbed the
+/// `+2` and said nothing.
+const SHORT_BOX_BUDGET: usize = 75;
 
 /// The one sweep, over every state.
 #[test]

@@ -2949,10 +2949,10 @@
       "verdict": "have"
     },
     "node::GetVisualWarningTooltipText": {
-      "covered_by": "a node has no WARNING state - a diagnostic a kind attaches to itself",
+      "covered_by": "NodeKind::warning returns the SENTENCE WITH the warning (R1927), so it cites the same proof rather than owning a second. ★ That is the point: here the reference has two independent virtuals, and measured across its own source one of its two overriders overrides only the bool and leaves this at its empty supplied answer — so that node shows a badge carrying no reason. One Option<String> makes the silent badge unrepresentable",
       "mechanism": "graph-node",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_node_show_visual_warning",
+      "verdict": "have"
     },
     "node::HasDeprecatedReference": {
       "covered_by": "the engine's visual script/asset subject matter",
@@ -3153,10 +3153,10 @@
       "verdict": "app-content"
     },
     "node::ShowVisualWarning": {
-      "covered_by": "a node has no WARNING state - a diagnostic a kind attaches to itself",
+      "covered_by": "NodeKind::warning, asked through Document::warning and listed by Document::warnings (R1927). ⚠ The pre-R1927 reason here was wrong in BOTH clauses, measured at the reference's header and both of its overriders: it is not a STATE (a const method computing a bool, asked every layout; the stored flag beside it is a compiler message, a different pair of members) and it is not something a KIND attaches to itself (one overrider answers from whether one of its own pins is wired plus a setting on its container, the other from the RUNNING node it debugs). The kind supplies the rule; the answer is per node and situational, which is why Surroundings is an argument here where the reference's overriders climb out of themselves to find it",
       "mechanism": "graph-node",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_node_show_visual_warning",
+      "verdict": "have"
     },
     "node::SupportsCommentBubble": {
       "covered_by": "a comment bubble is a drawn affordance",

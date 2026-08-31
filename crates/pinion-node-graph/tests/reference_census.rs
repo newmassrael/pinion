@@ -181,6 +181,24 @@ impl NodeKind for Op {
         Some(Ty::Flag)
     }
 
+    /// ★★★★★ R1927 — when a node of this taxonomy is in a questionable state.
+    ///
+    /// Shaped after the reference's own rule rather than invented: its one
+    /// overrider that consults the graph answers from **whether a particular
+    /// pin of its own is wired**, and reaches that fact by climbing out of
+    /// itself because its signature hands it nothing. Here it is the argument.
+    ///
+    /// `Sink` is the only kind that warns, so a proof can tell a rule that
+    /// fires from one that fires for everything.
+    fn warning(&self, around: &pinion_node_graph::Surroundings) -> Option<String> {
+        match self {
+            Self::Sink if !around.is_wired(Side::Input, 0) => {
+                Some("nothing reaches this sink, so it consumes nothing".to_owned())
+            }
+            _ => None,
+        }
+    }
+
     /// ★★★★★ R1926 — what colour each type is drawn in.
     ///
     /// `Text` says **nothing** on purpose, and it is an ATOM: a taxonomy that
@@ -1226,6 +1244,15 @@ fn engine_hook_proofs() -> Vec<Proof> {
             engine_node_prepare_for_copying,
         ),
         proof("engine", "node::ResizeNode", engine_node_resize_node),
+        // ★★★★★ R1927 — the WARNING pair. One proof, because they are one
+        // answer here: the reference's two virtuals can come apart and in its
+        // own source they do, so the tooltip row CITES this rather than owning
+        // a second proof there is no second mechanism for.
+        proof(
+            "engine",
+            "node::ShowVisualWarning",
+            engine_node_show_visual_warning,
+        ),
     ]
 }
 
@@ -1823,6 +1850,96 @@ fn dcc_node_poll() {
          of an already-broken fixture: {:?}",
         chain.document.validate()
     );
+}
+
+// ==================================================== R1927 — node warnings
+
+/// ★★★★★ R1927 — a node says whether it is in a questionable state, and why.
+///
+/// The reference's pair, and the three ways this passes it are each asserted
+/// rather than claimed:
+///
+/// * **the warning carries its own sentence**, so the silent badge its own
+///   overrider produces cannot be built here;
+/// * **the situation is the argument**, so the rule changes answer when the
+///   wiring changes and a test can drive it without a world around it;
+/// * **the graph can be asked**, which the reference has no call for at all.
+#[test]
+fn engine_node_show_visual_warning() {
+    let mut chain = chain();
+    let lonely = chain
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Sink), 0, 0)
+        .unwrap();
+
+    // ★ Unwired, the rule fires — and it fires WITH a sentence. There is no
+    // arrangement of this API in which it warns and says nothing.
+    let said = chain
+        .document
+        .warning(ROOT, lonely)
+        .expect("an unfed sink warns");
+    assert_eq!(said.node, lonely);
+    assert!(
+        said.sentence.contains("nothing reaches this sink"),
+        "the sentence is the application's own: {said:?}"
+    );
+
+    // ★★★★★ The situation is what it answers from: wire the sink and the same
+    // node, the same kind, stops warning. Without this the rule could be a
+    // constant and every other assertion here would still hold.
+    chain
+        .document
+        .connect(ROOT, Socket::new(chain.add, 0), Socket::new(lonely, 0))
+        .expect("a number reaches the sink");
+    assert_eq!(chain.document.warning(ROOT, lonely), None);
+
+    // And the argument is askable on its own, which is what makes a rule
+    // testable without driving a document through it.
+    let around = chain.document.surroundings(ROOT, lonely);
+    assert!(around.is_wired(Side::Input, 0));
+    assert!(around.any_wired(Side::Input));
+    assert!(!around.any_wired(Side::Output));
+    assert_eq!(around.wired(Side::Input).collect::<Vec<_>>(), vec![0]);
+
+    // ★ A kind with no rule says nothing, which is the ordinary case: a
+    // taxonomy where every kind warned could not tell a rule from a default.
+    assert_eq!(chain.document.warning(ROOT, chain.add), None);
+
+    // ★★★★★ The whole graph, in node order — the call the reference does not
+    // have, because there the badge is decided inside the widget.
+    let second = chain
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Sink), 40, 0)
+        .unwrap();
+    let listed = chain.document.warnings(ROOT);
+    assert_eq!(
+        listed.iter().map(|held| held.node).collect::<Vec<_>>(),
+        vec![second],
+        "only the unfed one is in the list, and it is addressable: {listed:?}"
+    );
+    assert!(listed.iter().all(|held| !held.sentence.is_empty()));
+
+    // ⚠ A structural body has no application rule to ask, and answering `None`
+    // for it is a different thing from a kind that declines to warn — this is
+    // the arm that would panic if the walk asked a frame for a kind.
+    let frame = chain
+        .document
+        .add_node(ROOT, NodeBody::Frame, 200, 200)
+        .unwrap();
+    assert_eq!(chain.document.warning(ROOT, frame), None);
+    assert!(
+        chain
+            .document
+            .warnings(ROOT)
+            .iter()
+            .all(|held| held.node != frame),
+        "and it is not in the list"
+    );
+
+    // ⚠ And a warning is NOT a structural finding: this document is warning and
+    // perfectly well formed, which is the line between the two.
+    assert!(!chain.document.warnings(ROOT).is_empty());
+    assert!(chain.document.validate().is_empty());
 }
 
 // ====================================================== R1926 — port colours

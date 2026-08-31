@@ -240,6 +240,7 @@ mod swap;
 #[cfg(test)]
 mod tests;
 mod view;
+mod warning;
 
 pub use appearance::{Appearance, Faces, Hidden, PutAway, PutAwayRefusal, Tint, VisiblePorts};
 pub use archive::{Archive, Dropped, Opening, REVISION, Unreadable, Unwritable};
@@ -288,6 +289,7 @@ pub use split::{
 };
 pub use swap::{Carried, Swapped};
 pub use view::{Camera, Fit, Fitted, Margin, ZoomRange};
+pub use warning::{Surroundings, Warning};
 
 /// Re-exported so a consumer can name the boundary derivation this crate's
 /// group operations are built on without adding a second dependency.

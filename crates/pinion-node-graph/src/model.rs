@@ -843,6 +843,35 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
         None
     }
 
+    /// ★★★★★ R1927 — **whether this node is in a questionable state, and what
+    /// to say about it** — or `None` when it has nothing to say.
+    ///
+    /// ONE answer where the reference has two independent ones. Measured this
+    /// round, of its two overriders one overrides the *should I warn* half and
+    /// leaves the *what does it say* half at its empty supplied answer, so that
+    /// node shows a badge carrying no reason. Returning the sentence WITH the
+    /// warning makes that state unrepresentable.
+    ///
+    /// `&self` and not an associated function, unlike
+    /// [`type_colour`](NodeKind::type_colour) and its neighbours: this is a
+    /// judgement about **this node's own configuration**, not a fact about the
+    /// taxonomy, and two nodes of one kind are expected to disagree.
+    ///
+    /// [`Surroundings`](crate::Surroundings) is what the node is wired to.
+    /// Handed over rather than reached for, which is the second measured
+    /// difference: the reference's signature gives its overriders nothing, so
+    /// one of them walks its chain of containers in a loop to find a setting
+    /// and the other asks a global for the node being debugged.
+    ///
+    /// ⚠ This is **not** [`Document::validate`](crate::Document::validate). That
+    /// answers how a document breaks the crate's own structural rules and no
+    /// application may add to it or silence it; this is the application's
+    /// judgement about one node in a graph that is perfectly well formed.
+    fn warning(&self, around: &crate::Surroundings) -> Option<String> {
+        let _ = around;
+        None
+    }
+
     /// ★★★★★ R1916 — **what a value of this type IS**, in a sentence, or
     /// `None` when the type's own name is the whole of what can be said.
     ///

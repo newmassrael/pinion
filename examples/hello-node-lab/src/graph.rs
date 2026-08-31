@@ -528,6 +528,30 @@ impl NodeKind for LabNode {
         }
     }
 
+    /// ★★★★★ R1927 — **when a node of this taxonomy is in a questionable
+    /// state**, in this application's own words.
+    ///
+    /// One rule, and it is the mirror of a finding this screen already makes:
+    /// `dials outside` says an address was written that nothing here listens
+    /// on, so the drawing is not the whole picture. This says the other half —
+    /// **this node listens and nothing on this canvas dials it**, so a service
+    /// is drawn that the drawing shows nobody using. Neither blocks a launch;
+    /// both mean a conclusion drawn from this canvas is drawn from a partial
+    /// graph, which is worth saying.
+    ///
+    /// ★ It needs the wiring, and that is why it is here rather than in the
+    /// view: the rule is a fact about **this node in this graph**, and the
+    /// framework hands it over ([`Surroundings`](pinion_node_graph::Surroundings))
+    /// instead of making a screen work it out. The reference's own equivalent
+    /// rule needs the same fact and has to climb out of the node to get it.
+    fn warning(&self, around: &pinion_node_graph::Surroundings) -> Option<String> {
+        (self.role.accepts() && self.listening && !around.any_wired(Side::Input)).then(|| {
+            "listening, and nothing on this canvas dials it — the drawing is \
+             not the whole picture"
+                .to_owned()
+        })
+    }
+
     /// ★★★★★ R1926 — **what colour a value of this socket type is drawn in.**
     ///
     /// The three halves of this taxonomy each answer for themselves, and that

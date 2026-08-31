@@ -782,6 +782,24 @@ fn r1718_every_gate_finding_is_said_distinctly_and_never_names_its_card() {
         // ★★★★★ R1885 — the sixth situation, and this gate caught its absence
         // on the first run after the arm was added, exactly as it caught the
         // fifth. An arm nobody drives is an arm that can say anything.
+        // ★★★★★ R1927 — the seventh situation, and this gate caught its absence
+        // on the first run after the arm was added, exactly as it caught the
+        // fifth and the sixth. Three for three: an arm nobody drives is an arm
+        // that can say anything.
+        //
+        // ⚠ The sentence is the MODEL's, carried verbatim, so what is driven
+        // here is a sentence this file did not write — which is the point of
+        // the arm. A wording of its own would be the screen answering a
+        // question the framework already answered.
+        (
+            "Unwired",
+            super::Finding::Unwired(
+                "listening, and nothing on this canvas dials it — the drawing \
+                 is not the whole picture"
+                    .to_owned(),
+            )
+            .sentence(),
+        ),
         (
             "Incompatible",
             super::Finding::Incompatible {
@@ -953,11 +971,27 @@ fn r1651_the_pin_a_node_shows_is_derived_from_the_form_it_holds() {
     owner.run(|| {
         let state = std::rc::Rc::new(state());
         let store = state.node_of("S-01").expect("on the canvas");
+        // ⚠ R1927 — the finding is named by ITS OWN sentence, not by the word
+        // "listening". The loose predicate was written when that word could
+        // only mean one thing on this screen; it now means two, and the
+        // opposite two: `nothing is listening` (this one, retired by giving the
+        // card an endpoint) and `listening, and nothing dials it` (the model's,
+        // RAISED by the same edit, because S-01 has no inbound link). The loose
+        // form failed here the moment the second existed — correctly, and for a
+        // reason that had nothing to do with what this test is about.
         let warned = |state: &LabState| {
             state
                 .gate_lines()
                 .into_iter()
-                .any(|(_, s)| s.starts_with("S-01") && s.contains("listening"))
+                .any(|(_, s)| s.starts_with("S-01") && s.contains("nothing is listening"))
+        };
+        // The other half of the same fact, so the pair is asserted rather than
+        // one of them being quietly filtered out of the question.
+        let undialled = |state: &LabState| {
+            state
+                .gate_lines()
+                .into_iter()
+                .any(|(_, s)| s.starts_with("S-01") && s.contains("nothing on this canvas dials"))
         };
         let listening = |state: &LabState| {
             state
@@ -973,6 +1007,11 @@ fn r1651_the_pin_a_node_shows_is_derived_from_the_form_it_holds() {
         };
         assert!(warned(&state), "it opens with nowhere to listen");
         assert!(!listening(&state), "so the pin is drawn closed");
+        assert!(
+            !undialled(&state),
+            "and a card that listens nowhere cannot be undialled — the model's \
+             rule has nothing to say about it yet"
+        );
 
         state
             .forms
@@ -985,6 +1024,16 @@ fn r1651_the_pin_a_node_shows_is_derived_from_the_form_it_holds() {
 
         assert!(listening(&state), "giving it an endpoint opens the pin");
         assert!(!warned(&state), "and retires the warning it raised");
+        // ★★★★★ R1927 — and it RAISES the other one, which is a real finding
+        // and not an artefact of this edit: S-01 dials R-01 and nothing dials
+        // S-01, so the moment it has somewhere to listen it is a service the
+        // drawing shows nobody using. One edit, one finding retired and one
+        // raised — a screen that only asserted the retirement would have been
+        // describing half of what it did.
+        assert!(
+            undialled(&state),
+            "and raises the model's own, because nothing here dials it"
+        );
         let transport = state
             .doc
             .borrow()

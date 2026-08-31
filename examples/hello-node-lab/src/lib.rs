@@ -2254,6 +2254,21 @@ impl LabState {
         // the list must come from one — the same reason `problems` renders
         // `defects` rather than re-deriving it.
         let mut seen: Vec<(String, ConfigForm)> = Vec::new();
+        // ★★★★★ R1927 — the framework's answers for the WHOLE graph, asked
+        // ONCE. [`Document::warnings`] is the call the reference has no
+        // equivalent of — there the badge is decided inside the node widget, so
+        // *what is wrong on this canvas* has to be assembled by whoever wants
+        // it — and this is the consumer that would otherwise have left it
+        // driven by a proof alone. Asking node by node inside the loop below
+        // would also be this screen re-deriving the list the crate already
+        // publishes, which is the R1717 shape this function exists to avoid.
+        let said: BTreeMap<NodeId, String> = self
+            .doc
+            .borrow()
+            .warnings(ROOT)
+            .into_iter()
+            .map(|held| (held.node, held.sentence))
+            .collect();
         for node in self.cards() {
             let name = self.name_of(node);
             // ★★ R1716 — the form the screen SHOWS. A gate over the stored half
@@ -2288,6 +2303,14 @@ impl LabState {
                     .is_some_and(|f| !f.value().trim().is_empty());
                 if self.role_of(node).is_some_and(Role::accepts) && !listens {
                     found.push((name.clone(), Finding::NothingListening));
+                }
+                // ★★★★★ R1927 — **the framework's own answer**, folded into the
+                // one walk rather than computed a second time here. The rule
+                // lives on the kind because it is a fact about this node in
+                // this graph; what belongs to the screen is only where to put
+                // the sentence.
+                if let Some(sentence) = said.get(&node) {
+                    found.push((name.clone(), Finding::Unwired(sentence.clone())));
                 }
                 if form
                     .field("discovery.multicast.enabled")
@@ -2499,6 +2522,13 @@ enum Finding {
     /// An address somebody wrote that nothing on this canvas listens on, so the
     /// drawing is no longer the whole picture.
     DialsOutside(String),
+    /// ★★★★★ R1927 — what the node's own KIND says is questionable about it,
+    /// carried verbatim.
+    ///
+    /// The sentence is the framework's answer, not this screen's: a second
+    /// wording here would be a second statement about one finding, free to
+    /// disagree with the one a consumer of the model reads.
+    Unwired(String),
     /// ★★★★★ R1818 — **a value the schema says is unique, held by more than one
     /// card.**
     ///
@@ -2549,7 +2579,12 @@ impl Finding {
     fn blocks(&self) -> bool {
         match self {
             Self::Value(defect) => defect.blocks(),
-            Self::NothingListening | Self::DiscoveryOn | Self::DialsOutside(_) => false,
+            Self::NothingListening
+            | Self::DiscoveryOn
+            | Self::DialsOutside(_)
+            // R1927 — the same class as `DialsOutside` and for the same
+            // reason: it says the drawing is partial, not that it is wrong.
+            | Self::Unwired(_) => false,
             // The two that BLOCK, and they block for one reason stated two
             // ways: what the graph says would happen cannot happen. A name two
             // nodes answer to does not name one node, so a launch acts on
@@ -2567,6 +2602,8 @@ impl Finding {
         match self {
             Self::Value(defect) => defect.sentence(),
             Self::NothingListening => "nothing is listening, so no node can dial it".to_owned(),
+            // R1927 — the framework's sentence, verbatim.
+            Self::Unwired(said) => said.clone(),
             Self::DiscoveryOn => {
                 "discovery is on, so links may appear that nobody authored".to_owned()
             }
@@ -3663,6 +3700,15 @@ struct CardShape {
     badge: Rect,
     /// The badge's label, relative to `rect`.
     badge_text: Rect,
+    /// ★★★★★ R1927 — the ISSUE DOT's seat, relative to `rect`.
+    ///
+    /// Always reserved, drawn only when this card has a problem. Reserved
+    /// rather than inserted, because a header whose identity label changed
+    /// width the moment a warning appeared would move text under a reader's
+    /// eye for a reason that has nothing to do with the text — and this
+    /// screen's paint sweep asserts that nothing a card draws leaves the card,
+    /// which conditional geometry is the usual way to break.
+    issue: Rect,
     /// The face the identity label is drawn at — scaled, so it shrinks with
     /// the diagram it belongs to.
     id_font: u32,
@@ -3818,13 +3864,22 @@ fn card_shape_at(state: &LabState, node: NodeId, zoom: u32) -> Option<CardShape>
     let badge_w = scaled(38).max(10);
     let badge_font = canvas_font_by(8, zoom);
     let badge_line = line_box(badge_font);
+    // ★ R1927 — the issue dot's size, scaled like everything else on a card:
+    // it is part of the diagram, not chrome over it.
+    let dot = scaled(7).max(3);
     Some(CardShape {
         rect: Rect::new(x, y, w, content_bottom + 3),
         id: Rect::new(
             pad,
             id_top,
-            w.saturating_sub(pad * 2 + badge_w).max(8),
+            w.saturating_sub(pad * 2 + badge_w + dot + gap).max(8),
             id_line,
+        ),
+        issue: Rect::new(
+            w.saturating_sub(badge_w + pad / 2 + dot + gap),
+            id_top + id_line.saturating_sub(dot) / 2,
+            dot,
+            dot,
         ),
         badge: Rect::new(
             w.saturating_sub(badge_w + pad / 2),
@@ -5773,6 +5828,13 @@ fn gate_rect(state: &LabState) -> Rect {
 const GATE_TOP_H: u32 = 54;
 /// One problem line.
 const GATE_LINE_H: u32 = 20;
+/// ★★★★★ R1927 — the face the verdict and every problem line are set in.
+///
+/// Named because three places wrote `9` and a fourth wrote the `13` that was
+/// meant to hold it — and `line_box(9)` is 15, so all three boxes were two
+/// pixels short of their own descenders for the panel's whole life. A face
+/// with a name is a face the box beside it can be derived from.
+const GATE_LINE_FONT: u32 = 9;
 /// How far the panel floats from the canvas edge.
 const GATE_MARGIN: u32 = 12;
 
@@ -8620,6 +8682,9 @@ fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
     // together would make "found" mean "selected" and lose whichever a reader
     // asked for last.
     let hits = found_nodes(state);
+    // ★★★★★ R1927 — which cards have a problem, and whether the worst of it
+    // blocks, worked out ONCE for the whole canvas.
+    let troubled = troubled_cards(state);
     for node in state.cards() {
         let Some(shape) = card_shape(state, node) else {
             continue;
@@ -8673,6 +8738,29 @@ fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
             shape.badge_font,
             role_ink(role),
         ));
+        // ★★★★★ R1927 — **the behaviour canon's per-node issue dot**, which this
+        // screen did not have. There the card carries a small round mark
+        // whenever the validation names that node, coloured by whether what it
+        // named blocks; here the same, and the colour is the framework's
+        // blocking/non-blocking split rather than a second rule.
+        //
+        // Read from `troubled`, which is `problems()` — the ONE walk this
+        // screen already renders its panel and its jump from — indexed once
+        // ABOVE this loop. Asking per card would be a full walk of every
+        // finding for every card drawn, and a second walk here is exactly the
+        // shape R1717's note on that function refuses.
+        if let Some(&blocks) = troubled.get(&node) {
+            parts.push(quiet(
+                box_at(
+                    &format!("lab.node.{name}.issue"),
+                    shape.issue,
+                    if blocks { ink.err } else { ink.warn },
+                    Some(ink.surface),
+                    shape.issue.w / 2,
+                ),
+                Silence::part_of(format!("lab.node.{name}")),
+            ));
+        }
         for ((key, value), (key_rect, value_rect)) in rows.iter().zip(shape.rows.iter()) {
             parts.push(label(key.clone(), *key_rect, shape.row_font, ink.text_3));
             // The value column holds user data — an endpoint, a key
@@ -8733,6 +8821,32 @@ fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
         children.extend(canvas_pins(state, node, shape.rect, role, ink));
     }
     children
+}
+
+/// ★★★★★ R1927 — **which cards have a problem, and whether the worst of each
+/// blocks** — the whole canvas in one walk.
+///
+/// A card is absent from the map when nothing is wrong with it, present with
+/// `false` when only non-blocking findings name it, and present with `true`
+/// when at least one blocking finding does. Three answers rather than a bool,
+/// because the canon's dot is coloured by exactly that distinction and a bool
+/// would make "no problem" and "a warning" the same mark.
+///
+/// ⚠ Written over the whole SET rather than per card on purpose. The first
+/// draft took a `node` and filtered [`LabState::problems`] for it, which is one
+/// complete walk of every finding **per card drawn** — quadratic in the graph,
+/// and invisible at the eight cards the specification opens with. The gate
+/// panel, the jump and the dots are all renderings of one walk (R1717); asking
+/// that walk once per mark is that same defect wearing the correct answer.
+fn troubled_cards(state: &LabState) -> BTreeMap<NodeId, bool> {
+    let mut worst: BTreeMap<NodeId, bool> = BTreeMap::new();
+    for problem in state.problems() {
+        if let Some(node) = problem.node {
+            let held = worst.entry(node).or_insert(false);
+            *held = *held || problem.blocks;
+        }
+    }
+    worst
 }
 
 /// A node's pins. Their appearance **is** the rule the legend states: filled =
@@ -8898,11 +9012,22 @@ fn canvas_overlays(state: &LabState, ink: Ink) -> Vec<Scene> {
         Some(ink.outline_2),
         10,
     ));
+    // ★★★★★ R1927 — every box in this panel is as tall as the face it holds,
+    // `line_box` and not a written-down 13. All three were 13 while a 9-pixel
+    // face reserves 15 and an 11-pixel one 18, so **every line this panel has
+    // ever drawn** was in a box too short for its own descenders — and the
+    // defect was invisible in the round-level number because it scales with how
+    // many findings the graph has. This round added a seventh finding, the
+    // sweep's short-run count rose by exactly the lines it added, and that is
+    // what pointed here. The seats (10 / 28 / 48) and the 20-pixel pitch are
+    // unchanged and still hold the taller boxes: R1874's lesson is that a box
+    // consulting its face forces the row around it to, and here the row was
+    // already generous enough.
     children.push(quiet(
         tagged_label(
             "lab.gate.head",
             "pre-launch check",
-            Rect::new(gate.x + 12, gate.y + 10, 150, 13),
+            Rect::new(gate.x + 12, gate.y + 10, 150, line_box(FONT_SMALL)),
             FONT_SMALL,
             ink.text,
         ),
@@ -8912,8 +9037,13 @@ fn canvas_overlays(state: &LabState, ink: Ink) -> Vec<Scene> {
         tagged_label(
             "lab.gate.verdict",
             verdict.sentence(),
-            Rect::new(gate.x + 12, gate.y + 28, gate.w - 24, 13),
-            9,
+            Rect::new(
+                gate.x + 12,
+                gate.y + 28,
+                gate.w - 24,
+                line_box(GATE_LINE_FONT),
+            ),
+            GATE_LINE_FONT,
             if verdict.may_launch() {
                 ink.ok
             } else {
@@ -8930,7 +9060,7 @@ fn canvas_overlays(state: &LabState, ink: Ink) -> Vec<Scene> {
             gate.x + 12,
             gate.y + 48 + u32::try_from(n).unwrap_or(0) * GATE_LINE_H,
             gate.w - 24,
-            13,
+            line_box(GATE_LINE_FONT),
         )
     };
     for (n, (blocks, sentence)) in shown.iter().enumerate() {
@@ -8938,7 +9068,7 @@ fn canvas_overlays(state: &LabState, ink: Ink) -> Vec<Scene> {
             &format!("lab.gate.line.{n}"),
             sentence.clone(),
             line_at(n),
-            9,
+            GATE_LINE_FONT,
             if *blocks { ink.err } else { ink.warn },
         ));
     }
@@ -8948,7 +9078,7 @@ fn canvas_overlays(state: &LabState, ink: Ink) -> Vec<Scene> {
             "lab.gate.more",
             format!("+{hidden} more — the verdict counts all of them"),
             line_at(shown.len()),
-            9,
+            GATE_LINE_FONT,
             ink.text_3,
         ));
     }
@@ -10363,6 +10493,12 @@ const FIELDS: &[SchemaField] = &{
         // BEFORE the hand lets go, which is the whole difference from finding
         // out by dropping.
         SchemaField::new("rewire", "json"),
+        // ★★★★★ R1927 — what is wrong with each card: the MODEL's own sentence
+        // where it has one, whether this screen's walk names the card at all,
+        // and whether the worst of it blocks. Published so the mark on the
+        // canvas and the line in the gate panel can be checked against ONE
+        // answer instead of two.
+        SchemaField::new("wrong", "json"),
         // ★★★★★ R1926 — the colour every socket type of this taxonomy is drawn
         // in, and the colour each pin on the canvas takes from it. Published so
         // a client reads the derivation instead of re-implementing it — the
@@ -10908,6 +11044,7 @@ impl ExternalIntrospect for LabOracle {
             "rewire" => Ok(IntrospectValue::Json(rewire_wire(state))),
             "sections" => Ok(IntrospectValue::Json(sections_wire(state))),
             "inks" => Ok(IntrospectValue::Json(inks_wire(state))),
+            "wrong" => Ok(IntrospectValue::Json(wrong_wire(state))),
             // ★ R1742 — the SAME value the host publishes for this section, so
             // "one build, two placements" is a fact a client can check rather
             // than a claim this file makes.
@@ -16556,6 +16693,41 @@ fn accepts_wire(state: &Rc<LabState>) -> serde_json::Value {
         })
         .collect();
     serde_json::json!({ "bodies": rows })
+}
+
+/// ★★★★★ R1927 — **what is wrong with each card**, from the two places that can
+/// answer, side by side.
+///
+/// `said` is the FRAMEWORK's — `Document::warning`, the kind's own judgement
+/// about this node in this graph, carried verbatim. `problem` and `blocks` are
+/// this screen's walk, which folds that answer in among its own findings.
+///
+/// Both, because they answer different questions and a reader has to be able to
+/// tell them apart: a card can have a problem this screen found and the model
+/// knows nothing about, and the mark on the canvas is about the second column
+/// while the census rows this round closes are about the first. Publishing only
+/// one would make the walk that checks the mark unable to say which it checked.
+fn wrong_wire(state: &Rc<LabState>) -> serde_json::Value {
+    let troubled = troubled_cards(state);
+    let rows: Vec<serde_json::Value> = state
+        .cards()
+        .into_iter()
+        .map(|node| {
+            let said = state
+                .doc
+                .borrow()
+                .warning(ROOT, node)
+                .map(|held| held.sentence);
+            let worst = troubled.get(&node).copied();
+            serde_json::json!({
+                "card": state.name_of(node),
+                "said": said,
+                "problem": worst.is_some(),
+                "blocks": worst.unwrap_or(false),
+            })
+        })
+        .collect();
+    serde_json::json!({ "cards": rows })
 }
 
 /// A [`Tint`] as the six hex digits every other colour on this wire is written
