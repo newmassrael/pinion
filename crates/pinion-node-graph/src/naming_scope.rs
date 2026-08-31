@@ -113,7 +113,16 @@ impl<K: NodeKind> Document<K> {
             Some(held) => match &held.body {
                 NodeBody::Kind(_) => K::naming(),
                 // A caption, not an address.
-                NodeBody::Frame => Naming::Free,
+                //
+                // ★ R1934 — a **reroute** is `Free` for the same reason and on
+                // measured evidence, not by analogy. R1932's own census of all
+                // fourteen overriders of the reference's name-validator hook
+                // found four that suppress the rule entirely, and **both of the
+                // engine's reroute classes are among them** — each handing back
+                // a validator that accepts everything, carrying the same
+                // copy-pasted remark about duplicates being allowed. A point on
+                // a wire is not somewhere a value is addressed from.
+                NodeBody::Frame | NodeBody::Reroute => Naming::Free,
                 // An interface end, a group instance and a delay are all
                 // addressed by name somewhere — the tree they belong to is the
                 // scope, which is the supplied answer.

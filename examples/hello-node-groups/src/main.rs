@@ -976,6 +976,7 @@ fn body_name(body: &NodeBody<Op>) -> String {
         NodeBody::Interface(InterfaceSide::Output) => "interface:output".to_owned(),
         NodeBody::Frame => "frame".to_owned(),
         NodeBody::Delay(ty) => format!("delay:{ty:?}"),
+        NodeBody::Reroute => "reroute".to_owned(),
     }
 }
 
@@ -1007,7 +1008,13 @@ fn node_scene(
         // A frame is not a card: it is drawn by `frame_scene`, behind
         // everything, at an extent DERIVED from what it contains (R1589), so
         // the canvas loop never reaches this arm for one.
-        NodeBody::Interface(_) | NodeBody::Frame => ColorRole::SurfaceContainerLow,
+        // R1934 — a reroute joins these two: it is a point on a wire and not a
+        // card, so it is drawn in the recessive role for the reason a frame is.
+        // This demo has no gesture that makes one, so the arm is reached only
+        // by a document loaded from elsewhere.
+        NodeBody::Interface(_) | NodeBody::Frame | NodeBody::Reroute => {
+            ColorRole::SurfaceContainerLow
+        }
         NodeBody::Kind(_) => ColorRole::SurfaceContainerHigh,
     });
     let label = theme.resolve(ColorRole::OnSurface);

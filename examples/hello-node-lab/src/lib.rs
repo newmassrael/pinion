@@ -10989,6 +10989,26 @@ const FIELDS: &[SchemaField] = &{
         // refusal `expose_pin` makes and the list below are the same fact, so a
         // client cannot be offered a type the edit would turn away.
         SchemaField::new("admits", "json"),
+        // ★★★★★ R1934 — put a bend in the wires leaving one pin. The address
+        // vocabulary is `split_pin`'s again, and the refusal is this round's:
+        // a bend goes on the wires LEAVING a pin, so an `accept` is turned
+        // away with the reason rather than silently doing nothing.
+        SchemaField::action_with(
+            "insert_reroute",
+            "string",
+            ArgForm::Delimited(','),
+            const {
+                &[
+                    SchemaArg::key("node", "string", "nodes"),
+                    SchemaArg::one_of("address", "string", &PIN_ADDRESSES),
+                ]
+            },
+        ),
+        // ★★★★★ R1934 — which things on the canvas a wire passes THROUGH, with
+        // the two ends and what the bend is carrying. Published because a
+        // client drawing a bend has to tell an undecided one from a decided
+        // one, and because the ends are what a drag needs to pick from.
+        SchemaField::new("passing", "json"),
         // ★★★★★ R1885 — put a card on another build. The build comes from a
         // CLOSED vocabulary and it is built from `Stack::ALL` rather than
         // spelled here, so the words an agent is offered cannot drift from the
@@ -11136,6 +11156,7 @@ impl ExternalIntrospect for LabOracle {
             "port_names" => Ok(IntrospectValue::Json(port_names_wire(state))),
             "naming" => Ok(IntrospectValue::Json(naming_wire(state))),
             "admits" => Ok(IntrospectValue::Json(admits_wire(state))),
+            "passing" => Ok(IntrospectValue::Json(passing_wire(state))),
             // ★ R1742 — the SAME value the host publishes for this section, so
             // "one build, two placements" is a fact a client can check rather
             // than a claim this file makes.
@@ -11996,6 +12017,14 @@ impl ExternalIntrospect for LabOracle {
                 })?;
                 let node = Self::card(&state, name.trim())?;
                 expose_pin(&state, node, address.trim()).map(IntrospectValue::Text)
+            }
+            "insert_reroute" => {
+                let raw = Self::text(&args)?;
+                let (name, address) = raw.split_once(',').ok_or_else(|| {
+                    InvokeError::rejected(format!("{raw:?} is not <card>,<address>"))
+                })?;
+                let node = Self::card(&state, name.trim())?;
+                insert_reroute(&state, node, address.trim()).map(IntrospectValue::Text)
             }
             // ★ R1681 — either layer, told apart by the `>`. A reported link
             // has no id to name it by, so the pair is the name; refusing to let
@@ -16986,6 +17015,108 @@ fn admits_wire(state: &Rc<LabState>) -> serde_json::Value {
             }))
             .collect::<Vec<_>>(),
     })
+}
+
+/// ★★★★★ R1934 — **put a bend in every wire leaving this pin.**
+///
+/// The lab's reading of the DCC's `add_reroute`, whose gesture is a line drawn
+/// across a canvas. The geometry belongs to the screen, so what is published
+/// here is the operator's own **unit of work**: its four behaviours are keyed
+/// on the SOURCE socket — one reroute per source socket however many wires were
+/// cut — so naming that socket is naming exactly one of its groups.
+///
+/// The crossing point is the midway between the two cards, which is where a
+/// person drawing the line would have crossed it. A caller wanting a different
+/// place moves the reroute afterwards, the same way a card is moved.
+fn insert_reroute(
+    state: &Rc<LabState>,
+    node: NodeId,
+    address: &str,
+) -> Result<String, InvokeError> {
+    let name = state.name_of(node);
+    let (side, path) = pin_address(address.trim())?;
+    if side != Side::Output {
+        return Err(InvokeError::rejected(format!(
+            "{address:?} is a pin a wire ARRIVES at; a bend goes on the wires \
+             LEAVING a pin, so name a `dial`"
+        )));
+    }
+    let mut doc = state.doc.borrow_mut();
+    let index = doc
+        .index_of(ROOT, node, side, &path)
+        .ok_or_else(|| InvokeError::rejected(format!("{name} has no pin at {address:?}")))?;
+    let source = Socket::new(node, index);
+    // Every wire leaving that pin, with the point a line drawn between the two
+    // cards would have crossed it at.
+    let cuts: Vec<(pinion_node_graph::LinkId, i32, i32)> = doc
+        .tree(ROOT)
+        .map(|host| {
+            host.links()
+                .iter()
+                .filter(|link| link.from == source)
+                .filter_map(|link| {
+                    let from = host.node(link.from.node)?;
+                    let to = host.node(link.to.node)?;
+                    Some((
+                        link.id,
+                        i32::midpoint(from.x, to.x),
+                        i32::midpoint(from.y, to.y),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let made = doc
+        .insert_reroutes(ROOT, &cuts)
+        .map_err(|why| InvokeError::rejected(why.to_string()))?;
+    let point = *made
+        .made
+        .first()
+        .ok_or_else(|| InvokeError::rejected("nothing was cut".to_owned()))?;
+    let count = made.rerouted.len();
+    drop(doc);
+    let called = state.name_of(point);
+    let said = format!("{count} wire(s) leaving {name}.{address} now bend at {called}");
+    state.say(Utterance::done(said.clone()));
+    Ok(said)
+}
+
+/// ★★★★★ R1934 — **which things on the canvas a wire passes THROUGH**, and by
+/// which two pins.
+///
+/// The engine's hook is named for drawing and none of its seven call sites
+/// draws: they ask it to decide which end of the point a drag should take, to
+/// spread a hover along the chain, and to keep the point's pins out of node
+/// alignment. So what a client needs published is the pair of ends, and
+/// `carries` beside it — because a bend that has not been decided yet is a real
+/// state and a client drawing it has to be able to tell it from a decided one.
+fn passing_wire(state: &Rc<LabState>) -> serde_json::Value {
+    let doc = state.doc.borrow();
+    let every: Vec<NodeId> = doc
+        .tree(ROOT)
+        .map(|host| host.nodes().map(|held| held.id).collect())
+        .unwrap_or_default();
+    let rows: Vec<serde_json::Value> = every
+        .into_iter()
+        .filter_map(|node| {
+            let through = doc.passing(ROOT, node)?;
+            let carries = doc
+                .signature(ROOT, node)
+                .and_then(|signature| signature.inputs.first().map(|port| port.flow.clone()))
+                .map_or("none", |flow| match flow {
+                    pinion_node_graph::Flow::Undecided => "undecided",
+                    pinion_node_graph::Flow::Control => "control",
+                    pinion_node_graph::Flow::Value { .. } => "value",
+                });
+            Some(serde_json::json!({
+                "card": state.name_of(node),
+                "in": through.inbound,
+                "out": through.outbound,
+                "carries": carries,
+            }))
+        })
+        .collect();
+    serde_json::json!({ "through": rows })
 }
 
 /// ★★★★★ R1932 — **what each thing on the canvas requires of its own name.**

@@ -97,10 +97,10 @@
       "verdict": "app-content"
     },
     "add_reroute": {
-      "covered_by": "no reroute body: a transparent 1-in/1-out node that inherits its type",
+      "covered_by": "Document::insert_reroutes (R1934) — the crossings a gesture made become reroutes on those wires. ⚠ The pre-R1934 reason described a BODY and this row is not about one: measured from the operator's own source it takes the POLYLINE the pointer drew, and its four behaviours are deduplication PER SOURCE SOCKET (its own comment says reusing one reroute for connected intersections is the point), keeping each cut link and re-pointing its source rather than deleting and remaking it, muting the new feed exactly when every cut link was muted, and landing at the average of that group's own crossings. All four are reproduced. ★ The geometry deliberately is not: which drawn curve a drawn line crosses is a fact about the screen, so the crossings arrive as an argument — and the frame a new reroute joins is derived from the cut wires' own endpoints (common_frame) rather than by hit-testing a frame's drawn bounds, which is the one question this crate cannot ask at all",
       "mechanism": "cpp",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::dcc_add_reroute",
+      "verdict": "have"
     },
     "add_simulation_zone": {
       "covered_by": "a ZONE KIND of the DCC's geometry-node content; the mechanism is add_zone",
@@ -2229,7 +2229,7 @@
       "verdict": "absent"
     },
     "MaterialEditor::ConvertNamedRerouteToReroute": {
-      "covered_by": "reroutes, named and not, are both absent",
+      "covered_by": "a NAMED reroute is absent, so there is no conversion between the two forms. ⚠ Half of this row's pre-R1934 reason ('reroutes, named and not, are both absent') stopped being true in R1934, which built the plain one (NodeBody::Reroute) — corrected by the round that falsified it rather than left for the next census to trip over",
       "mechanism": "MaterialEditor",
       "proven_by": "",
       "verdict": "absent"
@@ -2241,7 +2241,7 @@
       "verdict": "app-content"
     },
     "MaterialEditor::ConvertRerouteToNamedReroute": {
-      "covered_by": "reroutes, named and not, are both absent",
+      "covered_by": "a NAMED reroute is absent, so there is no conversion between the two forms. ⚠ Half of this row's pre-R1934 reason ('reroutes, named and not, are both absent') stopped being true in R1934, which built the plain one (NodeBody::Reroute) — corrected by the round that falsified it rather than left for the next census to trip over",
       "mechanism": "MaterialEditor",
       "proven_by": "",
       "verdict": "absent"
@@ -2469,7 +2469,7 @@
       "verdict": "have"
     },
     "MaterialEditor::SelectNamedRerouteDeclaration": {
-      "covered_by": "a NAMED reroute — a wire endpoint referenced by name from elsewhere in the graph, so a value crosses the canvas without an edge. `add_reroute` is absent too and this is the stronger form of it",
+      "covered_by": "a NAMED reroute — a wire endpoint referenced by name from elsewhere in the graph, so a value crosses the canvas without an edge. ⚠ Its second clause said `add_reroute` was absent too; R1934 built that one, so what remains here is the stronger form ALONE: the plain reroute is a node on the wire, and this is a node that is on no wire at all and is reached by NAME — which R1934's NodeBody::Reroute deliberately cannot be, being Naming::Free precisely because a point on a wire is not an address",
       "mechanism": "MaterialEditor",
       "proven_by": "",
       "verdict": "absent"
@@ -3129,10 +3129,10 @@
       "verdict": "host-framework"
     },
     "node::ShouldDrawNodeAsControlPointOnly": {
-      "covered_by": "no reroute body: a transparent 1-in/1-out node that inherits its type",
+      "covered_by": "Document::passing + NodeKind::passing (R1934) — a node says a wire runs THROUGH it and names the two ends. ★★★★★ Measured across all seven of the hook's call sites, NOT ONE of them draws anything: three pick which end of the point a drag should take (a node spawned under a dragged wire resumes from the far end; a drag hovering it picks the end that maximises the chance of a legal connection; an undecided drag picks the end the pointer is heading for), one spreads a hover along the chain by recursing across each point, one keeps the point's pins out of node alignment because a point on a wire is not where a wire is going, and one asserts it as a precondition. So the capability is 'a wire passes through here' and the hook's NAME is the one thing about it that is wrong. Two sources answer here because the reference needs two: of its three overriders, two are its reroute classes and the third is an application node class that answers from the node it is holding, which no editor-side taxonomy could have answered for it",
       "mechanism": "graph-node",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_node_should_draw_node_as_control_point_only",
+      "verdict": "have"
     },
     "node::ShouldMergeChildGraphs": {
       "covered_by": "the engine's visual script/asset subject matter",

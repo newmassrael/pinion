@@ -221,6 +221,17 @@
       ]
     },
     {
+      "name": "debt-a-second-windows-surface-is-presented-before-it-is-configured",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links analyzer-debt-repayment-loop"
+      ]
+    },
+    {
       "name": "debt-a-status-slot-shows-one-sentence-and-hides-the-other",
       "substituted": false,
       "blocked_by": "unmeasured",

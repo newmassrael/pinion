@@ -274,6 +274,18 @@ impl<K: NodeKind> Evaluator<'_, K> {
                             .cloned(),
                     ]
                 }
+                // ★★★★★ R1934 — a reroute computes nothing: what arrives at its
+                // input leaves by its output, which is exactly what
+                // `passed_through` derives for a bypassed node. Routing it
+                // through the SAME derivation rather than writing a one-line
+                // identity here is what stops the two from drifting — and the
+                // derivation is already general enough, because a reroute's
+                // signature is one port each side of the same flow.
+                //
+                // The engine reaches the same result by deleting the node
+                // before compilation (`ExpandNode` splices its two pin nets
+                // together); the DCC's evaluator likewise never sees one.
+                NodeBody::Reroute => self.passed_through(descent, node, depth, &signature),
                 NodeBody::Group(definition) => {
                     let bindings = self.node_inputs(descent, node, depth);
                     let inner = Descent {

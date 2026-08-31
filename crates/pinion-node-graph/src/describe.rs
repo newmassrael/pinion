@@ -30,6 +30,29 @@
 use crate::model::{Document, Flow, Multiplicity, NodeId, NodeKind, Side, TreeId};
 use crate::split::PortPath;
 
+/// ★★★★★ R1934 — what crosses a port, as the four answers there actually are.
+///
+/// The vocabulary [`Flow`] admits, projected for a reader: a value (with the
+/// type's own sentence when the taxonomy has one), control, or nothing decided
+/// yet. Kept beside [`PortTooltip`] rather than inside [`Flow`] because a flow
+/// carries the *type* and this carries what a person is told about it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Carrying {
+    /// A value. `described` is [`NodeKind::type_description`] — `None` when the
+    /// taxonomy says nothing about the type, which is **not** the same fact as
+    /// carrying control and is no longer rendered as though it were.
+    Value {
+        /// What the type says about itself, when it says anything.
+        described: Option<String>,
+    },
+    /// Control: the edge says *when*, never *what*.
+    Control,
+    /// R1934 — nothing has decided yet. Reached by a [`Flow::Undecided`] port,
+    /// which today means a [`NodeBody::Reroute`](crate::NodeBody::Reroute)
+    /// whose chain nothing has wired to.
+    Undecided,
+}
+
 /// ★★★★★ R1916 — everything a port can say about itself, in pieces.
 ///
 /// Every field is a fact the reference's own tooltip either loses in a string
@@ -38,9 +61,21 @@ use crate::split::PortPath;
 pub struct PortTooltip {
     /// The port's name, as the renderer draws it.
     pub name: String,
-    /// What the TYPE says it carries ([`NodeKind::type_description`]), or
-    /// `None` for a control port or a taxonomy that says nothing.
-    pub carries: Option<String>,
+    /// ★★★★★ R1934 — **what crosses this port**, said as a closed vocabulary
+    /// rather than as a string that might be missing.
+    ///
+    /// This field was `Option<String>` from R1916 to R1934 and the absence had
+    /// **two meanings at once**: a control port, and a value port whose
+    /// taxonomy answered no [`NodeKind::type_description`]. [`Self::sentence`]
+    /// resolved that ambiguity by picking one — it rendered *both* as "accepts
+    /// control" — so a value port with an undescribed type told every reader
+    /// it carried control. Measured on this crate's own test taxonomy at
+    /// R1934, and asserted since by
+    /// `r1934_an_undescribed_value_port_does_not_claim_to_carry_control`.
+    ///
+    /// The repair is R1928's rule applied again: **when there are more than
+    /// two answers, the answer is a type and not an `Option`.**
+    pub carries: Carrying,
     /// The PORT's own sentence ([`Port::description`](crate::Port::description)),
     /// or `None`.
     pub says: Option<String>,
@@ -78,14 +113,37 @@ impl PortTooltip {
             Side::Output => "gives",
         };
         match (&self.carries, self.multiplicity) {
-            (Some(what), Multiplicity::One) => {
+            (
+                Carrying::Value {
+                    described: Some(what),
+                },
+                Multiplicity::One,
+            ) => {
                 let _ = write!(out, " — {facing} one {what}");
             }
-            (Some(what), Multiplicity::Many) => {
+            (
+                Carrying::Value {
+                    described: Some(what),
+                },
+                Multiplicity::Many,
+            ) => {
                 let _ = write!(out, " — {facing} any number of {what}");
             }
-            (None, _) => {
+            // R1934 — a value port whose taxonomy describes nothing still says
+            // it carries a VALUE. Until this round it said "control".
+            (Carrying::Value { described: None }, Multiplicity::One) => {
+                let _ = write!(out, " — {facing} one value");
+            }
+            (Carrying::Value { described: None }, Multiplicity::Many) => {
+                let _ = write!(out, " — {facing} any number of values");
+            }
+            (Carrying::Control, _) => {
                 let _ = write!(out, " — {facing} control");
+            }
+            // R1934 — the undecided port. It is `One` on both sides, so there
+            // is no plural form to write.
+            (Carrying::Undecided, _) => {
+                let _ = write!(out, " — {facing} whatever the first wire decides");
             }
         }
         if let Some(says) = &self.says {
@@ -124,8 +182,11 @@ impl<K: NodeKind> Document<K> {
         let port = self.port_at(tree, node, side, at).ok()?;
         let multiplicity = port.flow.multiplicity(side);
         let carries = match &port.flow {
-            Flow::Value { ty, .. } => K::type_description(ty),
-            Flow::Control => None,
+            Flow::Value { ty, .. } => Carrying::Value {
+                described: K::type_description(ty),
+            },
+            Flow::Control => Carrying::Control,
+            Flow::Undecided => Carrying::Undecided,
         };
         // ★ Wiring is asked of the RESOLVED port, because that is what a wire
         // lands on. An address the signature does not currently expose has

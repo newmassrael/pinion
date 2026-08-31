@@ -286,6 +286,14 @@ pub enum NoSuchMember {
         /// How many levels in the path had been taken when it did.
         at: usize,
     },
+    /// ★ R1934 — a level went through a port **nothing has decided yet**, which
+    /// has no members because it does not know what it carries. Distinct from
+    /// [`ThroughControl`](Self::ThroughControl): that one is permanent, this
+    /// one ends the moment a wire decides the port.
+    ThroughUndecided {
+        /// How many levels had been taken.
+        at: usize,
+    },
     /// A level went through a type with no members.
     ThroughAtom {
         /// How many levels had been taken.
@@ -324,6 +332,7 @@ impl NoSuchMember {
         match self {
             Self::NoSuchPort { .. } => "no_such_port",
             Self::ThroughControl { .. } => "control",
+            Self::ThroughUndecided { .. } => "undecided",
             Self::ThroughAtom { .. } => "atom",
             Self::ThroughContainer { .. } => "container",
             Self::NoSuchIndex { .. } => "no_such_member",
@@ -341,6 +350,11 @@ impl core::fmt::Display for NoSuchMember {
                 f,
                 "level {at} of this path goes through a control port, which \
                  carries no value and so has no members"
+            ),
+            Self::ThroughUndecided { at } => write!(
+                f,
+                "level {at} of this path goes through a port nothing has \
+                 decided yet, so what it is made of is not known"
             ),
             Self::ThroughAtom { at, member } => write!(
                 f,
@@ -387,6 +401,21 @@ pub enum NotSplittable {
     /// not-connectable flag; here it falls out of the port's flow, which is one
     /// fact rather than two that could disagree.
     Control,
+    /// ★★★★★ R1934 — **nothing has decided what this port carries yet**, so
+    /// what it is made of is not known. A reroute's ports before a wire reaches
+    /// the chain.
+    ///
+    /// Its own arm and not [`Control`](Self::Control), for the reason
+    /// [`AlreadySplit`](Self::AlreadySplit) is not `Atom`: they are opposite
+    /// repairs. A control port will NEVER split; this one splits as soon as
+    /// something decides it, so the answer a screen should give a person is
+    /// "wire it up first" rather than "this cannot be done".
+    ///
+    /// ⚠ The engine reaches the same state and collapses it: its own bend node
+    /// answers the splittability predicate `false` unconditionally, so a bend
+    /// carrying a composite — which its pins would happily split — is refused
+    /// with the same word as one carrying an execution wire.
+    Undecided,
     /// ★★★★★ R1914 — this address is **already split**.
     ///
     /// The reference reaches the same state and cannot say so: its own
@@ -428,6 +457,7 @@ impl NotSplittable {
             Self::NoSuchNode { .. } => "no_such_node",
             Self::Address(why) => why.wire_word(),
             Self::Control => "control",
+            Self::Undecided => "undecided",
             Self::AlreadySplit => "already_split",
             Self::Wired { .. } => "wired",
             Self::Atom => "atom",
@@ -447,6 +477,11 @@ impl core::fmt::Display for NotSplittable {
                 f,
                 "a control port carries no value, so there is nothing to take \
                  apart"
+            ),
+            Self::Undecided => write!(
+                f,
+                "nothing has decided what this port carries yet, so what it is \
+                 made of is not known; wire it up first"
             ),
             Self::AlreadySplit => write!(
                 f,
@@ -555,6 +590,7 @@ impl<K: NodeKind> Document<K> {
 
         member_ports::<K>(&port).map_err(|why| match why {
             NoMembers::Control => NotSplittable::Control,
+            NoMembers::Undecided => NotSplittable::Undecided,
             NoMembers::Atom => NotSplittable::Atom,
             NoMembers::Container => NotSplittable::Container,
         })
@@ -644,6 +680,11 @@ impl<K: NodeKind> Document<K> {
 /// the silent corruption this crate spends its item edits avoiding.
 enum NoMembers {
     Control,
+    /// R1934 — nothing has decided what this port carries, so there is nothing
+    /// to take apart YET. A separate arm from [`Control`](Self::Control)
+    /// because they are opposite repairs: a control port will never split, and
+    /// an undecided one splits as soon as a wire decides it.
+    Undecided,
     Atom,
     Container,
 }
@@ -653,6 +694,7 @@ impl NoMembers {
     const fn at(self, at: usize, member: u32) -> NoSuchMember {
         match self {
             Self::Control => NoSuchMember::ThroughControl { at },
+            Self::Undecided => NoSuchMember::ThroughUndecided { at },
             Self::Atom => NoSuchMember::ThroughAtom { at, member },
             Self::Container => NoSuchMember::ThroughContainer { at },
         }
@@ -674,9 +716,18 @@ impl NoMembers {
 /// member*, and the member's own declared default is then the best answer
 /// available.
 fn member_ports<K: NodeKind>(parent: &KindPort<K>) -> Result<Vec<KindPort<K>>, NoMembers> {
-    let Flow::Value { ty, default } = &parent.flow else {
-        return Err(NoMembers::Control);
+    // ★ R1934 — three flows, three answers. Before this round the `else` said
+    // `Control` for everything that was not a value, so an UNDECIDED port —
+    // which is not control, and which will split the moment a wire decides
+    // it — was refused under the one word that means "never". A refusal whose
+    // reason is wrong is the defect this round repaired in `PortTooltip`, and
+    // an `if let ... else` is where the compiler cannot ask for the new arm.
+    let flow = match &parent.flow {
+        Flow::Value { ty, default } => (ty, default),
+        Flow::Control => return Err(NoMembers::Control),
+        Flow::Undecided => return Err(NoMembers::Undecided),
     };
+    let (ty, default) = flow;
     let mut members = match K::composition(ty) {
         Composition::Atom => return Err(NoMembers::Atom),
         Composition::Container => return Err(NoMembers::Container),

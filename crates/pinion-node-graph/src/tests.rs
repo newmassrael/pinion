@@ -10,16 +10,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Admission, AdoptError, Align, Appearance, Archive, Axis, BreakError, Breakpoints, Bringup,
-    Camera, Carried, Command, Composition, ConnectError, Control, Conversion, Crossings,
+    Camera, Carried, Carrying, Command, Composition, ConnectError, Control, Conversion, Crossings,
     Definitions, Direction, Discovery, Distribute, Document, Dropped, DuplicateError, Edge,
-    EditError, EditPath, Extent, ExtractError, Fit, ForceError, Fragment, GroupError, Grow, Halt,
-    InsertError, Instance, InterfaceSide, Item, ItemError, Layered, LinkId, LinkLayer, Machine,
-    Margin, Multiplicity, NestError, Node, NodeBody, NodeId, NodeKind, NodeSite, ObserveError,
-    Occurrence, Organic, Orphaned, ParentError, PathError, Port, PortPath, PortRef, PortSite,
-    PortValueError, ROOT, Reach, Relabelled, RelinkError, RepartitionError, Route, RunError,
-    SectionId, SelectError, Session, Severed, Sharing, Side, Socket, Stack, Standing, Stop,
-    Straighten, Stride, SwitchRefusal, Tick, Timeline, Tint, TreeId, UngroupError, Unreadable,
-    Violation, WatchError, Watches, ZoomRange, crossing,
+    EditError, EditPath, Extent, ExtractError, Fit, Flow, ForceError, Fragment, GroupError, Grow,
+    Halt, InsertError, Instance, InterfaceSide, Item, ItemError, Layered, LinkId, LinkLayer,
+    Machine, Margin, Multiplicity, Naming, NestError, Node, NodeBody, NodeId, NodeKind, NodeSite,
+    ObserveError, Occurrence, Organic, Orphaned, ParentError, PathError, Port, PortPath, PortRef,
+    PortSite, PortValueError, ROOT, Reach, Relabelled, RelinkError, RepartitionError, Route,
+    RunError, SectionId, SelectError, Session, Severed, Sharing, Side, Socket, Stack, Standing,
+    Stop, Straighten, Stride, SwitchRefusal, Tick, Timeline, Tint, TreeId, UngroupError,
+    Unreadable, Violation, WatchError, Watches, ZoomRange, crossing,
 };
 
 /// ★★★★★ R1925 — **an application that declares no two-state socket type is
@@ -4657,8 +4657,10 @@ fn r1916_a_port_says_what_it_is_for() {
         .expect("`Deep` is a port");
     assert_eq!(deep.name, "Deep");
     assert_eq!(
-        deep.carries.as_deref(),
-        Some("a pair and a number, written `head;tail`"),
+        deep.carries,
+        Carrying::Value {
+            described: Some("a pair and a number, written `head;tail`".to_owned()),
+        },
         "★ the TYPE's half, which the reference's base implementation drops",
     );
     assert_eq!(
@@ -4696,7 +4698,7 @@ fn r1916_a_port_says_what_it_is_for() {
         .document
         .port_tooltip(ROOT, carry, Side::Input, &PortPath::root(0))
         .expect("`Go` is a port");
-    assert_eq!(go.carries, None);
+    assert_eq!(go.carries, Carrying::Control);
     assert!(go.sentence().contains("control"), "{:?}", go.sentence());
 
     // ★ A type the taxonomy says nothing about answers `None` rather than an
@@ -4706,7 +4708,61 @@ fn r1916_a_port_says_what_it_is_for() {
         .document
         .port_tooltip(ROOT, carry, Side::Input, &PortPath::root(2))
         .expect("`Loose` is a port");
-    assert_eq!(loose.carries, None, "the fixture's `Bag` describes nothing");
+    assert_eq!(
+        loose.carries,
+        Carrying::Value { described: None },
+        "the fixture's `Bag` describes nothing — but it is still a VALUE port",
+    );
+}
+
+/// ★★★★★ R1934 — **an undescribed value port does not claim to carry control.**
+///
+/// The defect this asserts against is R1916's, found by R1934's opening
+/// re-measurement and not by anything that was watching. [`PortTooltip::carries`]
+/// was `Option<String>` and its absence meant two different things — a control
+/// port, and a value port whose taxonomy answered no `type_description` — while
+/// [`PortTooltip::sentence`] had to pick one, and picked control.
+///
+/// ⚠ **The assertion beside it passed the whole time.**
+/// `r1916_a_port_says_what_it_is_for` checked `loose.carries == None` and was
+/// right about the field; nothing asked what the SENTENCE built out of it said,
+/// so a reader was told the port carried control for eighteen rounds.
+/// The lesson is R1919's, in a new place: when a rendering is derived from
+/// pieces, checking the pieces is not checking the rendering.
+#[test]
+fn r1934_an_undescribed_value_port_does_not_claim_to_carry_control() {
+    let mut chain = fixture();
+    let carry = chain
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Carry), 0, 500)
+        .unwrap();
+
+    let control = chain
+        .document
+        .port_tooltip(ROOT, carry, Side::Input, &PortPath::root(0))
+        .expect("`Go` is a control port");
+    let undescribed = chain
+        .document
+        .port_tooltip(ROOT, carry, Side::Input, &PortPath::root(2))
+        .expect("`Loose` is a value port of an undescribed type");
+
+    assert_eq!(control.carries, Carrying::Control);
+    assert_eq!(undescribed.carries, Carrying::Value { described: None });
+
+    let said = undescribed.sentence();
+    assert!(
+        !said.contains("control"),
+        "★ this is the regression: {said:?} — a value port said it carried control",
+    );
+    assert!(
+        said.contains("value"),
+        "★ and it says what it does carry instead: {said:?}",
+    );
+    assert!(
+        control.sentence().contains("control"),
+        "the control port is unaffected: {:?}",
+        control.sentence(),
+    );
 }
 
 /// ★★★★★ R1916 — **a member port a split made says what IT is for**, and says
@@ -4732,8 +4788,10 @@ fn r1916_a_member_port_says_it_is_a_half() {
         "★ the member carries its own sentence, declared on the composition",
     );
     assert_eq!(
-        head.carries.as_deref(),
-        Some("two numbers written `left|right`"),
+        head.carries,
+        Carrying::Value {
+            described: Some("two numbers written `left|right`".to_owned()),
+        },
         "and the type half is the MEMBER's type, not the parent's",
     );
     assert_eq!(head.member_of, Some(PortPath::root(0).then(0)));
@@ -9128,6 +9186,17 @@ impl NodeKind for Flo {
             Self::Const(n) => format!("Const:{n}"),
             Self::Tally => "Tally".into(),
         }
+    }
+
+    /// ★★★★★ R1934 — the resting colour of a port nothing has decided yet.
+    ///
+    /// Declared HERE, on the control-plane taxonomy, because that is where the
+    /// third answer is a real one: this fixture is the only one in this file
+    /// with both flows, so "neither of the two" is a state it can reach. The
+    /// engine's graph-editor settings carry the same colour, a dark grey beside
+    /// the per-category ones.
+    fn undecided_colour() -> Option<Tint> {
+        Some(Tint::rgb(0x38, 0x32, 0x32))
     }
 
     fn inputs(&self) -> Vec<Port<Ty, Val>> {
@@ -15789,4 +15858,446 @@ fn r1885_a_taxonomy_with_no_opinion_about_pairs_admits_them_all() {
             );
         }
     }
+}
+
+// ================================================ R1934 — a bend in a wire
+
+/// ★★★★★ R1934 — **a reroute chain carries one flow, and the source decides it.**
+///
+/// Both references agree on this rule and reach it by different machinery: the
+/// DCC unions every reroute in the tree into components with a disjoint set and
+/// recomputes a stored type per component after every update; the engine
+/// propagates recursively through the chain on every connection change, with a
+/// boolean field guarding against "a loop of knots". Here it is a derivation,
+/// so there is no stored copy and nothing to run.
+///
+/// Three properties, and the third is what tells a chain-wide answer from a
+/// per-node one: a reroute in the MIDDLE of a chain has no link to the deciding
+/// port at all, and still carries what that port carries.
+#[test]
+fn r1934_a_reroute_chain_carries_one_flow_and_the_source_decides_it() {
+    let mut fix = fixture();
+    let doc = &mut fix.document;
+
+    let a = doc.add_node(ROOT, NodeBody::Reroute, 10, 10).unwrap();
+    let b = doc.add_node(ROOT, NodeBody::Reroute, 20, 10).unwrap();
+    let c = doc.add_node(ROOT, NodeBody::Reroute, 30, 10).unwrap();
+
+    // ★ Attached to nothing, the chain is undecided — and it SAYS so rather
+    // than claiming a type nothing supports. This is the one place this crate
+    // is deliberately stricter than the DCC, which keeps the last type it
+    // stored (a fresh reroute there is a colour).
+    for node in [a, b, c] {
+        let signature = doc.signature(ROOT, node).expect("a reroute has ports");
+        assert_eq!(signature.inputs.len(), 1, "one in");
+        assert_eq!(signature.outputs.len(), 1, "one out");
+        assert!(matches!(signature.inputs[0].flow, Flow::Undecided));
+        assert!(matches!(signature.outputs[0].flow, Flow::Undecided));
+    }
+
+    // A chain of three, wired to each other and to nothing else.
+    doc.connect(ROOT, Socket::new(a, 0), Socket::new(b, 0))
+        .expect("two undecided ends cross");
+    doc.connect(ROOT, Socket::new(b, 0), Socket::new(c, 0))
+        .expect("and so do the next two");
+    assert!(
+        matches!(
+            doc.signature(ROOT, b).unwrap().inputs[0].flow,
+            Flow::Undecided
+        ),
+        "a chain touching nothing decided is still undecided"
+    );
+
+    // ★★★★★ Now decide it at ONE end. Every node of the chain carries it —
+    // including `c`, which is two links away from the port that decided.
+    doc.connect(ROOT, Socket::new(fix.two, 0), Socket::new(a, 0))
+        .expect("a number reaches the chain");
+    for node in [a, b, c] {
+        let signature = doc.signature(ROOT, node).unwrap();
+        assert_eq!(
+            signature.inputs[0].flow.value_type(),
+            Some(&Ty::Number),
+            "every node of the chain carries what the source gives"
+        );
+        assert_eq!(signature.outputs[0].flow.value_type(), Some(&Ty::Number));
+    }
+
+    // ★ And it goes back to undecided when the deciding link goes, rather than
+    // remembering a type nothing supports any more.
+    let feeding = doc
+        .tree(ROOT)
+        .unwrap()
+        .links()
+        .iter()
+        .find(|link| link.from.node == fix.two && link.to.node == a)
+        .unwrap()
+        .id;
+    doc.disconnect(ROOT, feeding).expect("the link goes");
+    assert!(matches!(
+        doc.signature(ROOT, c).unwrap().inputs[0].flow,
+        Flow::Undecided
+    ));
+}
+
+/// ★★★★★ R1934 — **the source side wins**, and a sink decides only when no
+/// source does.
+///
+/// Measured on both references. The engine tries
+/// `PropagatePinTypeFromDirection(true)` — from the input — twice before ever
+/// looking the other way; the DCC computes a candidate from each side and then
+/// overwrites the sink one with the source one. A crate that took whichever
+/// arrived first would agree with them on every graph where only one side is
+/// wired, which is most of them, so this is the assertion that tells the rule
+/// from the coincidence.
+/// ⚠ The taxonomy is the **lattice** and not the default fixture, and that is
+/// forced rather than stylistic. With a taxonomy whose conversion relation is
+/// equality, a reroute the sink has already decided as `Text` simply refuses a
+/// `Number` source — correctly, and both references would too — so the
+/// precedence is unobservable there: whichever side arrives first is the only
+/// side that ever gets to answer. The lattice's relation is **asymmetric**
+/// (a scalar broadcasts into a vector; a vector does not narrow), so both wires
+/// can be present at once and the question "which one decided it" has two
+/// distinguishable answers.
+#[test]
+fn r1934_the_source_side_decides_a_reroute_before_the_sink_does() {
+    let mut doc: Document<LOp> = Document::new("lattice");
+    let bend = doc.add_node(ROOT, NodeBody::Reroute, 100, 0).unwrap();
+    let sink = doc
+        .add_node(ROOT, NodeBody::Kind(LOp::Sink), 300, 0)
+        .unwrap();
+    let level = doc
+        .add_node(ROOT, NodeBody::Kind(LOp::Level(4)), 0, 0)
+        .unwrap();
+
+    // Sink first: it takes a vector, so with nothing else attached that is what
+    // the chain carries.
+    doc.connect(ROOT, Socket::new(bend, 0), Socket::new(sink, 0))
+        .expect("an undecided end is taken by everything");
+    assert_eq!(
+        doc.signature(ROOT, bend).unwrap().outputs[0]
+            .flow
+            .value_type(),
+        Some(&LTy::Vector),
+        "with no source, the sink decides"
+    );
+
+    // ★★★★★ Now a SOURCE arrives, carrying the other type. The wire is legal
+    // because a scalar broadcasts into a vector, so BOTH wires are present —
+    // and the reroute now carries the SOURCE's type, not the sink's.
+    doc.connect(ROOT, Socket::new(level, 0), Socket::new(bend, 0))
+        .expect("a scalar broadcasts into an undecided end");
+    assert_eq!(
+        doc.signature(ROOT, bend).unwrap().inputs[0]
+            .flow
+            .value_type(),
+        Some(&LTy::Scalar),
+        "★ the source side wins over a sink that was already there"
+    );
+
+    // ★ And the graph is still well-formed: the wire the sink decided is now a
+    // scalar reaching a vector port, which is the conversion the lattice
+    // allows. Without this the assertion above would hold for an answer that
+    // had simply broken the other wire.
+    assert!(
+        doc.validate().is_empty(),
+        "both wires are still legal: {:?}",
+        doc.validate()
+    );
+
+    // ⚠ And the precedence is not an artefact of the order the links were made
+    // in: built the other way round, the answer is the same.
+    let mut other: Document<LOp> = Document::new("lattice");
+    let bend = other.add_node(ROOT, NodeBody::Reroute, 100, 0).unwrap();
+    let sink = other
+        .add_node(ROOT, NodeBody::Kind(LOp::Sink), 300, 0)
+        .unwrap();
+    let level = other
+        .add_node(ROOT, NodeBody::Kind(LOp::Level(4)), 0, 0)
+        .unwrap();
+    other
+        .connect(ROOT, Socket::new(level, 0), Socket::new(bend, 0))
+        .expect("the source first this time");
+    other
+        .connect(ROOT, Socket::new(bend, 0), Socket::new(sink, 0))
+        .expect("and a scalar still broadcasts into the sink");
+    assert_eq!(
+        other.signature(ROOT, bend).unwrap().inputs[0]
+            .flow
+            .value_type(),
+        Some(&LTy::Scalar),
+    );
+}
+
+/// ★★★★★ R1934 — **control crosses a reroute too.**
+///
+/// Not a guess: the engine's knot has a `GetExecTerminal` that walks a chain of
+/// knots to find where an execution wire ends up, and its own comment there —
+/// "knots for exec pins can have only one connection" — is a rule that could
+/// only be written about a knot carrying exec. The DCC has no control plane at
+/// all, so this is the axis where the two references are not equally wide and
+/// the wider one is what is reproduced.
+#[test]
+fn r1934_control_crosses_a_reroute() {
+    let mut doc: Document<Flo> = Document::new("flow");
+    let start = doc
+        .add_node(ROOT, NodeBody::Kind(Flo::Start), 0, 0)
+        .unwrap();
+    let step = doc
+        .add_node(ROOT, NodeBody::Kind(Flo::Step("one".into())), 200, 0)
+        .unwrap();
+    let bend = doc.add_node(ROOT, NodeBody::Reroute, 100, 0).unwrap();
+
+    doc.connect(ROOT, Socket::new(start, 0), Socket::new(bend, 0))
+        .expect("a control output reaches an undecided input");
+    let signature = doc.signature(ROOT, bend).unwrap();
+    assert!(
+        signature.inputs[0].flow.is_control(),
+        "★ the reroute is carrying control, not a value"
+    );
+    assert!(signature.outputs[0].flow.is_control());
+
+    doc.connect(ROOT, Socket::new(bend, 0), Socket::new(step, 0))
+        .expect("and control leaves it for a control input");
+
+    // ★ And now that it is decided, it refuses a VALUE at the far end — the
+    // mixed-flow rule reaches through the reroute rather than stopping at it.
+    let tally = doc
+        .add_node(ROOT, NodeBody::Kind(Flo::Tally), 400, 200)
+        .unwrap();
+    let refused = doc
+        .connect(ROOT, Socket::new(bend, 0), Socket::new(tally, 0))
+        .expect_err("a control reroute may not feed a number");
+    assert!(
+        matches!(refused, ConnectError::FlowMismatch { .. }),
+        "and the refusal names the flow: {refused:?}"
+    );
+}
+
+/// ★★★★★ R1934 — **an undecided port holds one link on each side**, which is
+/// the intersection of the two decided rules rather than either of them.
+///
+/// The property that matters is not the number but the DIRECTION it moves in:
+/// deciding a port may only ever WIDEN what it admits, so no link that was
+/// legal while the port was undecided becomes illegal when a type arrives. The
+/// other choice — many on both sides — lets a value input collect two links and
+/// then breaks that invariant the moment it is decided.
+#[test]
+fn r1934_deciding_a_reroute_only_ever_widens_what_it_admits() {
+    let undecided: Port<Ty, Val> = Port::with_flow("bend", Flow::Undecided);
+    for side in Side::ALL {
+        assert_eq!(
+            undecided.flow.multiplicity(side),
+            Multiplicity::One,
+            "an undecided port is One on {side:?}"
+        );
+    }
+
+    // ★★★★★ The property this assertion exists for: for EVERY decided flow and
+    // EVERY side, what the port admits once decided is at least what it
+    // admitted while undecided. `One` is the only answer with that property on
+    // both sides, because a value input and a control output are `One` and the
+    // other two are `Many`.
+    let decided: [Port<Ty, Val>; 2] = [Port::new("value", Ty::Number), Port::control("control")];
+    for port in &decided {
+        for side in Side::ALL {
+            let before = undecided.flow.multiplicity(side);
+            let after = port.flow.multiplicity(side);
+            assert!(
+                before == Multiplicity::One || after == Multiplicity::Many,
+                "deciding {side:?} narrowed it: {before:?} -> {after:?}"
+            );
+        }
+    }
+}
+
+/// ★★★★★ R1934 — **a ring of reroutes answers rather than recursing.**
+///
+/// The engine carries a `bRecursionGuard` field on the node for this, whose own
+/// comment says it is there "to prevent `PropagatePinType` from infinitely
+/// recursing if you manage to create a loop of knots". Deriving rather than
+/// propagating turns that field into a visited set inside one walk — a property
+/// of the derivation instead of state on every node.
+#[test]
+fn r1934_a_ring_of_reroutes_answers_rather_than_recursing() {
+    let mut fix = fixture();
+    let doc = &mut fix.document;
+    let a = doc.add_node(ROOT, NodeBody::Reroute, 0, 0).unwrap();
+    let b = doc.add_node(ROOT, NodeBody::Reroute, 40, 0).unwrap();
+    let c = doc.add_node(ROOT, NodeBody::Reroute, 80, 0).unwrap();
+    doc.connect(ROOT, Socket::new(a, 0), Socket::new(b, 0))
+        .expect("a to b");
+    doc.connect(ROOT, Socket::new(b, 0), Socket::new(c, 0))
+        .expect("b to c");
+    // Closing the ring: `connect` refuses it as a cycle, which is itself the
+    // right answer — a reroute is not a delay and may not carry one.
+    assert!(
+        doc.connect(ROOT, Socket::new(c, 0), Socket::new(a, 0))
+            .is_err(),
+        "a value cycle is refused, reroutes included"
+    );
+
+    // The chain still answers, in bounded time, for every member.
+    for node in [a, b, c] {
+        assert!(matches!(
+            doc.signature(ROOT, node).unwrap().inputs[0].flow,
+            Flow::Undecided
+        ));
+    }
+}
+
+/// ★★★★★ R1934 — **an undecided port is refused a split under its own name**,
+/// not under control's.
+///
+/// The closing audit's finding, and the one the compiler could not ask for:
+/// `member_ports` read the flow with `if let Flow::Value { .. } = … else`, so
+/// every non-value port left by the same door and was reported `Control`.
+/// Adding a third arm to `Flow` therefore made an existing refusal *lie*
+/// rather than fail to build.
+///
+/// ⚠ Asserting the refusal alone would have passed before the repair — a split
+/// of an undecided port WAS refused, just under the wrong word. So what is
+/// asserted is the word, on both the wire form and the sentence, and that the
+/// two arms are distinguishable from each other.
+///
+/// ★ The two are opposite repairs, which is why one word for both is a defect
+/// and not a simplification: a control port will never split, and this one
+/// splits as soon as a wire decides it — asserted by doing exactly that.
+#[test]
+fn r1934_an_undecided_port_is_refused_a_split_under_its_own_name() {
+    let mut fix = fixture();
+    let doc = &mut fix.document;
+    let bend = doc.add_node(ROOT, NodeBody::Reroute, 10, 10).unwrap();
+
+    let why = doc
+        .split_port(ROOT, bend, Side::Input, &PortPath::root(0))
+        .expect_err("an undecided port has no members");
+    assert_eq!(why.wire_word(), "undecided", "{why}");
+    assert!(
+        why.to_string().contains("decided"),
+        "and the sentence says so rather than talking about control: {why}"
+    );
+
+    // ⚠ The control refusal is still its own, so the two are told apart rather
+    // than merely renamed.
+    let carry = doc
+        .add_node(ROOT, NodeBody::Kind(Op::Carry), 0, 500)
+        .unwrap();
+    let control = doc
+        .split_port(ROOT, carry, Side::Input, &PortPath::root(0))
+        .expect_err("`Go` is a control port");
+    assert_eq!(control.wire_word(), "control", "{control}");
+
+    // ★★★★★ And the state ENDS: decide the chain, and the bend's ports split.
+    // Without this the arm would be indistinguishable from a permanent
+    // refusal, which is exactly the collapse the engine's own knot makes.
+    //
+    // ⚠ The OUTPUT end, and that is forced rather than stylistic: deciding the
+    // chain means wiring something to it, and a wired port is refused a split
+    // for its own separate reason (`Wired`). So the end that proves the
+    // undecided refusal has ended has to be the end with no wire on it — which
+    // is the same port pair, carrying the same derived flow.
+    doc.connect(ROOT, Socket::new(carry, 0), Socket::new(bend, 0))
+        .expect("a composite value reaches the bend");
+    assert!(
+        matches!(
+            doc.signature(ROOT, bend).unwrap().outputs[0].flow,
+            Flow::Value { .. }
+        ),
+        "the bend is decided now"
+    );
+    doc.split_port(ROOT, bend, Side::Output, &PortPath::root(0))
+        .expect("★ once decided, the bend's port comes apart");
+}
+
+/// ★★★★★ R1934 — **a reroute is not an address**, so two of them may share a
+/// name.
+///
+/// Measured, not reasoned by analogy with the frame: R1932's census of all
+/// fourteen overriders of the reference's name-validator hook found four that
+/// suppress the rule entirely, and **both of its reroute classes are among
+/// them** — each handing back a validator that accepts everything.
+#[test]
+fn r1934_two_reroutes_may_share_a_name() {
+    let mut fix = fixture();
+    let doc = &mut fix.document;
+    let a = doc.add_node(ROOT, NodeBody::Reroute, 0, 0).unwrap();
+    let b = doc.add_node(ROOT, NodeBody::Reroute, 40, 0).unwrap();
+
+    assert_eq!(doc.naming(ROOT, a), Naming::Free);
+    doc.relabel(ROOT, a, Some("via"))
+        .expect("a reroute may be named");
+    doc.relabel(ROOT, b, Some("via"))
+        .expect("★ and a second may take the same name");
+
+    // ⚠ And the rule is still live for an ordinary node in the same tree, so
+    // the assertion above is not passing because naming stopped being checked.
+    doc.relabel(ROOT, fix.two, Some("via"))
+        .expect_err("an ordinary node may not take a name another holds");
+}
+
+/// ★★★★★ R1934 — **an undecided port wears the taxonomy's resting colour, and
+/// a taxonomy that declares none is SILENT rather than black.**
+///
+/// The closing audit's finding, and it is R1888's shape: this round ADDED
+/// [`NodeKind::undecided_colour`] and the arm of [`crate::palette_of`] that
+/// reads it, and nothing performed either. The census fixture declares the
+/// hook, which made it LOOK covered — but a fixture's override is exactly what
+/// R1926 already recorded as the escape-hatch shape, because the DEFAULT is
+/// what an application writing nothing gets, and most of them write nothing.
+///
+/// So both halves are asked here, of two taxonomies differing in that one
+/// declaration: `Flo` declares a resting colour and `LOp` takes the default.
+///
+/// ⚠ And the colour is asked of a REAL port of a REAL bend, not only at the
+/// declaration — what a screen draws comes through [`Document::port_palette`],
+/// and a hook nothing routed to would still pass an assertion made at the
+/// trait.
+#[test]
+fn r1934_an_undecided_port_wears_the_taxonomys_resting_colour() {
+    let resting = Tint::rgb(0x38, 0x32, 0x32);
+
+    // ★ Declared: the taxonomy's answer reaches the palette.
+    let held = crate::palette_of::<Flo>(&Flow::Undecided);
+    assert_eq!(held.own(), Some(resting));
+    assert!(
+        held.members().is_empty(),
+        "nothing has decided what it carries, let alone what that is made of"
+    );
+    // ⚠ And it is its OWN colour rather than one borrowed from a type: without
+    // this the whole answer could be whatever `type_palette` happens to give.
+    assert_ne!(
+        held.own(),
+        crate::type_palette::<Flo>(&Ty::Number).own(),
+        "an undecided port is not drawn the way this taxonomy draws a number"
+    );
+
+    // ★★★★★ And a real port of a real bend answers the same, so the colour
+    // survives the derivation instead of only holding at the declaration.
+    let mut doc: Document<Flo> = Document::new("control");
+    let bend = doc.add_node(ROOT, NodeBody::Reroute, 0, 0).expect("a bend");
+    for at in [PortRef::input(0), PortRef::output(0)] {
+        let drawn = doc
+            .port_palette(ROOT, bend, at)
+            .expect("a bend has one port each side");
+        assert_eq!(drawn.own(), Some(resting), "{at:?}");
+    }
+
+    // ★★★★★ The DEFAULT, counted rather than assumed. `LOp` declares no colours
+    // at all, and an absence is a different answer from a black — which is
+    // precisely the distinction the reference cannot draw.
+    assert_eq!(LOp::undecided_colour(), None);
+    let silent = crate::palette_of::<LOp>(&Flow::Undecided);
+    assert_eq!(silent.own(), None);
+    assert!(silent.is_silent());
+    let mut lattice: Document<LOp> = Document::new("lattice");
+    let quiet = lattice
+        .add_node(ROOT, NodeBody::Reroute, 0, 0)
+        .expect("a bend");
+    assert!(
+        lattice
+            .port_palette(ROOT, quiet, PortRef::input(0))
+            .expect("a bend has one port each side")
+            .is_silent(),
+        "and the silence survives the derivation too"
+    );
 }

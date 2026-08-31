@@ -699,10 +699,32 @@ mod tests {
         assert_eq!(text_under(&scene, &row_tag(1)).as_deref(), Some("conn #8"));
     }
 
+    /// ★★★★★ R1934 — **the tests that touch the process-global `BOARD` hold
+    /// this while they do.**
+    ///
+    /// There are two of them, and until R1934 the first carried a comment
+    /// claiming to be the only one — written before `r1693_an_empty_connection_
+    /// list_says_it_is_empty` was added beside it, and false from that day on.
+    /// Both `clear()` the same global and then read it back, so run in
+    /// parallel they interleave: one clears while the other is between filling
+    /// the board and asking the view what is on it.
+    ///
+    /// ⚠ Measured, not reasoned. `cargo test --workspace` on a build host with
+    /// `RUST_TEST_THREADS=7` failed here — `two live connections claimed, left:
+    /// 0, right: 2`, which is exactly that interleaving — while the same tree
+    /// passed on a 30-thread machine. A race whose window is one function call
+    /// does not appear more often with more threads; it appears when the
+    /// scheduler happens to put the two on different cores at the same moment.
+    ///
+    /// A lock and not a comment, because R1888's rule applies: the property was
+    /// *stated* and nothing *performed* it. This is the performance.
+    static BOARD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn a11y_exposes_a_list_and_a_status_over_the_live_ids() {
-        // The ONE test that touches the process-global BOARD (all others use
-        // the pure builder with explicit ids), so no cross-test race on it.
+        let _held = BOARD_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         BOARD.ids.lock().unwrap().clear();
         let tracker = AttachTrackingIngress {
             // A never-fired inner: on_connect/on_disconnect never call submit.
@@ -761,6 +783,10 @@ mod tests {
     /// what separates the empty answer from a list nobody filled.
     #[test]
     fn r1693_an_empty_connection_list_says_it_is_empty() {
+        // R1934 — the second toucher of the global board. See `BOARD_LOCK`.
+        let _held = BOARD_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         BOARD.ids.lock().unwrap().clear();
         let nodes = <ConnLifecycleView as WidgetA11y>::access_node(&(), None);
         let list = nodes

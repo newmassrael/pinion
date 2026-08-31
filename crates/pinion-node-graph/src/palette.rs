@@ -151,6 +151,13 @@ pub fn palette_of<K: NodeKind>(flow: &Flow<K::Type, K::Value>) -> Palette {
             own: K::control_colour(),
             members: Vec::new(),
         },
+        // R1934 — an undecided port has no type to look a colour up by, so it
+        // reads its own resting colour. No members: nothing has decided what it
+        // carries, let alone what that is made of.
+        Flow::Undecided => Palette {
+            own: K::undecided_colour(),
+            members: Vec::new(),
+        },
     }
 }
 

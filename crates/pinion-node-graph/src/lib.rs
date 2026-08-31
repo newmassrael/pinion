@@ -235,6 +235,7 @@ mod observed;
 mod palette;
 mod partition;
 mod relink;
+mod reroute;
 mod run;
 mod section;
 mod select;
@@ -258,7 +259,7 @@ pub use debug::{
     PortSite, Reading, Session, Stride, Timeline, WatchError, Watches,
 };
 pub use deploy::{Bringup, Configured, Deployed, Placed, Plan, Uncarried, Unplannable};
-pub use describe::PortTooltip;
+pub use describe::{Carrying, PortTooltip};
 pub use eval::{Descent, Evaluator};
 pub use fragment::{
     Crossings, Definitions, DuplicateError, ExtractError, Fragment, InsertError, Inserted, Severed,
@@ -287,6 +288,7 @@ pub use observed::{
 pub use palette::{Palette, palette_of, type_palette};
 pub use partition::{PortChange, RepartitionError, Repartitioned, Sharing};
 pub use relink::{RelinkError, Relinked};
+pub use reroute::{Passing, RerouteError, Rerouted};
 pub use run::{Run, RunError, Step, Stop};
 pub use section::{InterfacePort, Section, SectionBreach, SectionId, SwitchRefusal};
 pub use select::{Grow, Grown, Reach, SelectError};

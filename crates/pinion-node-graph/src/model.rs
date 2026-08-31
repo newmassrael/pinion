@@ -261,6 +261,35 @@ pub enum Flow<T, V> {
     /// No type and no resting value, and both absences are structural — there
     /// is no field here to put one in.
     Control,
+    /// ★★★★★ R1934 — **not decided yet**: nothing has said whether this port
+    /// carries a value or control, and if a value, of which type.
+    ///
+    /// A third arm and not `Value { ty: Option<T> }`, because the undecided
+    /// state is not a value port missing its type — it does not know it is a
+    /// value port. [`NodeBody::Reroute`] is the body that reaches it: a
+    /// reroute inherits what crosses it, so a reroute chain nothing else
+    /// touches carries *this*, and a chain wired to a control edge carries
+    /// [`Control`](Self::Control). Both references reach the same state and
+    /// spell it as a type: the engine's knot allocates two wildcard pins and
+    /// **reverts to wildcard** when its last link goes; the DCC keeps a stored
+    /// socket type it recomputes per reroute component.
+    ///
+    /// # What it means for the two questions a port is asked
+    ///
+    /// * [`crossing`] — an undecided end is **accepted by everything**, which
+    ///   is what lets the first link decide it. That is the engine's
+    ///   `HasAnyWildcards` short-circuit, and this crate's version is one arm
+    ///   of the one function that decides a pair rather than a second rule.
+    /// * [`multiplicity`](Self::multiplicity) — **`One` on both sides**, the
+    ///   *intersection* of the two decided rules rather than either of them.
+    ///   Deciding a port can then only ever **widen** what it admits, so no
+    ///   link that was legal while the port was undecided becomes illegal when
+    ///   it is decided. The other choice — `Many` on both sides — would let a
+    ///   value input collect two links and then break that invariant the
+    ///   moment a type arrived. The engine has the same asymmetry and lives
+    ///   with it as a comment: "knots for exec pins can have only one
+    ///   connection".
+    Undecided,
 }
 
 impl<T, V> Flow<T, V> {
@@ -268,7 +297,7 @@ impl<T, V> Flow<T, V> {
     pub const fn value_type(&self) -> Option<&T> {
         match self {
             Self::Value { ty, .. } => Some(ty),
-            Self::Control => None,
+            Self::Control | Self::Undecided => None,
         }
     }
 
@@ -276,7 +305,7 @@ impl<T, V> Flow<T, V> {
     pub const fn default_value(&self) -> Option<&V> {
         match self {
             Self::Value { default, .. } => default.as_ref(),
-            Self::Control => None,
+            Self::Control | Self::Undecided => None,
         }
     }
 
@@ -312,7 +341,12 @@ impl<T, V> Flow<T, V> {
     /// ```
     pub const fn multiplicity(&self, side: Side) -> Multiplicity {
         match (self, side) {
-            (Self::Value { .. }, Side::Input) | (Self::Control, Side::Output) => Multiplicity::One,
+            // R1934 — an undecided port is `One` on BOTH sides: the
+            // intersection of the two decided rules, so deciding it can only
+            // ever widen what it admits. See [`Self::Undecided`].
+            (Self::Value { .. }, Side::Input)
+            | (Self::Control, Side::Output)
+            | (Self::Undecided, _) => Multiplicity::One,
             (Self::Value { .. }, Side::Output) | (Self::Control, Side::Input) => Multiplicity::Many,
         }
     }
@@ -415,6 +449,22 @@ impl<T, V> Port<T, V> {
         Self {
             name: name.into(),
             flow: Flow::Value { ty, default: None },
+            passthrough: true,
+            description: None,
+        }
+    }
+
+    /// ★ R1934 — a port carrying a flow that was **derived** rather than
+    /// declared.
+    ///
+    /// The general constructor the two named ones are cases of. It exists for
+    /// [`NodeBody::Reroute`], whose flow is read off the chain it belongs to
+    /// and can be any of the three — so the site building it cannot know which
+    /// of `new` / `control` to call.
+    pub fn with_flow(name: impl Into<String>, flow: Flow<T, V>) -> Self {
+        Self {
+            name: name.into(),
+            flow,
             passthrough: true,
             description: None,
         }
@@ -843,6 +893,45 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
         None
     }
 
+    /// ★★★★★ R1934 — what colour an **undecided** port is drawn in.
+    ///
+    /// Beside [`control_colour`](NodeKind::control_colour) and for the same
+    /// reason: [`Flow::Undecided`] has no type to look a colour up by, so a
+    /// taxonomy that wants its reroutes drawn in a resting colour has nowhere
+    /// else to say so.
+    ///
+    /// ★ Measured on the engine rather than assumed: its graph-editor settings
+    /// carry a wildcard pin colour of its own (a dark grey) beside the
+    /// per-category ones, and its promotable-operator node draws an unresolved
+    /// pin in exactly that. So the reference does support a resting colour for
+    /// this state, which is why the hook is built (R1926's rule, in the
+    /// direction that says *build it*).
+    #[must_use]
+    fn undecided_colour() -> Option<crate::Tint> {
+        None
+    }
+
+    /// ★★★★★ R1934 — **does a wire pass straight through this node**, and by
+    /// which two ports?
+    ///
+    /// `None` — the supplied answer — for an ordinary node: a wire reaching it
+    /// arrives, and what leaves is what the node computed.
+    ///
+    /// [`NodeBody::Reroute`] is this crate's own always-passing body and does
+    /// not go through here. This hook is for an application kind that is *also*
+    /// a point on a wire, which is not hypothetical: of the engine's three
+    /// overriders of the equivalent hook, two are its two reroute classes and
+    /// the third is a **dataflow** node class that answers by asking which
+    /// dataflow node it is currently holding — an answer no editor-side
+    /// taxonomy could have given for it.
+    ///
+    /// `&self` and not an associated function for exactly that reason: the
+    /// answer is a fact about *this node*, not about the kind.
+    #[must_use]
+    fn passing(&self) -> Option<crate::Passing> {
+        None
+    }
+
     /// ★★★★★ R1932 — **what this kind requires of the name a person gives one of
     /// its nodes**: where it has to be unique, or that it need not be.
     ///
@@ -1185,7 +1274,24 @@ pub fn crossing<K: NodeKind>(from: &KindPort<K>, to: &KindPort<K>) -> Conversion
         (Flow::Control, Flow::Value { .. }) | (Flow::Value { .. }, Flow::Control) => {
             Conversion::Refused
         }
+        // R1934 — an undecided end is admitted by everything, because the link
+        // is what decides it. Two undecided ends cross as well — that is a
+        // reroute chain nothing else has touched yet.
+        (Flow::Undecided, _) | (_, Flow::Undecided) => decided_by_the_link(),
     }
+}
+
+/// ★ R1934 — a pair that crosses **because the link is what decides it**.
+///
+/// The same value as a control pair's [`Conversion::Direct`] and a different
+/// fact, so it is a named function rather than a shared arm: clippy is right
+/// that two arms with one body are one arm, and the repair is to make the
+/// bodies say the two different things (R1928's rule — a lint's refusal is a
+/// design question, not something to `allow`). Nothing crosses *here*; what
+/// happens is that the reroute's ports stop being undecided the moment this
+/// link exists, and `Document::reroute_flow` re-derives them.
+const fn decided_by_the_link<V>() -> Conversion<V> {
+    Conversion::Direct
 }
 
 /// Which half of its tree's interface an interface node materialises.
@@ -1300,6 +1406,56 @@ pub enum NodeBody<K: NodeKind> {
     /// registers and the inputs, and that is what makes [`Document::tick`]
     /// reproducible.
     Delay(K::Type),
+    /// ★★★★★ R1934 — **a bend in a wire**: one port in, one port out, carrying
+    /// whatever the graph around it decided, and meaning nothing of its own.
+    ///
+    /// Both references have this and both spell it as a node, because a canvas
+    /// has nowhere else to put it: the DCC registers a `NodeReroute` in its
+    /// *layout* class beside the frame, and the engine ships a knot node whose
+    /// editor draws it as a control point rather than as a card.
+    ///
+    /// # It carries no data, and that is the design
+    ///
+    /// [`Delay`](Self::Delay) holds the type it stores; this holds nothing,
+    /// because **its type is derived rather than authored** —
+    /// [`Document::reroute_flow`] reads it off the chain the reroute belongs
+    /// to. Storing it would be a second copy of a fact the links already
+    /// answer, free to disagree with them after any edit.
+    ///
+    /// The DCC does store it (`NodeReroute::type_idname`) and then keeps a
+    /// whole-tree pass, `ntree_update_reroute_nodes`, whose job is to make the
+    /// stored copy agree with the links again — a disjoint-set union over every
+    /// reroute in the tree, run after every update. The engine stores it on the
+    /// pins and reaches agreement the other way, by recursive propagation with
+    /// a recursion guard "to prevent infinitely recursing if you manage to
+    /// create a loop of knots". **Deriving is what makes both of those
+    /// unnecessary.**
+    ///
+    /// # What it inherits, and from where
+    ///
+    /// Measured on both references, they agree on the rule and reach it by
+    /// different machinery:
+    ///
+    /// * A **chain** of reroutes wired to each other carries ONE flow. (The
+    ///   DCC unions them; the engine recurses through them.)
+    /// * The **source** side wins: a type arriving at the chain's input decides
+    ///   it, and only when there is none does the sink side decide it. (The DCC
+    ///   overwrites its `dst` candidate with the `src` one; the engine tries
+    ///   `PropagatePinTypeFromDirection(true)` first, twice.)
+    /// * With nothing attached, the chain is [`Flow::Undecided`]. (The engine
+    ///   "reverts to wildcard"; the DCC keeps its last stored type, which is
+    ///   the one place this crate is deliberately stricter — a remembered type
+    ///   nothing supports is a fact with no source.)
+    ///
+    /// # What it is transparent to
+    ///
+    /// Everything. It never computes ([`Document::evaluate`] routes through it
+    /// the way a bypassed node routes), control falls through it, and it is not
+    /// an address a name has to be unique against. The engine says the same in
+    /// three separate answers — `IsCompilerRelevant() == false`,
+    /// `IsNodeSafeToIgnore() == true`, and an `ExpandNode` that splices its two
+    /// pin nets together and deletes itself before compilation.
+    Reroute,
 }
 
 /// Which side of a node's own signature a port sits on (R1594).
@@ -1768,6 +1924,10 @@ impl<K: NodeKind> Node<K> {
             NodeBody::Interface(InterfaceSide::Output) => "Group Output".to_owned(),
             NodeBody::Frame => "Frame".to_owned(),
             NodeBody::Delay(_) => "Delay".to_owned(),
+            // R1934 — both references call it this, in their own words: the
+            // DCC's node type is named "Reroute" and the engine's knot node
+            // titles itself "Reroute Node".
+            NodeBody::Reroute => "Reroute".to_owned(),
         }
     }
 
@@ -2004,6 +2164,19 @@ impl<K: NodeKind> Tree<K> {
     #[must_use]
     pub fn link(&self, id: LinkId) -> Option<&Link> {
         self.links.iter().find(|l| l.id == id)
+    }
+
+    /// ★ R1934 — one link for modification, crate-private.
+    ///
+    /// The one edit a caller may make through it is moving an **end**, and the
+    /// one verb that does is [`Document::insert_reroutes`], which re-points a
+    /// cut link's source at the reroute it just made rather than deleting the
+    /// link and building a new one — so the link a caller was holding is still
+    /// the link it is holding. Crate-private because a link's ends were vetted
+    /// when it was made ([`Document::vet`]) and an application moving one
+    /// behind that check could seat a value on a control port.
+    pub(crate) fn link_mut(&mut self, id: LinkId) -> Option<&mut Link> {
+        self.links.iter_mut().find(|l| l.id == id)
     }
 
     /// What this tree exposes when instanced.
@@ -2298,6 +2471,11 @@ impl<K: NodeKind> Document<K> {
                 inputs: vec![Port::new("In", ty.clone())],
                 outputs: vec![Port::new("Out", ty.clone())],
             },
+            // R1934 — one in, one out, both carrying what the chain this
+            // reroute belongs to decided. Derived and not authored, which is
+            // why this arm needs the whole document where `Delay` needed only
+            // the body: see [`Document::reroute_flow`].
+            NodeBody::Reroute => self.reroute_signature(tree, node.id),
         })
     }
 
@@ -3243,8 +3421,17 @@ impl<K: NodeKind> Document<K> {
         // Lustre states as "every cycle must be broken by a `pre`", and it is
         // asked here as one predicate rather than re-derived, so the wire this
         // accepts is exactly the wire `cycle_nodes` will not report.
-        let adds_a_dependency =
-            source.value_type().is_some() && !self.cuts_dependency(tree, from.node);
+        // ★★★★★ R1934 — the test is "**not** control", not "is a decided
+        // value". An undecided port ([`Flow::Undecided`], which a reroute
+        // reaches) has no value type yet and is not control either, and reading
+        // the absence of a type as "carries no data" let a ring of reroutes be
+        // built: every link in it skipped this check, and the cycle was then
+        // there for the first decided port to arrive into. A cycle that becomes
+        // real later is the state this refusal exists to make unrepresentable,
+        // so the undecided case is refused with the value case rather than with
+        // the control one. Found by `r1934_a_ring_of_reroutes_answers_rather_
+        // than_recursing`, which expected the refusal and got a link.
+        let adds_a_dependency = !source.is_control() && !self.cuts_dependency(tree, from.node);
         if adds_a_dependency && let Some(path) = self.data_path_between(tree, to.node, from.node) {
             return Err(ConnectError::WouldCycle { path });
         }

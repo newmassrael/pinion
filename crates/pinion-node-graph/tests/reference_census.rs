@@ -44,13 +44,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use pinion_node_graph::{
-    Act, Admitted, Align, Appearance, Axis, Command, ConnectError, Conversion, Crossings,
+    Act, Admitted, Align, Appearance, Axis, Carrying, Command, ConnectError, Conversion, Crossings,
     Definitions, Described, Direction, Distribute, Document, Edge, EditError, EditPath, Extent,
     Faces, Fragment, Grow, Hidden, Instance, InterfacePort, InterfaceSide, Item, ItemError,
     LandError, Landfall, LinkId, Machine, Matched, Multiplicity, Node, NodeBody, NodeId, NodeKind,
-    NodeSite, NotRecombinable, NotSplittable, Port, PortName, PortPath, PortRef, PortSite, PutAway,
-    ROOT, Reach, RelinkError, SectionId, Session, Sharing, Side, Socket, Stack, Straighten, Stride,
-    SwitchRefusal, Tint, TreeId, Variadic, WatchError, palette_of, type_palette,
+    NodeSite, NotRecombinable, NotSplittable, Passing, Port, PortName, PortPath, PortRef, PortSite,
+    PutAway, ROOT, Reach, RelinkError, SectionId, Session, Sharing, Side, Socket, Stack,
+    Straighten, Stride, SwitchRefusal, Tint, TreeId, Variadic, WatchError, palette_of,
+    type_palette,
 };
 
 // ---------------------------------------------------------------- taxonomy
@@ -94,6 +95,16 @@ enum Op {
     /// `(Value: Number) -> Out: Number`. One in, one out: the shape a dissolve
     /// and a bypass are about.
     Double,
+    /// R1934 — `(In: Number) -> Out: Number`, and it declares itself a **point
+    /// on a wire** ([`NodeKind::passing`]).
+    ///
+    /// The same port shape as `Double` on purpose: the two differ in exactly
+    /// the one declaration under test, so an assertion that passes for one and
+    /// not the other cannot be reading anything else. It exists because the
+    /// engine's third overrider of the equivalent hook is an application node
+    /// class rather than one of its two reroute classes, so a fixture with only
+    /// the crate's own [`NodeBody::Reroute`] could not reach that case at all.
+    Relay,
     /// `(Phrase: Text) -> Out: Text`.
     Shout,
     /// `(Result: Number) -> ()`. A sink, so a graph has an end.
@@ -150,6 +161,7 @@ impl NodeKind for Op {
             Self::Add => "Add",
             Self::Mul => "Mul",
             Self::Double => "Double",
+            Self::Relay => "Relay",
             Self::Shout => "Shout",
             Self::Sink => "Sink",
             Self::Sequence => "Sequence",
@@ -245,6 +257,23 @@ impl NodeKind for Op {
         Some(Tint::rgb(0xEC, 0x5A, 0xA0))
     }
 
+    /// ★ R1934 — the resting colour of a port nothing has decided yet. The
+    /// engine's graph-editor settings carry one of these too, a dark grey
+    /// beside the per-category colours.
+    fn undecided_colour() -> Option<Tint> {
+        Some(Tint::rgb(0x38, 0x32, 0x32))
+    }
+
+    /// ★★★★★ R1934 — `Relay` declares itself a point on a wire and nothing else
+    /// does. One kind and not all of them, so an assertion about a passing kind
+    /// and one about an ordinary kind are both reachable from this taxonomy.
+    fn passing(&self) -> Option<Passing> {
+        match self {
+            Self::Relay => Some(Passing::ENDS),
+            _ => None,
+        }
+    }
+
     /// ★ R1916 — what a value of each type IS. `Bag` says nothing on purpose:
     /// a taxonomy that describes some of its types and not others is the
     /// ordinary case, and a fixture where every type spoke could not tell a
@@ -306,6 +335,7 @@ impl NodeKind for Op {
                 Port::new("Factor", Ty::Number),
             ],
             Self::Double => vec![Port::new("Value", Ty::Number)],
+            Self::Relay => vec![Port::new("In", Ty::Number)],
             Self::Shout => vec![Port::new("Phrase", Ty::Text)],
             Self::Sink => vec![Port::new("Result", Ty::Number)],
             // R1632 — the FIXED half of a variadic kind. What repeats is
@@ -372,7 +402,7 @@ impl NodeKind for Op {
 
     fn outputs(&self) -> Vec<Port<Ty, Val>> {
         match self {
-            Self::Num(_) | Self::Add | Self::Mul | Self::Double => {
+            Self::Num(_) | Self::Add | Self::Mul | Self::Double | Self::Relay => {
                 vec![Port::new("Out", Ty::Number)]
             }
             Self::Word(_) | Self::Shout | Self::Bundle => vec![Port::new("Out", Ty::Text)],
@@ -423,6 +453,9 @@ impl NodeKind for Op {
             Self::Add => vec![number(0).zip(number(1)).map(|(a, b)| Val::Number(a + b))],
             Self::Mul => vec![number(0).zip(number(1)).map(|(a, b)| Val::Number(a * b))],
             Self::Double => vec![number(0).map(|v| Val::Number(v * 2))],
+            // A kind that declares itself a point on a wire still has to say
+            // what it computes, and what it computes is the identity.
+            Self::Relay => vec![inputs.first().and_then(Clone::clone)],
             Self::Shout => vec![inputs.first().and_then(Option::as_ref).map(|v| match v {
                 Val::Text(t) => Val::Text(t.to_uppercase()),
                 other @ Val::Number(_) => other.clone(),
@@ -618,6 +651,7 @@ fn proofs() -> Vec<Proof> {
     all.extend(engine_description_proofs());
     all.extend(dcc_item_proofs());
     all.extend(dcc_r1933_proofs());
+    all.extend(r1934_reroute_proofs());
     all
 }
 
@@ -1317,6 +1351,21 @@ fn dcc_r1933_proofs() -> Vec<Proof> {
         "node_tree::valid_socket_type",
         dcc_node_tree_valid_socket_type,
     )]
+}
+
+/// R1934 — the reroute pair. One row per tree, because the two are two
+/// mechanisms and not two spellings: the DCC's is the **verb** that puts one on
+/// a wire, and the engine's is the **question** an editor asks a node about
+/// whether a wire runs through it.
+fn r1934_reroute_proofs() -> Vec<Proof> {
+    vec![
+        proof("dcc", "add_reroute", dcc_add_reroute),
+        proof(
+            "engine",
+            "node::ShouldDrawNodeAsControlPointOnly",
+            engine_node_should_draw_node_as_control_point_only,
+        ),
+    ]
 }
 
 /// And the schema's half of it — what the engine asks a GRAPH to decide.
@@ -2022,6 +2071,185 @@ fn dcc_node_tree_valid_socket_type() {
     assert!(
         document.unadmitted_ports(ROOT).is_empty(),
         "and an unrestricted tree has none by construction"
+    );
+}
+
+// ============================================== R1934 — a bend in a wire
+
+/// ★★★★★ R1934 — **the DCC's `add_reroute`**: a gesture across a canvas puts a
+/// reroute on every wire it crossed.
+///
+/// The operator's own four behaviours, measured from its source and asserted
+/// here. The first is the one nobody would guess from the name:
+///
+/// * **one reroute per source socket, not per cut wire** — its comment says
+///   "deduplicating new reroutes per output socket is useful because it allows
+///   reusing reroutes for connected intersections";
+/// * the cut links are **kept and re-pointed** (`link->fromnode = reroute`),
+///   not deleted and remade;
+/// * the feeding link is **muted exactly when every cut link was**;
+/// * the reroute lands at the **average** of its own crossings.
+///
+/// And the property neither reference states because there it cannot be
+/// stated — the graph still computes what it computed. The DCC has no
+/// evaluator that could be asked in a test; the engine deletes the node before
+/// compilation, so the question is answered by there being nothing left.
+#[test]
+fn dcc_add_reroute() {
+    let mut chain = chain();
+    let before = arrives(&chain.document, Socket::new(chain.sink, 0));
+    assert_eq!(before, Some(Val::Number(5)), "the fixture computes 2 + 3");
+
+    // A second reader of `add`, so the fan-out this deduplicates is real.
+    let watch = node(&mut chain.document, Op::Double);
+    wire(&mut chain.document, chain.add, 0, watch, 0);
+    let cut: Vec<LinkId> = chain
+        .document
+        .tree(ROOT)
+        .unwrap()
+        .links()
+        .iter()
+        .filter(|link| link.from == Socket::new(chain.add, 0))
+        .map(|link| link.id)
+        .collect();
+    assert_eq!(cut.len(), 2, "two wires leave `add`");
+
+    let made = chain
+        .document
+        .insert_reroutes(ROOT, &[(cut[0], 100, 40), (cut[1], 140, 60)])
+        .expect("both wires were cut");
+
+    // ★★★★★ ONE reroute, for two cut wires, because they share a source.
+    assert_eq!(
+        made.made.len(),
+        1,
+        "one reroute per SOURCE socket: {made:?}"
+    );
+    assert_eq!(made.feeds.len(), 1, "and one link feeding it");
+    // ★ The cut links kept their identity.
+    assert_eq!(made.rerouted, cut, "the cut links are the same links");
+
+    let reroute = made.made[0];
+    let held = chain.document.tree(ROOT).unwrap().node(reroute).unwrap();
+    assert_eq!(held.body, NodeBody::Reroute);
+    assert_eq!(
+        (held.x, held.y),
+        (120, 50),
+        "★ it lands at the average of ITS OWN crossings"
+    );
+
+    // ★ Both readers now read the reroute, and `add` feeds only it.
+    let links = chain.document.tree(ROOT).unwrap().links().to_vec();
+    let from_add = links
+        .iter()
+        .filter(|link| link.from.node == chain.add)
+        .count();
+    let from_reroute = links
+        .iter()
+        .filter(|link| link.from.node == reroute)
+        .count();
+    assert_eq!(from_add, 1, "`add` feeds the reroute and nothing else");
+    assert_eq!(from_reroute, 2, "and both readers hang off the reroute");
+
+    // ★★★★★ AND THE GRAPH STILL COMPUTES WHAT IT COMPUTED.
+    assert_eq!(
+        arrives(&chain.document, Socket::new(chain.sink, 0)),
+        before,
+        "a reroute is transparent to evaluation"
+    );
+
+    // ★ The reroute inherited what crosses it, rather than being authored.
+    let signature = chain.document.signature(ROOT, reroute).unwrap();
+    assert_eq!(signature.inputs.len(), 1);
+    assert_eq!(signature.outputs.len(), 1);
+    assert_eq!(
+        signature.inputs[0].flow.value_type(),
+        Some(&Ty::Number),
+        "it carries what `add` gives"
+    );
+
+    // ⚠ A gesture that crossed nothing leaves nothing behind — including an
+    // undo entry, which is why this is a refusal and not an empty answer.
+    let nodes_before = chain.document.tree(ROOT).unwrap().node_count();
+    assert!(chain.document.insert_reroutes(ROOT, &[]).is_err());
+    assert_eq!(
+        chain.document.tree(ROOT).unwrap().node_count(),
+        nodes_before
+    );
+}
+
+/// ★★★★★ R1934 — **the engine's `ShouldDrawNodeAsControlPointOnly`**: this node
+/// is a point a wire passes through, and these are its two ends.
+///
+/// ★ The hook's name says *draw* and **not one of its seven call sites draws
+/// anything**, measured across every one of them: three pick which END of the
+/// point a drag should take, one spreads a hover along the chain, one keeps the
+/// point's pins out of node alignment, and one asserts it as a precondition. So
+/// what is reproduced here is the capability, not the name.
+///
+/// Two sources answer, and both are asserted, because the reference needs both:
+/// of its three overriders, two are its reroute classes and the third is a
+/// dataflow node class that answers by asking which node it is holding.
+#[test]
+fn engine_node_should_draw_node_as_control_point_only() {
+    let mut chain = chain();
+
+    // ★ An ordinary node is not one, and neither is a frame — the default is a
+    // real answer rather than an absence of one.
+    assert_eq!(chain.document.passing(ROOT, chain.add), None);
+    let frame = chain
+        .document
+        .add_node(ROOT, NodeBody::Frame, 0, 0)
+        .expect("a frame");
+    assert_eq!(chain.document.passing(ROOT, frame), None);
+
+    // ★★★★★ A reroute always is, and says which port is the way in.
+    let cut = chain
+        .document
+        .tree(ROOT)
+        .unwrap()
+        .links()
+        .iter()
+        .find(|link| link.from.node == chain.add)
+        .unwrap()
+        .id;
+    let reroute = chain
+        .document
+        .insert_reroutes(ROOT, &[(cut, 10, 10)])
+        .expect("the wire was cut")
+        .made[0];
+    let passing = chain
+        .document
+        .passing(ROOT, reroute)
+        .expect("a reroute is a point on a wire");
+    assert_eq!(passing.inbound, 0);
+    assert_eq!(passing.outbound, 0);
+
+    // ★ `end` is the question every one of the reference's drag sites asks by
+    // hand, and it answers for both sides.
+    assert_eq!(passing.end(Side::Input), passing.inbound);
+    assert_eq!(passing.end(Side::Output), passing.outbound);
+
+    // ★ And the two ends it names are real ports, which is what makes the
+    // answer usable — the reference's own control-point widget asserts exactly
+    // this in its constructor.
+    let signature = chain.document.signature(ROOT, reroute).unwrap();
+    assert!(signature.inputs.get(passing.inbound as usize).is_some());
+    assert!(signature.outputs.get(passing.outbound as usize).is_some());
+
+    // ★★★★★ An application KIND may also declare itself a point on a wire —
+    // the third overrider's case, which no editor-side taxonomy could answer
+    // for. `Op::Relay` is that kind in this fixture.
+    let relay = node(&mut chain.document, Op::Relay);
+    assert_eq!(
+        chain.document.passing(ROOT, relay),
+        Some(Passing::ENDS),
+        "a kind that declares it is one"
+    );
+    assert_eq!(
+        chain.document.passing(ROOT, chain.two),
+        None,
+        "and a kind of the same taxonomy that does not, is not"
     );
 }
 
@@ -4501,8 +4729,10 @@ fn engine_schema_construct_basic_pin_tooltip() {
         .port_tooltip(ROOT, carry, Side::Input, &PortPath::root(1))
         .expect("`Whole` is a port");
     assert_eq!(
-        said.carries.as_deref(),
-        Some("two numbers written `left|right`"),
+        said.carries,
+        Carrying::Value {
+            described: Some("two numbers written `left|right`".to_owned()),
+        },
         "★ the TYPE's half is present, which is the half the reference's base \
          implementation drops",
     );
@@ -4531,8 +4761,18 @@ fn engine_schema_construct_basic_pin_tooltip() {
         .document
         .port_tooltip(ROOT, carry, Side::Input, &PortPath::root(2))
         .expect("`Loose` is a port");
-    assert_eq!(loose.carries, None);
+    assert_eq!(loose.carries, Carrying::Value { described: None });
     assert!(!loose.sentence().contains("  "), "{:?}", loose.sentence());
+    // ★★★★★ R1934 — and it does not say something ELSE about the type either.
+    // This line is what was missing: the assertion above checked the sentence
+    // had no hole in it, so a sentence that filled the hole with the wrong
+    // fact — "accepts control", which is what an undescribed value port said
+    // from R1916 to R1934 — passed it.
+    assert!(
+        !loose.sentence().contains("control"),
+        "a value port claimed to carry control: {:?}",
+        loose.sentence(),
+    );
 }
 
 /// ★★★★★ R1914 — the engine's `SplitPin`: **a composite value port becomes one
