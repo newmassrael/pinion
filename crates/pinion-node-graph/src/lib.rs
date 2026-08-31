@@ -228,6 +228,7 @@ mod layout;
 mod machine;
 mod model;
 mod naming;
+mod naming_scope;
 mod numbering;
 mod observed;
 mod palette;
@@ -276,6 +277,7 @@ pub use model::{
     ROOT, Refusal, Relabelled, Removed, Side, Signature, Socket, Tree, TreeId, crossing,
 };
 pub use naming::{Labelled, NameSource, PortName};
+pub use naming_scope::Naming;
 pub use observed::{
     AdoptError, Discovery, Judgement, Layers, LinkLayer, Observation, ObserveError, Reachability,
     Standing,

@@ -1293,6 +1293,17 @@ fn engine_hook_proofs() -> Vec<Proof> {
             "schema::DropPinOnNode",
             engine_schema_drop_pin_on_node,
         ),
+        // ★★★★★ R1932 — the NAME-VALIDATION pair. Measured, they are two
+        // capabilities on two subjects: the node's answers for that node and
+        // has fourteen overriders; the schema's takes four arguments, is
+        // overridden nowhere, and its consumers name a blueprint's variables
+        // rather than a graph's nodes. Only the first is a node-graph
+        // capability, and it is the one this proof is about.
+        proof(
+            "engine",
+            "node::MakeNameValidator",
+            engine_node_make_name_validator,
+        ),
     ]
 }
 
@@ -1889,6 +1900,105 @@ fn dcc_node_poll() {
         "the document itself is well-formed, so none of the above is an artefact \
          of an already-broken fixture: {:?}",
         chain.document.validate()
+    );
+}
+
+// =========================================== R1932 — what a name must be
+
+/// ★★★★★ R1932 — a kind says where its name has to be unique, or that it need
+/// not be.
+///
+/// The reference's node-side hook, and the three ways this passes it:
+///
+/// * **the off position is a value**, so a body whose name is a caption is free
+///   without anybody building an accept-everything validator for it;
+/// * **the scope is a type**, so two kinds wanting one reach state it once;
+/// * **a refusal still NAMES the holder**, which the reference's bare enum
+///   result cannot.
+///
+/// ⚠ And the supplied answer is under test, because most of this taxonomy does
+/// not override — R1926's rule, which R1928 met again.
+#[test]
+fn engine_node_make_name_validator() {
+    // ★ The census sentence said a label is free text. It is not, and has not
+    // been since R1682 — this is that rule, still standing, and it is asserted
+    // FIRST because everything below is a change to its reach.
+    let mut document = Document::new("root");
+    let one = node(&mut document, Op::Add);
+    let two = node(&mut document, Op::Mul);
+    document.relabel(ROOT, one, Some("adder")).expect("a name");
+    assert!(
+        matches!(
+            document.relabel(ROOT, two, Some("adder")),
+            Err(EditError::LabelTaken { held_by, .. }) if held_by == one
+        ),
+        "a taken name is refused, and the refusal NAMES the node holding it"
+    );
+    assert!(matches!(
+        document.relabel(ROOT, two, Some("   ")),
+        Err(EditError::LabelEmpty { .. })
+    ));
+
+    // ★★★★★ FREE — a frame's caption is not an address, so two frames may share
+    // one. The reference spends a dummy validator per commenting class on this;
+    // here it is what the body IS.
+    let frame_a = document
+        .add_node(ROOT, NodeBody::Frame, 0, 0)
+        .expect("the root tree exists");
+    let frame_b = document
+        .add_node(ROOT, NodeBody::Frame, 40, 0)
+        .expect("the root tree exists");
+    assert_eq!(
+        document.naming(ROOT, frame_a),
+        pinion_node_graph::Naming::Free
+    );
+    document
+        .relabel(ROOT, frame_a, Some("host"))
+        .expect("a caption");
+    document
+        .relabel(ROOT, frame_b, Some("host"))
+        .expect("★★★★★ and a second frame may share it");
+    assert_eq!(
+        document.nodes_labelled(ROOT, "host").len(),
+        2,
+        "both hold it, which is what Free means"
+    );
+    // ⚠ And the crate SAYS so rather than hiding it: a name two nodes answer to
+    // does not identify one, and the by-name lookup reports that.
+    assert_eq!(document.node_labelled(ROOT, "host"), None);
+
+    // ★ A KIND keeps the supplied scope, so the ordinary case is under test.
+    assert_eq!(
+        document.naming(ROOT, one),
+        pinion_node_graph::Naming::InTree
+    );
+    assert!(
+        document.relabel(ROOT, two, Some("adder")).is_err(),
+        "a node is still held to its tree"
+    );
+
+    // ★★★★★ IN DOCUMENT — the reference's commonest positive answer, and the
+    // one this crate could not express. Asserted through the SEARCH rather than
+    // through a taxonomy that declares it, because the fixture's kinds keep the
+    // default: what has to exist is a reach that spans trees and can be asked.
+    let inner = document.add_definition("inner");
+    let deep = document
+        .add_node(inner, NodeBody::Kind(Op::Double), 0, 0)
+        .expect("the new tree exists");
+    document
+        .relabel(inner, deep, Some("adder"))
+        .expect("another tree may hold it, because the kinds here are scoped to a tree");
+    let everywhere = document.nodes_labelled_anywhere("adder");
+    assert_eq!(
+        everywhere.len(),
+        2,
+        "the document-wide search finds both: {everywhere:?}"
+    );
+    assert!(everywhere.contains(&(ROOT, one)) && everywhere.contains(&(inner, deep)));
+    assert_eq!(
+        document.nodes_labelled(ROOT, "adder"),
+        vec![one],
+        "while the tree-wide search finds one — the two scopes are different questions"
     );
 }
 

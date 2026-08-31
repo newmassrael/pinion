@@ -10533,6 +10533,12 @@ const FIELDS: &[SchemaField] = &{
         // instead of two — the second spelling is exactly what this round
         // removed from the accessibility tree.
         SchemaField::new("port_names", "json"),
+        // ★★★★★ R1932 — what each thing on the canvas requires of its own NAME:
+        // where it has to be unique, or that it need not be. Published because
+        // a card and a frame now answer differently and a reader has no other
+        // way to tell which rule a refusal came from — the crate's answer,
+        // derived, so the screen cannot hold a second opinion about it.
+        SchemaField::new("naming", "json"),
         // ★★★★★ R1927 — what is wrong with each card: the MODEL's own sentence
         // where it has one, whether this screen's walk names the card at all,
         // and whether the worst of it blocks. Published so the mark on the
@@ -11086,6 +11092,7 @@ impl ExternalIntrospect for LabOracle {
             "inks" => Ok(IntrospectValue::Json(inks_wire(state))),
             "wrong" => Ok(IntrospectValue::Json(wrong_wire(state))),
             "port_names" => Ok(IntrospectValue::Json(port_names_wire(state))),
+            "naming" => Ok(IntrospectValue::Json(naming_wire(state))),
             // ★ R1742 — the SAME value the host publishes for this section, so
             // "one build, two placements" is a fact a client can check rather
             // than a claim this file makes.
@@ -16855,6 +16862,38 @@ fn accepts_wire(state: &Rc<LabState>) -> serde_json::Value {
         })
         .collect();
     serde_json::json!({ "bodies": rows })
+}
+
+/// ★★★★★ R1932 — **what each thing on the canvas requires of its own name.**
+///
+/// One row per node the canvas draws, carrying the crate's answer verbatim:
+/// `tree` (unique among the authored names here), `document` (unique
+/// everywhere) or `free` (two may share one). A frame answers `free`, because
+/// its caption is not an address — that is the crate's decision and this is a
+/// rendering of it, not a second opinion.
+fn naming_wire(state: &Rc<LabState>) -> serde_json::Value {
+    let doc = state.doc.borrow();
+    // ⚠ Every node the canvas draws, not `cards()`: a frame is exactly the body
+    // whose answer differs, and a register built from the card list would have
+    // published only the rows that all say the same thing.
+    let every: Vec<NodeId> = doc
+        .tree(ROOT)
+        .map(|host| host.nodes().map(|held| held.id).collect())
+        .unwrap_or_default();
+    let rows: Vec<serde_json::Value> = every
+        .into_iter()
+        .map(|node| {
+            serde_json::json!({
+                "card": state.name_of(node),
+                "unique": match doc.naming(ROOT, node) {
+                    pinion_node_graph::Naming::InTree => "tree",
+                    pinion_node_graph::Naming::InDocument => "document",
+                    pinion_node_graph::Naming::Free => "free",
+                },
+            })
+        })
+        .collect();
+    serde_json::json!({ "nodes": rows })
 }
 
 /// ★★★★★ R1928 — **what each card calls its own ports**, and who chose each

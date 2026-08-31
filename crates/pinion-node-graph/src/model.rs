@@ -843,6 +843,28 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
         None
     }
 
+    /// ★★★★★ R1932 — **what this kind requires of the name a person gives one of
+    /// its nodes**: where it has to be unique, or that it need not be.
+    ///
+    /// The supplied answer is [`Naming::InTree`](crate::Naming::InTree), which
+    /// is what this crate has enforced since R1682 — so a taxonomy that says
+    /// nothing keeps exactly the rule it had.
+    ///
+    /// An associated function and not a method: measured across the reference's
+    /// fourteen overriders, every one answers for its CLASS and none looks at
+    /// the node's own state. A kind whose instances disagreed about how far
+    /// their names must reach would make "is this name taken" a question with
+    /// no fixed population.
+    ///
+    /// ⚠ [`Naming::Free`](crate::Naming::Free) is the reference's commonest
+    /// single answer — four of the fourteen hand back a validator that accepts
+    /// everything — and it is the one this crate could not previously say at
+    /// all.
+    #[must_use]
+    fn naming() -> crate::Naming {
+        crate::Naming::InTree
+    }
+
     /// ★★★★★ R1928 — **what this node calls the port at `at`**, given the name
     /// the port was declared with.
     ///
@@ -2353,17 +2375,31 @@ impl<K: NodeKind> Document<K> {
             Act::Rename(node, label) => {
                 let wanted = Self::wanted_label(tree, node, label)?;
                 self.held(tree, node)?;
-                if let Some(name) = wanted.as_deref()
-                    && let Some(held_by) = self
-                        .nodes_labelled(tree, name)
-                        .into_iter()
-                        .find(|other| *other != node)
-                {
-                    return Err(EditError::LabelTaken {
-                        tree,
-                        label: name.to_owned(),
-                        held_by,
-                    });
+                // ★★★★★ R1932 — the SCOPE is the kind's, not this function's.
+                // Until this round the reach was written here as `nodes_labelled`
+                // — one tree, always — so an application could neither widen it
+                // nor turn it off, and a frame (this crate's comment) was held
+                // to the same uniqueness as a node the graph is addressed by.
+                if let Some(name) = wanted.as_deref() {
+                    let clash = match self.naming(tree, node) {
+                        crate::Naming::Free => None,
+                        crate::Naming::InTree => self
+                            .nodes_labelled(tree, name)
+                            .into_iter()
+                            .find(|other| *other != node)
+                            .map(|other| (tree, other)),
+                        crate::Naming::InDocument => self
+                            .nodes_labelled_anywhere(name)
+                            .into_iter()
+                            .find(|(where_, other)| !(*where_ == tree && *other == node)),
+                    };
+                    if let Some((where_, held_by)) = clash {
+                        return Err(EditError::LabelTaken {
+                            tree: where_,
+                            label: name.to_owned(),
+                            held_by,
+                        });
+                    }
                 }
                 Ok(())
             }

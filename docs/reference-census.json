@@ -3009,10 +3009,10 @@
       "verdict": "app-content"
     },
     "node::MakeNameValidator": {
-      "covered_by": "no name-validation surface: a label is free text",
+      "covered_by": "NodeKind::naming, read by Document::may(Act::Rename) through Document::naming (R1932). ⚠ The pre-R1932 reason was FALSE, not half false: a label has not been free text since R1682 — an empty name is refused and a name another node holds is refused with LabelTaken, which NAMES the holder where the reference's AlreadyInUse is a bare enum constant. Three of its seven validator results were already here. What was absent is that the rule was the CRATE's alone: an application could neither widen the scope nor turn it off. ★ Measured across all fourteen overriders, they do exactly two things — FOUR suppress (a comment and both reroute classes hand back a validator that accepts everything, carrying the same copy-pasted remark that comments may be duplicated) and the rest choose a SCOPE, building their validator over the whole blueprint rather than over the graph the node sits in. So the axis is a scope with an off position: Naming::{InTree, InDocument, Free}, and a frame is Free because its caption is not an address",
       "mechanism": "graph-node",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_node_make_name_validator",
+      "verdict": "have"
     },
     "node::NodeConnectionListChanged": {
       "covered_by": "no notification exists because nothing is stored: a node's derived facts are recomputed on read",
@@ -3501,10 +3501,10 @@
       "verdict": "app-content"
     },
     "schema::GetNameValidator": {
-      "covered_by": "no name-validation surface: a label is free text",
+      "covered_by": "RECLASSIFIED R1932, and the reclassification is what the end-condition rule demands: this is NOT the node-side hook under another name, it is a different capability on a different subject. Measured — its signature takes a blueprint, an original name, a validation scope and an action type id; it has ZERO overriders in the whole engine source; and its two consumers are the blueprint palette and the details panel, naming a blueprint's VARIABLES and ACTIONS. Nothing about it reaches a graph's nodes, which node::MakeNameValidator does with fourteen overriders. ⇒ asked whether this row has any path to zero: it has none while this project has no blueprint-class symbol table, so leaving it `absent` would keep a row in the owed count that cannot be built — the escape-hatch shape the standing rules name, in the direction that makes a backlog permanent rather than the one that inflates a score",
       "mechanism": "graph-schema",
       "proven_by": "",
-      "verdict": "absent"
+      "verdict": "app-content"
     },
     "schema::GetNodeSelectionCount": {
       "covered_by": "a selection belongs to an editor and not to a document - two people looking at one graph have two selections and one document",
