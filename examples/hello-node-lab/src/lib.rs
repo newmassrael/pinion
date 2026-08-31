@@ -119,7 +119,7 @@ use pinion_widget_paint::text_field as tf_paint;
 use serde::{Deserialize, Serialize};
 
 use deploy::Produced;
-use graph::{Implementation, LabNode, Revisions, Role, Stack, Transport};
+use graph::{Endpoint, Implementation, LabNode, Revisions, Role, Stack, Transport};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 
@@ -9577,6 +9577,22 @@ const PIN_PARTS: [&str; 2] = ["host", "service"];
 /// not a second argument, because it is ONE address — the crate's
 /// [`PortPath`] — and giving it two spellings on the wire is how a client comes
 /// to believe there are two things.
+/// ★★★★★ R1937 — the transports a pin may be given, as the wire spells them.
+///
+/// Built from [`Transport::ALL`] rather than listed, so a transport added later
+/// joins this vocabulary without anyone remembering to extend a second list —
+/// the rule `Endpoint::all` already states, applied to the wire. A hand-written
+/// roster is the shape whose omissions are invisible.
+const TRANSPORT_WORDS: [&str; Transport::ALL.len()] = {
+    let mut words = [""; Transport::ALL.len()];
+    let mut index = 0;
+    while index < Transport::ALL.len() {
+        words[index] = Transport::ALL[index].word();
+        index += 1;
+    }
+    words
+};
+
 const PIN_ADDRESSES: [&str; 6] = [
     "dial",
     "accept",
@@ -11053,6 +11069,29 @@ const FIELDS: &[SchemaField] = &{
         // another graph" is not visible from its title, and because a client
         // offering the swap has to know which cards are already instances.
         SchemaField::new("standing_for", "json"),
+        // ★★★★★ R1937 — give one pin a transport, and the card becomes the peer
+        // that speaks it. The address vocabulary is `split_pin`'s again, and
+        // the transport comes from a CLOSED list built from the taxonomy rather
+        // than spelled here, so an agent cannot be offered a word the edit
+        // would turn away.
+        SchemaField::action_with(
+            "set_pin_transport",
+            "string",
+            ArgForm::Delimited(','),
+            const {
+                &[
+                    SchemaArg::key("node", "string", "nodes"),
+                    SchemaArg::one_of("address", "string", &PIN_ADDRESSES),
+                    SchemaArg::one_of("transport", "string", &TRANSPORT_WORDS),
+                ]
+            },
+        ),
+        // ★★★★★ R1937 — which pins a person may choose a type for, and which
+        // types each would take. Published because a screen has to know before
+        // it offers a chooser, and because the answer is per (pin, type) rather
+        // than per pin: the same pin takes a whole locator and refuses half of
+        // one.
+        SchemaField::new("choosable", "json"),
         // ★★★★★ R1885 — put a card on another build. The build comes from a
         // CLOSED vocabulary and it is built from `Stack::ALL` rather than
         // spelled here, so the words an agent is offered cannot drift from the
@@ -11203,6 +11242,7 @@ impl ExternalIntrospect for LabOracle {
             "passing" => Ok(IntrospectValue::Json(passing_wire(state))),
             "names" => Ok(IntrospectValue::Json(names_wire(state))),
             "standing_for" => Ok(IntrospectValue::Json(standing_for_wire(state))),
+            "choosable" => Ok(IntrospectValue::Json(choosable_wire(state))),
             // ★ R1742 — the SAME value the host publishes for this section, so
             // "one build, two placements" is a fact a client can check rather
             // than a claim this file makes.
@@ -12086,6 +12126,20 @@ impl ExternalIntrospect for LabOracle {
                 let raw = Self::text(&args)?;
                 let node = Self::card(&state, raw.trim())?;
                 regroup(&state, node).map(IntrospectValue::Text)
+            }
+            "set_pin_transport" => {
+                let raw = Self::text(&args)?;
+                let mut parts = raw.splitn(3, ',');
+                let (Some(name), Some(address), Some(word)) =
+                    (parts.next(), parts.next(), parts.next())
+                else {
+                    return Err(InvokeError::rejected(format!(
+                        "{raw:?} is not <card>,<address>,<transport>"
+                    )));
+                };
+                let node = Self::card(&state, name.trim())?;
+                set_pin_transport(&state, node, address.trim(), word.trim())
+                    .map(IntrospectValue::Text)
             }
             // ★ R1681 — either layer, told apart by the `>`. A reported link
             // has no id to name it by, so the pair is the name; refusing to let
@@ -17308,6 +17362,94 @@ fn regroup(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError> {
     Ok(said)
 }
 
+/// ★★★★★ R1937 — **give one pin a transport**, and the card becomes the peer
+/// that speaks it.
+///
+/// The engine's per-pin type choice. What this screen adds over it is the
+/// REPORT: the reference's hook returns nothing and the node reconstructs, so a
+/// person cannot see that the choice cost them a wire. Here the sentence names
+/// how many went.
+fn set_pin_transport(
+    state: &Rc<LabState>,
+    node: NodeId,
+    address: &str,
+    word: &str,
+) -> Result<String, InvokeError> {
+    let name = state.name_of(node);
+    let transport = Transport::ALL
+        .into_iter()
+        .find(|t| t.word() == word)
+        .ok_or_else(|| InvokeError::rejected(format!("{word:?} is not a transport")))?;
+    let (side, path) = pin_address(address)?;
+    let mut doc = state.doc.borrow_mut();
+    let index = doc
+        .index_of(ROOT, node, side, &path)
+        .ok_or_else(|| InvokeError::rejected(format!("{name} has no pin at {address:?}")))?;
+    let port = match side {
+        Side::Input => PortRef::input(index),
+        Side::Output => PortRef::output(index),
+    };
+    let swapped = doc
+        .set_port_type(ROOT, node, port, &Endpoint::Locator(transport))
+        .map_err(|why| InvokeError::rejected(why.to_string()))?;
+    let lost = swapped.severed.len();
+    drop(doc);
+    let said =
+        format!("{name}.{address} now speaks {word}, and {lost} wire(s) could not cross with it");
+    state.say(Utterance::done(said.clone()));
+    Ok(said)
+}
+
+/// ★★★★★ R1937 — **which pins may be given a type, and which types each would
+/// take.**
+///
+/// Per (pin, type) rather than per pin, because that is the shape of the
+/// answer: the same pin takes a whole locator and refuses half of one. A screen
+/// that asked only "is this pin choosable" would offer a chooser whose entries
+/// are not all real.
+fn choosable_wire(state: &Rc<LabState>) -> serde_json::Value {
+    let doc = state.doc.borrow();
+    let rows: Vec<serde_json::Value> = doc
+        .tree(ROOT)
+        .map(|host| {
+            host.nodes()
+                .filter(|held| matches!(held.body, NodeBody::Kind(_)))
+                .flat_map(|held| {
+                    let card = state.name_of(held.id);
+                    let (ins, outs) = doc
+                        .signature(ROOT, held.id)
+                        .map_or((0, 0), |s| (s.inputs.len(), s.outputs.len()));
+                    let ports: Vec<(Side, u32)> = (0..ins)
+                        .map(|i| (Side::Input, u32::try_from(i).unwrap_or(0)))
+                        .chain((0..outs).map(|i| (Side::Output, u32::try_from(i).unwrap_or(0))))
+                        .collect();
+                    ports
+                        .into_iter()
+                        .map(|(side, index)| {
+                            let port = match side {
+                                Side::Input => PortRef::input(index),
+                                Side::Output => PortRef::output(index),
+                            };
+                            let takes: Vec<String> = Endpoint::all()
+                                .into_iter()
+                                .filter(|ty| doc.may_set_port_type(ROOT, held.id, port, ty))
+                                .map(|ty| format!("{ty:?}"))
+                                .collect();
+                            serde_json::json!({
+                                "card": card.clone(),
+                                "side": match side { Side::Input => "accept", Side::Output => "dial" },
+                                "index": index,
+                                "takes": takes,
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    serde_json::json!({ "ports": rows })
+}
+
 /// ★★★★★ R1936 — **what each card stands for**: its own kind, or a definition.
 ///
 /// "This node is another graph" is not visible from a card's title, and a
@@ -17595,7 +17737,7 @@ fn section_command(state: &Rc<LabState>, word: &str, rest: &str) -> Result<Strin
 /// ★ The answer is **no, with a reason**, and the reason is a fact about this
 /// application rather than about the framework: a section switch carries the
 /// taxonomy's own two-state type, and this screen's taxonomy is locators —
-/// [`Endpoint`](crate::graph::Endpoint) has no such member, so
+/// [`Endpoint`] has no such member, so
 /// `NodeKind::switch_type` is `None` here. Publishing that is the difference
 /// between a capability an agent can rule out and one it has to discover by
 /// failing.

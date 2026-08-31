@@ -425,6 +425,30 @@ impl NodeKind for LabNode {
         self.role.name().to_owned()
     }
 
+    /// ★★★★★ R1937 — **give one pin a transport, and this node becomes the node
+    /// that speaks it.**
+    ///
+    /// The engine's per-pin type choice, in this taxonomy's own vocabulary: a
+    /// pin's type IS the endpoint it carries, and an endpoint's transport is a
+    /// fact about the node rather than about the pin, so choosing one on any
+    /// pin is choosing it for the peer.
+    ///
+    /// ⚠ A HALF of a locator is refused, and that refusal is the point rather
+    /// than an omission: `Host` and `Service` are what a split produces
+    /// (R1914), so offering them here would let a person ask for a peer that
+    /// speaks "the host half of something", which is not a transport a peer can
+    /// speak. This is what makes *the kind may decline a particular type*
+    /// reachable on a real screen instead of only in a fixture.
+    fn retyped(&self, _port: pinion_node_graph::PortRef, ty: &Endpoint) -> Option<Self> {
+        match ty {
+            Endpoint::Locator(transport) => Some(Self {
+                transport: *transport,
+                ..self.clone()
+            }),
+            Endpoint::Host | Endpoint::Service => None,
+        }
+    }
+
     /// ★★★★★ R1923 — what a node of this role IS, DERIVED from the one line the
     /// palette already shows rather than written a second time.
     ///

@@ -49,9 +49,9 @@ use pinion_node_graph::{
     Faces, Fragment, Grow, Hidden, Instance, InterfacePort, InterfaceSide, Item, ItemError,
     LandError, Landfall, LinkId, Machine, Matched, Multiplicity, Node, NodeBody, NodeId, NodeKind,
     NodeSite, NotRecombinable, NotSplittable, Passing, Port, PortName, PortPath, PortRef, PortSite,
-    PutAway, ROOT, Reach, RelinkError, SectionId, Session, Sharing, Side, Socket, Stack,
-    Straighten, Stride, SwapError, SwitchRefusal, Tint, TreeId, Variadic, WatchError, palette_of,
-    type_palette,
+    PutAway, ROOT, Reach, RelinkError, RetypeError, SectionId, Session, Sharing, Side, Socket,
+    Stack, Straighten, Stride, SwapError, SwitchRefusal, Tint, TreeId, Variadic, WatchError,
+    palette_of, type_palette,
 };
 
 // ---------------------------------------------------------------- taxonomy
@@ -270,6 +270,28 @@ impl NodeKind for Op {
     fn passing(&self) -> Option<Passing> {
         match self {
             Self::Relay => Some(Passing::ENDS),
+            _ => None,
+        }
+    }
+
+    /// R1937 — the two CONSTANTS let their one output's type be chosen, and
+    /// nothing else here does.
+    ///
+    /// Deliberately narrow, in three directions at once, so a proof can tell
+    /// the declaration from a blanket yes: only these two kinds answer, only
+    /// their OUTPUT answers, and only the two atom types are accepted — a
+    /// composite is refused, which is what makes "the kind may decline a
+    /// particular type" observable rather than assumed.
+    fn retyped(&self, port: PortRef, ty: &Ty) -> Option<Self> {
+        if !matches!(self, Self::Num(_) | Self::Word(_))
+            || port.side != Side::Output
+            || port.index != 0
+        {
+            return None;
+        }
+        match ty {
+            Ty::Number => Some(Self::Num(0)),
+            Ty::Text => Some(Self::Word(String::new())),
             _ => None,
         }
     }
@@ -792,6 +814,18 @@ fn dcc_proofs() -> Vec<Proof> {
         // R1936 — the two group swaps. One capability with the definition
         // arriving from two places: an existing one, and a fresh empty one.
         proof("dcc", "swap_group_asset", dcc_swap_group_asset),
+        // R1937 — the per-port type pair. TWO mechanisms, not two spellings:
+        // the editor's verb, and the node's chance to say what it becomes.
+        proof(
+            "engine",
+            "GraphEditor::ChangePinType",
+            engine_graph_editor_change_pin_type,
+        ),
+        proof(
+            "engine",
+            "node::PinTypeChanged",
+            engine_node_pin_type_changed,
+        ),
         proof("dcc", "swap_empty_group", dcc_swap_empty_group),
         proof("dcc", "options_toggle", dcc_options_toggle),
         proof("dcc", "parent_set", dcc_parent_set),
@@ -1759,6 +1793,174 @@ fn dcc_group_separate() {
         arrives(&chain.document, Socket::new(chain.sink, 0)),
         before,
         "the value that used to cross the boundary was reconnected"
+    );
+}
+
+/// ★★★★★ R1937 — **the VERB**: a person gives one port a type, and the node
+/// becomes what its kind says it becomes.
+///
+/// The engine's editor command, whose own tooltip is *"Changes the type of this
+/// pin (boolean, int, etc.)"* — a CHOICE on one pin, not a wildcard resolving
+/// itself. What this crate adds is that the edit is the same edit as
+/// `set_kind`, so what it costs is reported.
+#[test]
+fn engine_graph_editor_change_pin_type() {
+    let mut chain = chain();
+    let source = num(&mut chain.document, 7);
+    let reader = node(&mut chain.document, Op::Double);
+    wire(&mut chain.document, source, 0, reader, 0);
+    assert_eq!(
+        arrives(&chain.document, Socket::new(reader, 0)),
+        Some(Val::Number(7))
+    );
+
+    // ★ The verb: that port, this type.
+    let swapped = chain
+        .document
+        .set_port_type(ROOT, source, PortRef::output(0), &Ty::Text)
+        .expect("a constant lets its output's type be chosen");
+
+    assert_eq!(
+        chain
+            .document
+            .tree(ROOT)
+            .unwrap()
+            .node(source)
+            .unwrap()
+            .body,
+        NodeBody::Kind(Op::Word(String::new())),
+        "★ the node became what its kind said it becomes"
+    );
+    assert_eq!(
+        chain.document.signature(ROOT, source).unwrap().outputs[0]
+            .flow
+            .value_type(),
+        Some(&Ty::Text),
+        "and the port carries the chosen type"
+    );
+    // ★★★★★ AND WHAT IT COST IS REPORTED. The wire into the reader could not
+    // survive a Number->Text output, and it is NAMED — where the reference's
+    // hook returns `void` and the node reconstructs, so nobody learns.
+    assert_eq!(
+        swapped.severed.len(),
+        1,
+        "the wire that could not cross is named: {swapped:?}"
+    );
+    assert!(
+        chain
+            .document
+            .tree(ROOT)
+            .unwrap()
+            .links()
+            .iter()
+            .all(|link| link.from.node != source),
+        "and the graph agrees with the report"
+    );
+    assert!(chain.document.validate().is_empty());
+
+    // ⚠ The address is the node's OWN signature: an index past its ports is a
+    // different refusal from a kind declining, because the repairs differ.
+    assert_eq!(
+        chain
+            .document
+            .set_port_type(ROOT, source, PortRef::output(9), &Ty::Number),
+        Err(RetypeError::NoSuchPort {
+            tree: ROOT,
+            node: source,
+            port: PortRef::output(9)
+        })
+    );
+}
+
+/// ★★★★★ R1937 — **the NODE's half**: the kind says what it becomes, and may
+/// decline — before anything moves.
+///
+/// The engine's hook, and its shape is the finding. Measured across all seven
+/// mentions: it is a `void` notification whose ONE external call site is the
+/// pin's type-selector widget (`OwningNode->PinTypeChanged(GraphPinObj)`), the
+/// rest being nodes calling it on themselves while reconstructing. Its own
+/// comment says it is called when a pin's type "has had its' pin type changed
+/// from an external source" — PAST TENSE, so a node hears about the change
+/// after it happened and cannot refuse.
+///
+/// ★ Here the same declaration is asked FIRST, so declining is a refusal rather
+/// than a reconstruction, and asking is separable from doing.
+#[test]
+fn engine_node_pin_type_changed() {
+    let mut chain = chain();
+    let source = num(&mut chain.document, 3);
+
+    // ★ The DEFAULT is a refusal, and it is what every kind that has not opted
+    // in says. Asserted on a kind that takes it, because a fixture where
+    // everything opts in cannot see the default at all.
+    assert!(
+        !chain
+            .document
+            .may_set_port_type(ROOT, chain.add, PortRef::output(0), &Ty::Text),
+        "★ `Add` never declared this hook, so its answer is the trait's default"
+    );
+    assert_eq!(
+        chain
+            .document
+            .set_port_type(ROOT, chain.add, PortRef::output(0), &Ty::Text),
+        Err(RetypeError::Refused {
+            tree: ROOT,
+            node: chain.add,
+            port: PortRef::output(0)
+        }),
+        "and the verb refuses with the same declaration the question read"
+    );
+
+    // ★★★★★ CHOOSABLE IS NOT A PROPERTY OF THE PORT ALONE: the same port of the
+    // same node accepts one type and declines another. The reference cannot ask
+    // this at all — its hook is a notification, so the only way to find out is
+    // to do it.
+    assert!(
+        chain
+            .document
+            .may_set_port_type(ROOT, source, PortRef::output(0), &Ty::Text)
+    );
+    assert!(
+        !chain
+            .document
+            .may_set_port_type(ROOT, source, PortRef::output(0), &Ty::Pair),
+        "★ a composite is declined by a kind that accepts the two atoms"
+    );
+    // ⚠ And the INPUT side of a kind that answers for its output does not: the
+    // hook is asked about a port, not about a node.
+    assert!(
+        !chain
+            .document
+            .may_set_port_type(ROOT, chain.add, PortRef::input(0), &Ty::Number)
+    );
+
+    // ★ Asking and doing cannot disagree, because they read one declaration —
+    // R1920's rule applied to a hook rather than to a permission.
+    for ty in [Ty::Number, Ty::Text, Ty::Pair] {
+        let asked = chain
+            .document
+            .may_set_port_type(ROOT, source, PortRef::output(0), &ty);
+        let done = chain
+            .document
+            .set_port_type(ROOT, source, PortRef::output(0), &ty)
+            .is_ok();
+        assert_eq!(asked, done, "asking and doing agree for {ty:?}");
+    }
+
+    // ⚠ A body this crate owns has no kind to ask, and says so in its own word
+    // rather than as a refusal by the kind — there is no kind.
+    let bend = chain
+        .document
+        .add_node(ROOT, NodeBody::Reroute, 0, 0)
+        .unwrap();
+    assert_eq!(
+        chain
+            .document
+            .set_port_type(ROOT, bend, PortRef::output(0), &Ty::Number),
+        Err(RetypeError::NotAKind {
+            tree: ROOT,
+            node: bend
+        })
     );
 }
 

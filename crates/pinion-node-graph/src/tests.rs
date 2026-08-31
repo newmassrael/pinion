@@ -17,9 +17,9 @@ use crate::{
     Machine, Margin, Multiplicity, Naming, NestError, Node, NodeBody, NodeId, NodeKind, NodeSite,
     ObserveError, Occurrence, Organic, Orphaned, ParentError, Passing, PathError, Port, PortPath,
     PortRef, PortSite, PortValueError, ROOT, Reach, Relabelled, RelinkError, RepartitionError,
-    Route, RunError, SectionId, SelectError, Session, Severed, Sharing, Side, Socket, Stack,
-    Standing, Stop, Straighten, Stride, SwapError, SwitchRefusal, Tick, Timeline, Tint, TreeId,
-    UngroupError, Unreadable, Violation, WatchError, Watches, ZoomRange, crossing,
+    RetypeError, Route, RunError, SectionId, SelectError, Session, Severed, Sharing, Side, Socket,
+    Stack, Standing, Stop, Straighten, Stride, SwapError, SwitchRefusal, Tick, Timeline, Tint,
+    TreeId, UngroupError, Unreadable, Violation, WatchError, Watches, ZoomRange, crossing,
 };
 
 /// ★★★★★ R1925 — **an application that declares no two-state socket type is
@@ -16808,6 +16808,53 @@ fn r1935_a_far_end_is_on_the_chain_without_having_two_ends() {
         doc.passing(ROOT, echo),
         None,
         "★★★★★ on the chain, and with no way in"
+    );
+}
+
+/// ★★★★★ R1937 — **the DEFAULT answer to "may this port's type be chosen" is
+/// no**, asserted on a taxonomy that takes it.
+///
+/// ⚠ This test exists because a counterfactual PASSED, and it is R1926's shape
+/// exactly: giving the trait default `Some(self.clone())` left the whole suite
+/// green, because the census fixture OVERRIDES the hook and so never reaches
+/// the default at all. A default is an escape hatch, and what most applications
+/// get is precisely the thing nothing was checking.
+///
+/// `LOp` declares nothing here, which is what makes it the right witness.
+#[test]
+fn r1937_the_default_refuses_to_let_a_ports_type_be_chosen() {
+    let mut doc: Document<LOp> = Document::new("lattice");
+    let node = doc
+        .add_node(ROOT, NodeBody::Kind(LOp::Level(1)), 0, 0)
+        .unwrap();
+
+    // ★ At the trait, on a kind that declared nothing.
+    assert_eq!(
+        LOp::Level(1).retyped(PortRef::output(0), &LTy::Vector),
+        None
+    );
+    // ★ And through the document, which is where a screen asks.
+    assert!(!doc.may_set_port_type(ROOT, node, PortRef::output(0), &LTy::Vector));
+    assert_eq!(
+        doc.set_port_type(ROOT, node, PortRef::output(0), &LTy::Vector),
+        Err(RetypeError::Refused {
+            tree: ROOT,
+            node,
+            port: PortRef::output(0)
+        }),
+        "★★★★★ the default is a REFUSAL, and it is what every kind that has not \
+         opted in says"
+    );
+    // ⚠ The counterpart that keeps this from passing vacuously: the refusal is
+    // about the DECLARATION and not about the port being absent, so an address
+    // that is not there answers a different word.
+    assert_eq!(
+        doc.set_port_type(ROOT, node, PortRef::output(7), &LTy::Vector),
+        Err(RetypeError::NoSuchPort {
+            tree: ROOT,
+            node,
+            port: PortRef::output(7)
+        })
     );
 }
 

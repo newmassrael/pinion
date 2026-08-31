@@ -1803,10 +1803,10 @@
       "verdict": "have"
     },
     "GraphEditor::ChangePinType": {
-      "covered_by": "per-PIN type: a wildcard port resolved per node, where set_kind changes the whole node",
+      "covered_by": "Document::set_port_type, R1937 — the VERB a person reaches on ONE port. ⚠ This row's pre-R1937 reason called it a wildcard resolving per node; the reference's own command tooltip is 'Changes the type of this pin (boolean, int, etc.)', so it is a CHOICE rather than an inference. What this crate adds is that the edit is the same edit as set_kind, so what could not cross the new signature is carried where it can be and NAMED where it cannot — the reference's hook returns void and the node reconstructs, so nobody learns what it cost",
       "mechanism": "GraphEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_graph_editor_change_pin_type",
+      "verdict": "have"
     },
     "GraphEditor::ClearAllQuickJumps": {
       "covered_by": "editor navigation over a viewport the crate does not hold",
@@ -3057,10 +3057,10 @@
       "verdict": "have"
     },
     "node::PinTypeChanged": {
-      "covered_by": "per-PIN type: a wildcard port resolved per node, where set_kind changes the whole node",
+      "covered_by": "NodeKind::retyped, R1937 — the NODE's half of the pair, and it is a different thing from the verb: a kind says what it BECOMES when one of its ports is given a type, and may decline. ★ Measured across all seven mentions of the reference's hook, it is a void notification whose one external call site is the pin's type-selector widget, and its own comment says it fires when a pin's type 'has had its' pin type changed from an external source' — past tense, so a node hears about the change after it happened and cannot refuse. Here the declaration is asked FIRST (Document::may_set_port_type reads the same one), so declining is a refusal, asking is separable from doing, and the two cannot disagree",
       "mechanism": "graph-node",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_node_pin_type_changed",
+      "verdict": "have"
     },
     "node::PostEditChangeProperty": {
       "covered_by": "the engine's UObject lifecycle, not its node system",

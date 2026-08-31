@@ -97,6 +97,79 @@ impl std::fmt::Display for SwapError {
 
 impl std::error::Error for SwapError {}
 
+/// Why one port's type could not be chosen (R1937).
+///
+/// Its own type rather than an arm on [`SwapError`] because the question is a
+/// different one — that asks what a node may STAND FOR, this asks what one of
+/// its ports may CARRY — and a screen repairs them differently: one offers
+/// another definition, the other offers another type or no chooser at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RetypeError {
+    /// That node is not in the tree.
+    NoSuchNode {
+        /// The tree asked about.
+        tree: TreeId,
+        /// The node asked about.
+        node: NodeId,
+    },
+    /// The node has no port at that address.
+    NoSuchPort {
+        /// The tree it is in.
+        tree: TreeId,
+        /// The node asked about.
+        node: NodeId,
+        /// The address that answered nothing.
+        port: PortRef,
+    },
+    /// A body this crate owns has no kind to ask.
+    NotAKind {
+        /// The tree it is in.
+        tree: TreeId,
+        /// The node asked about.
+        node: NodeId,
+    },
+    /// The kind declined: this port's type is not a person's to choose, or not
+    /// to be that.
+    ///
+    /// ★ The DEFAULT answer, and therefore what every kind that has not opted
+    /// in says. A refusal rather than a silent no-op because the caller asked
+    /// for something and is entitled to know it did not happen — and because
+    /// the same declaration is what a screen asks before offering a chooser.
+    Refused {
+        /// The tree it is in.
+        tree: TreeId,
+        /// The node that declined.
+        node: NodeId,
+        /// The port it declined for.
+        port: PortRef,
+    },
+}
+
+impl std::fmt::Display for RetypeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoSuchNode { tree, node } => {
+                write!(f, "no node {} in tree {}", node.0, tree.0)
+            }
+            Self::NoSuchPort { tree, node, port } => {
+                write!(f, "node {} in tree {} has no port {port}", node.0, tree.0)
+            }
+            Self::NotAKind { tree, node } => write!(
+                f,
+                "node {} in tree {} is a body this crate owns and has no kind to ask",
+                node.0, tree.0
+            ),
+            Self::Refused { tree, node, port } => write!(
+                f,
+                "node {} in tree {} does not let port {port} be given that type",
+                node.0, tree.0
+            ),
+        }
+    }
+}
+
+impl std::error::Error for RetypeError {}
+
 /// ★ R1936 — **what is about to go where**: the signature a node is leaving
 /// and the two correspondences that answer it.
 ///
@@ -385,6 +458,58 @@ impl<K: NodeKind> Document<K> {
         swapped.severed = severed;
         swapped.discarded = discarded;
         swapped
+            .severed
+            .extend(self.cut_what_no_longer_crosses(tree, node));
+        swapped.severed.sort_by_key(|link| link.id);
+        swapped
+    }
+
+    /// ★★★★★ R1937 — **a wire that was carried across may still be illegal at
+    /// its OTHER end**, and this is what removes it and names it.
+    ///
+    /// A correspondence answers *did this port survive*, and a port can survive
+    /// under the same name while carrying a different type — which is exactly
+    /// what [`set_port_type`](Self::set_port_type) does. The wire is then moved
+    /// onto a port whose type its far end never agreed to, and nothing had
+    /// looked at the far end.
+    ///
+    /// ⚠ Found by R1937's own proof and it is a PRE-EXISTING defect of
+    /// [`set_kind`](Self::set_kind) (R1598), reachable there the same way: any
+    /// swap where a port keeps its name and changes its type. The reference has
+    /// the corresponding line — its link transfer ends
+    /// `if not new_link.is_valid: tree.links.remove(new_link)` — and this crate
+    /// did not, so it was measurably behind on the one thing it claims to do
+    /// better. It reports what it removes, which the reference still does not.
+    fn cut_what_no_longer_crosses(&mut self, tree: TreeId, node: NodeId) -> Vec<Link> {
+        let Some(host) = self.tree(tree) else {
+            return Vec::new();
+        };
+        let touching: Vec<crate::model::LinkId> = host
+            .links()
+            .iter()
+            .filter(|link| link.from.node == node || link.to.node == node)
+            .map(|link| link.id)
+            .collect();
+        let mut cut = Vec::new();
+        for id in touching {
+            let refused = self
+                .tree(tree)
+                .and_then(|host| host.link(id).copied())
+                .is_some_and(|link| {
+                    let source = self.port(tree, link.from, crate::group::PortSide::Out);
+                    let sink = self.port(tree, link.to, crate::group::PortSide::In);
+                    match (source, sink) {
+                        (Some(from), Some(to)) => crossing::<K>(&from, &to).is_refused(),
+                        // A socket that no longer resolves is a dangling link,
+                        // which `remap_ports` already answered for; leave it.
+                        _ => false,
+                    }
+                });
+            if refused && let Ok(link) = self.disconnect(tree, id) {
+                cut.push(link);
+            }
+        }
+        cut
     }
 
     /// ★★★★★ R1936 — **make this node stand for that definition**, keeping the
@@ -476,6 +601,106 @@ impl<K: NodeKind> Document<K> {
             NodeBody::Group(definition),
             Items::default(),
         ))
+    }
+
+    /// ★★★★★ R1937 — **give one port a type**, and let the kind say what it
+    /// becomes.
+    ///
+    /// The engine's pair: an editor command a person reaches on one pin, and
+    /// the node hook that command reaches through. Measured, they are not two
+    /// spellings — one is the VERB and the other is the node's chance to react,
+    /// and the reaction there is to store the type and reconstruct.
+    ///
+    /// ★ The refusal happens BEFORE anything moves, which the reference cannot
+    /// do: its hook is a past-tense notification, so by the time a node hears
+    /// about the change the change has happened. Here
+    /// [`NodeKind::retyped`] answering `None` is the node declining, and it is
+    /// also the answer a screen needs before it offers a chooser — one
+    /// declaration, two questions.
+    ///
+    /// What it costs is reported, because this IS
+    /// [`set_kind`](Self::set_kind): the kind the hook answers is swapped in
+    /// through the same correspondence, so wires and authored values are
+    /// carried where they can be and NAMED where they cannot.
+    ///
+    /// # Errors
+    ///
+    /// [`RetypeError::NoSuchPort`] when the node has no such port,
+    /// [`RetypeError::NotAKind`] for a body this crate owns, and
+    /// [`RetypeError::Refused`] when the kind declines — which is the default,
+    /// and therefore the answer for every kind that has not opted in.
+    pub fn set_port_type(
+        &mut self,
+        tree: TreeId,
+        node: NodeId,
+        port: PortRef,
+        // By reference, which clippy asked for and which is also the right
+        // signature: the hook only READS the type — what it answers is a KIND —
+        // so taking ownership would make every caller clone a type it still
+        // holds. It is also what makes this verb and
+        // [`may_set_port_type`](Self::may_set_port_type) take the same argument,
+        // which is what lets a caller ask and then do with one value.
+        ty: &K::Type,
+    ) -> Result<Swapped<K>, RetypeError> {
+        let signature = self
+            .signature(tree, node)
+            .ok_or(RetypeError::NoSuchNode { tree, node })?;
+        let arity = match port.side {
+            Side::Input => signature.inputs.len(),
+            Side::Output => signature.outputs.len(),
+        };
+        if port.index as usize >= arity {
+            return Err(RetypeError::NoSuchPort { tree, node, port });
+        }
+        let held = self
+            .tree(tree)
+            .and_then(|t| t.node(node))
+            .ok_or(RetypeError::NoSuchNode { tree, node })?;
+        let NodeBody::Kind(kind) = &held.body else {
+            return Err(RetypeError::NotAKind { tree, node });
+        };
+        let became = kind
+            .retyped(port, ty)
+            .ok_or(RetypeError::Refused { tree, node, port })?;
+        self.set_kind(tree, node, became)
+            .map_err(|_| RetypeError::NoSuchNode { tree, node })
+    }
+
+    /// ★★★★★ R1937 — **may a person choose this port's type?**, asked without
+    /// making the edit.
+    ///
+    /// The same declaration [`set_port_type`](Self::set_port_type) obeys, so a
+    /// screen that offers a chooser and an edit that runs cannot disagree —
+    /// R1920's rule, applied to a hook rather than to a permission.
+    ///
+    /// ⚠ It takes the type it would be given, because a kind may accept one
+    /// type on a port and refuse another: *choosable* is not a property of the
+    /// port alone. The reference cannot ask this at all — its hook is a
+    /// notification, so the only way to find out is to do it.
+    #[must_use]
+    pub fn may_set_port_type(
+        &self,
+        tree: TreeId,
+        node: NodeId,
+        port: PortRef,
+        ty: &K::Type,
+    ) -> bool {
+        let Some(signature) = self.signature(tree, node) else {
+            return false;
+        };
+        let arity = match port.side {
+            Side::Input => signature.inputs.len(),
+            Side::Output => signature.outputs.len(),
+        };
+        if port.index as usize >= arity {
+            return false;
+        }
+        self.tree(tree)
+            .and_then(|t| t.node(node))
+            .is_some_and(|held| match &held.body {
+                NodeBody::Kind(kind) => kind.retyped(port, ty).is_some(),
+                _ => false,
+            })
     }
 
     /// ★★★★★ R1936 — **make this node stand for a NEW, empty definition**, and

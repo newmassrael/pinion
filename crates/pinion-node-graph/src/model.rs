@@ -932,6 +932,52 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
         None
     }
 
+    /// ★★★★★ R1937 — **one of my ports has been given a type: what do I
+    /// become?**
+    ///
+    /// `None` — the default — means *this port's type is not a person's to
+    /// choose*, which is the ordinary case and is also the answer a screen
+    /// needs before it offers a chooser at all. One declaration answers both
+    /// questions, which is R1928's shape: a hook that says what the node
+    /// becomes also says, by refusing, that nothing can be chosen here.
+    ///
+    /// # Why it answers a KIND rather than mutating
+    ///
+    /// Because the reference's equivalent is a `void` notification and that is
+    /// its defect, measured rather than argued. There a pin widget calls
+    /// `PinTypeChanged` on the owning node — the one external call site of
+    /// seven mentions — and the node reacts by *storing the type on itself and
+    /// reconstructing*: `IndexPinType = Pin->PinType`, then every pin is marked
+    /// discardable and the node is rebuilt. Three consequences follow, and this
+    /// hook has none of them:
+    ///
+    /// * **the node cannot refuse.** The type has already changed when the node
+    ///   is told; the hook's name is past tense. Answering `None` here is a
+    ///   refusal, and it happens *before* anything moves.
+    /// * **nobody learns what it cost.** The reconstruction drops pins, and
+    ///   with them wires and authored values, and the notification returns
+    ///   nothing. [`Document::set_port_type`] answers a
+    ///   [`Swapped`](crate::Swapped) — the same report
+    ///   [`set_kind`](Document::set_kind) gives, because it is the same edit.
+    /// * **the answer is a second copy of the node's own state.** Here the kind
+    ///   IS the state, so a kind that varies by type is a kind that says so in
+    ///   its own vocabulary, and there is nothing to keep in agreement.
+    ///
+    /// # What `port` addresses
+    ///
+    /// The node's own signature, the reading
+    /// [`signature`](Document::signature) gives — so a kind with a variadic run
+    /// (R1632) is asked about the port a person actually clicked rather than
+    /// about an index into its declaration.
+    #[must_use]
+    fn retyped(&self, port: PortRef, ty: &Self::Type) -> Option<Self>
+    where
+        Self: Sized,
+    {
+        let _ = (port, ty);
+        None
+    }
+
     /// ★★★★★ R1932 — **what this kind requires of the name a person gives one of
     /// its nodes**: where it has to be unique, or that it need not be.
     ///

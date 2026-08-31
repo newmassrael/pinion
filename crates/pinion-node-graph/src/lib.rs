@@ -299,7 +299,7 @@ pub use split::{
     AddressedPort, Composition, NoSuchMember, NotRecombinable, NotSplittable, PortPath, Recombined,
     RoundTrip, SplitChange, Splittable, round_trips,
 };
-pub use swap::{Carried, SwapError, Swapped};
+pub use swap::{Carried, RetypeError, SwapError, Swapped};
 pub use view::{Camera, Fit, Fitted, Margin, ZoomRange};
 pub use warning::{Surroundings, Warning};
 
