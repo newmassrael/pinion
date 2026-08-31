@@ -12,7 +12,8 @@
 //! canvas's three pin appearances mean something rather than decorate.
 
 use pinion_node_graph::{
-    Admission, Composition, Conversion, NodeKind, Port, Refusal, Side, Tint, Variadic,
+    Admission, Composition, Conversion, NodeKind, Port, PortName, PortRef, Refusal, Side, Tint,
+    Variadic,
 };
 use serde::{Deserialize, Serialize};
 
@@ -525,6 +526,35 @@ impl NodeKind for LabNode {
                     .describing("which port on that host"),
             ]),
             Endpoint::Host | Endpoint::Service => Composition::Atom,
+        }
+    }
+
+    /// ★★★★★ R1928 — **what this node calls its own ports.**
+    ///
+    /// One rule, and it is the reference's commonest use of this hook rather
+    /// than its rarest: **a node that listens nowhere shows no name on its
+    /// accept pin.** Measured this round, four of the reference's six
+    /// overriders use the capability to suppress a name, and the fact here is
+    /// exactly of that shape — the accept run's ports are named for the address
+    /// each one listens on, and a node with no `listen.endpoints` has no
+    /// address to name them with. The ordinal-derived stand-in the model would
+    /// otherwise show (`accept 0`) is a name for a seat that is not yet
+    /// anything, and a reader who cannot see the canvas is better told there is
+    /// no name than given one that means nothing.
+    ///
+    /// ⚠ It suppresses the NAME, not the pin: the pin is still drawn, still
+    /// announced, and still says what it is for — which is the distinction the
+    /// reference's empty text cannot make and [`PortName::Silent`] does.
+    ///
+    /// Everything else keeps its declaration. The dial pin's name is the
+    /// kind's, and an accept slot that a link has landed on carries the address
+    /// as its own item label — a name this node gives it, through the OTHER of
+    /// the three sources, which is why this hook does not answer for it.
+    fn port_name(&self, at: PortRef, declared: &str) -> PortName {
+        let _ = declared;
+        match at.side {
+            Side::Input if !self.listening => PortName::Silent,
+            Side::Input | Side::Output => PortName::Declared,
         }
     }
 

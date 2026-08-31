@@ -48,9 +48,9 @@ use pinion_node_graph::{
     Described, Direction, Distribute, Document, Edge, EditError, EditPath, Extent, Faces, Fragment,
     Grow, Hidden, Instance, InterfacePort, InterfaceSide, Item, ItemError, LinkId, Machine,
     Matched, Multiplicity, Node, NodeBody, NodeId, NodeKind, NodeSite, NotRecombinable,
-    NotSplittable, Port, PortPath, PortRef, PortSite, PutAway, ROOT, Reach, RelinkError, SectionId,
-    Session, Sharing, Side, Socket, Stack, Straighten, Stride, SwitchRefusal, Tint, TreeId,
-    Variadic, WatchError, palette_of, type_palette,
+    NotSplittable, Port, PortName, PortPath, PortRef, PortSite, PutAway, ROOT, Reach, RelinkError,
+    SectionId, Session, Sharing, Side, Socket, Stack, Straighten, Stride, SwitchRefusal, Tint,
+    TreeId, Variadic, WatchError, palette_of, type_palette,
 };
 
 // ---------------------------------------------------------------- taxonomy
@@ -179,6 +179,28 @@ impl NodeKind for Op {
     /// ★ R1925 — the two-state type a section switch carries.
     fn switch_type() -> Option<Ty> {
         Some(Ty::Flag)
+    }
+
+    /// ★★★★★ R1928 — what a node of this taxonomy calls its own ports.
+    ///
+    /// Shaped after the reference's own six overriders, which between them do
+    /// only two things and one of them far more often:
+    ///
+    /// * `Carry` **suppresses**, the way its two reroute classes do — measured,
+    ///   four of the six use the capability to make a pin show no name at all.
+    /// * `Stage` **renames its control output**, which is the other thing they
+    ///   do (two of them hand back a text of the node's own).
+    /// * ⚠ **Every other kind says nothing**, so the SUPPLIED answer is under
+    ///   test too. R1926's lesson: a fixture that overrides everywhere leaves
+    ///   the default with no check on it at all.
+    fn port_name(&self, at: PortRef, declared: &str) -> PortName {
+        match self {
+            Self::Carry => PortName::Silent,
+            Self::Stage(_) if at == PortRef::output(0) => {
+                PortName::Instead(format!("after {declared}"))
+            }
+            _ => PortName::Declared,
+        }
     }
 
     /// ★★★★★ R1927 — when a node of this taxonomy is in a questionable state.
@@ -1253,6 +1275,16 @@ fn engine_hook_proofs() -> Vec<Proof> {
             "node::ShowVisualWarning",
             engine_node_show_visual_warning,
         ),
+        // ★★★★★ R1928 — the pin-NAMING pair. One proof, because they are one
+        // answer here: the reference's `Should…` is a guard in front of its
+        // `Get…` and a class that overrides only the guard suppresses by
+        // accident, so the `Should…` row CITES this rather than owning a second
+        // proof there is no second mechanism for.
+        proof(
+            "engine",
+            "node::GetPinNameOverride",
+            engine_node_get_pin_name_override,
+        ),
     ]
 }
 
@@ -1850,6 +1882,212 @@ fn dcc_node_poll() {
          of an already-broken fixture: {:?}",
         chain.document.validate()
     );
+}
+
+// ================================================== R1928 — port naming
+
+/// ★★★★★ R1928 — a node says what it calls its own ports, and the answer says
+/// who chose it.
+///
+/// The reference's pair, and the three ways this passes it are each asserted
+/// rather than claimed:
+///
+/// * **three answers, not two hooks** — keep, rename, and show nothing — so the
+///   state its own source is in (opt in to overriding, then say nothing, and
+///   suppress by accident) cannot be built here;
+/// * **the answer names its source**, which a bare text cannot carry, and all
+///   three sources are reached: the kind's declaration, an item's authored
+///   label, and this node's own answer;
+/// * **the supplied answer is under test**, because most of this taxonomy does
+///   not override at all.
+///
+/// Each property is its own function below, because each is a **separate
+/// claim** and a reader looking for "where is silence asserted" should land on
+/// a name rather than on a line number. The split was asked for by a length
+/// lint and is the right one on its own terms — which is why it was taken
+/// rather than allowed away.
+#[test]
+fn engine_node_get_pin_name_override() {
+    let mut document = Document::new("root");
+    the_supplied_answer_keeps_the_declaration(&mut document);
+    a_silent_port_has_no_name_rather_than_a_blank_one(&mut document);
+    a_renamed_port_says_the_node_chose_it(&mut document);
+    an_authored_item_label_is_the_authors(&mut document);
+    an_items_ordinal_has_an_origin_and_a_stride(&mut document);
+
+    // ★ A port that is not there has no name, which is a different answer from
+    // a port with no name shown.
+    let add = node(&mut document, Op::Add);
+    assert_eq!(document.port_label(ROOT, add, PortRef::input(9)), None);
+    assert!(document.port_label(ROOT, add, PortRef::input(0)).is_some());
+
+    // ⚠ A body that is not a kind has no hook to ask, and answers the kind's —
+    // this is the arm that would panic if the resolution assumed a kind.
+    let frame = document
+        .add_node(ROOT, NodeBody::Frame, 0, 0)
+        .expect("the root tree exists");
+    assert_eq!(document.port_labels(ROOT, frame, Side::Input), Vec::new());
+}
+
+/// ★ The ORDINARY case, and it is the SUPPLIED answer: a kind that says nothing
+/// keeps its declaration, and the source says so.
+///
+/// First because without it every assertion below could hold with the hook
+/// wired to a constant — R1926's lesson, that a fixture overriding everywhere
+/// leaves the default with no check on it at all.
+fn the_supplied_answer_keeps_the_declaration(document: &mut Document<Op>) {
+    let add = node(document, Op::Add);
+    let plain = document
+        .port_label(ROOT, add, PortRef::input(0))
+        .expect("Add has a first input");
+    assert_eq!(
+        plain,
+        pinion_node_graph::Labelled {
+            text: Some("Augend".to_owned()),
+            source: pinion_node_graph::NameSource::Kind,
+        },
+        "a kind that does not override keeps its own declaration"
+    );
+}
+
+/// ★★★★★ SILENT — the reference's commonest use of this capability, and the one
+/// its own type cannot tell from an empty answer. Here it is a value.
+fn a_silent_port_has_no_name_rather_than_a_blank_one(document: &mut Document<Op>) {
+    let carry = node(document, Op::Carry);
+    let hushed = document
+        .port_label(ROOT, carry, PortRef::input(1))
+        .expect("Carry has a second input");
+    assert_eq!(hushed.text, None, "Carry shows no name for its ports");
+    assert_eq!(hushed.source, pinion_node_graph::NameSource::Node);
+    assert!(!hushed.is_shown());
+    assert!(
+        document
+            .port_labels(ROOT, carry, Side::Input)
+            .iter()
+            .all(|held| !held.is_shown()),
+        "and it is every port on the side, the way the reference's reroutes do it"
+    );
+    // ⚠ And the ports are still THERE — suppressing a name is not removing a
+    // port, which is the confusion an empty string invites. Asserted as a
+    // RELATION and not against a written-down count, because a count equal to
+    // the defect would not see it (R1921).
+    assert_eq!(
+        document.port_labels(ROOT, carry, Side::Input).len(),
+        document
+            .signature(ROOT, carry)
+            .expect("a signature")
+            .inputs
+            .len(),
+        "one label per declared port, silent or not"
+    );
+    assert!(
+        !document.port_labels(ROOT, carry, Side::Input).is_empty(),
+        "and there are ports to be silent about"
+    );
+}
+
+/// ★★★★★ INSTEAD — a name of the node's own, and it is derived from the declared
+/// one, which is what the argument is for.
+fn a_renamed_port_says_the_node_chose_it(document: &mut Document<Op>) {
+    let stage = node(document, Op::Stage(7));
+    let renamed = document
+        .port_label(ROOT, stage, PortRef::output(0))
+        .expect("Stage has a first output");
+    assert_eq!(
+        renamed,
+        pinion_node_graph::Labelled {
+            text: Some("after Then".to_owned()),
+            source: pinion_node_graph::NameSource::Node,
+        },
+    );
+    // ★ And only that port: a hook that answered for every port would pass the
+    // line above and lose what makes this per-port.
+    let untouched = document
+        .port_label(ROOT, stage, PortRef::output(1))
+        .expect("Stage has a second output");
+    assert_eq!(untouched.source, pinion_node_graph::NameSource::Kind);
+    assert_eq!(untouched.text.as_deref(), Some("Cost"));
+}
+
+/// ★★★★★ ITEM — the third source, which existed before this round and had no way
+/// to be told apart from the kind's. An unlabelled item's name is derived from
+/// its ordinal and is the KIND's; a labelled one is the author's, and now says
+/// so.
+fn an_authored_item_label_is_the_authors(document: &mut Document<Op>) {
+    let sequence = node(document, Op::Sequence);
+    let ordinal = document
+        .port_label(ROOT, sequence, PortRef::output(0))
+        .expect("the run tops up to its minimum");
+    assert_eq!(
+        ordinal.source,
+        pinion_node_graph::NameSource::Kind,
+        "an ordinal-derived name is the kind's: {ordinal:?}"
+    );
+    document
+        .insert_item(
+            ROOT,
+            sequence,
+            Side::Output,
+            0,
+            Item::plain().named("early"),
+        )
+        .expect("the run takes an item");
+    let authored = document
+        .port_label(ROOT, sequence, PortRef::output(0))
+        .expect("the item contributes a port");
+    assert_eq!(
+        authored,
+        pinion_node_graph::Labelled {
+            text: Some("early".to_owned()),
+            source: pinion_node_graph::NameSource::Item,
+        },
+        "and an authored one is the author's"
+    );
+    // ⚠ The item after it is still the kind's, so the source is a property of
+    // the PORT and not of the node.
+    assert_eq!(
+        document
+            .port_label(ROOT, sequence, PortRef::output(1))
+            .expect("the topped-up item")
+            .source,
+        pinion_node_graph::NameSource::Kind,
+    );
+}
+
+/// ★★★★★ A run that does NOT begin at index 0, and whose item contributes MORE
+/// THAN ONE port. `Blend` declares two fixed inputs with its run spliced between
+/// them, so the ordinal has an origin and a stride that are both different from
+/// the trivial ones — and a resolution that measured either from the wrong place
+/// would still be right on every kind above.
+///
+/// ⚠ This function exists because a counterfactual PASSED without it: dropping
+/// the run's offset from the arithmetic left the whole suite green, since every
+/// other variadic kind in this taxonomy starts its run at zero. The fixture's
+/// POPULATION was wrong, not the assertion — R1926's class, and the repair is
+/// the same one: widen what is asked, not what is claimed.
+fn an_items_ordinal_has_an_origin_and_a_stride(document: &mut Document<Op>) {
+    let blend = node(document, Op::Blend);
+    document
+        .insert_item(ROOT, blend, Side::Input, 0, Item::plain().named("hero"))
+        .expect("the run takes an item");
+    assert_eq!(
+        document
+            .port_label(ROOT, blend, PortRef::input(0))
+            .expect("the fixed port before the run")
+            .source,
+        pinion_node_graph::NameSource::Kind,
+        "the port BEFORE the run is the kind's, however the run's items are labelled"
+    );
+    for index in [1, 2] {
+        assert_eq!(
+            document
+                .port_label(ROOT, blend, PortRef::input(index))
+                .unwrap_or_else(|| panic!("input {index} is one of the item's two ports"))
+                .source,
+            pinion_node_graph::NameSource::Item,
+            "both ports of a labelled item are the author's, not just the first"
+        );
+    }
 }
 
 // ==================================================== R1927 — node warnings

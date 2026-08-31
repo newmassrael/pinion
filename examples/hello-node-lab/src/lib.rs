@@ -102,9 +102,9 @@ use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::widgets::wheel::WheelDirection;
 use pinion_core::{CellKind, Frame, Modifiers, Scene, WidgetCore, edit_field_keymap};
 use pinion_node_graph::{
-    Act, Camera, Document, Extent, Faces, Fit, Found, Item, LinkId, LinkLayer, Margin, Node,
-    NodeBody, NodeId, PortPath, PortRef, ROOT, Relinked, Side, Socket, Tint, Violation, ZoomRange,
-    palette_of, type_palette,
+    Act, Camera, Document, Extent, Faces, Fit, Found, Item, LinkId, LinkLayer, Margin, NameSource,
+    Node, NodeBody, NodeId, PortPath, PortRef, ROOT, Relinked, Side, Socket, Tint, Violation,
+    ZoomRange, palette_of, type_palette,
 };
 use pinion_platform_storage::AppStorage;
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
@@ -8823,6 +8823,39 @@ fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
     children
 }
 
+/// ★★★★★ R1928 — **what a reader who cannot see the canvas is told about one
+/// pin**: the card it is on, what kind of pin it is, what the MODEL calls it,
+/// and what can be done with it.
+///
+/// The third clause is the one this round added, and it is the only clause this
+/// file does not own — [`Document::port_label`] resolves it from the kind's
+/// declaration, the item's authored label, or the kind's own answer, and a
+/// second spelling here would be free to disagree with what a client reading
+/// the model sees.
+///
+/// ⚠ A [`Silent`](pinion_node_graph::PortName::Silent) port drops the clause rather than announcing an
+/// empty one. That is the distinction the type exists for: the pin is still
+/// announced and still says what it is for, and what is absent is a NAME, said
+/// so in as many words.
+fn pin_announcement(
+    state: &LabState,
+    node: NodeId,
+    at: PortRef,
+    card: &str,
+    kind: &str,
+    verb: &str,
+) -> String {
+    match state
+        .doc
+        .borrow()
+        .port_label(ROOT, node, at)
+        .and_then(|held| held.text)
+    {
+        Some(name) => format!("{card} {kind} · {name} — {verb}"),
+        None => format!("{card} {kind}, unnamed — {verb}"),
+    }
+}
+
 /// ★★★★★ R1927 — **which cards have a problem, and whether the worst of each
 /// blocks** — the whole canvas in one walk.
 ///
@@ -10493,6 +10526,13 @@ const FIELDS: &[SchemaField] = &{
         // BEFORE the hand lets go, which is the whole difference from finding
         // out by dropping.
         SchemaField::new("rewire", "json"),
+        // ★★★★★ R1928 — what each card calls its own ports, and WHO chose each
+        // name: the kind's declaration, the item's authored label, or the
+        // node's own answer. Published so the sentence a reader hears on a pin
+        // and the name the model resolved can be checked against ONE answer
+        // instead of two — the second spelling is exactly what this round
+        // removed from the accessibility tree.
+        SchemaField::new("port_names", "json"),
         // ★★★★★ R1927 — what is wrong with each card: the MODEL's own sentence
         // where it has one, whether this screen's walk names the card at all,
         // and whether the worst of it blocks. Published so the mark on the
@@ -11045,6 +11085,7 @@ impl ExternalIntrospect for LabOracle {
             "sections" => Ok(IntrospectValue::Json(sections_wire(state))),
             "inks" => Ok(IntrospectValue::Json(inks_wire(state))),
             "wrong" => Ok(IntrospectValue::Json(wrong_wire(state))),
+            "port_names" => Ok(IntrospectValue::Json(port_names_wire(state))),
             // ★ R1742 — the SAME value the host publishes for this section, so
             // "one build, two placements" is a fact a client can check rather
             // than a claim this file makes.
@@ -16532,14 +16573,45 @@ fn wire_access(state: &LabState) -> Vec<AccessNode> {
         let Some(role) = state.role_of(node) else {
             continue;
         };
+        // ★★★★★ R1928 — **what a pin is CALLED comes from the model**, and only
+        // what it is FOR is this screen's.
+        //
+        // Until this round both halves were one hand-written sentence here, so
+        // the model called the output port `dial` and this file wrote the word
+        // `dial` again beside it — two spellings of one fact, the shape R1926
+        // found in the colour table. Worse, the accept run's ports are named
+        // for the ADDRESS each one listens on (`Item::label`, since R1681), and
+        // none of that reached a reader who cannot see the canvas: every accept
+        // pin on every card announced the same six words.
+        //
+        // `Document::port_label` is the one resolution, so the name a reader
+        // hears is the name the model resolved — and when the kind answers
+        // `Silent` there is no name to hear, which is a different sentence
+        // rather than a missing one.
         nodes.push(
-            AccessNode::new(format!("lab.pin.{name}.dial"), AriaRole::Button)
-                .with_name(format!("{name} dial pin — drag to author a link")),
+            AccessNode::new(format!("lab.pin.{name}.dial"), AriaRole::Button).with_name(
+                pin_announcement(
+                    state,
+                    node,
+                    PortRef::output(0),
+                    &name,
+                    "dial pin",
+                    "drag to author a link",
+                ),
+            ),
         );
         if role.accepts() {
             nodes.push(
-                AccessNode::new(format!("lab.pin.{name}.accept"), AriaRole::Button)
-                    .with_name(format!("{name} accept pin — drop a link here")),
+                AccessNode::new(format!("lab.pin.{name}.accept"), AriaRole::Button).with_name(
+                    pin_announcement(
+                        state,
+                        node,
+                        PortRef::input(0),
+                        &name,
+                        "accept pin",
+                        "drop a link here",
+                    ),
+                ),
             );
         }
         // ★★★★★ R1914 — a member pin a split put on the frame is a thing on
@@ -16693,6 +16765,41 @@ fn accepts_wire(state: &Rc<LabState>) -> serde_json::Value {
         })
         .collect();
     serde_json::json!({ "bodies": rows })
+}
+
+/// ★★★★★ R1928 — **what each card calls its own ports**, and who chose each
+/// name.
+///
+/// One row per port of every card, on both sides, with the resolved name and
+/// its source. `name` is `null` for a port the kind answers
+/// [`Silent`](pinion_node_graph::PortName::Silent) for — deliberately unlabelled, which is a different
+/// row from one whose name happens to be short.
+///
+/// Published because the pin's spoken sentence is now DERIVED from this, and a
+/// walk that could see only the sentence could not say whether it agreed with
+/// the model or merely resembled it.
+fn port_names_wire(state: &Rc<LabState>) -> serde_json::Value {
+    let doc = state.doc.borrow();
+    let mut rows: Vec<serde_json::Value> = Vec::new();
+    for node in state.cards() {
+        let card = state.name_of(node);
+        for side in [Side::Output, Side::Input] {
+            for (index, held) in doc.port_labels(ROOT, node, side).into_iter().enumerate() {
+                rows.push(serde_json::json!({
+                    "card": card,
+                    "side": if side == Side::Output { "dial" } else { "accept" },
+                    "index": index,
+                    "name": held.text,
+                    "source": match held.source {
+                        NameSource::Kind => "kind",
+                        NameSource::Item => "item",
+                        NameSource::Node => "node",
+                    },
+                }));
+            }
+        }
+    }
+    serde_json::json!({ "ports": rows })
 }
 
 /// ★★★★★ R1927 — **what is wrong with each card**, from the two places that can

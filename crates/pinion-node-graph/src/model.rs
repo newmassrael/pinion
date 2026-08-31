@@ -843,6 +843,35 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
         None
     }
 
+    /// ★★★★★ R1928 — **what this node calls the port at `at`**, given the name
+    /// the port was declared with.
+    ///
+    /// The supplied answer is [`Declared`](crate::PortName::Declared): a kind that says nothing
+    /// keeps its own declaration, which is the ordinary case and the one the
+    /// reference also supplies.
+    ///
+    /// THREE arms where the reference has two hooks, and the third is the one
+    /// its own source needs most: measured this round, four of its six
+    /// overriders use the capability to make a pin show **no** name, and it
+    /// spells that as the empty text — so a class that overrides the *whether*
+    /// hook and forgets the *what* hook suppresses every one of its pin names by
+    /// accident, and one of the six is in exactly that state.
+    /// [`Silent`](crate::PortName::Silent) makes suppression a thing a kind says.
+    ///
+    /// `&self` and not an associated function: the reference's own two
+    /// title-returning overriders answer from the node's authored comment, so
+    /// this is a judgement about THIS node, not about the taxonomy.
+    ///
+    /// ⚠ This does **not** replace [`Item::label`](crate::Item::label). A node
+    /// has been able to name an item of a variadic run since R1632; this is how
+    /// a node names a *fixed* port, and how any port is made unlabelled.
+    /// [`Document::port_label`](crate::Document::port_label) is where the two
+    /// meet, and it reports which of them answered.
+    fn port_name(&self, at: crate::PortRef, declared: &str) -> crate::PortName {
+        let _ = (at, declared);
+        crate::PortName::Declared
+    }
+
     /// ★★★★★ R1927 — **whether this node is in a questionable state, and what
     /// to say about it** — or `None` when it has nothing to say.
     ///

@@ -226,6 +226,7 @@ mod items;
 mod layout;
 mod machine;
 mod model;
+mod naming;
 mod numbering;
 mod observed;
 mod palette;
@@ -272,6 +273,7 @@ pub use model::{
     LinkId, Matched, Multiplicity, Node, NodeBody, NodeId, NodeKind, Port, PortRef, PortValueError,
     ROOT, Refusal, Relabelled, Removed, Side, Signature, Socket, Tree, TreeId, crossing,
 };
+pub use naming::{Labelled, NameSource, PortName};
 pub use observed::{
     AdoptError, Discovery, Judgement, Layers, LinkLayer, Observation, ObserveError, Reachability,
     Standing,

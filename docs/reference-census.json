@@ -2925,10 +2925,10 @@
       "verdict": "absent"
     },
     "node::GetPinNameOverride": {
-      "covered_by": "a port's name comes from the kind and a node cannot override it",
+      "covered_by": "NodeKind::port_name, resolved by Document::port_label together with the two sources that were already here (R1928). ⚠ The pre-R1928 reason was half false: a node HAS been able to name a port since R1632 — Item::label names one item of a variadic run, and the node lab uses it for the address each accept slot listens on. What was absent is a node naming a FIXED port, and any way at all to say a port shows NO name. ★ Measured across all six of the reference's overriders, four use this to SUPPRESS a name rather than to give a different one, so the answer here is a three-arm type (Declared / Instead / Silent) rather than R1927's Option: an empty answer is meaningful here and meant nothing there",
       "mechanism": "graph-node",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_node_get_pin_name_override",
+      "verdict": "have"
     },
     "node::GetPropertyNameAndValueForDiff": {
       "covered_by": "the engine's visual script/asset subject matter",
@@ -3141,10 +3141,10 @@
       "verdict": "app-content"
     },
     "node::ShouldOverridePinNames": {
-      "covered_by": "a port's name comes from the kind and a node cannot override it",
+      "covered_by": "PortName::Declared is the supplied answer, so a kind that overrides nothing keeps its declaration and no separate guard is needed (R1928). It cites the same proof rather than owning a second. ★ That is the point: measured at the reference's own header, this is a GUARD in front of the other — its comment says the second hook is called for each pin, each frame, only when this answers true — and one of its six overriders answers this true while never overriding the other, so every pin name on that class is suppressed by the base class's empty default. One three-arm answer makes opting in and then saying nothing unrepresentable",
       "mechanism": "graph-node",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_node_get_pin_name_override",
+      "verdict": "have"
     },
     "node::ShowPaletteIconOnNode": {
       "covered_by": "drawing; this crate deliberately holds no renderer",
