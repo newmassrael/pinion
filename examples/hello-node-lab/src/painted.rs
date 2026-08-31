@@ -585,6 +585,19 @@ pub(super) fn render_so_a_press_can_be_asked(state: &std::rc::Rc<LabState>) {
     let _ = painted_at(state, (WIN_W, WIN_H));
 }
 
+/// ★★★★★ R1926 — **the scene this pipeline paints**, for a check next door that
+/// asks about a STYLE rather than a rectangle.
+///
+/// [`Painted`] keeps rectangles, because every question this module asks is
+/// about where something is. A pin's COLOUR lives on its border, so the check
+/// that the canvas draws what the model says needs the scene itself — and it
+/// needs THIS scene, laid out by the same two stages the window runs, rather
+/// than a second one a test painted for itself. That second screen is the whole
+/// class this module's header exists to warn about.
+pub(super) fn painted_scene(state: &std::rc::Rc<LabState>) -> Scene {
+    painted_at(state, (WIN_W, WIN_H)).1
+}
+
 /// The centre of a rectangle, which is where a press is aimed.
 const fn centre(rect: Rect) -> (u32, u32) {
     (rect.x + rect.w / 2, rect.y + rect.h / 2)

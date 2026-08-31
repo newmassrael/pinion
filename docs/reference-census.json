@@ -3537,10 +3537,10 @@
       "verdict": "app-content"
     },
     "schema::GetPinColor": {
-      "covered_by": "a PIN's colour, which R1921's node tint does not reach: measured from the reference's own signature, this is asked with a pin in hand, while the node face colours are asked of the node with no argument at all. A port here carries a name, a type and a flow, and nothing says what colour it is drawn in. R1921",
+      "covered_by": "Document::port_palette (R1926) — a PORT's colour, over the RESOLVED signature, so a port a split put there answers for its own type. It is a DERIVATION and not a second authored value, and that is measured rather than assumed: across the whole engine source twelve schemas override the type colour and exactly ONE overrides the pin colour, and that one reads the pin's type more precisely and then answers a TYPE colour. Nothing there gives one pin a colour of its own",
       "mechanism": "graph-schema",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_schema_get_pin_color",
+      "verdict": "have"
     },
     "schema::GetPinDisplayName": {
       "covered_by": "a Port carries its name and Document::signature answers it",
@@ -3549,10 +3549,10 @@
       "verdict": "have"
     },
     "schema::GetPinTypeColor": {
-      "covered_by": "a TYPE's colour, and the measured signature is what separates it from the pin's: this is asked with a pin TYPE and no pin, so it can be answered where no port exists — which is what lets an editor draw a legend, or colour a type in a picker. R1921 gave nodes a colour and did not reach this: a socket type here has no colour at all. R1921",
+      "covered_by": "NodeKind::type_colour declares it and type_palette answers it (R1926) — asked with a TYPE and no port, which is what lets a legend or a type picker ask. ★ Option<Tint> where the reference returns an actual black: its base answers FLinearColor::Black and its K2 implementation writes // Type does not have a defined color! before returning a settings default, so THERE never-coloured and coloured-black are one answer. Control is a second declaration (NodeKind::control_colour) because R1599 made control not a type",
       "mechanism": "graph-schema",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_schema_get_pin_type_color",
+      "verdict": "have"
     },
     "schema::GetReorderIndexInContainer": {
       "covered_by": "the engine's visual script/asset subject matter",
@@ -3567,10 +3567,10 @@
       "verdict": "app-content"
     },
     "schema::GetSecondaryPinTypeColor": {
-      "covered_by": "the SECOND colour a type is drawn in, for a container whose element type has a colour of its own — same mechanism and same argument as schema::GetPinTypeColor, and blocked on the same thing: a socket type here has no colour at all. R1921",
+      "covered_by": "Palette::members (R1926) — one colour per member of a COMPOSITE type, derived from NodeKind::composition, which the application already declares. ⚠ The pre-R1926 reason here (a container whose element type has a colour of its own) was wrong twice, measured at the reference's only implementation of substance: it answers a real second colour ONLY when the type is a MAP, and what it answers is the map's VALUE half — an array or a set gets a settings constant. So not containers and not elements. The reference's map is the two-member case of this and it has no third",
       "mechanism": "graph-schema",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_schema_get_secondary_pin_type_color",
+      "verdict": "have"
     },
     "schema::GetTypeId": {
       "covered_by": "the engine's UObject lifecycle, not its node system",

@@ -12,7 +12,7 @@
 //! canvas's three pin appearances mean something rather than decorate.
 
 use pinion_node_graph::{
-    Admission, Composition, Conversion, NodeKind, Port, Refusal, Side, Variadic,
+    Admission, Composition, Conversion, NodeKind, Port, Refusal, Side, Tint, Variadic,
 };
 use serde::{Deserialize, Serialize};
 
@@ -40,6 +40,25 @@ pub enum Transport {
 impl Transport {
     /// Every transport, in the order the palette's legend lists them.
     pub const ALL: [Self; 5] = [Self::Tcp, Self::Tls, Self::Quic, Self::Udp, Self::Ws];
+
+    /// ★★★★★ R1926 — the colour this transport is drawn in.
+    ///
+    /// Moved here from the screen, which is what closing the reference's pin
+    /// colour rows forced: the colour is a fact about the **socket type**, so
+    /// it belongs beside the taxonomy that owns the type. `transport_ink` in
+    /// the view now derives its `Color` from this, so the canvas and
+    /// [`NodeKind::type_colour`]
+    /// cannot answer differently.
+    #[must_use]
+    pub const fn tint(self) -> Tint {
+        match self {
+            Self::Tcp => Tint::rgb(0x2D, 0x6C, 0xDF),
+            Self::Tls => Tint::rgb(0x1F, 0x8A, 0x4C),
+            Self::Quic => Tint::rgb(0x7C, 0x4D, 0xEF),
+            Self::Udp => Tint::rgb(0xC7, 0x78, 0x00),
+            Self::Ws => Tint::rgb(0x3E, 0x7C, 0x8C),
+        }
+    }
 
     /// The word the legend and a locator both spell it with.
     #[must_use]
@@ -94,6 +113,31 @@ impl Endpoint {
         match self {
             Self::Locator(transport) => Some(transport),
             Self::Host | Self::Service => None,
+        }
+    }
+
+    /// ★★★★★ R1926 — every socket type this taxonomy has, **derived** from
+    /// [`Transport::ALL`] plus the two halves.
+    ///
+    /// Derived rather than listed, so a transport added later joins every
+    /// register built from this without anyone remembering to extend a second
+    /// list. A hand-written roster is the shape whose omissions are invisible,
+    /// which is the escape hatch this workspace refuses at the door.
+    #[must_use]
+    pub fn all() -> Vec<Self> {
+        let mut out: Vec<Self> = Transport::ALL.into_iter().map(Self::Locator).collect();
+        out.push(Self::Host);
+        out.push(Self::Service);
+        out
+    }
+
+    /// The one spelling a client reads this type under.
+    #[must_use]
+    pub fn wire_word(self) -> String {
+        match self {
+            Self::Locator(transport) => format!("locator/{}", transport.word()),
+            Self::Host => "host".to_owned(),
+            Self::Service => "service".to_owned(),
         }
     }
 }
@@ -482,6 +526,31 @@ impl NodeKind for LabNode {
             ]),
             Endpoint::Host | Endpoint::Service => Composition::Atom,
         }
+    }
+
+    /// ★★★★★ R1926 — **what colour a value of this socket type is drawn in.**
+    ///
+    /// The three halves of this taxonomy each answer for themselves, and that
+    /// is the whole point: before this round the canvas coloured every pin by
+    /// the **node's** transport, so splitting a locator drew its two halves in
+    /// one colour — the parent's — and a reader could not tell the host from
+    /// the service, nor either from the whole.
+    ///
+    /// ★ `Host` and `Service` get colours of their own rather than derived
+    /// ones, and that follows from a fact this file already records: a half
+    /// carries **no transport**, deliberately, because a host name is the same
+    /// host name over a stream or a datagram. So there is nothing to derive
+    /// from, and the two must simply be distinguishable — from each other and
+    /// from every transport. `r1926_the_socket_palette_is_injective` is what
+    /// holds that, so it is a checked property rather than a claim in prose.
+    fn type_colour(ty: &Endpoint) -> Option<Tint> {
+        Some(match ty {
+            Endpoint::Locator(transport) => transport.tint(),
+            // A place to reach.
+            Endpoint::Host => Tint::rgb(0x5A, 0xA7, 0xB8),
+            // Which port on it.
+            Endpoint::Service => Tint::rgb(0xD1, 0x6A, 0x5A),
+        })
     }
 
     /// ★★★★★ R1916 — what a value of this socket type IS.

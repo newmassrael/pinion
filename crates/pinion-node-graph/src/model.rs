@@ -806,6 +806,43 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
         None
     }
 
+    /// ★★★★★ R1926 — **what colour a value of this type is drawn in**, or
+    /// `None` when the taxonomy gives it none.
+    ///
+    /// The ONE declaration behind every colour a port is drawn in:
+    /// [`type_palette`](crate::type_palette) reads it for the type itself and,
+    /// through [`composition`](NodeKind::composition), for each member of a
+    /// composite; [`Document::port_palette`](crate::Document::port_palette)
+    /// derives a port's from it. So *what colour is this type* and *what colour
+    /// is this port* cannot disagree — there is nothing to disagree with.
+    ///
+    /// An associated function for [`composition`](NodeKind::composition)'s
+    /// reason: it is a fact about the taxonomy, not about a node.
+    ///
+    /// ★ `Option`, where the reference's equivalent returns an actual black.
+    /// Measured this round, its own K2 implementation writes `// Type does not
+    /// have a defined color!` and then returns a settings default — so there,
+    /// *nobody coloured this* and *somebody chose black* are the same answer.
+    #[must_use]
+    fn type_colour(ty: &Self::Type) -> Option<crate::Tint> {
+        let _ = ty;
+        None
+    }
+
+    /// ★★★★★ R1926 — what colour a **control** port is drawn in.
+    ///
+    /// Its own declaration and not a case of
+    /// [`type_colour`](NodeKind::type_colour), because R1599 made control not a
+    /// type: a port carries a value **or** control ([`Flow`]), and control has
+    /// no type to look a colour up by. The reference reaches its execution
+    /// pin's colour through the type hook, because there an exec pin *is* a pin
+    /// type — a string category. That is the price of the stronger model, and
+    /// it is one extra default-`None` declaration.
+    #[must_use]
+    fn control_colour() -> Option<crate::Tint> {
+        None
+    }
+
     /// ★★★★★ R1916 — **what a value of this type IS**, in a sentence, or
     /// `None` when the type's own name is the whole of what can be said.
     ///

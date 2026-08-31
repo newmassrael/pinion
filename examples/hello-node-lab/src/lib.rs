@@ -104,6 +104,7 @@ use pinion_core::{CellKind, Frame, Modifiers, Scene, WidgetCore, edit_field_keym
 use pinion_node_graph::{
     Act, Camera, Document, Extent, Faces, Fit, Found, Item, LinkId, LinkLayer, Margin, Node,
     NodeBody, NodeId, PortPath, PortRef, ROOT, Relinked, Side, Socket, Tint, Violation, ZoomRange,
+    palette_of, type_palette,
 };
 use pinion_platform_storage::AppStorage;
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
@@ -1275,14 +1276,21 @@ fn ink(theme: &Theme) -> Ink {
 
 /// The colour a transport is drawn in, which is what an accept pin's ring
 /// means.
+///
+/// ★★★★★ R1926 — **derived from the taxonomy now, not written here.** A pin's
+/// colour is a fact about the socket type it carries, so `Transport::tint` is
+/// the one statement of it and this is the `Color` a scene needs. Before this
+/// round the table lived here, which is how the canvas came to colour every
+/// pin — including the halves a split put on the frame — by the **node's**
+/// transport rather than by the port's own type.
 const fn transport_ink(transport: Transport) -> Color {
-    match transport {
-        Transport::Tcp => rgb(0x2D_6CDF),
-        Transport::Tls => rgb(0x1F_8A4C),
-        Transport::Quic => rgb(0x7C_4DEF),
-        Transport::Udp => rgb(0xC7_7800),
-        Transport::Ws => rgb(0x3E_7C8C),
-    }
+    ink_of(transport.tint())
+}
+
+/// ★ R1926 — a model colour as a scene colour. Opaque, because a
+/// [`Tint`] has no alpha to lose.
+const fn ink_of(tint: Tint) -> Color {
+    Color::rgba(tint.r, tint.g, tint.b, 255)
 }
 
 /// The colour a role is drawn in on the canvas card and the palette swatch.
@@ -8811,7 +8819,7 @@ fn canvas_pins(state: &LabState, node: NodeId, card: Rect, role: Role, ink: Ink)
         // client presses and the address `split_pin` accepts are the same
         // spelling by construction.
         for (side, dial) in [(Side::Output, true), (Side::Input, false)] {
-            for (ordinal, (path, _)) in member_pins(state, node, side).into_iter().enumerate() {
+            for (ordinal, (path, port)) in member_pins(state, node, side).into_iter().enumerate() {
                 children.push(box_at(
                     // ★ R1915 — the tag is `pin_word`'s output, which is the
                     // same function `Hit::of_tag` parses back and the same one
@@ -8820,11 +8828,21 @@ fn canvas_pins(state: &LabState, node: NodeId, card: Rect, role: Role, ink: Ink)
                     &format!("lab.pin.{name}.{}", pin_word(side, &path)),
                     member_pin_rect(state, card, dial, ordinal),
                     ink.surface,
-                    Some(if path.depth() > 1 {
-                        ink.text_3
-                    } else {
-                        transport_ink(transport)
-                    }),
+                    // ★★★★★ R1926 — the MEMBER's own type colour, asked of the
+                    // model with the port in hand.
+                    //
+                    // This line used to read `transport_ink(transport)` — the
+                    // NODE's transport — so a locator's two halves were drawn
+                    // in one colour, the parent's, and a reader could not tell
+                    // the host from the service nor either from the whole. That
+                    // is what the reference's per-pin colour hook is for, and
+                    // the crate now derives it from one declaration
+                    // (`NodeKind::type_colour`) so this cannot drift from it.
+                    Some(
+                        palette_of::<graph::LabNode>(&port.flow)
+                            .own()
+                            .map_or(ink.text_3, ink_of),
+                    ),
                     PIN / 2,
                 ));
             }
@@ -10345,6 +10363,12 @@ const FIELDS: &[SchemaField] = &{
         // BEFORE the hand lets go, which is the whole difference from finding
         // out by dropping.
         SchemaField::new("rewire", "json"),
+        // ★★★★★ R1926 — the colour every socket type of this taxonomy is drawn
+        // in, and the colour each pin on the canvas takes from it. Published so
+        // a client reads the derivation instead of re-implementing it — the
+        // duplication that had this screen colouring a split's halves by the
+        // NODE's transport until this round.
+        SchemaField::new("inks", "json"),
         // ★★★★★ R1925 — the sections this graph's own face is gathered into,
         // and what the framework answers when this screen asks for a section
         // switch. Published rather than left to a gesture because this screen
@@ -10883,6 +10907,7 @@ impl ExternalIntrospect for LabOracle {
             // why each card that refuses it does.
             "rewire" => Ok(IntrospectValue::Json(rewire_wire(state))),
             "sections" => Ok(IntrospectValue::Json(sections_wire(state))),
+            "inks" => Ok(IntrospectValue::Json(inks_wire(state))),
             // ★ R1742 — the SAME value the host publishes for this section, so
             // "one build, two placements" is a fact a client can check rather
             // than a claim this file makes.
@@ -16531,6 +16556,55 @@ fn accepts_wire(state: &Rc<LabState>) -> serde_json::Value {
         })
         .collect();
     serde_json::json!({ "bodies": rows })
+}
+
+/// A [`Tint`] as the six hex digits every other colour on this wire is written
+/// with.
+fn hex_of(tint: Tint) -> String {
+    format!("#{:02X}{:02X}{:02X}", tint.r, tint.g, tint.b)
+}
+
+/// ★★★★★ R1926 — **what colour every socket type is, and what colour every pin
+/// on the canvas takes from it.**
+///
+/// Two halves because they are two questions the reference keeps apart for a
+/// reason its own signatures record: `types` is asked with a TYPE and no port,
+/// which is what a legend or a type picker needs, and `pins` is asked with a
+/// port. Here the second is DERIVED from the first, so a client reading either
+/// gets the same answer — which is the whole difference from a screen that
+/// keeps its own colour table, as this one did until this round.
+///
+/// A composite type publishes its `members` too: the reference's *secondary
+/// pin type colour* is the second of those, and it has no third.
+fn inks_wire(state: &Rc<LabState>) -> serde_json::Value {
+    let types: Vec<serde_json::Value> = graph::Endpoint::all()
+        .into_iter()
+        .map(|ty| {
+            let held = type_palette::<graph::LabNode>(&ty);
+            serde_json::json!({
+                "type": ty.wire_word(),
+                "ink": held.own().map(hex_of),
+                "members": held.members().iter().map(|held| held.map(hex_of))
+                    .collect::<Vec<_>>(),
+                "silent": held.is_silent(),
+            })
+        })
+        .collect();
+    let doc = state.doc.borrow();
+    let mut pins = Vec::new();
+    for node in state.cards() {
+        for side in [Side::Output, Side::Input] {
+            for (path, port) in doc.resolved_ports(ROOT, node, side) {
+                let held = palette_of::<graph::LabNode>(&port.flow);
+                pins.push(serde_json::json!({
+                    "pin": format!("{}.{}", state.name_of(node), pin_word(side, &path)),
+                    "member": path.depth() > 0,
+                    "ink": held.own().map(hex_of),
+                }));
+            }
+        }
+    }
+    serde_json::json!({ "types": types, "pins": pins })
 }
 
 /// ★★★★★ R1925 — the agent half of [`sections_wire`]: add, fold and remove a

@@ -228,6 +228,7 @@ mod machine;
 mod model;
 mod numbering;
 mod observed;
+mod palette;
 mod partition;
 mod relink;
 mod run;
@@ -274,6 +275,7 @@ pub use observed::{
     AdoptError, Discovery, Judgement, Layers, LinkLayer, Observation, ObserveError, Reachability,
     Standing,
 };
+pub use palette::{Palette, palette_of, type_palette};
 pub use partition::{PortChange, RepartitionError, Repartitioned, Sharing};
 pub use relink::{RelinkError, Relinked};
 pub use run::{Run, RunError, Step, Stop};

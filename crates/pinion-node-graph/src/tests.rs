@@ -70,6 +70,49 @@ fn r1925_a_taxonomy_with_no_switchable_type_is_told_so_first() {
     assert!(doc.validate().is_empty());
 }
 
+/// ★★★★★ R1926 — **a taxonomy that declares no colours is SILENT, not black.**
+///
+/// Found by a counterfactual, and it is the escape-hatch shape this workspace
+/// refuses at the door: the census fixture OVERRIDES `type_colour`, so every
+/// assertion about absence over there is about that override. The trait's
+/// **default** — what an application that writes nothing gets, which is most of
+/// them — had nothing running it at all, and replacing it with an actual black
+/// left the whole suite green.
+///
+/// Black is precisely what the reference answers for a type nobody coloured, so
+/// this is the one line where the round's claim to be better than it lives.
+/// `LOp` takes the default, which is why the property is asked here.
+#[test]
+fn r1926_a_taxonomy_that_declares_no_colours_is_silent() {
+    let mut doc: Document<LOp> = Document::new("lattice");
+    for ty in [LTy::Scalar, LTy::Vector] {
+        let held = crate::type_palette::<LOp>(&ty);
+        assert_eq!(
+            held.own(),
+            None,
+            "{ty:?} was never given a colour, and that is a different answer \
+             from a black one"
+        );
+        assert!(held.is_silent(), "{ty:?}");
+    }
+    assert_eq!(
+        LOp::control_colour(),
+        None,
+        "and the control plane's default is the same absence"
+    );
+
+    // ★ And a real port of a real node answers the same way, so the silence
+    // survives the derivation rather than only holding at the declaration.
+    let node = doc
+        .add_node(ROOT, NodeBody::Kind(LOp::Meter), 0, 0)
+        .unwrap();
+    let at = doc
+        .port_palette(ROOT, node, PortRef::input(0))
+        .expect("`Meter` takes one input");
+    assert!(at.is_silent());
+    assert!(at.members().is_empty());
+}
+
 /// ★★★★★ R1925 — **a port is in at most one section, and that is the writer's
 /// doing rather than a check.**
 ///

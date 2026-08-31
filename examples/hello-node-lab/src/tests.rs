@@ -15,7 +15,7 @@ use super::{
     ZOOM_MIN, canvas_rect, card_rect, card_shape_at, content_to_window, deploy, inspector_rect,
     palette_rect, pin_rect, scenario, spec, use_lab_state,
 };
-use crate::graph::Role;
+use crate::graph::{Role, Transport};
 use pinion_node_graph::{Admission, NodeBody, ROOT};
 use std::collections::BTreeSet;
 
@@ -4354,6 +4354,211 @@ fn r1914_the_split_verb_says_why_it_will_not() {
         assert!(
             format!("{why:?}").contains("split"),
             "★ nothing to fold is not the same as not allowed to fold: {why:?}",
+        );
+    });
+}
+
+/// ★★★★★ R1926 — **every socket type has a colour, and no two share one.**
+///
+/// The property `LabNode::type_colour`'s comment claims, performed rather than
+/// asserted in prose — R1855's lesson, and R1925 met the same class one round
+/// ago when a module promised an invariant nothing ran.
+///
+/// It is the property the screen's whole point rests on: if a host and a
+/// service were drawn in one colour, splitting a locator would produce two pins
+/// a reader cannot tell apart, which is exactly the state this round found the
+/// canvas in — every member pin took the NODE's transport colour.
+///
+/// The population is `Endpoint::all()`, which is derived from `Transport::ALL`,
+/// so a transport added later is checked here without anyone extending a list.
+#[test]
+fn r1926_the_socket_palette_is_injective() {
+    use pinion_node_graph::{NodeKind, Tint};
+
+    let every = crate::graph::Endpoint::all();
+    assert!(
+        every.len() > Transport::ALL.len(),
+        "the roster is the transports AND the halves: {every:?}"
+    );
+    let inked: Vec<(crate::graph::Endpoint, Tint)> = every
+        .iter()
+        .map(|ty| {
+            (
+                *ty,
+                <crate::graph::LabNode as NodeKind>::type_colour(ty).unwrap_or_else(|| {
+                    panic!("{ty:?} has no colour, so a pin carrying it has none")
+                }),
+            )
+        })
+        .collect();
+    for (a, ink_a) in &inked {
+        for (b, ink_b) in &inked {
+            assert!(
+                a == b || ink_a != ink_b,
+                "★ {a:?} and {b:?} are drawn in the same colour {ink_a:?}, so a \
+                 reader cannot tell them apart"
+            );
+        }
+    }
+}
+
+/// ★ R1926 — the border colour the scene gave the box with this tag.
+///
+/// A local walk rather than a reuse of `painted.rs`'s harness, because that one
+/// keeps RECTANGLES and this question is about an edge — the exact asymmetry
+/// R1919 measured. Six lines is cheaper than widening a harness the rest of the
+/// module does not need widened.
+/// ★ What the frame says about one tag's border — **three** answers, because
+/// collapsing the first two would make a missing pin and a colourless one the
+/// same failure, which is the ambiguity R1922 recorded the cost of.
+#[derive(Debug, PartialEq)]
+enum PaintedEdge {
+    /// No box with that tag is on the frame at all.
+    Absent,
+    /// Drawn, and given no border.
+    Bare,
+    /// Drawn, in this colour.
+    Ink(pinion_core::Color),
+}
+
+impl PaintedEdge {
+    fn of(border: Option<&pinion_core::Border>) -> Self {
+        border.map_or(Self::Bare, |edge| Self::Ink(edge.color))
+    }
+
+    const fn is_drawn(&self) -> bool {
+        !matches!(self, Self::Absent)
+    }
+}
+
+fn painted_border(scene: &pinion_core::Scene, tag: &str) -> PaintedEdge {
+    use pinion_core::Scene;
+    // ★ A `Container`, not a `Box`: this screen's `box_at` builds a childless
+    // CONTAINER carrying the style, which is exactly the sort of thing a walk
+    // written from the type name rather than from the producer gets wrong — and
+    // the first draft of this one did, silently, by answering "not on the frame"
+    // for every pin.
+    match scene {
+        Scene::Container(node) if node.tag.as_deref() == Some(tag) => {
+            PaintedEdge::of(node.style.border.as_ref())
+        }
+        Scene::Box(node) if node.tag.as_deref() == Some(tag) => {
+            PaintedEdge::of(node.style.border.as_ref())
+        }
+        Scene::Container(node) => node
+            .children
+            .iter()
+            .map(|child| painted_border(child, tag))
+            .find(PaintedEdge::is_drawn)
+            .unwrap_or(PaintedEdge::Absent),
+        Scene::Scroll(node) => painted_border(&node.content, tag),
+        _ => PaintedEdge::Absent,
+    }
+}
+
+/// ★★★★★ R1926 — and the canvas paints what the model says, member by member.
+///
+/// The seam this round closed: the colour used to be a table in the view, read
+/// off the node's transport. Asserting the two agree is what stops it drifting
+/// back — and the second half, that the two halves of a split differ, is what
+/// makes the agreement worth having (a screen and a model that both answered
+/// one colour would satisfy the first half alone).
+#[test]
+fn r1926_a_split_draws_its_halves_in_their_own_colours() {
+    use pinion_node_graph::{NodeKind, Side};
+
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+        // The dial pin, because every card has one and it carries a locator —
+        // the same composite the accept pin carries, without depending on which
+        // roles listen.
+        //
+        // ⚠ And the card must be one this canvas actually DRAWS a pin for: the
+        // opening state has a collapsed card, a collapsed card paints no pins,
+        // and picking it made the first draft of this test fail for a reason
+        // that had nothing to do with colour. So the population is *cards whose
+        // dial pin is on the frame*, derived from the frame rather than assumed.
+        let opening = crate::painted::painted_scene(&state);
+        let card = state
+            .cards()
+            .into_iter()
+            .find(|node| {
+                painted_border(&opening, &format!("lab.pin.{}.dial", state.name_of(*node)))
+                    .is_drawn()
+                    && state
+                        .doc
+                        .borrow()
+                        .splittable(ROOT, *node, Side::Output, 0)
+                        .is_ok()
+            })
+            .expect("★ some card draws an unwired dial pin");
+        super::split_pin(&state, card, "dial").expect("the dial pin is a locator");
+
+        let members: Vec<_> = state
+            .doc
+            .borrow()
+            .resolved_ports(ROOT, card, Side::Output)
+            .into_iter()
+            .filter(|(path, _)| path.depth() > 0)
+            .collect();
+        assert_eq!(members.len(), 2, "a locator is made of two");
+
+        let inks: Vec<_> = members
+            .iter()
+            .map(|(_, port)| {
+                pinion_node_graph::palette_of::<crate::graph::LabNode>(&port.flow).own()
+            })
+            .collect();
+        assert!(
+            inks.iter().all(Option::is_some),
+            "each half carries a colour: {inks:?}"
+        );
+        assert_ne!(
+            inks[0], inks[1],
+            "★ and the two halves are NOT one colour — the defect this round found"
+        );
+        let whole = <crate::graph::LabNode as NodeKind>::type_colour(
+            &crate::graph::Endpoint::Locator(crate::graph::Transport::Tcp),
+        );
+        assert!(
+            inks.iter().all(|held| *held != whole),
+            "★★ nor is either of them the colour the WHOLE was drawn in, which \
+             is what the canvas used for both before this round"
+        );
+
+        // ★★★★★ And the PAINT agrees, which is the half a model test cannot
+        // reach: the line this round changed is in the view, and a model that
+        // answered correctly while the canvas kept its own table would satisfy
+        // everything above. The border, because that is where a pin's identity
+        // lives here (R1919).
+        let scene = crate::painted::painted_scene(&state);
+        let name = state.name_of(card);
+        let mut painted = Vec::new();
+        for (path, _) in &members {
+            let tag = format!("lab.pin.{name}.{}", super::pin_word(Side::Output, path));
+            painted.push(match painted_border(&scene, &tag) {
+                PaintedEdge::Ink(colour) => colour,
+                PaintedEdge::Bare => panic!("{tag} is drawn with no border"),
+                PaintedEdge::Absent => panic!("{tag} is not on the frame at all"),
+            });
+        }
+        assert_eq!(painted.len(), 2);
+        for (drawn, model) in painted.iter().zip(&inks) {
+            let tint = model.expect("each half carries a colour");
+            assert_eq!(
+                (drawn.r, drawn.g, drawn.b),
+                (tint.r, tint.g, tint.b),
+                "★★★★★ the canvas draws the colour the MODEL says, not one of \
+                 its own: painted {drawn:?} against {tint:?}"
+            );
+        }
+        assert_ne!(
+            (painted[0].r, painted[0].g, painted[0].b),
+            (painted[1].r, painted[1].g, painted[1].b),
+            "★★★★★ and the two halves are painted in two colours — the defect \
+             this round found, asserted where it lived"
         );
     });
 }

@@ -50,7 +50,7 @@ use pinion_node_graph::{
     Matched, Multiplicity, Node, NodeBody, NodeId, NodeKind, NodeSite, NotRecombinable,
     NotSplittable, Port, PortPath, PortRef, PortSite, PutAway, ROOT, Reach, RelinkError, SectionId,
     Session, Sharing, Side, Socket, Stack, Straighten, Stride, SwitchRefusal, Tint, TreeId,
-    Variadic, WatchError,
+    Variadic, WatchError, palette_of, type_palette,
 };
 
 // ---------------------------------------------------------------- taxonomy
@@ -179,6 +179,30 @@ impl NodeKind for Op {
     /// ★ R1925 — the two-state type a section switch carries.
     fn switch_type() -> Option<Ty> {
         Some(Ty::Flag)
+    }
+
+    /// ★★★★★ R1926 — what colour each type is drawn in.
+    ///
+    /// `Text` says **nothing** on purpose, and it is an ATOM: a taxonomy that
+    /// colours some of its types and not others is the ordinary case, and a
+    /// fixture where every type spoke could not tell an undeclared colour from
+    /// a declared one. `Bag` is a CONTAINER and *is* coloured, so a proof can
+    /// tell "no member colours because the composition has no members" from
+    /// "no member colours because nothing is coloured".
+    fn type_colour(ty: &Ty) -> Option<Tint> {
+        match ty {
+            Ty::Number => Some(Tint::rgb(0x2D, 0x6C, 0xDF)),
+            Ty::Pair => Some(Tint::rgb(0x7C, 0x4D, 0xEF)),
+            Ty::Bag => Some(Tint::rgb(0xC7, 0x78, 0x00)),
+            Ty::Flag => Some(Tint::rgb(0x1F, 0x8A, 0x4C)),
+            Ty::Text => None,
+        }
+    }
+
+    /// ★ R1926 — and the control plane's, which is a second declaration here
+    /// because control is not a type (R1599).
+    fn control_colour() -> Option<Tint> {
+        Some(Tint::rgb(0xEC, 0x5A, 0xA0))
     }
 
     /// ★ R1916 — what a value of each type IS. `Bag` says nothing on purpose:
@@ -743,7 +767,25 @@ fn dcc_hook_proofs() -> Vec<Proof> {
 ///
 /// Only `node_copy_color` OWNS the proof; the engine's four face rows CITE it.
 fn colour_proofs() -> Vec<Proof> {
-    vec![proof("dcc", "node_copy_color", dcc_node_copy_color)]
+    vec![
+        proof("dcc", "node_copy_color", dcc_node_copy_color),
+        // ★★★★★ R1926 — the three PORT colour rows. Three proofs and not one
+        // citing two, because the three ask genuinely different questions and
+        // the reference's own signatures are what separate them: one is asked
+        // with a TYPE and no port (a legend can ask it), one with a PORT, and
+        // one is the SECOND colour a composite type is drawn in.
+        proof(
+            "engine",
+            "schema::GetPinTypeColor",
+            engine_schema_get_pin_type_color,
+        ),
+        proof("engine", "schema::GetPinColor", engine_schema_get_pin_color),
+        proof(
+            "engine",
+            "schema::GetSecondaryPinTypeColor",
+            engine_schema_get_secondary_pin_type_color,
+        ),
+    ]
 }
 
 /// ★★★★★ R1922 — *would this tree accept this body?* Four rows, one mechanism;
@@ -1781,6 +1823,193 @@ fn dcc_node_poll() {
          of an already-broken fixture: {:?}",
         chain.document.validate()
     );
+}
+
+// ====================================================== R1926 — port colours
+
+/// ★★★★★ R1926 — a socket **type** has a colour, asked where no port exists.
+///
+/// The reference's signature is what makes this its own row: it takes a pin
+/// TYPE and no pin, so a legend or a type picker can ask it. R1921 gave a NODE
+/// an authored colour and did not reach a type at all.
+///
+/// ★ The assertion the reference could not make: `Text` answers **nothing**.
+/// Its base returns `FLinearColor::Black`, and its own K2 implementation writes
+/// `// Type does not have a defined color!` before returning a settings
+/// default — so there, *never coloured* and *coloured black* are one answer.
+#[test]
+fn engine_schema_get_pin_type_color() {
+    assert_eq!(
+        type_palette::<Op>(&Ty::Number).own(),
+        Some(Tint::rgb(0x2D, 0x6C, 0xDF)),
+        "a coloured type answers its colour"
+    );
+    assert_eq!(
+        type_palette::<Op>(&Ty::Flag).own(),
+        Some(Tint::rgb(0x1F, 0x8A, 0x4C))
+    );
+    assert_ne!(
+        type_palette::<Op>(&Ty::Number).own(),
+        type_palette::<Op>(&Ty::Flag).own(),
+        "two types are two colours — without this the whole answer could be one \
+         constant and every assertion above would still hold"
+    );
+    // ★★★★★ Absence, as a value.
+    assert_eq!(type_palette::<Op>(&Ty::Text).own(), None);
+    assert!(
+        type_palette::<Op>(&Ty::Text).is_silent(),
+        "an uncoloured atom is silent, which is the answer the reference \
+         cannot give"
+    );
+
+    // ★ Control is not a type here (R1599), so it is a second declaration and
+    // it is reachable — the reference reaches its execution pin through the
+    // same hook because there an exec pin IS a pin type.
+    let control: pinion_node_graph::Flow<Ty, Val> = Port::control("Then").flow;
+    assert_eq!(
+        palette_of::<Op>(&control).own(),
+        Some(Tint::rgb(0xEC, 0x5A, 0xA0))
+    );
+    assert!(
+        palette_of::<Op>(&control).members().is_empty(),
+        "control carries nothing, so it is made of nothing"
+    );
+}
+
+/// ★★★★★ R1926 — the SECOND colour a composite type is drawn in, and the two
+/// ways this passes what was measured.
+///
+/// Read this round at the only implementation of substance, the reference
+/// answers a real second colour **only when the type is a MAP**, and what it
+/// answers is the map's VALUE half; an array or a set gets a settings constant.
+/// So the census's own reason for this row — *a container whose element type
+/// has a colour of its own* — was wrong twice: not containers, and not
+/// elements.
+///
+/// Here it is one entry per member of a **composite**, derived from
+/// `NodeKind::composition`, which the application already declares. The
+/// reference's map is the two-member case; a three-member composite it cannot
+/// speak about at all.
+#[test]
+fn engine_schema_get_secondary_pin_type_color() {
+    let composite = type_palette::<Op>(&Ty::Pair);
+    assert_eq!(
+        composite.members().len(),
+        2,
+        "one entry per member of the composition the taxonomy already declares"
+    );
+    assert!(
+        composite
+            .members()
+            .iter()
+            .all(|held| *held == Some(Tint::rgb(0x2D, 0x6C, 0xDF))),
+        "and each is the MEMBER's own type colour, not the composite's: {:?}",
+        composite.members()
+    );
+    assert_ne!(
+        composite.own(),
+        composite.members()[0],
+        "★ the composite's own colour is not its members' — a palette that \
+         answered the same colour twice would satisfy the arity check above"
+    );
+
+    // ★★★★★ A CONTAINER is coloured and still has no member colours, so the
+    // empty list is a fact about the COMPOSITION rather than about the colour.
+    // Both halves are needed: the reference conflates them by answering a
+    // constant for everything that is not a map.
+    let container = type_palette::<Op>(&Ty::Bag);
+    assert_eq!(container.own(), Some(Tint::rgb(0xC7, 0x78, 0x00)));
+    assert!(container.members().is_empty());
+    assert!(!container.is_silent(), "it has a colour of its own");
+
+    // And an atom.
+    assert!(type_palette::<Op>(&Ty::Number).members().is_empty());
+}
+
+/// ★★★★★ R1926 — a **port's** colour, over the resolved signature.
+///
+/// ★ Why this is a derivation and not a second authored value, measured across
+/// the whole engine source this round: **twelve** schemas override the type
+/// colour and **one** overrides the pin colour — and that one reads the pin's
+/// type more precisely and then answers a TYPE colour, falling back to the type
+/// hook otherwise. Nothing in the reference gives one pin a colour of its own,
+/// so there is nothing here for a port's colour to disagree with its type's
+/// about.
+///
+/// ★★ And the half a screen depends on: a port a SPLIT put there answers for
+/// **its own** type. Without that, two halves of one address are drawn in one
+/// colour, which is exactly the state the node lab was in before this round.
+#[test]
+fn engine_schema_get_pin_color() {
+    let mut chain = chain();
+    let carry = chain
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Carry), 0, 0)
+        .unwrap();
+
+    // `Whole` carries the composite type, so its port answers the composite's
+    // palette — colour and members together.
+    let whole = chain
+        .document
+        .port_palette(ROOT, carry, PortRef::input(1))
+        .expect("`Whole` is a port");
+    assert_eq!(whole.own(), type_palette::<Op>(&Ty::Pair).own());
+    assert_eq!(whole.members().len(), 2);
+
+    // ★ Control reaches the port-level answer too, which on this fixture is
+    // input 0.
+    assert_eq!(
+        chain
+            .document
+            .port_palette(ROOT, carry, PortRef::input(0))
+            .and_then(|held| held.own()),
+        Op::control_colour(),
+        "a control port answers the control declaration"
+    );
+
+    // ★ A port that is not there is `None`, where the reference answers Black
+    // for a null pin — an answer a caller cannot tell from a black pin.
+    assert_eq!(
+        chain.document.port_palette(ROOT, carry, PortRef::input(99)),
+        None
+    );
+
+    // ★★★★★ After a split, each member port answers for ITS OWN type.
+    chain
+        .document
+        .split_port(ROOT, carry, Side::Input, &PortPath::root(1))
+        .expect("`Whole` splits");
+    let resolved = chain.document.resolved_ports(ROOT, carry, Side::Input);
+    let members: Vec<(usize, Port<Ty, Val>)> = resolved
+        .iter()
+        .enumerate()
+        .filter(|(_, (path, _))| path.depth() > 0)
+        .map(|(index, (_, port))| (index, port.clone()))
+        .collect();
+    assert_eq!(members.len(), 2, "two halves are on the frame");
+    for (index, port) in &members {
+        let at = PortRef::input(u32::try_from(*index).unwrap_or(0));
+        let answered = chain
+            .document
+            .port_palette(ROOT, carry, at)
+            .expect("a member port is a port of the resolved signature");
+        assert_eq!(
+            answered,
+            palette_of::<Op>(&port.flow),
+            "the indexed answer and the port-in-hand answer are one derivation"
+        );
+        assert_eq!(
+            answered.own(),
+            type_palette::<Op>(&Ty::Number).own(),
+            "and it is the MEMBER's type, not the composite it came out of"
+        );
+        assert_ne!(
+            answered.own(),
+            whole.own(),
+            "★ so a half is NOT drawn in the colour the whole was — the defect \
+             this round found on the node lab, stated as an assertion"
+        );
+    }
 }
 
 /// ★★★★★ R1921 — the DCC's `node_copy_color` and the engine's four node-face
