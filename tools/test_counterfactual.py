@@ -228,6 +228,30 @@ def test_a_red_baseline_is_refused() -> None:
         )
 
 
+#: The gate the end-to-end tests below drive, as a shell one-liner.
+#:
+#: ★★★★★ R1939.2 — `says` decides whether the gate NAMES its failure, and the
+#: two tests below differ in nothing else. Before R1939 an unreadable red still
+#: counted as a catch, so a silent gate was indistinguishable here from a
+#: speaking one and this file drove only the silent shape; that shape now has
+#: its own verdict, and a pair of tests is what tells the two apart.
+#:
+#: ⚠ The speaking form prints `cargo test`'s own header rather than an invented
+#: sentence: an arbitrary `bash` gate belongs to none of the four harnesses the
+#: driver knows, and a test that made up a fifth vocabulary would assert
+#: something no real gate says.
+def guard_gate(*, says: bool) -> list[str]:
+    spoken = (
+        'echo "---- tests::the_invariant stdout ----"; '
+        'echo "the invariant is gone"; '
+    )
+    return [
+        "bash",
+        "-c",
+        f"grep -q THE-INVARIANT guard.txt || {{ {spoken if says else ''}exit 1; }}",
+    ]
+
+
 def test_the_driver_runs_end_to_end() -> None:
     """The whole thing, over a real plan file and a real (trivial) gate."""
     print("end to end")
@@ -237,7 +261,7 @@ def test_the_driver_runs_end_to_end() -> None:
         # The gate passes only while the invariant is present, which is exactly
         # the shape of a real counterfactual: break it, and the gate goes red.
         plan = {
-            "gate": ["bash", "-c", "grep -q THE-INVARIANT guard.txt"],
+            "gate": guard_gate(says=True),
             "cases": [
                 {
                     "name": "CF-1 the invariant is load-bearing",
@@ -280,6 +304,71 @@ def test_the_driver_runs_end_to_end() -> None:
         )
 
 
+def test_a_silent_red_is_not_a_catch() -> None:
+    """★★★★★ R1939.2 — a gate that goes red and NAMES NOTHING is UNREADABLE.
+
+    The counterpart of the test above, differing only in whether the gate
+    speaks. It is the end-to-end half of standing rule (6): an unclassified
+    result is RED, not a pass — and before R1939 this driver had exactly that
+    escape hatch, reporting `exit 1` as the detail and counting the case toward
+    `caught`.
+
+    ⚠ Why a second test rather than a wider assertion in the first: the two
+    differ in ONE variable, so a regression can only be in the classifier and
+    not in the plan, the anchor or the restoration. And it is the shape this
+    file itself used to drive — `grep -q` says nothing — which is why the
+    change was invisible until `pre-push` ran it.
+    """
+    print("a red gate that names nothing")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "guard.txt").write_text("THE-INVARIANT\n")
+        plan = {
+            "gate": guard_gate(says=False),
+            "cases": [
+                {
+                    "name": "CF-1 the invariant is load-bearing",
+                    "file": "guard.txt",
+                    "find": "THE-INVARIANT",
+                    "replace": "nothing",
+                    "why": "the gate reads it and says nothing about it",
+                },
+            ],
+        }
+        (root / "plan.json").write_text(json.dumps(plan))
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(Path(__file__).resolve().parent / "counterfactual.py"),
+                str(root / "plan.json"),
+                "--root",
+                str(root),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        out = completed.stdout
+        check(cf.UNREADABLE in out, "the silent red is UNREADABLE")
+        check(
+            "CAUGHT" not in out,
+            "★★★★★ and it is NOT reported as a catch, which is what it used to be",
+        )
+        check("0/1 caught" in out, "so the tally counts it as uncaught")
+        check(
+            completed.returncode == 1,
+            "and the run fails, rather than passing on an unreadable verdict",
+        )
+        check(
+            "teach FAILURE_MARKERS this harness's vocabulary" in out,
+            "★ and the repair is NAMED, so an unreadable gate is actionable",
+        )
+        check(
+            (root / "guard.txt").read_text() == "THE-INVARIANT\n",
+            "with the tree left exactly as it was",
+        )
+
+
 def main() -> int:
     for test in (
         test_compile_error_is_not_a_catch,
@@ -288,6 +377,7 @@ def main() -> int:
         test_an_anchor_that_does_not_match_is_reported,
         test_the_file_is_restored_and_the_hash_says_so,
         test_the_driver_runs_end_to_end,
+        test_a_silent_red_is_not_a_catch,
     ):
         test()
     if FAILURES:
