@@ -4639,14 +4639,42 @@ struct RouterDrag {
 }
 
 impl RouterDrag {
-    /// Open a session over `scene`, with this screen's own state behind it.
-    fn over(state: &std::rc::Rc<ShellState>, scene: Scene) -> Self {
-        use pinion_core::scene::ExternalNode;
-        let mut oracle = ShellOracle::new();
-        oracle.attach_state(std::rc::Rc::clone(state));
-        let mut model = Scene::External(
-            ExternalNode::new(Box::new(oracle)).with_tag(super::VIEW_TAG.to_string()),
-        );
+    /// Open a session over `scene`, with **this application's whole surface
+    /// set** behind it.
+    ///
+    /// ★★★★★ R1958 — the model is
+    /// [`CoreShell::state_scene`](pinion_runtime::CoreShell::state_scene), the
+    /// same derivation the running application boots from, rather than one
+    /// built here.
+    ///
+    /// # ⚠ What the hand-built model could not do
+    ///
+    /// It was the host's own `External`, alone. A press aimed at a mounted
+    /// screen's control resolves — correctly — to that screen's tag, and no
+    /// External in that model answered it, so the press went nowhere: measured
+    /// at R1957, `lab.toolbar.more` is painted, the press lands, and
+    /// `toolbar_open` never turns on. The real application has those surfaces
+    /// because `create_extra_externals` returns `screens.externals(journey)`,
+    /// and that call was one of the two lines this constructor had no way to
+    /// reach. Asking the runtime for the scene reaches both.
+    ///
+    /// ⚠ Built inside the CURRENT owner scope, so the surfaces resolve the same
+    /// reactive state the view function does. The set is the journey's, so a
+    /// session opened after `state.go(…)` holds the destination's screens.
+    fn over(_state: &std::rc::Rc<ShellState>, scene: Scene) -> Self {
+        let owner = pinion_core::reactive::Owner::current()
+            .expect("the sweep runs inside a scope, which is where the surfaces resolve");
+        let mut model = pinion_runtime::CoreShell::<super::AnalyzerShellView>::state_scene(&owner);
+        // ★★★★★ R1958 — **announce the surface sizes, exactly as a frame
+        // does.** `layout_point` asks `external::surface_size` for the basis it
+        // multiplies a pointer FRACTION by, and that store is filled by
+        // `announce_external_sizes` — a per-frame step of the real shell that a
+        // hand-driven router never performed. Without it a mounted screen reads
+        // the `(1, 1)` fallback and floors every fraction to zero, which is the
+        // failure R1826 measured on this very binding when a second window
+        // forgot a surface: the cursor reported `0,0` and hit nothing.
+        let mut known = pinion_runtime::ExternalSizes::default();
+        pinion_runtime::announce_external_sizes(&scene, &mut model, &mut known);
         let mut router = pinion_runtime::InputRouter::new();
         router.update_paint_scene(scene, &mut model);
         Self { router, model }
@@ -7849,6 +7877,67 @@ fn r1956_things_placed_beside_each_other_share_their_seats_centre_line() {
              by hand where `containment::band_in` belongs:\n  {}",
             offenders.len(),
             offenders.join("\n  "),
+        );
+    });
+}
+
+/// ★★★★★ R1958 — **the walk's router holds the same surfaces the running
+/// application does**, which is the first of the things standing between this
+/// walk and a press on a mounted screen's control.
+///
+/// # What this asserts, and what it deliberately does not
+///
+/// It asserts the MODEL: the scene the router dispatches into carries the
+/// mounted screen's own `External`, and the press over that screen resolves to
+/// that screen's tag rather than to the host's. Both were false before this
+/// round — [`RouterDrag`] built its model by hand as *the host's External,
+/// alone* — and both are what `CoreShell::state_scene` now derives once for the
+/// application and for anything driving it.
+///
+/// ⚠ **It does not assert that the press MOVES the screen, because measured, it
+/// still does not.** With the model and the surface sizes both right, a press
+/// on `lab.toolbar.more` leaves `toolbar_open` off. That remainder is the
+/// reason `r1957_a_surface_that_opens_is_not_painted_over` still lives in
+/// `hello-node-lab`'s own file instead of here, and it is recorded on the debt
+/// with the three layers this round measured. Claiming more here than was
+/// measured is the thing this repository has a rule about.
+#[test]
+fn r1958_the_walks_router_holds_the_mounted_screens_surface() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        state.go("lab").expect("the node lab section is open");
+        let (shot, scene) = painted_at((WIN_W, WIN_H));
+        let control = shot
+            .rect("lab.toolbar.more")
+            .expect("at this size the lab's toolbar overflows, so the `…` control is painted");
+
+        // A press over the mounted screen resolves to THE SCREEN, which is what
+        // makes the host's own `Hit::at` the wrong instrument for it.
+        let hit = scene
+            .hit_test(centre(control).0, centre(control).1)
+            .expect("a press on a painted control resolves to something");
+        assert_eq!(
+            hit.segments.last().map(String::as_str),
+            Some("node_lab"),
+            "the press lands on the mounted screen, not on the host: {hit:?}",
+        );
+
+        let drag = RouterDrag::over(&state, scene);
+        let mut surfaces: Vec<String> = Vec::new();
+        drag.model.for_each_node(&mut |visit| {
+            if matches!(visit.node, Scene::External(_)) {
+                surfaces.push(visit.node.tag().unwrap_or("<untagged>").to_owned());
+            }
+        });
+        assert!(
+            surfaces.iter().any(|tag| tag == "node_lab"),
+            "the router's model holds the mounted screen's surface, so a press \
+             that resolves to it has somewhere to go; it holds {surfaces:?}",
+        );
+        assert!(
+            surfaces.iter().any(|tag| tag == super::VIEW_TAG),
+            "and the host's own, which the drag cases depend on: {surfaces:?}",
         );
     });
 }

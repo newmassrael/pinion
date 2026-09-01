@@ -732,42 +732,14 @@ impl<V: WidgetCore> CoreShell<V> {
         // pre-R55.D.5 shape, every existing `read_state` keeps
         // working.
         //
-        // Override (`V::create_extra_externals` non-empty): the scene
-        // becomes `Scene::Container([primary, ...extras])`. The
-        // extras list is resolved inside `root_owner.run` so the
-        // factory can call [`use_scroll_state`] and other
-        // `Owner::cache` hooks, sharing reactive state with what the
-        // view fn will resolve later (same cache key → same
-        // `Rc<ScrollState>`).
-        //
-        // (R56.1.b.1 §5.41) `create_external` runs inside the same
-        // `root_owner.run(...)` wrap so the primary External factory
-        // can call [`use_text_edit_state`] / [`use_caret_blink`] /
-        // [`use_scroll_state`] hooks too — required by widgets like
-        // `TextField` whose External composes shared reactive state
-        // with the view fn. Bindings without reactive-state needs
-        // (every pre-R56.1.b.1 example) are unaffected: their
-        // factories ignore the Owner context.
-        //
-        // (R1306 PR-51 §5.41 §5.45) The primary is composed only when the
-        // binding declares one via [`WidgetCore::primary_surface`] (default
-        // `Some`, delegating to `create_external`/`tag`). A no-primary
-        // binding (all surfaces are dynamic extras — sprag's topology B)
-        // returns `None` and the state scene is built from the extras alone.
-        // Reading it through the one `primary_surface` accessor keeps every
-        // substrate site off a bare `V::tag()`/`V::create_external()` call.
-        // `None` flows into `compose_root`, which drops the index-0 primary.
-        let primary = V::primary_surface()
-            .map(|p| Scene::External(ExternalNode::new(root_owner.run(p.factory)).with_tag(p.tag)));
-        let extra_children: Vec<Scene> = root_owner
-            .run(V::create_extra_externals)
-            .into_iter()
-            .map(|extra| Scene::External(ExternalNode::new(extra.handle).with_tag(extra.tag)))
-            .collect();
-        // (R688.A §5.16) Assemble through the one composition helper
-        // shared with `Self::reconcile_externals` — SSOT for the root
-        // shape (bare External vs Container([primary, ...extras])).
-        let scene = Self::compose_root(primary, extra_children);
+        // ★ R1958 — the surfaces, through `Self::state_scene`, so *resolve the
+        // primary, resolve the extras, compose them* is one derivation rather
+        // than a sequence this path spelled and every other caller had to
+        // reproduce. The paragraphs that used to stand here — R56.1.b.1 on the
+        // owner wrap, R1306 on the optional primary, R688.A on the root shape —
+        // moved WITH the code they describe, because a comment three call
+        // levels above its subject is a comment nobody will keep true.
+        let scene = Self::state_scene(&root_owner);
         // ★★★★★ R1724 — the same `root_owner.run(...)` wrap `V::view` (R51.146)
         // and `V::apply_key` (R51.152) have. See `Self::tail` for why the
         // projection needs the scope the other two already had.
@@ -1042,6 +1014,64 @@ impl<V: WidgetCore> CoreShell<V> {
     /// helpers ([`Scene::primary_external`], the input router's DFS walk,
     /// [`Scene::collect_focusable_tags`]) already tolerate a container of
     /// externals with no distinguished head.
+    /// ★★★★★ R1958 — **the state scene this binding's surfaces make**, built
+    /// once and reachable by anything that has to drive the router.
+    ///
+    /// `compose_root` (private, one level down) has been the SSOT for the root
+    /// SHAPE since R688.A. What had no single answer was the whole
+    /// construction: *resolve the primary surface, resolve the extras, compose
+    /// them*, which the boot path spelled inline. So a caller outside this
+    /// crate that wanted the model the router dispatches into had to build one
+    /// by hand — and a hand-built model is a model that can be missing
+    /// surfaces.
+    ///
+    /// # ⚠ The defect this comes from
+    ///
+    /// The assembled analysis tool's own walk could not press a control on a
+    /// mounted screen. It built its router model as *the host's External,
+    /// alone*, so a press resolved to a screen's tag that no External in that
+    /// model answered: measured, `lab.toolbar.more` is painted, the press
+    /// lands, and the screen's state never moves. The real application has the
+    /// mounted screens' surfaces because `create_extra_externals` puts them
+    /// there — and that call was one of the two lines the test had no way to
+    /// reach.
+    ///
+    /// # Owner
+    ///
+    /// Both factories run inside `owner`, which is what lets them resolve
+    /// `use_*` hooks and share reactive state with the view function
+    /// (R56.1.b.1, R51.146). A caller passing a different owner than the one
+    /// its view runs in gets different state, which is a caller error this
+    /// cannot detect — pass the scope the screen lives in.
+    ///
+    /// (R56.1.b.1 §5.41) The primary External factory needs that wrap as much
+    /// as the extras do — `TextField` and its kin compose
+    /// `use_text_edit_state` / `use_caret_blink` / `use_scroll_state` (the
+    /// `Owner::cache` hooks, wherever they live) with what the view fn resolves
+    /// later, and a factory run outside the scope would build a second copy of
+    /// each. Bindings with no reactive-state needs ignore the context.
+    ///
+    /// # The primary is optional
+    ///
+    /// (R1306 PR-51 §5.41 §5.45) It is composed only when the binding declares
+    /// one through [`pinion_core::WidgetCore::primary_surface`]
+    /// — the default delegates to `create_external`/`tag`. A no-primary binding
+    /// (every surface a dynamic extra) answers `None` and the scene is built
+    /// from the extras alone. Reading it through that one accessor is what
+    /// keeps every substrate site off a bare `V::tag()` / `V::create_external()`
+    /// pair.
+    #[must_use]
+    pub fn state_scene(owner: &Owner) -> Scene {
+        let primary = V::primary_surface()
+            .map(|p| Scene::External(ExternalNode::new(owner.run(p.factory)).with_tag(p.tag)));
+        let extra_children: Vec<Scene> = owner
+            .run(V::create_extra_externals)
+            .into_iter()
+            .map(|extra| Scene::External(ExternalNode::new(extra.handle).with_tag(extra.tag)))
+            .collect();
+        Self::compose_root(primary, extra_children)
+    }
+
     fn compose_root(primary: Option<Scene>, extra_children: Vec<Scene>) -> Scene {
         match primary {
             Some(primary) if extra_children.is_empty() => primary,
