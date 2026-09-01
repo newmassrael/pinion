@@ -220,6 +220,22 @@ impl Endpoint {
     }
 }
 
+/// ★★★★★ R1967 — where a role's words come from.
+///
+/// Two arms and no third, because there is no third state a reader could act
+/// on: either the screen says what the canon says, or it says something else on
+/// purpose. What there must NOT be is a role that says neither — which is what
+/// every role said before this existed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Wording {
+    /// The code and the label are the canon's own, letter for letter.
+    AsTheCanon,
+    /// Substituted on purpose: the canon's word here is a name the protocol
+    /// gives a node, and the standing order for this reproduction neutralises
+    /// those while keeping structure and behaviour identical.
+    Neutralised,
+}
+
 /// What a node is for.
 ///
 /// The two groups are the reference's: infrastructure that carries traffic, and
@@ -318,6 +334,52 @@ impl Role {
             // colour groups them by what they carry.
             Self::Publisher | Self::Subscriber => Tint::rgb(0x8A, 0x5C, 0xF6),
             Self::Querier | Self::Responder => Tint::rgb(0xC7, 0x78, 0x00),
+        }
+    }
+
+    /// ★★★★★ R1967 — **whether this role's WORDS are the canon's own or a
+    /// deliberate neutral substitution.**
+    ///
+    /// # Why this has to be declared
+    ///
+    /// The canon keeps a kind's colour, its short code and its label in one
+    /// declaration, and R1966 brought the colour here beside [`Self::badge`]
+    /// and [`Self::name`]. Extracted and compared this round, six of the eight
+    /// roles carry the canon's code AND its label to the letter, and two do
+    /// not.
+    ///
+    /// A difference in a word is not, on this screen, a defect: the standing
+    /// order for this reproduction is that STRUCTURE and BEHAVIOUR match while
+    /// **node names and protocol vocabulary are neutrally substituted**. So a
+    /// word that differs may be exactly right — and until now nothing said
+    /// which, so a substitution and a slip were the same silence. That is the
+    /// escape hatch this closes: an unclassified role is not a pass.
+    ///
+    /// ⚠ The canon's own words are deliberately NOT written here. Recording
+    /// them to prove the comparison would undo the substitution the comparison
+    /// exists to declare. What is carried is the JUDGEMENT; the words stay
+    /// where they are, and re-measuring means extracting from the canon again
+    /// (the round's ledger entry names the command).
+    ///
+    /// ⚠ Measured, not assumed: `git log -S` puts both words in R1651, which
+    /// predates every canon extraction in this repository. Neither was chosen
+    /// against the canon — they were authored first and the comparison came
+    /// later, so what makes them right is the standing order, not an argument
+    /// anybody made at the time.
+    #[must_use]
+    pub const fn wording(self) -> Wording {
+        match self {
+            // The canon's code and label, letter for letter.
+            Self::Router
+            | Self::Peer
+            | Self::Client
+            | Self::Publisher
+            | Self::Subscriber
+            | Self::Querier => Wording::AsTheCanon,
+            // ★ Substituted. Both are names the protocol gives a node, which
+            // the standing order for this reproduction neutralises — the code
+            // this screen shows and the word it reads by are its own.
+            Self::Store | Self::Responder => Wording::Neutralised,
         }
     }
 
@@ -1190,7 +1252,9 @@ impl NodeKind for LabNode {
 
 #[cfg(test)]
 mod tests {
-    use super::{Endpoint, Implementation, LabNode, Revisions, Role, Stack, Transport, halves};
+    use super::{
+        Endpoint, Implementation, LabNode, Revisions, Role, Stack, Transport, Wording, halves,
+    };
     use pinion_node_graph::{Admission, Judged, NodeKind, PortRef, Side};
 
     /// A node of one transport on BOTH sides, for the R1939 assertions below.
@@ -1202,6 +1266,54 @@ mod tests {
             listening: true,
             implementation: Implementation::default(),
         }
+    }
+
+    /// ★★★★★ R1967 — **every role says where its words come from, and the
+    /// answer is never nothing.**
+    ///
+    /// The population is [`Role::ALL`] and the classification is an exhaustive
+    /// match inside [`Role::wording`], so a role added later stops the build
+    /// until somebody says which it is — the same shape R1965 gave the rail's
+    /// divergence kinds, and the reason is the same: a list written out here
+    /// would leave the ninth role silently unclassified.
+    ///
+    /// ⚠ BOTH arms must be reached. A screen where everything is the canon's
+    /// word has nothing to declare and this check would be a tautology; a
+    /// screen where everything is substituted is not a reproduction. Measured
+    /// at R1967 by extracting the canon's own kind table: six of eight carry
+    /// its code and its label to the letter, and two are substituted because
+    /// the canon's words there are names the protocol gives a node.
+    #[test]
+    fn r1967_every_role_says_where_its_words_come_from() {
+        let mut canonical = 0_usize;
+        let mut neutralised = 0_usize;
+        for role in Role::ALL {
+            match role.wording() {
+                Wording::AsTheCanon => canonical += 1,
+                Wording::Neutralised => neutralised += 1,
+            }
+            assert!(
+                !role.badge().is_empty() && !role.name().is_empty(),
+                "{role:?} declares a wording and has no words to declare it about",
+            );
+        }
+        assert_eq!(
+            canonical + neutralised,
+            Role::ALL.len(),
+            "a role reached neither arm, which cannot happen and is asserted \
+             anyway: the count is what a reader checks, not the match",
+        );
+        assert!(
+            canonical > 0,
+            "★★★★★ no role carries the canon's own words, so this is not a \
+             reproduction of it — every one of them has been renamed",
+        );
+        assert!(
+            neutralised > 0,
+            "★★★★★ every role claims the canon's own words, so this check has \
+             nothing to distinguish and the standing order to neutralise node \
+             names and protocol vocabulary is either unfollowed or unrecorded",
+        );
     }
 
     /// ★★★★★ R1939 — **every socket type this taxonomy has says what its pin

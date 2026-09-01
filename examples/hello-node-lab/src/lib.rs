@@ -13138,6 +13138,19 @@ fn spec_json() -> serde_json::Value {
         "roles": spec::ROLES.iter().map(|r| serde_json::json!({
             "name": r.name, "gist": r.gist, "group": r.group, "accepts": r.accepts,
             "carries": r.carries.iter().map(|p| p.key()).collect::<Vec<_>>(),
+            // ★★★★★ R1967 — **where this role's words come from**, published
+            // rather than left as a judgement only the source carries.
+            //
+            // A client comparing this screen with the reference it reproduces
+            // needs to tell a DELIBERATE neutral substitution from a drift, and
+            // before this it could not: both looked like a word that differs.
+            // The canon's own word is deliberately absent — publishing it would
+            // undo the substitution this field exists to declare — so what
+            // crosses the wire is the judgement and never the vocabulary.
+            "wording": Role::from_name(r.name).map_or("unknown", |role| match role.wording() {
+                graph::Wording::AsTheCanon => "as_the_canon",
+                graph::Wording::Neutralised => "neutralised",
+            }),
         })).collect::<Vec<_>>(),
         "pin_legend": spec::PIN_LEGEND.iter().map(|(k, m)| serde_json::json!({
             "kind": k, "means": m,
