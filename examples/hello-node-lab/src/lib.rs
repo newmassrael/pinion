@@ -14231,7 +14231,7 @@ fn pin_address(word: &str) -> Result<(Side, PortPath), InvokeError> {
 /// * **what moved** — the ports that changed index, which is what an undo and
 ///   an editor's own bookkeeping both need. Its command answers `void`.
 /// * **what the value became** — a recombine composes the members back with
-///   [`NodeKind::implode`](pinion_node_graph::NodeKind::implode), and says so.
+///   [`NodeKind::implode`], and says so.
 fn split_pin(state: &Rc<LabState>, node: NodeId, address: &str) -> Result<String, InvokeError> {
     let name = state.name_of(node);
     let (word, folding) = address
