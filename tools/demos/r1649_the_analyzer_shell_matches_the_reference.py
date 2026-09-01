@@ -457,7 +457,7 @@ def body() -> None:
             assert_eq(q(tf, "nav"), "dashboard", "B2: and the section did not change")
         for seat in ahead_keys():
             tf.intervene(f"{EXT}/nav", seat)
-            tf.tick(16)
+            tf.tick_ms(16)
             assert_eq(
                 q(tf, "nav"),
                 seat,
@@ -465,7 +465,7 @@ def body() -> None:
                 f"it locks is one this build takes",
             )
         tf.intervene(f"{EXT}/nav", "dashboard")
-        tf.tick(16)
+        tf.tick_ms(16)
         assert_eq(q(tf, "nav"), "dashboard", "B2: and back where the rest expects to be")
 
         # ── (B3) ★★ R1671 — the screen and its GESTURE agree about the window
@@ -1113,7 +1113,7 @@ def body() -> None:
             tf, "shell.rail.settings", lambda: q(tf, "nav"), "N: a rail seat"
         )
         tf.intervene(f"{EXT}/nav", "dashboard")
-        tf.tick(16)
+        tf.tick_ms(16)
         assert_router_press_moves(
             tf, "shell.subbar.edit", lambda: q(tf, "editing"), "N: the layout-edit toggle"
         )
@@ -1122,7 +1122,7 @@ def body() -> None:
         # pressing at all rather than a fact about where.
         before = (q(tf, "nav"), q(tf, "editing"))
         tf.request("scene/click", {"button": "left", "at": {"x": 2, "y": 2}})
-        tf.tick(16)
+        tf.tick_ms(16)
         assert_eq(
             (q(tf, "nav"), q(tf, "editing")),
             before,

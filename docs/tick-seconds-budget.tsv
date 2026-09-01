@@ -9,7 +9,6 @@
 tools/demos/r1413_transport.py	2
 tools/demos/r1414_replay.py	2
 tools/demos/r1426_textgrid_cursor_blink_phase.py	1
-tools/demos/r1649_the_analyzer_shell_matches_the_reference.py	2
 tools/demos/r1651_the_node_lab_matches_the_reference.py	1
 tools/demos/r1663_a_field_says_which_bytes.py	1
 tools/demos/r1693_a_screen_is_a_tree_a_reader_can_walk.py	2

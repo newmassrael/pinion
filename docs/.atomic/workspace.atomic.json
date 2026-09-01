@@ -79858,6 +79858,44 @@
         "⚠ The `ahead` list is the only record that the scope mockup locks anything at all: R1948 removed `spec::Seat` when the last requirement-booked seat opened, so the rail's own type can no longer spell `reserved`. If the mockup is ever re-extracted and opens those seats, both entries go and the two references agree; if a THIRD locked seat appears, the type has to grow one back."
       ]
     },
+    "R1953.1": {
+      "decision_summary": "A new wait in a demo is a FRAME, and this one asked for sixteen seconds.\n\nR1953's push was refused by `tools/tick_units.py`, and the refusal was about R1953's own code: the round added two `tf.tick(16)` calls to `r1649_the_analyzer_shell_matches_the_reference.py` to let a rail write settle. `tick()` takes SECONDS — the unit R1783 measured 172 sites across 28 files getting wrong — so both sites asked the demo clock to fast-forward sixteen seconds where they meant one frame at 60fps.\n\n⇒ the gate did exactly what it exists for, on the round that had its own lesson in front of it, and the repair is `tick_ms(16)` at all FOUR sites in the file rather than the two the ratchet charged. The other two are older and mean the same thing; being in the file is what made them visible, and leaving a site that says sixteen seconds because a budget row grandfathers it is how a ratchet becomes a licence.\n\n★ And the budget row is gone rather than lowered. The file's census is 0 now, so the row is removed and the ratchet holds at zero for it — a row reading `2` for a file with no such site is a slot two seconds-sized ticks could re-enter without the gate saying anything.",
+      "changes_bullets": [
+        "`tools/demos/r1649_the_analyzer_shell_matches_the_reference.py`: four `tf.tick(16)` become `tf.tick_ms(16)` — the two R1953 wrote (the `ahead_keys` loop, which drives every seat the reference locks and this build opens, and the return to `dashboard` after it) and the two that were already there (the settle before the layout-edit toggle, and the one after the negative control's press in the app bar's corner). Every one of them means *let a frame pass so the write lands*.",
+        "`docs/tick-seconds-budget.tsv`: the file's row is REMOVED, by `tools/tick_units.py --write-budget`, because its census is now 0. The tree holds 102 sites in 23 files where it held 104 in 24."
+      ],
+      "verification_bullets": [
+        "`python3 tools/tick_units.py` refused before the change, naming all four lines and the ratchet move `2 -> 4`, and passes after it: `102 site(s) in 23 file(s)`. Its own selftest reports 12 of 12 cases OK on both runs.",
+        "⚠ The change is a BEHAVIOUR change to the demo — sixteen seconds of demo clock become sixteen milliseconds — so the demo was re-run rather than reasoned about: `r1649_the_analyzer_shell_matches_the_reference.py` PASS (83.56s), with the shell's boot gates reporting what they reported before (6 inert regions all heard, 0 lost to scroll, 339 regions with 0 undecided, 191 conforming nodes, `analyzer_shell=34+0/338`).",
+        "The verdict on R1953's push was read from a FILE (`push.rc` = 1) and confirmed against `git ls-remote origin main`, which still named R1952's commit — the push was refused, not partially applied."
+      ],
+      "impact_refs": [
+        "5.35"
+      ],
+      "carry_forward_bullets": [
+        "⚠ THE ROUND THAT WROTE THE DEFECT HAD THE LESSON IN FRONT OF IT. R1783 measured this exact unit error at 172 sites in 28 files and built the gate; the standing notes name `tf.tick_ms(16)` as the one-frame spelling. R1953 still wrote `tick(16)` twice. ⇒ a lesson recorded is not a lesson applied, and what caught it was the GATE, at the push, not the round's own reading.",
+        "⚠ Only a gate this project already had could see it, and only because it is a RATCHET rather than a rule: the two older sites in the same file had been passing for rounds under a budget row. A per-file budget makes a wrong site permanent until somebody edits that file for another reason.",
+        "The remaining 102 sites in 23 files are unaudited by this round. Each is either a deliberate fast-forward or the same error, and the budget cannot tell them apart — it counts them, it does not classify them. That is the shape `debt-a-remainder-list-in-the-same-file-has-no-gate` describes, one tool over."
+      ],
+      "publishable_decision_summary": "A new wait in a demo is a FRAME, and this one asked for sixteen seconds.\n\nR1953's push was refused by `tools/tick_units.py`, and the refusal was about R1953's own code: the round added two `tf.tick(16)` calls to `r1649_the_analyzer_shell_matches_the_reference.py` to let a rail write settle. `tick()` takes SECONDS — the unit R1783 measured 172 sites across 28 files getting wrong — so both sites asked the demo clock to fast-forward sixteen seconds where they meant one frame at 60fps.\n\n⇒ the gate did exactly what it exists for, on the round that had its own lesson in front of it, and the repair is `tick_ms(16)` at all FOUR sites in the file rather than the two the ratchet charged. The other two are older and mean the same thing; being in the file is what made them visible, and leaving a site that says sixteen seconds because a budget row grandfathers it is how a ratchet becomes a licence.\n\n★ And the budget row is gone rather than lowered. The file's census is 0 now, so the row is removed and the ratchet holds at zero for it — a row reading `2` for a file with no such site is a slot two seconds-sized ticks could re-enter without the gate saying anything.",
+      "publishable_changes_bullets": [
+        "`tools/demos/r1649_the_analyzer_shell_matches_the_reference.py`: four `tf.tick(16)` become `tf.tick_ms(16)` — the two R1953 wrote (the `ahead_keys` loop, which drives every seat the reference locks and this build opens, and the return to `dashboard` after it) and the two that were already there (the settle before the layout-edit toggle, and the one after the negative control's press in the app bar's corner). Every one of them means *let a frame pass so the write lands*.",
+        "`docs/tick-seconds-budget.tsv`: the file's row is REMOVED, by `tools/tick_units.py --write-budget`, because its census is now 0. The tree holds 102 sites in 23 files where it held 104 in 24."
+      ],
+      "publishable_verification_bullets": [
+        "`python3 tools/tick_units.py` refused before the change, naming all four lines and the ratchet move `2 -> 4`, and passes after it: `102 site(s) in 23 file(s)`. Its own selftest reports 12 of 12 cases OK on both runs.",
+        "⚠ The change is a BEHAVIOUR change to the demo — sixteen seconds of demo clock become sixteen milliseconds — so the demo was re-run rather than reasoned about: `r1649_the_analyzer_shell_matches_the_reference.py` PASS (83.56s), with the shell's boot gates reporting what they reported before (6 inert regions all heard, 0 lost to scroll, 339 regions with 0 undecided, 191 conforming nodes, `analyzer_shell=34+0/338`).",
+        "The verdict on R1953's push was read from a FILE (`push.rc` = 1) and confirmed against `git ls-remote origin main`, which still named R1952's commit — the push was refused, not partially applied."
+      ],
+      "publishable_impact_refs": [
+        "5.35"
+      ],
+      "publishable_carry_forward_bullets": [
+        "⚠ THE ROUND THAT WROTE THE DEFECT HAD THE LESSON IN FRONT OF IT. R1783 measured this exact unit error at 172 sites in 28 files and built the gate; the standing notes name `tf.tick_ms(16)` as the one-frame spelling. R1953 still wrote `tick(16)` twice. ⇒ a lesson recorded is not a lesson applied, and what caught it was the GATE, at the push, not the round's own reading.",
+        "⚠ Only a gate this project already had could see it, and only because it is a RATCHET rather than a rule: the two older sites in the same file had been passing for rounds under a budget row. A per-file budget makes a wrong site permanent until somebody edits that file for another reason.",
+        "The remaining 102 sites in 23 files are unaudited by this round. Each is either a deliberate fast-forward or the same error, and the budget cannot tell them apart — it counts them, it does not classify them. That is the shape `debt-a-remainder-list-in-the-same-file-has-no-gate` describes, one tool over."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
