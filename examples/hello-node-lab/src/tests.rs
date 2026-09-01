@@ -1089,7 +1089,7 @@ fn r1651_the_pin_a_node_shows_is_derived_from_the_form_it_holds() {
             .expect("a kind node");
         assert_eq!(
             transport,
-            crate::graph::Transport::Quic,
+            Some(crate::graph::Transport::Quic),
             "★ and the pin's COLOUR follows the locator, because the colour is \
              the type the taxonomy refuses a mismatched link on"
         );
@@ -4659,6 +4659,392 @@ fn r1926_a_split_draws_its_halves_in_their_own_colours() {
             (painted[1].r, painted[1].g, painted[1].b),
             "★★★★★ and the two halves are painted in two colours — the defect \
              this round found, asserted where it lived"
+        );
+    });
+}
+
+/// ★★★★★ R1961 close-audit — **choosing a card's transport moves its ADDRESS,
+/// so the choice survives the next edit.**
+///
+/// The second author this round nearly shipped. `set_pin_transport` wrote
+/// `LabNode::transport` through the crate's type swap, and R1961 made that
+/// field a derivation — so the verb and the derivation both owned one fact, and
+/// the derivation wins whenever anything settles. A person would have chosen a
+/// transport, edited an unrelated field, and watched the choice vanish.
+///
+/// ⚠ The assertion is deliberately *after an unrelated edit*, because that is
+/// the only shape that can tell the two designs apart: writing the field
+/// directly passes every check made immediately afterwards.
+#[test]
+fn r1961_a_chosen_transport_outlives_an_unrelated_edit() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+        let subject = state.node_of("R-01").expect("the specification's router");
+        let elsewhere = state.node_of("P-02").expect("the specification's P-02");
+
+        super::set_pin_transport(&state, subject, "dial", "udp").expect("a card that listens may");
+        assert_eq!(
+            spoken_by(&state, subject),
+            Some(Transport::Udp),
+            "the card speaks what was chosen",
+        );
+        assert!(
+            super::endpoints_of(&state, subject)
+                .iter()
+                .all(|one| one.starts_with("udp/")),
+            "★★★★★ and the ADDRESS moved with it — {:?}",
+            super::endpoints_of(&state, subject),
+        );
+
+        // An edit that has nothing to do with the choice, on another card.
+        state
+            .forms
+            .borrow_mut()
+            .get_mut(&elsewhere)
+            .expect("a form")
+            .set("listen.endpoints", "tcp/0.0.0.0:7449")
+            .expect("held");
+        super::sync_node(&state, elsewhere);
+        assert_eq!(
+            spoken_by(&state, subject),
+            Some(Transport::Udp),
+            "★★★★★ and the choice is still there — a verb that wrote the derived \
+             field instead of the address would have lost it here",
+        );
+
+        // ★ And the card that has no address of its own is REFUSED rather than
+        // silently doing nothing, which is what the escape hatch used to hide.
+        let learner = state
+            .cards()
+            .into_iter()
+            .find(|node| spoken_by(&state, *node).is_none())
+            .expect("★ some card speaks nothing");
+        let why = super::set_pin_transport(&state, learner, "dial", "udp")
+            .expect_err("★ a card with no address of its own cannot be given one");
+        assert!(
+            format!("{why:?}").contains("listens nowhere"),
+            "★ and the refusal says why: {why:?}",
+        );
+    });
+}
+
+/// Every string in a published value, wherever in its shape it sits.
+///
+/// Written over the whole value rather than over the keys a register is known
+/// to use: which key carries a socket type is exactly what the check below must
+/// not have to know, since the defect it exists for is a register nobody
+/// remembered.
+fn strings_in(value: &serde_json::Value, out: &mut Vec<String>) {
+    match value {
+        serde_json::Value::String(text) => out.push(text.clone()),
+        serde_json::Value::Array(items) => {
+            for item in items {
+                strings_in(item, out);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for held in map.values() {
+                strings_in(held, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// ★★★★★ R1961 close-audit — **one socket type, one published spelling.**
+///
+/// `Endpoint::wire_word`'s own doc calls itself *the one spelling a client
+/// reads this type under*. Measured while auditing this round: it was false.
+/// Three registers spelled a socket type with `Debug` (`choosable`, `drawn`
+/// inside `tints`, and `containers`) while three others used `wire_word`
+/// (`takes`, `admits`, `ports`), so one type reached a client as both
+/// `Locator(Tcp)` and `locator/tcp` — and an agent joining the registers on the
+/// token cannot.
+///
+/// ★ The population is DERIVED twice over: every path the screen publishes
+/// (from its own schema, not a list here) crossed with every `Debug` spelling
+/// the taxonomy has (from [`Endpoint::all`]). A type added later is watched
+/// without anyone editing this, which is the property the fix needs — R1961
+/// added `Unspoken`, whose two spellings were `locator` and `Unspoken`, sharing
+/// not even a stem.
+///
+/// ⚠ Coarse in the same way the R1960 ratchet is: it forbids the exact `Debug`
+/// text anywhere in a register, so a register legitimately publishing the word
+/// `Host` on its own would be reported. That is the failure direction worth
+/// having — it names the register and the token, and a reader decides.
+#[test]
+fn r1961_one_socket_type_has_one_published_spelling() {
+    use pinion_core::external::ExternalIntrospect;
+
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+        crate::painted::render_so_a_press_can_be_asked(&state);
+        let mut oracle = super::LabOracle::new();
+        oracle.attach(state);
+
+        let debug_forms: Vec<String> = crate::graph::Endpoint::all()
+            .into_iter()
+            .map(|ty| format!("{ty:?}"))
+            .collect();
+        let words: BTreeSet<String> = crate::graph::Endpoint::all()
+            .into_iter()
+            .map(crate::graph::Endpoint::wire_word)
+            .collect();
+        assert_eq!(
+            words.len(),
+            debug_forms.len(),
+            "★ two socket types share a published word, so the spelling does not \
+             identify the type: {words:?}",
+        );
+
+        let mut asked = 0_usize;
+        for field in oracle.schema().fields {
+            let Ok(read) = oracle.query(field.path) else {
+                continue;
+            };
+            asked += 1;
+            let mut found = Vec::new();
+            match &read {
+                pinion_core::external::IntrospectValue::Json(value) => {
+                    strings_in(value, &mut found);
+                }
+                pinion_core::external::IntrospectValue::Text(text) => found.push(text.clone()),
+                _ => {}
+            }
+            for token in found {
+                assert!(
+                    !debug_forms.contains(&token),
+                    "★★★★★ `{}` publishes the socket type as `{token}`, which is \
+                     its `Debug` text — the taxonomy's one spelling is \
+                     `wire_word` and this register reached past it",
+                    field.path,
+                );
+            }
+        }
+        assert!(
+            asked > 1,
+            "★ the registers have to be REACHED: {asked} answered, so this gate \
+             is asking an empty screen",
+        );
+    });
+}
+
+/// ★ R1961 — the FILL the scene gave the box with this tag.
+///
+/// The sibling of [`painted_border`], and separate for the reason that one
+/// records: `painted.rs`'s harness keeps rectangles, and a card's transport
+/// lives in its ground rather than in its edge. Answers `None` when no box
+/// carries the tag, which the callers below turn into a named failure rather
+/// than a missing colour.
+fn painted_fill(scene: &pinion_core::Scene, tag: &str) -> Option<pinion_core::Color> {
+    use pinion_core::Scene;
+    match scene {
+        Scene::Container(node) if node.tag.as_deref() == Some(tag) => Some(node.style.fill),
+        Scene::Box(node) if node.tag.as_deref() == Some(tag) => Some(node.style.fill),
+        Scene::Container(node) => node
+            .children
+            .iter()
+            .find_map(|child| painted_fill(child, tag)),
+        Scene::Scroll(node) => painted_fill(&node.content, tag),
+        _ => None,
+    }
+}
+
+/// The transport the document says this card speaks.
+fn spoken_by(state: &LabState, node: pinion_node_graph::NodeId) -> Option<Transport> {
+    state
+        .doc
+        .borrow()
+        .tree(ROOT)
+        .and_then(|t| t.node(node))
+        .and_then(|n| match &n.body {
+            NodeBody::Kind(kind) => Some(kind.transport),
+            _ => None,
+        })
+        .expect("a kind node")
+}
+
+/// ★★★★★ R1961 — **every card on the opening canvas speaks an address that is
+/// actually on it, and the canvas does not draw them all the same.**
+///
+/// Two halves, and the second is the one
+/// `debt-every-card-on-the-opening-graph-speaks-one-transport` asked for by
+/// name: *the walk must assert the POPULATION*, because a screen whose eight
+/// cards are one colour cannot demonstrate that the colour is derived — "read
+/// off the transport" and "constant" are indistinguishable there, which is the
+/// class R1845 / R1926 / R1927 named.
+///
+/// The first half is the derivation itself, re-run from scratch against what
+/// the document stores. It is what makes the second half mean something: a
+/// canvas could be given two colours by writing two colours.
+#[test]
+fn r1961_the_opening_canvas_speaks_the_addresses_it_carries() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+
+        // ── the derivation, re-run ──────────────────────────────────────────
+        let mut listens = 0_usize;
+        let mut from_the_wire = 0_usize;
+        let mut unspoken: Vec<String> = Vec::new();
+        for node in state.cards() {
+            let name = state.name_of(node);
+            let listen = state
+                .forms
+                .borrow()
+                .get(&node)
+                .and_then(|form| form.field("listen.endpoints"))
+                .map_or(String::new(), |f| f.value().into_owned());
+            let dialled = super::dialled_endpoint(&state.doc.borrow(), node);
+            let want = super::transport_spoken(&listen, dialled.as_deref());
+            assert_eq!(
+                spoken_by(&state, node),
+                want,
+                "★ {name} stores a transport the derivation does not give it — \
+                 listen {listen:?}, dialled {dialled:?}",
+            );
+            match (Transport::of_locator(&listen), want) {
+                (Some(_), _) => listens += 1,
+                (None, Some(_)) => {
+                    // ★★★★★ The repair itself: this card has NO address of its
+                    // own, and the transport it speaks came off the wire it
+                    // dials. Before R1961 these took the escape hatch — a
+                    // classification nobody made.
+                    from_the_wire += 1;
+                    assert!(
+                        dialled.is_some(),
+                        "★ {name} speaks {want:?} and dials nothing, so nothing \
+                         said it — that is the escape hatch back",
+                    );
+                }
+                (None, None) => unspoken.push(name),
+            }
+        }
+        assert_eq!(
+            listens + from_the_wire + unspoken.len(),
+            state.cards().len(),
+            "every card is accounted for by one of the three: {listens} listen, \
+             {from_the_wire} read the wire, {unspoken:?} speak nothing",
+        );
+        assert!(
+            from_the_wire > 0,
+            "★★★★★ the derivation this round exists for has to be REACHED: no \
+             card takes its transport from the wire it dials, so the whole arm \
+             is untested by this graph",
+        );
+        assert!(
+            !unspoken.is_empty(),
+            "★★★★★ and the unclassified state has to be reachable too. A graph \
+             in which every card has an address cannot tell a derivation from a \
+             default — which is the thing R1921 forbade and the escape hatch \
+             hid for five rounds",
+        );
+
+        // ── the population, on the frame ────────────────────────────────────
+        let scene = crate::painted::painted_scene(&state);
+        let mut fills: BTreeSet<(u8, u8, u8)> = BTreeSet::new();
+        for node in state.cards() {
+            let tag = format!("lab.node.{}", state.name_of(node));
+            if let Some(fill) = painted_fill(&scene, &tag) {
+                fills.insert((fill.r, fill.g, fill.b));
+            }
+        }
+        assert!(
+            fills.len() > 1,
+            "★★★★★ every card on the opening canvas is painted the same colour \
+             {fills:?} — so a reader cannot tell a card drawn from its taxonomy \
+             from one drawn from a default, and this screen cannot show the \
+             capability it carries",
+        );
+    });
+}
+
+/// ★★★★★ R1961 — **a card learns what it speaks from the wire it draws, and
+/// unlearns it when the wire goes.**
+///
+/// The live half. The check above reads one opening state; this one drives the
+/// screen's own verbs — `delete_link`, a form commit, `connect` — and asserts
+/// the derivation after each, which is what holds every site that has to call
+/// `settle_transports`. A site that forgets it leaves a stale colour, and a
+/// stale colour is exactly what this screen's debt is about.
+///
+/// ⚠ The peer is given a **quic** address first, so the transport the wire
+/// teaches is one no default could have produced. Asserting that a card became
+/// TCP would pass against the escape hatch this round removed.
+#[test]
+fn r1961_a_card_learns_what_it_speaks_from_the_wire_it_draws() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+        let learner = state
+            .cards()
+            .into_iter()
+            .find(|node| spoken_by(&state, *node).is_none())
+            .expect("★ some card on the opening canvas speaks nothing");
+        let peer = state.node_of("P-03").expect("the specification's P-03");
+
+        // Free the peer's only endpoint: this screen refuses a second dialler
+        // on an address one card already took, which is the reference's rule.
+        let held = state
+            .doc
+            .borrow()
+            .tree(ROOT)
+            .map(|t| {
+                t.links()
+                    .iter()
+                    .filter(|l| l.to.node == peer)
+                    .map(|l| l.id)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        for link in held {
+            super::delete_link(&state, link).expect("a drawn link can be removed");
+        }
+        state
+            .forms
+            .borrow_mut()
+            .get_mut(&peer)
+            .expect("a form")
+            .set("listen.endpoints", "quic/0.0.0.0:7451")
+            .expect("held");
+        super::sync_node(&state, peer);
+        assert_eq!(
+            spoken_by(&state, peer),
+            Some(Transport::Quic),
+            "the peer speaks the address it was given",
+        );
+
+        super::connect(&state, learner, peer).expect("★ a card that speaks nothing may dial one");
+        assert_eq!(
+            spoken_by(&state, learner),
+            Some(Transport::Quic),
+            "★★★★★ and it now speaks what the wire dials — not the TCP a \
+             default would have handed it",
+        );
+
+        let drawn = state
+            .doc
+            .borrow()
+            .tree(ROOT)
+            .and_then(|t| {
+                t.links()
+                    .iter()
+                    .find(|l| l.from.node == learner)
+                    .map(|l| l.id)
+            })
+            .expect("the wire just drawn");
+        super::delete_link(&state, drawn).expect("and it can be taken away again");
+        assert_eq!(
+            spoken_by(&state, learner),
+            None,
+            "★★★★★ and it stops speaking it — a derived fact that only ever \
+             grew would be a stored one wearing a derivation's name",
         );
     });
 }

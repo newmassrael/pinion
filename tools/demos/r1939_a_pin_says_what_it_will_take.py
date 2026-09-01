@@ -150,11 +150,23 @@ def body() -> None:
 
         banner("B — ★ the sentence is the PIN's, not one global rule")
         dials = [row for row in rows if row["pin"] == "dial"]
-        subject = dials[0]["card"]
+        # R1961 — the subject is NAMED and it is a card that LISTENS. Choosing a
+        # transport moves the address the choice is read off, and a card with no
+        # address of its own has none to move: it takes the transport of the
+        # peer it dials, so the verb refuses it (asserted in E below). It used to
+        # be `dials[0]` — the first card, which listens nowhere and only appeared
+        # to work while an escape hatch answered TCP for it.
+        subject = "R-01"
+        # R1961 — ⚠ this used to read *the opening canvas speaks ONE transport,
+        # so the sentences start identical*, and that sentence WAS the defect
+        # `debt-every-card-on-the-opening-graph-speaks-one-transport` is open on,
+        # written down as an assertion. It is two now: a card that listens
+        # nowhere and dials nothing carries no transport, and its pin's rule is
+        # the type itself rather than a scheme.
         ok(
-            f"B: ⚠ the opening canvas speaks ONE transport, so the sentences "
-            f"start identical — {sorted({d['wants'] for d in dials})}",
-            len({d["wants"] for d in dials}) == 1,
+            f"B: ★★★★★ the opening canvas already speaks more than one thing, "
+            f"because one card speaks NOTHING — {sorted({d['wants'] for d in dials})}",
+            len({d["wants"] for d in dials}) == 2,
         )
         # ★ So the difference is CAUSED rather than found: R1937's verb makes
         # one card speak another transport, and the sentence has to follow.
@@ -232,6 +244,23 @@ def body() -> None:
             f"E: ★ which is the sentence the same pin publishes — "
             f"{landed['wants']!r}",
             offered.split("/", 1)[0] in landed["wants"],
+        )
+        # R1961 — and the other side of the same rule: a card whose transport is
+        # read off the peer it dials has no address of its own to re-scheme, so
+        # the verb refuses it by name instead of appearing to work.
+        speechless = [d["card"] for d in dials if "can speak" not in d["wants"]]
+        ok(
+            f"E: ★★★★★ the card that speaks nothing is named by the register — "
+            f"{speechless}",
+            len(speechless) == 1,
+        )
+        why = refusal(
+            app, f"{surface}/set_pin_transport", f"{speechless[0]},dial,udp"
+        )
+        ok(
+            f"E: ★★★★★ and choosing a transport for it is REFUSED, because the "
+            f"choice moves an address it does not have — {why!r}",
+            why is not None and "listens nowhere" in str(why),
         )
 
         print(f"\n{len(CHECKS)} check(s) held.")

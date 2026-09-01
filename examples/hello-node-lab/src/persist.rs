@@ -173,6 +173,12 @@ fn install(state: &Rc<LabState>, archive: Archive<LabNode, Kept>) {
                 .map_or_else(Selection::empty, Selection::one),
         );
     }
+    // ★ R1961 — a restored graph is put back in step with its OWN addresses.
+    // The transport a card speaks is derived (from its listen endpoint, or from
+    // the address it dials), so an archive is trusted for the addresses and the
+    // wires and never for the answer read off them — which is what keeps a file
+    // written before this derivation existed from painting a stale colour.
+    crate::settle_transports(state);
     // Everything below is declared VOLATILE, and a load is where that has to be
     // acted on rather than merely written down: a link picked in the graph that
     // was on screen a moment ago names an id this document may not have.

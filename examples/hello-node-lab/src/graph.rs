@@ -100,6 +100,26 @@ pub enum Endpoint {
     Host,
     /// The service half: which port on that host.
     Service,
+    /// ★★★★★ R1961 — **a locator whose transport nothing has said.**
+    ///
+    /// A node reads the transport it speaks off an address: the one it listens
+    /// on, or — for a role that cannot listen — the one it dials. A node with
+    /// neither has no address anywhere on it, and this is what its pins carry.
+    ///
+    /// It is a socket type rather than an absence because a pin must carry one:
+    /// [`Port::new`] takes a type, so "no type" is not sayable, and the shape
+    /// that stood here instead — `unwrap_or(Transport::Tcp)` — is a
+    /// classification nobody made. A card drawn as TCP because nothing said
+    /// otherwise is the defect `debt-every-card-on-the-opening-graph-speaks-
+    /// one-transport` is open on.
+    ///
+    /// ⚠ It converts BOTH WAYS with every [`Self::Locator`], and that is the
+    /// arm rather than an omission: a node that has not been told what it
+    /// speaks cannot refuse a wire, and the wire is precisely what tells it.
+    /// Before this arm existed a card just taken from the palette could only
+    /// ever be wired to a TCP peer, because the escape hatch had already
+    /// answered for it.
+    Unspoken,
 }
 
 impl Endpoint {
@@ -128,17 +148,24 @@ impl Endpoint {
         Transport::of_locator(locator).map(Self::Locator)
     }
 
-    /// The transport this endpoint speaks, or `None` for a half of one.
+    /// The transport this endpoint speaks, or `None` when it speaks none.
     ///
     /// A half carries no transport, and that is not an omission: a host name is
     /// the same host name whether it is dialled over a stream or a datagram, so
     /// giving the halves a transport would have invented a fact for the canvas
     /// to colour a pin by wrongly.
+    ///
+    /// ⚠ R1961 — `None` now covers **two** different absences: a half, which
+    /// has no transport by construction, and [`Self::Unspoken`], which is a
+    /// whole address nothing has named a transport for. They are one answer
+    /// here because the question is *what scheme does this type name*, and
+    /// neither names one. Where the difference matters — whether the type has
+    /// an inside — the arms are matched by name instead.
     #[must_use]
     pub const fn transport(self) -> Option<Transport> {
         match self {
             Self::Locator(transport) => Some(transport),
-            Self::Host | Self::Service => None,
+            Self::Host | Self::Service | Self::Unspoken => None,
         }
     }
 
@@ -154,16 +181,41 @@ impl Endpoint {
         let mut out: Vec<Self> = Transport::ALL.into_iter().map(Self::Locator).collect();
         out.push(Self::Host);
         out.push(Self::Service);
+        out.push(Self::Unspoken);
         out
     }
 
     /// The one spelling a client reads this type under.
+    ///
+    /// ★★★★★ R1961 close-audit — **that sentence was false when it was
+    /// written, and is now held by a test.** Measured over the screen's own
+    /// registers: `takes`, `admits` and `ports` published `locator/tcp` while
+    /// `choosable`, `drawn` and `containers` published `Locator(Tcp)` — one
+    /// type, two vocabularies, on one wire, and a client matching on the token
+    /// cannot join them. `r1961_one_socket_type_has_one_published_spelling`
+    /// reads every register the screen publishes and holds each token to this
+    /// vocabulary, so a fourth publisher cannot quietly reach for `Debug`
+    /// again.
+    ///
+    /// ⚠ **The gate holds REGISTERS, not prose**, and one prose site remains
+    /// outside it by the crate's own decision: `Refusal::TypeNotAdmitted`
+    /// carries the taxonomy's `Debug` text because that enum is not generic
+    /// over the socket type, and its doc names the seam — an application is
+    /// meant to catch the arm and re-word it. This screen does not, so a person
+    /// reading that one refusal still sees `Host` where every register says
+    /// `host`. Stated rather than counted as covered.
+    ///
+    /// ⚠ R1961 also made the divergence maximal before it closed it:
+    /// [`Self::Unspoken`]'s two spellings were `locator` and `Unspoken`, which
+    /// share not even a stem — a reminder that adding an arm to a type is
+    /// adding it to every surface the type is published on.
     #[must_use]
     pub fn wire_word(self) -> String {
         match self {
             Self::Locator(transport) => format!("locator/{}", transport.word()),
             Self::Host => "host".to_owned(),
             Self::Service => "service".to_owned(),
+            Self::Unspoken => "locator".to_owned(),
         }
     }
 }
@@ -317,8 +369,21 @@ impl Role {
 pub struct LabNode {
     /// What this node is for.
     pub role: Role,
-    /// The transport its pins speak, taken from its configured endpoint.
-    pub transport: Transport,
+    /// ★★★★★ R1961 — the transport its pins speak, **read off an address it
+    /// actually uses**, or `None` when no address anywhere on it says.
+    ///
+    /// `Option` and not a [`Transport`] with a fall-back, which is the whole
+    /// decision. The fall-back was `unwrap_or(Transport::Tcp)`, and it
+    /// classified every node that does not listen — exactly the roles that
+    /// CANNOT ([`Role::accepts`] is false for Client, Publisher and Querier) —
+    /// so half the opening canvas was coloured by a default nobody chose. An
+    /// `Option` makes the unclassified state *sayable*, which is what lets the
+    /// canvas draw it, the gate name it, and a test count it.
+    ///
+    /// Derived, never authored: see `transport_spoken` on the screen side,
+    /// which is the one place that decides it.
+    #[serde(default)]
+    pub transport: Option<Transport>,
     /// Whether *this* node has somewhere to listen. A role that accepts and a
     /// node with no endpoint is the closed pin.
     pub listening: bool,
@@ -469,7 +534,7 @@ fn halves(value: &str) -> (&str, &str) {
 /// a stray `/` are all refused with no repair: inventing a service number or
 /// dropping part of a host would hand a person a value they did not write and
 /// could not tell from one they did.
-fn relocated(transport: Transport, value: &str) -> Option<String> {
+pub(crate) fn relocated(transport: Transport, value: &str) -> Option<String> {
     let (host, service) = halves(value);
     if host.is_empty() || host.contains('/') || service.is_empty() {
         return None;
@@ -521,6 +586,25 @@ fn service_of(value: &str) -> Option<String> {
     Some(number.clamp(1, 65535).to_string())
 }
 
+impl LabNode {
+    /// ★★★★★ R1961 — **the socket type this node's own pins carry.**
+    ///
+    /// Three sites wrote `Endpoint::Locator(self.transport)` — the dial pin,
+    /// the accept run's template, and the card's colour — so one fact about a
+    /// node had three authors, and `None` would have had to be spelled three
+    /// ways. Counted before the repair, which is this workspace's standing
+    /// rule: a fact more than one place spells is lifted rather than fixed in
+    /// place, so the ways they could disagree stop being sayable.
+    ///
+    /// [`Endpoint::Unspoken`] is what an undecided transport carries, and it
+    /// is why this is a total function into a type rather than an `Option`
+    /// three callers would each have to answer.
+    #[must_use]
+    pub fn socket_type(&self) -> Endpoint {
+        self.transport.map_or(Endpoint::Unspoken, Endpoint::Locator)
+    }
+}
+
 impl NodeKind for LabNode {
     /// ★ R1914 — an [`Endpoint`], not a [`Transport`]: a pin carries a whole
     /// locator or one half of one, and the split act needs the difference.
@@ -549,10 +633,16 @@ impl NodeKind for LabNode {
     fn retyped(&self, _port: pinion_node_graph::PortRef, ty: &Endpoint) -> Option<Self> {
         match ty {
             Endpoint::Locator(transport) => Some(Self {
-                transport: *transport,
+                transport: Some(*transport),
                 ..self.clone()
             }),
-            Endpoint::Host | Endpoint::Service => None,
+            // ★ R1961 — `Unspoken` is refused for the same reason the two
+            // halves are: it is a state a node ARRIVES in, not one a person
+            // asks for. What a node speaks is read off an address, so
+            // un-saying it would have to un-write the address, which this verb
+            // cannot do — and a menu entry that silently did less than it said
+            // is worse than one that is not offered.
+            Endpoint::Host | Endpoint::Service | Endpoint::Unspoken => None,
         }
     }
 
@@ -581,7 +671,7 @@ impl NodeKind for LabNode {
     /// registers with.
     fn outputs(&self) -> Vec<Port<Self::Type, Self::Value>> {
         vec![
-            Port::new("dial", Endpoint::Locator(self.transport))
+            Port::new("dial", self.socket_type())
                 .describing("the address this node hands on to whatever it reaches"),
         ]
     }
@@ -602,7 +692,7 @@ impl NodeKind for LabNode {
                 Variadic::at(
                     0,
                     vec![
-                        Port::new("accept", Endpoint::Locator(self.transport))
+                        Port::new("accept", self.socket_type())
                             .describing("an address this node listens on"),
                     ],
                 )
@@ -625,10 +715,29 @@ impl NodeKind for LabNode {
     /// it here rather than at each authoring site is what makes the canvas, the
     /// wire and the validation gate answer the same question.
     fn conversion(from: &Self::Type, to: &Self::Type) -> Conversion<Self::Value> {
-        if from == to {
-            Conversion::Direct
-        } else {
-            Conversion::Refused
+        match (from, to) {
+            _ if from == to => Conversion::Direct,
+            // ★★★★★ R1961 — **an undecided end cannot refuse, and the wire is
+            // what decides it.**
+            //
+            // Both directions, because both are real on this screen: a card
+            // just taken from the palette dials a peer that listens, and a
+            // peer that listens nowhere is dialled by one that does. Refusing
+            // either would make the node's own emptiness the reason a person
+            // cannot fill it in — and before this arm existed the escape hatch
+            // hid that by answering TCP, which let a fresh card reach TCP peers
+            // and silently no others.
+            //
+            // ★★★★★ Measured by taking it away: the OPENING GRAPH does not
+            // build without it. `seed_nodes` runs before `seed_links` (a link
+            // needs two node ids), so a card whose transport comes off a wire
+            // is undecided at the moment its wire is authored — and three of
+            // the seven links were refused, which surfaced not as a wiring
+            // error but as *no card takes its transport from the wire it
+            // dials*. The arm is load-bearing, not a convenience.
+            (Endpoint::Unspoken, Endpoint::Locator(_))
+            | (Endpoint::Locator(_), Endpoint::Unspoken) => Conversion::Direct,
+            _ => Conversion::Refused,
         }
     }
 
@@ -646,7 +755,21 @@ impl NodeKind for LabNode {
     /// recurses and a model that could not would be the wrong shape.
     fn composition(ty: &Self::Type) -> Composition<Self::Type, Self::Value> {
         match ty {
-            Endpoint::Locator(_) => Composition::Members(vec![
+            // ★★★★★ R1961 — `Unspoken` is here rather than in an arm of its
+            // own: an address with no scheme is STILL a host and a service, so
+            // it composes exactly as a locator does, and clippy refusing two
+            // identical bodies is the design saying so.
+            //
+            // Measured rather than assumed. The first draft made it an atom, on
+            // the argument that [`implode`](NodeKind::implode) has no scheme to
+            // put back, and `r1915_a_wire_on_a_member_is_cut_by_the_fold_and_
+            // named` went red — a card just taken from the palette could no
+            // longer have either pin split, because the gesture asks the type
+            // whether it has an inside. The round-trip law holds without the
+            // scheme: `host:service` explodes and comes back itself, which is
+            // what an address this taxonomy cannot type looks like anyway
+            // ([`Transport::of_locator`] answers `None` for one).
+            Endpoint::Locator(_) | Endpoint::Unspoken => Composition::Members(vec![
                 // ★ R1916 — each member says what IT is for. The reference's
                 // sub-pins are pins and have nowhere to carry this.
                 Port::new("host", Endpoint::Host)
@@ -762,6 +885,13 @@ impl NodeKind for LabNode {
             Endpoint::Host => Tint::rgb(0x5A, 0xA7, 0xB8),
             // Which port on it.
             Endpoint::Service => Tint::rgb(0xD1, 0x6A, 0x5A),
+            // ★ R1961 — a neutral, and the ONLY neutral in this palette: it is
+            // what "nothing here says" has to look like. It is checked to be
+            // distinct from all seven others by
+            // `r1926_the_socket_palette_is_injective`, which is why a colour
+            // added here cannot quietly become a second spelling of one that
+            // already means something.
+            Endpoint::Unspoken => Tint::rgb(0x69, 0x71, 0x80),
         })
     }
 
@@ -783,7 +913,7 @@ impl NodeKind for LabNode {
     /// to be recomputed under them ([`Document::faces`](
     /// pinion_node_graph::Document::faces)).
     fn drawn_as(&self) -> Drawn<Self::Type> {
-        Drawn::LikeType(Endpoint::Locator(self.transport))
+        Drawn::LikeType(self.socket_type())
     }
 
     /// ★★★★★ R1916 — what a value of this socket type IS.
@@ -803,6 +933,9 @@ impl NodeKind for LabNode {
             }
             Endpoint::Host => "a host name or address".to_owned(),
             Endpoint::Service => "a service port number".to_owned(),
+            Endpoint::Unspoken => {
+                "an address, over a transport nothing on this node has said yet".to_owned()
+            }
         })
     }
 
@@ -839,6 +972,13 @@ impl NodeKind for LabNode {
                 wants: "a service number from 1 to 65535".to_owned(),
                 nearest: |value| service_of(value),
             },
+            // ★ R1961 — the one place in this taxonomy where the type is the
+            // whole constraint, and it is honest rather than lax: the rule the
+            // other locator arms apply is *the scheme must be the one this pin
+            // speaks*, and this pin does not speak one. There is nothing to
+            // re-scheme a value to, so a `Shaped` rule here would have to be a
+            // repair that never repairs.
+            Endpoint::Unspoken => Admits::Anything,
         }
     }
 
@@ -852,7 +992,10 @@ impl NodeKind for LabNode {
     ///
     /// [`implode`]: NodeKind::implode
     fn explode(ty: &Self::Type, value: &Self::Value) -> Vec<Option<Self::Value>> {
-        if ty.transport().is_none() {
+        // ★ R1961 — the halves have no inside; a whole address does, whether or
+        // not anything has said which transport carries it. The guard used to
+        // be `transport().is_none()`, which answers the same for both.
+        if matches!(ty, Endpoint::Host | Endpoint::Service) {
             return Vec::new();
         }
         let (host, service) = halves(value);
@@ -871,11 +1014,20 @@ impl NodeKind for LabNode {
     /// taxonomy that owns the type and `round_trips` is a law a consumer can
     /// run over them.
     fn implode(ty: &Self::Type, members: &[Option<Self::Value>]) -> Option<Self::Value> {
-        let transport = ty.transport()?;
         let [Some(host), Some(service)] = members else {
             return None;
         };
-        Some(format!("{}/{host}:{service}", transport.word()))
+        match ty {
+            Endpoint::Host | Endpoint::Service => None,
+            // ★ R1961 — the scheme is the one the TYPE names, and `Unspoken`
+            // names none, so the address comes back without one. That is what
+            // makes the round trip hold for the new arm rather than breaking
+            // it: the string that comes back is the schemeless one that went in.
+            Endpoint::Locator(_) | Endpoint::Unspoken => Some(match ty.transport() {
+                Some(transport) => format!("{}/{host}:{service}", transport.word()),
+                None => format!("{host}:{service}"),
+            }),
+        }
     }
 
     /// Two peers may be wired when they can negotiate a wire revision (R1885).
@@ -923,7 +1075,7 @@ mod tests {
     fn speaking(transport: Transport) -> LabNode {
         LabNode {
             role: Role::ALL[0],
-            transport,
+            transport: Some(transport),
             listening: true,
             implementation: Implementation::default(),
         }
@@ -1060,7 +1212,7 @@ mod tests {
         for role in Role::ALL {
             let node = LabNode {
                 role,
-                transport: Transport::Tcp,
+                transport: Some(Transport::Tcp),
                 listening: true,
                 implementation: Implementation::default(),
             };
@@ -1180,7 +1332,7 @@ mod tests {
     fn peer(stack: Stack, first: u32, last: u32) -> LabNode {
         LabNode {
             role: Role::Peer,
-            transport: Transport::Tcp,
+            transport: Some(Transport::Tcp),
             listening: true,
             implementation: Implementation {
                 stack,
@@ -1295,36 +1447,129 @@ mod tests {
     ///
     /// ⚠ **The escape hatch is what is counted, not the derivation.**
     /// `unwrap_or(Transport::Tcp)` is a classification nobody made — the thing
-    /// R1921 forbade — so the honest floor is ZERO and the pin is what remains
-    /// on the way there. Two are left: `transport_of_form`, which needs a
-    /// dialling node's transport to come from its LINK (R1716's direction), and
-    /// the pin-drawing read, which needs a card that cannot be drawn for a node
-    /// that is not there.
+    /// R1921 forbade — so the honest floor is ZERO.
+    ///
+    /// ★★★★★ **R1961 took it there**, which is why the number below is `0` and
+    /// not `2`. A dialling node's transport now comes from the address on the
+    /// wire it dials (`transport_spoken`), and a node with no address anywhere
+    /// on it carries [`Endpoint::Unspoken`] rather than a defaulted TCP. A
+    /// ratchet that has reached its floor is kept rather than deleted: it is
+    /// what refuses the hatch being written a sixth time.
     ///
     /// ⚠⚠ Counted from the source text, which is coarse: a comment mentioning
-    /// the call would count. That is why the number is a RATCHET and the test
-    /// prints the lines — a reader can see whether a rise is real. The
-    /// alternative, parsing Rust here, is a second compiler.
+    /// the call would count, and one does — so BOTH comment forms are excluded
+    /// and the test prints the lines it kept. The alternative, parsing Rust
+    /// here, is a second compiler.
     #[test]
     fn r1960_a_nodes_transport_is_decided_in_one_place() {
-        /// The sites left, and the round that must remove each. Falls to zero;
-        /// never rises.
-        const ESCAPES: usize = 2;
+        /// The sites left. Reached zero at R1961; never rises.
+        const ESCAPES: usize = 0;
+        /// ★★★★★ Assembled from two pieces so **this file cannot match
+        /// itself**. Measured the moment the population grew to include
+        /// `graph.rs`: the gate found its own filter line and its own failure
+        /// message and reported two escapes that do not exist. A source-text
+        /// gate whose own text is in the population is a gate that fails when
+        /// it succeeds.
+        const NEEDLE: &str = concat!("unwrap_or(Transport", "::Tcp)");
 
-        let source = include_str!("lib.rs");
-        let sites: Vec<(usize, &str)> = source
-            .lines()
-            .enumerate()
-            .filter(|(_, line)| line.contains("unwrap_or(Transport::Tcp)"))
-            .filter(|(_, line)| !line.trim_start().starts_with("///"))
-            .map(|(n, line)| (n + 1, line.trim()))
-            .collect();
+        let sites: Vec<(&str, usize, &str)> = [
+            ("lib.rs", include_str!("lib.rs")),
+            ("graph.rs", include_str!("graph.rs")),
+        ]
+        .into_iter()
+        .flat_map(|(file, source)| {
+            source
+                .lines()
+                .enumerate()
+                .filter(|(_, line)| line.contains(NEEDLE))
+                .filter(|(_, line)| !line.trim_start().starts_with("//"))
+                .map(move |(n, line)| (file, n + 1, line.trim()))
+                .collect::<Vec<_>>()
+        })
+        .collect();
         assert_eq!(
             sites.len(),
             ESCAPES,
-            "`unwrap_or(Transport::Tcp)` is a transport nobody chose; the pin \
-             says {ESCAPES} are left to remove and the source holds {}: {sites:#?}",
+            "{NEEDLE} is a transport nobody chose; the pin says {ESCAPES} are \
+             left and the source holds {}: {sites:#?}",
             sites.len(),
+        );
+    }
+
+    /// ★★★★★ R1961 — **an undecided end cannot refuse a wire, and a decided
+    /// pair still must agree.**
+    ///
+    /// The conversion table, all four shapes, because the arm added this round
+    /// is the one that WEAKENS the rule and a weakening nobody bounded is how a
+    /// type gate stops being one. Two locators of different transports are
+    /// still refused; `Unspoken` crosses with any locator, both ways; and a
+    /// locator still does not reach a HALF of one, which is the refusal R1937
+    /// exists to make reachable.
+    #[test]
+    fn r1961_an_unspoken_end_crosses_with_any_locator_and_the_rest_still_refuse() {
+        let direct = |from: Endpoint, to: Endpoint| {
+            matches!(
+                <LabNode as NodeKind>::conversion(&from, &to),
+                pinion_node_graph::Conversion::Direct
+            )
+        };
+        for transport in Transport::ALL {
+            let locator = Endpoint::Locator(transport);
+            assert!(
+                direct(Endpoint::Unspoken, locator),
+                "a card that speaks nothing yet may dial {transport:?}",
+            );
+            assert!(
+                direct(locator, Endpoint::Unspoken),
+                "a card that speaks {transport:?} may reach one that speaks nothing yet",
+            );
+            assert!(
+                !direct(locator, Endpoint::Host) && !direct(Endpoint::Host, locator),
+                "a half of a locator is still not a locator",
+            );
+        }
+        assert!(
+            !direct(
+                Endpoint::Locator(Transport::Tcp),
+                Endpoint::Locator(Transport::Quic)
+            ),
+            "★ the rule the legend draws is intact: two transports must agree",
+        );
+        assert!(
+            direct(Endpoint::Unspoken, Endpoint::Unspoken),
+            "two cards that both speak nothing yet may still be wired",
+        );
+    }
+
+    /// ★★★★★ R1961 — **an address with no scheme still comes apart, and comes
+    /// back.**
+    ///
+    /// The law the crate states over `explode`/`implode`, asked of the arm
+    /// added this round. It is here because the first draft got it wrong in the
+    /// other direction — `Composition::Atom`, which took the split gesture away
+    /// from every card just placed from the palette — and an arm whose inside
+    /// is decided by argument rather than by the law is an arm that will be
+    /// decided differently next time.
+    #[test]
+    fn r1961_an_unspoken_address_round_trips_through_its_halves() {
+        let ty = Endpoint::Unspoken;
+        let members = <LabNode as NodeKind>::explode(&ty, &"0.0.0.0:7447".to_owned());
+        assert_eq!(
+            members,
+            vec![Some("0.0.0.0".to_owned()), Some("7447".to_owned())],
+            "a schemeless address is a host and a service",
+        );
+        assert_eq!(
+            <LabNode as NodeKind>::implode(&ty, &members),
+            Some("0.0.0.0:7447".to_owned()),
+            "★ and comes back itself — no scheme is invented on the way",
+        );
+        assert!(
+            matches!(
+                <LabNode as NodeKind>::composition(&ty),
+                pinion_node_graph::Composition::Members(_)
+            ),
+            "★ so the gesture that asks whether it has an inside is told yes",
         );
     }
 }

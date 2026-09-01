@@ -466,6 +466,17 @@
       ]
     },
     {
+      "name": "debt-three-authored-wires-point-the-way-they-are-drawn",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links screen-a-vs-canon-operation-census"
+      ]
+    },
+    {
       "name": "debt-two-deliberate-divergences-from-the-behaviour-canon",
       "substituted": false,
       "blocked_by": "spec-round",

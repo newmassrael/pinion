@@ -1977,6 +1977,10 @@ impl LabState {
         seed_nodes(&mut doc, &frame_ids, &mut ids, &mut forms);
 
         let selected_link = seed_links(&mut doc, &forms, &ids).map(LinkPick::Authored);
+        // ★ R1961 — the wires are on now, so the cards that read their
+        // transport off one can be told what it is. `seed_nodes` above could
+        // only ask the forms.
+        settle_transports_in(&mut doc, &forms);
 
         let selection = ids
             .get(spec::SELECTED_NODE)
@@ -2727,7 +2731,11 @@ fn seed_nodes(
             .field("listen.endpoints")
             .map(|f| f.value().into_owned())
             .unwrap_or_default();
-        let transport = transport_of_form(&form);
+        // ★ R1961 — the form's half only. The wire's half cannot be read yet:
+        // `seed_links` runs after this, because a link needs two node ids.
+        // `opening` settles the whole document once the wires are on it, which
+        // is the same call every later edit makes.
+        let transport = transport_spoken(&listen, None);
         let (x, y, _) = node.rect;
         let id = doc
             .add_node(
@@ -2985,6 +2993,14 @@ impl ResetScope {
                 state.pan.set((0, 0));
             }
         }
+        // ★ R1961 — once, after the match, rather than in the three arms that
+        // move an address. `Nodes` takes cards away (and the wires that hung on
+        // them), `Fields` puts endpoints back and `Links` re-authors wires, so
+        // three of the five arms feed the derivation; putting the call here
+        // instead of in each of them is what stops a sixth scope from having to
+        // remember. `Layout` and `View` move nothing it reads, and settling
+        // over them is a no-op rather than a cost worth branching on.
+        settle_transports(state);
     }
 }
 
@@ -9071,16 +9087,20 @@ fn canvas_pins(state: &LabState, node: NodeId, card: Rect, role: Role, ink: Ink)
             f.field("listen.endpoints")
                 .is_some_and(|v| !v.value().trim().is_empty())
         });
-        let transport = state
+        // ★ R1961 — the node's OWN socket type, through the one function that
+        // turns a transport into one. The `unwrap_or(Transport::Tcp)` that
+        // stood here answered for two different absences with one colour — a
+        // frame rather than a card, and a card whose transport nothing had
+        // said — and the second of those is now a colour of its own.
+        let socket = state
             .doc
             .borrow()
             .tree(ROOT)
             .and_then(|t| t.node(node))
             .and_then(|n| match &n.body {
-                NodeBody::Kind(kind) => Some(kind.transport),
+                NodeBody::Kind(kind) => Some(kind.socket_type()),
                 _ => None,
-            })
-            .unwrap_or(Transport::Tcp);
+            });
         if shows(Side::Output, 0) {
             children.push(box_at(
                 &format!("lab.pin.{name}.dial"),
@@ -9107,7 +9127,9 @@ fn canvas_pins(state: &LabState, node: NodeId, card: Rect, role: Role, ink: Ink)
                 Some(if lit {
                     ink.accent
                 } else if listening {
-                    transport_ink(transport)
+                    socket
+                        .and_then(|ty| <LabNode as NodeKind>::type_colour(&ty))
+                        .map_or(ink.text_3, ink_of)
                 } else {
                     ink.text_3
                 }),
@@ -13252,21 +13274,73 @@ fn spec_json() -> serde_json::Value {
 /// The one place the two halves meet: an endpoint edited in the inspector
 /// changes what the canvas draws and what the gate says, and it does so by
 /// re-deriving rather than by a second write.
+///
+/// ★ R1961 — the transport half moved to [`settle_transports`], because it
+/// stopped being a fact about **one** node's form the moment it could be read
+/// off a wire. `listening` did not move: it is still exactly *does this node's
+/// own form give it somewhere to listen*.
 fn sync_node(state: &Rc<LabState>, node: NodeId) {
-    let forms = state.forms.borrow();
-    let Some(form) = forms.get(&node) else {
-        return;
-    };
-    let listen = form
-        .field("listen.endpoints")
-        .map_or(String::new(), |f| f.value().into_owned());
-    let transport = transport_of_form(form);
-    drop(forms);
-    let mut doc = state.doc.borrow_mut();
-    if let Some(slot) = doc.tree_mut(ROOT).and_then(|t| t.node_mut(node)) {
+    let listening = state.forms.borrow().get(&node).is_some_and(|form| {
+        form.field("listen.endpoints")
+            .is_some_and(|f| !f.value().trim().is_empty())
+    });
+    if let Some(slot) = state
+        .doc
+        .borrow_mut()
+        .tree_mut(ROOT)
+        .and_then(|t| t.node_mut(node))
+    {
         if let NodeBody::Kind(kind) = &mut slot.body {
-            kind.transport = transport;
-            kind.listening = !listen.trim().is_empty();
+            kind.listening = listening;
+        }
+    }
+    settle_transports(state);
+}
+
+/// ★★★★★ R1961 — **put every card's transport back in step with the addresses
+/// the document actually carries.**
+///
+/// Whole-document and not per node, because the input is not per node: a node's
+/// transport can be read off *its own form* or off *the wire it dials*, so a
+/// link drawn between two other cards is enough to change one — and a
+/// per-node call would put the burden of knowing which on every editing site.
+/// Eight cards is the opening graph; the walk is trivial, and a settle that is
+/// always total is a settle no caller can get half right.
+///
+/// ⚠ **It has to be CALLED**, and that is this design's residue, stated rather
+/// than hidden. [`LabNode`] is handed to the crate's hooks as `&self`, so a
+/// derived transport has to be stored somewhere those hooks can see it, and
+/// storing a derived value means keeping it in step. What holds it is
+/// `r1961_every_card_speaks_the_address_it_uses`, which drives the screen's
+/// link edits through their real action functions and re-derives from scratch
+/// afterwards — so a site that forgets this call fails a test rather than
+/// drawing a stale colour.
+fn settle_transports(state: &Rc<LabState>) {
+    let forms = state.forms.borrow();
+    settle_transports_in(&mut state.doc.borrow_mut(), &forms);
+}
+
+/// [`settle_transports`] over a document that is not in a [`LabState`] yet.
+///
+/// `LabState::opening` builds the graph before there is a state to borrow it
+/// out of, and a reset re-seeds the same way — so the derivation takes the two
+/// things it actually reads rather than the screen that happens to hold them.
+fn settle_transports_in(doc: &mut Document<LabNode>, forms: &BTreeMap<NodeId, ConfigForm>) {
+    let nodes: Vec<NodeId> = doc
+        .tree(ROOT)
+        .map(|tree| tree.nodes().map(|node| node.id).collect())
+        .unwrap_or_default();
+    for node in nodes {
+        let listen = forms.get(&node).map_or(String::new(), |form| {
+            form.field("listen.endpoints")
+                .map_or(String::new(), |f| f.value().into_owned())
+        });
+        let dialled = dialled_endpoint(doc, node);
+        let transport = transport_spoken(&listen, dialled.as_deref());
+        if let Some(slot) = doc.tree_mut(ROOT).and_then(|t| t.node_mut(node)) {
+            if let NodeBody::Kind(kind) = &mut slot.body {
+                kind.transport = transport;
+            }
         }
     }
 }
@@ -13325,41 +13399,59 @@ fn endpoint_at(state: &LabState, socket: Socket) -> Option<String> {
 /// listen** — a real state on this screen, and one the launch gate already
 /// names rather than one the canvas should refuse to draw. The slot is then
 /// unlabelled, which is exactly true: the link dials no address.
-/// ★★★★★ R1960 — **the transport a node speaks, read from its form, in one
-/// place.**
+/// ★★★★★ R1961 — **the transport a node speaks, read off an address it
+/// actually uses.** `None` when nothing on the node says.
 ///
-/// Two sites decided this and wrote the same expression: `seed_nodes`, when the
-/// opening graph is built, and the form's own commit path, when a person edits
-/// an endpoint. A node's transport is one fact and it had two authors.
+/// Two addresses, in the order a node acquires them:
 ///
-/// ⚠ **The escape hatch is still here and is still wrong**, kept deliberately
-/// so it is now in ONE place to remove rather than four:
+/// 1. **the one it listens on**, when its role can listen and it has been given
+///    one — the node's own declaration of what it speaks;
+/// 2. **the one it dials**, otherwise. A Client, a Publisher and a Querier
+///    cannot listen at all ([`Role::accepts`] is false for those three), so
+///    they have no address of their own and the wire is the only thing that
+///    can say. This is R1716's direction — *the connection is derived from the
+///    wire* — and it satisfies [`LabNode::conversion`] by construction: a node
+///    that took its transport from the address it dials agrees with the pin it
+///    dialled, because it read the answer off that pin.
 ///
-/// * `connect.endpoints` is not a field of any form — R1716 took it out when
-///   connections became derived from the wire — so that `or_else` arm has been
-///   dead since. It is kept because deleting it silently would hide the shape
-///   of what the fall-back is standing in for.
-/// * `unwrap_or(Transport::Tcp)` classifies every node that does not listen,
-///   which is exactly the roles that CANNOT listen (`Role::accepts` is false
-///   for Client, Publisher and Querier). Four of the opening graph's eight
-///   nodes take it, so half the canvas is coloured by a default nobody chose —
-///   the thing R1921 forbade and `debt-every-card-on-the-opening-graph-speaks-
-///   one-transport` is open on.
+/// # Why it answers `Option`, and what that replaced
 ///
-/// ⇒ The repair those debts want is for a dialling node's transport to come
-/// from **the link it is on**, which is R1716's own direction and satisfies
-/// `LabNode::conversion` by construction. That is a model change; this is the
-/// derivation it needs first.
-fn transport_of_form(form: &ConfigForm) -> Transport {
-    let listen = form
-        .field("listen.endpoints")
-        .map_or(String::new(), |f| f.value().into_owned());
-    Transport::of_locator(&listen)
-        .or_else(|| {
-            form.field("connect.endpoints")
-                .and_then(|f| Transport::of_locator(&f.value()))
-        })
-        .unwrap_or(Transport::Tcp)
+/// R1960 lifted five copies of `unwrap_or(Transport::Tcp)` into two. This
+/// removes both, and the removal is the point rather than the tidying: a
+/// default is a **classification nobody made**. It coloured every non-listening
+/// card TCP — four of the opening graph's eight — so R1940's "a card is drawn
+/// in the colour of the transport it speaks" was, for half the canvas, a card
+/// drawn in the colour of a fall-back. A reader could not tell the derivation
+/// from the default, which is exactly the state R1921 forbade.
+///
+/// The dead arm went with it: `connect.endpoints` has not been a field of any
+/// form since R1716, so the `or_else` that read it could never fire.
+///
+/// A node that neither listens nor dials — a card just taken from the palette
+/// — now says so: [`Endpoint::Unspoken`] is what its pins carry, and its card
+/// is drawn in the one neutral this palette has.
+fn transport_spoken(listen: &str, dialled: Option<&str>) -> Option<Transport> {
+    Transport::of_locator(listen).or_else(|| dialled.and_then(Transport::of_locator))
+}
+
+/// The address `node` DIALS, when it is on a link that dials one.
+///
+/// Its dial pin is output 0 — the one the taxonomy declares — and the address
+/// is the landing item's label, which is where this screen already keeps *which
+/// wire took which address* ([`endpoint_of`]). So this reads the endpoint model
+/// rather than adding a second one.
+///
+/// The FIRST such link, in the document's own order. A node's pins all speak
+/// one transport, and `conversion` refuses a second wire that disagrees, so
+/// "the first" and "the only one that could be there" are the same set — but
+/// the order is stated because a document loaded from disk could carry a state
+/// this screen would not author.
+fn dialled_endpoint(doc: &Document<LabNode>, node: NodeId) -> Option<String> {
+    doc.tree(ROOT)?
+        .links()
+        .iter()
+        .filter(|link| link.from.node == node)
+        .find_map(|link| endpoint_of(doc, link.to))
 }
 
 /// ★★★★★ R1960 — **what a link's landing pin carries**, in one place.
@@ -13579,6 +13671,7 @@ fn connect_at(
     match made {
         Ok(made) => {
             state.selected_link.set(Some(LinkPick::Authored(made.link)));
+            settle_transports(state);
             let word = format!(
                 "{}.{} -> {}.{}",
                 state.name_of(from),
@@ -13638,6 +13731,9 @@ fn connect(state: &Rc<LabState>, from: NodeId, to: NodeId) -> Result<String, Inv
     match made {
         Ok(made) => {
             state.selected_link.set(Some(LinkPick::Authored(made.link)));
+            // ★ R1961 — the wire is what tells a dialling card what it speaks,
+            // so the card learns it here, in the same act that drew the wire.
+            settle_transports(state);
             let word = format!("{} -> {}", state.name_of(from), state.name_of(to));
             match &endpoint {
                 Some(one) => state.say(Utterance::done(format!("linked {word} on {one}"))),
@@ -13668,6 +13764,9 @@ fn delete_link(state: &Rc<LabState>, link: LinkId) -> Result<String, InvokeError
     match gone {
         Ok(gone) => {
             close_slot(state, gone.to.node, gone.to.port);
+            // ★ R1961 — and unsaying it: a card whose only address was the one
+            // this wire dialled speaks nothing again.
+            settle_transports(state);
             if state.selected_link.get() == Some(LinkPick::Authored(link)) {
                 state.selected_link.set(None);
             }
@@ -13720,6 +13819,9 @@ fn delete_card(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError
     }
     state.forms.borrow_mut().remove(&node);
     state.opened_at.borrow_mut().remove(&node);
+    // ★ R1961 — a card taken away takes its wires, and every card that was
+    // dialling it loses the address it read its transport off.
+    settle_transports(state);
     if state.active_card() == Some(node) {
         select_card(state, state.cards().first().copied());
     }
@@ -14689,6 +14791,7 @@ fn adopt_link(state: &Rc<LabState>, from: Socket, to: Socket) -> Result<String, 
     match taken {
         Ok(made) => {
             state.selected_link.set(Some(LinkPick::Authored(made.link)));
+            settle_transports(state);
             let word = format!("{} -> {}", state.name_of(from.node), state.name_of(to.node));
             state.say(Utterance::done(format!("adopted {word}")));
             Ok(word)
@@ -14965,6 +15068,11 @@ fn move_end(
             // The old slot last: closing it re-points what is past it, and the
             // link has already left it.
             close_slot(state, was.node, was.port);
+            // ★ R1961 — re-aiming a wire changes the address its SOURCE dials,
+            // so the card that dials it may now speak something else. One call
+            // here covers both verbs built on this: `relink_to` and
+            // `choose_endpoint`.
+            settle_transports(state);
             Ok(landed.relinked)
         }
         Err(why) => {
@@ -16415,7 +16523,14 @@ fn add_node(state: &Rc<LabState>, role: Role) {
             ROOT,
             NodeBody::Kind(LabNode {
                 role,
-                transport: Transport::Tcp,
+                // ★★★★★ R1961 — a card just taken from the palette listens
+                // nowhere and dials nothing, so nothing says what it speaks and
+                // it says so. `Transport::Tcp` stood here, and it was not a
+                // neutral choice: the type rule is *the transports must agree*,
+                // so a fresh card could be wired to a TCP peer and silently to
+                // no other. It speaks whatever the first wire drawn from it
+                // dials, which is what `settle_transports` works out.
+                transport: None,
                 listening: false,
                 // R1885 — a node the palette adds runs the reference build, so
                 // adding one never introduces an incompatibility a person did
@@ -17652,6 +17767,30 @@ fn regroup(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError> {
 /// REPORT: the reference's hook returns nothing and the node reconstructs, so a
 /// person cannot see that the choice cost them a wire. Here the sentence names
 /// how many went.
+///
+/// # ★★★★★ R1961 — it moves the ADDRESS, because that is what says what a card
+/// speaks
+///
+/// This verb wrote `LabNode::transport` directly, through the crate's
+/// `set_port_type` and the kind's `retyped` hook. R1961 made that field a
+/// DERIVATION — a card reads its transport off the address it listens on, or
+/// off the one it dials — so writing it here left the fact with **two
+/// authors**, and the derived one wins the moment anything settles: a person
+/// who chose a transport and then edited any field anywhere would silently lose
+/// it. Found by re-measuring inside the round that caused it; the first
+/// measurement looked for `retyped` and this verb does not spell it.
+///
+/// So the choice is applied where the fact lives. Every address the card
+/// listens on is re-schemed to `word` — through [`graph::relocated`], the same
+/// repair the pin's own declaration offers ([`NodeKind::takes`]), so the value
+/// this writes is one that declaration would accept — and the derivation then
+/// reads the answer back out.
+///
+/// ⚠ **A card that listens nowhere is REFUSED, and that is the model rather
+/// than a gap.** Its transport comes from the address it dials, which belongs
+/// to its peer; there is nothing on the card to write. Before R1961 the escape
+/// hatch hid this — the verb appeared to work and the value survived until the
+/// next unrelated edit.
 fn set_pin_transport(
     state: &Rc<LabState>,
     node: NodeId,
@@ -17664,6 +17803,26 @@ fn set_pin_transport(
         .find(|t| t.word() == word)
         .ok_or_else(|| InvokeError::rejected(format!("{word:?} is not a transport")))?;
     let (side, path) = pin_address(address)?;
+    let held = endpoints_of(state, node);
+    if held.is_empty() {
+        let said = Utterance::refused(&format!(
+            "{name} listens nowhere, so nothing on it says what it speaks — it \
+             takes the transport of the address it dials"
+        ));
+        state.say(said.clone());
+        return Err(InvokeError::rejected(said.into_clause()));
+    }
+    let mut moved = Vec::with_capacity(held.len());
+    for one in &held {
+        let Some(next) = graph::relocated(transport, one) else {
+            let said = Utterance::refused(&format!(
+                "{name} listens on {one}, which has no {word} address near enough to offer"
+            ));
+            state.say(said.clone());
+            return Err(InvokeError::rejected(said.into_clause()));
+        };
+        moved.push(next);
+    }
     let mut doc = state.doc.borrow_mut();
     let index = doc
         .index_of(ROOT, node, side, &path)
@@ -17672,11 +17831,21 @@ fn set_pin_transport(
         Side::Input => PortRef::input(index),
         Side::Output => PortRef::output(index),
     };
+    // The type swap first, because it is the half that can REFUSE — and a
+    // refusal must leave the form as it found it. It is also what severs the
+    // wires that cannot cross, which no form edit would do.
     let swapped = doc
         .set_port_type(ROOT, node, port, &Endpoint::Locator(transport))
         .map_err(|why| InvokeError::rejected(why.to_string()))?;
     let lost = swapped.severed.len();
     drop(doc);
+    if let Some(form) = state.forms.borrow_mut().get_mut(&node) {
+        form.set("listen.endpoints", moved.join(FieldType::SEPARATOR))
+            .ok();
+    }
+    // And now the derivation reads the answer back out of the address, so the
+    // stored value has one author again.
+    sync_node(state, node);
     let said =
         format!("{name}.{address} now speaks {word}, and {lost} wire(s) could not cross with it");
     state.say(Utterance::done(said.clone()));
@@ -17815,7 +17984,10 @@ fn containers_wire(state: &Rc<LabState>) -> serde_json::Value {
                     serde_json::json!({ "shape": shape.word(), "makes": format!("{made:?}") })
                 })
                 .collect();
-            serde_json::json!({ "type": format!("{ty:?}"), "held_in": held })
+            // ★ R1961 close-audit — the third of three registers that spelled a
+            // socket type with `Debug`. The taxonomy has one spelling and it is
+            // `wire_word`.
+            serde_json::json!({ "type": ty.wire_word(), "held_in": held })
         })
         .collect();
     // ★ The vocabulary is derived, so a shape added upstream joins this register
@@ -17857,10 +18029,18 @@ fn choosable_wire(state: &Rc<LabState>) -> serde_json::Value {
                                 Side::Input => PortRef::input(index),
                                 Side::Output => PortRef::output(index),
                             };
+                            // ★★★★★ R1961 close-audit — `wire_word`, not
+                            // `{ty:?}`. Its own doc says it is "the one
+                            // spelling a client reads this type under", and
+                            // measured that sentence was false: this register
+                            // and `drawn` published `Locator(Tcp)` while
+                            // `takes`, `admits` and `ports` published
+                            // `locator/tcp`, so a client matching on the token
+                            // saw two vocabularies for one type.
                             let takes: Vec<String> = Endpoint::all()
                                 .into_iter()
                                 .filter(|ty| doc.may_set_port_type(ROOT, held.id, port, ty))
-                                .map(|ty| format!("{ty:?}"))
+                                .map(Endpoint::wire_word)
                                 .collect();
                             serde_json::json!({
                                 "card": card.clone(),
@@ -18499,7 +18679,9 @@ fn drawn_wire(state: &Rc<LabState>, node: NodeId) -> serde_json::Value {
     match said {
         Some(Drawn::LikeType(endpoint)) => serde_json::json!({
             "says": "like_type",
-            "type": format!("{endpoint:?}"),
+            // ★ R1961 close-audit — the taxonomy's one spelling. See
+            // `choosable_wire` for the measurement that found the second.
+            "type": endpoint.wire_word(),
         }),
         Some(Drawn::In(tint)) => serde_json::json!({
             "says": "in",

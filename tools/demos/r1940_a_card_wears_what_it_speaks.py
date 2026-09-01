@@ -131,7 +131,11 @@ def body() -> None:
         )
 
         banner("B — ★★★★★ the faces come from that declaration")
-        subject = rows[0]["node"]
+        # R1961 — NAMED, and a card that LISTENS. Choosing a transport moves the
+        # address the choice is read off, so a card whose transport comes from
+        # the peer it dials has nothing to move and the verb refuses it (section
+        # E). This was `rows[0]`, the first card, which listens nowhere.
+        subject = "R-01"
         before = card(tints(app, surface), subject)
         ok(
             f"B: ★ the card has NO authored colour and is still drawn — "
@@ -160,7 +164,10 @@ def body() -> None:
         ok(
             f"C: ★ and its own sentence names the type it now claims — "
             f"{after['drawn']!r}",
-            "Udp" in after["drawn"]["type"],
+            # R1961 — the register publishes the taxonomy's ONE spelling
+            # (`wire_word`) rather than its `Debug` text, so this reads
+            # `locator/udp` where it used to read `Locator(Udp)`.
+            after["drawn"]["type"] == "locator/udp",
         )
         ok(
             f"C: ★★★★★ while the neighbour did NOT move, so this is per CARD "

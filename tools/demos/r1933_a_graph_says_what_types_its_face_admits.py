@@ -66,10 +66,22 @@ SHELL = "hello-analyzer-shell"
 EXT = "/external"
 SEAT = "lab"
 
-#: A card whose dial pin carries no wire, so it can be split. Named rather than
-#: discovered: a walk that hunted for a splittable card would quietly assert
-#: about whichever one it found.
-FREE_CARD = "T-02"
+#: A card whose dial pin carries no wire, so it can be split, AND whose
+#: transport is named, so the face will take it. Named rather than discovered: a
+#: walk that hunted for a splittable card would quietly assert about whichever
+#: one it found.
+#:
+#: R1961 — it was `T-02`, which stopped satisfying the second half. A card reads
+#: the transport it speaks off an address it uses — its own listen endpoint, or
+#: the one it dials — and T-02 has neither, so it now carries
+#: `Endpoint::Unspoken` and the face refuses it. `P-03` listens, and its dial
+#: pin is equally unwired. The card that speaks nothing is not dropped from this
+#: walk: section C asks about it directly.
+FREE_CARD = "P-03"
+
+#: R1961 — the card on the opening graph that listens nowhere and dials nothing,
+#: so nothing on it names a transport.
+UNSPOKEN_CARD = "T-02"
 
 CHECKS: list[str] = []
 
@@ -130,8 +142,15 @@ def body() -> None:
             yes != [] and no != [],
         )
         ok(
-            f"A: ★ the refused ones are the HALVES of an address — {no}",
-            set(no) == {"host", "service"},
+            # R1961 — three refused, not two. The face admits an address whose
+            # TRANSPORT IS NAMED, so it turns away the two halves of one AND
+            # the whole address nothing has named a transport for (`locator`,
+            # `Endpoint::Unspoken`) — a card just taken from the palette speaks
+            # that until a wire tells it otherwise, and publishing it on the
+            # graph's interface would offer a peer an address it cannot dial.
+            f"A: ★ the refused ones are the halves of an address, and the "
+            f"address with no transport named — {no}",
+            set(no) == {"host", "service", "locator"},
         )
         ok(
             f"A: ★ and the admitted ones are whole locators — {yes}",
@@ -162,6 +181,17 @@ def body() -> None:
         )
         said = expose(app, surface, FREE_CARD, "dial")
         ok(f"C: ★★★★★ {FREE_CARD}.dial is taken — {said!r}", said is None)
+        # R1961 — the other side of the same declaration, on a card that is not
+        # a half of anything: a WHOLE address whose transport nothing has named
+        # is refused too, because publishing it would offer a peer an address it
+        # cannot dial. Before R1961 no such card existed — an escape hatch gave
+        # every unnamed card TCP — so this arm of the face's rule was unreachable.
+        why = expose(app, surface, UNSPOKEN_CARD, "dial")
+        ok(
+            f"C: ★★★★★ but {UNSPOKEN_CARD}.dial is REFUSED — it listens nowhere "
+            f"and dials nothing, so nothing says what it speaks — {why!r}",
+            why is not None and "does not admit" in (why or ""),
+        )
 
         banner("D — ★★★★★ a HALF is refused, and the refusal says which type")
         apart = app.invoke(f"{surface}/split_pin", f"{FREE_CARD},dial")

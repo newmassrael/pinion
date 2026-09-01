@@ -123,11 +123,11 @@ def body() -> None:
         ok(
             f"A: ★★★★★ the answer is per (pin, TYPE) and it WITHHOLDS some — "
             f"{offered}",
-            len(offered) > 0 and any("Locator" in t for t in offered),
+            len(offered) > 0 and any(t.startswith("locator/") for t in offered),
         )
         ok(
             f"A: ★ and half a locator is not among them — {offered}",
-            not any(t in ("Host", "Service") for t in offered),
+            not any(t in ("host", "service") for t in offered),
         )
         wires_before = len(links(app, surface))
 
