@@ -546,7 +546,7 @@ const STORAGE_KEY: &str = "node_graph.state";
 // saved graph. The default means an old blob READS correctly; the version is
 // what tells a person their file predates the field rather than leaving them to
 // find out from a value that was never written.
-const PERSISTED_SCHEMA_VERSION: u32 = 18;
+const PERSISTED_SCHEMA_VERSION: u32 = 19;
 
 /// R1599 — the append-only `(version, digest)` ledger the persistence gate
 /// reads. See `pinion_core::test_fixtures::assert_persisted_shape` for why it
@@ -567,6 +567,10 @@ const PERSISTED_SHAPE_HISTORY: &[(u32, u64)] = &[
     (16, 0x8c78_2add_a365_ce63),
     (17, 0x0aac_91b1_399b_e776),
     (18, 0x89f1_0dbb_ca3b_4019),
+    // R1944 — `Document` remembers its tree-id frontier, so a removed
+    // definition's id is never handed out again. A field, so the persisted
+    // shape moved.
+    (19, 0x5f59_30e3_4fd8_5f32),
 ];
 
 /// R849 — where a newly added node first lands, and the per-add cascade step

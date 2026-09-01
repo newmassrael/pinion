@@ -282,7 +282,7 @@ pub use model::{
     Description, Document, DroppedLink, EditError, Flow, Found, InZone, Instance, Interface,
     InterfaceSide, Judged, KindPort, Link, LinkId, Matched, Multiplicity, Node, NodeBody, NodeId,
     NodeKind, PairError, Port, PortRef, PortValueError, PortValueResult, ROOT, Refusal, Relabelled,
-    Removed, Side, Signature, Socket, Tree, TreeId, crossing,
+    RemoveTreeError, Removed, RemovedTree, Side, Signature, Socket, Tree, TreeId, Used, crossing,
 };
 pub use naming::{Labelled, NameSource, PortName};
 pub use naming_scope::Naming;

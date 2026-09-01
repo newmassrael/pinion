@@ -54,7 +54,7 @@ use pinion_node_graph::{
     Stride, SwapError, SwitchRefusal, Tint, TreeId, Variadic, Violation, WatchError, Watches,
     palette_of, type_palette,
 };
-use pinion_node_graph::{InZone, PairError};
+use pinion_node_graph::{InZone, PairError, RemoveTreeError, Used};
 
 // ---------------------------------------------------------------- taxonomy
 
@@ -785,6 +785,7 @@ fn proof<F: Fn() + 'static>(tree: &'static str, operator: &'static str, run: F) 
 /// this project lets a function have; the two are one table.
 fn proofs() -> Vec<Proof> {
     let mut all = dcc_proofs();
+    all.extend(hook_round_proofs());
     all.extend(dcc_hook_proofs());
     all.extend(engine_proofs());
     all.extend(engine_permission_proofs());
@@ -888,6 +889,71 @@ fn dcc_item_proofs() -> Vec<Proof> {
     ]
 }
 
+/// ★★★★★ R1944 — the proofs the per-pin and per-node capability rounds added,
+/// kept apart from the operator list above.
+///
+/// ⚠ A SPLIT, not an `allow`: the workspace lints a function past a hundred
+/// lines and it was right — one list had grown to hold two things. These are
+/// the rounds that asked a KIND or a SCHEMA a question (what a port takes, what
+/// a node is drawn as, whether a value can be looked at, what closes a zone,
+/// what a removal took), where the list above is the editor's OPERATORS. The
+/// boundary is what the proofs are about rather than where the line count fell.
+fn hook_round_proofs() -> Vec<Proof> {
+    vec![
+        // R1937 — the per-port type pair. TWO mechanisms, not two spellings:
+        // the editor's verb, and the node's chance to say what it becomes.
+        proof(
+            "engine",
+            "GraphEditor::ChangePinType",
+            engine_graph_editor_change_pin_type,
+        ),
+        proof(
+            "engine",
+            "node::PinTypeChanged",
+            engine_node_pin_type_changed,
+        ),
+        // R1938 — the schema's half of the same selector: which container
+        // shapes a type may be held in.
+        proof(
+            "engine",
+            "schema::SupportsPinTypeContainer",
+            engine_schema_supports_pin_type_container,
+        ),
+        // R1939 — what a port takes as its RESTING value: the capability the
+        // reference spells as an open key-value bag hung on a pin.
+        proof(
+            "engine",
+            "node::GetPinMetaData",
+            engine_node_get_pin_meta_data,
+        ),
+        // R1940 — what a node is drawn as, answered per NODE and derived from
+        // what that node currently is.
+        proof("dcc", "node::ui_class", dcc_node_ui_class),
+        // R1941 — a kind's objection carries its weight, and the heaviest one
+        // stops the graph being run.
+        proof(
+            "engine",
+            "node::ValidateNodeDuringCompilation",
+            engine_node_validate_node_during_compilation,
+        ),
+        // R1942 — whether a type's value can be looked at while the graph runs,
+        // and the refusal saying which type and why.
+        proof(
+            "engine",
+            "schema::CanShowDataTooltipForPin",
+            engine_schema_can_show_data_tooltip_for_pin,
+        ),
+        // R1943 — a zone is a PAIR, and the region between is derived.
+        proof("dcc", "add_zone", dcc_add_zone),
+        // R1944 — a definition can be removed, and the removal says what went.
+        proof(
+            "engine",
+            "schema::TryDeleteGraph",
+            engine_schema_try_delete_graph,
+        ),
+    ]
+}
+
 fn dcc_proofs() -> Vec<Proof> {
     vec![
         proof("dcc", "add_empty_group", dcc_add_empty_group),
@@ -943,51 +1009,6 @@ fn dcc_proofs() -> Vec<Proof> {
         // R1936 — the two group swaps. One capability with the definition
         // arriving from two places: an existing one, and a fresh empty one.
         proof("dcc", "swap_group_asset", dcc_swap_group_asset),
-        // R1937 — the per-port type pair. TWO mechanisms, not two spellings:
-        // the editor's verb, and the node's chance to say what it becomes.
-        proof(
-            "engine",
-            "GraphEditor::ChangePinType",
-            engine_graph_editor_change_pin_type,
-        ),
-        proof(
-            "engine",
-            "node::PinTypeChanged",
-            engine_node_pin_type_changed,
-        ),
-        // R1938 — the schema's half of the same selector: which container
-        // shapes a type may be held in.
-        proof(
-            "engine",
-            "schema::SupportsPinTypeContainer",
-            engine_schema_supports_pin_type_container,
-        ),
-        // R1939 — what a port takes as its RESTING value: the capability the
-        // reference spells as an open key-value bag hung on a pin.
-        proof(
-            "engine",
-            "node::GetPinMetaData",
-            engine_node_get_pin_meta_data,
-        ),
-        // R1940 — what a node is drawn as, answered per NODE and derived from
-        // what that node currently is.
-        proof("dcc", "node::ui_class", dcc_node_ui_class),
-        // R1941 — a kind's objection carries its weight, and the heaviest one
-        // stops the graph being run.
-        proof(
-            "engine",
-            "node::ValidateNodeDuringCompilation",
-            engine_node_validate_node_during_compilation,
-        ),
-        // R1942 — whether a type's value can be looked at while the graph runs,
-        // and the refusal saying which type and why.
-        proof(
-            "engine",
-            "schema::CanShowDataTooltipForPin",
-            engine_schema_can_show_data_tooltip_for_pin,
-        ),
-        // R1943 — a zone is a PAIR, and the region between is derived.
-        proof("dcc", "add_zone", dcc_add_zone),
         proof("dcc", "swap_empty_group", dcc_swap_empty_group),
         proof("dcc", "options_toggle", dcc_options_toggle),
         proof("dcc", "parent_set", dcc_parent_set),
@@ -2157,6 +2178,111 @@ fn engine_node_get_pin_meta_data() {
             }),
         "★★★★★ the standing check reports it: {:?}",
         document.validate(),
+    );
+}
+
+/// ★★★★★ R1944 — **a definition can be removed from the document**, and the
+/// removal says what went with it.
+///
+/// # The measurement
+///
+/// The reference's schema is asked to delete a graph, and the editor falls back
+/// to its own procedure when the schema declines. Counted: **one declaration
+/// (answering NO), ZERO overriders, one consumer** — so that extension point
+/// has never once been taken and every deletion goes down the fallback. R1938's
+/// shape: a hook whose refusal is never exercised is a hook nobody has had to
+/// think about.
+///
+/// The fallback is the capability, and three things about it decided this:
+///
+/// * **It removes every node bound to that graph, unconditionally**, and
+///   answers `void`. Here [`Used`] makes the caller choose, and the safe arm
+///   NAMES the sites.
+/// * **Whether a graph may go at all is a FLAG on the graph**, so *why not* has
+///   no answer. Here the refusals are named.
+/// * **It does not look for definitions its removal orphaned.**
+///
+/// ⚠ And this round found the structural reason the row was true: a tree's id
+/// WAS its position in the document's list, so nothing could be removed without
+/// every later id changing meaning. `Document::tree` searches now, and
+/// `next_tree_id` counts from the highest ever handed out rather than from the
+/// length — the two agreed only while removal was impossible.
+#[test]
+fn engine_schema_try_delete_graph() {
+    let mut document: Document<Op> = Document::new("root");
+    let outer = document
+        .add_node(ROOT, NodeBody::Kind(Op::Double), 0, 0)
+        .expect("root tree");
+    let definition = document.add_definition("shared");
+    let one = document
+        .add_node(ROOT, NodeBody::Group(definition), 40, 0)
+        .expect("root tree");
+    let two = document
+        .add_node(ROOT, NodeBody::Group(definition), 80, 0)
+        .expect("root tree");
+
+    // (A) ★★★★★ WHERE, not how many. `instance_count` has answered the count
+    // since groups existed; a refusal a person cannot act on is a refusal they
+    // work around.
+    assert_eq!(document.instance_count(definition), 2);
+    assert_eq!(
+        document.instances_of(definition),
+        vec![(ROOT, one), (ROOT, two)]
+    );
+
+    // (B) ★★★★★ The safe arm REFUSES and names the sites — the reference never
+    // refuses at all, because its flag is on the graph and its fallback simply
+    // removes what was bound.
+    assert_eq!(
+        document.remove_definition(definition, Used::Refuse),
+        Err(RemoveTreeError::StillUsed {
+            by: vec![(ROOT, one), (ROOT, two)]
+        })
+    );
+    assert!(
+        document.tree(definition).is_some(),
+        "★ and a refused removal changed nothing"
+    );
+
+    // ★★★★★ A definition authored and NOT YET PLACED, standing here across the
+    // removal below. It is the population that tells "this removal orphaned it"
+    // from "it was already standing alone" — without it, a sweep of every
+    // instance-less definition would look correct.
+    let unplaced = document.add_definition("drafted, not placed");
+
+    // (C) ★★★★★ The destructive arm REPORTS what it took, which the reference
+    // answers `void` for.
+    let went = document
+        .remove_definition(definition, Used::TakeThemToo)
+        .expect("the caller said so");
+    assert_eq!(went.instances, vec![(ROOT, one), (ROOT, two)]);
+    assert_eq!(went.definitions, vec![definition]);
+    assert!(document.tree(definition).is_none());
+    assert!(
+        document
+            .tree(ROOT)
+            .is_some_and(|held| held.node(outer).is_some()),
+        "★ and it took ONLY what stood for that definition"
+    );
+    assert!(
+        document.tree(unplaced).is_some(),
+        "★★★★★ and a definition that was ALREADY standing alone survives — the \
+         removal sweeps up what IT orphaned, not every instance-less definition"
+    );
+
+    // (D) ★★★★★ AND THE ID IS NOT A POSITION ANY MORE, which is what made the
+    // removal possible at all: the next definition gets a FRESH id, so a
+    // `NodeBody::Group` naming the removed one cannot silently start naming it.
+    let fresh = document.add_definition("later");
+    assert_ne!(
+        fresh, definition,
+        "★★★★★ a removed id is never handed out again"
+    );
+    assert!(document.tree(fresh).is_some());
+    assert!(
+        document.tree(ROOT).is_some(),
+        "★ and the root is still reachable by its own id after a gap opened \
+         before it in the list"
     );
 }
 

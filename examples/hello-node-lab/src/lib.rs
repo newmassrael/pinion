@@ -11158,6 +11158,27 @@ const FIELDS: &[SchemaField] = &{
         // is bracketed here" and "nobody asked" are different statements, and
         // only the first is a fact a client can act on.
         SchemaField::new("zones", "json"),
+        // ★★★★★ R1944 — every definition this document holds and WHERE each is
+        // used. The count has been derivable since groups existed; the sites
+        // are what a refusal has to carry to be actionable and what a removal
+        // has to report to be undoable.
+        SchemaField::new("definitions", "json"),
+        // ★★★★★ R1944 — remove a definition. `<name>,keep` refuses while
+        // anything stands for it and NAMES what does; `<name>,take` removes
+        // those too and says what went. A CLOSED vocabulary for the second
+        // argument, because the two outcomes differ in whether data is lost and
+        // a typo must not pick the destructive one.
+        SchemaField::action_with(
+            "drop_definition",
+            "string",
+            ArgForm::Delimited(','),
+            const {
+                &[
+                    SchemaArg::open("definition", "string"),
+                    SchemaArg::one_of("used", "string", &["keep", "take"]),
+                ]
+            },
+        ),
         // ★★★★★ R1939 — give one pin the address it rests at. The locator is
         // deliberately an OPEN argument: the point of the round is that the pin
         // judges it and says what it wants, so a closed vocabulary here would
@@ -11329,6 +11350,7 @@ impl ExternalIntrospect for LabOracle {
             "takes" => Ok(IntrospectValue::Json(takes_wire(state))),
             "watchable" => Ok(IntrospectValue::Json(watchable_wire(state))),
             "zones" => Ok(IntrospectValue::Json(zones_wire(state))),
+            "definitions" => Ok(IntrospectValue::Json(definitions_wire(state))),
             // ★ R1742 — the SAME value the host publishes for this section, so
             // "one build, two placements" is a fact a client can check rather
             // than a claim this file makes.
@@ -12214,6 +12236,10 @@ impl ExternalIntrospect for LabOracle {
                 let raw = Self::text(&args)?;
                 let node = Self::card(&state, raw.trim())?;
                 unname_bend(&state, node).map(IntrospectValue::Text)
+            }
+            "drop_definition" => {
+                let raw = Self::text(&args)?;
+                drop_definition(&state, &raw).map(IntrospectValue::Text)
             }
             "regroup" => {
                 let raw = Self::text(&args)?;
@@ -18131,6 +18157,84 @@ fn card_tint(state: &LabState, node: NodeId) -> Option<Tint> {
         .tree(ROOT)
         .and_then(|host| host.node(node))
         .and_then(|held| held.appearance.tint)
+}
+
+/// ★★★★★ R1944 — **every definition this document holds, and where each is
+/// used.**
+///
+/// The sites, not a count: a person told "2 instances" still has to find them,
+/// and the reference publishes neither — there, whether a graph may be deleted
+/// is a flag on the graph and the deletion takes what was bound to it without
+/// saying so.
+fn definitions_wire(state: &Rc<LabState>) -> serde_json::Value {
+    let doc = state.doc.borrow();
+    let rows: Vec<serde_json::Value> = doc
+        .definitions()
+        .map(|held| {
+            let used: Vec<serde_json::Value> = doc
+                .instances_of(held.id)
+                .into_iter()
+                .map(|(tree, node)| {
+                    serde_json::json!({
+                        "tree": tree.0,
+                        "card": state.name_of(node),
+                    })
+                })
+                .collect();
+            serde_json::json!({
+                "definition": held.name.clone(),
+                "id": held.id.0,
+                "used_by": used,
+            })
+        })
+        .collect();
+    serde_json::json!({ "definitions": rows })
+}
+
+/// ★★★★★ R1944 — **remove a definition**, refusing while anything stands for
+/// it unless the caller says to take those too.
+///
+/// The refusal NAMES the cards, which is what makes it something a person can
+/// act on rather than a wall. The reference never refuses: its flag lives on
+/// the graph and its fallback removes whatever was bound, answering nothing.
+fn drop_definition(state: &Rc<LabState>, raw: &str) -> Result<String, InvokeError> {
+    let (name, word) = raw
+        .split_once(',')
+        .ok_or_else(|| InvokeError::rejected(format!("{raw:?} is not <definition>,<used>")))?;
+    let used = match word.trim() {
+        "keep" => pinion_node_graph::Used::Refuse,
+        "take" => pinion_node_graph::Used::TakeThemToo,
+        other => {
+            return Err(InvokeError::rejected(format!(
+                "{other:?} is not `keep` or `take`"
+            )));
+        }
+    };
+    let wanted = name.trim();
+    let mut doc = state.doc.borrow_mut();
+    let id = doc
+        .definitions()
+        .find(|held| held.name == wanted)
+        .map(|held| held.id)
+        .ok_or_else(|| InvokeError::rejected(format!("no definition named {wanted:?}")))?;
+    match doc.remove_definition(id, used) {
+        Ok(went) => {
+            let said = format!(
+                "{wanted} removed, with {} card(s) and {} definition(s)",
+                went.instances.len(),
+                went.definitions.len()
+            );
+            drop(doc);
+            state.say(Utterance::done(said.clone()));
+            Ok(said)
+        }
+        Err(why) => {
+            let said = why.to_string();
+            drop(doc);
+            state.say(Utterance::refused(&said));
+            Err(InvokeError::rejected(said))
+        }
+    }
 }
 
 /// ★★★★★ R1943 — **what each card is with respect to ZONES**, and whether this

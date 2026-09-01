@@ -2778,6 +2778,22 @@ impl<K: NodeKind> Tree<K> {
 ))]
 pub struct Document<K: NodeKind> {
     trees: Vec<Tree<K>>,
+    /// ★★★★★ R1944 — one past the highest [`TreeId`] this document has EVER
+    /// handed out.
+    ///
+    /// A field and not a derivation, and that is the whole of it: derived from
+    /// the trees that remain, a removal hands the id back, and the next
+    /// definition is minted with an id that every `NodeBody::Group` naming the
+    /// removed one would silently start naming. `Tree` keeps `next_node` and
+    /// `next_link` for exactly this reason and has since the beginning; trees
+    /// were the one collection whose ids were positions, which is why nothing
+    /// could be removed from it.
+    ///
+    /// ⚠ `serde` default is 0, and [`Document::next_tree_id`] is held to the
+    /// highest id the trees actually carry — so a file written before this
+    /// field existed cannot mint a colliding id either.
+    #[serde(default)]
+    next_tree: u32,
     /// R1645 — the links a source **reported**, which are not links.
     ///
     /// Deliberately not in [`Tree::links`], and that placement is the whole
@@ -2839,6 +2855,8 @@ impl<K: NodeKind> Document<K> {
         Self {
             observed: BTreeSet::new(),
             discovery: crate::observed::Discovery::Off,
+            // The root is 0, so the next id is 1.
+            next_tree: 1,
             trees: vec![Tree {
                 id: ROOT,
                 name: root_name.into(),
@@ -2865,9 +2883,16 @@ impl<K: NodeKind> Document<K> {
     }
 
     /// One tree.
+    ///
+    /// ⚠★★★★★ R1944 — a SEARCH, not `trees[id]`. A tree's id was its position
+    /// for as long as nothing could be removed, and
+    /// [`Document::remove_definition`] ends that: after one removal every id
+    /// past the gap would name the wrong tree. The cost is a scan of a
+    /// collection that holds one entry per DEFINITION — a handful, not a graph
+    /// — and the alternative is an identity that quietly changes meaning.
     #[must_use]
     pub fn tree(&self, id: TreeId) -> Option<&Tree<K>> {
-        self.trees.get(id.0 as usize)
+        self.trees.iter().find(|held| held.id == id)
     }
 
     /// Take on `other`'s id frontier, so nothing this document mints from now on
@@ -2894,9 +2919,9 @@ impl<K: NodeKind> Document<K> {
         }
     }
 
-    /// One tree for modification.
+    /// One tree for modification. A search, for [`Document::tree`]'s reason.
     pub fn tree_mut(&mut self, id: TreeId) -> Option<&mut Tree<K>> {
-        self.trees.get_mut(id.0 as usize)
+        self.trees.iter_mut().find(|held| held.id == id)
     }
 
     /// The id [`Self::add_definition`] would hand out next.
@@ -2907,8 +2932,43 @@ impl<K: NodeKind> Document<K> {
     /// cycle. It is the same expression the allocation uses rather than a second
     /// copy of it, so the two cannot drift.
     #[must_use]
+    /// ⚠★★★★★ R1944 — ONE PAST THE HIGHEST EVER HANDED OUT, not the count.
+    ///
+    /// It was `trees.len()` while nothing could be removed, and those two
+    /// agreed for exactly as long as that held. `Document::remove_definition`
+    /// ends it: after one removal the count is behind the highest id, so the
+    /// next tree would be minted with an id a live tree already has — and every
+    /// `NodeBody::Group` naming the removed one would silently start naming the
+    /// new one.
     pub(crate) fn next_tree_id(&self) -> TreeId {
-        TreeId(u32::try_from(self.trees.len()).unwrap_or(u32::MAX))
+        TreeId(self.next_tree.max(self.tree_frontier()))
+    }
+
+    /// One past the highest id any tree currently here holds.
+    ///
+    /// The floor `next_tree` is held to, so a document that arrived from a file
+    /// without the field — or one whose frontier was raised by taking on
+    /// another document's ids — still cannot mint a colliding id.
+    fn tree_frontier(&self) -> u32 {
+        self.trees
+            .iter()
+            .map(|held| held.id.0)
+            .max()
+            .map_or(0, |highest| highest.saturating_add(1))
+    }
+
+    /// ★ R1944 — mint the next tree id, moving the frontier past it.
+    ///
+    /// ⚠ Goes through [`Document::next_tree_id`] rather than computing its own
+    /// answer, and that is not tidiness: written as a second computation it was
+    /// a SECOND PATH, and a counterfactual that broke `next_tree_id` was caught
+    /// by nothing because every tree here is minted through this one. Two ways
+    /// to answer "what id comes next" is exactly the drift this field exists to
+    /// stop.
+    fn mint_tree_id(&mut self) -> TreeId {
+        let id = self.next_tree_id();
+        self.next_tree = id.0.saturating_add(1);
+        id
     }
 
     /// Copy a tree wholesale and answer the copy's id.
@@ -2917,8 +2977,8 @@ impl<K: NodeKind> Document<K> {
     /// two definitions may share one. The DCC must rename a copied node group
     /// (`Sum` becomes `Sum.001`) because an ID's name *is* its key.
     pub(crate) fn copy_tree(&mut self, source: TreeId) -> Option<TreeId> {
-        let mut copy = self.trees.get(source.0 as usize)?.clone();
-        let id = self.next_tree_id();
+        let mut copy = self.tree(source)?.clone();
+        let id = self.mint_tree_id();
         copy.id = id;
         self.trees.push(copy);
         Some(id)
@@ -2929,7 +2989,7 @@ impl<K: NodeKind> Document<K> {
     /// A definition created this way has no interface and no instances; it
     /// becomes reachable when something instantiates it.
     pub fn add_definition(&mut self, name: impl Into<String>) -> TreeId {
-        let id = self.next_tree_id();
+        let id = self.mint_tree_id();
         self.trees.push(Tree {
             id,
             name: name.into(),
@@ -2966,6 +3026,17 @@ impl<K: NodeKind> Document<K> {
         pairs.sort_unstable();
         pairs.dedup();
         pairs
+    }
+
+    /// ★ R1944 — drop a tree and everything in it, with no questions asked.
+    ///
+    /// Crate-private on purpose: the questions are
+    /// [`Document::remove_definition`]'s, and a caller reaching this directly
+    /// would be re-deciding them. That is the seam the reference does not have
+    /// — its editor's delete path asks a schema, falls back to its own
+    /// procedure, and is itself the public surface.
+    pub(crate) fn drop_tree(&mut self, id: TreeId) {
+        self.trees.retain(|held| held.id != id);
     }
 
     /// How many instances of `definition` exist across the whole document.
@@ -3396,7 +3467,7 @@ impl<K: NodeKind> Document<K> {
     pub fn remove_node(&mut self, tree: TreeId, node: NodeId) -> Result<Removed, EditError> {
         self.may(tree, Act::Delete(node))?;
         let adopted = self.adopt_orphans(tree, node);
-        if let Some(host) = self.trees.get_mut(tree.0 as usize) {
+        if let Some(host) = self.tree_mut(tree) {
             host.nodes.remove(&node);
         }
         Ok(Removed {
@@ -3616,7 +3687,7 @@ impl<K: NodeKind> Document<K> {
     /// still there and still contains where the node was. Only the containment
     /// the deletion actually destroyed is destroyed here.
     pub(crate) fn adopt_orphans(&mut self, tree: TreeId, dying: NodeId) -> Vec<NodeId> {
-        let Some(host) = self.trees.get_mut(tree.0 as usize) else {
+        let Some(host) = self.tree_mut(tree) else {
             return Vec::new();
         };
         let Some(grandparent) = host.nodes.get(&dying).map(|n| n.parent) else {
@@ -3650,7 +3721,7 @@ impl<K: NodeKind> Document<K> {
         node: NodeId,
         moved: &BTreeMap<PortRef, PortRef>,
     ) -> Vec<Link> {
-        let Some(host) = self.trees.get_mut(tree.0 as usize) else {
+        let Some(host) = self.tree_mut(tree) else {
             return Vec::new();
         };
         let mut severed = Vec::new();
@@ -3681,7 +3752,7 @@ impl<K: NodeKind> Document<K> {
     }
 
     pub(crate) fn unwire_node(&mut self, tree: TreeId, node: NodeId) -> Vec<Link> {
-        let Some(host) = self.trees.get_mut(tree.0 as usize) else {
+        let Some(host) = self.tree_mut(tree) else {
             return Vec::new();
         };
         let (dropped, kept) = host
@@ -3921,7 +3992,7 @@ impl<K: NodeKind> Document<K> {
     ) -> Result<Connected, ConnectError<K::Type>> {
         let crowded = self.vet(tree, from, to)?;
         // The tree exists: `vet` resolved a signature through it twice.
-        let Some(host) = self.trees.get_mut(tree.0 as usize) else {
+        let Some(host) = self.tree_mut(tree) else {
             return Err(ConnectError::NoSuchNode(from));
         };
         let id = LinkId(host.next_link);
@@ -4080,7 +4151,7 @@ impl<K: NodeKind> Document<K> {
     /// there. [`disconnect`](Self::disconnect) is the public verb and resolves
     /// its own index.
     pub(crate) fn lift(&mut self, tree: TreeId, at: usize) -> Option<Link> {
-        let host = self.trees.get_mut(tree.0 as usize)?;
+        let host = self.tree_mut(tree)?;
         (at < host.links.len()).then(|| host.links.remove(at))
     }
 
@@ -4103,7 +4174,7 @@ impl<K: NodeKind> Document<K> {
         crowded: Option<Side>,
         at: Option<usize>,
     ) -> Option<Link> {
-        let host = self.trees.get_mut(tree.0 as usize)?;
+        let host = self.tree_mut(tree)?;
         let displaced = match crowded {
             Some(Side::Input) => host.links.iter().find(|l| l.to == link.to).copied(),
             Some(Side::Output) => host.links.iter().find(|l| l.from == link.from).copied(),
@@ -4260,13 +4331,13 @@ impl<K: NodeKind> Document<K> {
     /// between trees, and it has already worked out where every incident link
     /// goes; [`Self::remove_node`] would drop them.
     pub(crate) fn take_node(&mut self, tree: TreeId, node: NodeId) -> Option<Node<K>> {
-        self.trees.get_mut(tree.0 as usize)?.nodes.remove(&node)
+        self.tree_mut(tree)?.nodes.remove(&node)
     }
 
     /// Put a node into a tree under its existing id, keeping the id source
     /// ahead of it.
     pub(crate) fn put_node(&mut self, tree: TreeId, node: Node<K>) {
-        let Some(host) = self.trees.get_mut(tree.0 as usize) else {
+        let Some(host) = self.tree_mut(tree) else {
             return;
         };
         host.next_node = host.next_node.max(node.id.0 + 1);
@@ -4275,7 +4346,7 @@ impl<K: NodeKind> Document<K> {
 
     /// Take a link out of a tree.
     pub(crate) fn take_link(&mut self, tree: TreeId, link: LinkId) -> Option<Link> {
-        let host = self.trees.get_mut(tree.0 as usize)?;
+        let host = self.tree_mut(tree)?;
         let at = host.links.iter().position(|l| l.id == link)?;
         Some(host.links.remove(at))
     }
@@ -4302,7 +4373,7 @@ impl<K: NodeKind> Document<K> {
         to: Socket,
         muted: bool,
     ) -> LinkId {
-        let Some(host) = self.trees.get_mut(tree.0 as usize) else {
+        let Some(host) = self.tree_mut(tree) else {
             return LinkId(u32::MAX);
         };
         let id = LinkId(host.next_link);
@@ -4944,6 +5015,77 @@ pub type PortValueResult<K> = Result<
     Option<<K as NodeKind>::Value>,
     PortValueError<<K as NodeKind>::Type, <K as NodeKind>::Value>,
 >;
+
+/// ★★★★★ R1944 — what a caller wants done about the instances of a definition
+/// it is removing.
+///
+/// Two arms and the caller must pick one, which is the whole decision: the
+/// reference has no such choice — its delete-a-graph path removes the nodes
+/// bound to that graph unconditionally and says nothing about having done it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Used {
+    /// Refuse while anything still stands for this definition, and name what
+    /// does. The safe answer, and the default a screen should offer: a
+    /// reference that disappears with its target is data loss the person did
+    /// not ask for.
+    Refuse,
+    /// Remove them too, and REPORT what went.
+    TakeThemToo,
+}
+
+/// ★★★★★ R1944 — why a definition could not be removed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RemoveTreeError {
+    /// No such tree.
+    NoSuchTree(TreeId),
+    /// The root is where a document lives; removing it would leave nothing.
+    TheRoot,
+    /// Something still stands for this definition, and this says what.
+    ///
+    /// ⚠ The SITES, not a count. `instance_count` could already answer *how
+    /// many*, and a person told "3 instances" still has to find them; the
+    /// reference answers neither, because it never refuses.
+    StillUsed {
+        /// Every instance, as (the tree it is in, the node).
+        by: Vec<(TreeId, NodeId)>,
+    },
+}
+
+impl fmt::Display for RemoveTreeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoSuchTree(tree) => write!(f, "no tree {tree}"),
+            Self::TheRoot => f.write_str("the root tree cannot be removed"),
+            Self::StillUsed { by } => write!(
+                f,
+                "{} node(s) still stand for it, the first in tree {}",
+                by.len(),
+                by.first().map_or(ROOT, |(tree, _)| *tree)
+            ),
+        }
+    }
+}
+
+impl std::error::Error for RemoveTreeError {}
+
+/// ★★★★★ R1944 — what a removal took with it.
+///
+/// Returned rather than done silently, which is the measured difference: the
+/// reference's path removes every node bound to the graph and answers `void`,
+/// so a caller cannot undo, report or even count what it cost.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RemovedTree {
+    /// Every instance node that went with it, as (the tree it was in, the node).
+    pub instances: Vec<(TreeId, NodeId)>,
+    /// Every definition that went with it because only it stood for them.
+    ///
+    /// ⚠ A definition can hold instances of ANOTHER definition, so removing one
+    /// can orphan a chain. Named rather than left: the reference's path does
+    /// not look, so a nested definition simply stays in the document with
+    /// nothing pointing at it.
+    pub definitions: Vec<TreeId>,
+}
 
 /// ★★★★★ R1943 — why two nodes could not be made a zone.
 ///

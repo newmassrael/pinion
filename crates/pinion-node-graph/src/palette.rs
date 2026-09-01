@@ -221,6 +221,121 @@ impl<K: NodeKind> Document<K> {
     /// to read.
     ///
     /// [`Appearance::tint`]: crate::Appearance::tint
+    /// ★★★★★ R1944 — **every node that stands for this definition**, as (the
+    /// tree it is in, the node).
+    ///
+    /// `instance_count` has answered *how many* since groups existed; this
+    /// answers *where*, which is what a refusal has to carry to be actionable
+    /// and what a removal has to report to be undoable.
+    #[must_use]
+    pub fn instances_of(&self, definition: TreeId) -> Vec<(TreeId, NodeId)> {
+        let mut found: Vec<(TreeId, NodeId)> = self
+            .trees()
+            .flat_map(|held| {
+                held.nodes()
+                    .filter(|node| node.body == crate::NodeBody::Group(definition))
+                    .map(move |node| (held.id, node.id))
+            })
+            .collect();
+        found.sort_unstable();
+        found
+    }
+
+    /// ★★★★★ R1944 — **remove a definition from the document**, saying what
+    /// went with it.
+    ///
+    /// # What forced it, measured in the reference this round
+    ///
+    /// Its schema is asked to delete a graph, and the editor falls back to its
+    /// own procedure when the schema declines. Counted: **one declaration
+    /// (answering NO), ZERO overriders, one consumer** — so that extension
+    /// point has never once been taken, and every deletion goes down the
+    /// fallback. R1938's shape: a hook whose refusal is never exercised is a
+    /// hook nobody has had to think about.
+    ///
+    /// The fallback is what the capability really is, and it does three things
+    /// this answers differently:
+    ///
+    /// * **It removes every node bound to that graph, unconditionally**, and
+    ///   answers `void`. A caller cannot report what it cost, and a person who
+    ///   deleted a definition in use loses the nodes that used it without being
+    ///   asked. Here [`Used`](crate::Used) makes the caller choose, and
+    ///   `Refuse` names the sites.
+    /// * **Whether a graph may go at all is a FLAG on the graph**
+    ///   (`bAllowDeletion`), so *why not* has no answer. Here the refusals are
+    ///   named ([`RemoveTreeError`](crate::RemoveTreeError)).
+    /// * **It does not look for definitions orphaned by the removal.** A
+    ///   definition can hold instances of another, so removing one can leave a
+    ///   chain with nothing pointing at it; those are removed and REPORTED here.
+    ///
+    /// # Errors
+    ///
+    /// [`RemoveTreeError`](crate::RemoveTreeError).
+    pub fn remove_definition(
+        &mut self,
+        definition: TreeId,
+        used: crate::Used,
+    ) -> Result<crate::RemovedTree, crate::RemoveTreeError> {
+        use crate::{RemoveTreeError, RemovedTree, Used};
+        if definition == crate::ROOT {
+            return Err(RemoveTreeError::TheRoot);
+        }
+        if self.tree(definition).is_none() {
+            return Err(RemoveTreeError::NoSuchTree(definition));
+        }
+        let standing = self.instances_of(definition);
+        if used == Used::Refuse && !standing.is_empty() {
+            return Err(RemoveTreeError::StillUsed { by: standing });
+        }
+        // ⚠ Taken BEFORE anything is removed: which definitions currently have
+        // an instance is what tells an orphan this removal MADE from one that
+        // was already standing alone.
+        let was_used: std::collections::BTreeSet<TreeId> = self
+            .definitions()
+            .map(|held| held.id)
+            .filter(|id| !self.instances_of(*id).is_empty())
+            .collect();
+        // ⚠ The instances go FIRST and from every tree, including the one being
+        // removed: a definition may hold an instance of itself's peer, and
+        // dropping the tree without clearing them would leave a node whose body
+        // names a tree that is gone.
+        let mut went = RemovedTree {
+            instances: standing.clone(),
+            definitions: vec![definition],
+        };
+        // ★ Through `remove_node`, not by reaching into the tree: that verb
+        // already drops the links a removed node was on and reports what it
+        // orphaned, and a second removal path here would be a second set of
+        // invariants free to drift from it.
+        for (tree, node) in &standing {
+            let _ = self.remove_node(*tree, *node);
+        }
+        self.drop_tree(definition);
+        // ★ And then whatever THIS REMOVAL orphaned, transitively.
+        //
+        // ⚠ Only what it orphaned. A definition that already stood alone —
+        // authored and not yet placed — is a legitimate state this must not
+        // sweep up, so the population is the ones that HAD an instance before
+        // and have none now. That distinction is the reason `was_used` is taken
+        // before anything is removed rather than derived afterwards.
+        loop {
+            let orphaned: Vec<TreeId> = self
+                .definitions()
+                .map(|held| held.id)
+                .filter(|id| was_used.contains(id) && self.instances_of(*id).is_empty())
+                .collect();
+            if orphaned.is_empty() {
+                break;
+            }
+            for id in orphaned {
+                self.drop_tree(id);
+                went.definitions.push(id);
+            }
+        }
+        went.definitions.sort_unstable();
+        Ok(went)
+    }
+
     /// ★★★★★ R1943 — **make two nodes a zone**: one opens it, the other closes
     /// it, and the region between them is derived rather than stored.
     ///

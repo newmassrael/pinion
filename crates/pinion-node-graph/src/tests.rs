@@ -8,7 +8,6 @@ use std::collections::BTreeSet;
 use pinion_graph::Sugiyama;
 use serde::{Deserialize, Serialize};
 
-use crate::PairError;
 use crate::{
     Admission, Admits, AdoptError, Align, Appearance, Archive, Axis, BeaconError, BreakError,
     Breakpoints, Bringup, Camera, Carried, Carrying, Command, Composition, ConnectError, Container,
@@ -23,6 +22,7 @@ use crate::{
     Stop, Straighten, Stride, SwapError, SwitchRefusal, Tick, Timeline, Tint, TreeId, UngroupError,
     Unreadable, Violation, WatchError, Watches, ZoomRange, crossing,
 };
+use crate::{PairError, RemoveTreeError, RemovedTree, Used};
 
 /// ★★★★★ R1925 — **an application that declares no two-state socket type is
 /// told THAT**, whatever section it names.
@@ -16829,6 +16829,61 @@ fn r1935_a_far_end_is_on_the_chain_without_having_two_ends() {
 ///
 /// ⚠ The empty answer is READABLE either way: `wants()` says so in a sentence,
 /// which is what a screen shows beside a free field.
+/// ★★★★★ R1944 — **the SAFE answers are the ones a caller has to ask for**:
+/// the root cannot go, and a definition in use is refused unless the caller
+/// says otherwise.
+///
+/// Written before a counterfactual asked, which is the standing practice. ★ And
+/// what it holds is the escape-hatch shape rather than a supplied value: this
+/// axis has no defaulted hook — the *default* is which arm a caller must name,
+/// and the assertion is that neither destructive outcome can be reached without
+/// naming it.
+#[test]
+fn r1944_the_root_and_a_used_definition_are_both_refused() {
+    let mut document: Document<LOp> = Document::new("lattice");
+    assert_eq!(
+        document.remove_definition(ROOT, Used::Refuse),
+        Err(RemoveTreeError::TheRoot),
+        "★ the root is where the document lives"
+    );
+    assert_eq!(
+        document.remove_definition(ROOT, Used::TakeThemToo),
+        Err(RemoveTreeError::TheRoot),
+        "★★★★★ and NOT even with the destructive arm — the root's refusal is \
+         not something a caller can opt out of"
+    );
+    assert_eq!(
+        document.remove_definition(TreeId(9999), Used::TakeThemToo),
+        Err(RemoveTreeError::NoSuchTree(TreeId(9999)))
+    );
+    // ★ An unplaced definition goes freely, which is what makes the refusal
+    // below about being USED rather than about being a definition.
+    let spare = document.add_definition("spare");
+    assert_eq!(
+        document.remove_definition(spare, Used::Refuse),
+        Ok(RemovedTree {
+            instances: Vec::new(),
+            definitions: vec![spare],
+        })
+    );
+    // ★★★★★ AND THE ID IS NOT HANDED BACK. Asserted HERE rather than beside
+    // the census proof, and that placement is the finding: the proof grew a
+    // second definition standing across its removal, which lifted the frontier
+    // on its own and MASKED this — a counterfactual that derived the frontier
+    // from the trees that remain went unnoticed there. The population must be
+    // controlled for this question, so it is: `spare` was the highest id and it
+    // is gone.
+    let after = document.add_definition("after");
+    assert_ne!(
+        after, spare,
+        "★★★★★ a removed tree id is never minted again — derived from what \
+         remains it would be, and every `NodeBody::Group` naming the removed \
+         one would silently start naming this"
+    );
+    assert!(document.tree(spare).is_none());
+    assert!(document.tree(after).is_some());
+}
+
 /// ★★★★★ R1943 — **the DEFAULT answer to "what closes the zone this kind
 /// opens" is that it opens none**, asserted on a taxonomy that takes it.
 ///
