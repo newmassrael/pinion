@@ -85,6 +85,7 @@ pub mod chip;
 pub mod chooser;
 pub mod column_header;
 pub mod config_form;
+pub mod control_mark;
 pub mod coord;
 pub mod datepicker;
 pub mod described;

@@ -10,11 +10,18 @@
 //!
 //! ## What is here, and what is deliberately not
 //!
-//! This module answers **where the parts go**. It returns rectangles and takes
-//! no theme, no colour and no glyph, because those are the half of a card
-//! header that has been chosen exactly once in this tree — and freezing an
+//! This module answers **where the parts go**: [`lay_out`] returns rectangles
+//! and takes no theme, no colour and no glyph, because those are the half of a
+//! card header that had been chosen exactly once in this tree — and freezing an
 //! opinion that has one witness is how a lift becomes a fork with extra steps.
 //! The consumer keeps its skin; what it stops keeping is the arithmetic.
+//!
+//! ⚠ That sentence covered the whole module when it was written and stopped
+//! being true one round later: R1817 brought [`header_scene`] here, which takes
+//! [`HeaderInk`] and draws marks. Re-measured and corrected at R1950, which
+//! moved the marks themselves out to [`crate::control_mark`] — the vocabulary
+//! there now has a second witness (a panel's chrome), which is the condition
+//! this paragraph names for freezing one.
 //!
 //! ## Why the arithmetic is the half worth lifting
 //!
@@ -61,11 +68,11 @@
 //! capability this type has and that one does not.
 
 use pinion_core::containment;
-use pinion_core::scene::{ContainerNode, PathCommand, PathNode, PathPoint, Rect, Scene, TextNode};
-use pinion_core::style::{
-    BoxStyle, Color, LayoutStyle, PathStyle, Size, Stroke, TextOverflow, TextStyle,
-};
+use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
+use pinion_core::style::{BoxStyle, Color, TextOverflow, TextStyle};
 use pinion_core::widgets::card::CardAffordance;
+
+use crate::control_mark::{self, ControlMark, absolute, dot};
 
 /// The ready badge's status dot, across.
 const BADGE_DOT: u32 = 6;
@@ -573,125 +580,14 @@ pub struct HeaderSpec<'a> {
     pub ink: HeaderInk,
 }
 
-fn dot(x: u32, y: u32, size: u32, fill: Color) -> Scene {
-    Scene::Container(
-        ContainerNode::new(Vec::new())
-            .with_style(BoxStyle::filled(fill).with_corner_radius(size / 2))
-            .with_layout(absolute(Rect::new(x, y, size, size))),
-    )
-}
-
-fn absolute(rect: Rect) -> LayoutStyle {
-    LayoutStyle::new()
-        .with_absolute_position(rect.x, rect.y)
-        .with_size(Size::px(rect.w, rect.h))
-        .with_pointer_transparent(true)
-}
-
-#[allow(
-    clippy::cast_precision_loss,
-    reason = "header coordinates are < 2^13, exactly representable in f32"
-)]
-fn point(x: u32, y: u32) -> PathPoint {
-    PathPoint::new(x as f32, y as f32)
-}
-
-/// A stroked polyline set in `rect`-local coordinates.
-fn strokes(rect: Rect, runs: &[Vec<(u32, u32)>], ink: Color, width: u32) -> Scene {
-    let mut commands = Vec::new();
-    for run in runs {
-        for (n, (x, y)) in run.iter().enumerate() {
-            let at = point(*x, *y);
-            commands.push(if n == 0 {
-                PathCommand::MoveTo(at)
-            } else {
-                PathCommand::LineTo(at)
-            });
-        }
-    }
-    Scene::Path(
-        PathNode::new(rect, commands, PathStyle::stroked(Stroke::new(ink, width)))
-            .with_layout(absolute(rect)),
-    )
-}
-
-/// The mark one header control draws, in its slot's local coordinates.
-///
-/// ★ R1697's lesson, carried here with the code it is about: `restore` is the
-/// maximise control's OTHER FACE. The control toggles, and a control that
-/// toggles without changing its mark tells a person the same thing in both
-/// states — a capability that exists and is not drawn is one nobody can use.
-#[must_use]
-pub fn affordance_mark(
-    affordance: CardAffordance,
-    rect: Rect,
-    ink: Color,
-    restore: bool,
-) -> Vec<Scene> {
-    let (cx, cy) = (rect.w / 2, rect.h / 2);
-    match affordance {
-        CardAffordance::Settings => (0..3)
-            .map(|n| dot(cx - 1, cy - 5 + n * 5, 2, ink))
-            .collect(),
-        // A square lifting out of another.
-        CardAffordance::TearOff => vec![strokes(
-            rect,
-            &[
-                vec![
-                    (cx - 5, cy - 1),
-                    (cx - 5, cy + 5),
-                    (cx + 1, cy + 5),
-                    (cx + 1, cy - 1),
-                    (cx - 5, cy - 1),
-                ],
-                vec![(cx - 1, cy - 5), (cx + 5, cy - 5), (cx + 5, cy + 1)],
-            ],
-            ink,
-            1,
-        )],
-        // Two overlapping squares — one box come back out of another, which is
-        // the form a restore control takes everywhere.
-        CardAffordance::Maximize if restore => vec![strokes(
-            rect,
-            &[
-                vec![
-                    (cx - 6, cy - 2),
-                    (cx + 2, cy - 2),
-                    (cx + 2, cy + 6),
-                    (cx - 6, cy + 6),
-                    (cx - 6, cy - 2),
-                ],
-                vec![(cx - 2, cy - 6), (cx + 6, cy - 6), (cx + 6, cy + 2)],
-            ],
-            ink,
-            1,
-        )],
-        CardAffordance::Maximize => vec![strokes(
-            rect,
-            &[vec![
-                (cx - 5, cy - 5),
-                (cx + 5, cy - 5),
-                (cx + 5, cy + 5),
-                (cx - 5, cy + 5),
-                (cx - 5, cy - 5),
-            ]],
-            ink,
-            1,
-        )],
-        CardAffordance::Close => strokes_close(rect, ink),
-    }
-}
-
-fn strokes_close(rect: Rect, ink: Color) -> Vec<Scene> {
-    let (w, h) = (rect.w, rect.h);
-    let (x0, y0, x1, y1) = (w / 2 - 4, h / 2 - 4, w / 2 + 4, h / 2 + 4);
-    vec![strokes(
-        rect,
-        &[vec![(x0, y0), (x1, y1)], vec![(x1, y0), (x0, y1)]],
-        ink,
-        1,
-    )]
-}
+// ★★★★★ R1950 — `affordance_mark` was here, and it is gone rather than kept as
+// a one-line forwarder. Its vocabulary and its painter live in
+// [`crate::control_mark`] now, which is where R1697's lesson went too: `restore`
+// is the maximise control's OTHER FACE, and it is a face rather than a flag
+// there, so nothing has to be told which one to draw. A second public entry
+// point into one painting is how the two come to disagree — the exact shape
+// that module exists to close — so `header_scene` below asks the vocabulary
+// directly and there is one way in.
 
 /// The six-dot drag grip.
 #[must_use]
@@ -777,11 +673,10 @@ pub fn header_scene(
     for (n, slot) in laid.slots().iter().copied() {
         let affordance = spec.offered[n];
         out.push(Scene::Container(
-            ContainerNode::new(affordance_mark(
-                affordance,
+            ContainerNode::new(control_mark::scenes(
+                ControlMark::of_card(affordance, spec.restore),
                 Rect::new(0, 0, slot.w, slot.h),
                 spec.ink.muted,
-                spec.restore,
             ))
             .with_tag(format!("{tag_prefix}.{}", affordance.wire()))
             .with_layout(absolute(slot)),

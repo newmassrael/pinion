@@ -8050,8 +8050,9 @@ fn close_mark(rect: Rect, ink: Color) -> Scene {
     )
 }
 
-// ★ R1817 — the detach mark moved to `card_header::affordance_mark` with the
-// rest of the header's glyphs.
+// ★ R1817 — the detach mark moved to the card header's glyphs, and R1950 moved
+// those on again to `pinion_widget_paint::control_mark`, where a panel's chrome
+// draws from the same vocabulary.
 
 /// R1697 — the resize mark: two diagonals climbing out of the bottom-right
 /// corner, the form every window manager and every reference toolkit uses for
@@ -8118,10 +8119,13 @@ fn send_home_mark(rect: Rect, ink: Color) -> Scene {
     )
 }
 
-// ★ R1817 — `affordance_mark` moved to `card_header`, and R1697's lesson went
-// with it: `restore` is the maximise control's OTHER face, because a control
-// that toggles without changing its mark tells a person the same thing in both
-// states. A lesson left behind when its code moves is a lesson nobody re-reads.
+// ★ R1817 — the affordance marks moved to `card_header`, and R1697's lesson
+// went with them: `restore` is the maximise control's OTHER face, because a
+// control that toggles without changing its mark tells a person the same thing
+// in both states. A lesson left behind when its code moves is a lesson nobody
+// re-reads. ★ R1950 moved both again, to
+// `pinion_widget_paint::control_mark::ControlMark`, where that face is a VALUE
+// rather than a `bool` a caller has to remember to pass.
 
 /// A framed pane, split once across and once down: a list of messages beside
 /// what one of them contains.

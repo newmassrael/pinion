@@ -260,6 +260,67 @@ pub struct EdgePolicy {
     pub resize: Resize,
 }
 
+/// What one of a panel's chrome controls does.
+///
+/// ★★★★★ R1950 — a panel's header offered two controls and **no vocabulary
+/// named them**. They were a pair of tags spelled in a paint function
+/// (`"{tag}.flip"`, `"{tag}.fold"`), which is why the accessibility tree and
+/// the paint could publish different sets of them and did: the tree asked the
+/// policy whether each was offered and the paint drew both unconditionally, so
+/// a panel that admits one edge advertised a move to nowhere. Naming the acts
+/// is what lets [`EdgePolicy::controls`] be the one roster both read.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, pinion_derive::VariantCensus,
+)]
+#[variant_census(all)]
+pub enum PanelAffordance {
+    /// Move the panel to another edge it admits.
+    Flip,
+    /// Fold it away to its strip.
+    Fold,
+}
+
+impl PanelAffordance {
+    /// Every act, in the order a header lays them out.
+    pub const ALL: [Self; 2] = [Self::Flip, Self::Fold];
+
+    /// This act's wire spelling.
+    #[must_use]
+    pub const fn wire(self) -> &'static str {
+        match self {
+            Self::Flip => "flip",
+            Self::Fold => "fold",
+        }
+    }
+
+    /// The act that wire spelling names.
+    ///
+    /// The inverse of [`wire`](Self::wire), for the reason
+    /// `CardAffordance::from_wire` exists: a vocabulary published without its
+    /// parser is two definitions of one set.
+    #[must_use]
+    pub fn from_wire(word: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|act| act.wire() == word)
+    }
+}
+
+/// One control a panel's header offers, and the edge it acts toward.
+///
+/// ★ The edge is part of the control rather than something a caller works out
+/// afterwards, and that is what makes a control *readable*: a flip names where
+/// the panel would GO and a fold the edge it collapses INTO, so both the
+/// sentence a screen reader is given and the mark a painter draws come from
+/// one value. A control that says only "flip" leaves every consumer to derive
+/// the destination again, and the ones that do not are the ones that point the
+/// wrong way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct PanelControl {
+    /// What pressing it does.
+    pub act: PanelAffordance,
+    /// The edge that act moves the panel toward.
+    pub toward: ChromeEdge,
+}
+
 /// Why a placement change was refused.
 ///
 /// ★ Carries what was ASKED and what was ALLOWED, not just a failure. A refusal
@@ -459,6 +520,74 @@ impl EdgePolicy {
         }
     }
 
+    /// ★ R1950 — the edge a panel at `from` would flip to: the next edge this
+    /// policy admits, cycling — or `None` when there is nowhere else to go.
+    ///
+    /// Derived from the declaration rather than written as "the other side". A
+    /// policy admitting two edges today is free to admit a third, and a control
+    /// spelled `Left => Right, _ => Left` would go on offering two of them.
+    ///
+    /// ★★ `None` when the cycle comes back to the edge the panel is already on
+    /// — a policy admitting exactly one edge, or a `from` that policy does not
+    /// admit at all. Both are *nowhere else*, and the difference matters
+    /// because a control offering to move a panel to where it already is looks
+    /// identical to one that works until a person presses it.
+    #[must_use]
+    pub fn next_edge(&self, from: ChromeEdge) -> Option<ChromeEdge> {
+        let n = self.allowed.iter().position(|edge| *edge == from)?;
+        let next = *self.allowed.get((n + 1) % self.allowed.len())?;
+        (next != from).then_some(next)
+    }
+
+    /// ★★★★★ R1950 — the control this panel's header offers for `act` at `at`,
+    /// or `None` when it offers none.
+    ///
+    /// **The single statement of what a panel's chrome holds**, which is what
+    /// this round exists to give it. Before it, whether a control was offered
+    /// was answered twice — once by the accessibility tree, which asked the
+    /// policy, and once by the paint, which asked nothing — and the two were
+    /// free to disagree.
+    ///
+    /// A FOLDED panel offers nothing: its strip is the whole affordance, which
+    /// is what makes a fold reversible by the person who did it. That is the
+    /// screen's rule and it belongs here rather than in each painter, because
+    /// a painter that forgot it would draw two controls onto an eighteen-pixel
+    /// strip.
+    #[must_use]
+    pub fn control(&self, act: PanelAffordance, at: EdgePlacement) -> Option<PanelControl> {
+        if at.folded {
+            return None;
+        }
+        let toward = match act {
+            PanelAffordance::Flip => self.next_edge(at.edge)?,
+            PanelAffordance::Fold => {
+                if !self.foldable {
+                    return None;
+                }
+                at.edge
+            }
+        };
+        Some(PanelControl { act, toward })
+    }
+
+    /// Whether this panel's header offers `act` at `at`.
+    #[must_use]
+    pub fn offers(&self, act: PanelAffordance, at: EdgePlacement) -> bool {
+        self.control(act, at).is_some()
+    }
+
+    /// Every control this panel's header offers at `at`, in the order a header
+    /// lays them out.
+    ///
+    /// Takes `self` by value — the policy is [`Copy`] and a declaration is a
+    /// value, so an iterator that borrowed it would tie a caller's roster to a
+    /// borrow it has no reason to hold.
+    pub fn controls(self, at: EdgePlacement) -> impl Iterator<Item = PanelControl> {
+        PanelAffordance::ALL
+            .into_iter()
+            .filter_map(move |act| self.control(act, at))
+    }
+
     /// ★★★★★ (R1902) The placement a panel **opens in**, judged by the same
     /// rules a gesture is judged by — or the refusal.
     ///
@@ -645,7 +774,7 @@ impl Restored {
 
 #[cfg(test)]
 mod tests {
-    use super::{EdgePlacement, EdgePolicy, EdgeRefusal, Resize};
+    use super::{EdgePlacement, EdgePolicy, EdgeRefusal, PanelAffordance, Resize};
     use crate::style::ChromeEdge;
 
     const SIDES: &[ChromeEdge] = &[ChromeEdge::Left, ChromeEdge::Right];
@@ -1228,5 +1357,139 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// ★★★★★ R1950 — **a control is offered exactly when the act behind it
+    /// would be admitted.** The roster is not a second opinion.
+    ///
+    /// Asked against the three admitting methods rather than re-spelling their
+    /// conditions, which is this module's own rule from `admit_opening`: a gate
+    /// compares against the output of the derivation, it does not write the
+    /// derivation again. It is also what the defect needed — the paint offered
+    /// two controls unconditionally while `admit` would have refused one of
+    /// them, and nothing anywhere compared the two answers.
+    #[test]
+    fn r1950_a_control_is_offered_exactly_when_its_act_is_admitted() {
+        let policies = [
+            EdgePolicy::movable(SIDES),
+            EdgePolicy::movable(&[ChromeEdge::Left]),
+            EdgePolicy::fixed(),
+            EdgePolicy {
+                allowed: SIDES,
+                foldable: false,
+                resize: Resize::Fixed,
+            },
+        ];
+        for policy in policies {
+            for edge in ChromeEdge::ALL {
+                for folded in [false, true] {
+                    let at = EdgePlacement {
+                        edge,
+                        extent: 230,
+                        folded,
+                    };
+                    let offered: Vec<_> = policy.controls(at).collect();
+                    for act in PanelAffordance::ALL {
+                        let control = policy.control(act, at);
+                        assert_eq!(
+                            control.is_some(),
+                            offered.iter().any(|c| c.act == act),
+                            "{act:?} at {at:?}: `controls` and `control` disagree"
+                        );
+                        let admitted = match act {
+                            PanelAffordance::Flip => policy
+                                .next_edge(edge)
+                                .is_some_and(|to| policy.admit(at, to).is_ok()),
+                            PanelAffordance::Fold => policy.admit_fold(at, true).is_ok(),
+                        };
+                        assert_eq!(
+                            control.is_some(),
+                            admitted && !folded,
+                            "{act:?} at {at:?}: a control is offered for an act that \
+                             would be refused, or refused for one that would be admitted"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// ★★★★★ R1950 — the edge a control names is the edge the act would
+    /// actually reach.
+    ///
+    /// A flip's `toward` is where the panel LANDS, so performing it must put it
+    /// there; a fold's is the edge it collapses into, which is the one it is on
+    /// — otherwise the mark a painter draws points somewhere the panel never
+    /// goes, and a screen reader is told the same untruth in words.
+    #[test]
+    fn r1950_a_controls_edge_is_where_its_act_lands() {
+        let policy = EdgePolicy::movable(SIDES);
+        for edge in SIDES.iter().copied() {
+            let at = EdgePlacement::open(edge, 230);
+            for control in policy.controls(at) {
+                match control.act {
+                    PanelAffordance::Flip => {
+                        let after = policy
+                            .admit(at, control.toward)
+                            .expect("an offered flip is an admitted move");
+                        assert_eq!(after.edge, control.toward);
+                        assert_ne!(after.edge, edge, "a flip that goes nowhere is not a flip");
+                    }
+                    PanelAffordance::Fold => assert_eq!(control.toward, edge),
+                }
+            }
+        }
+    }
+
+    /// ★★★★★ R1950 — a panel pinned to one edge offers **no flip**, which is
+    /// the case the paint got wrong and the case `allowed`'s own documentation
+    /// already promised ("no flip control").
+    ///
+    /// Both shapes of *nowhere else* are asked, because they arrive by
+    /// different routes: an empty `allowed` is a rail declaring it does not
+    /// move, and a single-entry `allowed` is a panel whose cycle comes back to
+    /// where it started.
+    #[test]
+    fn r1950_a_pinned_panel_offers_no_flip() {
+        for allowed in [&[][..], &[ChromeEdge::Left][..]] {
+            let policy = EdgePolicy {
+                allowed,
+                foldable: true,
+                resize: Resize::Fixed,
+            };
+            let at = EdgePlacement::open(ChromeEdge::Left, 54);
+            assert_eq!(policy.next_edge(ChromeEdge::Left), None);
+            assert!(!policy.offers(PanelAffordance::Flip, at));
+            assert!(
+                policy.offers(PanelAffordance::Fold, at),
+                "pinned is not the same as frozen — it still folds if it says it does"
+            );
+        }
+    }
+
+    /// ★★★★★ R1950 — a folded panel offers no header controls at all: the
+    /// strip is the whole affordance.
+    #[test]
+    fn r1950_a_folded_panel_offers_its_strip_and_nothing_else() {
+        let policy = EdgePolicy::movable(SIDES);
+        let folded = EdgePlacement::folded_at(ChromeEdge::Left, 230);
+        assert_eq!(policy.controls(folded).count(), 0);
+        assert_eq!(
+            policy
+                .controls(EdgePlacement::open(ChromeEdge::Left, 230))
+                .count(),
+            PanelAffordance::ARMS,
+            "and an open one offers both, so the line above is about the fold"
+        );
+    }
+
+    /// R1950 — the act vocabulary round-trips its wire spelling, both ways.
+    #[test]
+    fn r1950_the_act_vocabulary_round_trips() {
+        for act in PanelAffordance::ALL {
+            assert_eq!(PanelAffordance::from_wire(act.wire()), Some(act));
+        }
+        assert_eq!(PanelAffordance::ALL.len(), PanelAffordance::ARMS);
+        assert_eq!(PanelAffordance::from_wire("unfold"), None);
     }
 }

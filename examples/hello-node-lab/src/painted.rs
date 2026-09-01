@@ -58,6 +58,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use pinion_core::edge_panel::PanelAffordance;
 use pinion_core::external::{ExternalIntrospect, IntrospectValue};
 use pinion_core::reactive::Owner;
 use pinion_core::scene::Rect;
@@ -1252,6 +1253,108 @@ fn assert_disjoint(when: &str, shot: &Painted) {
     );
 }
 
+/// The absolute rect of the node tagged `tag`, and the absolute rects of every
+/// mark painted UNDER it.
+///
+/// A mark is a stroked or filled path with commands, or a container that
+/// actually fills — the node itself is excluded, so a button's own background
+/// is not mistaken for something drawn in it. That exclusion is the whole
+/// difficulty of this question: an empty chrome button is a filled, bordered,
+/// pressable, reachable box, and every general check this file runs is happy
+/// with it.
+fn marks_under(scene: &Scene, tag: &str) -> (Option<Rect>, Vec<Rect>) {
+    let mut own = None;
+    let mut marks = Vec::new();
+    scene.for_each_node(&mut |visit| {
+        let Some(rect) = visit.absolute_rect() else {
+            return;
+        };
+        if visit.node.tag() == Some(tag) {
+            own.get_or_insert(rect);
+            return;
+        }
+        if !visit.ancestors.iter().any(|a| a.tag() == Some(tag)) {
+            return;
+        }
+        let inked = match visit.node {
+            Scene::Path(path) => {
+                !path.commands.is_empty()
+                    && (path.style.stroke.is_some()
+                        || path.style.fill.is_some()
+                        || path.style.gradient.is_some())
+            }
+            Scene::Container(container) => container.style.fill.a > 0,
+            Scene::Text(_) => true,
+            _ => false,
+        };
+        if inked {
+            marks.push(rect);
+        }
+    });
+    (own, marks)
+}
+
+/// ★★★★★ R1950 — **every chrome control a panel offers has ink inside it**,
+/// and a control it does not offer is not painted at all.
+///
+/// # Why this assertion and not an easier one
+///
+/// A person looked at the running window on 2026-09-01 and reported that the
+/// palette's title-bar buttons were grey with nothing in them. They were, and
+/// every gate in this file passed: `assert_reachable` asks whether a control
+/// can be REACHED, the containment checks ask whether what is drawn stays
+/// inside its owner, and the voice census asks whether it has a NAME. An empty
+/// box satisfies all three — it is reachable, contained, and named. ⇒ *reached*
+/// and *read* are different properties, and until this round only the first had
+/// a gate.
+///
+/// # Why the population is the policy's
+///
+/// Because fixing one button and shipping the next one blank is what a
+/// hand-written pair of tags allows, and that is not hypothetical here: the
+/// paint drew two controls unconditionally while the accessibility tree
+/// published only the ones the policy offered. Both halves ask
+/// [`EdgePolicy::controls`](pinion_core::edge_panel::EdgePolicy::controls) now,
+/// and so does this — so a control added to a panel joins this check by being
+/// offered, and one the policy withdraws must disappear from the paint.
+fn assert_panel_marks(when: &str, state: &LabState, scene: &Scene) -> Vec<String> {
+    let mut checked = Vec::new();
+    for which in super::SidePanel::ALL {
+        let offered: Vec<_> = which.controls(state).collect();
+        for control in &offered {
+            let tag = format!("{}.{}", which.tag(), control.act.wire());
+            let (own, marks) = marks_under(scene, &tag);
+            let Some(button) = own else {
+                panic!("{when}: {tag} is offered by the policy and painted nowhere");
+            };
+            assert!(
+                !marks.is_empty(),
+                "{when}: {tag} is an empty box — a control a person can point at \
+                 and cannot read"
+            );
+            for mark in marks {
+                assert!(
+                    inside(button, mark),
+                    "{when}: {tag}'s mark {mark:?} is outside the button \
+                     {button:?} that holds it"
+                );
+            }
+            checked.push(tag);
+        }
+        for act in PanelAffordance::ALL {
+            if offered.iter().any(|control| control.act == act) {
+                continue;
+            }
+            let tag = format!("{}.{}", which.tag(), act.wire());
+            assert!(
+                marks_under(scene, &tag).0.is_none(),
+                "{when}: {tag} is painted though this panel's policy does not offer it"
+            );
+        }
+    }
+    checked
+}
+
 /// ★ R1656 — a card added from the palette lands where nothing already is.
 ///
 /// The placement was the canvas centre unconditionally, and two cards answering
@@ -1582,6 +1685,10 @@ fn r1653_the_painted_screen_is_the_specification_in_every_state() {
         // ★ R1800 — the worst per-case count of runs whose own box is too short
         // for their face, so the sweep can pin it once rather than per case.
         let mut short_worst = 0usize;
+        // ★★★★★ R1950 — every chrome button this sweep found a mark in. A SET,
+        // asserted against the full product below, because a per-case count
+        // cannot tell "the inspector is folded here" from "nobody looked".
+        let mut marked: BTreeSet<String> = BTreeSet::new();
         for (when, mutate) in STATES {
             mutate(&state);
             // ★★★★★ R1818 — no state this sweep reaches may hand one identifier
@@ -1612,6 +1719,11 @@ fn r1653_the_painted_screen_is_the_specification_in_every_state() {
                 below_total += assert_contained(&label, &shot, *size);
                 assert_disjoint(&label, &shot);
                 below_total += assert_contained_ink(&label, &scene, *size);
+                // ★★★★★ R1950 — and the question none of the checks above can
+                // ask: is there anything DRAWN in the chrome buttons a panel
+                // offers. See `assert_panel_marks` for why reached, contained
+                // and named all pass on an empty box.
+                marked.extend(assert_panel_marks(&label, &state, &scene));
                 // ★ R1800 — a second question the line above cannot ask: the
                 // check above is about a mark leaving its PARENT, this is about
                 // a run's OWN box being too short for the face it is set in.
@@ -1631,6 +1743,25 @@ fn r1653_the_painted_screen_is_the_specification_in_every_state() {
             STATES.len() >= 8,
             "the sweep visits {} state(s)",
             STATES.len()
+        );
+        // ★★★★★ R1950 — the sweep saw a mark in EVERY chrome button both
+        // panels can offer, not merely in the ones the opening state happens to
+        // show. Written as the product of the two vocabularies rather than as a
+        // list, so a panel or an act added anywhere raises what this demands —
+        // and the equality is what makes it a population rather than a floor a
+        // shrinking screen could still meet.
+        let want: BTreeSet<String> = super::SidePanel::ALL
+            .into_iter()
+            .flat_map(|which| {
+                PanelAffordance::ALL
+                    .into_iter()
+                    .map(move |act| format!("{}.{}", which.tag(), act.wire()))
+            })
+            .collect();
+        assert_eq!(
+            marked, want,
+            "the sweep found a mark in these chrome buttons and the two panels \
+             can offer these"
         );
         // ★ R1800 — a PIN, not a ceiling: lowering it is the repair, and the
         // equality is what stops an improvement going unrecorded.

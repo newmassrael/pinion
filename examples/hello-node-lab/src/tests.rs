@@ -3192,9 +3192,17 @@ fn r1887_pressing_the_header_control_moves_the_panel_and_the_layout_follows() {
             pane.x + control.x + control.w / 2,
             pane.y + control.y + control.h / 2,
         );
+        // ★ R1950 — the expected hit is built from the panel's own roster, so
+        // this says *the first control the policy offers* rather than naming an
+        // act the paint might not be drawing there.
+        let offered = super::SidePanel::Palette
+            .controls(&state)
+            .next()
+            .expect("a movable, foldable palette offers a flip first");
+        assert_eq!(offered.act, pinion_core::edge_panel::PanelAffordance::Flip);
         assert_eq!(
             super::Hit::at(&state, at.0, at.1),
-            super::Hit::Panel(super::SidePanel::Palette, super::PanelAct::Flip),
+            super::Hit::Panel(super::SidePanel::Palette, super::PanelAct::Offered(offered)),
             "the flip control is what a press at its painted centre reaches"
         );
         super::move_cursor(&state, at.0, at.1);

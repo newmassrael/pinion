@@ -69,7 +69,7 @@ use pinion_a11y::{
 use pinion_core::availability::Unavailable;
 use pinion_core::containment::{band_in, line_box, line_rect_in};
 use pinion_core::describe::{Descriptions, Resting};
-use pinion_core::edge_panel::EdgePlacement;
+use pinion_core::edge_panel::{EdgePlacement, PanelAffordance, PanelControl};
 use pinion_core::external::{
     ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ObjectArgs, PointerTarget,
@@ -110,10 +110,13 @@ use pinion_node_graph::{
 use pinion_platform_storage::AppStorage;
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use pinion_widget_paint::caption::{self, captioned};
+// ★★★★★ R1950 — the marks a chrome control draws, shared with a card's header.
+// The panel's two buttons were empty boxes until this vocabulary reached them.
 use pinion_widget_paint::config_form::{
     FieldGrowth, FormGeometry, FormStyle, OpenPicker, RowWrap, Seat, form_geometry_showing,
     row_access_nodes, view_config_form_showing,
 };
+use pinion_widget_paint::control_mark::{self, ControlMark};
 use pinion_widget_paint::pane::{PanePointer, scroll_pane};
 use pinion_widget_paint::run::text_run;
 use pinion_widget_paint::text_field as tf_paint;
@@ -919,18 +922,22 @@ impl SidePanel {
         }
     }
 
-    /// The edge this panel would flip to — the next edge its policy admits,
-    /// cycling, so one control reaches every declared edge.
+    /// ★★★★★ R1950 — **the controls this panel's header offers**, and the one
+    /// roster the paint, the hit test and the accessibility tree all read.
     ///
-    /// ★ Derived from the declaration rather than written as "the other side".
-    /// The policy admits two edges today and the specification is free to admit
-    /// a third; a control spelled `Left => Right, _ => Left` would silently go
-    /// on offering two of them.
-    fn next_edge(self, state: &LabState) -> Option<ChromeEdge> {
-        let allowed = self.spec().policy.allowed;
-        let here = self.at(state).edge;
-        let n = allowed.iter().position(|edge| *edge == here)?;
-        allowed.get((n + 1) % allowed.len()).copied()
+    /// They did not before. The tree asked the policy whether each control was
+    /// offered; the paint drew both, unconditionally, and drew them empty; the
+    /// hit test named slot 0 `Flip` and slot 1 `Fold` whatever the policy said.
+    /// Three answers to one question, and the person who reported the empty
+    /// buttons was looking at the one that asked nothing.
+    ///
+    /// ★ The `next_edge` this type used to own went with it — the rule is a
+    /// property of a *policy*, and the copy living beside one screen could not
+    /// be reached by the crate's own roster. The lifted one also answers `None`
+    /// where this one answered *the edge it is already on*, for a policy
+    /// admitting exactly one edge.
+    fn controls(self, state: &LabState) -> impl Iterator<Item = PanelControl> {
+        self.spec().policy.controls(self.at(state))
     }
 }
 
@@ -1009,20 +1016,29 @@ fn side_panel_access(state: &LabState, which: SidePanel) -> Vec<AccessNode> {
                 .with_name(format!("{} is folded, open it again", which.spec().title)),
         ];
     }
+    // ★★★★★ R1950 — the SAME roster the paint walks, so a control a reader is
+    // told about is a control that is drawn. The names stay derived from the
+    // control's own edge: "move the palette to the right edge" is the fact a
+    // reader needs before pressing, and now the mark drawn in the button points
+    // at that same edge rather than at a direction somebody chose once.
     let mut nodes = Vec::new();
-    if let Some(edge) = which.next_edge(state) {
+    for control in which.controls(state) {
+        let (suffix, name) = match control.act {
+            PanelAffordance::Flip => (
+                control.act.wire(),
+                format!(
+                    "move the {} to the {} edge",
+                    which.word(),
+                    edge_word(control.toward)
+                ),
+            ),
+            PanelAffordance::Fold => (
+                control.act.wire(),
+                format!("fold the {} to its strip", which.word()),
+            ),
+        };
         nodes.push(
-            AccessNode::new(format!("{}.flip", which.tag()), AriaRole::Button).with_name(format!(
-                "move the {} to the {} edge",
-                which.word(),
-                edge_word(edge)
-            )),
-        );
-    }
-    if which.spec().policy.foldable {
-        nodes.push(
-            AccessNode::new(format!("{}.fold", which.tag()), AriaRole::Button)
-                .with_name(format!("fold the {} to its strip", which.word())),
+            AccessNode::new(format!("{}.{suffix}", which.tag()), AriaRole::Button).with_name(name),
         );
     }
     // ★★★★★ R1889 — the grip, published as a VALUE IN A RANGE rather than as a
@@ -4289,27 +4305,43 @@ enum Hit {
 /// What pressing a panel's own chrome asks of its placement.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum PanelAct {
-    /// Move it to the next edge its policy admits.
-    Flip,
-    /// Fold it to its strip.
-    Fold,
+    /// ★★★★★ R1950 — one of the controls the panel's header **offers**, with
+    /// the edge it acts toward.
+    ///
+    /// The control rather than its act, and that is what deletes a case: this
+    /// value can only be built from
+    /// [`EdgePolicy::controls`](pinion_core::edge_panel::EdgePolicy::controls),
+    /// so a flip that has nowhere to go is not a press this arm can carry. The
+    /// arm it replaced was spelled `Flip` and had to answer *no ask* for that
+    /// state, with a refusal sentence beside it — a message for a state the
+    /// press can no longer be in.
+    Offered(PanelControl),
     /// Bring a folded one back.
     Unfold,
 }
 
 impl PanelAct {
-    /// The ask this act makes of [`place_panel`], given where the panel is.
+    /// The ask this act makes of [`place_panel`].
     ///
     /// ★ Not a second copy of the policy: this turns a press into a QUESTION
-    /// and `place_panel` answers it. `Flip` has no ask when the panel sits on
-    /// an edge its own declaration no longer admits — which is a state a
-    /// specification edit can produce — and saying so here is better than
-    /// inventing an edge.
-    fn ask(self, state: &LabState, which: SidePanel) -> Option<PlaceAsk> {
+    /// and `place_panel` answers it. Total, since R1950 — the edge a flip asks
+    /// for is the one the offered control already names, so there is nothing
+    /// left to look up and nothing to fail at.
+    fn ask(self) -> PlaceAsk {
         match self {
-            Self::Flip => which.next_edge(state).map(PlaceAsk::Edge),
-            Self::Fold => Some(PlaceAsk::Fold(true)),
-            Self::Unfold => Some(PlaceAsk::Fold(false)),
+            Self::Offered(control) => match control.act {
+                PanelAffordance::Flip => PlaceAsk::Edge(control.toward),
+                PanelAffordance::Fold => PlaceAsk::Fold(true),
+            },
+            Self::Unfold => PlaceAsk::Fold(false),
+        }
+    }
+
+    /// The word the wire answers a press on this control with.
+    fn wire(self) -> &'static str {
+        match self {
+            Self::Offered(control) => control.act.wire(),
+            Self::Unfold => "unfold",
         }
     }
 }
@@ -4332,11 +4364,19 @@ fn panel_chrome_hit(
         return Some(Hit::Panel(which, PanelAct::Unfold));
     }
     let (lx, ly) = (px.saturating_sub(rect.x), py.saturating_sub(rect.y));
-    if contains(side_panel_control(rect, 0), lx, ly) {
-        return Some(Hit::Panel(which, PanelAct::Flip));
-    }
-    if contains(side_panel_control(rect, 1), lx, ly) {
-        return Some(Hit::Panel(which, PanelAct::Fold));
+    // ★★★★★ R1950 — the SAME roster `side_panel` paints, walked in the same
+    // order, so a slot is pressable exactly when something was drawn in it.
+    // The two were written out separately before, with slot 0 spelled `Flip`
+    // and slot 1 `Fold` — which is a press on a control a policy may never have
+    // offered, and on a slot that would then be empty.
+    for (nth, control) in which.controls(state).enumerate() {
+        let slot = side_panel_control(
+            rect,
+            u32::try_from(nth).expect("a header offers two controls, not four billion"),
+        );
+        if contains(slot, lx, ly) {
+            return Some(Hit::Panel(which, PanelAct::Offered(control)));
+        }
     }
     // ★★★★★ R1889 — the grip, asked AFTER the two header controls and before
     // the body. After, because the grip runs the panel's full height and would
@@ -4779,15 +4819,9 @@ impl Hit {
             Self::ClearGraph => "clear".into(),
             // ★ R1887 — the word names the panel AND the act, because "you
             // pressed a panel control" does not say which of the two.
-            Self::Panel(which, act) => format!(
-                "panel:{}:{}",
-                which.word(),
-                match act {
-                    PanelAct::Flip => "flip",
-                    PanelAct::Fold => "fold",
-                    PanelAct::Unfold => "unfold",
-                }
-            ),
+            Self::Panel(which, act) => {
+                format!("panel:{}:{}", which.word(), act.wire())
+            }
             // ★ R1889 — its own word, so a wire reader can tell a press that
             // PLACES a panel from one that starts resizing it. Same shape as
             // the arm above and deliberately not folded into it: the two answer
@@ -6969,6 +7003,34 @@ fn box_at(tag: &str, rect: Rect, fill: Color, border: Option<Color>, radius: u32
     box_holding(tag, rect, fill, border, radius, Vec::new())
 }
 
+/// The outline [`box_holding`] draws inside a box it is given a border colour
+/// for.
+///
+/// ★ R1950 — a named constant because it now has a second reader:
+/// [`box_content`]. It was a literal `1` in the builder while nothing needed to
+/// know it; the round that put a mark INSIDE one of these boxes needed the
+/// number to inset by, and a second literal would have been the copy that goes
+/// wrong the day the frame changes — the note [`PANEL_FRAME`] already carries.
+const BOX_FRAME: u32 = 1;
+
+/// A bordered box's CONTENT rectangle in its own space: its box less the
+/// [`BOX_FRAME`] outline [`box_holding`] draws inside it.
+///
+/// ★★★★★ R1950 — the placement half of
+/// [`pinion_core::containment::content_rect`], for boxes rather than panels,
+/// and **the screen gate found the need for it on the first run**: a mark drawn
+/// at `(0, 0, w, h)` inside a bordered button overhung its own button by a
+/// pixel on all four sides, because a child's position is read from the box's
+/// BORDER box and its content is a pixel in from that. R1874's note about a
+/// panel's rows, met a third time, one level further in.
+fn box_content(rect: Rect) -> Rect {
+    pinion_core::containment::content_of(
+        Rect::new(0, 0, rect.w, rect.h),
+        Some(&Border::new(Color::rgba(0, 0, 0, 0), BOX_FRAME)),
+        &[],
+    )
+}
+
 /// The same box, **holding something** — for a box whose caption is its own
 /// child rather than a run drawn beside it.
 ///
@@ -6985,7 +7047,7 @@ fn box_holding(
 ) -> Scene {
     let mut style = BoxStyle::filled(fill).with_corner_radius(radius);
     if let Some(colour) = border {
-        style = style.with_border(Border::new(colour, 1));
+        style = style.with_border(Border::new(colour, BOX_FRAME));
     }
     Scene::Container(
         ContainerNode::new(children)
@@ -7426,8 +7488,15 @@ fn side_panel(
         );
     }
     let head = side_panel_head(rect);
-    let flip = side_panel_control(rect, 0);
-    let fold = side_panel_control(rect, 1);
+    // ★★★★★ R1950 — the controls come from the POLICY, and each carries the
+    // edge it acts toward, so the mark drawn inside it can point there.
+    //
+    // Before this round the two boxes were painted unconditionally and empty:
+    // a panel admitting one edge advertised a move to nowhere, and neither box
+    // said what it did. The roster is `side_panel_access`'s too — one question,
+    // one answer.
+    let controls: Vec<_> = which.controls(state).collect();
+    let first = side_panel_control(rect, 0);
     // ★★★★★ R1889 — the resize band, painted only when the panel declares it
     // resizes. A grip a reader can see and cannot drag is worse than none: it
     // is an affordance that lies, and the specification is what decides.
@@ -7447,42 +7516,49 @@ fn side_panel(
     let title_band = line_rect_in(
         head,
         head.x + PAD,
-        flip.x.saturating_sub(head.x + PAD),
+        first.x.saturating_sub(head.x + PAD),
         FONT_SMALL,
     );
+    let buttons = controls.iter().enumerate().map(|(nth, control)| {
+        let slot = side_panel_control(
+            rect,
+            u32::try_from(nth).expect("a header offers two controls, not four billion"),
+        );
+        box_holding(
+            &format!("{}.{}", which.tag(), control.act.wire()),
+            slot,
+            ink.raised,
+            Some(ink.outline),
+            4,
+            // ★★★★★ R1950 — the mark, in the button's CONTENT box. This is the
+            // whole of the repair a person asked for: the box was drawn and
+            // nothing was drawn in it, so the control could be pointed at and
+            // not read. `box_content` rather than the slot itself — see that
+            // function for the pixel this cost on its first run.
+            control_mark::scenes(
+                ControlMark::of_panel(*control),
+                box_content(slot),
+                ink.text_2,
+            ),
+        )
+    });
     panel(
         which.tag(),
         rect,
         ink.surface,
         Some(ink.outline),
-        vec![
-            quiet(
-                tagged_label(
-                    &format!("{}.head", which.tag()),
-                    which.spec().title,
-                    title_band,
-                    FONT_SMALL,
-                    ink.text_2,
-                ),
-                Silence::name_of(which.tag()),
+        std::iter::once(quiet(
+            tagged_label(
+                &format!("{}.head", which.tag()),
+                which.spec().title,
+                title_band,
+                FONT_SMALL,
+                ink.text_2,
             ),
-            box_at(
-                &format!("{}.flip", which.tag()),
-                flip,
-                ink.raised,
-                Some(ink.outline),
-                4,
-            ),
-            box_at(
-                &format!("{}.fold", which.tag()),
-                fold,
-                ink.raised,
-                Some(ink.outline),
-                4,
-            ),
-            body(),
-        ]
-        .into_iter()
+            Silence::name_of(which.tag()),
+        ))
+        .chain(buttons)
+        .chain(std::iter::once(body()))
         .chain(chrome)
         .collect(),
     )
@@ -15285,17 +15361,11 @@ fn release(state: &Rc<LabState>) {
         // the same function the wire verb calls. A refusal is SAID rather than
         // dropped: measured at R1801, the floor accepts a move its own
         // declaration forbids and reports nothing at all.
-        Hit::Panel(which, act) => match act.ask(state, which) {
-            None => state.say(Utterance::refused(&format!(
-                "the {} sits on an edge its own declaration no longer admits",
-                which.word()
-            ))),
-            Some(ask) => {
-                if let Err(refused) = place_panel(state, which, ask) {
-                    state.say(Utterance::refused(&panel_refusal_sentence(which, &refused)));
-                }
+        Hit::Panel(which, act) => {
+            if let Err(refused) = place_panel(state, which, act.ask()) {
+                state.say(Utterance::refused(&panel_refusal_sentence(which, &refused)));
             }
-        },
+        }
         Hit::Zoom(up) => {
             zoom_to(state, zoom_stepped(state, up));
         }
