@@ -1310,16 +1310,19 @@ const fn ink_of(tint: Tint) -> Color {
     Color::rgba(tint.r, tint.g, tint.b, 255)
 }
 
-/// The colour a role is drawn in on the canvas card and the palette swatch.
+/// The colour a role is drawn in: the card's body, its badge, and the palette
+/// swatch.
+///
+/// ★★★★★ R1966 — **derived from the taxonomy now, not written here.**
+///
+/// The table this replaced was the kind palette living in the view while the
+/// taxonomy next door held the badge and the name — the canon keeps all three
+/// in one declaration, and the half that had wandered was also the half that
+/// had drifted: `Router` read `#EC5AA0`, this screen's accent pink, where the
+/// canon draws `#9A004F`. Exactly R1926's move for [`Transport::tint`], made
+/// for the kind axis.
 const fn role_ink(role: Role) -> Color {
-    match role {
-        Role::Router => rgb(0xEC_5AA0),
-        Role::Peer => rgb(0x2D_6CDF),
-        Role::Client => rgb(0x69_7180),
-        Role::Store => rgb(0x1F_8A4C),
-        Role::Publisher | Role::Subscriber => rgb(0x8A_5CF6),
-        Role::Querier | Role::Responder => rgb(0xC7_7800),
-    }
+    ink_of(role.tint())
 }
 
 // ── State ───────────────────────────────────────────────────────────────────

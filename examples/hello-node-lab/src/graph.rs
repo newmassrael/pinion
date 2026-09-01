@@ -274,6 +274,53 @@ impl Role {
         }
     }
 
+    /// ★★★★★ R1966 — **the colour a card of this role is drawn in.**
+    ///
+    /// # The axis, measured against the canon
+    ///
+    /// The behaviour canon keeps TWO colour systems and this is the first of
+    /// them. A node kind declares `{colour, code, label}` in one place and the
+    /// card BODY wears that colour; a protocol declares its own colour and the
+    /// PINS and BADGES wear that. Extracted this round: 21 kinds against 9
+    /// protocols, and the canon's own comment beside the second says why it is
+    /// the pin's — *a dial only stands when it and the peer's listen speak the
+    /// same protocol, so this is the graph's real pin type*.
+    ///
+    /// This screen painted the card body by TRANSPORT, which is the protocol
+    /// axis on the kind's surface. ⚠ The two systems share colour VALUES —
+    /// `peer` and `tcp` are both `#2D6CDF` — so a check that counts how many
+    /// colours a canvas shows passes while the axis is wrong, which is how it
+    /// went unseen until a person compared the two windows.
+    ///
+    /// # Why it lives HERE
+    ///
+    /// Beside [`Self::badge`] and [`Self::name`], which are this taxonomy's
+    /// other two facts about what a kind looks like — the canon holds all three
+    /// in ONE declaration, and ours were spelled in two files. The colour was
+    /// the one that had wandered, and it was also the one that had drifted:
+    /// measured this round, six of the eight matched the canon exactly and
+    /// `Router` did not — it wore `#EC5AA0`, this screen's accent pink, where
+    /// the canon draws `#9A004F`.
+    ///
+    /// R1926 moved [`Transport::tint`] here for the same reason and in the same
+    /// words. `role_ink` in the view now derives its `Color` from this, so the
+    /// palette swatch, the badge and the card cannot answer differently.
+    #[must_use]
+    pub const fn tint(self) -> Tint {
+        match self {
+            Self::Router => Tint::rgb(0x9A, 0x00, 0x4F),
+            Self::Peer => Tint::rgb(0x2D, 0x6C, 0xDF),
+            Self::Client => Tint::rgb(0x69, 0x71, 0x80),
+            Self::Store => Tint::rgb(0x1F, 0x8A, 0x4C),
+            // The canon gives `pub` and `sub` one colour, and `qry` and `qbl`
+            // another. Kept as it draws them rather than split for tidiness: a
+            // reader tells a publisher from a subscriber by its badge, and the
+            // colour groups them by what they carry.
+            Self::Publisher | Self::Subscriber => Tint::rgb(0x8A, 0x5C, 0xF6),
+            Self::Querier | Self::Responder => Tint::rgb(0xC7, 0x78, 0x00),
+        }
+    }
+
     /// The three-letter badge the canvas card carries.
     #[must_use]
     pub const fn badge(self) -> &'static str {
@@ -641,18 +688,14 @@ impl LabNode {
         Self::socket_of(self.listens_over)
     }
 
-    /// ★★★★★ R1962 — the socket type the **card** is drawn in: the address it
-    /// is REACHED at, falling back to the one it reaches out on.
-    ///
-    /// The order is the one R1961's single derivation already had, kept
-    /// deliberately: a card's colour is what it IS on the network, and a node
-    /// with an address of its own is that address. A node with none is only
-    /// knowable by what it dials, which is what the second arm reads — and a
-    /// node with neither is drawn in the palette's one neutral.
-    #[must_use]
-    pub fn card_type(&self) -> Endpoint {
-        Self::socket_of(self.listens_over.or(self.dials_over))
-    }
+    // ⚠ R1966 — `card_type` stood here and is GONE, removed rather than
+    // silenced. R1962 built it as *the socket type the card is drawn in*, and
+    // R1966 moved the card body onto the kind axis the canon draws it on, so
+    // there is no socket type the card is drawn in any more. The compiler said
+    // so first — `method card_type is never used` under `-D dead-code` — and
+    // an `allow` there would have kept a function whose whole doc described a
+    // rule the screen had stopped following. The two facts it folded are still
+    // here, apart, under the names of the pins that read them.
 }
 
 impl NodeKind for LabNode {
@@ -955,25 +998,44 @@ impl NodeKind for LabNode {
         })
     }
 
-    /// ★★★★★ R1940 — **a card is drawn in the colour of the transport it
-    /// speaks.**
+    /// ★★★★★ R1966 — **a card is drawn in the colour of its KIND**, which is
+    /// the axis the canon draws it on.
     ///
-    /// `LikeType` and not a colour written out here, which is the whole reason
-    /// that arm exists: the transport palette is already declared once, for
-    /// PINS ([`type_colour`](NodeKind::type_colour)), and a card naming its own
-    /// copy would be a second vocabulary free to disagree with the legend the
-    /// same screen draws. Recolour a transport and the pins AND the cards that
-    /// speak it move together, because there is one declaration.
+    /// # What this corrects
     ///
-    /// ⚠ Answered from `self`, so this is per CARD and not per kind: R1937's
-    /// verb gives one card another transport, and its colour follows the same
-    /// turn. That is the capability the reference spells as a per-node class
-    /// override, and it is why an authored colour has to outrank this rather
-    /// than the other way round — a person who chose a colour did not choose it
-    /// to be recomputed under them ([`Document::faces`](
-    /// pinion_node_graph::Document::faces)).
+    /// R1940 made it the colour of the transport the node speaks, and R1960
+    /// justified leaving it there with a measurement that was wrong in one
+    /// clause: *the canon's lab node has no transport axis and no colour*. The
+    /// first half is right — the canon's node carries no transport. The second
+    /// is false. The canon holds TWO colour systems: 21 node kinds, each
+    /// declaring `{colour, code, label}` together, worn by the card BODY; and 9
+    /// protocols worn by the PINS and the badges beside them.
+    ///
+    /// ⚠⚠ The two systems share colour VALUES — `peer` and `tcp` are both
+    /// `#2D6CDF`, `apub` and `quic` both `#7C4DEF` — so a screen painting the
+    /// body by protocol looks right in every check that counts how many colours
+    /// a canvas shows. It is wrong where the values happen to differ, and the
+    /// clearest case is the router: the canon draws it `#9A004F` and this
+    /// screen gave it whatever protocol that node spoke. A person comparing the
+    /// two windows is what found it.
+    ///
+    /// # Why `In` and not `LikeType`
+    ///
+    /// R1940 chose `LikeType` so that recolouring a transport moved the pins
+    /// and the cards together, and that argument was sound for the axis it
+    /// assumed. On the kind axis the card's colour is not a socket type at all,
+    /// so there is no type to be *like* — [`Role::tint`] is the one declaration
+    /// now, and the palette swatch, the badge and this all read it.
+    ///
+    /// ⚠ Still answered from `self` and still outranked by an authored colour
+    /// ([`Document::faces`](pinion_node_graph::Document::faces)): a person who
+    /// chose a colour did not choose it to be recomputed under them.
+    ///
+    /// ⚠ The transport palette is NOT deleted — it moved, it did not go. It is
+    /// what [`type_colour`](NodeKind::type_colour) gives every pin, which is
+    /// where the canon puts it and where the legend this screen draws reads it.
     fn drawn_as(&self) -> Drawn<Self::Type> {
-        Drawn::LikeType(self.card_type())
+        Drawn::In(self.role.tint())
     }
 
     /// ★★★★★ R1916 — what a value of this socket type IS.

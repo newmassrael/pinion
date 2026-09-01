@@ -91,16 +91,23 @@ def card(rows: list[dict], name: str) -> dict:
     return next(row for row in rows if row["node"] == name)
 
 
-def pin_colour(app: RpcSubprocess, surface: str, name: str) -> str | None:
-    """The colour this card's own dial pin is drawn in (R1926's register).
+def pin_colour(
+    app: RpcSubprocess, surface: str, name: str, which: str = "dial"
+) -> str | None:
+    """The colour one of this card's pins is drawn in (R1926's register).
 
-    ★ Read from the OTHER register on purpose: the point of R1940's third arm
-    is that a card and its pins reach ONE declaration, and two registers
-    agreeing is the only way to show it from outside.
+    ★ Read from the OTHER register on purpose: card and pin reach two different
+    declarations, and two registers is the only way to show that from outside.
+
+    ⚠ R1966 — `which` exists because the two pins answer for two different
+    facts since R1962 split them: the ACCEPT pin wears the transport this node
+    listens on, and the DIAL pin the one it dials. A section changing what a
+    card listens on and then reading its dial pin is asking the wrong pin —
+    which is what the first draft of section C did.
     """
     published = js(app.query(f"{surface}/inks"))
     for row in published["pins"]:
-        if row["pin"] == f"{name}.dial":
+        if row["pin"] == f"{name}.{which}":
             return row["ink"]
     return None
 
@@ -124,10 +131,15 @@ def body() -> None:
             "before it paints",
             all(row.get("drawn", {}).get("says") for row in rows),
         )
+        # R1966 — `in`, not `like_type`. The card body moved onto the axis the
+        # canon draws it on: a node KIND declares its colour and the body wears
+        # that; a PROTOCOL declares its own and the pins wear that. On the kind
+        # axis a card's colour is not a socket type at all, so there is no type
+        # for it to be *like*, and `Role::tint` is the one declaration.
         ok(
-            f"A: ★ and every one of them says it is drawn like a TYPE — "
-            f"{sorted({row['drawn']['says'] for row in rows})}",
-            {row["drawn"]["says"] for row in rows} == {"like_type"},
+            f"A: ★ and every one of them says it is drawn IN a colour its kind "
+            f"declares — {sorted({row['drawn']['says'] for row in rows})}",
+            {row["drawn"]["says"] for row in rows} == {"in"},
         )
 
         banner("B — ★★★★★ the faces come from that declaration")
@@ -142,32 +154,66 @@ def body() -> None:
             f"tint={before['tint']!r} faces={before['faces'] is not None}",
             before["tint"] is None and before["faces"] is not None,
         )
+        # ★★★★★ R1966 — THE CLAIM THIS SECTION USED TO MAKE WAS THE DEFECT.
+        #
+        # It asserted that a card wears the colour of its own dial pin, and read
+        # that as *what ONE declaration means*. Measured against the canon, they
+        # are TWO declarations on two axes: the card body is the node's KIND and
+        # the pin is the protocol. The router is where they part loudest — the
+        # canon draws it `#9A004F` and this screen was giving it whatever
+        # protocol it spoke — so the honest assertion is that the two are APART,
+        # and that each is the colour its own declaration names.
         ok(
-            f"B: ★★★★★ and the colour it wears is the colour its own dial pin "
-            f"wears, which is what ONE declaration means — "
-            f"{before['faces']['title']!r}",
-            pin_colour(app, surface, subject) == before["faces"]["title"],
+            f"B: ★★★★★ the card's body and its dial pin are drawn from DIFFERENT "
+            f"declarations — body {before['faces']['title']!r} against pin "
+            f"{pin_colour(app, surface, subject)!r}",
+            pin_colour(app, surface, subject) != before["faces"]["title"],
+        )
+        ok(
+            f"B: ★ and the body is the colour the KIND declares — "
+            f"{before['drawn']!r}",
+            before["drawn"]["colour"].lower() == "#9a004f",
         )
 
-        banner("C — ★★★★★ the answer is per CARD")
+        banner("C — ★★★★★ changing what a card SPEAKS does not change what it IS")
+        # ★★★★★ R1966 — this section asserted the opposite and was green for it.
+        # It made the card's colour FOLLOW `set_pin_transport`, which is the
+        # axis error stated as a requirement: a router that changes the
+        # protocol it speaks is still a router, and the canon keeps drawing its
+        # body `#9A004F`. What must move is the PIN.
         others = [row["node"] for row in rows if row["node"] != subject]
         neighbour = others[0]
         neighbour_before = card(rows, neighbour)["faces"]["title"]
-        app.invoke(f"{surface}/set_pin_transport", f"{subject},dial,udp")
+        pin_before = pin_colour(app, surface, subject, "accept")
+        app.invoke(f"{surface}/set_pin_transport", f"{subject},accept,udp")
         app.tick_ms(16)
         after = card(tints(app, surface), subject)
         ok(
-            f"C: ★★★★★ the card's colour FOLLOWED the transport it now speaks — "
-            f"{before['faces']['title']!r} -> {after['faces']['title']!r}",
-            after["faces"]["title"] != before["faces"]["title"],
+            f"C: ★★★★★ the card's body did NOT move, because what it IS did not "
+            f"change — {before['faces']['title']!r} -> {after['faces']['title']!r}",
+            after["faces"]["title"] == before["faces"]["title"],
+        )
+        # ⚠⚠ R1966 — THE OTHER HALF IS NOT ASSERTED, AND THAT IS A FINDING.
+        # Measured here: the verb answers `R-01.accept now speaks udp, and 0
+        # wire(s) could not cross with it` and NOT ONE PIN COLOUR MOVES. An
+        # accept pin's colour comes from the run ITEM — the address the wire
+        # that landed on it dialled — and re-scheming the card's own
+        # `listen.endpoints` never reaches those items (R1928 records that
+        # `sync_node` deliberately does not sync a form back into an item). So
+        # the action reports success and changes nothing a person can see.
+        # Registered as `debt-an-accept-pin-does-not-follow-the-address-its-
+        # card-now-listens-on` rather than asserted here, because it is a
+        # different defect from the axis this round moved.
+        ok(
+            f"C: ⚠ and its accept pin did NOT move, which is a defect this "
+            f"round REGISTERED rather than fixed — {pin_before!r} -> "
+            f"{pin_colour(app, surface, subject, 'accept')!r}",
+            pin_colour(app, surface, subject, "accept") == pin_before,
         )
         ok(
-            f"C: ★ and its own sentence names the type it now claims — "
+            f"C: ★ and the body's own sentence still names its kind's colour — "
             f"{after['drawn']!r}",
-            # R1961 — the register publishes the taxonomy's ONE spelling
-            # (`wire_word`) rather than its `Debug` text, so this reads
-            # `locator/udp` where it used to read `Locator(Udp)`.
-            after["drawn"]["type"] == "locator/udp",
+            after["drawn"]["colour"].lower() == "#9a004f",
         )
         ok(
             f"C: ★★★★★ while the neighbour did NOT move, so this is per CARD "

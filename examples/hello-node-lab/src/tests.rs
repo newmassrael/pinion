@@ -4875,7 +4875,9 @@ fn r1962_a_card_listens_on_one_transport_and_dials_another() {
         assert_eq!(
             card,
             Some(Transport::Quic),
-            "★ P-01 is drawn as the address it LISTENS on",
+            // R1966 — *speaks*, not *is drawn as*: the card body moved to the
+            // kind axis, so this is a fact about the node and its pins.
+            "★ P-01 speaks the address it LISTENS on",
         );
         assert_eq!(
             dials,
@@ -4934,8 +4936,15 @@ fn painted_fill(scene: &pinion_core::Scene, tag: &str) -> Option<pinion_core::Co
     }
 }
 
-/// The transport the document says this card speaks — the CARD's, which is the
-/// one its colour is drawn from: its own listen address, else the one it dials.
+/// The transport the document says this node speaks: its own listen address,
+/// else the one it dials.
+///
+/// ⚠ R1966 — this doc said *the CARD's, which is the one its colour is drawn
+/// from*, and the second clause is no longer true: the card body is drawn on
+/// the KIND axis now, as the canon draws it, and what a node speaks reaches the
+/// screen through its PINS. The value is unchanged and still worth asserting —
+/// only the claim about where it is seen was wrong, and a comment three rounds
+/// away from the line it describes is the shape that goes stale.
 fn spoken_by(state: &LabState, node: pinion_node_graph::NodeId) -> Option<Transport> {
     two_transports_of(state, node).0
 }
@@ -5037,8 +5046,20 @@ fn r1961_the_opening_canvas_speaks_the_addresses_it_carries() {
              hid for five rounds",
         );
 
-        // ── the population, on the frame ────────────────────────────────────
-        let scene = crate::painted::painted_scene(&state);
+        r1966_the_canvas_draws_kinds_and_the_pins_draw_wires(&state);
+    });
+}
+
+/// ★★★★★ R1966 — **the frame half of the check above**: a card's body says what
+/// it IS and its pin says what it SPEAKS.
+///
+/// Its own function for R1909.2's reason — the walk's job is the population and
+/// the claims are a separate question about one frame — and because clippy
+/// refused the two together at 106 lines, which is the same judgement said by a
+/// linter.
+fn r1966_the_canvas_draws_kinds_and_the_pins_draw_wires(state: &std::rc::Rc<LabState>) {
+    {
+        let scene = crate::painted::painted_scene(state);
         let mut fills: BTreeSet<(u8, u8, u8)> = BTreeSet::new();
         for node in state.cards() {
             let tag = format!("lab.node.{}", state.name_of(node));
@@ -5046,35 +5067,71 @@ fn r1961_the_opening_canvas_speaks_the_addresses_it_carries() {
                 fills.insert((fill.r, fill.g, fill.b));
             }
         }
-        // ★★★★★ R1962 — the population is TRANSPORT colours, not colours. The
-        // R1961 form of this asked only that more than one fill appear, and the
-        // second fill was the palette's neutral — the card that speaks nothing.
-        // That distinguishes "derived" from "defaulted", which was R1961's
-        // question, but it does NOT show two transports, which is what the
-        // person who reported this screen was looking at. Derived from
-        // `Transport::ALL` so a transport added later joins without an edit.
-        let spoken: BTreeSet<(u8, u8, u8)> = Transport::ALL
-            .into_iter()
-            .map(|t| {
-                let tint = t.tint();
-                (tint.r, tint.g, tint.b)
-            })
-            .filter(|ink| fills.contains(ink))
-            .collect();
         assert!(
-            spoken.len() > 1,
-            "★★★★★ the opening canvas paints {} transport colour(s) — a canvas \
-             of one cannot show that a card wears what it speaks, which is the \
-             capability R1940 built and the defect a person reported. Fills \
-             {fills:?}, of which transports {spoken:?}",
-            spoken.len(),
+            fills.len() > 1,
+            "★ the canvas paints one colour over all eight cards: {fills:?}",
         );
-        assert!(
-            fills.len() > spoken.len(),
-            "★ and the card that speaks NOTHING is still drawn apart from all of \
-             them — {fills:?} against {spoken:?}",
+        // ★★★★★ R1966 — the population is the KIND palette, and it is asserted
+        // by NAMING TWO KINDS rather than by counting colours.
+        //
+        // ⚠⚠ R1962's form of this counted how many of the painted fills were
+        // `Transport::ALL` tints and demanded more than one. Measured at R1966
+        // AFTER the card body moved onto the kind axis, that check still
+        // reported THREE transport colours — over a canvas that paints none.
+        // `peer` and `tcp` are both `#2D6CDF`, `sto` and `tls` both `#1F8A4C`,
+        // `qry` and `udp` both `#C77800`: the canon's two colour systems share
+        // VALUES, so a check that counts colours cannot tell the axes apart and
+        // was green through the whole time the axis was wrong.
+        //
+        // Naming two kinds is what a count cannot do. `Router` and `Peer` are
+        // the pair the canon separates most loudly — `#9A004F` against
+        // `#2D6CDF` — and they are the pair a person looking at the two windows
+        // would compare first.
+        let fill_of = |name: &str| -> Option<(u8, u8, u8)> {
+            let node = state.node_of(name)?;
+            painted_fill(&scene, &format!("lab.node.{}", state.name_of(node)))
+                .map(|c| (c.r, c.g, c.b))
+        };
+        let router = fill_of("R-01").expect("the router is painted");
+        let peer = fill_of("P-01").expect("a peer is painted");
+        assert_ne!(
+            router, peer,
+            "★★★★★ the router and a peer are painted the same colour, so the \
+             canvas is not drawing cards by KIND — which is the axis the canon \
+             draws them on, and the defect a person reported by comparing the \
+             two windows",
         );
-    });
+        for (name, role) in [("R-01", Role::Router), ("P-01", Role::Peer)] {
+            let want = role.tint();
+            assert_eq!(
+                fill_of(name),
+                Some((want.r, want.g, want.b)),
+                "★ {name} is not painted the colour its kind declares — the one \
+                 declaration is `Role::tint`, and a card reading anything else \
+                 is a second vocabulary",
+            );
+        }
+        // ★ And the pins still wear the WIRE, because the transport palette was
+        // moved rather than deleted: that is where the canon keeps it, and the
+        // legend this screen draws reads it there.
+        let ring = match painted_border(&scene, "lab.pin.P-01.accept") {
+            PaintedEdge::Ink(colour) => (colour.r, colour.g, colour.b),
+            other => panic!("the peer's accept pin carries no colour: {other:?}"),
+        };
+        let quic = Transport::Quic.tint();
+        assert_eq!(
+            ring,
+            (quic.r, quic.g, quic.b),
+            "★★★★★ the accept pin no longer wears the transport it listens on, \
+             so moving the card body to the kind axis took the wire's colour \
+             with it instead of leaving it where the canon puts it",
+        );
+        assert_ne!(
+            ring, peer,
+            "★ and the two systems are visibly apart on one card: its body says \
+             what it IS and its pin says what it SPEAKS",
+        );
+    }
 }
 
 /// ★★★★★ R1961 — **a card learns what it speaks from the wire it draws, and
