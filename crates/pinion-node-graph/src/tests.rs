@@ -8,6 +8,7 @@ use std::collections::BTreeSet;
 use pinion_graph::Sugiyama;
 use serde::{Deserialize, Serialize};
 
+use crate::PairError;
 use crate::{
     Admission, Admits, AdoptError, Align, Appearance, Archive, Axis, BeaconError, BreakError,
     Breakpoints, Bringup, Camera, Carried, Carrying, Command, Composition, ConnectError, Container,
@@ -16828,6 +16829,45 @@ fn r1935_a_far_end_is_on_the_chain_without_having_two_ends() {
 ///
 /// ⚠ The empty answer is READABLE either way: `wants()` says so in a sentence,
 /// which is what a screen shows beside a free field.
+/// ★★★★★ R1943 — **the DEFAULT answer to "what closes the zone this kind
+/// opens" is that it opens none**, asserted on a taxonomy that takes it.
+///
+/// Written BEFORE a counterfactual asked, which is now the standing practice
+/// (R1938, R1939, R1942 did; R1941 did not and was caught for it).
+///
+/// ★ And the default is a REFUSAL where R1942's is a permission, which is the
+/// measurement rather than an inconsistency: a node opens a bracketed region
+/// exactly when its taxonomy says so, and a supplied *yes* would make every
+/// existing kind an opener of a zone nothing can close.
+#[test]
+fn r1943_the_default_kind_opens_no_zone() {
+    let mut document: Document<LOp> = Document::new("lattice");
+    let one = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Sum), 0, 0)
+        .expect("root tree");
+    let two = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Sum), 40, 0)
+        .expect("root tree");
+    assert_eq!(LOp::Sum.closed_by(), None);
+    assert_eq!(
+        document.in_zone(ROOT, one),
+        None,
+        "★ a kind that opens nothing is not IN a zone and is not waiting to be"
+    );
+    assert_eq!(
+        document.pair(ROOT, one, two),
+        Err(PairError::OpensNothing(one)),
+        "★★★★★ and pairing is refused by NAME, not by a bare false"
+    );
+    // ⚠ A node cannot close the zone it opens, checked before anything else so
+    // the refusal names that rather than a consequence of it.
+    assert_eq!(
+        document.pair(ROOT, one, one),
+        Err(PairError::ItsOwnCloser(one))
+    );
+    assert!(!document.unpair(ROOT, one), "and there was nothing to undo");
+}
+
 /// ★★★★★ R1942 — **the DEFAULT answer to "can this type's value be looked at"
 /// is yes**, asserted on a taxonomy that takes it.
 ///

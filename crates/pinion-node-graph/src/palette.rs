@@ -221,6 +221,107 @@ impl<K: NodeKind> Document<K> {
     /// to read.
     ///
     /// [`Appearance::tint`]: crate::Appearance::tint
+    /// ★★★★★ R1943 — **make two nodes a zone**: one opens it, the other closes
+    /// it, and the region between them is derived rather than stored.
+    ///
+    /// # Errors
+    ///
+    /// [`PairError`](crate::PairError), one arm per distinct refusal — which is
+    /// the measured difference from the reference, whose equivalent answers
+    /// `bool` and writes its reason into a report list.
+    pub fn pair(
+        &mut self,
+        tree: TreeId,
+        opener: NodeId,
+        closer: NodeId,
+    ) -> Result<(), crate::PairError> {
+        use crate::PairError;
+        if opener == closer {
+            return Err(PairError::ItsOwnCloser(opener));
+        }
+        let held = self.tree(tree).ok_or(PairError::NoSuchNode(opener))?;
+        let want = match &held.node(opener).ok_or(PairError::NoSuchNode(opener))?.body {
+            crate::NodeBody::Kind(kind) => {
+                kind.closed_by().ok_or(PairError::OpensNothing(opener))?
+            }
+            _ => return Err(PairError::NotAKind(opener)),
+        };
+        match &held.node(closer).ok_or(PairError::NoSuchNode(closer))?.body {
+            crate::NodeBody::Kind(kind) if *kind == want => {}
+            crate::NodeBody::Kind(_) => return Err(PairError::WrongCloser { opener, closer }),
+            _ => return Err(PairError::NotAKind(closer)),
+        }
+        // ⚠ BOTH ends are checked, not only the closer. The reference checks
+        // only whether the closer is spoken for — its opener's own stored id is
+        // simply overwritten, so re-pairing an opener silently abandons the
+        // zone it was in.
+        for (already, taken) in &held.zones {
+            if *already == opener || *taken == opener {
+                return Err(PairError::AlreadyPaired {
+                    node: opener,
+                    with: if *already == opener { *taken } else { *already },
+                });
+            }
+            if *already == closer || *taken == closer {
+                return Err(PairError::AlreadyPaired {
+                    node: closer,
+                    with: if *already == closer { *taken } else { *already },
+                });
+            }
+        }
+        self.tree_mut(tree)
+            .ok_or(PairError::NoSuchNode(opener))?
+            .zones
+            .insert(opener, closer);
+        Ok(())
+    }
+
+    /// ★ R1943 — take a zone apart, answering whether there was one.
+    ///
+    /// Addressed by either end, because a person clicking a node to un-zone it
+    /// has whichever end they clicked — and making them find the opener first
+    /// would be this crate's storage decision leaking into its surface.
+    pub fn unpair(&mut self, tree: TreeId, node: NodeId) -> bool {
+        let Some(held) = self.tree(tree) else {
+            return false;
+        };
+        let opener = held
+            .zones
+            .iter()
+            .find(|(opens, closes)| **opens == node || **closes == node)
+            .map(|(opens, _)| *opens);
+        match opener {
+            Some(opens) => self.tree_mut(tree).is_some_and(|held| {
+                held.zones.remove(&opens);
+                true
+            }),
+            None => false,
+        }
+    }
+
+    /// ★★★★★ R1943 — **what this node is with respect to zones**, or `None`
+    /// when its kind has nothing to do with them.
+    ///
+    /// Answers from EITHER end, which the reference cannot without scanning:
+    /// there the pairing lives on the opener as the closer's id, so asking a
+    /// closer what it closes means walking every opening node in the tree.
+    #[must_use]
+    pub fn in_zone(&self, tree: TreeId, node: NodeId) -> Option<crate::InZone> {
+        let held = self.tree(tree)?;
+        if let Some(closer) = held.zones.get(&node) {
+            return Some(crate::InZone::Opens(*closer));
+        }
+        if let Some((opener, _)) = held.zones.iter().find(|(_, closes)| **closes == node) {
+            return Some(crate::InZone::Closes(*opener));
+        }
+        match &held.node(node)?.body {
+            crate::NodeBody::Kind(kind) if kind.closed_by().is_some() => {
+                Some(crate::InZone::OpensNothingYet)
+            }
+            _ => None,
+        }
+    }
+
     #[must_use]
     pub fn faces(&self, tree: TreeId, node: NodeId) -> Option<crate::Faces> {
         let held = self.tree(tree)?.node(node)?;

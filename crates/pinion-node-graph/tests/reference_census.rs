@@ -54,6 +54,7 @@ use pinion_node_graph::{
     Stride, SwapError, SwitchRefusal, Tint, TreeId, Variadic, Violation, WatchError, Watches,
     palette_of, type_palette,
 };
+use pinion_node_graph::{InZone, PairError};
 
 // ---------------------------------------------------------------- taxonomy
 
@@ -356,6 +357,21 @@ impl NodeKind for Op {
         match ty {
             Ty::Number => Some(Self::Num(0)),
             Ty::Text => Some(Self::Word(String::new())),
+            _ => None,
+        }
+    }
+
+    /// R1943 — which kinds OPEN a bracketed region, and what closes each.
+    ///
+    /// `Sequence` opens and `Sink` closes it — a pair chosen because the two
+    /// are ALREADY in this fixture for other proofs, so the zone axis is
+    /// carried by nodes whose other behaviour is independently pinned. Nothing
+    /// else opens anything, so a proof can tell a declaration from a blanket
+    /// yes, and `Sink` closing does not make `Sink` an opener: the closer is
+    /// found through the opener's declaration, never by asking the closer.
+    fn closed_by(&self) -> Option<Self> {
+        match self {
+            Self::Sequence => Some(Self::Sink),
             _ => None,
         }
     }
@@ -970,6 +986,8 @@ fn dcc_proofs() -> Vec<Proof> {
             "schema::CanShowDataTooltipForPin",
             engine_schema_can_show_data_tooltip_for_pin,
         ),
+        // R1943 — a zone is a PAIR, and the region between is derived.
+        proof("dcc", "add_zone", dcc_add_zone),
         proof("dcc", "swap_empty_group", dcc_swap_empty_group),
         proof("dcc", "options_toggle", dcc_options_toggle),
         proof("dcc", "parent_set", dcc_parent_set),
@@ -2140,6 +2158,124 @@ fn engine_node_get_pin_meta_data() {
         "★★★★★ the standing check reports it: {:?}",
         document.validate(),
     );
+}
+
+/// ★★★★★ R1943 — **a zone is a PAIR of nodes**, and the region between them is
+/// derived rather than stored.
+///
+/// # The measurement
+///
+/// The reference's add-a-zone operator does four things: it creates an INPUT
+/// node and an OUTPUT node, pairs them, places them either side of the cursor,
+/// and wires the one socket they share. So the census row's "a bracketed region
+/// of ONE tree" describes what a person SEES; what the model holds is a pair.
+/// Its four zones — a simulation across a time span, a dynamic repetition, a
+/// per-element operation, and a closure evaluated elsewhere — are four such
+/// pairs.
+///
+/// ★★★★★ TWO MEASURED DEFECTS, and each decides a piece of what is built here:
+///
+/// * **The pairing is a ONE-WAY id**, stored on the opener as the closer's
+///   identifier with nothing on the closer. Asking a closer what it closes
+///   means walking every opening node in the tree — its own pairing routine
+///   performs exactly that walk to find out whether a closer is spoken for.
+/// * **Its refusals are REPORTED, not returned**: the routine answers `bool`
+///   and writes the reason into a report list, so *wrong kind of closer* and
+///   *that closer is already paired* reach a caller as the same `false`.
+///   R1942's class, on another axis.
+///
+/// ★ AND ONE MORE THIS ROUND FOUND: it checks only whether the CLOSER is
+/// spoken for. An opener that is already in a zone simply has its stored id
+/// overwritten, so re-pairing an opener silently abandons the zone it was in.
+/// Both ends are checked here.
+#[test]
+fn dcc_add_zone() {
+    let mut document: Document<Op> = Document::new("root");
+    let opens = document
+        .add_node(ROOT, NodeBody::Kind(Op::Sequence), 0, 0)
+        .expect("root tree");
+    let closes = document
+        .add_node(ROOT, NodeBody::Kind(Op::Sink), 80, 0)
+        .expect("root tree");
+
+    // (A) ★ An opener declares its closer as a KIND, so what may close it is a
+    // value rather than a rule a caller has to know. The reference reaches the
+    // same fact through three registry hops (node type -> zone type -> that
+    // zone's output type).
+    assert_eq!(Op::Sequence.closed_by(), Some(Op::Sink));
+    assert_eq!(Op::Double.closed_by(), None);
+
+    // (B) ★★★★★ An opener with nothing closing it is a NAMED state, which the
+    // reference reaches routinely (its operator creates both nodes before
+    // pairing them) and cannot say: there an unpaired opener is one whose
+    // stored id resolves to nothing.
+    assert_eq!(document.in_zone(ROOT, opens), Some(InZone::OpensNothingYet));
+    assert_eq!(
+        document.in_zone(ROOT, closes),
+        None,
+        "★ and a node that merely COULD close one is not in a zone — the closer \
+         is found through the opener, never by asking the closer"
+    );
+
+    // (C) The pair is made, and BOTH ends answer — the half the reference
+    // cannot without scanning every opening node in the tree.
+    document.pair(ROOT, opens, closes).expect("a zone");
+    assert_eq!(document.in_zone(ROOT, opens), Some(InZone::Opens(closes)));
+    assert_eq!(document.in_zone(ROOT, closes), Some(InZone::Closes(opens)));
+
+    // (D) ★★★★★ EVERY REFUSAL IS ITS OWN ARM, which is the measured difference:
+    // there they are one `bool` and a report list.
+    let other = document
+        .add_node(ROOT, NodeBody::Kind(Op::Sink), 160, 0)
+        .expect("root tree");
+    assert_eq!(
+        document.pair(ROOT, opens, other),
+        Err(PairError::AlreadyPaired {
+            node: opens,
+            with: closes
+        }),
+        "★ the OPENER being spoken for is caught — the reference checks only \
+         the closer and overwrites the opener's id"
+    );
+    let plain = document
+        .add_node(ROOT, NodeBody::Kind(Op::Double), 240, 0)
+        .expect("root tree");
+    assert_eq!(
+        document.pair(ROOT, plain, other),
+        Err(PairError::OpensNothing(plain))
+    );
+    let second = document
+        .add_node(ROOT, NodeBody::Kind(Op::Sequence), 320, 0)
+        .expect("root tree");
+    assert_eq!(
+        document.pair(ROOT, second, plain),
+        Err(PairError::WrongCloser {
+            opener: second,
+            closer: plain
+        }),
+        "★ and the wrong KIND of closer is a different refusal from no closer \
+         at all"
+    );
+    assert_eq!(
+        document.pair(ROOT, second, second),
+        Err(PairError::ItsOwnCloser(second))
+    );
+
+    // (E) ★ Taking it apart is addressed by EITHER end, because a person
+    // clicking a node has whichever end they clicked.
+    assert!(document.unpair(ROOT, closes), "addressed by the closer");
+    assert_eq!(
+        document.in_zone(ROOT, opens),
+        Some(InZone::OpensNothingYet),
+        "★ and the opener is back to waiting rather than to nothing"
+    );
+    assert_eq!(document.in_zone(ROOT, closes), None);
+    // ★★★★★ And the freed closer can be used, which is what makes the refusal
+    // in (D) about STATE rather than about identity.
+    document
+        .pair(ROOT, second, closes)
+        .expect("the closer is free now");
+    assert_eq!(document.in_zone(ROOT, closes), Some(InZone::Closes(second)));
 }
 
 /// ★★★★★ R1942 — **whether a type's value can be LOOKED AT while the graph

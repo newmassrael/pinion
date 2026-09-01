@@ -115,10 +115,10 @@
       "verdict": "app-content"
     },
     "add_zone": {
-      "covered_by": "a ZONE: a bracketed region of ONE tree with evaluation semantics — neither a Frame (no semantics) nor a Group (another tree)",
+      "covered_by": "NodeKind::closed_by + Document::pair / unpair / in_zone + PairError + InZone, R1943 — a zone is a PAIR of nodes and the region between them is derived rather than stored. ★★★★★ THE ROW DESCRIBED WHAT A PERSON SEES, NOT WHAT THE MODEL HOLDS: 'a bracketed region of ONE tree' is the drawing; read from the operator, add-a-zone does four things — creates an INPUT node and an OUTPUT node, PAIRS them, places them either side of the cursor, and wires the one socket they share. Its four zones (a simulation across a time span, a dynamic repetition, a per-element operation, and a closure evaluated elsewhere) are four such pairs. Nothing stores a region. ★ Its own field said where to look: `mechanism: python-core`, and grepping the C sources for the operator answers ZERO — it is a Python operator over a C-side pairing call, the same shape R1936 met. ★★★★★ TWO MEASURED DEFECTS, each deciding a piece of what is built here: (1) THE PAIRING IS A ONE-WAY ID, stored on the opener as the closer's identifier with nothing on the closer, so asking a closer what it closes means walking every opening node in the tree — its own pairing routine performs exactly that walk to find out whether a closer is spoken for; here ONE map holds it and the reverse is derived, so the two directions cannot disagree and a dangling id cannot outlive its node. (2) ITS REFUSALS ARE REPORTED, NOT RETURNED: the routine answers bool and writes the reason into a report list, so 'wrong kind of closer' and 'that closer is already paired' reach a caller as the same false; here every refusal is its own arm of PairError. ★AND ONE MORE THIS ROUND FOUND BY READING THE ROUTINE: it checks only whether the CLOSER is spoken for — an opener already in a zone simply has its stored id overwritten, so re-pairing an opener SILENTLY ABANDONS the zone it was in. Both ends are checked here. ⇒ the opener declares its closer as a KIND, which removes the reference's three registry hops (node type -> zone type -> that zone's output type) and needs no string key; and InZone has a third arm for an opener with nothing closing it yet — a state the reference reaches routinely, since its own operator creates both nodes before pairing them, and cannot name",
       "mechanism": "python-core",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::dcc_add_zone",
+      "verdict": "have"
     },
     "attach": {
       "covered_by": "Document::set_parent",

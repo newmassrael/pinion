@@ -102,10 +102,10 @@ use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::widgets::wheel::WheelDirection;
 use pinion_core::{CellKind, Frame, Modifiers, Scene, WidgetCore, edit_field_keymap};
 use pinion_node_graph::{
-    Act, Camera, Document, Drawn, Extent, Faces, Fit, Found, Instance, Item, Judged, LandError,
-    Landfall, LinkId, LinkLayer, Margin, NameSource, Node, NodeBody, NodeId, NodeKind, Objection,
-    PortPath, PortRef, PortSite, ROOT, Relinked, Side, Socket, Tint, Violation, WatchError,
-    Watches, ZoomRange, palette_of, type_palette,
+    Act, Camera, Document, Drawn, Extent, Faces, Fit, Found, InZone, Instance, Item, Judged,
+    LandError, Landfall, LinkId, LinkLayer, Margin, NameSource, Node, NodeBody, NodeId, NodeKind,
+    Objection, PortPath, PortRef, PortSite, ROOT, Relinked, Side, Socket, Tint, Violation,
+    WatchError, Watches, ZoomRange, palette_of, type_palette,
 };
 use pinion_platform_storage::AppStorage;
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
@@ -11152,6 +11152,12 @@ const FIELDS: &[SchemaField] = &{
         // crate rather than by the taxonomy — two different answers a screen
         // has to be able to tell apart.
         SchemaField::new("watchable", "json"),
+        // ★★★★★ R1943 — what each card is with respect to ZONES: a bracketed
+        // region opened by one node and closed by another. This taxonomy opens
+        // none, and the register SAYS so rather than staying silent — "nothing
+        // is bracketed here" and "nobody asked" are different statements, and
+        // only the first is a fact a client can act on.
+        SchemaField::new("zones", "json"),
         // ★★★★★ R1939 — give one pin the address it rests at. The locator is
         // deliberately an OPEN argument: the point of the round is that the pin
         // judges it and says what it wants, so a closed vocabulary here would
@@ -11322,6 +11328,7 @@ impl ExternalIntrospect for LabOracle {
             "containers" => Ok(IntrospectValue::Json(containers_wire(state))),
             "takes" => Ok(IntrospectValue::Json(takes_wire(state))),
             "watchable" => Ok(IntrospectValue::Json(watchable_wire(state))),
+            "zones" => Ok(IntrospectValue::Json(zones_wire(state))),
             // ★ R1742 — the SAME value the host publishes for this section, so
             // "one build, two placements" is a fact a client can check rather
             // than a claim this file makes.
@@ -18117,6 +18124,48 @@ fn card_tint(state: &LabState, node: NodeId) -> Option<Tint> {
         .tree(ROOT)
         .and_then(|host| host.node(node))
         .and_then(|held| held.appearance.tint)
+}
+
+/// ★★★★★ R1943 — **what each card is with respect to ZONES**, and whether this
+/// taxonomy has any.
+///
+/// ⚠ This screen's taxonomy opens NO zone, and that is a measured decision
+/// rather than an omission: its graph is a deployment plan, where a bracketed
+/// region with evaluation semantics has nothing to correspond to — the
+/// reference's four are a simulation across time, a repetition, a per-element
+/// operation and a closure, none of which a deployment has. A rule invented to
+/// make this register look busier would be the unreachable-gate mistake R1941
+/// named.
+///
+/// What the register carries instead is the JUDGEMENT, derived from the
+/// framework: `opens` is what the crate answers for each card, so a client
+/// reading `"any": false` is reading a fact rather than a silence.
+fn zones_wire(state: &Rc<LabState>) -> serde_json::Value {
+    let doc = state.doc.borrow();
+    let rows: Vec<serde_json::Value> = state
+        .cards()
+        .into_iter()
+        .map(|node| {
+            let stood = doc.in_zone(ROOT, node);
+            serde_json::json!({
+                "card": state.name_of(node),
+                "in_zone": match stood {
+                    Some(InZone::Opens(closer)) => serde_json::json!({
+                        "side": "opens", "with": state.name_of(closer),
+                    }),
+                    Some(InZone::Closes(opener)) => serde_json::json!({
+                        "side": "closes", "with": state.name_of(opener),
+                    }),
+                    Some(InZone::OpensNothingYet) => serde_json::json!({
+                        "side": "opens", "with": serde_json::Value::Null,
+                    }),
+                    None => serde_json::Value::Null,
+                },
+            })
+        })
+        .collect();
+    let any = rows.iter().any(|row| !row["in_zone"].is_null());
+    serde_json::json!({ "cards": rows, "any": any })
 }
 
 /// ★★★★★ R1942 — **whether each pin's value can be LOOKED AT**, and when it

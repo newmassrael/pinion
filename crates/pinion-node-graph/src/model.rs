@@ -1347,6 +1347,45 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
     /// application may add to it or silence it; this is the application's
     /// judgement about one node in a graph that is perfectly well formed.
     ///
+    /// ★★★★★ R1943 — **does this kind OPEN a bracketed region, and what kind
+    /// closes it?**
+    ///
+    /// `None` — the supplied answer — for an ordinary node. A kind that opens a
+    /// zone answers the kind that must close it, so *what may close this* is a
+    /// value a screen can act on rather than a rule it has to know.
+    ///
+    /// # What forced it, measured in the reference this round
+    ///
+    /// Its add-a-zone operator does exactly four things: it creates an INPUT
+    /// node and an OUTPUT node, pairs them, places them either side of the
+    /// cursor, and wires the one socket they share. So a zone is **not a stored
+    /// region** — the region is derived from a PAIR, which is what this
+    /// declaration makes expressible. Its four zones (a simulation across a
+    /// time span, a dynamic repetition, a per-element operation, and a closure
+    /// evaluated elsewhere) are four such pairs.
+    ///
+    /// Two measured defects decide the shape here:
+    ///
+    /// * **The pairing is a one-way id.** It is stored on the opening node as
+    ///   the closer's identifier and nothing is stored on the closer, so *what
+    ///   does this close?* is a scan of every opening node in the tree — its own
+    ///   pairing routine performs exactly that scan to find out whether a
+    ///   closer is already spoken for. Here one map holds it and the reverse is
+    ///   derived, so the two directions cannot disagree.
+    /// * **Its refusals are REPORTED, not returned.** The routine answers
+    ///   `bool` and writes the reason into a report list, so a caller told
+    ///   *false* cannot tell *wrong kind of closer* from *that closer is
+    ///   already paired*. Here they are two arms of
+    ///   [`PairError`] — R1942's class, met on another axis.
+    ///
+    /// ★ Answering a KIND rather than a name is what removes the reference's
+    /// lookup table: it maps a node type to a zone type to that zone's output
+    /// type, three hops through registries, where this is one value the
+    /// taxonomy already has.
+    fn closed_by(&self) -> Option<Self> {
+        None
+    }
+
     /// ★★★★★ R1942 — **can a value of this type be LOOKED AT while the graph
     /// runs**, or is it a type that carries something with no value to read?
     ///
@@ -2625,6 +2664,24 @@ pub struct Tree<K: NodeKind> {
     /// before this field existed reads back as the unrestricted tree it was.
     #[serde(default = "crate::Admitted::default")]
     pub(crate) admitted: crate::Admitted<K::Type>,
+    /// ★★★★★ R1943 — which node CLOSES the zone each opening node opens.
+    ///
+    /// ⚠ ONE map, from the opener to the closer, and the reverse look-up is
+    /// derived rather than stored. That is the decision: two maps could
+    /// disagree about one pair, and a pairing that is true in one direction and
+    /// not the other is exactly the state R1891's rule says to make
+    /// unrepresentable rather than to check for.
+    ///
+    /// ★ Measured against the reference, which stores the pairing on the
+    /// OPENING NODE as the closer's id and nothing on the closer. So *what
+    /// closes this?* is a field read there and *what does this close?* is a
+    /// scan of every opening node in the tree — its own pairing routine does
+    /// exactly that scan to find out whether a closer is already spoken for.
+    /// One map here has the same asymmetry in cost and none of it in TRUTH: a
+    /// dangling id cannot outlive the node, because [`Document::unpair`] and
+    /// node removal both go through the map.
+    #[serde(default = "BTreeMap::new", skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) zones: BTreeMap<NodeId, NodeId>,
     next_node: u32,
     next_link: u32,
 }
@@ -2789,6 +2846,7 @@ impl<K: NodeKind> Document<K> {
                 links: Vec::new(),
                 interface: Interface::default(),
                 admitted: crate::Admitted::Anything,
+                zones: BTreeMap::new(),
                 next_node: 0,
                 next_link: 0,
             }],
@@ -2879,6 +2937,7 @@ impl<K: NodeKind> Document<K> {
             links: Vec::new(),
             interface: Interface::default(),
             admitted: crate::Admitted::Anything,
+            zones: BTreeMap::new(),
             next_node: 0,
             next_link: 0,
         });
@@ -4885,6 +4944,80 @@ pub type PortValueResult<K> = Result<
     Option<<K as NodeKind>::Value>,
     PortValueError<<K as NodeKind>::Type, <K as NodeKind>::Value>,
 >;
+
+/// ★★★★★ R1943 — why two nodes could not be made a zone.
+///
+/// Every arm is a distinct refusal a caller can act on, which is the measured
+/// difference from the reference: there the routine answers `bool` and writes
+/// its reason into a report list, so *wrong kind of closer* and *that closer is
+/// already paired* arrive as the same `false`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PairError {
+    /// No such node in that tree.
+    NoSuchNode(NodeId),
+    /// The opener's body is not a kind — a group instance, a frame, an
+    /// interface end or a delay cannot open a zone.
+    NotAKind(NodeId),
+    /// That kind opens nothing: it declared no closer.
+    OpensNothing(NodeId),
+    /// The closer is not the kind this opener's declaration names.
+    WrongCloser {
+        /// The node that would open.
+        opener: NodeId,
+        /// The node offered as its closer.
+        closer: NodeId,
+    },
+    /// One of the two is already in a zone, and this says which and with whom.
+    ///
+    /// Carried rather than left to a second call: a caller offering to re-pair
+    /// needs to know what it would break.
+    AlreadyPaired {
+        /// The node that is already spoken for.
+        node: NodeId,
+        /// Who it is paired with.
+        with: NodeId,
+    },
+    /// A node cannot close the zone it opens.
+    ItsOwnCloser(NodeId),
+}
+
+impl fmt::Display for PairError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoSuchNode(node) => write!(f, "no node {node}"),
+            Self::NotAKind(node) => write!(f, "node {node} is not an application node"),
+            Self::OpensNothing(node) => write!(f, "node {node}'s kind opens no zone"),
+            Self::WrongCloser { opener, closer } => write!(
+                f,
+                "node {closer} is not the kind node {opener} declares closes it"
+            ),
+            Self::AlreadyPaired { node, with } => {
+                write!(f, "node {node} is already in a zone with node {with}")
+            }
+            Self::ItsOwnCloser(node) => write!(f, "node {node} cannot close itself"),
+        }
+    }
+}
+
+impl std::error::Error for PairError {}
+
+/// ★★★★★ R1943 — what a node is, with respect to zones.
+///
+/// Three arms, and the third is why this is not a `bool`: a node can be an
+/// opener that is **not yet paired**, which is a state the reference reaches
+/// routinely (its own operator creates the two nodes before pairing them) and
+/// cannot name — there, an unpaired opener is simply an opener whose stored id
+/// resolves to nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InZone {
+    /// This node opens a zone, closed by that node.
+    Opens(NodeId),
+    /// This node closes a zone, opened by that node.
+    Closes(NodeId),
+    /// This node's kind opens a zone and nothing closes it yet.
+    OpensNothingYet,
+}
 
 /// Why a value could not be authored on a port (R1594).
 #[derive(Debug, Clone, PartialEq, Eq)]
