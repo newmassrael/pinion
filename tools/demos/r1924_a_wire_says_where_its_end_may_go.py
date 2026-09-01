@@ -200,10 +200,19 @@ def body() -> None:
             f"model — {reasons}",
             any("already dials every endpoint" in why for why in reasons),
         )
+        # R1962 — the model's refusal here used to be its REACHABILITY rule (a
+        # cycle) and is now its TYPE rule, because P-01 listens on quic since
+        # that round and the mismatch is decided before the cycle would be. Both
+        # are the model's and neither is this screen's, which is the whole of
+        # what this check is for; naming both is what keeps it from being
+        # widened until it passes.
         ok(
             "C: ★★★★★ while another is the MODEL's, so the question is asking "
-            "both sides rather than one",
-            any("cannot feed itself" in why or "cycle" in why for why in reasons),
+            f"both sides rather than one — {reasons}",
+            any(
+                "cannot feed itself" in why or "cycle" in why or "expects Locator" in why
+                for why in reasons
+            ),
         )
         for name in refusers:
             because = rows[name]["because"]

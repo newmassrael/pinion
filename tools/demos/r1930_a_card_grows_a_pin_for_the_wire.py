@@ -224,14 +224,46 @@ def body() -> None:
         # fail. R1927's finding, met again in the round after it: an assertion
         # whose population or whose predicate cannot be false is a green light
         # on nothing. What follows drives the real gesture instead.
-        standing_now = next(
-            n for n, r in verdicts(app, surface).items() if r["verdict"] == "standing"
-        )
-        app.pointer_button("left", "down", path=f"lab.pin.{standing_now}.accept")
-        app.tick_ms(16)
-        carried = rewire(app, surface)
+        # R1962 — the wire is CHOSEN by the property this section needs rather
+        # than by document order, and the candidates are every card that HAS an
+        # accept pin rather than only the one the wire currently stands on.
+        #
+        # It was `next(card whose verdict is standing)`, which by this point in
+        # the walk is the card section B moved the wire to — so the wire in hand
+        # was always R-01's, and every card R-01 could grow a pin on is one it
+        # already dials. That was survivable while every card spoke tcp, because
+        # P-01 was then a taker; since R1962 P-01 listens on quic and refuses a
+        # tcp wire, and both verdicts collapsed to none. The claim this section
+        # makes is that SOME wire can both be taken and grow a pin, so searching
+        # for it IS the claim — and the assertion below still fails if no wire
+        # has the property.
+        both: dict = {}
+        carried: dict = {"carried": False, "cards": []}
+        standing_now = ""
+        tried: dict = {}
+        for name, row in verdicts(app, surface).items():
+            no_pin = "no accept pin" in (row["because"] or "")
+            if no_pin or "·" in name:
+                continue
+            app.pointer_button("left", "down", path=f"lab.pin.{name}.accept")
+            app.tick_ms(16)
+            held_now = rewire(app, surface)
+            found = {
+                r["verdict"]: r["card"]
+                for r in held_now["cards"]
+                if r["verdict"] in ("takes", "grows")
+            }
+            tried[name] = {
+                r["card"]: (r["verdict"], r["because"]) for r in held_now["cards"]
+            }
+            if len(found) == 2:
+                standing_now, carried, both = name, held_now, found
+                break
+            app.pointer_button("left", "up", path=f"lab.pin.{name}.accept")
+            app.tick_ms(16)
         ok(
-            f"D: the wire is in the hand — carried={carried['carried']}",
+            f"D: the wire is in the hand — carried={carried['carried']}, "
+            f"tried={tried}",
             carried["carried"] is True,
         )
         held = {row["card"]: row for row in carried["cards"]}

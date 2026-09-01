@@ -369,10 +369,10 @@ impl Role {
 pub struct LabNode {
     /// What this node is for.
     pub role: Role,
-    /// ★★★★★ R1961 — the transport its pins speak, **read off an address it
-    /// actually uses**, or `None` when no address anywhere on it says.
+    /// ★★★★★ R1962 — the transport its **accept** pins speak: the scheme of the
+    /// address it listens on, or `None` when it listens nowhere.
     ///
-    /// `Option` and not a [`Transport`] with a fall-back, which is the whole
+    /// `Option` and not a [`Transport`] with a fall-back, which was R1961's
     /// decision. The fall-back was `unwrap_or(Transport::Tcp)`, and it
     /// classified every node that does not listen — exactly the roles that
     /// CANNOT ([`Role::accepts`] is false for Client, Publisher and Querier) —
@@ -380,10 +380,30 @@ pub struct LabNode {
     /// `Option` makes the unclassified state *sayable*, which is what lets the
     /// canvas draw it, the gate name it, and a test count it.
     ///
-    /// Derived, never authored: see `transport_spoken` on the screen side,
-    /// which is the one place that decides it.
+    /// Derived, never authored: see `transports_spoken` on the screen side,
+    /// which is the one place that decides both of these.
     #[serde(default)]
-    pub transport: Option<Transport>,
+    pub listens_over: Option<Transport>,
+    /// ★★★★★ R1962 — the transport its **dial** pin speaks: the scheme of the
+    /// address on the wire it dials, or `None` when it dials nothing.
+    ///
+    /// # Why this is a SECOND field and not the one above
+    ///
+    /// R1961 folded both into one `transport`, and that fold is a modelling
+    /// error the domain does not have: a router listening on `tcp` may perfectly
+    /// well dial a `quic` peer. One value made the two agree by construction, so
+    /// [`NodeKind::conversion`] forced every node joined by a link into ONE
+    /// transport — and `spec::LINKS` joins all eight of the opening graph, which
+    /// is why `debt-every-card-on-the-opening-graph-speaks-one-transport` could
+    /// not be repaid by editing the fixture. The fold WAS the blocker, and it
+    /// was stated as prose in R1961's ledger before it was measured here.
+    ///
+    /// ⚠ A node has ONE dial pin however many peers it reaches, so this is
+    /// still one value: everything a card dials must agree. That is a real
+    /// constraint of the drawing rather than a leftover of the fold — the pin
+    /// is what a person drags from.
+    #[serde(default)]
+    pub dials_over: Option<Transport>,
     /// Whether *this* node has somewhere to listen. A role that accepts and a
     /// node with no endpoint is the closed pin.
     pub listening: bool,
@@ -599,9 +619,39 @@ impl LabNode {
     /// [`Endpoint::Unspoken`] is what an undecided transport carries, and it
     /// is why this is a total function into a type rather than an `Option`
     /// three callers would each have to answer.
+    ///
+    /// ★★★★★ R1962 — and the three answers are no longer ONE answer. The
+    /// lift stands; what changed is that the fact underneath it turned out to
+    /// be two facts, so this is the shared spelling and the three named
+    /// readers below say which of the two each one reads.
+    fn socket_of(held: Option<Transport>) -> Endpoint {
+        held.map_or(Endpoint::Unspoken, Endpoint::Locator)
+    }
+
+    /// The socket type this node's **dial** pin carries.
     #[must_use]
-    pub fn socket_type(&self) -> Endpoint {
-        self.transport.map_or(Endpoint::Unspoken, Endpoint::Locator)
+    pub fn dial_type(&self) -> Endpoint {
+        Self::socket_of(self.dials_over)
+    }
+
+    /// The socket type this node's **accept** pins carry, before any item on
+    /// the run overrides it with the address a particular wire dialled.
+    #[must_use]
+    pub fn accept_type(&self) -> Endpoint {
+        Self::socket_of(self.listens_over)
+    }
+
+    /// ★★★★★ R1962 — the socket type the **card** is drawn in: the address it
+    /// is REACHED at, falling back to the one it reaches out on.
+    ///
+    /// The order is the one R1961's single derivation already had, kept
+    /// deliberately: a card's colour is what it IS on the network, and a node
+    /// with an address of its own is that address. A node with none is only
+    /// knowable by what it dials, which is what the second arm reads — and a
+    /// node with neither is drawn in the palette's one neutral.
+    #[must_use]
+    pub fn card_type(&self) -> Endpoint {
+        Self::socket_of(self.listens_over.or(self.dials_over))
     }
 }
 
@@ -630,11 +680,21 @@ impl NodeKind for LabNode {
     /// speaks "the host half of something", which is not a transport a peer can
     /// speak. This is what makes *the kind may decline a particular type*
     /// reachable on a real screen instead of only in a fixture.
-    fn retyped(&self, _port: pinion_node_graph::PortRef, ty: &Endpoint) -> Option<Self> {
+    fn retyped(&self, port: pinion_node_graph::PortRef, ty: &Endpoint) -> Option<Self> {
         match ty {
-            Endpoint::Locator(transport) => Some(Self {
-                transport: Some(*transport),
-                ..self.clone()
+            // ★ R1962 — the side the pin is on decides which of the two facts
+            // this writes. Before the split there was one field and the hook
+            // could not tell "make this card listen on udp" from "make it dial
+            // udp", which are different edits with different consequences.
+            Endpoint::Locator(transport) => Some(match port.side {
+                Side::Input => Self {
+                    listens_over: Some(*transport),
+                    ..self.clone()
+                },
+                Side::Output => Self {
+                    dials_over: Some(*transport),
+                    ..self.clone()
+                },
             }),
             // ★ R1961 — `Unspoken` is refused for the same reason the two
             // halves are: it is a state a node ARRIVES in, not one a person
@@ -671,7 +731,7 @@ impl NodeKind for LabNode {
     /// registers with.
     fn outputs(&self) -> Vec<Port<Self::Type, Self::Value>> {
         vec![
-            Port::new("dial", self.socket_type())
+            Port::new("dial", self.dial_type())
                 .describing("the address this node hands on to whatever it reaches"),
         ]
     }
@@ -692,7 +752,7 @@ impl NodeKind for LabNode {
                 Variadic::at(
                     0,
                     vec![
-                        Port::new("accept", self.socket_type())
+                        Port::new("accept", self.accept_type())
                             .describing("an address this node listens on"),
                     ],
                 )
@@ -913,7 +973,7 @@ impl NodeKind for LabNode {
     /// to be recomputed under them ([`Document::faces`](
     /// pinion_node_graph::Document::faces)).
     fn drawn_as(&self) -> Drawn<Self::Type> {
-        Drawn::LikeType(self.socket_type())
+        Drawn::LikeType(self.card_type())
     }
 
     /// ★★★★★ R1916 — what a value of this socket type IS.
@@ -1071,11 +1131,12 @@ mod tests {
     use super::{Endpoint, Implementation, LabNode, Revisions, Role, Stack, Transport, halves};
     use pinion_node_graph::{Admission, Judged, NodeKind, PortRef, Side};
 
-    /// A node of one transport, for the R1939 assertions below.
+    /// A node of one transport on BOTH sides, for the R1939 assertions below.
     fn speaking(transport: Transport) -> LabNode {
         LabNode {
             role: Role::ALL[0],
-            transport: Some(transport),
+            listens_over: Some(transport),
+            dials_over: Some(transport),
             listening: true,
             implementation: Implementation::default(),
         }
@@ -1212,7 +1273,8 @@ mod tests {
         for role in Role::ALL {
             let node = LabNode {
                 role,
-                transport: Some(Transport::Tcp),
+                listens_over: Some(Transport::Tcp),
+                dials_over: Some(Transport::Tcp),
                 listening: true,
                 implementation: Implementation::default(),
             };
@@ -1332,7 +1394,8 @@ mod tests {
     fn peer(stack: Stack, first: u32, last: u32) -> LabNode {
         LabNode {
             role: Role::Peer,
-            transport: Some(Transport::Tcp),
+            listens_over: Some(Transport::Tcp),
+            dials_over: Some(Transport::Tcp),
             listening: true,
             implementation: Implementation {
                 stack,

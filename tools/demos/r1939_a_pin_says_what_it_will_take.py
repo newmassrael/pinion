@@ -160,13 +160,20 @@ def body() -> None:
         # R1961 — ⚠ this used to read *the opening canvas speaks ONE transport,
         # so the sentences start identical*, and that sentence WAS the defect
         # `debt-every-card-on-the-opening-graph-speaks-one-transport` is open on,
-        # written down as an assertion. It is two now: a card that listens
-        # nowhere and dials nothing carries no transport, and its pin's rule is
-        # the type itself rather than a scheme.
+        # written down as an assertion.
+        #
+        # R1962 — and it is THREE now, which is the debt actually moving: a tcp
+        # sentence, a quic one (P-01 listens on quic and the cards that dial it
+        # read that), and the typeless one belonging to the card that speaks
+        # nothing at all. Asserted as the three KINDS rather than as a count, so
+        # a fixture that produced three of the same kind could not satisfy it.
+        wants = {d["wants"] for d in dials}
         ok(
-            f"B: ★★★★★ the opening canvas already speaks more than one thing, "
-            f"because one card speaks NOTHING — {sorted({d['wants'] for d in dials})}",
-            len({d["wants"] for d in dials}) == 2,
+            f"B: ★★★★★ the opening canvas speaks more than one transport, and "
+            f"one card speaks NOTHING — {sorted(wants)}",
+            any("tcp/host:service" in w for w in wants)
+            and any("quic/host:service" in w for w in wants)
+            and any("any value of" in w for w in wants),
         )
         # ★ So the difference is CAUSED rather than found: R1937's verb makes
         # one card speak another transport, and the sentence has to follow.

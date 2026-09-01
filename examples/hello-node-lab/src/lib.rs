@@ -2735,14 +2735,23 @@ fn seed_nodes(
         // `seed_links` runs after this, because a link needs two node ids.
         // `opening` settles the whole document once the wires are on it, which
         // is the same call every later edit makes.
-        let transport = transport_spoken(&listen, None);
+        let (listens_over, _) = transports_spoken(&listen, None);
         let (x, y, _) = node.rect;
         let id = doc
             .add_node(
                 ROOT,
                 NodeBody::Kind(LabNode {
                     role,
-                    transport,
+                    listens_over,
+                    // ★★★★★ R1962 — explicitly NOTHING, not the listen
+                    // fall-back, and the order is why. `seed_links` runs after
+                    // this, so a card seeded already dialling its own transport
+                    // would have its dial pin TYPED before its wire exists —
+                    // and P-01, listening on quic and about to dial the tcp
+                    // router, would have had that wire refused. Undecided is
+                    // the truth at this moment; `opening` settles the whole
+                    // document once the wires are on it.
+                    dials_over: None,
                     listening: !listen.is_empty(),
                     implementation: opening_implementation(node.id),
                 }),
@@ -3251,19 +3260,52 @@ fn seed_links(
                 let _ = doc.set_port_value(ROOT, node, at, listening.clone());
             }
         }
-        // ★ And the DIAL pin's resting value is this card's own address, which
-        // is what the taxonomy's `evaluate` already implies: a node hands on
-        // the locator it was reached by, so a node nobody has reached yet hands
-        // on its own. R1594's rule — a source node's resting constant lives on
-        // its output port — read for the one source every card is.
+        // ★ And the DIAL pin's resting value is the address this card DIALS,
+        // falling back to its own when it dials nothing. R1594's rule — a
+        // source node's resting constant lives on its output port — read for
+        // the one source every card is.
+        //
+        // ★★★★★ R1962 — it was *its own address* unconditionally, and that
+        // stopped being admissible the moment listening and dialling became
+        // separate: a card listening on quic and dialling a tcp router would
+        // rest a quic locator on a tcp-typed pin, which the document itself
+        // refuses — measured, as `the graph is not sound: node 4 has a value on
+        // port out0, which that port will not admit`, from a save that would
+        // not reopen. A pin's resting value has to be one its own type admits,
+        // and the dial pin's type is what it dials.
+        let dialled = dialled_endpoint(doc, node);
         for index in 0..u32::try_from(signature.outputs.len()).unwrap_or(0) {
             let at = PortRef::output(index);
             if doc.port_value(ROOT, node, at).is_none() {
-                let _ = doc.set_port_value(ROOT, node, at, listening.clone());
+                let rest = dialled.clone().unwrap_or_else(|| listening.clone());
+                let _ = doc.set_port_value(ROOT, node, at, rest);
             }
         }
     }
     selected_link
+}
+
+/// ★★★★★ R1962 — **the address a card opens listening on, from the one place
+/// that declares it.**
+///
+/// Counted before this round changed one of them: the value was spelled TWICE
+/// — here as a `match` on the card's name, and in [`spec::NODES`] as the card's
+/// own `listen` row — and the two agreed on all four listeners by nothing more
+/// than care. `NodeSpec::rows` says in its own doc that a row is *a digest of
+/// its form*, so a screen that read the form off the digest would have been
+/// inverting the relationship; the honest direction is that the specification
+/// declares the address and the form opens holding it, which is what this does.
+///
+/// ⚠ Counted and NOT lifted: `opening_id` is the same shape and only
+/// PARTLY derivable — five of the eight cards carry an `id` row in the
+/// specification and three (T-01, Q-01, T-02) do not, so folding it here would
+/// need the specification to gain rows the canon's cards do not show.
+fn opening_listen(id: &str) -> &'static str {
+    spec::NODES
+        .iter()
+        .find(|node| node.id == id)
+        .and_then(|node| node.rows.iter().find(|(key, _)| *key == "listen"))
+        .map_or("", |(_, value)| *value)
 }
 
 /// The configuration form a node of that role opens with.
@@ -3273,14 +3315,7 @@ fn seed_links(
 /// values, because a form whose rows depended on which node was clicked would
 /// make "the key is the configuration path" untrue for all but one of them.
 fn form_for(id: &str, role: Role) -> ConfigForm {
-    let listen = match id {
-        "R-01" => "tcp/0.0.0.0:7447",
-        "P-01" => "tcp/0.0.0.0:7448",
-        "P-02" => "tcp/0.0.0.0:7449",
-        "P-03" => "tcp/0.0.0.0:7451",
-        _ if role.accepts() => "",
-        _ => "",
-    };
+    let listen = opening_listen(id);
     // ★★★★★ R1690 — **the shape comes from the option surface, not from
     // here.** Every row below used to name its own, and one of them was wrong
     // for the whole life of this screen: `id` is read by a parser and was
@@ -9092,13 +9127,19 @@ fn canvas_pins(state: &LabState, node: NodeId, card: Rect, role: Role, ink: Ink)
         // stood here answered for two different absences with one colour — a
         // frame rather than a card, and a card whose transport nothing had
         // said — and the second of those is now a colour of its own.
+        //
+        // ★ R1962 — the ACCEPT type, because this ring is the accept pin's and
+        // the legend says the ring is *the transport this node can be dialled
+        // over*. It was the node's single transport, which for a card that
+        // listens on one scheme and dials another would have drawn the wrong
+        // one — an error that could not exist before the two were separable.
         let socket = state
             .doc
             .borrow()
             .tree(ROOT)
             .and_then(|t| t.node(node))
             .and_then(|n| match &n.body {
-                NodeBody::Kind(kind) => Some(kind.socket_type()),
+                NodeBody::Kind(kind) => Some(kind.accept_type()),
                 _ => None,
             });
         if shows(Side::Output, 0) {
@@ -13336,10 +13377,11 @@ fn settle_transports_in(doc: &mut Document<LabNode>, forms: &BTreeMap<NodeId, Co
                 .map_or(String::new(), |f| f.value().into_owned())
         });
         let dialled = dialled_endpoint(doc, node);
-        let transport = transport_spoken(&listen, dialled.as_deref());
+        let (listens_over, dials_over) = transports_spoken(&listen, dialled.as_deref());
         if let Some(slot) = doc.tree_mut(ROOT).and_then(|t| t.node_mut(node)) {
             if let NodeBody::Kind(kind) = &mut slot.body {
-                kind.transport = transport;
+                kind.listens_over = listens_over;
+                kind.dials_over = dials_over;
             }
         }
     }
@@ -13430,8 +13472,42 @@ fn endpoint_at(state: &LabState, socket: Socket) -> Option<String> {
 /// A node that neither listens nor dials — a card just taken from the palette
 /// — now says so: [`Endpoint::Unspoken`] is what its pins carry, and its card
 /// is drawn in the one neutral this palette has.
-fn transport_spoken(listen: &str, dialled: Option<&str>) -> Option<Transport> {
-    Transport::of_locator(listen).or_else(|| dialled.and_then(Transport::of_locator))
+///
+/// # ★★★★★ R1962 — it answers TWO transports, because they are two facts
+///
+/// R1961 folded them into one and wrote the consequence down as prose: *a
+/// router listening on tcp cannot dial a quic peer*. Measured here, that prose
+/// was the blocker itself. `LabNode::conversion` requires a dial pin and the
+/// accept slot it lands on to agree, so one value per node propagated equality
+/// along every wire — and `spec::LINKS` joins all eight cards of the opening
+/// graph into one component, which is exactly why
+/// `debt-every-card-on-the-opening-graph-speaks-one-transport` could not be
+/// repaid by editing the fixture.
+///
+/// The domain has no such rule. A node's LISTEN scheme and the scheme of the
+/// address it DIALS are independent, and separating them is what makes a
+/// second transport on this canvas expressible at all.
+/// ⚠ The dial half falls back to the listen half, and the fall-back is NOT the
+/// fold coming back: **the wire wins whenever there is one**, which is the
+/// whole of what the split buys. It exists because a card's dial pin rests at
+/// the address it would hand on ([`NodeKind::evaluate`] — a node passes on the
+/// locator it was reached by, so one nobody has reached hands on its own), and
+/// a pin resting at a schemed address while carrying no scheme cannot put that
+/// address back together: measured, `implode` returned `0.0.0.0:7449` for
+/// `tcp/0.0.0.0:7449`.
+///
+/// ⚠⚠ The residue, stated rather than hidden: a card that listens and has
+/// never dialled can still only dial its own transport. It is the fold, cut
+/// down from *every* card to *unwired ones*, and what would remove it is the
+/// dial pin resting at nothing until a wire gives it an address — which is a
+/// change to what a split can be asked of, not to this derivation.
+fn transports_spoken(
+    listen: &str,
+    dialled: Option<&str>,
+) -> (Option<Transport>, Option<Transport>) {
+    let listens_over = Transport::of_locator(listen);
+    let dials_over = dialled.and_then(Transport::of_locator).or(listens_over);
+    (listens_over, dials_over)
 }
 
 /// The address `node` DIALS, when it is on a link that dials one.
@@ -16530,7 +16606,8 @@ fn add_node(state: &Rc<LabState>, role: Role) {
                 // so a fresh card could be wired to a TCP peer and silently to
                 // no other. It speaks whatever the first wire drawn from it
                 // dials, which is what `settle_transports` works out.
-                transport: None,
+                listens_over: None,
+                dials_over: None,
                 listening: false,
                 // R1885 — a node the palette adds runs the reference build, so
                 // adding one never introduces an incompatibility a person did

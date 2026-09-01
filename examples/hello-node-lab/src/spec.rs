@@ -540,9 +540,28 @@ pub const NODES: &[NodeSpec] = &[
         badge: "PEER",
         rect: (172, 52, 150),
         frame: "host-a",
+        // ★★★★★ R1962 — **the opening graph's second transport, and it is a
+        // deliberate divergence from the canon rather than a transcription.**
+        //
+        // Measured this round: the canon's lab holds THREE `listen.endpoints`
+        // (P-01 7448, R-01 7447, P-02 7449) and every one of them is `tcp/`.
+        // The canon has no transport axis and no card colour at all, so a
+        // fixture faithful to it is monochrome BY CONSTRUCTION under our
+        // derivation — which is why `debt-every-card-on-the-opening-graph-
+        // speaks-one-transport` cannot be repaid by reproducing the canon
+        // harder. It is one of this screen's second-pass additions, and the
+        // standing order is explicit that those are kept.
+        //
+        // `quic` on P-01 and not elsewhere, because P-01 is the one listener
+        // that is DIALLED by a card with no address of its own (T-01), so the
+        // second transport reaches two cards and exercises both arms of
+        // `transports_spoken` at once. It became expressible only when R1962
+        // separated what a node listens on from what it dials: with one field
+        // per node, P-01 speaking quic would have made its dial pin quic too
+        // and its wire to the tcp router illegal.
         rows: &[
             ("id", "b1"),
-            ("listen", "tcp/0.0.0.0:7448"),
+            ("listen", "quic/0.0.0.0:7448"),
             ("discovery", "true"),
             ("routing", "peer_to_peer"),
         ],

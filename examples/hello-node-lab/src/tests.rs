@@ -1083,7 +1083,9 @@ fn r1651_the_pin_a_node_shows_is_derived_from_the_form_it_holds() {
             .tree(super::ROOT)
             .and_then(|t| t.node(store))
             .and_then(|n| match &n.body {
-                super::NodeBody::Kind(kind) => Some(kind.transport),
+                // ★ R1962 — the LISTEN half: this edit gave the card an address
+                // of its own, and that is the scheme its accept pin wears.
+                super::NodeBody::Kind(kind) => Some(kind.listens_over),
                 _ => None,
             })
             .expect("a kind node");
@@ -1134,7 +1136,23 @@ fn r1651_a_listening_node_takes_as_many_dials_as_reach_it() {
             inbound, 3,
             "the opening graph dials the router from three nodes"
         );
-        let extra = state.node_of("T-01").expect("on the canvas");
+        // ★★★★★ R1962 — the fourth dialler is a card the PALETTE adds, which is
+        // a gesture this screen has, rather than a card already on the canvas.
+        // It was `T-01`, and that only worked while every card spoke one
+        // transport: T-01 dials P-01, P-01 listens on quic since R1962, and a
+        // card has ONE dial pin — so T-01 cannot also dial the tcp router. The
+        // three cards with free dial pins would each close a cycle. A fresh
+        // card speaks nothing yet, so it may dial anything, which is the same
+        // reasoning `r1915_a_wire_on_a_member_is_cut_by_the_fold_and_named`
+        // recorded when it hit the identical wall.
+        let before = state.cards();
+        super::add_node(&state, crate::graph::Role::Store);
+        let extra = *state
+            .cards()
+            .iter()
+            .rev()
+            .find(|n| !before.contains(n))
+            .expect("★ the palette put a card on the canvas");
         super::connect(&state, extra, router).expect("a fourth dial is accepted");
         assert_eq!(state.degree(router).0, 4, "and the pin took it");
 
@@ -4833,6 +4851,68 @@ fn r1961_one_socket_type_has_one_published_spelling() {
     });
 }
 
+/// ★★★★★ R1962 — **a card listening on one transport dials a peer that speaks
+/// another, and the opening graph does exactly that.**
+///
+/// The blocker R1961 wrote down as prose and never measured: with ONE transport
+/// per node, `LabNode::conversion` propagated equality along every wire, so
+/// `spec::LINKS` forced all eight cards of the opening graph into one value and
+/// the fixture could not carry a second. The domain has no such rule — a router
+/// listening on tcp may dial a quic peer — and this asserts the model no longer
+/// invents one.
+///
+/// ⚠ Asked of the OPENING graph rather than of a state the test builds, because
+/// the fixture is where the debt lives: P-01 listens on quic and dials the tcp
+/// router, and both halves are read from the document rather than assumed.
+#[test]
+fn r1962_a_card_listens_on_one_transport_and_dials_another() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+        let split = state.node_of("P-01").expect("the specification's P-01");
+        let (card, dials) = two_transports_of(&state, split);
+        assert_eq!(
+            card,
+            Some(Transport::Quic),
+            "★ P-01 is drawn as the address it LISTENS on",
+        );
+        assert_eq!(
+            dials,
+            Some(Transport::Tcp),
+            "★★★★★ and its dial pin carries the address it DIALS — one card, \
+             two transports, which one field could not hold",
+        );
+
+        // The wire that could not have existed: the document holds it, and the
+        // graph is sound with it.
+        let router = state.node_of("R-01").expect("the specification's router");
+        let joined = state.doc.borrow().tree(ROOT).is_some_and(|tree| {
+            tree.links()
+                .iter()
+                .any(|l| l.from.node == split && l.to.node == router)
+        });
+        assert!(
+            joined,
+            "★★★★★ the quic peer really is wired to the tcp router — before the \
+             split this link was refused, `node carries Locator(Quic), node \
+             expects Locator(Tcp)`",
+        );
+
+        // ★ And the rule is INTACT where it belongs: two ends that disagree are
+        // still refused. A split that merely stopped asking would satisfy
+        // everything above.
+        let refused = <crate::graph::LabNode as pinion_node_graph::NodeKind>::conversion(
+            &crate::graph::Endpoint::Locator(Transport::Quic),
+            &crate::graph::Endpoint::Locator(Transport::Tcp),
+        );
+        assert!(
+            matches!(refused, pinion_node_graph::Conversion::Refused),
+            "★ the transports must still agree pin to pin",
+        );
+    });
+}
+
 /// ★ R1961 — the FILL the scene gave the box with this tag.
 ///
 /// The sibling of [`painted_border`], and separate for the reason that one
@@ -4854,15 +4934,26 @@ fn painted_fill(scene: &pinion_core::Scene, tag: &str) -> Option<pinion_core::Co
     }
 }
 
-/// The transport the document says this card speaks.
+/// The transport the document says this card speaks — the CARD's, which is the
+/// one its colour is drawn from: its own listen address, else the one it dials.
 fn spoken_by(state: &LabState, node: pinion_node_graph::NodeId) -> Option<Transport> {
+    two_transports_of(state, node).0
+}
+
+/// ★ R1962 — both halves the document holds for this card: what its colour and
+/// accept pins read (`listens_over ?? dials_over` and `listens_over`), and what
+/// its dial pin reads.
+fn two_transports_of(
+    state: &LabState,
+    node: pinion_node_graph::NodeId,
+) -> (Option<Transport>, Option<Transport>) {
     state
         .doc
         .borrow()
         .tree(ROOT)
         .and_then(|t| t.node(node))
         .and_then(|n| match &n.body {
-            NodeBody::Kind(kind) => Some(kind.transport),
+            NodeBody::Kind(kind) => Some((kind.listens_over.or(kind.dials_over), kind.dials_over)),
             _ => None,
         })
         .expect("a kind node")
@@ -4901,11 +4992,12 @@ fn r1961_the_opening_canvas_speaks_the_addresses_it_carries() {
                 .and_then(|form| form.field("listen.endpoints"))
                 .map_or(String::new(), |f| f.value().into_owned());
             let dialled = super::dialled_endpoint(&state.doc.borrow(), node);
-            let want = super::transport_spoken(&listen, dialled.as_deref());
+            let (listens_over, dials_over) = super::transports_spoken(&listen, dialled.as_deref());
+            let want = listens_over.or(dials_over);
             assert_eq!(
-                spoken_by(&state, node),
-                want,
-                "★ {name} stores a transport the derivation does not give it — \
+                two_transports_of(&state, node),
+                (want, dials_over),
+                "★ {name} stores transports the derivation does not give it — \
                  listen {listen:?}, dialled {dialled:?}",
             );
             match (Transport::of_locator(&listen), want) {
@@ -4954,12 +5046,33 @@ fn r1961_the_opening_canvas_speaks_the_addresses_it_carries() {
                 fills.insert((fill.r, fill.g, fill.b));
             }
         }
+        // ★★★★★ R1962 — the population is TRANSPORT colours, not colours. The
+        // R1961 form of this asked only that more than one fill appear, and the
+        // second fill was the palette's neutral — the card that speaks nothing.
+        // That distinguishes "derived" from "defaulted", which was R1961's
+        // question, but it does NOT show two transports, which is what the
+        // person who reported this screen was looking at. Derived from
+        // `Transport::ALL` so a transport added later joins without an edit.
+        let spoken: BTreeSet<(u8, u8, u8)> = Transport::ALL
+            .into_iter()
+            .map(|t| {
+                let tint = t.tint();
+                (tint.r, tint.g, tint.b)
+            })
+            .filter(|ink| fills.contains(ink))
+            .collect();
         assert!(
-            fills.len() > 1,
-            "★★★★★ every card on the opening canvas is painted the same colour \
-             {fills:?} — so a reader cannot tell a card drawn from its taxonomy \
-             from one drawn from a default, and this screen cannot show the \
-             capability it carries",
+            spoken.len() > 1,
+            "★★★★★ the opening canvas paints {} transport colour(s) — a canvas \
+             of one cannot show that a card wears what it speaks, which is the \
+             capability R1940 built and the defect a person reported. Fills \
+             {fills:?}, of which transports {spoken:?}",
+            spoken.len(),
+        );
+        assert!(
+            fills.len() > spoken.len(),
+            "★ and the card that speaks NOTHING is still drawn apart from all of \
+             them — {fills:?} against {spoken:?}",
         );
     });
 }
