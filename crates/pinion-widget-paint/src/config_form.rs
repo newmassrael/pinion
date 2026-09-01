@@ -1420,30 +1420,68 @@ fn provenance_badges(
             if field.applies() == Applies::Hot {
                 out.push(applies());
             }
-            out.push(source(&format!("{SOURCE_WORD} {from}")));
+            out.push(source(&provenance_phrase(&from, None)));
             out
         }
         Source::Shared(from) => vec![
             applies(),
-            source(&format!(
-                "{SOURCE_WORD} {from} {}",
-                field.derived_elements()
-            )),
+            source(&provenance_phrase(&from, Some(field.derived_elements()))),
         ],
     }
 }
 
-/// The word a source badge opens with, where it used to open with an arrow.
+/// ★★★★★ R1954 — **the words a source badge PAINTS, and the only place they
+/// are spelled.**
 ///
-/// ★★★★★ R1952 — the badge is **prose**, and a badge is the one place in this
-/// module where a drawn mark is the wrong answer: its run is 9px and the
-/// narrowest slot [`Indicator::MIN`](crate::indicator::Indicator::MIN) draws
-/// into is thirteen, so a mark would set the pill's height rather than sit in
-/// it. Prose has to be spellable in the face this tree ships, and `U+21AA` is
-/// not — so the badge says the word. It is also what the row's own description
-/// already said to a reader who cannot see the badge, which is a second reason
-/// the arrow was carrying nothing the words did not.
-const SOURCE_WORD: &str = "from";
+/// A source badge declares [`Silence::name_of`] against the row's description
+/// node: *my text is that node's name*. WAI-ARIA calls the resulting obligation
+/// label-in-name, and it is the one place on these screens where some ink and
+/// some announcement are declared to be the same words — so it is the one place
+/// a comparison is a comparison rather than a guess.
+///
+/// It was two spellings until this round. R1952 replaced the badge's hooked
+/// arrow with a word and wrote `"from {from}"`, while the description said
+/// `"worked out from the {from}"` — one article apart, which is enough: a
+/// person reading the badge aloud says three words the screen reader never
+/// says, and `r1692` failed exactly there. The sighted reader and the listening
+/// reader were handed different phrases for one fact.
+///
+/// ⇒ [`provenance_sentence`] is built by PREPENDING to this, so the badge's
+/// words are a contiguous run of the description's words **by construction**.
+/// A gate can still check it — and does — but the check can no longer be the
+/// only thing holding them together.
+fn provenance_phrase(from: &str, shared_elements: Option<usize>) -> String {
+    match shared_elements {
+        Some(n) => format!("from the {from} {n}"),
+        None => format!("from the {from}"),
+    }
+}
+
+/// ★★★★★ R1954 — **what a reader who cannot see the badge is told instead.**
+///
+/// [`provenance_phrase`] with the verb in front of it. The composition is the
+/// guarantee: there is no way to write this sentence that does not contain the
+/// badge's own words, in the badge's own order.
+///
+/// R1716 recorded why the sentence has to carry everything the badge does — *a
+/// reader who cannot see the badge is the reader who most needs what it says* —
+/// and that is why the shared-row COUNT travels here too. It was only on the
+/// badge until this round, so the one fact the floor has no shape for at all
+/// was the one fact a listening reader did not get.
+fn provenance_sentence(from: &str, shared_elements: Option<usize>) -> String {
+    format!("worked out {}", provenance_phrase(from, shared_elements))
+}
+
+// ★★★★★ R1952 — the badge is **prose**, and a badge is the one place in this
+// module where a drawn mark is the wrong answer: its run is 9px and the
+// narrowest slot `Indicator::MIN` draws into is thirteen, so a mark would set
+// the pill's height rather than sit in it. Prose has to be spellable in the
+// face this tree ships, and `U+21AA` is not — so the badge says the word.
+//
+// ⚠ R1954 — and saying "the word" is what broke it. The badge's prose is
+// [`provenance_phrase`] now, composed into the description by
+// [`provenance_sentence`], because a badge that declares itself another node's
+// NAME cannot be allowed to spell that name a second way.
 
 // ★★★★★ R1952 — **the three seats stopped being characters, and one of them
 // carried a sentence that had gone false.**
@@ -2227,7 +2265,15 @@ pub fn row_access_nodes(
         // locked cell answers 3 of 256 standard roles and none of them is a
         // reason, so this sentence has no counterpart there at all.
         if let Some(from) = field.source().derived_from() {
-            said.push(format!("worked out from the {from}"));
+            // ★★★★★ R1954 — the SAME phrase the badge paints, with a verb in
+            // front of it, so label-in-name holds by construction rather than
+            // by two authors agreeing. The shared-row count travels here for
+            // R1716's reason: the reader who cannot see the badge is the one
+            // who most needs what it says, and until this round the count was
+            // the one thing that stayed on the badge alone.
+            let shared =
+                matches!(field.source(), Source::Shared(_)).then(|| field.derived_elements());
+            said.push(provenance_sentence(from, shared));
         }
         if let Some(instead) = field.goes().instead() {
             said.push(format!("{instead}, not configuration"));
@@ -2484,10 +2530,15 @@ fn part_access_node(tag_prefix: &str, field: &ConfigField, suffix: &str, seat: R
         // put a status node beside every line of every list on the screen, and
         // what a reader needs here is one clause.
         if let Some(from) = field.element_source(at).derived_from() {
+            // ★ R1954 — the third site that spelled this clause. An element
+            // carries no badge of its own, so there is nothing here for
+            // label-in-name to compare — but a second spelling of one clause is
+            // what let the first two drift, and the count of sites was three.
             node = node
                 .with_name(format!(
-                    "{key} element {}, worked out from the {from}",
-                    element_ordinal(last)
+                    "{key} element {}, {}",
+                    element_ordinal(last),
+                    provenance_sentence(from, None)
                 ))
                 .with_state(AccessState {
                     read_only: true,

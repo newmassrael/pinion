@@ -111,6 +111,26 @@ def banner(text: str) -> None:
     print(f"\n=== {text} ===")
 
 
+#: The acts a config-form row's seat can offer, as they appear in the tag
+#: `pinion_widget_paint::config_form` builds — `{prefix}.{act}.{key}`.
+#:
+#: ★★★★★ R1954 — the population of "the marks this pan loses" is addressed by
+#: this and not by the characters those seats used to be typeset with. R1952
+#: turned all three into stroked paths (the face this tree ships has no glyph
+#: for `U+21AA`), and a path carries no `content` — so three checks in this file
+#: went looking for ink that no longer exists while the screen was unchanged.
+#: `Seat::act` is closed at three arms; a fourth joins here.
+SEAT_ACTS = (".remove.", ".author.", ".disown.")
+
+
+def seat_marks(rows: list) -> list:
+    """The `out_of_sight` rows that are a row seat's mark, by address.
+
+    One reader for the three sites that each asked this question their own way.
+    """
+    return [r for r in rows if any(act in (r.get("path") or "") for act in SEAT_ACTS)]
+
+
 def reach_at(app: RpcSubprocess, size: tuple[int, int]) -> dict:
     resp = app.request(
         "scene/scroll_reach", {"at": {"width": size[0], "height": size[1]}}
@@ -287,19 +307,56 @@ def c_the_recipe_names_the_pan_and_works(app: RpcSubprocess, name: str) -> None:
         f"it is the screen's own number rather than one written here",
         reach["lost"] == 0,
     )
-    # The marks that round lost are the seat glyphs inside the inspector's row
-    # actions. They carry no tag, so they are found by their content.
+    # The marks that round lost are the seats inside the inspector's row
+    # actions, and they are found by their ADDRESS.
     #
-    # ★★ R1716 — there are two of them now, because a row's seat says who owns
-    # its value: `×` takes an authored row away and `↪` takes a derived one
-    # over. Both words are accepted for the same reason R1713.2 had to accept
-    # two: a predicate that names one spelling of a thing stops measuring the
-    # moment the thing grows a second.
-    glyphs = [r for r in reach["out_of_sight"] if r["content"] in ("×", "↪")]
+    # ★★★★★ R1954 — this read `content in ("×", "↪")` and R1952 took both
+    # characters away: the face this tree ships has no glyph for `U+21AA`, so
+    # each seat became a stroked path and a path holds no content at all. The
+    # check answered 0 and the screen had not changed — the seats are painted,
+    # they are still off the fold, and `scroll_reach` still reports every one of
+    # them.
+    #
+    # ⇒ R1716's own note said why it was fragile: *a predicate that names one
+    # spelling of a thing stops measuring the moment the thing grows a second*.
+    # It grew a THIRD (give-back) and then stopped being a spelling at all. The
+    # comment beside it also said "they carry no tag" — which was never true of
+    # the seat box: `config_form` builds `{prefix}.{act}.{key}` for exactly the
+    # reason R1717 records, that the painter and the accessibility tree must
+    # name a seat the same way. An address survives a mark becoming a drawing;
+    # a character does not.
+    #
+    # The act vocabulary is `Seat::act`'s and is closed at three, so a fourth
+    # act joins this population by being named in `SEAT_ACTS` rather than at
+    # each of the three sites below — this file spelled the character check
+    # three times, and repairing only the first would have left the other two
+    # asking for ink that no longer exists.
+    glyphs = seat_marks(reach["out_of_sight"])
     ok(
-        f"C/{name}: the marks that were lost there are reported, by content "
+        f"C/{name}: the marks that were lost there are reported, by address "
         f"({len(glyphs)} of them)",
         len(glyphs) >= 5,
+    )
+    # ⚠ R1954 — and MORE THAN ONE act is represented, which `>= 5` alone does
+    # not say. Measured while mutating this check: narrowing `SEAT_ACTS` to a
+    # single act left the count above five and the gate green, so a vocabulary
+    # that quietly shrank — or a seat kind that stopped painting — would have
+    # passed. A threshold on a total cannot see a population losing a member.
+    #
+    # ⚠ And it is *more than one*, not *all three*: measured here, this pan
+    # loses `remove` and `author` seats and no `disown` one, because no row in
+    # this inspector has two contributors. Asserting all three would be a claim
+    # about the fixture dressed up as a claim about the screen — R1716's own
+    # reason for accepting two spellings, one level up.
+    acts_seen = {
+        act.strip(".")
+        for act in SEAT_ACTS
+        if any(act in (g.get("path") or "") for g in glyphs)
+    }
+    ok(
+        f"C/{name}: and the marks are more than one KIND of seat "
+        f"({sorted(acts_seen)} of {len(SEAT_ACTS)} acts)",
+        len(acts_seen) > 1,
     )
     deep = [g for g in glyphs if len(g["moves"]) > 1]
     ok(
@@ -334,7 +391,7 @@ def c_the_recipe_names_the_pan_and_works(app: RpcSubprocess, name: str) -> None:
     assert_eq(design_size(app), at, f"C/{name}: the window took that width")
     live = app.request("scene/scroll_reach")
     assert live is not None and isinstance(live.result, dict)
-    live_glyphs = [r for r in live.result["out_of_sight"] if r["content"] == "×"]
+    live_glyphs = seat_marks(live.result["out_of_sight"])
     assert live_glyphs, f"C/{name}: the glyphs are off screen in the live window"
     # ★★ And below the comfortable size the pan IS there to drive — the other
     # half of the property section B checks at the top of the band.
@@ -353,7 +410,7 @@ def c_the_recipe_names_the_pan_and_works(app: RpcSubprocess, name: str) -> None:
     app.tick(0.016)
     after = app.request("scene/scroll_reach")
     assert after is not None and isinstance(after.result, dict)
-    still = [r for r in after.result["out_of_sight"] if r["content"] == "×"]
+    still = seat_marks(after.result["out_of_sight"])
     ok(
         f"C/{name}: performing the recipe {[(m['viewport'], m['to_x'], m['to_y']) for m in recipe]} "
         f"brought the mark on screen ({len(live_glyphs)} off screen before, "

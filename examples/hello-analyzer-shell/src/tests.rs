@@ -6913,3 +6913,73 @@ fn pane_of(spec: &serde_json::Value, name: &str) -> serde_json::Value {
         .unwrap_or_else(|| panic!("{name} is a pane this surface publishes"))
         .clone()
 }
+
+/// ★★★★★ R1954 — **the sort this screen ANNOUNCES is the sort it DRAWS.**
+///
+/// R1952 replaced the sort arrow's character with a stroked path for a good
+/// reason: `NotoSans-Regular` has no `U+25B2`, so a reader was being shown a
+/// `.notdef` box beside a column heading. Nothing then asked whether the
+/// drawing and the announcement still agreed, and nothing *could* have — the
+/// paint's only check counted characters, the accessibility tree's only check
+/// read the state, and the two never met. They meet here, on the screen this
+/// project is judged on, which opens with a sorted feed.
+///
+/// ⇒ this is not two oracles. It is ONE rule — `col_sort_dir` over the screen's
+/// own `alarm_sort` — asked at the two moments a reader can meet it: the mark a
+/// sighted reader sees, and the `aria-sort` a listening reader hears. A repair
+/// that moves only one of them fails here, which is exactly the state R1952
+/// could have shipped and no gate would have said so.
+///
+/// ⚠ The DIRECTION is compared, not the presence of a mark. A gate that asks
+/// *is there an arrow* goes green on an arrow pointing the wrong way — the
+/// class R1945 recorded as *counting whether a property exists gives a green
+/// light to whether it is right*.
+#[test]
+fn r1954_the_sort_this_screen_announces_is_the_sort_it_draws() {
+    use pinion_a11y::{SortDirection, WidgetA11y};
+    use pinion_widget_paint::indicator::Indicator;
+
+    let (column, _) = spec::ALARM_OPENING_SORT;
+    for ascending in [true, false] {
+        Owner::new().run(|| {
+            let state = use_shell_state();
+            state.alarm_sort.set(Some((column, ascending)));
+
+            let drawn: Vec<Indicator> = pinion_widget_paint::indicator::marks_in(&super::view(
+                ScreenState::default(),
+                pinion_core::Frame::default(),
+            ))
+            .into_iter()
+            .filter(|mark| matches!(mark, Indicator::Sort { .. }))
+            .collect();
+            assert_eq!(
+                drawn,
+                vec![Indicator::Sort { ascending }],
+                "the opening screen draws exactly one sort arrow and it points \
+                 the way `alarm_sort` says (ascending={ascending})",
+            );
+
+            let said: Vec<(String, SortDirection)> =
+                super::AnalyzerShellView::access_node(&ScreenState::default(), None)
+                    .into_iter()
+                    .filter_map(|node| node.sort.map(|dir| (node.tag.clone(), dir)))
+                    .collect();
+            assert_eq!(
+                said.len(),
+                1,
+                "exactly one heading announces a sort (ascending={ascending}): \
+                 {said:?}",
+            );
+            assert_eq!(
+                said[0].1,
+                SortDirection::from_ascending(ascending),
+                "the heading tagged {} announces {:?} while the screen drew the \
+                 {} arrow — the reader who sees the mark and the reader who \
+                 hears the name are being told different things",
+                said[0].0,
+                said[0].1,
+                if ascending { "ascending" } else { "descending" },
+            );
+        });
+    }
+}

@@ -54,8 +54,33 @@ from rpc_verify import (  # noqa: E402
 EXAMPLE = "hello-table"
 T = "table"
 VIEWPORT = (600, 360)
-ASC = "▲"
-DESC = "▼"
+### ★★★★★ R1954 — the sort direction is read from what the screen SAYS, and
+### the mark is read from what it DRAWS. This file asked one question and it
+### asked it of a character.
+###
+### It collected the header band's text runs and looked for `U+25B2` /
+### `U+25BC`. R1952 stopped typesetting those — the face this tree ships has
+### no glyph for either, so a reader was seeing a `.notdef` box beside a column
+### heading — and the arrow became a stroked path. The characters vanished,
+### this check went red, and what it had been standing in for did not change at
+### all: the grid still announces `aria-sort` on the sorted columnheader and
+### still draws exactly one arrow in that column's heading.
+###
+### ⇒ two readings of ONE rule, taken at two moments. The DIRECTION comes from
+### the accessibility tree, which is where a person using a screen reader gets
+### it and where WAI-ARIA puts it; the MARK's presence comes from the paint.
+### Neither is a re-derivation of the other, and a repair that moved only one of
+### them would leave the two disagreeing — which is the state R1952 shipped and
+### nothing noticed, because the only check here was of a character that no
+### longer existed.
+###
+### ⚠ Deliberately NOT re-derived here: which way the drawn arrow points. The
+### point set is `pinion_widget_paint::indicator`'s, `Indicator::face_of` reads
+### it back, and `table.rs`'s own tests assert the pair. A second decoder
+### written in Python would be a second oracle for one drawing — the defect this
+### project has recorded a dozen times — so this file asserts the two facts it
+### can read WITHOUT re-implementing anything, and the arrow's direction stays
+### the crate's to check.
 
 
 def q(d, slot):
@@ -66,25 +91,82 @@ def order(d, n=6):
     return [q(d, f"order.{v}") for v in range(n)]
 
 
-def header_glyphs(d):
-    """Collect the glyph text nodes painted in the header band."""
+def said_sort(d):
+    """Which column heading ANNOUNCES a sort, and in which direction.
+
+    `{column_index: "ascending" | "descending"}`, read from `scene/access` —
+    the tree a screen reader is handed. A columnheader with no sort carries no
+    `sort` key at all, so an empty answer is *nothing claims to be sorted*
+    rather than *the field was not looked at*.
+    """
+    nodes = d.request("scene/access").result["nodes"]
+    return {
+        n["column_index"]: n["sort"]
+        for n in nodes
+        if n.get("role") == "columnheader" and n.get("sort")
+    }
+
+
+def drawn_marks(d):
+    """How many marks each column's heading DRAWS, by paint.
+
+    `{col: n}` over every column, including the zeroes — a per-column count
+    rather than a total, because a total cannot tell *one arrow in the sorted
+    column* from *one arrow in the wrong column*.
+
+    A mark is a `Path`: `pinion_widget_paint::indicator` strokes these.
+    ⚠ Measured, not assumed — a header cell holds zero paths when its column is
+    not the sort key, so nothing else in a heading draws that way TODAY. This
+    counts paths rather than identifying them, so a heading that grew some other
+    stroked ornament would be miscounted here; the ornament would have to
+    announce itself for this to tell them apart, and none does.
+    """
     snap = d.snapshot(source="paint", viewport=VIEWPORT)
-    hrow = find_by_tag(snap, f"{T}_hrow")
-    assert hrow is not None, "header band present"
-    out = []
+    out = {}
+    for col in range(4):
+        cell = find_by_tag(snap, f"{T}#h{col}")
+        assert cell is not None, f"header cell {col} present"
+        n = 0
 
-    def walk(node):
-        if not isinstance(node, dict):
-            return
-        if node.get("type") == "Text":
-            c = node.get("content")
-            if c in (ASC, DESC):
-                out.append(c)
-        for ch in node.get("children") or []:
-            walk(ch)
+        def walk(node):
+            nonlocal n
+            if not isinstance(node, dict):
+                return
+            if node.get("type") == "Path":
+                n += 1
+            for ch in node.get("children") or []:
+                walk(ch)
 
-    walk(hrow)
+        walk(cell)
+        out[col] = n
     return out
+
+
+def sorted_column(d):
+    """The one column that both SAYS it is sorted and DRAWS a mark.
+
+    Returns `(column, direction)` or `None`. ★★★★★ The two readings are
+    reconciled HERE rather than asserted apart, so a screen that announces a
+    sort it does not draw — or draws one it does not announce — cannot answer
+    this at all.
+    """
+    said = said_sort(d)
+    drawn = drawn_marks(d)
+    # `column_index` is 1-based in the accessibility tree (the row header
+    # occupies 0); the paint's `#h{col}` is 0-based.
+    marked = {col for col, n in drawn.items() if n > 0}
+    announced = {ci - 1 for ci in said}
+    assert marked == announced, (
+        f"the heading that says it is sorted and the heading that draws an "
+        f"arrow are different headings: announced {sorted(announced)}, "
+        f"drew {sorted(marked)} (per-column marks {drawn})"
+    )
+    for col, n in drawn.items():
+        assert n <= 1, f"column {col} draws {n} marks where at most one belongs"
+    if not announced:
+        return None
+    col = next(iter(announced))
+    return (col, said[col + 1])
 
 
 def click_header(d, col):
@@ -98,7 +180,7 @@ def body() -> None:
         assert_eq(q(d, "sort_col"), -1, "boot unsorted (sort_col -1)")
         assert_eq(q(d, "sort_dir"), "none", "boot sort_dir none")
         assert_eq(order(d), [0, 1, 2, 3, 4, 5], "boot identity order")
-        assert_eq(header_glyphs(d), [], "no sort glyph when unsorted")
+        assert_eq(sorted_column(d), None, "nothing says or draws a sort when unsorted")
 
         # ── select data row 0 ("Tabs") so we can prove it survives sort ─
         d.click(path=f"{T}#0_0")
@@ -113,7 +195,11 @@ def body() -> None:
         # Tooltip = data rows [3, 1, 5, 0, 2, 4].
         assert_eq(order(d), [3, 1, 5, 0, 2, 4], "ascending Widget order")
         assert_eq(q(d, "cell.3.0"), "Dialog", "data row 3 is Dialog (now visual 0)")
-        assert_eq(header_glyphs(d), [ASC], "one ascending glyph")
+        assert_eq(
+            sorted_column(d),
+            (0, "ascending"),
+            "column 0 says ascending and draws the one mark that says so",
+        )
         # Selection survived (data-indexed): row 0 still selected, now at
         # visual position 3 (order[3] == 0).
         assert_eq(q(d, "selected.0"), True, "selected data row survives the sort")
@@ -124,14 +210,18 @@ def body() -> None:
         click_header(d, 0)
         assert_eq(q(d, "sort_dir"), "descending", "descending after 2nd click")
         assert_eq(order(d), [4, 2, 0, 5, 1, 3], "descending = reversed ascending")
-        assert_eq(header_glyphs(d), [DESC], "one descending glyph")
+        assert_eq(
+            sorted_column(d),
+            (0, "descending"),
+            "the same column says descending and still draws exactly one mark",
+        )
 
         # ── click again -> unsorted ────────────────────────────────────
         click_header(d, 0)
         assert_eq(q(d, "sort_col"), -1, "3rd click clears the sort")
         assert_eq(q(d, "sort_dir"), "none", "back to unsorted")
         assert_eq(order(d), [0, 1, 2, 3, 4, 5], "identity order restored")
-        assert_eq(header_glyphs(d), [], "glyph gone when unsorted")
+        assert_eq(sorted_column(d), None, "both readings go quiet together")
 
         # ── invoke "sort" — the direct AI path (no pointer synthesis) ──
         assert_eq(d.invoke("/external/sort", 1), "ascending", "invoke sort returns dir")
