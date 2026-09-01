@@ -7674,3 +7674,104 @@ fn r1909_a_press_puts_the_inspector_away_and_a_press_brings_it_back() {
         );
     });
 }
+
+/// ★★★★★ R1957 — **a surface that opens is a surface a person can read.**
+///
+/// # The report this reproduces
+///
+/// A person opened this screen's toolbar overflow — the `…` control — in the
+/// assembled analysis tool and said the menu *opens and is then cut to almost
+/// nothing*: its rounded top edge is visible and a few pixels down the canvas
+/// grid resumes.
+///
+/// # ⚠ TWO DIAGNOSES WERE WRONG BEFORE THIS ONE, and both were remeasured away
+///
+/// 1. *the floating surface is trapped in its parent's clip.* Measured:
+///    `Overflow`'s default is `Visible` and this toolbar declares no window
+///    over its children, so `Scene::clips_subtree` is false for it and nothing
+///    there clips at all.
+/// 2. *it is the card settings popover.* Measured: `config_open` has seven
+///    sites in the shell and **no painter**, so it draws nothing — and the
+///    report describes a surface that is drawn.
+///
+/// What it actually is: this screen's root paints
+/// `palette, toolbar, canvas, inspector` **in that order**, a scene is painted
+/// depth-first, and the menu hangs below the toolbar's own rectangle — so the
+/// canvas is drawn over it.
+///
+/// ⚠⚠ **The shell fixed this exact defect by hand at R1672** — its preset menu
+/// was a child of the sub bar, hung 81 pixels below it, and was lifted to a
+/// top-level sibling painted last. That repair left NO GATE, so this screen
+/// made the same mistake and nothing said so.
+///
+/// # Why "painted over" and not "overlaps"
+///
+/// `layering::host_marks_over_guest` reports an overlap in either direction,
+/// which is right across the host/guest seam and useless inside one screen: a
+/// pane's marks meet their own pane's background constantly.
+/// [`pinion_screen::layering::marks_painted_over`] reads the walk's own order —
+/// depth-first IS paint order — so only a mark drawn LATER is reported.
+///
+/// ⚠ The seats are found through [`super::in_toolbar_overflow`], the screen's
+/// own answer to what the overflow holds, so this gate and the paint cannot
+/// disagree about the population.
+#[test]
+fn r1957_a_surface_that_opens_is_not_painted_over() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        let shot = painted(&state);
+        // The control exists only when the row actually moved a group into the
+        // overflow, which is a property of the window width. Asserted rather
+        // than skipped: a walk that quietly tests nothing is the escape hatch
+        // this project's rules forbid.
+        assert!(
+            shot.tags.contains_key("lab.toolbar.more"),
+            "at {WIN_W}x{WIN_H} this toolbar overflows, so the `…` control is \
+             painted and a person can press it",
+        );
+        let at = centre(shot.tags["lab.toolbar.more"]);
+        super::move_cursor(&state, at.0, at.1);
+        super::press(&state);
+        super::release(&state);
+        let (opened, scene) = painted_at(&state, (WIN_W, WIN_H));
+
+        // The menu is open. Without this the covering check below would pass
+        // vacuously on a menu that never opened — a population that can be
+        // empty gives a wrong claim a green.
+        let seats: Vec<String> = opened
+            .tags
+            .keys()
+            .filter(|tag| super::in_toolbar_overflow(tag))
+            .cloned()
+            .collect();
+        assert!(
+            !seats.is_empty(),
+            "pressing the `…` control opens the overflow, so its seats are \
+             painted; the toolbar's tags are {:?}",
+            opened
+                .tags
+                .keys()
+                .filter(|t| t.starts_with("lab.toolbar"))
+                .collect::<Vec<_>>(),
+        );
+
+        let mut covered: Vec<String> = Vec::new();
+        for seat in &seats {
+            for over in pinion_screen::layering::marks_painted_over(&scene, seat) {
+                covered.push(format!(
+                    "`{}` {:?} is painted over `{}` {:?}",
+                    over.host, over.host_rect, over.guest, over.guest_rect,
+                ));
+            }
+        }
+        assert!(
+            covered.is_empty(),
+            "{} covering(s) over {} open overflow seat(s) — a surface that \
+             opens and is then covered is one a person cannot read:\n  {}",
+            covered.len(),
+            seats.len(),
+            covered.join("\n  "),
+        );
+    });
+}

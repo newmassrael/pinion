@@ -120,6 +120,100 @@ pub fn host_marks_over_guest(scene: &Scene, guest_tag: &str) -> Vec<Overlap> {
     found
 }
 
+/// ★★★★★ R1957 — **every mark painted AFTER `tag`'s subtree that covers part
+/// of it**, which is the question [`host_marks_over_guest`] cannot ask.
+///
+/// # Two different questions, and why the older one is not this one
+///
+/// That function asks *whose* mark it is — host or guest — and reports any
+/// overlap in either direction, because across the host/guest seam an overlap
+/// is a defect whichever was drawn first. Inside ONE screen that is not true:
+/// the marks of a pane overlap their own pane's background constantly, and a
+/// panel's border meets everything it frames. What makes an overlap a defect
+/// *here* is **order** — a scene is painted depth-first, so a node visited
+/// later is drawn on top — and nothing in this tree could read that.
+///
+/// # The defect this comes from
+///
+/// A person opened the node lab's toolbar overflow and reported that the menu
+/// *opens and then is cut to almost nothing*: the rounded top edge is visible
+/// and a few pixels down the canvas grid resumes. It is not a clip — the
+/// toolbar declares no window over its children, and a scene's default
+/// overflow is `Visible` — it is that the lab's root paints
+/// `palette, toolbar, canvas, inspector` **in that order**, so the canvas is
+/// drawn over a menu that hangs below the toolbar's own rectangle.
+///
+/// ⚠ The shell had the SAME defect and fixed it by hand at R1672 — its preset
+/// menu was a child of the sub bar and hung 81 pixels below it, and the repair
+/// was to make it a top-level sibling painted last. **That repair left no
+/// gate**, so a second screen made the same mistake and nothing said so for
+/// 285 rounds. A rule kept by remembering is a rule that gets broken.
+///
+/// # What is reported
+///
+/// A mark is `over` when it is visited AFTER the subtree of `tag`, is not
+/// inside that subtree, is not one of its ancestors (a container holds what it
+/// paints and its own background is drawn before its children), and its visible
+/// rectangle meets one of the subtree's marks. Visible, not promised: this
+/// reads [`absolute_rect`](pinion_core::scene::NodeVisit::absolute_rect), so a
+/// mark a clip has already removed cannot cover anything.
+#[must_use]
+pub fn marks_painted_over(scene: &Scene, tag: &str) -> Vec<Overlap> {
+    // The subtree's marks, and the visit index at which the subtree ENDS. A
+    // scene is walked depth-first in paint order, so "painted after" is
+    // "visited after" and needs no second traversal to establish.
+    let mut under: Vec<(String, Rect)> = Vec::new();
+    let mut last_of_subtree: Option<usize> = None;
+    let mut later: Vec<(usize, String, Rect)> = Vec::new();
+    let mut n = 0usize;
+    scene.for_each_node(&mut |visit| {
+        let here = n;
+        n += 1;
+        let inside = visit.node.tag() == Some(tag)
+            || visit
+                .ancestors
+                .iter()
+                .any(|a| a.tag().is_some_and(|t| t == tag));
+        let Some(rect) = visit.absolute_rect() else {
+            // Already invisible: it covers nothing and nothing covers it.
+            if inside {
+                last_of_subtree = Some(here);
+            }
+            return;
+        };
+        if inside {
+            last_of_subtree = Some(here);
+            if let Some(own) = visit.node.tag() {
+                under.push((own.to_owned(), rect));
+            }
+        } else if let Some(own) = visit.node.tag() {
+            later.push((here, own.to_owned(), rect));
+        }
+    });
+    let Some(end) = last_of_subtree else {
+        return Vec::new(); // the scene holds no such subtree
+    };
+    let held_by = ancestors_of(scene, tag);
+
+    let mut found = Vec::new();
+    for (at, over_tag, over_rect) in &later {
+        if *at <= end || held_by.contains(over_tag.as_str()) {
+            continue;
+        }
+        for (under_tag, under_rect) in &under {
+            if meets(*over_rect, *under_rect) {
+                found.push(Overlap {
+                    host: over_tag.clone(),
+                    guest: under_tag.clone(),
+                    host_rect: *over_rect,
+                    guest_rect: *under_rect,
+                });
+            }
+        }
+    }
+    found
+}
+
 /// The tags of every container the guest's node hangs beneath.
 ///
 /// Read from the ancestor chain the walk already carries, because that is what

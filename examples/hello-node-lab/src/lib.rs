@@ -5775,15 +5775,15 @@ fn overflow_control_seat(state: &LabState) -> Option<ToolbarSeat> {
 ///
 /// Answers `false` for a tag that is not a cluster seat at all, so the grant it
 /// gives is exactly the seats whose group moved and nothing else.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the wire asks it through `toolbar_overflow`; \
-    this spelling is the per-TAG one the paint gates need"
-    )
-)]
-pub(crate) fn in_toolbar_overflow(tag: &str) -> bool {
+/// ★ R1957 — **public, and the `dead_code` expectation is gone with the
+/// privacy.** The ASSEMBLED tool asks this now: the shell's layering gate has
+/// to know which seats an open overflow holds, and the only alternative is for
+/// that gate to spell the membership rule a second time — the class of defect
+/// this repository counts by the dozen. A crate-private helper whose only
+/// non-test caller was hypothetical is exactly what that expectation was
+/// recording; there is a real one now.
+#[must_use]
+pub fn in_toolbar_overflow(tag: &str) -> bool {
     // ★ R1791.1 — through `tags()`, which is seats AND the captions painted
     // inside them. This used to carry its own hand-written case for
     // `lab.toolbar.zoom` while the wire's `moved_seats` carried none, so the two
@@ -8091,25 +8091,53 @@ fn toolbar_controls(state: &LabState, ink: Ink) -> Vec<Scene> {
 /// The menu's seats keep their own tags, so a press aimed at
 /// `lab.toolbar.config` still lands on the configuration export: it is
 /// somewhere else, not something else.
-fn toolbar_overflow(state: &LabState, bar: Rect, ink: Ink) -> Vec<Scene> {
+fn toolbar_overflow(_state: &LabState, bar: Rect, ink: Ink) -> Vec<Scene> {
     let local = |r: Rect| Rect::new(r.x - bar.x, r.y - bar.y, r.w, r.h);
     let Some(control) = overflow_rect() else {
         return Vec::new();
     };
-    let mut children = toolbar_overflow_seat(local(control), ink);
-    if state.toolbar_open.get() {
-        for (tag, rect) in overflow_menu_seats() {
-            let seat = local(rect);
-            children.push(box_at(tag, seat, ink.raised, Some(ink.outline), 6));
-            children.push(label(
-                tag.rsplit('.').next().unwrap_or(tag),
-                seat_caption(seat),
-                FONT_SMALL,
-                ink.text_2,
-            ));
-        }
+    toolbar_overflow_seat(local(control), ink)
+}
+
+/// ★★★★★ R1957 — **the menu itself, painted LAST and in window space.**
+///
+/// # Why it is not a child of the toolbar any more
+///
+/// It was, and a person reported the result: the menu *opens and is then cut to
+/// almost nothing* — its rounded top edge visible, and a few pixels down the
+/// canvas grid resuming. It is not a clip ([`pinion_core::style::Overflow`]'s
+/// default is `Visible` and the toolbar declares no window over its children,
+/// so [`pinion_core::Scene::clips_subtree`] is false for it); it is **order**. A
+/// scene is painted depth-first, this screen's root paints
+/// `palette, toolbar, canvas, inspector`, and the menu hangs BELOW the
+/// toolbar's own rectangle — straight into the canvas that is drawn after it.
+///
+/// ⚠⚠ **The shell had this identical defect and fixed it by hand at R1672**:
+/// its preset menu was a child of the sub bar, hung 81 pixels below it, and was
+/// lifted to a top-level sibling painted last. That repair left no gate, so
+/// this screen made the same mistake and nothing said so.
+/// `r1957_a_surface_that_opens_is_not_painted_over` is that gate now, and it
+/// reads paint ORDER rather than presence — every check this screen carried
+/// asked whether the seats were PRESENT, and they always were.
+///
+/// The seats keep their own tags and their own window rectangles, which is what
+/// lets [`overflow_menu_seats`] stay the single answer to *where a seat is* for
+/// the paint, the hit test and the gate alike.
+fn overflow_menu(state: &LabState, ink: Ink) -> Vec<Scene> {
+    if !state.toolbar_open.get() {
+        return Vec::new();
     }
-    children
+    let mut out = Vec::new();
+    for (tag, seat) in overflow_menu_seats() {
+        out.push(box_at(tag, seat, ink.raised, Some(ink.outline), 6));
+        out.push(label(
+            tag.rsplit('.').next().unwrap_or(tag),
+            seat_caption(seat),
+            FONT_SMALL,
+            ink.text_2,
+        ));
+    }
+    out
 }
 
 fn toolbar_overflow_seat(seat: Rect, ink: Ink) -> Vec<Scene> {
@@ -10427,6 +10455,14 @@ fn view(field: (TextFieldState, u32), _frame: Frame) -> Scene {
         canvas(&state, ink),
         inspector(&state, field, &theme, ink),
     ]);
+    // ★★★★★ R1957 — **the overflow menu is painted last**, because a scene is
+    // painted depth-first and a surface that opens over the canvas has to be
+    // drawn after it. As a child of the toolbar it was covered by the canvas
+    // the moment it hung below the bar's own rectangle, which is what a person
+    // saw and reported as *the menu opens and is then cut to almost nothing*.
+    // The shell's preset menu is a top-level sibling for exactly this reason
+    // (R1672); the difference is that this one now has a gate behind it.
+    panes.extend(overflow_menu(&state, ink));
 
     Scene::Container(
         ContainerNode::new(panes)

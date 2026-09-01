@@ -455,6 +455,17 @@
       ]
     },
     {
+      "name": "debt-the-shells-walk-cannot-press-a-mounted-screens-control",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links debt-the-canon-is-one-app-and-we-are-many-binaries"
+      ]
+    },
+    {
       "name": "debt-two-deliberate-divergences-from-the-behaviour-canon",
       "substituted": false,
       "blocked_by": "spec-round",

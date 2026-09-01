@@ -3511,6 +3511,7 @@ dependencies = [
  "pinion-node-graph",
  "pinion-platform-storage",
  "pinion-runtime",
+ "pinion-screen",
  "pinion-shell",
  "pinion-widget-paint",
  "serde",

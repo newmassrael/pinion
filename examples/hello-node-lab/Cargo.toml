@@ -56,6 +56,11 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+# R1957 — `layering::marks_painted_over`, which reads the walk's own order to
+# say whether a mark drawn LATER covers one drawn earlier. The overflow menu
+# this screen opens was being painted over by its own canvas and no check here
+# could see it: every gate this file carries asks whether a mark is PRESENT.
+pinion-screen = { path = "../../crates/pinion-screen", version = "0.0.1" }
 # R1653 — the integration test runs the real view -> layout pipeline, so the
 # rectangles it asserts against are the ones the window would paint rather than
 # the ones the geometry helpers predict.
