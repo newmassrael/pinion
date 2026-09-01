@@ -1347,6 +1347,49 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
     /// application may add to it or silence it; this is the application's
     /// judgement about one node in a graph that is perfectly well formed.
     ///
+    /// ★★★★★ R1942 — **can a value of this type be LOOKED AT while the graph
+    /// runs**, or is it a type that carries something with no value to read?
+    ///
+    /// The supplied answer is [`Inspectable::Yes`]: a type that carries a value
+    /// has a value to look at, which is what this crate assumed before the
+    /// question could be asked. A taxonomy declares the exceptions.
+    ///
+    /// # What forced it, measured in the reference this round
+    ///
+    /// Its schema is asked whether a pin may show its data, and the answer
+    /// gates whether a debugger will let a person inspect that pin at all.
+    /// Counted: one supplied declaration (answering **no**, because a bare
+    /// schema knows none of its types), **two** overriders and **one**
+    /// consumer.
+    ///
+    /// The two overriders are what decided the shape here. One refuses
+    /// **execution** pins and **delegate** pins; the other refuses **pose**
+    /// pins and then defers to the first. Execution is already answered here —
+    /// control is not a value ([`Flow::Control`]) and
+    /// [`WatchError::NotAValue`](crate::WatchError::NotAValue) has refused it
+    /// since R1644. The other two are the gap: **a type that carries a value
+    /// and still has nothing a person can read**, which nothing here could say.
+    ///
+    /// ★★★★★ AND THE MEASURED DEFECT IS THAT ITS ANSWER IS A BARE `bool`. Its
+    /// one consumer asks five separate questions — the pin is orphaned, the
+    /// owning node is disabled, the schema refuses, there is no debug context,
+    /// the session is not running — and folds every one of them into the same
+    /// `false`. A person told *no* cannot tell which of the five it was, and
+    /// nothing downstream can either. Here the refusal carries its sentence, so
+    /// [`Document::stale_watches`](crate::Document::stale_watches) can say
+    /// which of its reasons applied to which port.
+    ///
+    /// An associated function and not a method, for
+    /// [`type_colour`](NodeKind::type_colour)'s reason: whether a value can be
+    /// read is a fact about the TYPE, and two ports of one type must not be
+    /// able to disagree about it.
+    ///
+    /// [`Inspectable::Yes`]: crate::Inspectable::Yes
+    fn inspectable(ty: &Self::Type) -> crate::Inspectable {
+        let _ = ty;
+        crate::Inspectable::Yes
+    }
+
     /// ★★★★★ R1941 — **and the answer carries its WEIGHT**, which is the axis
     /// R1927 left out. Measured in the reference: its graph node is asked to
     /// validate itself during compilation, and what it says goes into the log

@@ -46,12 +46,13 @@ use serde::{Deserialize, Serialize};
 use pinion_node_graph::{
     Act, Admits, Admitted, Align, Appearance, Axis, Carrying, Command, ConnectError, Container,
     Conversion, Crossings, Definitions, Described, Direction, Distribute, Document, Drawn, Edge,
-    EditError, EditPath, Extent, Faces, Fragment, Grow, Hidden, Instance, InterfacePort,
-    InterfaceSide, Item, ItemError, LandError, Landfall, LinkId, Machine, Matched, Multiplicity,
-    Node, NodeBody, NodeId, NodeKind, NodeSite, NotRecombinable, NotSplittable, Objection, Passing,
-    Port, PortName, PortPath, PortRef, PortSite, PortValueError, PutAway, ROOT, Reach, RelinkError,
-    RetypeError, SectionId, Session, Sharing, Side, Socket, Stack, Straighten, Stride, SwapError,
-    SwitchRefusal, Tint, TreeId, Variadic, Violation, WatchError, palette_of, type_palette,
+    EditError, EditPath, Extent, Faces, Fragment, Grow, Hidden, Inspectable, Instance,
+    InterfacePort, InterfaceSide, Item, ItemError, LandError, Landfall, LinkId, Machine, Matched,
+    Multiplicity, Node, NodeBody, NodeId, NodeKind, NodeSite, NotRecombinable, NotSplittable,
+    Objection, Passing, Port, PortName, PortPath, PortRef, PortSite, PortValueError, PutAway, ROOT,
+    Reach, RelinkError, RetypeError, SectionId, Session, Sharing, Side, Socket, Stack, Straighten,
+    Stride, SwapError, SwitchRefusal, Tint, TreeId, Variadic, Violation, WatchError, Watches,
+    palette_of, type_palette,
 };
 
 // ---------------------------------------------------------------- taxonomy
@@ -356,6 +357,31 @@ impl NodeKind for Op {
             Ty::Number => Some(Self::Num(0)),
             Ty::Text => Some(Self::Word(String::new())),
             _ => None,
+        }
+    }
+
+    /// R1942 — which of this taxonomy's types have a value a person can LOOK
+    /// AT while the graph runs.
+    ///
+    /// `Bag` cannot, and it is the only one: a container is a handle to however
+    /// many things are in it, and showing "the value" of one is showing
+    /// something the model does not have. That is the shape the reference's two
+    /// overriders refuse — a pin that carries a live binding, and one that
+    /// carries an evaluation-time pose — neither of which is an execution pin,
+    /// which this crate already refuses on its own arm.
+    ///
+    /// ★ Exactly one type refuses, so a proof can tell a declaration from a
+    /// blanket no, and the four that permit include the composite (`Pair`) —
+    /// so "container" and "composite" are told apart here rather than collapsed
+    /// into one refusal.
+    fn inspectable(ty: &Ty) -> Inspectable {
+        match ty {
+            Ty::Bag => Inspectable::No(
+                "a bag of pairs, which is a handle to however many things are \
+                 in it rather than one value"
+                    .to_owned(),
+            ),
+            _ => Inspectable::Yes,
         }
     }
 
@@ -936,6 +962,13 @@ fn dcc_proofs() -> Vec<Proof> {
             "engine",
             "node::ValidateNodeDuringCompilation",
             engine_node_validate_node_during_compilation,
+        ),
+        // R1942 — whether a type's value can be looked at while the graph runs,
+        // and the refusal saying which type and why.
+        proof(
+            "engine",
+            "schema::CanShowDataTooltipForPin",
+            engine_schema_can_show_data_tooltip_for_pin,
         ),
         proof("dcc", "swap_empty_group", dcc_swap_empty_group),
         proof("dcc", "options_toggle", dcc_options_toggle),
@@ -2106,6 +2139,115 @@ fn engine_node_get_pin_meta_data() {
             }),
         "★★★★★ the standing check reports it: {:?}",
         document.validate(),
+    );
+}
+
+/// ★★★★★ R1942 — **whether a type's value can be LOOKED AT while the graph
+/// runs**, and a refusal that says which type and why.
+///
+/// # The measurement
+///
+/// The reference's schema is asked whether a pin may show its data, and the
+/// answer gates whether a debugger lets a person inspect that pin at all.
+/// Counted: **one supplied declaration** (answering NO — a bare schema knows
+/// none of its types and cannot vouch for any), **two** overriders, **one**
+/// consumer.
+///
+/// The two overriders decide the shape. One refuses **execution** pins and
+/// **delegate** pins; the other refuses **pose** pins and defers to the first.
+/// Execution is already answered here — control is not a value, and
+/// [`WatchError::NotAValue`] has refused it since R1644. The other two are the
+/// gap: a type that CARRIES a value and still has nothing a person can read.
+///
+/// ★★★★★ AND THE MEASURED DEFECT IS THAT THE ANSWER IS A BARE `bool`. Its one
+/// consumer asks five separate questions — the pin is orphaned, the owning node
+/// is disabled, the schema refuses, there is no debug context, the session is
+/// not running — and folds every one into the same `false`. A person told *no*
+/// cannot tell which of the five it was. Here the refusal carries its sentence
+/// and its own arm, so the crate's refusal and the taxonomy's are two different
+/// answers rather than one word.
+#[test]
+fn engine_schema_can_show_data_tooltip_for_pin() {
+    let mut document: Document<Op> = Document::new("root");
+    let carry = document
+        .add_node(ROOT, NodeBody::Kind(Op::Carry), 0, 0)
+        .expect("root tree");
+    let mut watches = Watches::default();
+
+    // (A) The declaration is READABLE without a port in hand — what a screen
+    // needs before it offers a watch affordance at all.
+    assert_eq!(<Op as NodeKind>::inspectable(&Ty::Number), Inspectable::Yes);
+    assert!(matches!(
+        <Op as NodeKind>::inspectable(&Ty::Bag),
+        Inspectable::No(_)
+    ));
+
+    // (B) ★★★★★ THE WATCH ENFORCES IT, and the refusal carries the taxonomy's
+    // own sentence — `Carry`'s inputs are (Go: control, Whole: Pair, Loose:
+    // Bag), so one node reaches all three answers.
+    assert_eq!(
+        document.set_watch(
+            &mut watches,
+            PortSite::at(ROOT, carry, PortRef::input(1), Instance::root()),
+        ),
+        Ok(true),
+        "★ the composite port is watchable, so this cannot pass by refusing \
+         everything"
+    );
+    let refused = document
+        .set_watch(
+            &mut watches,
+            PortSite::at(ROOT, carry, PortRef::input(2), Instance::root()),
+        )
+        .expect_err("a bag has no one value to read");
+    match &refused {
+        WatchError::NotInspectable { port, why, .. } => {
+            assert_eq!(*port, PortRef::input(2));
+            assert!(
+                why.contains("handle to however many"),
+                "★★★★★ the sentence is the TAXONOMY's, carried rather than \
+                 re-derived: {why:?}"
+            );
+        }
+        other => panic!("expected the taxonomy's refusal, got {other:?}"),
+    }
+
+    // (C) ★★★★★ AND IT IS A DIFFERENT ANSWER FROM THE CRATE'S. Control is
+    // refused on its own arm, by a rule no taxonomy has a say in — the
+    // distinction the reference cannot make, because both reach it through one
+    // `bool` from one schema call.
+    assert!(matches!(
+        document.set_watch(
+            &mut watches,
+            PortSite::at(ROOT, carry, PortRef::input(0), Instance::root()),
+        ),
+        Err(WatchError::NotAValue { .. })
+    ));
+
+    // (D) ★ The refusal READS as a sentence, which is what a debugger shows.
+    assert!(
+        refused.to_string().contains("holds a bag of pairs"),
+        "{refused}"
+    );
+
+    // (E) ★★★★★ And a watch armed while the type permitted it is REPORTED as
+    // stale when the port's type changes under it — the half a gate on the
+    // arming alone would miss. `Carry`'s second input is a Pair; retyping the
+    // node is not available here, so this drives the equivalent reachable
+    // state: a watch on a port that stops existing.
+    let listed = document.stale_watches(&watches);
+    assert!(
+        listed.is_empty(),
+        "nothing is stale while the document stands: {listed:?}"
+    );
+    document
+        .set_kind(ROOT, carry, Op::Double)
+        .expect("a kind swap");
+    let listed = document.stale_watches(&watches);
+    assert!(
+        !listed.is_empty(),
+        "★★★★★ the watch on a port the swap removed is REPORTED, with why — \
+         the reference answers one watch at a time and only `bool`"
     );
 }
 

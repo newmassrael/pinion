@@ -594,6 +594,29 @@ pub enum WatchError {
         /// The control port.
         port: PortRef,
     },
+    /// ★★★★★ R1942 — the port carries a value of a type the **taxonomy** says
+    /// has nothing a person can read, and this says which type and why.
+    ///
+    /// Distinct from [`NotAValue`](Self::NotAValue), and the two are not two
+    /// spellings of one refusal: that one is the CRATE's — control is not a
+    /// value by construction — and this one is the taxonomy's, about a port
+    /// that does carry a value. The reference reaches both through one `bool`
+    /// from one schema call, which is why a person told *no* there cannot tell
+    /// which of the two they met.
+    ///
+    /// The sentence is the taxonomy's own ([`NodeKind::inspectable`]), carried
+    /// rather than re-derived, so what a debugger shows and what the taxonomy
+    /// declared cannot differ.
+    NotInspectable {
+        /// The tree.
+        tree: TreeId,
+        /// The node.
+        node: NodeId,
+        /// The port.
+        port: PortRef,
+        /// Why this type has nothing to read, in the taxonomy's own words.
+        why: String,
+    },
 }
 
 impl fmt::Display for WatchError {
@@ -613,11 +636,40 @@ impl fmt::Display for WatchError {
                 f,
                 "port {port} of node {node} in tree {tree} carries control, not a value"
             ),
+            Self::NotInspectable {
+                tree,
+                node,
+                port,
+                why,
+            } => write!(f, "port {port} of node {node} in tree {tree} holds {why}"),
         }
     }
 }
 
 impl std::error::Error for WatchError {}
+
+/// ★★★★★ R1942 — **whether a value of a type can be LOOKED AT while the graph
+/// runs.**
+///
+/// See [`NodeKind::inspectable`] for the measurement. Two arms rather than a
+/// `bool`, and the sentence is the whole reason: the reference answers this
+/// with a bare `bool` whose one consumer folds FIVE separate refusals into it,
+/// so a person told *no* cannot tell which of the five they met.
+///
+/// ⚠ Not an `Option<String>`, where `None` would have to mean *yes*: a reader
+/// meeting `None` has to be told which way it reads, and the two states here
+/// are a permission and a refusal rather than a value and its absence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Inspectable {
+    /// A value of this type can be read.
+    Yes,
+    /// It cannot, and this says what it holds instead — in the taxonomy's own
+    /// words, so a debugger quotes rather than invents.
+    ///
+    /// Reads into the refusal's sentence as *port … holds …*, so a taxonomy
+    /// writes a noun phrase: "a live connection, which has no value to read".
+    No(String),
+}
 
 /// What a watched port held, in one occurrence (R1644).
 ///
@@ -1490,6 +1542,20 @@ impl<K: NodeKind> Document<K> {
                 node: site.node,
                 port: site.port,
             });
+        }
+        // ★★★★★ R1942 — and then what the TAXONOMY says about the type. Asked
+        // after control, because control is not a value by construction and a
+        // taxonomy has no say in that: reporting the narrower refusal about it
+        // would name a rule that did not apply.
+        if let Some(ty) = port.value_type() {
+            if let crate::Inspectable::No(why) = K::inspectable(ty) {
+                return Err(WatchError::NotInspectable {
+                    tree: site.tree,
+                    node: site.node,
+                    port: site.port,
+                    why,
+                });
+            }
         }
         Ok(())
     }

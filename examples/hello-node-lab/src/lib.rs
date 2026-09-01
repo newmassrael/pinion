@@ -102,9 +102,10 @@ use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::widgets::wheel::WheelDirection;
 use pinion_core::{CellKind, Frame, Modifiers, Scene, WidgetCore, edit_field_keymap};
 use pinion_node_graph::{
-    Act, Camera, Document, Drawn, Extent, Faces, Fit, Found, Item, Judged, LandError, Landfall,
-    LinkId, LinkLayer, Margin, NameSource, Node, NodeBody, NodeId, NodeKind, Objection, PortPath,
-    PortRef, ROOT, Relinked, Side, Socket, Tint, Violation, ZoomRange, palette_of, type_palette,
+    Act, Camera, Document, Drawn, Extent, Faces, Fit, Found, Instance, Item, Judged, LandError,
+    Landfall, LinkId, LinkLayer, Margin, NameSource, Node, NodeBody, NodeId, NodeKind, Objection,
+    PortPath, PortRef, PortSite, ROOT, Relinked, Side, Socket, Tint, Violation, WatchError,
+    Watches, ZoomRange, palette_of, type_palette,
 };
 use pinion_platform_storage::AppStorage;
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
@@ -11144,6 +11145,13 @@ const FIELDS: &[SchemaField] = &{
         // the field, the value in it, and the repair when the two disagree —
         // all from the ONE declaration the edit below enforces.
         SchemaField::new("takes", "json"),
+        // ★★★★★ R1942 — whether each pin's value can be LOOKED AT once this
+        // graph is deployed, and when it cannot, the taxonomy's own reason.
+        // Published per pin rather than per type because the refusal a client
+        // must show is about a PIN, and because a control pin is refused by the
+        // crate rather than by the taxonomy — two different answers a screen
+        // has to be able to tell apart.
+        SchemaField::new("watchable", "json"),
         // ★★★★★ R1939 — give one pin the address it rests at. The locator is
         // deliberately an OPEN argument: the point of the round is that the pin
         // judges it and says what it wants, so a closed vocabulary here would
@@ -11313,6 +11321,7 @@ impl ExternalIntrospect for LabOracle {
             "choosable" => Ok(IntrospectValue::Json(choosable_wire(state))),
             "containers" => Ok(IntrospectValue::Json(containers_wire(state))),
             "takes" => Ok(IntrospectValue::Json(takes_wire(state))),
+            "watchable" => Ok(IntrospectValue::Json(watchable_wire(state))),
             // ★ R1742 — the SAME value the host publishes for this section, so
             // "one build, two placements" is a fact a client can check rather
             // than a claim this file makes.
@@ -18108,6 +18117,61 @@ fn card_tint(state: &LabState, node: NodeId) -> Option<Tint> {
         .tree(ROOT)
         .and_then(|host| host.node(node))
         .and_then(|held| held.appearance.tint)
+}
+
+/// ★★★★★ R1942 — **whether each pin's value can be LOOKED AT**, and when it
+/// cannot, whose refusal it is and why.
+///
+/// Derived by asking the framework to arm a watch and reading what it refuses,
+/// rather than by re-deciding here: the register a client reads and the gate an
+/// arming would meet are then the same call. The reference publishes no such
+/// list at all — there the answer exists only inside the debugger's own
+/// can-I-inspect check, as a `bool` that folds five separate refusals together.
+fn watchable_wire(state: &Rc<LabState>) -> serde_json::Value {
+    let doc = state.doc.borrow();
+    let mut rows = Vec::new();
+    for node in state.cards() {
+        for side in [Side::Output, Side::Input] {
+            for (path, _port) in doc.resolved_ports(ROOT, node, side) {
+                if path.depth() > 0 {
+                    continue;
+                }
+                let at = match side {
+                    Side::Input => PortRef::input(path.port),
+                    Side::Output => PortRef::output(path.port),
+                };
+                let site = PortSite::at(ROOT, node, at, Instance::root());
+                // ⚠ A scratch set: arming is what answers the question, and a
+                // register must not change what it reports on.
+                let mut scratch = Watches::default();
+                let (yes, whose, why) = match doc.set_watch(&mut scratch, site) {
+                    Ok(_) => (true, serde_json::Value::Null, serde_json::Value::Null),
+                    Err(WatchError::NotAValue { .. }) => (
+                        false,
+                        serde_json::json!("the crate"),
+                        serde_json::json!("this pin carries control, not a value"),
+                    ),
+                    Err(WatchError::NotInspectable { why, .. }) => (
+                        false,
+                        serde_json::json!("the taxonomy"),
+                        serde_json::json!(why),
+                    ),
+                    Err(other) => (
+                        false,
+                        serde_json::json!("the document"),
+                        serde_json::json!(other.to_string()),
+                    ),
+                };
+                rows.push(serde_json::json!({
+                    "pin": format!("{}.{}", state.name_of(node), pin_word(side, &path)),
+                    "watchable": yes,
+                    "refused_by": whose,
+                    "why": why,
+                }));
+            }
+        }
+    }
+    serde_json::json!({ "pins": rows })
 }
 
 /// ★★★★★ R1940 — **what this card's KIND says it is drawn as**, in a sentence.

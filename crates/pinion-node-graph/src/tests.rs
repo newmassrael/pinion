@@ -13,14 +13,14 @@ use crate::{
     Breakpoints, Bringup, Camera, Carried, Carrying, Command, Composition, ConnectError, Container,
     Control, Conversion, Crossings, Definitions, Direction, Discovery, Distribute, Document, Drawn,
     Dropped, DuplicateError, Edge, EditError, EditPath, Extent, ExtractError, Fit, Flow,
-    ForceError, Fragment, GroupError, Grow, Halt, InsertError, Instance, InterfaceSide, Item,
-    ItemError, Layered, LinkId, LinkLayer, Machine, Margin, Multiplicity, Naming, NestError, Node,
-    NodeBody, NodeId, NodeKind, NodeSite, ObserveError, Occurrence, Organic, Orphaned, ParentError,
-    Passing, PathError, Port, PortPath, PortRef, PortSite, PortValueError, ROOT, Reach, Relabelled,
-    RelinkError, RepartitionError, RetypeError, Route, RunError, SectionId, SelectError, Session,
-    Severed, Sharing, Side, Socket, Stack, Standing, Stop, Straighten, Stride, SwapError,
-    SwitchRefusal, Tick, Timeline, Tint, TreeId, UngroupError, Unreadable, Violation, WatchError,
-    Watches, ZoomRange, crossing,
+    ForceError, Fragment, GroupError, Grow, Halt, InsertError, Inspectable, Instance,
+    InterfaceSide, Item, ItemError, Layered, LinkId, LinkLayer, Machine, Margin, Multiplicity,
+    Naming, NestError, Node, NodeBody, NodeId, NodeKind, NodeSite, ObserveError, Occurrence,
+    Organic, Orphaned, ParentError, Passing, PathError, Port, PortPath, PortRef, PortSite,
+    PortValueError, ROOT, Reach, Relabelled, RelinkError, RepartitionError, RetypeError, Route,
+    RunError, SectionId, SelectError, Session, Severed, Sharing, Side, Socket, Stack, Standing,
+    Stop, Straighten, Stride, SwapError, SwitchRefusal, Tick, Timeline, Tint, TreeId, UngroupError,
+    Unreadable, Violation, WatchError, Watches, ZoomRange, crossing,
 };
 
 /// ★★★★★ R1925 — **an application that declares no two-state socket type is
@@ -16828,6 +16828,44 @@ fn r1935_a_far_end_is_on_the_chain_without_having_two_ends() {
 ///
 /// ⚠ The empty answer is READABLE either way: `wants()` says so in a sentence,
 /// which is what a screen shows beside a free field.
+/// ★★★★★ R1942 — **the DEFAULT answer to "can this type's value be looked at"
+/// is yes**, asserted on a taxonomy that takes it.
+///
+/// Written BEFORE a counterfactual asked, which R1941 failed to do and was
+/// caught for: a default is an escape hatch, the census fixture overrides these
+/// hooks, so what most applications get is the thing nothing checks. `LOp`
+/// declares nothing here.
+///
+/// ★ And the default is a PERMISSION where R1938's is a refusal, which is the
+/// measurement rather than an inconsistency: a port that carries a VALUE has a
+/// value by construction, so a taxonomy saying nothing has not failed to opt
+/// in — it has said the ordinary thing. The reference's supplied answer is a
+/// refusal for the opposite reason: a bare schema there knows none of its
+/// types, so it cannot vouch for any of them.
+#[test]
+fn r1942_the_default_type_can_be_looked_at() {
+    let mut document: Document<LOp> = Document::new("lattice");
+    let sum = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Sum), 0, 0)
+        .expect("root tree");
+    assert_eq!(
+        LOp::inspectable(&LTy::Vector),
+        Inspectable::Yes,
+        "the trait's supplied answer is that a value can be read"
+    );
+    // ★ And it is the WATCH that must agree, not only the hook: a default
+    // nothing consults is a default nothing means.
+    let mut watches = Watches::default();
+    assert_eq!(
+        document.set_watch(
+            &mut watches,
+            PortSite::at(ROOT, sum, PortRef::input(0), Instance::root()),
+        ),
+        Ok(true),
+        "so an ordinary value port may be watched"
+    );
+}
+
 /// ★★★★★ R1941 — **the DEFAULT answer to "what is wrong with this node" is
 /// that the kind objects to nothing**, asserted on a taxonomy that takes it.
 ///

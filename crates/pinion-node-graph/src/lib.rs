@@ -259,8 +259,8 @@ pub use arrange::{
 pub use beacon::{BeaconError, Gathered, Spread};
 pub use bypass::{Bridge, Passthrough, Rewired, Route};
 pub use debug::{
-    BreakError, Breakpoints, Command, Direction, Halt, Landing, NodeSite, Occurrence, Paused,
-    PortSite, Reading, Session, Stride, Timeline, WatchError, Watches,
+    BreakError, Breakpoints, Command, Direction, Halt, Inspectable, Landing, NodeSite, Occurrence,
+    Paused, PortSite, Reading, Session, Stride, Timeline, WatchError, Watches,
 };
 pub use deploy::{Bringup, Configured, Deployed, Placed, Plan, Uncarried, Unplannable};
 pub use describe::{Carrying, PortTooltip};
