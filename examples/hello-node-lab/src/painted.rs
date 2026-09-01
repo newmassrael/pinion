@@ -1253,47 +1253,6 @@ fn assert_disjoint(when: &str, shot: &Painted) {
     );
 }
 
-/// The absolute rect of the node tagged `tag`, and the absolute rects of every
-/// mark painted UNDER it.
-///
-/// A mark is a stroked or filled path with commands, or a container that
-/// actually fills — the node itself is excluded, so a button's own background
-/// is not mistaken for something drawn in it. That exclusion is the whole
-/// difficulty of this question: an empty chrome button is a filled, bordered,
-/// pressable, reachable box, and every general check this file runs is happy
-/// with it.
-fn marks_under(scene: &Scene, tag: &str) -> (Option<Rect>, Vec<Rect>) {
-    let mut own = None;
-    let mut marks = Vec::new();
-    scene.for_each_node(&mut |visit| {
-        let Some(rect) = visit.absolute_rect() else {
-            return;
-        };
-        if visit.node.tag() == Some(tag) {
-            own.get_or_insert(rect);
-            return;
-        }
-        if !visit.ancestors.iter().any(|a| a.tag() == Some(tag)) {
-            return;
-        }
-        let inked = match visit.node {
-            Scene::Path(path) => {
-                !path.commands.is_empty()
-                    && (path.style.stroke.is_some()
-                        || path.style.fill.is_some()
-                        || path.style.gradient.is_some())
-            }
-            Scene::Container(container) => container.style.fill.a > 0,
-            Scene::Text(_) => true,
-            _ => false,
-        };
-        if inked {
-            marks.push(rect);
-        }
-    });
-    (own, marks)
-}
-
 /// ★★★★★ R1950 — **every chrome control a panel offers has ink inside it**,
 /// and a control it does not offer is not painted at all.
 ///
@@ -1323,8 +1282,11 @@ fn assert_panel_marks(when: &str, state: &LabState, scene: &Scene) -> Vec<String
         let offered: Vec<_> = which.controls(state).collect();
         for control in &offered {
             let tag = format!("{}.{}", which.tag(), control.act.wire());
-            let (own, marks) = marks_under(scene, &tag);
-            let Some(button) = own else {
+            // ★ R1951 — the framework's own reader now. This function held a
+            // private copy until a second screen needed the same question.
+            let under = pinion_core::test_fixtures::screen_ink::marks_under(scene, &tag);
+            let marks = &under.marks;
+            let Some(button) = under.own else {
                 panic!("{when}: {tag} is offered by the policy and painted nowhere");
             };
             assert!(
@@ -1332,13 +1294,14 @@ fn assert_panel_marks(when: &str, state: &LabState, scene: &Scene) -> Vec<String
                 "{when}: {tag} is an empty box — a control a person can point at \
                  and cannot read"
             );
-            for mark in marks {
-                assert!(
-                    inside(button, mark),
-                    "{when}: {tag}'s mark {mark:?} is outside the button \
-                     {button:?} that holds it"
-                );
-            }
+            // ★ R1951 — the containment predicate is the fixture's too, so this
+            // screen and the shell cannot come to spell *inside* differently.
+            let out = under.marks_outside();
+            assert!(
+                out.is_empty(),
+                "{when}: {tag}'s mark(s) {out:?} lie outside the button \
+                 {button:?} that holds them"
+            );
             checked.push(tag);
         }
         for act in PanelAffordance::ALL {
@@ -1347,7 +1310,9 @@ fn assert_panel_marks(when: &str, state: &LabState, scene: &Scene) -> Vec<String
             }
             let tag = format!("{}.{}", which.tag(), act.wire());
             assert!(
-                marks_under(scene, &tag).0.is_none(),
+                pinion_core::test_fixtures::screen_ink::marks_under(scene, &tag)
+                    .own
+                    .is_none(),
                 "{when}: {tag} is painted though this panel's policy does not offer it"
             );
         }

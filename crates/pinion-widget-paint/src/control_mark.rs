@@ -235,15 +235,20 @@ pub fn scenes(mark: ControlMark, rect: Rect, ink: Color) -> Vec<Scene> {
             ink,
             1,
         )],
-        // Two chevrons pointing at the edge it collapses into — and no bar,
-        // which is what tells this apart from a flip at this size.
+        // ★★★★★ R1951 — ONE chevron pointing at the edge it collapses into, and
+        // no bar, which is what tells this apart from a flip at this size.
+        //
+        // The points are the behaviour reference's own, read out of it this
+        // round: its collapse control is a 20-unit box carrying
+        // `8,5 13,10 8,15` — a single chevron whose apex is five units from the
+        // centre — and this is that drawing, expressed from the centre so it can
+        // be turned onto any edge. R1950 drew TWO chevrons here, which was this
+        // module's invention rather than a reproduction; the reference was not
+        // asked until the round that first put this mark on a screen the
+        // reference also draws.
         ControlMark::Fold { to } => vec![strokes(
             rect,
-            &directed(
-                to,
-                (cx, cy),
-                &[&[(1, -5), (-4, 0), (1, 5)], &[(6, -5), (1, 0), (6, 5)]],
-            ),
+            &directed(to, (cx, cy), &[&[(2, -5), (-3, 0), (2, 5)]]),
             ink,
             1,
         )],
@@ -446,6 +451,75 @@ mod tests {
                 "{mark:?} draws exactly what another face draws"
             );
         }
+    }
+
+    /// ★★★★★ R1951 — **the fold mark is the behaviour reference's drawing**,
+    /// point for point, and not merely *a* chevron.
+    ///
+    /// # Why a reproduction needs a predicate and not a sentence
+    ///
+    /// The screen this mark landed on is one the reference also draws, and
+    /// until this round it drew a twelve-by-two bar there — an invention
+    /// nobody had compared with anything. The ink gate could not see that: a
+    /// bar is ink, so "there is something in the box" was already true. What
+    /// no gate asked was whether the something is *what the reference draws*.
+    ///
+    /// The reference's collapse control is a 20-unit box carrying the polyline
+    /// below, measured out of it at R1951. Expressed from that box's centre it
+    /// is an apex three units one way and two ends two units the other, five
+    /// up and five down — which is exactly what [`scenes`] emits for
+    /// [`ControlMark::Fold`], and this asserts the two are the same points
+    /// rather than the same adjective.
+    ///
+    /// ⚠ The comparison is made at the reference's own scale. A slot bigger
+    /// than 20 units draws the same mark rather than a scaled one, which is a
+    /// deliberate difference and the reason this pins the SHAPE at one size
+    /// instead of a ratio at every size.
+    #[test]
+    fn r1951_the_fold_mark_is_the_references_own_chevron() {
+        /// The reference's collapse polyline, in its own 20-unit box.
+        const REFERENCE_CHEVRON: [(i32, i32); 3] = [(8, 5), (13, 10), (8, 15)];
+        /// The centre of that box.
+        const REFERENCE_CENTRE: (i32, i32) = (10, 10);
+
+        // The reference's chevron points RIGHT (its apex is at x=13, past the
+        // centre), and its palette is the right-hand drawer — so the face to
+        // compare is the one that folds toward the right edge.
+        let rect = Rect::new(0, 0, 20, 20);
+        let ours = ink_of(
+            ControlMark::Fold {
+                to: ChromeEdge::Right,
+            },
+            rect,
+        );
+        let theirs: Vec<(u32, u32)> = REFERENCE_CHEVRON
+            .into_iter()
+            .map(|(x, y)| {
+                #[allow(
+                    clippy::cast_sign_loss,
+                    reason = "the reference's points are inside its own box"
+                )]
+                (
+                    (REFERENCE_CENTRE.0 + (x - REFERENCE_CENTRE.0)) as u32,
+                    (REFERENCE_CENTRE.1 + (y - REFERENCE_CENTRE.1)) as u32,
+                )
+            })
+            .collect();
+        assert_eq!(
+            ours.len(),
+            theirs.len(),
+            "the reference draws {} point(s) and this draws {}",
+            theirs.len(),
+            ours.len()
+        );
+        // Compared as a SET: a polyline drawn end-to-start is the same chevron,
+        // and the direction it is walked is not something a reader can see.
+        let ours_set: BTreeSet<_> = ours.iter().copied().collect();
+        let theirs_set: BTreeSet<_> = theirs.iter().copied().collect();
+        assert_eq!(
+            ours_set, theirs_set,
+            "the fold mark is not the chevron the reference draws"
+        );
     }
 
     /// R1950 — a mark that points somewhere points there **because of the

@@ -1243,6 +1243,131 @@ fn r1668_every_painted_control_answers_for_itself() {
     });
 }
 
+/// ★★★★★ R1951 — **every button on this screen is READABLE**: one that says
+/// nothing has a mark drawn inside it, and one that speaks says something.
+///
+/// # The question none of the checks above ask
+///
+/// R1950 repaid a defect a person reported from the running window — a chrome
+/// button drawn as an empty grey box — and gated it over the two panels of one
+/// screen. Every general check in this file was happy with that box: it is
+/// REACHED (`r1668_every_painted_control_answers_for_itself` presses its
+/// centre), CONTAINED (`r1672_every_painted_mark_is_inside_the_box_that_owns
+/// _it`), NAMED (the voice census), and inert-classified. *Reached* and *read*
+/// are different properties, and only the first had a gate.
+///
+/// This is the second property, asked of **every** button rather than of the
+/// two the report happened to name — because fixing one button and shipping the
+/// next one blank is what a per-control check allows.
+///
+/// # Why the population is the accessibility tree's
+///
+/// It is the screen's own statement of what a person can press, published for a
+/// reader who never sees the drawing. Deriving the roster from the paint
+/// instead would ask the drawing to nominate what the drawing must contain,
+/// which is the shape that answers "all of them" for free.
+///
+/// # The classification, and why nothing falls between
+///
+/// Each painted button is read one of two ways and BOTH are checked, so there
+/// is no "not applicable" arm to hide in:
+///
+/// * it **speaks** — some descendant run has non-blank text — and then the
+///   words are what a person reads, checked non-empty;
+/// * it **is read by a mark** — no words at all — and then something must be
+///   drawn inside it, checked as ink strictly inside the button's own box.
+///
+/// A button published by the tree and painted NOWHERE is neither, and is
+/// counted rather than ignored: a control can legitimately be off-screen (a
+/// folded palette's rows, a page that is not current), so it is the count that
+/// is pinned, not each case.
+///
+/// ⚠ A speaking button's words could still be a glyph the host's font does not
+/// carry, which paints a blank or a box. That is a different axis — font
+/// coverage — and this gate does not reach it; see the round's carry.
+#[test]
+fn r1951_every_button_is_read_by_its_words_or_by_a_mark() {
+    use pinion_a11y::WidgetA11y;
+    use pinion_core::test_fixtures::screen_ink::marks_under;
+
+    let mut by_mark: BTreeSet<String> = BTreeSet::new();
+    let mut by_words: BTreeSet<String> = BTreeSet::new();
+    let mut unpainted: BTreeSet<String> = BTreeSet::new();
+    sweep(|_, _, scene, case| {
+        let buttons: Vec<String> =
+            super::AnalyzerShellView::access_node(&ScreenState::default(), None)
+                .into_iter()
+                .filter(|node| node.role == pinion_a11y::AriaRole::Button)
+                .map(|node| node.tag)
+                .collect();
+        assert!(
+            !buttons.is_empty(),
+            "{case}: the accessibility tree publishes no button at all, so this \
+             check has nothing to ask about"
+        );
+        for tag in buttons {
+            let under = marks_under(scene, &tag);
+            let Some(button) = under.own else {
+                unpainted.insert(tag);
+                continue;
+            };
+            if under.reads_by_mark() {
+                assert!(
+                    !under.marks.is_empty(),
+                    "{case}: {tag} says nothing and has nothing drawn in it — a \
+                     control a person can point at and cannot read"
+                );
+                let out = under.marks_outside();
+                assert!(
+                    out.is_empty(),
+                    "{case}: {tag}'s mark(s) {out:?} lie outside the button \
+                     {button:?} that holds them"
+                );
+                by_mark.insert(tag);
+            } else {
+                assert!(
+                    under.words.iter().any(|word| !word.trim().is_empty()),
+                    "{case}: {tag} was classified as speaking and says nothing"
+                );
+                by_words.insert(tag);
+            }
+        }
+    });
+    // ★ The two populations, pinned as a floor each. Zero is reachable for
+    // either — a screen whose every button carries a word, or one whose every
+    // button is an icon — so a population that emptied would otherwise read as
+    // "nothing was wrong" rather than "nothing was asked" (R1651.1).
+    // ★ PINS, not floors. Both are reachable at zero — a screen whose every
+    // button carries a word, or one whose every button is an icon — so a
+    // population that emptied would otherwise read as "nothing was wrong"
+    // rather than "nothing was asked" (R1651.1). Measured at R1951: eight cards
+    // times five chrome controls (settings, tear-off, maximize, close and the
+    // grip) plus the palette's fold.
+    assert_eq!(by_mark.len(), 41, "buttons read by a mark: {by_mark:?}");
+    assert_eq!(
+        by_words.len(),
+        4,
+        "buttons read by their words: {by_words:?}"
+    );
+    // ★★★★★ And the third bucket is REPORTED rather than silently dropped: a
+    // button the sweep never painted ANYWHERE is one no case ever asked about,
+    // and a check whose population quietly loses members reads afterwards as
+    // though it had covered them.
+    //
+    // ⚠ Measured at R1951 and it changed what this bucket means: taken
+    // per-case it holds 39 of the 41, because a narrowing card DROPS header
+    // affordances from the left (R1672) and a maximised board hides seven cards
+    // — so "not painted here" is the specified behaviour of almost every one of
+    // them. The fact worth pinning is the one that survives the union: a button
+    // painted in **no** case at all.
+    unpainted.retain(|tag| !by_mark.contains(tag) && !by_words.contains(tag));
+    assert_eq!(
+        unpainted.len(),
+        0,
+        "published button(s) painted in no swept case at all: {unpainted:?}"
+    );
+}
+
 // -- 4. Contained: nothing is painted outside the box it belongs to -----------
 
 /// R1668 — every painted mark lies inside the pane its address puts it in.

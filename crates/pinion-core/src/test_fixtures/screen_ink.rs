@@ -141,6 +141,121 @@ pub fn assert_contained_ink(when: &str, scene: &Scene, size: (u32, u32)) -> usiz
     offscreen
 }
 
+/// What is painted under one tagged node: where the node itself landed, the ink
+/// its descendants put down, and the words they say.
+///
+/// See [`marks_under`] for what each field is for.
+#[derive(Debug, Default, Clone)]
+pub struct Under {
+    /// The window-absolute rectangle of the tagged node, or `None` when nothing
+    /// with that tag is painted.
+    pub own: Option<crate::scene::Rect>,
+    /// The window-absolute rectangle of every descendant that puts ink down —
+    /// a stroked or filled path with commands, and a container that actually
+    /// fills. **Not** the tagged node itself.
+    pub marks: Vec<crate::scene::Rect>,
+    /// What every descendant text run says, in paint order.
+    pub words: Vec<String>,
+}
+
+impl Under {
+    /// Whether this node is read by a MARK rather than by words — an icon
+    /// button.
+    ///
+    /// The distinction a chrome census turns on: a control that says nothing
+    /// can only be understood from what is drawn in it, so an empty one is
+    /// unreadable, while a control with words is read whether or not it also
+    /// carries a mark.
+    #[must_use]
+    pub fn reads_by_mark(&self) -> bool {
+        self.words.iter().all(|word| word.trim().is_empty())
+    }
+
+    /// The marks that do not lie wholly inside the tagged node's own box.
+    ///
+    /// ★ The containment predicate lives here rather than in each caller, for
+    /// the reason this module exists at all: two screens spelling *inside* on
+    /// their own would be two answers to one question. Empty when nothing is
+    /// painted under the tag, and empty when the tag is painted nowhere — a
+    /// node that is not there cannot be overhung, which is a different question
+    /// and [`Self::own`] is what asks it.
+    #[must_use]
+    pub fn marks_outside(&self) -> Vec<crate::scene::Rect> {
+        let Some(own) = self.own else {
+            return Vec::new();
+        };
+        self.marks
+            .iter()
+            .copied()
+            .filter(|mark| {
+                !(mark.x >= own.x
+                    && mark.y >= own.y
+                    && mark.x + mark.w <= own.x + own.w
+                    && mark.y + mark.h <= own.y + own.h)
+            })
+            .collect()
+    }
+}
+
+/// **What is painted under `tag`**, excluding the tagged node itself.
+///
+/// # Why the framework owns this
+///
+/// R1950 wrote it inside one screen to ask whether a panel's chrome buttons had
+/// anything drawn in them, and R1951 needed the same question of a second
+/// screen. This module's own header says what happens next: three mechanical
+/// copies is the immediate-lift case and *two screens measuring differently
+/// would disagree about the same defect*. Lifted at the second, before the
+/// disagreement exists rather than after — which is the rule R1949 arrived at
+/// from the other end (one copy plus an absence is already a lift).
+///
+/// # Why the node itself is excluded
+///
+/// Because it is usually a filled, bordered box, and counting it would make
+/// *every* control answer "yes, there is ink here". The defect this exists to
+/// find is a control that is drawn and holds **nothing** — reachable,
+/// contained, named, pressable and unreadable.
+#[must_use]
+pub fn marks_under(scene: &Scene, tag: &str) -> Under {
+    let mut under = Under::default();
+    scene.for_each_node(&mut |visit| {
+        let Some(rect) = visit.absolute_rect() else {
+            return;
+        };
+        if visit.node.tag() == Some(tag) {
+            if under.own.is_none() {
+                under.own = Some(rect);
+            }
+            return;
+        }
+        if !visit.ancestors.iter().any(|a| a.tag() == Some(tag)) {
+            return;
+        }
+        match visit.node {
+            Scene::Path(path) => {
+                if !path.commands.is_empty()
+                    && (path.style.stroke.is_some()
+                        || path.style.fill.is_some()
+                        || path.style.gradient.is_some())
+                {
+                    under.marks.push(rect);
+                }
+            }
+            Scene::Container(container) => {
+                if container.style.fill.a > 0 {
+                    under.marks.push(rect);
+                }
+            }
+            Scene::Text(text) => {
+                under.words.push(text.content.clone());
+                under.marks.push(rect);
+            }
+            _ => {}
+        }
+    });
+    under
+}
+
 /// How many text runs the scene paints at all — the denominator every count of
 /// short boxes needs to mean anything.
 #[must_use]

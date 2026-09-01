@@ -107,7 +107,7 @@ use pinion_core::drop_target::{
     BOARD_WIDGET_DRAG_KIND, DropAccept, DropAction, DropActions, DropClause, DropContract,
     DropOffer, DropStanding, DropVerdict, standing_value,
 };
-use pinion_core::edge_panel::EdgePlacement;
+use pinion_core::edge_panel::{EdgePlacement, PanelAffordance};
 use pinion_core::external::{
     ArgForm, Backend, BackendFallback, BackendSupport, DragPayload, DragUpdate, External,
     ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
@@ -155,6 +155,10 @@ use pinion_shell::{SizeStrategy, WidgetView, WindowSpec, vello_renderer_impl};
 use pinion_widget_paint::button::{self, ButtonColors, ButtonStyle};
 use pinion_widget_paint::card_header;
 use pinion_widget_paint::chooser;
+// ★★★★★ R1951 — the marks a chrome control draws. The palette's fold button
+// wore a face of its own until this round; now the same act reads the same way
+// here and in the node lab's panels.
+use pinion_widget_paint::control_mark;
 use pinion_widget_paint::header_feed::{FeedColumn, HeaderFeed, HeaderFeedStyle};
 use pinion_widget_paint::pages::{PagePointer, view_page_region};
 use pinion_widget_paint::pane::{PanePointer, scroll_pane};
@@ -3177,6 +3181,49 @@ fn palette_row_h() -> u32 {
 /// actually compares.
 const fn palette_fold_rect() -> Rect {
     Rect::new(PALETTE_W - 16 - 26, 14, 26, 26)
+}
+
+/// ★★★★★ R1951 — **the face the palette's own control wears**, asked of the
+/// policy that offers it rather than chosen here.
+///
+/// `spec::PALETTE_POLICY` admits no edge and folds, so
+/// [`EdgePolicy::controls`](pinion_core::edge_panel::EdgePolicy::controls)
+/// answers exactly one control — a fold toward the edge the palette is on — and
+/// this screen paints what that answers. Two facts stop being this file's to
+/// remember: *which* control the palette offers, and *which way* its mark
+/// points.
+///
+/// # Panics
+///
+/// When the palette's placement offers no fold at all, which its own
+/// specification forbids: `PALETTE_POLICY.foldable` is `true` and this is only
+/// reached on the unfolded path, so a `None` here means the policy and the
+/// screen have come apart and the screen would otherwise paint an empty box —
+/// the defect this vocabulary exists to make impossible.
+fn palette_fold_face() -> control_mark::ControlMark {
+    let at = palette_placement();
+    let control = spec::PALETTE_POLICY
+        .control(PanelAffordance::Fold, at)
+        .expect("the palette declares that it folds, and this path is the unfolded one");
+    control_mark::ControlMark::of_panel(control)
+}
+
+/// The outline [`palette_scene`]'s chrome boxes draw inside themselves.
+const PALETTE_CHROME_FRAME: u32 = 1;
+
+/// A bordered chrome box's CONTENT rectangle in its own space.
+///
+/// ★ R1951 — the placement half of `containment::content_rect`, here for the
+/// reason the node lab needed its own at R1950: a child's position is read from
+/// the box's BORDER box, so a mark handed the box's own rectangle overhangs it
+/// by the frame on all four sides. That is a defect a screen gate reports and a
+/// reader sees, and it costs one function to make unreachable.
+fn box_content(rect: Rect) -> Rect {
+    pinion_core::containment::content_of(
+        Rect::new(0, 0, rect.w, rect.h),
+        Some(&Border::new(Color::rgba(0, 0, 0, 0), PALETTE_CHROME_FRAME)),
+        &[],
+    )
 }
 
 fn palette_rect() -> Rect {
@@ -12732,12 +12779,22 @@ fn palette_scene(state: &ShellState, palette: Palette) -> Scene {
         .silenced(Silence::name_of("shell.palette")),
         // ★★★★★ R1903 — the control that puts it away, at the rectangle
         // `Hit::at` asks the same function for.
+        //
+        // ★★★★★ R1951 — and its MARK is now the shared chrome vocabulary's,
+        // asked of the palette's own policy rather than drawn here. Two things
+        // were wrong with the twelve-by-two bar it replaces, and only one of
+        // them was the one R1950 wrote down: the same act wore a different face
+        // from the node lab's panels, AND **the behaviour reference draws a
+        // chevron**, measured this round — its collapse control is a 20-unit box
+        // carrying `8,5 13,10 8,15`. So the bar was not a reproduction of
+        // anything; it was this screen's own invention, and a bar says
+        // *minimise* where the reference says *push it back to its edge*.
         Scene::Container(
-            ContainerNode::new(vec![Scene::Container(
-                ContainerNode::new(Vec::new())
-                    .with_style(BoxStyle::filled(palette.muted))
-                    .with_layout(absolute(Rect::new(7, 12, 12, 2))),
-            )])
+            ContainerNode::new(control_mark::scenes(
+                palette_fold_face(),
+                box_content(palette_fold_rect()),
+                palette.muted,
+            ))
             .with_tag(format!("{PALETTE_HEAD}fold"))
             .with_style(
                 BoxStyle::filled(palette.raised)
