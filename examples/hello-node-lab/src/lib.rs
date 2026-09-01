@@ -2727,12 +2727,7 @@ fn seed_nodes(
             .field("listen.endpoints")
             .map(|f| f.value().into_owned())
             .unwrap_or_default();
-        let transport = Transport::of_locator(&listen)
-            .or_else(|| {
-                form.field("connect.endpoints")
-                    .and_then(|f| Transport::of_locator(&f.value()))
-            })
-            .unwrap_or(Transport::Tcp);
+        let transport = transport_of_form(&form);
         let (x, y, _) = node.rect;
         let id = doc
             .add_node(
@@ -13265,12 +13260,7 @@ fn sync_node(state: &Rc<LabState>, node: NodeId) {
     let listen = form
         .field("listen.endpoints")
         .map_or(String::new(), |f| f.value().into_owned());
-    let transport = Transport::of_locator(&listen)
-        .or_else(|| {
-            form.field("connect.endpoints")
-                .and_then(|f| Transport::of_locator(&f.value()))
-        })
-        .unwrap_or(Transport::Tcp);
+    let transport = transport_of_form(form);
     drop(forms);
     let mut doc = state.doc.borrow_mut();
     if let Some(slot) = doc.tree_mut(ROOT).and_then(|t| t.node_mut(node)) {
@@ -13335,15 +13325,70 @@ fn endpoint_at(state: &LabState, socket: Socket) -> Option<String> {
 /// listen** — a real state on this screen, and one the launch gate already
 /// names rather than one the canvas should refuse to draw. The slot is then
 /// unlabelled, which is exactly true: the link dials no address.
+/// ★★★★★ R1960 — **the transport a node speaks, read from its form, in one
+/// place.**
+///
+/// Two sites decided this and wrote the same expression: `seed_nodes`, when the
+/// opening graph is built, and the form's own commit path, when a person edits
+/// an endpoint. A node's transport is one fact and it had two authors.
+///
+/// ⚠ **The escape hatch is still here and is still wrong**, kept deliberately
+/// so it is now in ONE place to remove rather than four:
+///
+/// * `connect.endpoints` is not a field of any form — R1716 took it out when
+///   connections became derived from the wire — so that `or_else` arm has been
+///   dead since. It is kept because deleting it silently would hide the shape
+///   of what the fall-back is standing in for.
+/// * `unwrap_or(Transport::Tcp)` classifies every node that does not listen,
+///   which is exactly the roles that CANNOT listen (`Role::accepts` is false
+///   for Client, Publisher and Querier). Four of the opening graph's eight
+///   nodes take it, so half the canvas is coloured by a default nobody chose —
+///   the thing R1921 forbade and `debt-every-card-on-the-opening-graph-speaks-
+///   one-transport` is open on.
+///
+/// ⇒ The repair those debts want is for a dialling node's transport to come
+/// from **the link it is on**, which is R1716's own direction and satisfies
+/// `LabNode::conversion` by construction. That is a model change; this is the
+/// derivation it needs first.
+fn transport_of_form(form: &ConfigForm) -> Transport {
+    let listen = form
+        .field("listen.endpoints")
+        .map_or(String::new(), |f| f.value().into_owned());
+    Transport::of_locator(&listen)
+        .or_else(|| {
+            form.field("connect.endpoints")
+                .and_then(|f| Transport::of_locator(&f.value()))
+        })
+        .unwrap_or(Transport::Tcp)
+}
+
+/// ★★★★★ R1960 — **what a link's landing pin carries**, in one place.
+///
+/// Two sites grew a slot for a wire that dials an address — `open_slot_in` and
+/// the wire's own landing — and both wrote the same three facts: name it after
+/// the address, type it as a locator, and *fall back to TCP when the string has
+/// no scheme*. That fall-back is a classification nobody made, and this is
+/// where it stops: [`graph::Endpoint::of_written_locator`] refuses an
+/// unreadable address, and an untypeable pin is `Item::plain()` — exactly what
+/// both callers already do when there is no address at all.
+///
+/// ⚠ The behaviour change is deliberate and narrow: a locator with no `/`
+/// scheme used to give the pin a TCP-coloured type, so the canvas drew a
+/// colour no address supported. It now draws an untyped pin, which is the
+/// truthful one and the same thing the no-endpoint case draws.
+fn typed_slot_item(endpoint: Option<&str>) -> Item<graph::Endpoint> {
+    let Some(one) = endpoint else {
+        return Item::plain();
+    };
+    match graph::Endpoint::of_written_locator(one) {
+        Some(ty) => Item::plain().named(one).typed(0, ty),
+        None => Item::plain().named(one),
+    }
+}
+
 fn open_slot_in(doc: &mut Document<LabNode>, to: NodeId, endpoint: Option<&str>) -> Option<u32> {
     let arity = u32::try_from(doc.signature(ROOT, to)?.inputs.len()).unwrap_or(0);
-    let item = match endpoint {
-        Some(one) => Item::plain().named(one).typed(
-            0,
-            graph::Endpoint::Locator(Transport::of_locator(one).unwrap_or(Transport::Tcp)),
-        ),
-        None => Item::plain(),
-    };
+    let item = typed_slot_item(endpoint);
     doc.insert_item(ROOT, to, Side::Input, arity, item).ok()?;
     let mut port = arity;
     // ★ The run declares `at_least(1)`, so a node that has never been dialled
@@ -14907,13 +14952,7 @@ fn move_end(
     // canvas draws AND an authored value the model can take apart (R1914).
     // Ignored when an existing pin takes the end, which is the crate's answer
     // and not this screen's to make.
-    let item = match endpoint {
-        Some(one) => Item::plain().named(one).typed(
-            0,
-            graph::Endpoint::Locator(Transport::of_locator(one).unwrap_or(Transport::Tcp)),
-        ),
-        None => Item::plain(),
-    };
+    let item = typed_slot_item(endpoint);
     let done = state
         .doc
         .borrow_mut()

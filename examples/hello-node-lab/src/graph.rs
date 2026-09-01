@@ -103,6 +103,31 @@ pub enum Endpoint {
 }
 
 impl Endpoint {
+    /// ★★★★★ R1960 — **the socket type a written locator carries**, or `None`
+    /// when the string names no transport this taxonomy has.
+    ///
+    /// # Why this exists, and why it refuses instead of defaulting
+    ///
+    /// Two sites built `Endpoint::Locator(Transport::of_locator(one).unwrap_or(
+    /// Transport::Tcp))` — growing a pin for a link that dials an address, and
+    /// landing one on an existing link — so the same string was read into a
+    /// type twice, with the same escape hatch written twice. **A default is a
+    /// classification nobody made**: a locator with no scheme is not TCP, it is
+    /// a locator this screen cannot type, and answering `Tcp` gives the canvas
+    /// a colour to draw a pin by that no address supports.
+    ///
+    /// So this answers `Option` and the callers say what an unreadable address
+    /// means to them — which for both of them is *the pin carries no type*, the
+    /// same thing they already do for `endpoint: None`.
+    ///
+    /// ⚠ Part of the count `debt-every-card-on-the-opening-graph-speaks-one-
+    /// transport` records: a node's transport was decided at FIVE sites, and
+    /// the two this replaces are the pair that read it out of a string.
+    #[must_use]
+    pub fn of_written_locator(locator: &str) -> Option<Self> {
+        Transport::of_locator(locator).map(Self::Locator)
+    }
+
     /// The transport this endpoint speaks, or `None` for a half of one.
     ///
     /// A half carries no transport, and that is not an omission: a host name is
@@ -1252,5 +1277,54 @@ mod tests {
             assert_eq!(Stack::from_word(stack.word()), Some(stack));
         }
         assert_eq!(Stack::from_word("no such build"), None);
+    }
+
+    /// ★★★★★ R1960 — **a node's transport is decided in ONE place, and that
+    /// place is named in the failure.**
+    ///
+    /// # Why a source count and not a behaviour test
+    ///
+    /// The defect this ratchets is not something a screen does wrong — it is
+    /// the same decision spelled at several sites, which behaves identically
+    /// until one of them is edited. `debt-every-card-on-the-opening-graph-
+    /// speaks-one-transport` measured FIVE such sites; two read a locator
+    /// string into a port type, two read a form into a node's transport, and
+    /// one re-read the node while drawing its pins. This project's rule 13
+    /// says the repair for that is a derivation, and a derivation nothing
+    /// guards is one the next round re-splits.
+    ///
+    /// ⚠ **The escape hatch is what is counted, not the derivation.**
+    /// `unwrap_or(Transport::Tcp)` is a classification nobody made — the thing
+    /// R1921 forbade — so the honest floor is ZERO and the pin is what remains
+    /// on the way there. Two are left: `transport_of_form`, which needs a
+    /// dialling node's transport to come from its LINK (R1716's direction), and
+    /// the pin-drawing read, which needs a card that cannot be drawn for a node
+    /// that is not there.
+    ///
+    /// ⚠⚠ Counted from the source text, which is coarse: a comment mentioning
+    /// the call would count. That is why the number is a RATCHET and the test
+    /// prints the lines — a reader can see whether a rise is real. The
+    /// alternative, parsing Rust here, is a second compiler.
+    #[test]
+    fn r1960_a_nodes_transport_is_decided_in_one_place() {
+        /// The sites left, and the round that must remove each. Falls to zero;
+        /// never rises.
+        const ESCAPES: usize = 2;
+
+        let source = include_str!("lib.rs");
+        let sites: Vec<(usize, &str)> = source
+            .lines()
+            .enumerate()
+            .filter(|(_, line)| line.contains("unwrap_or(Transport::Tcp)"))
+            .filter(|(_, line)| !line.trim_start().starts_with("///"))
+            .map(|(n, line)| (n + 1, line.trim()))
+            .collect();
+        assert_eq!(
+            sites.len(),
+            ESCAPES,
+            "`unwrap_or(Transport::Tcp)` is a transport nobody chose; the pin \
+             says {ESCAPES} are left to remove and the source holds {}: {sites:#?}",
+            sites.len(),
+        );
     }
 }
