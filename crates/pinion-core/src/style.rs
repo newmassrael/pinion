@@ -1267,6 +1267,48 @@ impl Border {
         self.width = width;
         self
     }
+
+    /// ★★★★★ R1949 — **where this border's stroke actually runs, as a signed
+    /// offset from the box's own edge.** Positive moves inward.
+    ///
+    /// # Why this is the scene's rule rather than a renderer's
+    ///
+    /// A stroke is centred on its path, so `placement` is not a hint a backend
+    /// interprets — it is arithmetic, and every backend that draws a border has
+    /// to do the same arithmetic or the same scene comes out differently. The
+    /// enum's own doc has said since R46.3.2 that each backend "must honour this
+    /// enum so a tagged scene round-trips identically across targets", and until
+    /// this method the honouring was left to each of them separately.
+    ///
+    /// Measured at R1949, which is what moved it here: the vello adapter spelled
+    /// the rule out and `pinion-pdf` did not mention `BorderPlacement` at all —
+    /// **one copy and one absence**, so a printed scene put every border half a
+    /// stroke-width from where the window put it. R1945 established that two
+    /// copies plus an absence is a lift; one copy plus an absence is the same
+    /// lift, made before the second copy exists to disagree with the first.
+    ///
+    /// ⚠ **And the copy that existed carried an escape hatch this does not.**
+    /// It matched `BorderPlacement::Inside | _`, with a comment calling the
+    /// wildcard "forward-compat coverage" — so a variant added later would have
+    /// been drawn as `Inside` by a renderer that had never heard of it, silently
+    /// and everywhere. Here the match is exhaustive: this enum is
+    /// `#[non_exhaustive]` to the outside world and complete inside this crate,
+    /// so a new placement stops the build until somebody says where its stroke
+    /// goes.
+    #[must_use]
+    pub fn stroke_offset(self) -> f32 {
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "a border width is a small pixel count, so f32 carries it and \
+                      its half exactly"
+        )]
+        let half = self.width as f32 / 2.0;
+        match self.placement {
+            BorderPlacement::Inside => half,
+            BorderPlacement::Center => 0.0,
+            BorderPlacement::Outside => -half,
+        }
+    }
 }
 
 /// (R708 §5.50) A normalized colour stop on a [`Gradient`] ramp.

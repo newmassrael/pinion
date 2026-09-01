@@ -309,7 +309,42 @@ impl ContentBuilder {
                 self.set_alpha(border.color.a);
                 self.set_stroke_color(border.color);
                 let _ = writeln!(self.ops, "{} w", fmt_num(f64::from(border.width)));
-                self.rect_path(x0, y0, w, h, radius);
+                // ★★★★★ R1949 — **the border runs where `placement` says, not on
+                // the box's edge.**
+                //
+                // This projector did not mention `BorderPlacement` anywhere
+                // (measured: zero occurrences in the crate), so it stroked every
+                // border centred on the rect while the window's default is
+                // `Inside`. One scene, two places, half a stroke-width apart —
+                // and `backend_parity` could not see it because for a border it
+                // counted that vello "encodes exactly one extra path" and never
+                // asked WHERE that path was.
+                //
+                // The rule is asked for rather than restated: `stroke_offset` is
+                // the scene's, and a second spelling here is exactly what made
+                // the GUI-side sibling of this defect (R1945).
+                let offset = f64::from(border.stroke_offset());
+                // A stroke follows the box inset by the offset, and the circle
+                // THAT edge traces has a correspondingly smaller radius — the
+                // half a naive fix drops, and the half R1945 had to add on the
+                // vello side.
+                let inner_w = (w - offset * 2.0).max(0.0);
+                let inner_h = (h - offset * 2.0).max(0.0);
+                // ⚠ A sharp box stays sharp. Written as `(radius - offset)`
+                // first, this gave an `Outside` border on a square box a radius
+                // of `+width/2` — the negative offset made a corner out of
+                // nothing — and the gate below caught it on its first run. The
+                // vello side has the same rule in `BoxOutline`: an outline that
+                // is `Sharp` is still `Sharp` after an inset.
+                let inner_r = if radius <= 0.0 {
+                    0.0
+                } else {
+                    (radius - offset)
+                        .max(0.0)
+                        .min(inner_w / 2.0)
+                        .min(inner_h / 2.0)
+                };
+                self.rect_path(x0 + offset, y0 + offset, inner_w, inner_h, inner_r);
                 self.ops.push_str("S\n");
             }
         }
@@ -678,7 +713,7 @@ fn alpha_gs_in_index_order(content: &ContentBuilder) -> Vec<(u32, u8)> {
 mod tests {
     use super::*;
     use pinion_core::scene::{BoxNode, ContainerNode};
-    use pinion_core::style::Border;
+    use pinion_core::style::{Border, BorderPlacement};
 
     fn text_node(content: &str, x: u32, y: u32, size: u32, color: Color) -> Scene {
         Scene::Text(TextNode::styled(
@@ -929,6 +964,123 @@ mod tests {
         assert!(
             pdf.document.contains("re\nS\n"),
             "stroke operator follows the path"
+        );
+    }
+
+    /// The rectangle the projector strokes, read out of the emitted operators.
+    ///
+    /// ★ The STROKE's, not the fill's: both are `re`, and the one that matters
+    /// is the path the `S` operator consumes. Finding it by the operator that
+    /// follows it is what makes this a reading of the border rather than of
+    /// whatever rectangle happened to be emitted last.
+    fn stroked_rect(doc: &str) -> (f64, f64, f64, f64) {
+        let before = doc
+            .split("re\nS\n")
+            .next()
+            .expect("split always yields one part");
+        let numbers: Vec<f64> = before
+            .rsplit('\n')
+            .next()
+            .unwrap_or_default()
+            .split_whitespace()
+            .filter_map(|t| t.parse::<f64>().ok())
+            .collect();
+        assert_eq!(
+            numbers.len(),
+            4,
+            "a stroked `re` takes four numbers; read {numbers:?} from {before:?}"
+        );
+        (numbers[0], numbers[1], numbers[2], numbers[3])
+    }
+
+    /// ★★★★★ R1949 — **the border runs where `placement` says, and the three
+    /// placements put it in three different places.**
+    ///
+    /// The gate the defect got past. `backend_parity` asked whether vello
+    /// "encodes exactly one extra path" for a bordered scene and whether this
+    /// projector "emits more content" — both true while this projector ignored
+    /// `BorderPlacement` entirely and stroked every border centred, half a
+    /// stroke-width from where the window drew it.
+    ///
+    /// ⚠ Asserted as the RELATION between the box and its stroke, not as three
+    /// literal rectangles: a gate that restates the arithmetic is a second
+    /// spelling of the rule, which is the class of defect R1945 and this round
+    /// have now each repaired once.
+    #[test]
+    fn r1949_the_border_runs_where_its_placement_says() {
+        const SIDE: u32 = 40;
+        const WIDTH: u32 = 2;
+        let mut seen: Vec<(f64, f64, f64, f64)> = Vec::new();
+        for placement in [
+            BorderPlacement::Inside,
+            BorderPlacement::Center,
+            BorderPlacement::Outside,
+        ] {
+            let border = Border::new(Color::rgb(0, 0, 0), WIDTH).with_placement(placement);
+            let style = BoxStyle::filled(Color::rgb(0xff, 0xff, 0xff)).with_border(border);
+            let scene = Scene::Box(BoxNode::new(Rect::new(10, 10, SIDE, SIDE), style));
+            let pdf = render_scene(&scene, PageSize::new(80, 80));
+            let (x, y, w, h) = stroked_rect(&pdf.document);
+
+            // The offset is the scene's own answer, asked rather than restated.
+            let offset = f64::from(border.stroke_offset());
+            assert!(
+                (w - (f64::from(SIDE) - offset * 2.0)).abs() < 0.001
+                    && (h - (f64::from(SIDE) - offset * 2.0)).abs() < 0.001,
+                "{placement:?}: the stroked box is {w}x{h}, and an offset of \
+                 {offset} makes it {}x{} on a side of {SIDE}",
+                f64::from(SIDE) - offset * 2.0,
+                f64::from(SIDE) - offset * 2.0,
+            );
+            seen.push((x, y, w, h));
+        }
+        // ★ And the three are DISTINCT. Before this round they were identical —
+        // which is what "the projector does not read placement" looks like from
+        // the outside, and what no count of paths or bytes could report.
+        for (n, one) in seen.iter().enumerate() {
+            for other in &seen[n + 1..] {
+                assert_ne!(
+                    one, other,
+                    "two placements stroke the same rectangle, so this projector \
+                     is not reading the field",
+                );
+            }
+        }
+    }
+
+    /// ★★★★★ R1949 — **a rounded border's stroke follows a correspondingly
+    /// smaller circle.**
+    ///
+    /// The half a naive placement fix drops, and the half R1945 had to add on
+    /// the vello side: the stroke runs along the inset rectangle, so the arc it
+    /// traces has radius `r - offset`. Asserted through the emitted path's own
+    /// corner geometry — a rounded `re` is never emitted, so the presence of the
+    /// curve operators IS the claim that a radius was honoured.
+    #[test]
+    fn r1949_a_rounded_border_strokes_a_correspondingly_smaller_arc() {
+        let border = Border::new(Color::rgb(0, 0, 0), 4).with_placement(BorderPlacement::Inside);
+        let style = BoxStyle::filled(Color::rgb(0xff, 0xff, 0xff))
+            .with_border(border)
+            .with_corner_radius(10);
+        let scene = Scene::Box(BoxNode::new(Rect::new(0, 0, 60, 60), style));
+        let pdf = render_scene(&scene, PageSize::new(60, 60));
+        assert!(
+            pdf.document.contains(" c\n"),
+            "a rounded box emits curve operators rather than a plain `re`",
+        );
+        // The stroke's own path starts at `x + radius` along the bottom edge.
+        // With a 4-wide Inside border the offset is 2, so the inset box starts
+        // at 2 and its radius is 8 — the first point is 10, which is where an
+        // UNSHIFTED radius would also put it, so the assertion that carries the
+        // claim is the WIDTH of the traced box below.
+        let stroke_half = pdf
+            .document
+            .split("4 w\n")
+            .nth(1)
+            .expect("the stroke's width operator precedes its path");
+        assert!(
+            stroke_half.contains("2 "),
+            "the stroked path begins at the inset edge, not at the box's own",
         );
     }
 

@@ -51,8 +51,8 @@ use pinion_core::scene::{
     TextGridNode, TextNode,
 };
 use pinion_core::style::{
-    Border, BorderPlacement, BoxStyle, Color, DotLattice, Fit, FontStyle, FontWeight,
-    GenericFontFamily, Gradient, GradientKind, LineHeight, StrokeCap, TextOverflow, TextStyle,
+    Border, BoxStyle, Color, DotLattice, Fit, FontStyle, FontWeight, GenericFontFamily, Gradient,
+    GradientKind, LineHeight, StrokeCap, TextOverflow, TextStyle,
 };
 use pinion_core::term_grid::{
     CellInkKey, CellWidth, ColorTarget, CursorShape, GridBuffer, Palette, TermCell, TermColor,
@@ -4164,9 +4164,10 @@ fn to_peniko_extend(extend: pinion_core::style::Extend) -> PenikoExtend {
 }
 
 /// Emit one Vello stroke for a pinion [`Border`]. Vello strokes are
-/// path-centered; the [`BorderPlacement`] determines whether we inset
-/// (Inside, legacy softbuffer), keep the stroke on the path (Center,
-/// Vello-native), or outset (Outside, CSS content-box).
+/// path-centered; the border's placement determines whether the stroke insets
+/// (Inside, legacy softbuffer), stays on the path (Center, Vello-native), or
+/// outsets (Outside, CSS content-box) — and since R1949 that decision is
+/// [`Border::stroke_offset`]'s rather than this function's.
 ///
 /// R1945 — `corner_radius` is a parameter, not a thing this function does not
 /// know. Before R1945 it took `(r, border, transform)` and stroked a square
@@ -4185,19 +4186,17 @@ fn stroke_rect(
         return;
     }
     let w = f64::from(border.width);
-    // Signed offset of the stroke's path centre relative to the rect
-    // edge — positive moves inward (Inside), zero leaves on edge
-    // (Center), negative moves outward (Outside).
-    let offset = match border.placement {
-        BorderPlacement::Center => 0.0,
-        BorderPlacement::Outside => -(w / 2.0),
-        // Inside (R46.3.2 default — legacy softbuffer compatibility)
-        // plus any future #[non_exhaustive] variant: conservative
-        // inset geometry. Listing Inside under the wildcard rather
-        // than as its own arm satisfies clippy::match_same_arms
-        // without losing forward-compat coverage.
-        BorderPlacement::Inside | _ => w / 2.0,
-    };
+    // ★★★★★ R1949 — the offset is the SCENE's now (`Border::stroke_offset`),
+    // not this renderer's.
+    //
+    // What stood here was a `match` on `placement` ending in
+    // `BorderPlacement::Inside | _`, whose comment called the wildcard
+    // "forward-compat coverage" — a variant added later would have been drawn
+    // as `Inside` by a renderer that had never heard of it. And `pinion-pdf`
+    // did not read `placement` at all, so one scene put a border in two places.
+    // One copy plus one absence is a lift; the lifted rule is exhaustive, so a
+    // new placement now stops the build instead of being guessed at here.
+    let offset = f64::from(border.stroke_offset());
     BoxOutline::inset(r, f64::from(corner_radius), offset).stroke(
         out,
         &Stroke::new(w),
