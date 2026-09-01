@@ -2089,6 +2089,37 @@ ok "a check that never answered is counted, not silently dropped" \
 ok "and it is reported on its own line with its wait reason" \
    "$(grep -cE '^  unanswered +1 .*NotYet 1' <<<"$verdict_unanswered")" "1"
 
+# ★★★★★ R1963 — 4. AND THE CAUSE THE DRIVER NAMED FOR IT.
+#
+# The census line used to end `NEITHER prescription reaches these`, and measured
+# against the driver's own logs that is true of only part of the bucket: it
+# records four of eighteen as never having been ASKED — the run ended between
+# the typing and the Enter — which asking again reaches, and one as never having
+# reached a pane. Four problems summed into one number, with a sentence saying
+# nothing reaches any of them, is the shape R1906 removed one level up.
+#
+# ⚠ Asserted from OUTSIDE for R1906's reason, with the expectation written here.
+# Two verbatim driver lines: one the driver diagnosed and one it said nothing
+# about. The second is the discriminating case — a classifier that guessed would
+# report two `never asked` and no `unclassified`, keeping the total right while
+# inventing evidence, which is the failure direction that matters.
+verdict_causes="$(mktemp -d)"
+printf '%s\n' \
+  'it said: \"the checker was started and never answered: the wait ended RunEnded — give it longer, or a faster judge\" — the run ended between the typing and the Enter, so nothing was asked' \
+  'it said: \"the checker was started and never answered: the wait ended NotYet — give it longer, or a faster judge\" — it was shown the agent'"'"'s own account of this turn' \
+  > "$verdict_causes/run1.log"
+verdict_split="$(python3 "$repo_root/tools/round_verdict.py" --census \
+                 --from "$verdict_causes" 2>&1 || true)"
+rm -rf "$verdict_causes"
+ok "the cause the driver named for an unanswered check is reported" \
+   "$(grep -cE '^ +never asked +1 ' <<<"$verdict_split")" "1"
+ok "a record the driver named no cause for is unclassified, not guessed" \
+   "$(grep -cE '^ +unclassified +1 ' <<<"$verdict_split")" "1"
+ok "a cause with no records reads zero rather than vanishing from the report" \
+   "$(grep -cE '^ +displayed +0 ' <<<"$verdict_split")" "1"
+ok "and the line no longer claims nothing reaches the whole bucket" \
+   "$(grep -c 'NEITHER prescription reaches' <<<"$verdict_split")" "0"
+
 # --- R1799: the step timer -------------------------------------------------
 #
 # It is an instrument, so what it has to get right is that it MEASURES: a step

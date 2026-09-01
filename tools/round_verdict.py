@@ -31,6 +31,22 @@ record reach different sets: telling a checker to lead with a verdict reaches an
 answer with words in it, and reaches **neither** an answer with no words nor a
 checker that never spoke.
 
+⚠⚠ **R1963 — and "a checker that never spoke" is not one problem either.** The
+driver writes, in the same sentence and after its own advice, what the PANE was
+doing; R1906's regex stops at the wait reason, so this census threw that clause
+away and reported all eighteen as a bucket nothing reaches. Measured against the
+real logs: **8** were asked and displayed — the judge simply outran the bound,
+and those are the only ones a faster judge reaches; **4** the driver records as
+never having been ASKED at all, because the run ended between the typing and the
+Enter, so *asking again* reaches them and no judge would have helped; **1**
+never reached a pane a judge reads; **5** carry no clause and are
+``unclassified``, which is reported and never folded into the other three.
+
+⇒ ★★★★★ *The instrument was discarding the diagnosis its own source had already
+written.* Not a blind spot in the regex's shape this time but in its length —
+R1906 anchored it to stop at the reason word for a good reason (R1901's bug was
+taking the rest of a line) and the cost of that care was everything after it.
+
 ★ **How many, and of what shape, is a command — do not read it off this page.**
 
     python3 tools/round_verdict.py --census
@@ -440,6 +456,38 @@ CHECKER_UNANSWERED = re.compile(
     r"the checker was started and never answered: the wait ended (\w+)"
 )
 
+#: ★★★★★ R1963 — **what the driver says about the PANE**, on a check that never
+#: answered, and the phrase it says it with.
+#:
+#: The wait reason above is *how the wait ended*; this is *what was happening at
+#: the other end*, and the driver has been writing it in the same sentence all
+#: along — after its own advice, which is why R1906's regex, deliberately
+#: anchored to stop at the reason word, never reached it.
+#:
+#: ⚠⚠ It matters because the census's own line says **NEITHER prescription
+#: reaches these**, and measured against the real logs that is true of only
+#: eight of the eighteen. Four of them the driver records as never having been
+#: ASKED — the run ended between the typing and the Enter — so *asking again*
+#: reaches those, and one never reached a pane a judge reads. Summing four
+#: problems into one number and declaring nothing reaches any of them is the
+#: escape-hatch shape this repository refuses, met inside the instrument built
+#: to remove it one level up.
+#:
+#: Order is longest-evidence-first only in the sense that the phrases are
+#: disjoint on the driver's real lines; the selftest asserts that a line
+#: carrying one is not read as another.
+UNANSWERED_CAUSE: tuple[tuple[str, str], ...] = (
+    # Asked, delivered, and displayed — the judge simply had not finished. This
+    # is the ONLY cause a faster judge or a longer bound reaches, and
+    # `round_verdict.py --line` is the faster judge that already exists.
+    ("displayed", "the pane painted the prompt back"),
+    # Nothing was ever asked. Re-asking reaches these, and no change to the
+    # judge would have helped.
+    ("never asked", "the run ended between the typing and the Enter"),
+    # The prompt never reached a screen a judge reads.
+    ("off screen", "NOWHERE ON THAT SCREEN"),
+)
+
 #: Markup that stands in for an answer the checker did not give. Stripped before
 #: asking whether anything was said, because a bare line-break tag has letters
 #: in it and is nonetheless nothing a person wrote.
@@ -493,6 +541,36 @@ def extract_unanswered(text: str) -> list[str]:
     return [m.group(1) for m in CHECKER_UNANSWERED.finditer(text)]
 
 
+def unanswered_cause(text: str, at: int) -> str:
+    """★ R1963 — which of [`UNANSWERED_CAUSE`] the driver named for the record
+    that starts at `at`, or ``unclassified`` when it named none.
+
+    Read from the record's own LINE and no further, because the driver writes
+    one transition per line and a phrase from the next record would be a cause
+    attributed to the wrong check — R1901's bug, which was taking the rest of a
+    line, one step further out.
+
+    ⚠ ``unclassified`` is a real answer and is never folded into a named cause.
+    Measured on the real logs, five of eighteen records carry no clause at all;
+    a reader told they were "displayed" would be told something the driver never
+    said. There IS a path to zero — the driver writes a clause on the other
+    thirteen — so the bucket is a finding rather than a permanent excuse.
+    """
+    end = text.find("\n", at)
+    line = text[at:] if end == -1 else text[at:end]
+    for name, phrase in UNANSWERED_CAUSE:
+        if phrase in line:
+            return name
+    return "unclassified"
+
+
+def extract_unanswered_causes(text: str) -> list[str]:
+    """The cause the driver named for every unanswered record, in order."""
+    return [
+        unanswered_cause(text, m.end()) for m in CHECKER_UNANSWERED.finditer(text)
+    ]
+
+
 def census_logs(from_dir: Path | None) -> tuple[Path, list[Path]]:
     """Where the driver's run logs are, and which ones exist."""
     if from_dir is None:
@@ -519,11 +597,13 @@ def census(from_dir: Path | None) -> tuple[bool, str]:
         )
     buckets: dict[str, list[str]] = {"verdict": [], "prose": [], "contentless": []}
     waits: list[str] = []
+    causes: list[str] = []
     for log in logs:
         text = log.read_text(errors="replace")
         for answer in extract_answers(text):
             buckets[classify(answer)].append(answer)
         waits.extend(extract_unanswered(text))
+        causes.extend(extract_unanswered_causes(text))
     answered = sum(len(v) for v in buckets.values())
     total = answered + len(waits)
     if total == 0:
@@ -560,8 +640,21 @@ def census(from_dir: Path | None) -> tuple[bool, str]:
         # nothing to lead with a verdict, so NEITHER recorded prescription — the
         # prompt half or the parser half — reaches it. Naming it as a fourth
         # bucket inside the answer taxonomy would have hidden that.
-        f"  unanswered  {len(waits):3d}  the checker never spoke; NEITHER "
-        f"prescription reaches these" + (f" — {why}" if why else ""),
+        # ★★★★★ R1963 — it used to end at "NEITHER prescription reaches these",
+        # and measured against the driver's own words that is true of only the
+        # `displayed` share. The driver names what the pane was doing; the four
+        # lines below are that, read rather than discarded, because the four
+        # causes have four different repairs and only one of them is a judge.
+        f"  unanswered  {len(waits):3d}  the checker never spoke"
+        + (f" — {why}" if why else ""),
+        f"      displayed    {causes.count('displayed'):3d}  asked and ON the pane; "
+        f"only a faster judge or a longer bound reaches these",
+        f"      never asked  {causes.count('never asked'):3d}  the run ended before "
+        f"the Enter, so nothing was asked — ASKING AGAIN reaches these",
+        f"      off screen   {causes.count('off screen'):3d}  the prompt never "
+        f"reached a pane a judge reads",
+        f"      unclassified {causes.count('unclassified'):3d}  the driver named no "
+        f"cause; NOT folded into any of the three above",
         f"  {len(firsts)} distinct first token(s) among the unreadable",
         "  numerator only: the driver records a check ONLY when it failed to "
         "verify, so no rate can be taken from this",
@@ -719,6 +812,48 @@ def selftest() -> int:
            extract_unanswered("Reviewing --ReviewNone--> Priming") == []
            and extract_answers("Reviewing --ReviewNone--> Priming") == [])
 
+    # ★★★★★ R1963 — the CAUSE the driver named, on lines taken verbatim from
+    # its logs. Verbatim for R1906's reason, one level down: a fixture written
+    # from the docstring would carry the causes already known, and the whole
+    # point is that the driver was writing one this census had never read.
+    real_displayed = (
+        'it said: \\"the checker was started and never answered: the wait ended '
+        'NotYet — give it longer, or a faster judge\\" — it was shown the '
+        "agent's own account of this turn — the pane painted the prompt back, "
+        "so it is on that screen"
+    )
+    real_off_screen = (
+        'it said: \\"the checker was started and never answered: the wait ended '
+        'NotYet — give it longer, or a faster judge\\" — the agent itself named '
+        "this question as the one it received and the prompt is NOWHERE ON THAT "
+        "SCREEN — its composer folded the paste away"
+    )
+    expect("a check that was asked and displayed is named as displayed",
+           extract_unanswered_causes(real_displayed) == ["displayed"])
+    expect("a run that ended before the Enter is named as never asked",
+           extract_unanswered_causes(real_run_ended) == ["never asked"])
+    expect("a prompt that never reached a screen is named as off screen",
+           extract_unanswered_causes(real_off_screen) == ["off screen"])
+    # ★★★★★ THE ESCAPE HATCH, closed. A driver line with no clause must be
+    # `unclassified` and must NOT be quietly attributed to the commonest cause —
+    # measured, five of the eighteen real records carry no clause, so the wrong
+    # answer here would be five records of invented evidence.
+    expect("a record the driver said nothing about is unclassified, not guessed",
+           extract_unanswered_causes(real_unanswered) == ["unclassified"])
+    expect("an unknown clause is unclassified rather than matched to a cause",
+           extract_unanswered_causes(
+               real_unanswered + " — the pane was doing something new"
+           ) == ["unclassified"])
+    # ★ And a cause is read from the record's OWN line. Two records on two lines
+    # keep their own causes; a phrase from the next line is a cause attributed
+    # to the wrong check, which is R1901's bug one step further out.
+    expect("a cause does not leak across a line break",
+           extract_unanswered_causes(real_unanswered + "\n" + real_displayed)
+           == ["unclassified", "displayed"])
+    expect("every cause name is one the report prints",
+           set(name for name, _ in UNANSWERED_CAUSE)
+           == {"displayed", "never asked", "off screen"})
+
     expect("a bare YES is readable", classify("YES") == "verdict")
     expect("a bare NO is readable", classify("NO") == "verdict")
     expect("a verdict with a dash after it is readable",
@@ -772,8 +907,22 @@ def selftest() -> int:
                "unanswered    2" in said_both)
         expect("with the wait reasons broken out, commonest first",
                "NotYet 1, RunEnded 1" in said_both)
-        expect("and it still says NEITHER prescription reaches them",
-               "NEITHER prescription reaches" in said_both)
+        # ★★★★★ R1963 — this case asserted the sentence *NEITHER prescription
+        # reaches them*, and the sentence turned out to be FALSE. Measured
+        # against the driver's own logs: of eighteen unanswered records it
+        # names four as never having been ASKED, which *asking again* reaches,
+        # and one as never having reached a pane. So the line is split by the
+        # driver's own diagnosis now, and this case asserts the split instead of
+        # the claim it disproved. The fixture holds one `never asked` (its
+        # verbatim line carries that clause) and one with no clause at all.
+        expect("the unanswered line no longer claims nothing reaches them",
+               "NEITHER prescription reaches" not in said_both)
+        expect("the cause the driver named is reported",
+               "never asked    1" in said_both)
+        expect("and a record it named no cause for is reported as unclassified",
+               "unclassified   1" in said_both)
+        expect("a cause the fixture has none of reads zero rather than vanishing",
+               "displayed      0" in said_both and "off screen     0" in said_both)
     # A directory whose logs record neither shape must REFUSE, not report a
     # clean bill — the same rule as an unreadable source, one level in.
     with tempfile.TemporaryDirectory() as tmp:
