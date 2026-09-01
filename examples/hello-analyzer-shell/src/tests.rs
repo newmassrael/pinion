@@ -678,6 +678,128 @@ fn r1728_the_specification_is_the_references_own_rail() {
     assert_eq!(locked, ["topology", "sessions"]);
 }
 
+/// ★★★★★ R1965 — **every way the rail can differ from its specification is a
+/// way this gate NAMES**, and a sixth way would not compile.
+///
+/// # The class this closes
+///
+/// `r1728_the_rail_reproduces_the_reference_or_says_where_it_does_not` compares
+/// `spec::RAIL` against the reviewed `docs/analyzer-rail-spec.json` and refuses
+/// any difference the pin does not declare. What it never said is *which kinds
+/// of difference it can see* — so a reader had two choices: believe it, or find
+/// out by hand.
+///
+/// R1965 found out by hand, and it took four mutations of the real table: a
+/// reorder is caught (`` `logs` is specified at seat 3 and sits at seat 7 ``), a
+/// retitle is caught (`` `settings` is specified as "Settings" and reads
+/// "Preferences" ``), closing a seat is caught, and deleting one is caught — the
+/// last by `screen_roster()` rather than by the comparison, which is a
+/// different guarantee wearing the same green. That work is this test now,
+/// because a coverage a session has to rediscover by mutating a shipped
+/// constant is a coverage nobody will check twice.
+///
+/// # Why the omission is a COMPILE error and not an assertion
+///
+/// The population is [`Divergence`]'s own arms. A hand-written list of five
+/// would leave a sixth silently uncovered — the escape-hatch shape this
+/// workspace refuses — so each produced divergence is classified through an
+/// EXHAUSTIVE match, and a variant added upstream stops the build here until
+/// somebody says whether the rail can diverge that way.
+///
+/// ⚠ Driven over a SYNTHETIC pair, deliberately. Asking the real rail would
+/// answer *the two `ahead` entries* and nothing else, because the real rail
+/// conforms — a gate whose population is the passing case cannot show what it
+/// would catch.
+#[test]
+fn r1965_every_way_the_rail_can_diverge_is_one_this_gate_names() {
+    use pinion_core::widgets::destination::{Destination, Destinations, RosterSpec, SeatSpec};
+
+    // A specification of four seats, and a rail that differs from it in every
+    // way the model can express at once.
+    let specified = RosterSpec::new(vec![
+        SeatSpec::open("alpha", "Alpha"),
+        SeatSpec::open("beta", "Beta"),
+        SeatSpec::open("gamma", "Gamma"),
+        SeatSpec::open("delta", "Delta"),
+    ])
+    .expect("a written specification of four open seats");
+    let built = Destinations::new(vec![
+        // `alpha` keeps its place and its name, so something conforms — a diff
+        // in which everything differs cannot show that agreement is possible.
+        Destination::open("alpha", "Alpha"),
+        // `gamma` and `beta` change places.
+        Destination::open("gamma", "Gamma"),
+        Destination::open("beta", "Bravo"),
+        // `delta` is present and cannot be arrived at.
+        Destination::closed(
+            "delta",
+            "Delta",
+            pinion_core::availability::Unavailable::reserved("requirement 1"),
+        ),
+        // And a seat no specification declares.
+        Destination::open("epsilon", "Epsilon"),
+    ])
+    .expect("a rail of five seats");
+
+    let found = specified.diff(&built);
+
+    let (mut absent, mut unspecified, mut out_of_order, mut retitled, mut standing) =
+        (0_usize, 0_usize, 0_usize, 0_usize, 0_usize);
+    for divergence in &found {
+        // ★ EXHAUSTIVE on purpose. A sixth arm upstream is a compile error
+        // here, which is the only way an uncovered kind stops being silent.
+        match divergence {
+            Divergence::Absent { .. } => absent += 1,
+            Divergence::Unspecified { .. } => unspecified += 1,
+            Divergence::OutOfOrder { .. } => out_of_order += 1,
+            Divergence::Retitled { .. } => retitled += 1,
+            Divergence::Standing { .. } => standing += 1,
+        }
+    }
+
+    // Every kind is REACHED. A zero here is a kind the comparison cannot see,
+    // which is a difference this application could ship without being told.
+    for (kind, count) in [
+        ("Unspecified", unspecified),
+        ("OutOfOrder", out_of_order),
+        ("Retitled", retitled),
+        ("Standing", standing),
+    ] {
+        assert!(
+            count > 0,
+            "the diff produced no {kind} divergence over a pair built to \
+             contain one, so a rail differing that way from its specification \
+             would pass unremarked: {found:?}",
+        );
+    }
+    // ⚠ `Absent` is the one kind this pair cannot produce, and saying so is the
+    // point rather than an omission: every specified seat IS on the rail here.
+    // It is exercised by the shell's own roster instead — deleting a seat from
+    // `spec::RAIL` fails at `screen_roster()` with `` `settings` is an open
+    // destination with no screen mounted at it ``, measured at R1965 — which is
+    // a DIFFERENT guarantee, and one that would not fire for a seat the shell
+    // paints itself. Asserted as zero so that a later change making the pair
+    // produce one is a red that sends a reader back to this sentence.
+    assert_eq!(
+        absent, 0,
+        "this pair declares every specified seat on the rail, so an Absent \
+         divergence means the fixture no longer says what this comment says",
+    );
+
+    // And the sentences name the seat and both sides, because a divergence a
+    // person cannot act on is a divergence they will not act on.
+    let said: Vec<String> = found.iter().map(Divergence::sentence).collect();
+    for want in [
+        "`beta` is specified as \"Beta\" and reads \"Bravo\"",
+        "seat 4 `epsilon` is on the rail and no specification declares it",
+    ] {
+        assert!(
+            said.iter().any(|s| s == want),
+            "no divergence reads {want:?}; the gate said {said:?}",
+        );
+    }
+}
+
 /// R1668 — the header controls the specification names all map onto an
 /// affordance this shell can paint.
 #[test]
