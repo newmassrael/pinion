@@ -7923,7 +7923,20 @@ fn r1958_the_walks_router_holds_the_mounted_screens_surface() {
             "the press lands on the mounted screen, not on the host: {hit:?}",
         );
 
-        let drag = RouterDrag::over(&state, scene);
+        let mut drag = RouterDrag::over(&state, scene);
+        // ★ R1958.1 — and a cursor move onto that control leaves the ROUTER
+        // hovering the mounted screen, which is the tag a press is then sent
+        // to (`InputRouter::pointer_down` → `dispatch_send(state_scene, hover,
+        // "PointerDown")`). Measured: `Some("node_lab")`. This is the first of
+        // the debt's three remaining candidates, and it is now ruled OUT — the
+        // press is addressed correctly and still does not move the screen.
+        drag.cursor(centre(control));
+        assert_eq!(
+            drag.router.hover_target(pinion_runtime::PointerId::MOUSE),
+            Some("node_lab"),
+            "a cursor over a mounted screen's control hovers that screen, so \
+             the press that follows is addressed to it",
+        );
         let mut surfaces: Vec<String> = Vec::new();
         drag.model.for_each_node(&mut |visit| {
             if matches!(visit.node, Scene::External(_)) {

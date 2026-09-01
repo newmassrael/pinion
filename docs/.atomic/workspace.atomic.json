@@ -80222,6 +80222,40 @@
         "NEXT MILESTONE: the third layer of the same debt — probe the hover target first, because it is the cheapest of the three and the one the router can be asked about directly."
       ]
     },
+    "R1958.1": {
+      "decision_summary": "The press is addressed correctly, and still does not land.\n\nR1958 left three candidates for the layer it could not reach. This is the cheapest of them, measured: `InputRouter::hover_target` is public, and after a cursor move onto `lab.toolbar.more` it answers **`Some(\"node_lab\")`**.\n\n⇒ CANDIDATE (a) IS RULED OUT. The router hovers the mounted screen, so `pointer_down` sends `PointerDown` to that screen's tag — the address is right and the screen still does not move. What remains is (b) the identity of the state behind `screens.externals()`'s handle, and (c) whether `cursor_moved` dispatched a `pointer_move` at all.\n\n★ A GROUND FOR SUSPECTING (b), found while writing the probe: `MountedScreen::externals` (`crates/pinion-screen/src/mount.rs:137`) calls `(primary.factory)()` **without** an `owner.run` wrap, where `CoreShell::state_scene` wraps both factories. The running application is safe because `create_extra_externals` is itself called inside `root_owner.run`, and the walk wraps it the same way — but *which scope a factory runs in* is exactly the thing that decides state identity for this family, so that is where the next measurement goes.\n\n⚠ AND A COST THE PROBE PAID, recorded so the next one does not pay it again: the `External` trait has **no** `query`. That name belongs to `QuerySource::introspect_query`, reached through `ExternalIntrospect`. Three near-identical spellings, and asking the handle directly means picking the right one.",
+      "changes_bullets": [
+        "`examples/hello-analyzer-shell/src/painted.rs`: the R1958 gate now also asserts the router's hover after a cursor move onto the mounted screen's control is that screen — so a press that stops being addressed correctly is red, and the measurement that ruled out candidate (a) is a gate rather than a note.",
+        "The debt records (a) as ruled out, keeps (b) and (c), and carries both findings above: the unwrapped factory call at `mount.rs:137` to measure next, and the three spellings of \"ask the handle\" that cost this probe three compile errors."
+      ],
+      "verification_bullets": [
+        "`cargo test -p hello-analyzer-shell r1958` — exit 0 with the hover assertion in place; the measured value is `Some(\"node_lab\")`.",
+        "`cargo clippy -p hello-analyzer-shell --all-targets --features pinion-runtime/vello` — clean. `cargo fmt --all --check` — clean.",
+        "The debt census is unchanged at 42: this correction opened and closed nothing."
+      ],
+      "impact_refs": [
+        "5.35"
+      ],
+      "carry_forward_bullets": [
+        "⚠ THE MILESTONE IS STILL NOT REACHED. Two of the debt's three layers are paid and one candidate of the remaining three is ruled out. (b) is next: measure whether the handle `screens.externals()` builds sees the same state the walk does, starting at the unwrapped `(primary.factory)()` in `MountedScreen::externals`."
+      ],
+      "publishable_decision_summary": "The press is addressed correctly, and still does not land.\n\nR1958 left three candidates for the layer it could not reach. This is the cheapest of them, measured: `InputRouter::hover_target` is public, and after a cursor move onto `lab.toolbar.more` it answers **`Some(\"node_lab\")`**.\n\n⇒ CANDIDATE (a) IS RULED OUT. The router hovers the mounted screen, so `pointer_down` sends `PointerDown` to that screen's tag — the address is right and the screen still does not move. What remains is (b) the identity of the state behind `screens.externals()`'s handle, and (c) whether `cursor_moved` dispatched a `pointer_move` at all.\n\n★ A GROUND FOR SUSPECTING (b), found while writing the probe: `MountedScreen::externals` (`crates/pinion-screen/src/mount.rs:137`) calls `(primary.factory)()` **without** an `owner.run` wrap, where `CoreShell::state_scene` wraps both factories. The running application is safe because `create_extra_externals` is itself called inside `root_owner.run`, and the walk wraps it the same way — but *which scope a factory runs in* is exactly the thing that decides state identity for this family, so that is where the next measurement goes.\n\n⚠ AND A COST THE PROBE PAID, recorded so the next one does not pay it again: the `External` trait has **no** `query`. That name belongs to `QuerySource::introspect_query`, reached through `ExternalIntrospect`. Three near-identical spellings, and asking the handle directly means picking the right one.",
+      "publishable_changes_bullets": [
+        "`examples/hello-analyzer-shell/src/painted.rs`: the R1958 gate now also asserts the router's hover after a cursor move onto the mounted screen's control is that screen — so a press that stops being addressed correctly is red, and the measurement that ruled out candidate (a) is a gate rather than a note.",
+        "The debt records (a) as ruled out, keeps (b) and (c), and carries both findings above: the unwrapped factory call at `mount.rs:137` to measure next, and the three spellings of \"ask the handle\" that cost this probe three compile errors."
+      ],
+      "publishable_verification_bullets": [
+        "`cargo test -p hello-analyzer-shell r1958` — exit 0 with the hover assertion in place; the measured value is `Some(\"node_lab\")`.",
+        "`cargo clippy -p hello-analyzer-shell --all-targets --features pinion-runtime/vello` — clean. `cargo fmt --all --check` — clean.",
+        "The debt census is unchanged at 42: this correction opened and closed nothing."
+      ],
+      "publishable_impact_refs": [
+        "5.35"
+      ],
+      "publishable_carry_forward_bullets": [
+        "⚠ THE MILESTONE IS STILL NOT REACHED. Two of the debt's three layers are paid and one candidate of the remaining three is ruled out. (b) is next: measure whether the handle `screens.externals()` builds sees the same state the walk does, starting at the unwrapped `(primary.factory)()` in `MountedScreen::externals`."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
