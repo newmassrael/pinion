@@ -329,10 +329,18 @@ pub const RAIL: &[RailSpec] = &[
         title: "Node Lab",
         seat: Seat::Page,
     },
+    // ★★★★★ R1947 — **the first seat this rail opens against the scope
+    // mockup's own drawing.** That mockup locks this seat under requirement 12
+    // and this rail locked it the same way for 219 rounds; the behaviour
+    // reference BUILDS the section, and R1946 turned that disagreement into a
+    // list. `hello-topology-view` is the section, mounted like any other, and
+    // `docs/analyzer-rail-spec.json`'s `owed` names the divergence — this build
+    // is now AHEAD of the mockup here, which is a difference that has to be
+    // declared just as loudly as being behind.
     RailSpec {
         key: "topology",
         title: "Topology",
-        seat: Seat::Reserved("requirement 12"),
+        seat: Seat::Page,
     },
     // ★ R1728 — booked under requirement 18, not 14. The reference names the
     // requirement in the seat's own tooltip and 14 is not among the six it

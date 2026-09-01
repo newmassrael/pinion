@@ -236,6 +236,7 @@ members = [
     "examples/hello-node-lab",
     "examples/hello-key-patterns",
     "examples/hello-log-view",
+    "examples/hello-topology-view",
     "examples/hello-overflow-clip",
     "examples/hello-packet-view",
     "examples/hello-graph-diff",

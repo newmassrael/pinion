@@ -1,0 +1,121 @@
+{
+  "$at": { "width": 1220, "height": 760 },
+  "$comment": [
+    "R1947 — the analysis tool's TOPOLOGY section, written down once, in neutral",
+    "vocabulary, as the behaviour reference draws it.",
+    "",
+    "WHY THIS SECTION IS BEING BUILT NOW, and what makes it different from the",
+    "four that came before it. Every earlier section closed a gap against the",
+    "SCOPE reference — the first-stage screen mockup — whose rail this build",
+    "reproduces seat for seat. This one does not: the mockup draws this seat",
+    "LOCKED, booked under requirement 12, and this build locked it the same way",
+    "for 219 rounds. What the mockup cannot see is that the BEHAVIOUR reference",
+    "— the working prototype, a superset of it — BUILDS this section: its rail",
+    "moves here like any other seat, a section-selected predicate names it, and",
+    "it has a full view of its own.",
+    "",
+    "R1946 measured that divergence and made it a list (`second_phase_owed` in",
+    "docs/analyzer-rail-spec.json). This file is what pays the first entry off.",
+    "So the seat opening here is NOT a first-stage reproduction gap closing; it",
+    "is the second stage arriving, which the owner's 2026-08-19 order asks for",
+    "in exactly this position: reproduce the first stage, then improve past it.",
+    "The rail pin records the divergence rather than hiding it.",
+    "",
+    "EXTRACTION. The reference is not in this repository and must not be. Its",
+    "topology view is three panes: a filter rail, a graph, and an inspector.",
+    "Measured at the command on 2026-09-01: a 238-wide filter column with four",
+    "labelled groups, a graph column whose 46-high header carries the section",
+    "title, the layout in force, a live mark and a fit control, and a 308-wide",
+    "inspector with a headline, a status line, a four-tile grid, a key list and",
+    "two actions. The node population is six peers around one router.",
+    "",
+    "VOCABULARY. The reference's product, protocol and resource words are",
+    "replaced by the words this tree already uses for them — the key patterns",
+    "are `hello-key-patterns`'s own, and the router is `R-01` as the sibling",
+    "sections name it. Structure and behaviour are what is reproduced.",
+    "",
+    "THE TWO HALVES, as in every sibling pin: `canon` is what the reference",
+    "draws. `owed` is where this build does not draw it yet, each entry saying",
+    "why. The gate asserts the difference between the painted surface and",
+    "`canon` is EXACTLY `owed`, so a new divergence fails and so does an owed",
+    "one that has been paid off without this file being told."
+  ],
+
+  "filters": {
+    "$comment": [
+      "The left column, 238 wide. Four labelled groups under a heading that",
+      "states the observed population — the reference puts the count in the",
+      "heading rather than in the graph, so a reader knows what they are",
+      "looking at before it is drawn."
+    ],
+    "canon": [
+      { "ordinal": 1, "key": "title", "title": "Filters and layers" },
+      { "ordinal": 2, "key": "observed", "title": "Observed population" },
+      { "ordinal": 3, "key": "layout", "title": "Layout" },
+      { "ordinal": 4, "key": "links", "title": "Show links" },
+      { "ordinal": 5, "key": "highlight", "title": "Highlight key pattern" },
+      { "ordinal": 6, "key": "streaming", "title": "Streaming" }
+    ],
+    "owed": []
+  },
+
+  "graph": {
+    "$comment": [
+      "The middle column. A 46-high header, then the plot. The header's second",
+      "run states WHICH layout is in force, which is the reference's own",
+      "affordance for a control whose two buttons are in the other pane — the",
+      "graph says what it is showing rather than making a reader look away.",
+      "",
+      "`canvas` is the plot as one surface. Its interior — a node's circle, a",
+      "link's line, a label — is not part of this roster on purpose: those are",
+      "a population that changes with the capture, and a specification that",
+      "enumerated them would be a copy of the data rather than of the screen.",
+      "What holds them is `painted.rs`'s own sweep, which asserts every",
+      "declared node is drawn and reaches its own inspector."
+    ],
+    "canon": [
+      { "ordinal": 1, "key": "title", "title": "Network topology" },
+      { "ordinal": 2, "key": "layout_label", "title": "Layout in force" },
+      { "ordinal": 3, "key": "live", "title": "Capture state" },
+      { "ordinal": 4, "key": "fit", "title": "Fit" },
+      { "ordinal": 5, "key": "canvas", "title": "The node-link plot" },
+      { "ordinal": 6, "key": "zoom_in", "title": "Zoom in" },
+      { "ordinal": 7, "key": "zoom_out", "title": "Zoom out" },
+      { "ordinal": 8, "key": "hint", "title": "Selection hint" }
+    ],
+    "owed": []
+  },
+
+  "inspector": {
+    "$comment": [
+      "The right column, 308 wide. What the reference shows about the node a",
+      "reader picked: an identity block, a four-tile grid of measurements, the",
+      "key patterns observed on that node, and two actions.",
+      "",
+      "★ `isolate` and `detach` are drawn and REFUSED here, which is this",
+      "tree's established treatment of a reference control that leads out of a",
+      "section nothing has built. The reference draws them live and answers a",
+      "later-stage toast; drawing them absent would lose the affordance and",
+      "drawing them live would promise a section that does not exist, so they",
+      "are present, disabled, and each states the requirement that books it —",
+      "the same shape `hello-key-patterns` uses for the action out of its own",
+      "section."
+    ],
+    "canon": [
+      { "ordinal": 1, "key": "title", "title": "Inspector" },
+      { "ordinal": 2, "key": "badge", "title": "Selected node" },
+      { "ordinal": 3, "key": "id", "title": "Node identifier" },
+      { "ordinal": 4, "key": "status", "title": "Status" },
+      { "ordinal": 5, "key": "role", "title": "Role" },
+      { "ordinal": 6, "key": "zid", "title": "Session identifier" },
+      { "ordinal": 7, "key": "links", "title": "Links" },
+      { "ordinal": 8, "key": "rate", "title": "Message rate" },
+      { "ordinal": 9, "key": "encryption", "title": "Encryption" },
+      { "ordinal": 10, "key": "state", "title": "Status tile" },
+      { "ordinal": 11, "key": "keys", "title": "Key patterns" },
+      { "ordinal": 12, "key": "isolate", "title": "Isolate" },
+      { "ordinal": 13, "key": "detach", "title": "Detach" }
+    ],
+    "owed": []
+  }
+}

@@ -1,0 +1,47 @@
+[package]
+name = "hello-topology-view"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1947 Phase-B plane-C integration consumer — the analysis tool's topology section, the sixth seat of the reference's rail and the FIRST seat this build opens that the scope mockup draws locked. Three panes: a 238-wide filter column with a layout choice, two link toggles and a live-capture toggle; a graph column whose 46-high header states the layout in force and whose plot draws six peers around one router with selection and zoom; and a 308-wide inspector with a four-tile measurement grid, the key patterns observed on the picked node, and two actions drawn and refused with the requirement that books them. Its three surfaces are checked against docs/analyzer-topology-spec.json through pinion_core::conformance, read back out of the PAINTED scene."
+publish = false
+
+# ★ R1947 — a library and a four-line binary from its first round, which is the
+# rule R1730 measured and R1731 repeated: the screen is the library, the binary
+# is a call into it, so the demo sweep's process and the application's mounted
+# section are one source rather than two builds wearing one name.
+[lib]
+name = "hello_topology_view"
+path = "src/lib.rs"
+
+[[bin]]
+name = "hello-topology-view"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# §5.40 AccessKit substrate for `WidgetA11y::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# §5.21 the scrolling pane the inspector's key list sits in.
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+# §5.16 paint-side AppShell (winit + Vello + RPC).
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R1537 §5.16 — the emitted renderer owns its wgpu device through pinion-gpu.
+pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
+vello = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+# R1653 — the integration test runs the real view -> layout pipeline, so the
+# rectangles it asserts against are the ones the window would paint.
+pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1" }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

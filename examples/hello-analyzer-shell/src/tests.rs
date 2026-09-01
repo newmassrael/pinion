@@ -434,7 +434,46 @@ fn r1668_every_reserved_seat_names_what_it_waits_for() {
         .iter()
         .filter_map(|seat| seat.reserved_for().map(|why| (seat.key, why)))
         .collect();
-    assert_eq!(locked.len(), 2, "the reference locks two rail seats");
+    // ★★★★★ R1947 — **this counts what THIS RAIL locks, and it is no longer the
+    // same number as what the reference locks.**
+    //
+    // It read `assert_eq!(locked.len(), 2, "the reference locks two rail
+    // seats")` — a count of one thing under a sentence about another, true only
+    // while the two agreed. R1947 opened `topology`, which the scope mockup
+    // locks and the behaviour reference builds, so they do not agree any more.
+    //
+    // The relation is what is asserted now, and it is the honest one: every
+    // seat this rail locks is one the reference locks too, and the reference
+    // locking MORE is a declared divergence rather than a defect. A count would
+    // have to be edited every time either side moves; a subset holds.
+    let specified_locked: Vec<String> = spec::canon()
+        .all()
+        .iter()
+        .filter(|seat| seat.standing.why().is_some())
+        .map(|seat| seat.key.to_string())
+        .collect();
+    assert!(
+        !specified_locked.is_empty(),
+        "the reference locks nothing, so the comparison below judges an empty set",
+    );
+    for (key, _) in &locked {
+        assert!(
+            specified_locked.iter().any(|s| s == key),
+            "this rail locks {key}, which the reference does not",
+        );
+    }
+    let opened: Vec<&String> = specified_locked
+        .iter()
+        .filter(|key| !locked.iter().any(|(k, _)| *k == key.as_str()))
+        .collect();
+    let declared = spec::owed();
+    for key in opened {
+        assert!(
+            declared.owed().iter().any(|entry| &entry.key == key),
+            "this rail opens {key}, which the reference locks, and no entry in \
+             `docs/analyzer-rail-spec.json` declares it",
+        );
+    }
     for (key, why) in locked {
         assert!(
             why.starts_with("requirement "),
@@ -482,10 +521,14 @@ fn r1668_every_reserved_seat_names_what_it_waits_for() {
         .iter()
         .filter_map(|seat| seat.reserved_for().map(|why| (seat.key, why)))
         .collect();
-    assert_eq!(
-        booked.len(),
-        2,
-        "the reference draws two of its eight seats locked itself",
+    // ★★★★★ R1947 — a FLOOR rather than the count `2` this carried, for the
+    // reason the sibling assertion above now states at length: this counts what
+    // THIS rail locks, under a sentence about what the reference locks, and the
+    // two stopped agreeing when `topology` was built. What survives either way
+    // is that the property below has something to judge.
+    assert!(
+        !booked.is_empty(),
+        "no seat is booked, so the requirement check below judges nothing",
     );
     for (key, why) in booked {
         assert!(
@@ -4443,11 +4486,43 @@ fn r1832_every_locked_seat_cites_a_requirement_the_register_books_to_it() {
             .as_u64()
             .expect("a rail row names a requirement");
         let seat = row["seat"].as_str().expect("a rail row names a seat");
-        let cite = spec::RAIL
+        let on_rail = spec::RAIL
             .iter()
             .find(|s| s.key == seat)
-            .and_then(spec::RailSpec::reserved_for)
-            .unwrap_or_else(|| panic!("the rail has no reserved seat {seat:?}"));
+            .unwrap_or_else(|| panic!("the register books {seat:?}, which is not a rail seat"));
+        // ★★★★★ R1947 — **a row may say the section behind it was BUILT, and
+        // then the seat must be open rather than locked.**
+        //
+        // Before this round every rail row was a locked seat and the lookup
+        // below could assume one. R1947 built `topology`, so the assumption
+        // stopped holding — and the honest repair is not to skip the row but to
+        // make the register carry the fact and check BOTH directions: a row
+        // with `built` whose seat is still locked is a section we said we
+        // finished and did not, and a row without it whose seat is open is one
+        // that arrived with nobody told.
+        match row["built"].as_str() {
+            Some(round) => {
+                assert!(
+                    !round.is_empty(),
+                    "the {seat:?} row is marked built by nothing",
+                );
+                assert!(
+                    on_rail.reserved_for().is_none(),
+                    "the register says {seat:?} was built at {round}, and the rail still \
+                     locks it",
+                );
+                checked += 1;
+                continue;
+            }
+            None => assert!(
+                on_rail.reserved_for().is_some(),
+                "the rail opens {seat:?} and the register still books it as deferred — \
+                 add `built` to its row, naming the round",
+            ),
+        }
+        let cite = on_rail
+            .reserved_for()
+            .expect("the arm above established this seat is locked");
         assert_eq!(
             cited(cite),
             Some(n),

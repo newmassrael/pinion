@@ -174,11 +174,6 @@
   ],
   "second_phase_owed": [
     {
-      "key": "topology",
-      "round": "R1946",
-      "reason": "The behaviour reference draws a node-link view of the peers with a layout choice, a zoom and a filter panel. This build closes the seat, and a reader is told only that a later requirement books it."
-    },
-    {
       "key": "sessions",
       "round": "R1946",
       "reason": "The behaviour reference draws a peer list on an eight-column grid with a per-peer detail beside it. This build closes the seat, and a reader is told only that a later requirement books it."
@@ -228,5 +223,30 @@
     "describe a worse build than the one that exists. An EMPTY list is the",
     "strongest form of that: there is nothing left to describe."
   ],
-  "owed": []
+  "owed": [
+    {
+      "key": "topology",
+      "sentence": "`topology` is specified closed (reserved) and is open",
+      "since": "R1947",
+      "why": [
+        "★★★★★ THE FIRST ENTRY HERE THAT POINTS THE OTHER WAY. Every earlier",
+        "one said this build was BEHIND the reference and was deleted when the",
+        "section arrived. This one says it is AHEAD: the scope mockup draws",
+        "this seat locked under requirement 12, and `hello-topology-view` is",
+        "the section the BEHAVIOUR reference builds, mounted here at R1947.",
+        "",
+        "It is declared rather than hidden for the reason this file's whole",
+        "shape exists: the gate asserts the live difference EQUALS this list,",
+        "so a divergence nobody wrote down fails. Being ahead is a divergence.",
+        "A build that quietly opened seats the reference locks would drift from",
+        "its own specification in the direction that feels like progress, which",
+        "is the direction nobody checks.",
+        "",
+        "⚠ This entry does NOT come out when something is built — there is",
+        "nothing left to build. It comes out if and when the scope mockup is",
+        "re-extracted and opens the seat, at which point the two references",
+        "agree and `behaviour` and `standing` say the same thing."
+      ]
+    }
+  ]
 }

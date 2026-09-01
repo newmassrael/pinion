@@ -1523,6 +1523,17 @@ fn screen_roster() -> ScreenRoster {
                 "lab",
                 Box::new(Mount::<hello_node_lab::NodeLabView>::new()) as Box<dyn Screen>,
             ),
+            // ★★★★★ R1947 — **the first seat this build opens that the SCOPE
+            // reference draws locked.** Every mount above closed a gap against
+            // that mockup; this one opens a seat the mockup books under a later
+            // requirement, because the BEHAVIOUR reference builds the section
+            // and a person asked for it by name. `docs/analyzer-rail-spec.json`
+            // carries the divergence in its `owed` list rather than pretending
+            // the two references agree.
+            (
+                "topology",
+                Box::new(Mount::<hello_topology_view::TopologyView>::new()) as Box<dyn Screen>,
+            ),
         ],
     )
     .expect("the mounted screens sit at open destinations of this rail")

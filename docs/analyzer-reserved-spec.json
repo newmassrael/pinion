@@ -64,8 +64,30 @@
     { "requirement": 26, "books": "a link-level capture source", "where": "in-place" }
   ],
 
+  "$rail_comment": [
+    "★★★★★ R1947 — a rail row may carry `built`, naming the round that BUILT",
+    "the section behind a seat the scope mockup draws locked. It is the rail's",
+    "counterpart of `built` below, and it exists for the same reason: without",
+    "it the gate cannot tell a seat we finished from a seat we forgot.",
+    "",
+    "⚠ It is NOT the same statement as `built` below, and the difference is why",
+    "this is a separate field rather than a row added there. That list is about",
+    "the dashboard's widget PALETTE; requirement 12 books a seat on both",
+    "surfaces, and R1947 built the rail's section while the palette's widget is",
+    "untouched. One field for both would have made building either look like",
+    "building both.",
+    "",
+    "A row WITHOUT `built` must be locked on the rail; a row WITH it must be",
+    "open. Both directions, so a section that quietly stops being reproduced",
+    "fails as loudly as one that arrives undeclared."
+  ],
   "rail": [
-    { "requirement": 12, "seat": "topology" },
+    {
+      "requirement": 12,
+      "seat": "topology",
+      "built": "R1947",
+      "$note": "The behaviour reference builds this section and the scope mockup locks it. `hello-topology-view` is the section, mounted at the rail's sixth seat; `docs/analyzer-rail-spec.json` carries the divergence against the mockup."
+    },
     { "requirement": 18, "seat": "sessions" }
   ],
 

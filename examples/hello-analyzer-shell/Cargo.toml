@@ -48,6 +48,12 @@ hello-key-patterns = { path = "../hello-key-patterns" }
 # ★★★★★ R1731 — the log destination's page, and the one that closes the rail:
 # with it every section the reference opens is one this application opens.
 hello-log-view = { path = "../hello-log-view" }
+# ★★★★★ R1947 — the topology destination's page, and the FIRST seat this build
+# opens that the scope mockup draws locked: the behaviour reference builds this
+# section, so opening it is the second stage arriving rather than a
+# reproduction gap closing. `docs/analyzer-rail-spec.json` records the
+# divergence instead of hiding it.
+hello-topology-view = { path = "../hello-topology-view" }
 vello = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
