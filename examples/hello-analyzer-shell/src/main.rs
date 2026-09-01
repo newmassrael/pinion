@@ -10278,6 +10278,49 @@ fn latency_stats(quantiles: &Quantiles) -> Vec<(&'static str, String)> {
         .collect()
 }
 
+/// ★★★★★ R1955 — **a stat tile's two lines, stacked so they cannot collide.**
+///
+/// Both stat cards paint the same shape: a bigger line and a smaller one, one
+/// above the other inside a [`STAT_H`] tile. Each wrote FOUR literals for it —
+/// two heights and two `y`s — and the heights were four and five pixels short
+/// of the faces they hold, which is what a reader meets as a cut descender.
+///
+/// ⚠ Deriving only the heights is what made this function necessary rather than
+/// optional: with the boxes grown and the `y`s left as literals, the second line
+/// started one pixel inside the first and `r1649`'s smear gate reported six
+/// pairs painted on top of each other. **A height and the offset of what sits
+/// under it are one fact.** Here the second line begins exactly where the first
+/// one's line box ends, so an overlap is not a defect that can be written.
+fn stat_lines(
+    top: u32,
+    first: (&str, u32, Color),
+    second: (&str, u32, Color),
+    w: u32,
+) -> Vec<Scene> {
+    let (first_text, first_face, first_ink) = first;
+    let (second_text, second_face, second_ink) = second;
+    let first_h = pinion_core::containment::line_box(first_face);
+    vec![
+        label(
+            first_text,
+            Rect::new(10, top, w.saturating_sub(20), first_h),
+            first_face,
+            first_ink,
+        ),
+        label(
+            second_text,
+            Rect::new(
+                10,
+                top + first_h,
+                w.saturating_sub(20),
+                pinion_core::containment::line_box(second_face),
+            ),
+            second_face,
+            second_ink,
+        ),
+    ]
+}
+
 /// The latency card's content: three derived tiles, the binned distribution
 /// with its tail emphasised, and the caption that says what the emphasis means.
 fn latency_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
@@ -10294,20 +10337,12 @@ fn latency_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
     } else {
         for (n, (key, value)) in stats.iter().enumerate() {
             out.push(Scene::Container(
-                ContainerNode::new(vec![
-                    label(
-                        key,
-                        Rect::new(10, 6, stat_w.saturating_sub(20), 12),
-                        FONT_TINY,
-                        palette.muted,
-                    ),
-                    label(
-                        value,
-                        Rect::new(10, 22, stat_w.saturating_sub(20), 17),
-                        FONT_TITLE,
-                        palette.ink,
-                    ),
-                ])
+                ContainerNode::new(stat_lines(
+                    6,
+                    (key, FONT_TINY, palette.muted),
+                    (value, FONT_TITLE, palette.ink),
+                    stat_w,
+                ))
                 .with_tag(format!("card.{id}.stat.{n}"))
                 .with_style(
                     BoxStyle::filled(palette.raised)
@@ -10447,7 +10482,18 @@ fn filter_body(state: &ShellState, id: &str, rect: Rect, palette: Palette) -> Ve
             Scene::Container(
                 ContainerNode::new(vec![clipped(
                     &chip.label,
-                    Rect::new(9, 4, at.w.saturating_sub(18), 13),
+                    // ★★★★★ R1955 — the label's box is DERIVED from the face it
+                    // is set in. It was the literal `13` while
+                    // `line_box(FONT_TINY)` is 17, so every chip on this card
+                    // was four pixels short of the line it holds — the shape a
+                    // person sees as a cut descender, and six of the first six
+                    // rows `r1800`'s gate names when its budget is lowered.
+                    Rect::new(
+                        9,
+                        4,
+                        at.w.saturating_sub(18),
+                        pinion_core::containment::line_box(FONT_TINY),
+                    ),
                     FONT_TINY,
                     if chip.on {
                         palette.on_accent
@@ -10631,20 +10677,12 @@ fn filter_counts(
     }
     for (n, (value, what)) in spec::FILTER_STATS.iter().enumerate() {
         out.push(Scene::Container(
-            ContainerNode::new(vec![
-                label(
-                    value,
-                    Rect::new(10, 7, stat_w.saturating_sub(20), 17),
-                    FONT_TITLE,
-                    palette.ink,
-                ),
-                label(
-                    what,
-                    Rect::new(10, 27, stat_w.saturating_sub(20), 13),
-                    FONT_TINY,
-                    palette.muted,
-                ),
-            ])
+            ContainerNode::new(stat_lines(
+                7,
+                (value, FONT_TITLE, palette.ink),
+                (what, FONT_TINY, palette.muted),
+                stat_w,
+            ))
             .with_tag(format!("card.{id}.stat.{n}"))
             .with_style(
                 BoxStyle::filled(palette.raised)

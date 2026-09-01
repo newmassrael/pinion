@@ -302,7 +302,30 @@ const SIZES: &[(&str, (u32, u32))] = &[
 /// of writing 16 fixed the new three AND the two that had been in the budget
 /// since the menu existed — so adding rows is what made a per-row defect
 /// visible, and repairing it lowered the pin rather than raising it.
-const SHORT_BOX_BUDGET: usize = 77;
+///
+/// ★★★★★ R1955 — **77 -> 60**, and every one of the seventeen was a literal
+/// where a derivation belonged.
+///
+/// A person watching a running window on 2026-09-01 reported a button reading
+/// `lavout` — a `y` cut at its box's bottom edge. The instrument that says so
+/// existed (R1800 built it, and `short_box_population` makes every screen ask
+/// it), so the question was never *is it measured* but *what does the pin
+/// admit*: 77 runs on this screen sat in a box too short for their own face,
+/// and a reader meets each of them as a clipped descender.
+///
+/// Lowering the pin to 0 NAMES the offenders, and the first three groups were
+/// one shape: a filter chip's label box written `13`, a filter tile's value and
+/// caption written `17` and `13`, and a latency tile's key and value written
+/// `12` and `17` — against `line_box` values of 17, 21 and 17. Each is
+/// `containment::line_box(face)` now, so the box cannot fall behind the face it
+/// is set in, and a face size changed later carries its box with it. That is
+/// R1894's repair applied three more times, which is the tell that the literal
+/// was the class rather than the site.
+///
+/// ⚠ 60 IS STILL A BACKLOG, not a floor. The rest are named by the same
+/// procedure — set this to 0 and read the assertion — and the next group is the
+/// latency distribution's x-axis labels, 3px short each.
+const SHORT_BOX_BUDGET: usize = 60;
 
 /// Where every tag in the painted scene ended up, and every text run with it.
 struct Painted {

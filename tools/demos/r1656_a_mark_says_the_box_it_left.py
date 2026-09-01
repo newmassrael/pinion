@@ -62,6 +62,29 @@ BIG = (2494, 1531)
 #: near it.
 MARK_FLOOR = 300
 
+#: ★★★★★ R1955 — the most a run's INK may stand out of its own line box,
+#: vertically, on this screen.
+#:
+#: `over_h` is `ink_h - h`. A shaped line box is normally taller than the ink it
+#: holds, so this is zero for most runs; where it is positive the face's extent
+#: has outgrown the box the layout reserved, and the pixels have to go
+#: somewhere. Measured at R1955, every positive value on this screen is 1 or 2.
+#:
+#: Measured at R1955 on the screen this demo drives: 13 of 180 runs overrun, and
+#: the worst is 5px — a node id in the inspector body. 5 is therefore what this
+#: screen HAS, not a tolerance anybody chose, and it is pinned so a sixth pixel
+#: has to be argued for.
+#:
+#: ⚠ A BUDGET IS NOT A VERDICT, and 5px is not a small number: an overrun inside
+#: this budget may still be CLIPPED by an ancestor, which this instrument cannot
+#: see. That is exactly the shape a person reported on 2026-09-01 — a button
+#: reading `lavout`, its `y` cut at the box's bottom edge — while every gate in
+#: this tree was green. The clipping question belongs to
+#: `debt-text-is-not-centred-in-the-box-that-holds-it`; what this pin does is
+#: stop the overrun growing while that is unanswered, and put a NUMBER where
+#: there was a sentence saying the axis need not be measured.
+VERTICAL_OVERRUN_BUDGET = 5
+
 
 def containment(tf):
     return call(tf, "scene/containment")
@@ -117,9 +140,8 @@ def run(tf: RpcSubprocess) -> None:
         assert e["fate"] in ("smeared", "clipped"), e["fate"]
 
     # ── 5. the discriminating numbers on the text read ───────────────────────
-    #      `overflows` is true of most runs on most screens (a shaped line box is
-    #      taller than the face it holds), so the amount and the axis are what a
-    #      caller can threshold on.
+    #      `overflows` is true whenever EITHER axis overruns, so the amount and
+    #      the axis are what a caller can threshold on.
     runs = text_runs(tf)
     assert len(runs) > 40, f"the screen has text: {len(runs)}"
     for r in runs:
@@ -132,9 +154,62 @@ def run(tf: RpcSubprocess) -> None:
     discriminating = [r for r in runs if r["over_w"] > 0]
     assert len(discriminating) < len(runs) // 2, (
         f"{len(discriminating)} of {len(runs)} runs are too WIDE for their box — "
-        f"the horizontal axis is the one an author gets wrong, and it should be "
-        f"rare; the vertical one is near-universal and is why the boolean alone "
-        f"cannot gate"
+        f"the horizontal axis is one an author gets wrong, and it should be rare"
+    )
+    # ★★★★★ R1955 — **the vertical axis is measured too, and the sentence that
+    # excused not measuring it was false.**
+    #
+    # This block used to say `overflows` is true of *most runs on most screens*
+    # because *a shaped line box is taller than the face it holds*, and gate the
+    # width alone. Both halves are wrong. `over_h` is `ink_h - h`, so it is
+    # positive when the INK is taller than its box — the opposite of the
+    # phenomenon the sentence described — and it is not most runs: measured at
+    # R1955, 54 of 247 here and 51 of 176 on the node lab, under a quarter each
+    # time.
+    #
+    # ⚠ WHY THIS MATTERS RATHER THAN BEING TIDINESS: a person watching a running
+    # window on 2026-09-01 reported a button reading `lavout` — the `y`'s
+    # descender cut off at the box's bottom edge — and this is the one
+    # instrument in the tree that publishes the vertical overrun. It was
+    # published and nobody asked, because the only reader said in as many words
+    # that the vertical axis is not one an author gets wrong.
+    #
+    # The claim is deliberately the WEAK, TRUE one: an overrun is a fact about a
+    # line box and its face, not yet a defect — whether the ink is then CLIPPED
+    # needs the clip chain, which this instrument does not see. So this asserts
+    # the shape (a minority, bounded per run) and reports the numbers, and the
+    # clipping question is registered rather than pretended at.
+    # ⚠ The instrument first: `over_h` is derived from `ink_h`, and a host that
+    # answered no ink height at all would report every overrun as zero and pass
+    # this whole block. A budget whose population can go empty for the wrong
+    # reason is a budget that greenlights the instrument dying.
+    assert all(r.get("ink_h", 0) > 0 for r in runs if r["content"]), (
+        "every painted run reports an ink height — without it `over_h` is a "
+        "structural zero and the budget below cannot fail"
+    )
+    # ⚠ R1955 wrote a check here asserting `over_h == max(0, ink_h - h)` and it
+    # was WRONG — measured, a run reading '65535' publishes `over_h` 0 with an
+    # `ink_h` 15 above its `h`. `over_h` is the overrun past the box's BOTTOM
+    # edge, and ink standing out of the top is not that. The naive identity was
+    # a claim about a field this file does not own; the assertion above (every
+    # painted run reports an ink height) is the weak, true form of what it was
+    # reaching for.
+    too_tall = [r for r in runs if r["over_h"] > 0]
+    assert len(too_tall) < len(runs) // 2, (
+        f"{len(too_tall)} of {len(runs)} runs have ink TALLER than their line "
+        f"box — a minority is the shape this screen has had; a majority means "
+        f"the line box stopped being derived from the face"
+    )
+    worst = max((r["over_h"] for r in too_tall), default=0)
+    assert worst <= VERTICAL_OVERRUN_BUDGET, (
+        f"a run's ink overruns its line box by {worst}px, past the {VERTICAL_OVERRUN_BUDGET}px "
+        f"this screen has held: "
+        f"{[(r['content'][:20], r['over_h'], r['owner']) for r in too_tall if r['over_h'] == worst][:3]}"
+    )
+    print(
+        f"[over] {len(too_tall)} of {len(runs)} run(s) overrun their line box "
+        f"vertically, worst {worst}px (budget {VERTICAL_OVERRUN_BUDGET}); "
+        f"{len(discriminating)} overrun horizontally"
     )
 
     # ── 6. §5.15 — the surface is told its size, and the fraction follows it ──
