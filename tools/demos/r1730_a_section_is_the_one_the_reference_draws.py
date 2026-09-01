@@ -62,7 +62,13 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from analyzer_spec import keys_spec, rail_spec, surfaces  # noqa: E402
+from analyzer_spec import (  # noqa: E402
+    declared_divergences,
+    keys_spec,
+    rail_spec,
+    reproduced,
+    surfaces,
+)
 from rpc_verify import (  # noqa: E402
     RealPointer,
     RealPointerUnavailable,
@@ -154,9 +160,14 @@ def section_a(app: RpcSubprocess, spec: dict) -> None:
             [],
             f"A: the {surface} surface's difference reconciles with its ledger",
         )
+        # R1964 — `reproduced(...)`, not `len(canon) - len(owed)` written out
+        # again. The rail grew a SECOND kind of divergence at R1947 (`ahead`)
+        # and both hand copies of this arithmetic went on omitting it; the
+        # derivation subtracts every declared kind and refuses a kind it has
+        # not been taught.
         assert_eq(
             row["reproduced"],
-            len(canon) - len(owed),
+            reproduced(spec[surface]),
             f"A: and the {surface} reproduction is a number, not an impression",
         )
 
@@ -310,15 +321,49 @@ def section_e(spec: dict) -> None:
             "E: the shell's rail is still the specified rail",
         )
         conformance = shell.query(f"{EXT}/conformance")
+        # ★★★★★ R1964 — BOTH kinds of divergence, and the derivation rather
+        # than a second copy of the shell's arithmetic.
+        #
+        # This read `len(canon) - len(owed)` and `owed` alone, and R1947 gave
+        # the rail a kind it had never heard of: `ahead`, a seat the scope
+        # mockup locks and this build OPENS. So it asserted `6 == 8 - 0` and CI
+        # was red for five pushes under the sentence *expected 8, got 6* —
+        # which reads like two sections nobody built, and is the opposite:
+        # `hello-topology-view` (R1947) and `hello-sessions-view` (R1948) are
+        # both mounted, open and painting, and `behaviour.reproduced` is 8 of 8.
+        declared = declared_divergences(rail)
         assert_eq(
-            conformance["reproduced"],
-            len(rail["canon"]) - len(owed),
-            "E: ★★ and the shell now reproduces one more seat than it did",
+            sorted(d["key"] for d in conformance["divergences"]),
+            sorted(entry["key"] for entry in declared),
+            "E: ★★ every way the rail differs from the mockup is one somebody "
+            "wrote down -- BEHIND and AHEAD both, so a build that quietly "
+            "opened a locked seat fails here just as loudly as one that lost a "
+            "section",
         )
         assert_eq(
             [d["says"] for d in conformance["divergences"]],
-            [entry["sentence"] for entry in owed],
-            "E: with the remainder exactly as declared",
+            [entry["sentence"] for entry in declared],
+            "E: with the remainder exactly as declared, sentence for sentence",
+        )
+        assert_eq(
+            conformance["reproduced"],
+            reproduced(rail),
+            "E: ★★ and the count the shell publishes is the count the "
+            "specification derives -- two derivations of one rule, not a rule "
+            "and a copy of it",
+        )
+        # ★ The second reference, whose number is the one a person asked about:
+        # every section the behaviour prototype builds is one this build opens.
+        assert_eq(
+            conformance["behaviour"]["reproduced"],
+            conformance["behaviour"]["builds"],
+            "E: ★★★★★ and against the BEHAVIOUR reference nothing is owed -- "
+            "every section it builds, this build opens",
+        )
+        ok(
+            f"E: ★ the shell reconciles its live difference with its ledger -- "
+            f"{conformance['reconciles']}",
+            conformance["reconciles"] is True,
         )
         shell.intervene(f"{EXT}/nav", "keys")
         shell.tick(16)

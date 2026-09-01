@@ -258,6 +258,82 @@ def palette_bookings() -> dict[str, str]:
     }
 
 
+#: ★★★★★ R1964 — the keys of a specification that list a way this build
+#: DIFFERS from the reference the specification is of.
+#:
+#: `owed` is *behind* and `ahead` is *in front*; both are divergences and both
+#: are subtracted from a reproduction count. Naming them together is the whole
+#: point: R1947 and R1948 added `ahead` to the rail and every reader that had
+#: written `len(canon) - len(owed)` by hand went on omitting it.
+DIVERGENCE_LISTS = ("owed", "ahead")
+
+#: Keys of a specification that are lists and are NOT divergences from it.
+#:
+#: `canon` is the thing being measured against. `second_phase_owed` is a
+#: remainder against a DIFFERENT reference (R1946's behaviour prototype), so
+#: folding it in would subtract one reference's gap from another's count.
+#:
+#: ⚠ Declared rather than inferred, because the alternative is a fall-through
+#: that treats an unrecognised list as *not a divergence* — which is the
+#: direction that hides work, and exactly how `ahead` went unread for
+#: seventeen rounds.
+NOT_A_DIVERGENCE = ("canon", "second_phase_owed")
+
+
+def declared_divergences(spec: dict) -> list[dict]:
+    """Every divergence a specification declares, of every kind it has.
+
+    # Why this exists
+
+    ★★★★★ R1964 — the arithmetic *reproduced = specified − diverging* was
+    spelled at FOUR sites, two in the shell and two in `r1730`, and the two in
+    the demo held their own copy reading only `owed`. R1947 gave the rail a
+    second kind of divergence and the copies could not see it: the demo asserted
+    `6 == 8 - 0` and CI stayed red for five pushes, reported as *expected 8, got
+    6* — which reads like two missing sections and is nothing of the kind. Both
+    seats are built, open and painting; the build is AHEAD of the scope mockup.
+
+    So the count is derived here, once, from every declared kind.
+
+    # Raises
+
+    `KeyError` when the specification carries a list this does not classify. An
+    unclassified list is RED rather than ignored: a third kind of divergence
+    added later must stop a reader that has not been taught about it, not be
+    silently left out of its count.
+    """
+    unknown = sorted(
+        key
+        for key, value in spec.items()
+        if not key.startswith("$")
+        and isinstance(value, list)
+        and key not in DIVERGENCE_LISTS
+        and key not in NOT_A_DIVERGENCE
+    )
+    if unknown:
+        raise KeyError(
+            f"{unknown} is a declared list this does not classify — say whether "
+            f"it is a divergence (add it to DIVERGENCE_LISTS) or is not (add it "
+            f"to NOT_A_DIVERGENCE). Leaving it out would drop it from every "
+            f"reproduction count that reads this."
+        )
+    found: list[dict] = []
+    for key in DIVERGENCE_LISTS:
+        found.extend(spec.get(key, []))
+    return found
+
+
+def reproduced(spec: dict) -> int:
+    """How many of a specification's seats this build reproduces exactly.
+
+    The one statement of the arithmetic on this side of the wire. The shell
+    publishes its own (`specified - divergences.len()`), and a demo comparing
+    the two is comparing two derivations of one rule rather than a rule with a
+    copy of itself — which is what makes the comparison a gate.
+    """
+    return len(spec["canon"]) - len(declared_divergences(spec))
+
+
 def surfaces(spec: dict) -> list[str]:
     """The surfaces a section's specification fixes, by the name it gives them.
 
@@ -330,6 +406,40 @@ def selftest() -> int:
         for field in ("key", "sentence", "since", "why"):
             if not entry.get(field):
                 problems.append(f"divergence {entry.get('key')!r} has no `{field}`")
+
+    # ★★★★★ R1964 — [`declared_divergences`] must gather EVERY declared kind,
+    # and must refuse a kind it has not been taught.
+    #
+    # The defect it exists for: two readers spelled `len(canon) - len(owed)` by
+    # hand, R1947 gave the rail a second kind, and both copies went on omitting
+    # it — `r1730` asserted `6 == 8 - 0` and CI was red for five pushes under a
+    # sentence that reads like two missing sections. So the derivation is
+    # checked here against the pin's own arrays, and the refusal is checked
+    # too: an unclassified list must stop a reader rather than be left out of
+    # its count, which is the direction that hides work.
+    gathered = sorted(e["key"] for e in declared_divergences(rail))
+    both_ways = sorted(owed | ahead)
+    if gathered != both_ways:
+        problems.append(
+            f"the derived divergence set {gathered} is not the pin's own "
+            f"{both_ways} — a kind is being dropped from every reproduction "
+            f"count that reads it"
+        )
+    if reproduced(rail) != len(rail["canon"]) - len(both_ways):
+        problems.append(
+            f"`reproduced` is {reproduced(rail)}, which is not "
+            f"{len(rail['canon'])} seats less its {len(both_ways)} divergence(s)"
+        )
+    try:
+        declared_divergences({"canon": [], "owed": [], "ahead": [], "invented": []})
+    except KeyError:
+        pass
+    else:
+        problems.append(
+            "a specification carrying a list this does not classify was "
+            "accepted — an unrecognised divergence kind must be RED, because "
+            "falling through treats it as *not a divergence* and drops it"
+        )
 
     for problem in problems:
         print(f"analyzer_spec: {problem}")

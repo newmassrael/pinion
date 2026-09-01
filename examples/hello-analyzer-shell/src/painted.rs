@@ -9567,6 +9567,18 @@ fn r1911_every_open_section_paints_itself_where_it_belongs() {
             "every open section is mounted, so this check has become a second \
              copy of R1729 and the sections it exists for are gone",
         );
+        // ⚠ R1964 — an assertion that `open` equals the whole of `spec::RAIL`
+        // was written here and REMOVED, because measuring it found it could not
+        // fail. Both mutations that should have reddened it died earlier, in
+        // `screen_roster()`: closing a mounted seat is refused as *the mounted
+        // screens sit at open destinations of this rail*, and closing an
+        // unmounted one as *`settings` is an open destination with no screen
+        // mounted at it*. So a closed seat cannot reach this line, and deleting
+        // one from the rail shrinks both sides of the comparison together.
+        // Kept as a note rather than as a check: an assertion whose predicate
+        // has no path to false is a green light on nothing (R1927, R1930), and
+        // the population this walk covers is guaranteed by the roster's own two
+        // refusals rather than by anything restated here.
 
         for key in &open {
             r1911_the_claims_at(&screens, key, &open);
