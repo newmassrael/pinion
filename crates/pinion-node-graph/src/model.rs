@@ -1346,7 +1346,18 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
     /// answers how a document breaks the crate's own structural rules and no
     /// application may add to it or silence it; this is the application's
     /// judgement about one node in a graph that is perfectly well formed.
-    fn warning(&self, around: &crate::Surroundings) -> Option<String> {
+    ///
+    /// ★★★★★ R1941 — **and the answer carries its WEIGHT**, which is the axis
+    /// R1927 left out. Measured in the reference: its graph node is asked to
+    /// validate itself during compilation, and what it says goes into the log
+    /// whose error count decides whether the build succeeded — across the
+    /// editor's blueprint nodes, **27 errors, 31 warnings and 2 notes**. So a
+    /// node there may REFUSE, not merely complain, and the weight is chosen by
+    /// which log method the implementation called rather than by anything a
+    /// caller can read back. Here it is [`Objection`](crate::Objection), a
+    /// value, so [`Document::may_run`](crate::Document::may_run) is a question
+    /// anybody may ask without compiling anything.
+    fn warning(&self, around: &crate::Surroundings) -> Option<crate::Objection> {
         let _ = around;
         None
     }

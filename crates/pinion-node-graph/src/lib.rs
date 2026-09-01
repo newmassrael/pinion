@@ -304,7 +304,7 @@ pub use split::{
 };
 pub use swap::{Carried, RetypeError, SwapError, Swapped};
 pub use view::{Camera, Fit, Fitted, Margin, ZoomRange};
-pub use warning::{Surroundings, Warning};
+pub use warning::{Objection, Surroundings, Warning};
 
 /// Re-exported so a consumer can name the boundary derivation this crate's
 /// group operations are built on without adding a second dependency.

@@ -12,8 +12,8 @@
 //! canvas's three pin appearances mean something rather than decorate.
 
 use pinion_node_graph::{
-    Admission, Admits, Composition, Conversion, Drawn, NodeKind, Port, PortName, PortRef, Refusal,
-    Side, Tint, Variadic,
+    Admission, Admits, Composition, Conversion, Drawn, NodeKind, Objection, Port, PortName,
+    PortRef, Refusal, Side, Tint, Variadic,
 };
 use serde::{Deserialize, Serialize};
 
@@ -680,12 +680,39 @@ impl NodeKind for LabNode {
     /// framework hands it over ([`Surroundings`](pinion_node_graph::Surroundings))
     /// instead of making a screen work it out. The reference's own equivalent
     /// rule needs the same fact and has to climb out of the node to get it.
-    fn warning(&self, around: &pinion_node_graph::Surroundings) -> Option<String> {
-        (self.role.accepts() && self.listening && !around.any_wired(Side::Input)).then(|| {
-            "listening, and nothing on this canvas dials it — the drawing is \
-             not the whole picture"
-                .to_owned()
-        })
+    /// ★★★★★ R1941 — and the answer carries its WEIGHT. This one **warns**
+    /// rather than blocks, deliberately: a node listening with nothing drawn
+    /// dialling it is a picture that is incomplete, not a graph that cannot be
+    /// run — the peer may exist off this canvas, which is the whole reason the
+    /// sentence says *the drawing is not the whole picture*. A rule that
+    /// blocked here would refuse to start a deployment that is perfectly
+    /// legitimate.
+    fn warning(&self, around: &pinion_node_graph::Surroundings) -> Option<Objection> {
+        if self.role.accepts() && self.listening && !around.any_wired(Side::Input) {
+            return Some(Objection::Warns(
+                "listening, and nothing on this canvas dials it — the drawing is \
+                 not the whole picture"
+                    .to_owned(),
+            ));
+        }
+        // ⚠★★★★★ R1941 — AND THIS TAXONOMY DELIBERATELY DECLARES NO BLOCKING
+        // RULE, which is a measured decision rather than an omission.
+        //
+        // A blocking arm was drafted here — a card that neither accepts nor
+        // reaches anything — and then removed, because NO GESTURE THIS SCREEN
+        // OFFERS CAN REACH THAT STATE: a card's role is fixed when it is built,
+        // there is no verb that removes a link, and the opening canvas has no
+        // such card. Measured by driving the assembled shell: the gate reports
+        // `blocking: 0` and four non-blocking findings, and no sequence of the
+        // published actions moves it.
+        //
+        // ⇒ a rule nothing can reach is not a gate, it is decoration that reads
+        // like one. The weight axis is real and proven where it CAN be driven
+        // (`pinion-node-graph`'s own census proof exercises all three arms and
+        // the `may_run` gate); what this screen owes is a gesture that reaches
+        // the state, and that is a round of its own rather than a rule written
+        // here in advance of one.
+        None
     }
 
     /// ★★★★★ R1926 — **what colour a value of this socket type is drawn in.**

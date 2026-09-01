@@ -3165,10 +3165,10 @@
       "verdict": "app-content"
     },
     "node::ValidateNodeDuringCompilation": {
-      "covered_by": "a KIND cannot contribute a rule to Document::validate - the standing check is the crate's alone",
+      "covered_by": "Objection + NodeKind::warning + Document::may_run / objections, R1941 — a kind's judgement about its own node carries its WEIGHT, and the heaviest weight stops the graph being run. ★★★★★ THE PRIOR REASON WAS TRUE AND MEASURED THE WRONG THING: 'a KIND cannot contribute a rule to Document::validate' is still true and still deliberate (R1927's module says so in as many words — no application may add to or silence the structural check), but the reference's capability was never a contribution to THAT. Its node is asked to validate itself during compilation and writes into the compiler's message log, whose ERROR COUNT is the pass's verdict — so what it says can FAIL THE BUILD, and the axis we lacked was weight, not access to the structural check. ★ Counted this round: 1 supplied (empty) declaration, 53 overriding declarations, 57 implementations, and 5 real call sites (the remaining matches are comments); the call sits at the end of the structural well-formedness pass. Across the editor's blueprint nodes those implementations record 27 errors, 31 warnings and 2 notes — one hook, routinely, at three weights. ⇒ R1927 built 'a node may complain' and this builds 'a node may REFUSE'. ★★★★★ TWO MEASURED DEFECTS ANSWERED HERE: (1) THE WEIGHT IS IN THE CALL, NOT IN THE VALUE — severity is chosen by which of three logging methods was invoked and nothing holds it afterwards, so a caller cannot ask how bad a node is, only read a log; here it is a three-arm Objection (Blocks / Warns / Notes) each carrying its own sentence, so a sentence cannot come apart from its weight (R1927's rule on the new axis) and there is no unclassified fourth state. (2) THE ANSWER IS A SIDE EFFECT — the hook returns nothing and writes into a log shared with everything else the compile said, so 'is this node all right?' is not a question that tree can put; returning the objection makes Document::may_run a question anybody may ask at any time without compiling, and Document::objections names exactly what to fix. ⚠ The two gates stay separate and a caller wanting 'can I start this' must pass both: a well-formed document can refuse to run, and a malformed one is not runnable whatever every kind says",
       "mechanism": "graph-node",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_node_validate_node_during_compilation",
+      "verdict": "have"
     },
     "schema::AddAction": {
       "covered_by": "which node kinds a palette offers, and how it is searched",

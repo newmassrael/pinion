@@ -103,8 +103,8 @@ use pinion_core::widgets::wheel::WheelDirection;
 use pinion_core::{CellKind, Frame, Modifiers, Scene, WidgetCore, edit_field_keymap};
 use pinion_node_graph::{
     Act, Camera, Document, Drawn, Extent, Faces, Fit, Found, Item, Judged, LandError, Landfall,
-    LinkId, LinkLayer, Margin, NameSource, Node, NodeBody, NodeId, NodeKind, PortPath, PortRef,
-    ROOT, Relinked, Side, Socket, Tint, Violation, ZoomRange, palette_of, type_palette,
+    LinkId, LinkLayer, Margin, NameSource, Node, NodeBody, NodeId, NodeKind, Objection, PortPath,
+    PortRef, ROOT, Relinked, Side, Socket, Tint, Violation, ZoomRange, palette_of, type_palette,
 };
 use pinion_platform_storage::AppStorage;
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
@@ -2283,12 +2283,15 @@ impl LabState {
         // driven by a proof alone. Asking node by node inside the loop below
         // would also be this screen re-deriving the list the crate already
         // publishes, which is the R1717 shape this function exists to avoid.
-        let said: BTreeMap<NodeId, String> = self
+        // ★★★★★ R1941 — the OBJECTION, not just its sentence: the weight comes
+        // from the framework too, so this screen does not decide how heavily to
+        // take an answer it did not write.
+        let said: BTreeMap<NodeId, Objection> = self
             .doc
             .borrow()
             .warnings(ROOT)
             .into_iter()
-            .map(|held| (held.node, held.sentence))
+            .map(|held| (held.node, held.objection))
             .collect();
         for node in self.cards() {
             let name = self.name_of(node);
@@ -2330,8 +2333,8 @@ impl LabState {
                 // lives on the kind because it is a fact about this node in
                 // this graph; what belongs to the screen is only where to put
                 // the sentence.
-                if let Some(sentence) = said.get(&node) {
-                    found.push((name.clone(), Finding::Unwired(sentence.clone())));
+                if let Some(objection) = said.get(&node) {
+                    found.push((name.clone(), Finding::Unwired(objection.clone())));
                 }
                 if form
                     .field("discovery.multicast.enabled")
@@ -2449,19 +2452,44 @@ impl LabState {
     }
 
     /// ★ R1717 — built from the SAME walk the panel renders, so the count and
-    /// the list cannot disagree. A graph warning is carried as an unknown key
-    /// here for one reason: [`Verdict`] counts blocking against non-blocking
-    /// and that arm is the framework's non-blocking one, so the arithmetic is
-    /// the framework's rather than a second rule written here.
+    /// the list cannot disagree.
+    ///
+    /// ★★★★★ R1941 — **and a graph finding is now carried at ITS OWN WEIGHT.**
+    /// It used to become an unknown key whatever it was, on the stated ground
+    /// that "the arithmetic is the framework's rather than a second rule
+    /// written here" — and that sentence was FALSE in the direction nobody
+    /// checks: an unknown key is the framework's NON-BLOCKING arm, so every
+    /// blocking graph finding was counted as a warning. Measured by driving the
+    /// assembled shell: putting one card on a build that shares no wire
+    /// revision with its peer made the gate list show `blocks: true` while this
+    /// verdict still answered `blocking: 0`. Two instruments, one fact, and
+    /// they disagreed.
+    ///
+    /// The arithmetic is still the framework's — what is fixed is the arm each
+    /// finding is handed to it as, which is chosen by [`Finding::blocks`], the
+    /// same predicate the panel marks its lines with.
     fn verdict(&self) -> Verdict {
         let defects: Vec<ConfigDefect> = self
             .defects()
             .into_iter()
             .map(|(who, finding)| match finding {
                 Finding::Value(defect) => defect,
-                other => ConfigDefect::UnknownKey {
-                    key: format!("{who} · {}", other.sentence()),
-                },
+                other => {
+                    let key = format!("{who} · {}", other.sentence());
+                    if other.blocks() {
+                        // The framework's blocking arm. A value of the wrong
+                        // type is what it is: something the target refuses at
+                        // start-up, which is exactly what a blocking graph
+                        // finding says about this deployment.
+                        ConfigDefect::WrongType {
+                            key,
+                            want: "a graph that can be started".to_owned(),
+                            got: other.sentence(),
+                        }
+                    } else {
+                        ConfigDefect::UnknownKey { key }
+                    }
+                }
             })
             .collect();
         Verdict::over(&defects)
@@ -2549,7 +2577,14 @@ enum Finding {
     /// The sentence is the framework's answer, not this screen's: a second
     /// wording here would be a second statement about one finding, free to
     /// disagree with the one a consumer of the model reads.
-    Unwired(String),
+    ///
+    /// ★★★★★ R1941 — and it carries the framework's WEIGHT for the same
+    /// reason. It used to be a bare sentence that this screen classified as
+    /// never blocking, which was a judgement made HERE about an answer written
+    /// THERE — and it was wrong as soon as a kind had a rule that should stop a
+    /// launch. Carrying the [`Objection`] means the screen reports the weight
+    /// rather than deciding it.
+    Unwired(Objection),
     /// ★★★★★ R1818 — **a value the schema says is unique, held by more than one
     /// card.**
     ///
@@ -2600,12 +2635,14 @@ impl Finding {
     fn blocks(&self) -> bool {
         match self {
             Self::Value(defect) => defect.blocks(),
-            Self::NothingListening
-            | Self::DiscoveryOn
-            | Self::DialsOutside(_)
-            // R1927 — the same class as `DialsOutside` and for the same
-            // reason: it says the drawing is partial, not that it is wrong.
-            | Self::Unwired(_) => false,
+            Self::NothingListening | Self::DiscoveryOn | Self::DialsOutside(_) => false,
+            // ★★★★★ R1941 — the framework's weight, not this screen's guess.
+            // This arm used to be a flat `false` beside the three above, on the
+            // stated ground that a kind's answer "says the drawing is partial,
+            // not that it is wrong" — true of the ONE rule that existed then,
+            // and a judgement this screen had no business making about an
+            // answer a taxonomy writes. A kind that blocks now blocks.
+            Self::Unwired(objection) => objection.blocks(),
             // The two that BLOCK, and they block for one reason stated two
             // ways: what the graph says would happen cannot happen. A name two
             // nodes answer to does not name one node, so a launch acts on
@@ -2623,8 +2660,10 @@ impl Finding {
         match self {
             Self::Value(defect) => defect.sentence(),
             Self::NothingListening => "nothing is listening, so no node can dial it".to_owned(),
-            // R1927 — the framework's sentence, verbatim.
-            Self::Unwired(said) => said.clone(),
+            // R1927 — the framework's sentence, verbatim; R1941 — read off the
+            // objection, so the sentence a person sees and the weight the gate
+            // applies are one value.
+            Self::Unwired(said) => said.sentence().to_owned(),
             Self::DiscoveryOn => {
                 "discovery is on, so links may appear that nobody authored".to_owned()
             }
@@ -17795,7 +17834,7 @@ fn wrong_wire(state: &Rc<LabState>) -> serde_json::Value {
                 .doc
                 .borrow()
                 .warning(ROOT, node)
-                .map(|held| held.sentence);
+                .map(|held| held.sentence().to_owned());
             let worst = troubled.get(&node).copied();
             serde_json::json!({
                 "card": state.name_of(node),

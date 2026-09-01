@@ -16828,6 +16828,45 @@ fn r1935_a_far_end_is_on_the_chain_without_having_two_ends() {
 ///
 /// ⚠ The empty answer is READABLE either way: `wants()` says so in a sentence,
 /// which is what a screen shows beside a free field.
+/// ★★★★★ R1941 — **the DEFAULT answer to "what is wrong with this node" is
+/// that the kind objects to nothing**, asserted on a taxonomy that takes it.
+///
+/// ⚠ Written because a counterfactual CAUGHT ITS ABSENCE: R1938 and R1939 both
+/// asserted their default before one asked, and this round did not — so making
+/// the supplied answer an empty note left every gate green. That is the escape
+/// hatch a default is, met for the fourth round running: the census fixture
+/// overrides these hooks, so what most applications get is the thing nothing
+/// checks. `LOp` declares no rule, which is what makes it the witness.
+#[test]
+fn r1941_the_default_kind_objects_to_nothing() {
+    let mut document: Document<LOp> = Document::new("lattice");
+    let sum = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Sum), 0, 0)
+        .expect("root tree");
+    assert_eq!(
+        document.warning(ROOT, sum),
+        None,
+        "the trait's supplied answer is that the kind objects to nothing"
+    );
+    assert!(
+        document.warnings(ROOT).is_empty(),
+        "★ so the tree lists nothing: {:?}",
+        document.warnings(ROOT)
+    );
+    // ★★★★★ And the GATE is open, which is the half a `None` alone does not
+    // say: a taxonomy that has no rules must not be a taxonomy that cannot
+    // start. Opting in to *being allowed to run* would make every existing
+    // taxonomy's graphs unrunnable.
+    assert!(
+        document.may_run(ROOT),
+        "★ nothing blocks a graph whose kinds say nothing"
+    );
+    assert!(document.objections(ROOT).is_empty());
+    // ⚠ And a tree that is not there answers the empty list rather than
+    // refusing — an absent tree is not a blocked one.
+    assert!(document.may_run(TreeId(9999)));
+}
+
 /// ★★★★★ R1940 — **the DEFAULT answer to "what is this node drawn as" is
 /// that the kind says nothing**, asserted on a taxonomy that takes it.
 ///

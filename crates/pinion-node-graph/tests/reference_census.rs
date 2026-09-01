@@ -48,8 +48,8 @@ use pinion_node_graph::{
     Conversion, Crossings, Definitions, Described, Direction, Distribute, Document, Drawn, Edge,
     EditError, EditPath, Extent, Faces, Fragment, Grow, Hidden, Instance, InterfacePort,
     InterfaceSide, Item, ItemError, LandError, Landfall, LinkId, Machine, Matched, Multiplicity,
-    Node, NodeBody, NodeId, NodeKind, NodeSite, NotRecombinable, NotSplittable, Passing, Port,
-    PortName, PortPath, PortRef, PortSite, PortValueError, PutAway, ROOT, Reach, RelinkError,
+    Node, NodeBody, NodeId, NodeKind, NodeSite, NotRecombinable, NotSplittable, Objection, Passing,
+    Port, PortName, PortPath, PortRef, PortSite, PortValueError, PutAway, ROOT, Reach, RelinkError,
     RetypeError, SectionId, Session, Sharing, Side, Socket, Stack, Straighten, Stride, SwapError,
     SwitchRefusal, Tint, TreeId, Variadic, Violation, WatchError, palette_of, type_palette,
 };
@@ -222,13 +222,30 @@ impl NodeKind for Op {
     /// pin of its own is wired**, and reaches that fact by climbing out of
     /// itself because its signature hands it nothing. Here it is the argument.
     ///
-    /// `Sink` is the only kind that warns, so a proof can tell a rule that
-    /// fires from one that fires for everything.
-    fn warning(&self, around: &pinion_node_graph::Surroundings) -> Option<String> {
+    /// R1941 — and each objection carries its WEIGHT. All three arms are
+    /// reachable, and they are on DIFFERENT kinds so a proof cannot pass by
+    /// condemning one:
+    ///
+    /// * an unfed `Sink` **blocks**: a graph whose end consumes nothing cannot
+    ///   sensibly be run, which is what a blocking objection is for.
+    /// * a `Relay` with nothing on its input **warns**: it will run and pass
+    ///   nothing along.
+    /// * a `Double` with no consumer **notes** it: worth knowing, and nothing
+    ///   more.
+    ///
+    /// Everything else says nothing, so a proof can tell a rule that fires
+    /// from one that fires for everything.
+    fn warning(&self, around: &pinion_node_graph::Surroundings) -> Option<Objection> {
         match self {
-            Self::Sink if !around.is_wired(Side::Input, 0) => {
-                Some("nothing reaches this sink, so it consumes nothing".to_owned())
-            }
+            Self::Sink if !around.is_wired(Side::Input, 0) => Some(Objection::Blocks(
+                "nothing reaches this sink, so it consumes nothing".to_owned(),
+            )),
+            Self::Relay if !around.any_wired(Side::Input) => Some(Objection::Warns(
+                "this relay passes nothing along".to_owned(),
+            )),
+            Self::Double if !around.any_wired(Side::Output) => Some(Objection::Notes(
+                "nothing reads what this doubles".to_owned(),
+            )),
             _ => None,
         }
     }
@@ -913,6 +930,13 @@ fn dcc_proofs() -> Vec<Proof> {
         // R1940 — what a node is drawn as, answered per NODE and derived from
         // what that node currently is.
         proof("dcc", "node::ui_class", dcc_node_ui_class),
+        // R1941 — a kind's objection carries its weight, and the heaviest one
+        // stops the graph being run.
+        proof(
+            "engine",
+            "node::ValidateNodeDuringCompilation",
+            engine_node_validate_node_during_compilation,
+        ),
         proof("dcc", "swap_empty_group", dcc_swap_empty_group),
         proof("dcc", "options_toggle", dcc_options_toggle),
         proof("dcc", "parent_set", dcc_parent_set),
@@ -2082,6 +2106,122 @@ fn engine_node_get_pin_meta_data() {
             }),
         "★★★★★ the standing check reports it: {:?}",
         document.validate(),
+    );
+}
+
+/// ★★★★★ R1941 — **a kind's objection carries its WEIGHT, and the heaviest
+/// one stops the graph being run.**
+///
+/// # The measurement
+///
+/// The reference asks each graph node to validate itself during compilation,
+/// handing it the compiler's message log. Counted this round: **one supplied
+/// (empty) declaration, 53 overriding declarations, 57 implementations, and 5
+/// real call sites** — the rest of the matches are comments. The call sits at
+/// the end of the structural well-formedness pass, and the pass's verdict is
+/// the log's ERROR COUNT, so what a node says there can FAIL THE BUILD.
+///
+/// Across the editor's blueprint nodes those implementations record **27
+/// errors, 31 warnings and 2 notes**: one hook, routinely, at three weights.
+///
+/// ⇒ the capability is not *a node may complain* — R1927 built that — it is
+/// *a node may REFUSE*, and this round is the weight axis.
+///
+/// # The two measured defects this answers
+///
+/// * **The weight is in the CALL, not in the value.** Severity there is chosen
+///   by which of three logging methods the implementation invoked; nothing
+///   holds it afterwards, so a caller cannot ask *how bad is this node* — only
+///   read a log. Here it is an [`Objection`], and
+///   [`Document::may_run`] is a question anybody may ask without compiling.
+/// * **The answer is a SIDE EFFECT.** The hook returns nothing and writes into
+///   a log shared with everything else the compile said, so *is this node all
+///   right?* is not a question that tree can put. Returning the objection makes
+///   the per-node answer and the whole-graph verdict the same fact.
+#[test]
+fn engine_node_validate_node_during_compilation() {
+    let mut chain = chain();
+
+    // (A) ★★★★★ ALL THREE WEIGHTS, on three different kinds, so no assertion
+    // here can pass by condemning one kind's rule.
+    let sink = chain
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Sink), 0, 0)
+        .expect("root tree");
+    let relay = chain
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Relay), 40, 0)
+        .expect("root tree");
+    let double = chain
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Double), 80, 0)
+        .expect("root tree");
+    assert!(matches!(
+        chain.document.warning(ROOT, sink).map(|w| w.objection),
+        Some(Objection::Blocks(_))
+    ));
+    assert!(matches!(
+        chain.document.warning(ROOT, relay).map(|w| w.objection),
+        Some(Objection::Warns(_))
+    ));
+    assert!(matches!(
+        chain.document.warning(ROOT, double).map(|w| w.objection),
+        Some(Objection::Notes(_))
+    ));
+
+    // (B) ★★★★★ THE GATE: the blocking one stops the graph, and the other two
+    // do not. Asserted as a VALUE, which is the half the reference cannot
+    // answer without compiling and counting a log.
+    assert!(
+        !chain.document.may_run(ROOT),
+        "a blocking objection stops it: {:?}",
+        chain.document.objections(ROOT)
+    );
+    assert_eq!(
+        chain
+            .document
+            .objections(ROOT)
+            .into_iter()
+            .map(|held| held.node)
+            .collect::<Vec<_>>(),
+        vec![sink],
+        "★ and ONLY the blocking one is listed, so a refusal names what to fix"
+    );
+
+    // (C) ★ Every weight is still in the full list, so the blocking filter is
+    // a view of one walk rather than a second opinion.
+    assert_eq!(
+        chain.document.warnings(ROOT).len(),
+        3,
+        "the three objections are all still reported: {:?}",
+        chain.document.warnings(ROOT)
+    );
+
+    // (D) ★★★★★ AND THE GATE OPENS when the blocking objection is answered —
+    // by changing the SITUATION, not the kind. Without this the verdict could
+    // be a constant and everything above would still hold.
+    chain
+        .document
+        .connect(ROOT, Socket::new(chain.add, 0), Socket::new(sink, 0))
+        .expect("a number reaches the sink");
+    assert!(
+        chain.document.may_run(ROOT),
+        "the sink is fed, so nothing blocks: {:?}",
+        chain.document.objections(ROOT)
+    );
+    assert!(
+        chain.document.warnings(ROOT).len() >= 2,
+        "★ while the lighter objections are UNCHANGED — opening the gate is \
+         not the same as silencing the list: {:?}",
+        chain.document.warnings(ROOT)
+    );
+
+    // (E) ⚠ And it is NOT the structural check: a well-formed document that
+    // blocks, and the two answers are independent.
+    assert!(
+        chain.document.validate().is_empty(),
+        "the document was well formed throughout: {:?}",
+        chain.document.validate()
     );
 }
 
@@ -3960,7 +4100,7 @@ fn engine_node_show_visual_warning() {
         .expect("an unfed sink warns");
     assert_eq!(said.node, lonely);
     assert!(
-        said.sentence.contains("nothing reaches this sink"),
+        said.sentence().contains("nothing reaches this sink"),
         "the sentence is the application's own: {said:?}"
     );
 
@@ -3997,7 +4137,7 @@ fn engine_node_show_visual_warning() {
         vec![second],
         "only the unfed one is in the list, and it is addressable: {listed:?}"
     );
-    assert!(listed.iter().all(|held| !held.sentence.is_empty()));
+    assert!(listed.iter().all(|held| !held.sentence().is_empty()));
 
     // ⚠ A structural body has no application rule to ask, and answering `None`
     // for it is a different thing from a kind that declines to warn — this is

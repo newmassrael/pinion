@@ -793,11 +793,11 @@ fn r1718_every_gate_finding_is_said_distinctly_and_never_names_its_card() {
         // question the framework already answered.
         (
             "Unwired",
-            super::Finding::Unwired(
+            super::Finding::Unwired(pinion_node_graph::Objection::Warns(
                 "listening, and nothing on this canvas dials it — the drawing \
                  is not the whole picture"
                     .to_owned(),
-            )
+            ))
             .sentence(),
         ),
         (
@@ -812,6 +812,49 @@ fn r1718_every_gate_finding_is_said_distinctly_and_never_names_its_card() {
         ),
     ];
     assert_speaks_of("Finding", CARD, super::Finding::ARMS, &said, &[]);
+}
+
+/// ★★★★★ R1941 — **the weight of a framework answer is REPORTED here, not
+/// decided here.**
+///
+/// ⚠ Asserted in this file rather than in the walk, and the reason is a
+/// measurement rather than a preference: the walk that drives this screen
+/// cannot reach a card whose kind objects. The taxonomy's rule needs a card
+/// that accepts, is listening, and has nothing wired to it, and no gesture this
+/// screen publishes removes a link or changes a card's role — so a
+/// counterfactual that put this arm back to a flat `false` left that walk
+/// GREEN. An empty population is a green light for a wrong assertion, which is
+/// the failure this project keeps meeting; the repair is to assert where the
+/// population is not empty.
+///
+/// What it holds is the whole of what R1941 changed here: this arm used to
+/// answer `false` whatever the framework said, on the stated ground that a
+/// kind's answer "says the drawing is partial, not that it is wrong" — a
+/// judgement about somebody else's answer. Now it forwards.
+#[test]
+fn r1941_a_framework_objection_carries_its_own_weight() {
+    use pinion_node_graph::Objection;
+
+    let blocking = super::Finding::Unwired(Objection::Blocks("cannot start".to_owned()));
+    let warning = super::Finding::Unwired(Objection::Warns("looks odd".to_owned()));
+    let note = super::Finding::Unwired(Objection::Notes("worth knowing".to_owned()));
+
+    assert!(
+        blocking.blocks(),
+        "★★★★★ a kind that BLOCKS blocks — the screen reports the weight"
+    );
+    assert!(
+        !warning.blocks(),
+        "★ and one that only warns does not, so the forwarding is not a \
+         blanket yes"
+    );
+    assert!(!note.blocks());
+
+    // ★ And the sentence is the framework's either way, so weight and wording
+    // travel together rather than being two statements this screen joins.
+    assert_eq!(blocking.sentence(), "cannot start");
+    assert_eq!(warning.sentence(), "looks odd");
+    assert_eq!(note.sentence(), "worth knowing");
 }
 
 /// ★★★★ R1718 — and nothing on this screen speaks to a person without being

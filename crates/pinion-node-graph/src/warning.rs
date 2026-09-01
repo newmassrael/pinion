@@ -101,7 +101,67 @@ impl Surroundings {
     }
 }
 
-/// What a node says is wrong with it.
+/// ★★★★★ R1941 — **what a kind says is wrong with its node, and how heavily.**
+///
+/// R1927 made *warning* and *what it says* one answer so a badge could not be
+/// silent. This adds the axis that answer did not carry: **whether the
+/// objection stops anything.**
+///
+/// # What forced it, measured in the reference this round
+///
+/// Its graph node is asked, during compilation, to validate itself, and what it
+/// says goes into the compiler's own message log — the same log whose ERROR
+/// COUNT decides whether the compile succeeded. Measured across the editor's
+/// blueprint nodes, those implementations record **27 errors, 31 warnings and
+/// 2 notes**: the same hook, routinely, at three different weights, and the
+/// heaviest of them STOPS THE BUILD. So the capability is not *a node may
+/// complain*; it is *a node may REFUSE*.
+///
+/// Three arms, each carrying its own sentence, so the states the reference can
+/// reach are unrepresentable here:
+///
+/// * **The weight lives in the TYPE, not in which method was called.** There,
+///   severity is chosen by calling one of three log methods, and a node that
+///   forgets which one it meant is indistinguishable from one that meant it.
+///   A value cannot forget.
+/// * **A sentence cannot come apart from its weight**, which is R1927's rule
+///   applied to the new axis: the sentence is inside the arm.
+/// * **And nothing is unclassified.** There is no fourth *said something,
+///   weight unknown* state, because there is nowhere to put it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Objection {
+    /// The node cannot be run as it stands, and this says why.
+    ///
+    /// The weight that STOPS things: [`Document::may_run`] is false while any
+    /// node answers this.
+    Blocks(String),
+    /// The node will run and something about it is suspect.
+    Warns(String),
+    /// Worth knowing, and neither of the above.
+    ///
+    /// Its own arm rather than folded into [`Warns`](Self::Warns) because the
+    /// reference distinguishes them and a screen showing every note as a
+    /// warning is how a list of warnings stops being read.
+    Notes(String),
+}
+
+impl Objection {
+    /// What it says, whatever its weight.
+    #[must_use]
+    pub fn sentence(&self) -> &str {
+        match self {
+            Self::Blocks(said) | Self::Warns(said) | Self::Notes(said) => said,
+        }
+    }
+
+    /// Whether this objection stops the graph being run.
+    #[must_use]
+    pub const fn blocks(&self) -> bool {
+        matches!(self, Self::Blocks(_))
+    }
+}
+
+/// What a node says is wrong with it, with the node it is about.
 ///
 /// Carries the node so a list of these is addressable — the half the
 /// reference's per-node badge does not have to solve and its absent
@@ -110,11 +170,21 @@ impl Surroundings {
 pub struct Warning {
     /// The node it is about.
     pub node: NodeId,
-    /// What is wrong, in the application's own words.
+    /// What is wrong and how heavily, in the application's own words.
     ///
-    /// Never empty by construction: a kind answers `None` or a sentence, so
-    /// there is no third state in which a node warns without saying why.
-    pub sentence: String,
+    /// Never empty by construction: a kind answers `None` or an objection, and
+    /// an objection carries its sentence inside its weight — so there is no
+    /// state in which a node objects without saying why, and none in which it
+    /// says something at no weight at all.
+    pub objection: Objection,
+}
+
+impl Warning {
+    /// What is wrong, in the application's own words.
+    #[must_use]
+    pub fn sentence(&self) -> &str {
+        self.objection.sentence()
+    }
 }
 
 impl<K: NodeKind> Document<K> {
@@ -129,8 +199,8 @@ impl<K: NodeKind> Document<K> {
         let NodeBody::Kind(kind) = &held.body else {
             return None;
         };
-        let sentence = kind.warning(&self.surroundings(tree, node))?;
-        Some(Warning { node, sentence })
+        let objection = kind.warning(&self.surroundings(tree, node))?;
+        Some(Warning { node, objection })
     }
 
     /// Every warning in a tree, in node order.
@@ -149,6 +219,58 @@ impl<K: NodeKind> Document<K> {
         found
             .into_iter()
             .filter_map(|node| self.warning(tree, node))
+            .collect()
+    }
+
+    /// ★★★★★ R1941 — **may this tree be run?**
+    ///
+    /// False while any node answers [`Objection::Blocks`]. The question a
+    /// person asks before starting anything, answered as a VALUE — which is
+    /// the difference from the reference that matters most here.
+    ///
+    /// # Why this is the shape, measured
+    ///
+    /// There, a node's validation writes into a compiler message log and
+    /// returns nothing, so *is this node all right?* has no answer except by
+    /// compiling and counting what came out. The weight is chosen by which
+    /// logging method the implementation happened to call, and the verdict
+    /// exists only as a count of errors accumulated in a log that also holds
+    /// everything else the compile said.
+    ///
+    /// Here a kind returns its objection, so this is a question anybody may
+    /// ask, at any time, without running anything and without a log — and
+    /// [`Document::objections`] hands back exactly the ones that stop it, in
+    /// node order, so "why not?" is answerable in the same breath.
+    ///
+    /// ⚠ It says nothing about whether the document is WELL FORMED — that is
+    /// [`Document::validate`](crate::Document::validate), which no application
+    /// may add to or silence. A tree can be perfectly well formed and still
+    /// refuse to run because a kind objects to one node's configuration, and a
+    /// tree with a structural fault is not runnable whatever every kind says.
+    /// The two gates are separate on purpose and a caller wanting *can I start
+    /// this* must pass both.
+    #[must_use]
+    pub fn may_run(&self, tree: TreeId) -> bool {
+        self.objections(tree).is_empty()
+    }
+
+    /// ★★★★★ R1941 — every objection in this tree that STOPS it being run, in
+    /// node order.
+    ///
+    /// The other half of [`may_run`](Self::may_run): a refusal a person cannot
+    /// act on is a refusal they will work around. Node order for
+    /// [`warnings`](Self::warnings)'s reason.
+    ///
+    /// ⚠ A filter over [`warnings`](Self::warnings) rather than a second walk
+    /// of the tree, so the blocking list and the full list cannot disagree
+    /// about what any one node said — the shape R1940 found the reference
+    /// getting wrong on another axis, where two consumers each carried their
+    /// own copy of one decision.
+    #[must_use]
+    pub fn objections(&self, tree: TreeId) -> Vec<Warning> {
+        self.warnings(tree)
+            .into_iter()
+            .filter(|held| held.objection.blocks())
             .collect()
     }
 
