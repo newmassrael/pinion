@@ -1,7 +1,7 @@
 //! R682.B §5.16 — GUI-agnostic snapshot of a paint-fragment cache's
 //! observable state at the moment its enclosing paint pass completed.
 //!
-//! Lives outside [`paint_adapter`](crate::paint_adapter) because that
+//! Lives outside [`paint_adapter`][vello-paint-adapter] because that
 //! module is gated behind the `vello` feature (it holds the actual
 //! `vello::Scene` fragments). The stats struct carries no GPU
 //! references — pure `u64` / `usize` counters + a
@@ -33,6 +33,12 @@
 //! `last_damage_region` is the only per-paint field — it's swapped
 //! in at the close of each paint pass and reflects only the most
 //! recent paint's miss-rect union.
+//!
+// R1945.2 — this module exists precisely BECAUSE `paint_adapter` is gated, so
+// its own doc cannot hold a link that only resolves with the feature. The
+// label's definition is supplied when the target exists; without it the text
+// renders verbatim and nothing is asked to resolve.
+#![cfg_attr(feature = "vello", doc = "[vello-paint-adapter]: crate::paint_adapter")]
 
 use pinion_core::scene::Rect;
 

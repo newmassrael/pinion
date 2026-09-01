@@ -1837,6 +1837,25 @@ esac
 ok "and the push gate's rustdoc is SCOPED to the pushed crates" \
    "$hook_doc_scoped" "scoped"
 
+# ★★★★★ R1945.2 — and rustdoc CANNOT be the only home, because the thing it
+# does not see is the reason the label form exists. A `[`x`][kebab-label]` whose
+# definition is missing renders as literal text and `cargo doc` exits 0 —
+# measured by deleting one, in both configurations. That silence is what
+# `tools/feature_gated_doc_links.py` covers, so its presence at the push gate is
+# asserted here beside the run it complements, and its own selftest runs too.
+# A gate for a convention with a silent failure mode is worth exactly as much as
+# the assertion that it is still wired in.
+gated_links="$(sed -n \
+    's|^if ! python3 "\$repo_root/\(tools/feature_gated_doc_links.py\)" --check.*|\1|p' \
+    "$repo_root/.githooks/pre-push" | head -1)"
+ok "the push gate pairs feature-gated doc-link labels" \
+   "${gated_links:+present}" "present"
+if python3 "$repo_root/tools/feature_gated_doc_links.py" --selftest >/dev/null 2>&1; then
+    ok "the gated-doc-link gate passes its own tests" "pass" "pass"
+else
+    ok "the gated-doc-link gate passes its own tests" "FAIL" "pass"
+fi
+
 # ── R1791: the impact-ref guard is itself guarded ───────────────────────────
 #
 # ★ `tools/impact_refs.py` exists because a prescription nobody executes is not

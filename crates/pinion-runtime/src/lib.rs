@@ -6,7 +6,7 @@
 //! lives in [`layout`]; the §5.35 input dispatch primitive (R48) lives
 //! in [`input`] — its `InputRouter` is the framework-side surface that
 //! replaces application-level hit-test wiring. R46.3.1 added
-//! [`paint_adapter`] (feature `vello`) — the Scene → `vello::Scene`
+//! [`paint_adapter`][vello-paint-adapter] (feature `vello`) — the Scene → `vello::Scene`
 //! framework primitive that replaced inline paint walkers in
 //! consumer examples. R51.52 added [`focus`] — the §5.39 focus model
 //! primitive that owns the focused-widget identity for key dispatch
@@ -24,6 +24,32 @@
 //! R51.145 added [`frame_pacing`] — the §5.28 per-frame
 //! `dt` clamp helper that protects the spring solver against
 //! background-resume / debugger-pause `dt` spikes.
+//!
+// R1945.2 — LINK DEFINITIONS FOR THE `vello`-GATED MODULES.
+//
+// Three of this crate's modules — `paint_adapter`, `text_engine` and
+// `image_cache` — exist only under the `vello` feature, and the crate doc
+// above is ungated prose that names one of them. An intra-doc link into a
+// gated module is BROKEN in this crate's own default configuration:
+// `cargo doc -p pinion-runtime` answered seven `unresolved link` errors across
+// this file, `layout.rs` and `paint_cache_stats.rs` on 2026-09-01, and had for
+// as long as those links had been written. Nothing saw it — CI documents the
+// WORKSPACE with `--features pinion-runtime/vello`, where they all resolve,
+// and the per-crate `pre-push` gate (R1916) docs only the crates a push
+// touches, which had not included this one since R1905.
+//
+// The repair keeps ONE copy of the prose: the text above carries a markdown
+// reference whose label is KEBAB-CASE, and the label's definition is supplied
+// below only when the feature is on. With `vello` the label resolves and the
+// reader gets a hyperlink; without it the label is undefined, pulldown-cmark
+// renders the text verbatim, and nothing is asked to resolve. A path-shaped
+// label does NOT work — rustdoc resolves an undefined one as a path, measured
+// — and a `cfg_attr` pair carrying the sentence twice would be one rule with
+// two spellings, the exact defect R1945 repaired one file away.
+//
+// ⚠ A kebab label with no definition is SILENT in both configurations, so the
+// pairing is a gate: `tools/feature_gated_doc_links.py`, run by `pre-push`.
+#![cfg_attr(feature = "vello", doc = "[vello-paint-adapter]: crate::paint_adapter")]
 
 pub mod command;
 pub mod core_shell;
@@ -82,9 +108,17 @@ pub use layout::{
 };
 pub use paint_cache_stats::FragmentCacheStats;
 /// R1404 §5.16 — the decoded RGBA image a producer registers into the
-/// [`MemoryImageStore`]. Re-exported (ungated — `pinion-asset` is a
-/// non-optional dependency) so a consumer can name the `insert` parameter
-/// type of this crate's own public store, the [`LayoutCache`] rationale.
+/// [`MemoryImageStore`][vello-memory-image-store]. Re-exported (ungated —
+/// `pinion-asset` is a non-optional dependency) so a consumer can name the
+/// `insert` parameter type of this crate's own public store, the
+/// [`LayoutCache`] rationale.
+// R1945.2 — the store is `vello`-gated and this re-export is not; see the
+// crate-doc note above for why the label's definition is supplied only when
+// the item it names exists.
+#[cfg_attr(
+    feature = "vello",
+    doc = "[vello-memory-image-store]: crate::image_cache::MemoryImageStore"
+)]
 pub use pinion_asset::DecodedImage;
 /// R1344 §5.36 — re-export of the cache every `compute_layout*` entry takes by
 /// `&mut`. Without it a caller cannot name the parameter type of this crate's

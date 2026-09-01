@@ -739,6 +739,31 @@ else
     echo "pre-push: intra-doc links — this push touches no crate source" >&2
 fi
 
+# 2b. Feature-gated doc-link labels — the hole the gate above cannot see.
+#
+# ★★★★★ WHY BOTH. R1945.2 found seven doc links from UNGATED prose into
+# `vello`-gated modules, so `cargo doc -p pinion-runtime` (that crate's own
+# default configuration) had been red for as long as they existed. The repair
+# keeps one copy of the prose by writing the reference with a KEBAB-CASE label
+# and supplying the label's definition only under `cfg_attr(feature = …)`.
+#
+# ⚠ Kebab-case is what makes rustdoc leave the label alone — and therefore what
+# makes a MISSING definition silent. Measured at R1945.2: with the definition
+# deleted, `cargo doc` exits 0 and says nothing while the page renders
+# `[`paint_adapter`][vello-paint-adapter]` as literal text. The step above
+# cannot catch that in principle, so this one pairs every use with a definition.
+#
+# Reads source; boots nothing; runs whatever the push touched, because a label
+# can be orphaned by an edit in a file this push does not carry.
+step "gated doc links"
+if ! python3 "$repo_root/tools/feature_gated_doc_links.py" --selftest >&2; then
+    echo "pre-push: the gated-doc-link gate failed its own tests" >&2
+    exit 1
+fi
+if ! python3 "$repo_root/tools/feature_gated_doc_links.py" --check >&2; then
+    exit 1
+fi
+
 # 3. validate-code-refs — hallucination-class citation gate (unconditional;
 #    push validates the publishable state). Output captured, surfaced only on
 #    failure (the info-level Path B binding axis is verbose).

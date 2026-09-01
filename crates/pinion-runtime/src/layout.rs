@@ -85,12 +85,12 @@ pub enum NodeContext {
 /// R1070 §5.37 — measure-override seam for the opt-in self-hosted text engine.
 ///
 /// `layout` is feature-ungated, so it must not name the `vello`-gated
-/// [`crate::text_engine::SelfHostedTextEngine`]; this trait is the decoupling
+/// [`SelfHostedTextEngine`][vello-text-engine]; this trait is the decoupling
 /// boundary — the same `enumerate ⊥ parse` layering R1067 drew between
 /// `pinion-platform-fonts` (discovery) and `text_engine` (selection). The engine
 /// implements it so a single-style `Scene::Text` leaf can be *sized* by the §5.37
 /// engine, keeping the measured box self-consistent with the §5.37 paint arm
-/// ([`crate::paint_adapter::to_vello_with_text_engine`]) — closing the R1068
+/// ([`to_vello_with_text_engine`][vello-paint-with-engine]) — closing the R1068
 /// paint-only gap where a string wider than the §5.37 advance overflowed the
 /// parley measured box.
 ///
@@ -103,6 +103,20 @@ pub enum NodeContext {
 /// so a documentable, ratified seam reads better than an anonymous closure and can
 /// gain methods without becoming a second measure entry point. The single-method
 /// `(f32, f32)` shape is the single-line interim; expect it to widen.
+// R1945.2 — this doc is ungated and both items it links are `vello`-gated, so
+// the labels' definitions are supplied only when those items exist. See the
+// `pinion-runtime` crate-doc note for why this rather than a `cfg_attr` pair
+// carrying the sentence twice. ★ Note the paragraph above declares exactly this
+// invariant ("`layout` is feature-ungated, so it must not name the `vello`-gated
+// …") and then broke it with a link for as long as the link existed.
+#[cfg_attr(
+    feature = "vello",
+    doc = "[vello-text-engine]: crate::text_engine::SelfHostedTextEngine"
+)]
+#[cfg_attr(
+    feature = "vello",
+    doc = "[vello-paint-with-engine]: crate::paint_adapter::to_vello_with_text_engine"
+)]
 /// R1344 §5.36 §5.12 — a measured text box: its size plus the number of visual
 /// lines it resolved into.
 ///
@@ -451,11 +465,11 @@ pub fn compute_layout_with_scroll_dirty(
 /// stays the default everywhere else.
 ///
 /// WIRE BOTH ARMS OR NEITHER: pair this with
-/// [`to_vello_with_text_engine`](crate::paint_adapter::to_vello_with_text_engine)
+/// [`to_vello_with_text_engine`][vello-paint-with-engine]
 /// using the SAME engine. Enabling the engine for measure but not paint (or
 /// vice-versa) re-opens a coherence gap — a box sized by §5.37 filled by parley
 /// glyphs, or a parley-sized box the §5.37 paint arm declines into. The shared
-/// eligibility SSOT ([`crate::text_engine::self_hosted_text_eligible`]) guarantees
+/// eligibility SSOT ([`self_hosted_text_eligible`][vello-eligible]) guarantees
 /// the two arms agree on WHICH leaves are eligible, not that both are enabled.
 ///
 /// R1538 — returns the same [`LayoutPass`] as
@@ -465,6 +479,16 @@ pub fn compute_layout_with_scroll_dirty(
 ///
 /// Same conditions as [`compute_layout`] (taffy internal logic errors only,
 /// never on user-supplied scene shape).
+// R1945.2 — `vello`-gated link targets; definitions supplied only with the
+// feature, so this ungated function's doc resolves in both configurations.
+#[cfg_attr(
+    feature = "vello",
+    doc = "[vello-paint-with-engine]: crate::paint_adapter::to_vello_with_text_engine"
+)]
+#[cfg_attr(
+    feature = "vello",
+    doc = "[vello-eligible]: crate::text_engine::self_hosted_text_eligible"
+)]
 #[must_use]
 #[allow(clippy::cast_precision_loss)]
 pub fn compute_layout_with_text_measure(
