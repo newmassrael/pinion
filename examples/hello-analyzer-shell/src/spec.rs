@@ -175,84 +175,58 @@ pub const SEARCH_HINT: &str = "name, address, value\u{2026}";
 
 // --- The rail ----------------------------------------------------------------
 
-/// ★★★★★ R1695 — what this application does when a rail seat is pressed.
-///
-/// Before this arm existed the table said only whether a seat was *reserved*,
-/// and the four that were neither reserved nor this screen fell through the gap
-/// between those two words. Driven through the pointer router and measured:
-/// pressing Stream, Decode, Catalog or Settings moved the string the rail
-/// highlights itself from and left the painted scene at **193 tagged regions
-/// before and 193 after** — the screen said *Stream* and showed the dashboard.
-///
-/// A seat is now one of three things, and the two that refuse refuse for
-/// different reasons a reader must be able to tell apart.
-pub enum Seat {
-    /// This application shows it: pressing the seat arrives, and the page
-    /// region changes.
-    Page,
-    /// Booked under a named requirement of a release that has not shipped.
-    ///
-    /// The reference locks rail seats the same way it locks palette items, and
-    /// for the same stated reason: *"when the second release arrives the lock is
-    /// lifted and the screen structure does not change"*.
-    Reserved(&'static str),
-    // ★★★★★ R1729 — **`Elsewhere` was here, and it is gone because nothing
-    // constructs it any more.**
-    //
-    // It said *built and shipping, on a different surface of this product*, and
-    // it existed because this tree assembled a one-application tool as three
-    // executables: R1695 gave it three seats, R1724 took one (the node lab),
-    // R1728 found two of the remaining three were seats the reference does not
-    // have at all, and R1729 mounted the last real one (the capture viewer).
-    // The compiler is what reported the arm was dead — an unconstructed variant
-    // is a `dead_code` error under this workspace's lints — so the round did
-    // not have to notice.
-    //
-    // Deleted rather than kept with an allow: an arm nobody builds is a claim
-    // about this screen that is no longer true, and its return should be a
-    // compile-checked event rather than a comment somebody remembers.
-    // `pinion_core::availability::UnavailableKind::Elsewhere` is untouched and
-    // still has consumers — the vocabulary is the framework's, and any product
-    // with more than one surface needs it. What ended is this rail needing it.
-    // ★★★★★ R1731 — **`Unbuilt` was here, and it is gone for the same reason
-    // `Elsewhere` went at R1729: nothing constructs it.**
-    //
-    // It said *in the specification of the release being built, and not built*,
-    // and R1728 spent an arm on it because the rail could not be made faithful
-    // without one: the reference draws eight seats, this application drew
-    // seven, and the two it lacked were absent for a reason none of the arms it
-    // had could say. R1730 built the first of those two and R1731 the second,
-    // so the arm has no constructor — and an unconstructed variant is a
-    // `dead_code` error under this workspace's lints, so the compiler is what
-    // reported it rather than a reader noticing.
-    //
-    // Deleted rather than kept behind an allow, which makes the claim the
-    // strongest form available: **this rail cannot say "specified and not
-    // built", because it has no way to spell it.** Its return would be a
-    // compile-checked event rather than a comment somebody remembers.
-    // `pinion_core::availability::UnavailableKind::Unbuilt` is untouched and
-    // still has consumers — the vocabulary is the framework's, and any product
-    // assembled against a written specification passes through that state.
-}
-
+// ★★★★★ R1948 — **`Seat` WAS HERE, and it is gone because only one of its arms
+// has a constructor left.**
+//
+// R1695 introduced it with three arms, because the table said only whether a
+// seat was *reserved* and four seats fell through the gap between that word and
+// its opposite. Three rounds took an arm each, and every one of them was
+// reported by the COMPILER rather than noticed by a reader — an unconstructed
+// variant is a `dead_code` error under this workspace's lints:
+//
+//   R1729 took `Elsewhere` (*built and shipping, on another surface of this
+//   product*) when the capture viewer was mounted rather than pointed at.
+//   R1731 took `Unbuilt` (*specified and not built*) when the log section
+//   arrived, which is when this rail stopped being able to SPELL that state.
+//   R1948 takes `Reserved` (*booked under a named requirement*), because the
+//   sessions section is the last seat the scope mockup locks, and building it
+//   leaves nothing to construct the arm with.
+//
+// What remains is one answer, so it is not an enum: a seat either names the
+// requirement that books it or it does not, and `Option` is that shape. The
+// claim this makes is the strongest available and the compiler enforces it —
+// **this rail opens every seat it has, and cannot say otherwise.**
+//
+// ⚠ The mockup still locks two of them, and that has not stopped being true.
+// It is `docs/analyzer-rail-spec.json`'s `owed` that carries it now, which is
+// the right place: `Seat` was about what THIS BUILD does, the pin is about how
+// that differs from the reference, and folding the second into the first is
+// what made an ahead-of-the-mockup seat unrepresentable before R1947.
+//
+// `pinion_core::availability::UnavailableKind` keeps all three words. The
+// vocabulary is the framework's, and any product with more than one surface, or
+// assembled against a written specification, passes through those states. What
+// ended is this rail needing them.
 /// One seat on the icon rail.
 pub struct RailSpec {
     /// The seat's key, and the suffix of its paint tag.
     pub key: &'static str,
     /// What a reader calls it.
     pub title: &'static str,
-    /// What pressing it does.
-    pub seat: Seat,
+    /// The requirement booking this seat, when one books it.
+    ///
+    /// ★ `None` at every seat since R1948, and that is a MEASURED state rather
+    /// than a default: the sessions section was the last one the scope mockup
+    /// locks, and building it left the rail with nothing to refuse. See the
+    /// note above this struct for the three arms this field replaced.
+    pub reserved_for: Option<&'static str>,
 }
 
 impl RailSpec {
     /// The requirement this seat is booked under, when it is booked under one.
     #[must_use]
     pub const fn reserved_for(&self) -> Option<&'static str> {
-        match self.seat {
-            Seat::Reserved(why) => Some(why),
-            Seat::Page => None,
-        }
+        self.reserved_for
     }
 }
 
@@ -277,7 +251,7 @@ pub const RAIL: &[RailSpec] = &[
     RailSpec {
         key: "dashboard",
         title: "Dashboard",
-        seat: Seat::Page,
+        reserved_for: None,
     },
     // ★★★★★ R1729 — **the second seat to stop saying *elsewhere*, and the
     // last one that ever could.** Its page is `hello-packet-view`, mounted
@@ -288,7 +262,7 @@ pub const RAIL: &[RailSpec] = &[
     RailSpec {
         key: "packets",
         title: "Packets",
-        seat: Seat::Page,
+        reserved_for: None,
     },
     // ★★★★★ R1730 — **the first seat this rail ever opened by BUILDING one.**
     //
@@ -301,7 +275,7 @@ pub const RAIL: &[RailSpec] = &[
     RailSpec {
         key: "keys",
         title: "Key Patterns",
-        seat: Seat::Page,
+        reserved_for: None,
     },
     // ★★★★★ R1731 — **the seat that closed the rail.** Its page is
     // `hello-log-view`, built for it the way `keys` was, and with it every
@@ -310,7 +284,7 @@ pub const RAIL: &[RailSpec] = &[
     RailSpec {
         key: "logs",
         title: "Logs",
-        seat: Seat::Page,
+        reserved_for: None,
     },
     // ★★★★★ R1724 — **the first seat to stop saying *elsewhere*.**
     //
@@ -327,7 +301,7 @@ pub const RAIL: &[RailSpec] = &[
     RailSpec {
         key: "lab",
         title: "Node Lab",
-        seat: Seat::Page,
+        reserved_for: None,
     },
     // ★★★★★ R1947 — **the first seat this rail opens against the scope
     // mockup's own drawing.** That mockup locks this seat under requirement 12
@@ -340,20 +314,28 @@ pub const RAIL: &[RailSpec] = &[
     RailSpec {
         key: "topology",
         title: "Topology",
-        seat: Seat::Page,
+        reserved_for: None,
     },
-    // ★ R1728 — booked under requirement 18, not 14. The reference names the
-    // requirement in the seat's own tooltip and 14 is not among the six it
-    // defers; this said 14 from the round the seat was written.
+    // ★★★★★ R1948 — **the eighth seat, and the last one this rail refused.**
+    //
+    // The scope mockup books it under requirement 18 (R1728 measured that it is
+    // 18 and not 14, against the seat's own tooltip in the reference). The
+    // behaviour reference BUILDS the section, and `hello-sessions-view` is it —
+    // mounted here exactly as R1947 mounted the topology section, with
+    // `docs/analyzer-rail-spec.json`'s `owed` carrying the divergence.
+    //
+    // Opening it is what emptied `Seat`: this was the only seat left with a
+    // requirement, so the arm that carried one has no constructor and the field
+    // above is an `Option` that is now `None` eight times out of eight.
     RailSpec {
         key: "sessions",
         title: "Sessions",
-        seat: Seat::Reserved("requirement 18"),
+        reserved_for: None,
     },
     RailSpec {
         key: "settings",
         title: "Settings",
-        seat: Seat::Page,
+        reserved_for: None,
     },
 ];
 
@@ -374,11 +356,9 @@ pub const RAIL: &[RailSpec] = &[
 pub fn destinations() -> Destinations {
     Destinations::new(
         RAIL.iter()
-            .map(|seat| match seat.seat {
-                Seat::Page => Destination::open(seat.key, seat.title),
-                Seat::Reserved(why) => {
-                    Destination::closed(seat.key, seat.title, Unavailable::reserved(why))
-                }
+            .map(|seat| match seat.reserved_for() {
+                None => Destination::open(seat.key, seat.title),
+                Some(why) => Destination::closed(seat.key, seat.title, Unavailable::reserved(why)),
             })
             .collect(),
     )
@@ -3063,7 +3043,7 @@ impl Population {
                 .collect(),
             Population::ReservedRail => RAIL
                 .iter()
-                .filter(|seat| !matches!(seat.seat, Seat::Page))
+                .filter(|seat| seat.reserved_for().is_some())
                 .map(|seat| seat.key.to_owned())
                 .collect(),
             Population::OptionGroups => OPTION_GROUPS

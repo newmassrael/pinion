@@ -2341,6 +2341,22 @@ impl WidgetView for TopologyView {
     }
 }
 
+/// ★★★★★ R1948 — **the peers this section plots, by identifier.**
+///
+/// The one thing this crate publishes about its population, and it exists
+/// because the sessions section names a peer per session and those must be
+/// THESE peers — one capture seen two ways, rather than two screens that happen
+/// to share a rail. `hello-sessions-view` asserts the containment at compile
+/// time against this list.
+///
+/// A function over the identifiers rather than the table itself: a sibling
+/// section needs to know *which peers exist*, and giving it `NodeSpec` would
+/// let it reach for a placement or a standing it has no business reproducing.
+#[must_use]
+pub fn peers() -> Vec<&'static str> {
+    spec::NODES.iter().map(|node| node.id).collect()
+}
+
 /// Run the topology section as an application of its own.
 pub fn run() {
     pinion_shell::run::<TopologyView>();

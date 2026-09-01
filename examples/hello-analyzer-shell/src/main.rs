@@ -1534,6 +1534,14 @@ fn screen_roster() -> ScreenRoster {
                 "topology",
                 Box::new(Mount::<hello_topology_view::TopologyView>::new()) as Box<dyn Screen>,
             ),
+            // ★★★★★ R1948 — **the eighth and last seat.** With this every
+            // section the BEHAVIOUR reference builds is one this application
+            // opens, and the rail has nothing left to refuse — which is what
+            // emptied `spec::Seat` of its last arm.
+            (
+                "sessions",
+                Box::new(Mount::<hello_sessions_view::SessionsView>::new()) as Box<dyn Screen>,
+            ),
         ],
     )
     .expect("the mounted screens sit at open destinations of this rail")
@@ -2074,7 +2082,7 @@ impl ShellState {
                 .map(|seat| {
                     Member::maybe(
                         format!("shell.rail.{}", seat.key),
-                        matches!(seat.seat, spec::Seat::Page),
+                        seat.reserved_for().is_none(),
                     )
                 })
                 .collect(),
@@ -12143,7 +12151,7 @@ fn spec_json() -> serde_json::Value {
             "key": seat.key,
             "title": seat.title,
             "reserved_for": seat.reserved_for(),
-            "open": matches!(seat.seat, spec::Seat::Page),
+            "open": seat.reserved_for().is_none(),
         })).collect::<Vec<_>>(),
         "rail_active": spec::RAIL_ACTIVE,
         // ★ R1695 — the Settings destination.

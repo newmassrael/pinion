@@ -1,0 +1,51 @@
+[package]
+name = "hello-sessions-view"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1948 Phase-B plane-C integration consumer — the analysis tool's sessions section, the EIGHTH and last seat of the reference's rail. A session list under a 46-high header carrying a derived count, a filter and three status chips, laid out on an eight-column grid; beside it a 320-wide detail with a status pill, the peer it reaches, a four-tile negotiated block, a handshake timeline, a per-channel sequence list, and two actions — one of which crosses to the topology section rather than refusing, because R1947 built it. Its two surfaces are checked against docs/analyzer-sessions-spec.json through pinion_core::conformance, read back out of the PAINTED scene."
+publish = false
+
+# ★ R1948 — a library and a four-line binary from its first round, which is the
+# rule R1730 established and R1731 and R1947 repeated.
+[lib]
+name = "hello_sessions_view"
+path = "src/lib.rs"
+
+[[bin]]
+name = "hello-sessions-view"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# §5.40 AccessKit substrate for `WidgetA11y::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# §5.21 the scrolling pane and R1813's caption binding.
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+# §5.16 paint-side AppShell (winit + Vello + RPC).
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R1537 §5.16 — the emitted renderer owns its wgpu device through pinion-gpu.
+pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
+# ★★★★★ R1948 — the topology section, for its PEER POPULATION and nothing else.
+# Every session names a peer, and those are the six that section plots; this
+# dependency is what lets `tests::r1948_every_session_names_a_peer_the_topology_plots`
+# assert it instead of two tables drifting apart. It is a compile-time read of a
+# declaration, not a screen embedding a screen.
+hello-topology-view = { path = "../hello-topology-view" }
+vello = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+# R1653 — the integration test runs the real view -> layout pipeline, so the
+# rectangles it asserts against are the ones the window would paint.
+pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1" }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

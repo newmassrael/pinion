@@ -54,6 +54,11 @@ hello-log-view = { path = "../hello-log-view" }
 # reproduction gap closing. `docs/analyzer-rail-spec.json` records the
 # divergence instead of hiding it.
 hello-topology-view = { path = "../hello-topology-view" }
+# ★★★★★ R1948 — the sessions destination's page, and the LAST seat this rail
+# refused. With it every section the behaviour reference builds is one this
+# application opens, and `spec::Seat` is gone: nothing constructs a reserved
+# seat any more, which the compiler reported rather than a reader noticing.
+hello-sessions-view = { path = "../hello-sessions-view" }
 vello = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

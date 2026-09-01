@@ -88,7 +88,12 @@
       "built": "R1947",
       "$note": "The behaviour reference builds this section and the scope mockup locks it. `hello-topology-view` is the section, mounted at the rail's sixth seat; `docs/analyzer-rail-spec.json` carries the divergence against the mockup."
     },
-    { "requirement": 18, "seat": "sessions" }
+    {
+      "requirement": 18,
+      "seat": "sessions",
+      "built": "R1948",
+      "$note": "The behaviour reference builds this section and the scope mockup locks it. `hello-sessions-view` is the section, mounted at the rail's eighth and last seat; with it the rail has no reserved seat left, and `spec::Seat` lost its final arm."
+    }
   ],
 
   "$built_comment": [

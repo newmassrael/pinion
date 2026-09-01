@@ -91,6 +91,11 @@ SCREENS = [
     # declares what it gives up and is asked about it by nothing was never in
     # the check, which reads as passing and is not.
     ("topology", "hello-topology-view"),
+    # ★ R1948 — the sessions section. Added in the round that built it rather
+    # than by the push gate, which is what R1947 had to learn from being
+    # refused: a screen that declares what it gives up and is asked by nothing
+    # was never in the check.
+    ("sessions", "hello-sessions-view"),
 ]
 
 #: The one screen that concedes, and what it declares the band costs. Written

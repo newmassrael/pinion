@@ -340,68 +340,57 @@ fn r1946_the_distance_from_the_behaviour_reference_is_exactly_what_the_pin_decla
     }
 }
 
-/// ★★★★★ R1946 — **a seat this build is behind the behaviour reference on says
-/// so, in the sentence a reader is shown.**
+/// ★★★★★ R1948 — **every seat says where it goes, and none says it is
+/// missing.**
 ///
-/// A person opened the window and asked why two sections are not there at all.
-/// The seat could answer the requirement that books it — the scope mockup's
-/// fact, and true — and was silent about the thing the question was about: the
-/// working reference has both, and this build has not built them. That silence
-/// was not a wording choice. Nothing in this tree held the fact until this
-/// round, so no sentence could have carried it.
+/// ⚠ This REPLACES `r1946_a_seat_this_build_is_behind_the_reference_on_says_so`,
+/// on that gate's own instruction. It asserted that a seat owed against the
+/// behaviour reference carries a clause saying so, and it opened by refusing an
+/// empty population *in those words*: **"build the sections and delete this
+/// gate, do not let it pass by having nothing to judge."** R1947 and R1948 built
+/// them, `second_phase_owed` is empty, and the gate did exactly what it was
+/// written to do — it failed rather than passing over nothing.
 ///
-/// The gate runs in **both** directions over the rail, and the second one is
-/// what makes it more than a spell-check: a seat that is NOT behind must not
-/// carry the clause. Today the reserved seats and the owed seats happen to be
-/// the same two, so only the open seats separate the arms — and if a seat is
-/// ever reserved for a reason the reference shares, this is what refuses to let
-/// it claim otherwise.
-///
-/// ⚠ This is the register, not the pixels. That the sentence reaches a looking
-/// reader is `r1916`'s tip painter and its own sweep; what is asserted here is
-/// that the register has the sentence to give it.
+/// What replaces it is the claim that survives: every seat is a place a reader
+/// can go, and no seat's sentence still tells them a section is absent. The
+/// second half is what catches the residue of a round like this one — a clause
+/// left behind in a register after the thing it described stopped being true.
 #[test]
-fn r1946_a_seat_this_build_is_behind_the_reference_on_says_so() {
-    const CLAUSE: &str = "the reference draws it and this build does not yet";
+fn r1948_every_rail_seat_says_where_it_goes_and_none_pleads_absence() {
+    const BEHIND: &str = "the reference draws it and this build does not yet";
+    const ABSENT: &str = "is not in this release";
     let described = super::chrome_descriptions();
-    let behind = spec::second_phase_owed();
-    assert!(
-        !behind.is_empty(),
-        "nothing is owed against the behaviour reference, so both arms below \
-         compare an empty population — build the sections and delete this gate, \
-         do not let it pass by having nothing to judge",
-    );
+    let mut checked = 0_usize;
     for seat in spec::RAIL {
         let sentence = described
             .of(&format!("shell.rail.{}", seat.key))
             .unwrap_or_else(|| panic!("{} carries no description", seat.key));
-        let owed = behind.iter().any(|key| key == seat.key);
-        assert_eq!(
-            sentence.contains(CLAUSE),
-            owed,
-            "{} {} the clause naming the reference, and it is {} owed against it \
-             — sentence: {sentence:?}",
+        assert!(
+            !sentence.contains(BEHIND),
+            "{}'s sentence still says the reference has something this build does \
+             not, and `second_phase_owed` is empty — sentence: {sentence:?}",
             seat.key,
-            if sentence.contains(CLAUSE) {
-                "carries"
-            } else {
-                "lacks"
-            },
-            if owed { "" } else { "not" },
         );
-        if owed {
-            // The requirement is still there. The new clause ADDS to what the
-            // seat said; a reader who wanted the booking must not lose it.
-            let why = seat
-                .reserved_for()
-                .expect("an owed seat is reserved, which the sibling gate asserts");
-            assert!(
-                sentence.contains(why),
-                "{}'s sentence gained the reference clause and dropped its booking",
-                seat.key
-            );
-        }
+        assert!(
+            !sentence.contains(ABSENT),
+            "{}'s sentence still tells a reader the section is missing — {sentence:?}",
+            seat.key,
+        );
+        assert!(
+            sentence.starts_with("Go to "),
+            "{}'s sentence does not say where pressing it goes — {sentence:?}",
+            seat.key,
+        );
+        checked += 1;
     }
+    // ★ Rule: can this pass by judging nothing? The count is asserted against
+    // the rail, so an empty register fails here rather than reading as success.
+    assert_eq!(checked, spec::RAIL.len(), "not every seat was judged");
+    assert!(
+        spec::second_phase_owed().is_empty(),
+        "a seat is owed against the behaviour reference and every sentence above \
+         says otherwise",
+    );
 }
 
 /// R1668 — a reserved entry states a booking, and the rail's reserved seats do
@@ -521,21 +510,36 @@ fn r1668_every_reserved_seat_names_what_it_waits_for() {
         .iter()
         .filter_map(|seat| seat.reserved_for().map(|why| (seat.key, why)))
         .collect();
-    // ★★★★★ R1947 — a FLOOR rather than the count `2` this carried, for the
-    // reason the sibling assertion above now states at length: this counts what
-    // THIS rail locks, under a sentence about what the reference locks, and the
-    // two stopped agreeing when `topology` was built. What survives either way
-    // is that the property below has something to judge.
-    assert!(
-        !booked.is_empty(),
-        "no seat is booked, so the requirement check below judges nothing",
-    );
-    for (key, why) in booked {
+    // ★★★★★ R1948 — **the rail books NOTHING now, and the floor R1947 put here
+    // is gone rather than lowered.**
+    //
+    // R1947 replaced a hard `2` with `!booked.is_empty()`, which was right at
+    // the time and rested on the same assumption one layer down: that this rail
+    // always refuses something. Building the sessions section made that false —
+    // `spec::Seat` lost its last arm to the compiler in the same edit — so the
+    // floor failed, correctly, on the round that emptied the population.
+    //
+    // ⚠ What replaces it is NOT a weaker check. The property below is still
+    // asserted over whatever is booked, and the emptiness itself is now a
+    // CLAIM: a seat that starts being refused again has to come with a reason
+    // that names a requirement, and `r1728` holds the rail to the pin either
+    // way. A test that judged an empty set silently is what this comment exists
+    // to prevent, and the assertion under the loop is that guard.
+    for (key, why) in &booked {
         assert!(
             why.starts_with("requirement ") && why.len() > 12,
             "the {key} seat cites {why:?}, which names no requirement",
         );
     }
+    // ★ The emptiness is a claim rather than a silence: this rail refuses
+    // nothing, and the reference's own locks live in the pin's `owed`. If that
+    // stops being true the reason is a rail seat that grew a requirement back,
+    // and the loop above is what judges it.
+    assert_eq!(
+        booked.len(),
+        spec::RAIL.len() - spec::destinations().all().len(),
+        "a seat is booked on the rail and open on the roster, or the other way",
+    );
 }
 
 /// ★★★★★ R1728 — **the rail this application runs on IS the rail the reference

@@ -1792,6 +1792,7 @@ dependencies = [
  "hello-log-view",
  "hello-node-lab",
  "hello-packet-view",
+ "hello-sessions-view",
  "hello-topology-view",
  "pinion-a11y",
  "pinion-chart",
@@ -4024,6 +4025,23 @@ dependencies = [
  "pinion-gpu",
  "pinion-shell",
  "pinion-widget-paint",
+ "vello",
+]
+
+[[package]]
+name = "hello-sessions-view"
+version = "0.0.1"
+dependencies = [
+ "hello-topology-view",
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-gpu",
+ "pinion-runtime",
+ "pinion-shell",
+ "pinion-widget-paint",
+ "serde",
+ "serde_json",
  "vello",
 ]
 

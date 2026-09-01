@@ -172,13 +172,19 @@
     "it is wrong — but the sentence naming its source is, and no gate here",
     "reaches it. Named rather than left as an absence."
   ],
-  "second_phase_owed": [
-    {
-      "key": "sessions",
-      "round": "R1946",
-      "reason": "The behaviour reference draws a peer list on an eight-column grid with a per-peer detail beside it. This build closes the seat, and a reader is told only that a later requirement books it."
-    }
+  "$second_phase_paid_comment": [
+    "R1948 — EMPTY, and that is the north star's condition (A) becoming true:",
+    "every seat the behaviour reference builds is one this build opens. The two",
+    "entries that were here — `topology` (R1946, paid R1947) and `sessions`",
+    "(R1946, paid R1948) — are deleted rather than marked done, for the reason",
+    "`owed` states above: the gate asserts the live difference EQUALS this list,",
+    "so a paid entry left here would fail as loudly as a new one.",
+    "",
+    "What they became is two entries in `owed`, pointing the other way. This",
+    "build is now AHEAD of the scope mockup at both seats, and that difference",
+    "is what has to stay declared."
   ],
+  "second_phase_owed": [],
   "$owed_comment": [
     "`sentence` is the divergence VERBATIM, as the framework renders it. That",
     "is deliberate and it is the ratchet: any change to the built rail, and any",
@@ -246,6 +252,32 @@
         "nothing left to build. It comes out if and when the scope mockup is",
         "re-extracted and opens the seat, at which point the two references",
         "agree and `behaviour` and `standing` say the same thing."
+      ]
+    },
+    {
+      "key": "sessions",
+      "sentence": "`sessions` is specified closed (reserved) and is open",
+      "since": "R1948",
+      "why": [
+        "The second entry of its kind and the last one available: with this",
+        "seat open, every section the BEHAVIOUR reference builds is one this",
+        "build opens, and `second_phase_owed` is empty.",
+        "",
+        "The scope mockup books this seat under requirement 18 and",
+        "`hello-sessions-view` is the section the working prototype draws — a",
+        "session list on the reference's own eight-column grid beside a detail",
+        "pane whose crossing action reaches the topology section R1947 built.",
+        "",
+        "★★★★★ WHAT OPENING IT COST, recorded because the compiler is what",
+        "found it: this was the last seat on the rail with a requirement, so",
+        "`spec::Seat`'s remaining arm lost its constructor and the enum is gone.",
+        "The rail can no longer SPELL 'reserved' — a stronger claim than",
+        "declaring every seat open, and one this file now carries alone.",
+        "",
+        "⚠ Which means these two entries are the only record that the mockup",
+        "locks anything. If the mockup is ever re-extracted and opens them, both",
+        "entries go and the two references agree; if a THIRD locked seat ever",
+        "appears, the rail's own type has to grow one back."
       ]
     }
   ]

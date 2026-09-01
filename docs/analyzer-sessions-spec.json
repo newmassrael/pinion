@@ -1,0 +1,92 @@
+{
+  "$at": { "width": 1220, "height": 760 },
+  "$comment": [
+    "R1948 — the analysis tool's SESSIONS section, written down once, in neutral",
+    "vocabulary, as the behaviour reference draws it.",
+    "",
+    "THE LAST SEAT. This is the eighth and final destination of the reference's",
+    "rail, and the second one this build opens that the SCOPE mockup draws",
+    "locked — R1947 opened `topology` the same way and wrote the pattern down.",
+    "The mockup books this seat under requirement 18; the BEHAVIOUR reference",
+    "builds it, and `docs/analyzer-rail-spec.json`'s `second_phase_owed` has",
+    "carried it as the one remaining entry since R1946 measured the gap.",
+    "",
+    "EXTRACTION, measured at the command on 2026-09-01. Two panes: a session",
+    "list under a 46-high header carrying the section name, a derived count, a",
+    "filter field and three status chips; and a 320-wide detail beside it. The",
+    "list is an eight-column grid — session, peer and identifier, link, role,",
+    "encryption, uptime, rate, status — over six sessions. The detail carries a",
+    "headline, a status pill, the peer it reaches, a four-tile negotiated block,",
+    "a handshake timeline and a per-channel sequence list, then two actions.",
+    "",
+    "★★★★★ ONE CAPTURE, TWO SECTIONS. Every session names a PEER, and those are",
+    "the same six the topology section plots: the reference's detail pane has a",
+    "control that jumps to the graph with that peer selected. That is not a",
+    "coincidence to reproduce loosely — it is the reason both sections are views",
+    "of one capture rather than two screens that happen to sit on one rail, and",
+    "this build asserts it (`tests::r1948_every_session_names_a_peer_the_",
+    "topology_plots`). Requiring it is what stops the two populations drifting.",
+    "",
+    "VOCABULARY. Neutral throughout and consistent with the sibling sections:",
+    "the peers are `P-01`..`P-06` as `hello-topology-view` declares them, and",
+    "the handshake steps are named for what they do rather than for the",
+    "reference's own wire words.",
+    "",
+    "THE TWO HALVES, as in every sibling pin: `canon` is what the reference",
+    "draws, `owed` is where this build does not draw it yet. The gate asserts",
+    "the difference between the painted surface and `canon` is EXACTLY `owed`."
+  ],
+
+  "list": {
+    "$comment": [
+      "The left pane. The header's second run is a COUNT the reference states",
+      "as `5 active / 1 closed`, and this build derives both halves from the",
+      "population rather than writing them — a count beside a list it does not",
+      "come from is the defect this tree has found repeatedly.",
+      "",
+      "`rows` is the grid as one surface. Its interior — a session's eight",
+      "cells — is not enumerated here on purpose: those are a population that",
+      "changes with the capture, and a specification that listed them would be",
+      "a copy of the data rather than of the screen. `painted.rs` asserts every",
+      "declared session is drawn and reaches its own detail."
+    ],
+    "canon": [
+      { "ordinal": 1, "key": "title", "title": "Sessions" },
+      { "ordinal": 2, "key": "count", "title": "Observed sessions" },
+      { "ordinal": 3, "key": "filter", "title": "Filter" },
+      { "ordinal": 4, "key": "chips", "title": "Status filter" },
+      { "ordinal": 5, "key": "columns", "title": "Column headings" },
+      { "ordinal": 6, "key": "rows", "title": "The session list" }
+    ],
+    "owed": []
+  },
+
+  "detail": {
+    "$comment": [
+      "The right pane, 320 wide. What the reference shows about the session a",
+      "reader picked.",
+      "",
+      "★ `topology` is the reference's own control OUT of this section, and it",
+      "WORKS here rather than refusing: R1947 built the section it leads to, so",
+      "this is the first cross-section action in this application. `close` is",
+      "the reference's destructive control and is drawn and refused, which is",
+      "this tree's treatment of an affordance nothing has built."
+    ],
+    "canon": [
+      { "ordinal": 1, "key": "title", "title": "Session detail" },
+      { "ordinal": 2, "key": "badge", "title": "Selected session" },
+      { "ordinal": 3, "key": "id", "title": "Session identifier" },
+      { "ordinal": 4, "key": "status", "title": "Status" },
+      { "ordinal": 5, "key": "peer", "title": "Peer reached" },
+      { "ordinal": 6, "key": "version", "title": "Negotiated version" },
+      { "ordinal": 7, "key": "batch", "title": "Negotiated batch" },
+      { "ordinal": 8, "key": "resolution", "title": "Negotiated resolution" },
+      { "ordinal": 9, "key": "encryption", "title": "Encryption" },
+      { "ordinal": 10, "key": "timeline", "title": "Handshake timeline" },
+      { "ordinal": 11, "key": "channels", "title": "Channels and last sequence" },
+      { "ordinal": 12, "key": "topology", "title": "Show in topology" },
+      { "ordinal": 13, "key": "close", "title": "Close session" }
+    ],
+    "owed": []
+  }
+}
