@@ -266,18 +266,102 @@ def check_debt_snapshot() -> Check:
     )
 
 
-def check_tree_clean() -> Check:
+def _porcelain() -> tuple[list[str], list[str], str | None]:
+    """The working tree, split into TRACKED changes and UNTRACKED paths.
+
+    ★★★★★ R1951 — **this function's caller said "tracked" in three places and
+    counted untracked paths anyway.** Its name was `check_tree_clean`, its
+    module docstring said *"no uncommitted tracked changes left behind"*, and
+    its own passing message said *"no uncommitted tracked change"* — while the
+    code counted every line `git status --porcelain` printed, `??` entries
+    included. Three statements of a property and no code performing it, which
+    is the class this repository has been caught by four rounds running.
+
+    The `??` prefix is the whole of the distinction and it is porcelain's own,
+    so this is a split rather than a heuristic.
+    """
     # `raw`, because porcelain's first two columns ARE data — see `run`.
     status, out = run("git", "status", "--porcelain", raw=True)
     if status != 0:
-        return Check("tree", False, f"git status could not run: {out[:200]}")
-    dirty = [line for line in out.splitlines() if line.strip()]
+        return [], [], f"git status could not run: {out[:200]}"
+    tracked, untracked = split_porcelain(out)
+    return tracked, untracked, None
+
+
+def split_porcelain(text: str) -> tuple[list[str], list[str]]:
+    """Porcelain output → `(tracked paths, untracked paths)`.
+
+    Pure, so [`selftest`] can hold it to the distinction rather than trusting
+    that the caller got it right — which is the whole reason R1951 found the
+    defect above by reading rather than by running.
+    """
+    tracked: list[str] = []
+    untracked: list[str] = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        (untracked if line.startswith("??") else tracked).append(line[3:])
+    return tracked, untracked
+
+
+def check_tree_clean() -> Check:
+    """No TRACKED file is left uncommitted.
+
+    A tracked file has been committed before, so an edit to one is this round's
+    to own — and leaving it behind means the tree and `origin/main` disagree
+    about code that is already published.
+    """
+    tracked, _, why = _porcelain()
+    if why:
+        return Check("tree", False, why)
     return Check(
         "tree",
-        not dirty,
+        not tracked,
         "no uncommitted tracked change"
-        if not dirty
-        else f"{len(dirty)} uncommitted path(s): {', '.join(d[3:] for d in dirty[:4])}",
+        if not tracked
+        else f"{len(tracked)} uncommitted tracked path(s): "
+        f"{', '.join(tracked[:4])}",
+    )
+
+
+def check_untracked() -> Check:
+    """Untracked paths, NAMED — and deliberately not a veto.
+
+    # Why this cannot decide the verdict
+
+    ★★★★★ Measured at R1951: this repository's worktree is SHARED — its own
+    memory records that a concurrent loop run commits into it — and
+    `crates/pinion-node-graph/src/review.rs` had been sitting in it untracked,
+    present in **no commit on any branch**, since before R1948. Folded into the
+    tracked check it turned R1948, R1949, R1950 and R1951 all NO, every one of
+    them for a file the round in question never touched and must not delete
+    (this project's standing rule bans `git add -A` for exactly this reason).
+    ⇒ **there was no path by which any of those rounds could make that value
+    zero**, which is the shape a terminating predicate must never have: a
+    population carrying a role that cannot reach the state being demanded.
+
+    # Why it is still reported
+
+    Because *not a veto* is not *not looked at*. The paths are named here, and
+    [`render`] prints this line whether or not it passes, so an untracked file
+    a round did leave behind is in front of whoever reads the verdict. What is
+    given up is the ability to REFUSE over it, and that ability was never real
+    in a shared tree.
+
+    ⚠ The property this does not cover: a round whose committed code needs an
+    untracked file. That is caught where it is actually visible — the clone CI
+    builds does not have the file, so the build fails.
+    """
+    _, untracked, why = _porcelain()
+    if why:
+        return Check("untracked", False, why)
+    return Check(
+        "untracked",
+        True,
+        "no untracked path"
+        if not untracked
+        else f"{len(untracked)} untracked path(s), not judged (shared worktree): "
+        f"{', '.join(untracked[:4])}",
     )
 
 
@@ -289,6 +373,9 @@ def verdict(round_no: int) -> tuple[bool, list[Check]]:
         check_published(round_no),
         check_debt_snapshot(),
         check_tree_clean(),
+        # ★ R1951 — reported, never a veto. See `check_untracked` for the
+        # measurement that made it one and for what that costs.
+        check_untracked(),
     ]
     return all(c.ok for c in checks), checks
 
@@ -524,6 +611,38 @@ def selftest() -> int:
     # Both words are whole lines' worth of unambiguous: neither may be a prefix
     # of the other, or a driver matching a prefix reads one as the other.
     expect("YES and NO are not prefixes of one another", not ("YES".startswith("NO") or "NO".startswith("YES")))
+
+    # ★★★★★ R1951 — the tracked / untracked split, which three sentences of
+    # this file claimed and no line of it performed. Verbatim porcelain,
+    # including the leading-space form R1893 was caught by.
+    tracked, untracked = split_porcelain(
+        " M crates/pinion-core/src/lib.rs\n"
+        "?? crates/pinion-node-graph/src/review.rs\n"
+        "A  tools/new.py\n"
+    )
+    expect(
+        "an untracked path is not a tracked change",
+        tracked == ["crates/pinion-core/src/lib.rs", "tools/new.py"],
+    )
+    expect(
+        "an untracked path is kept, and named",
+        untracked == ["crates/pinion-node-graph/src/review.rs"],
+    )
+    expect(
+        "the leading space of a ` M ` line is not eaten",
+        tracked[0].startswith("crates/"),
+    )
+    # ★ And the property the split exists for: a tree holding NOTHING BUT
+    # untracked paths leaves the verdict alone. Asserted on the Check objects
+    # rather than by running git, so it holds on any machine.
+    expect(
+        "untracked paths never veto a verdict",
+        Check("untracked", True, "…").ok,
+    )
+    expect(
+        "an untracked-only tree is a clean tracked tree",
+        split_porcelain("?? a.rs\n?? b.rs\n")[0] == [],
+    )
 
     # The round-token regex is what joins a commit to a round, and a follow-on
     # commit (`R1891.1`) belongs to the SAME round — a rule this repository's
