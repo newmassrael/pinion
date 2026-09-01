@@ -120,6 +120,17 @@
       ]
     },
     {
+      "name": "debt-a-floating-surface-cannot-leave-its-parents-clip",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "person",
+      "closed_because": "rule:analyzer-debt-repayment-loop",
+      "why": [
+        "links debt-canon-gui-surface-census"
+      ]
+    },
+    {
       "name": "debt-a-fragment-run-arrives-backwards-in-the-capture",
       "substituted": false,
       "blocked_by": "buildable",
@@ -464,6 +475,17 @@
       "why": [
         "links analyzer-behaviour-canon-is-the-standalone-prototype, debt-canon-gui-surface-census",
         "names dashboard.t2.9"
+      ]
+    },
+    {
+      "name": "debt-two-line-box-rules-disagree-by-three-pixels",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links debt-canon-gui-surface-census"
       ]
     },
     {

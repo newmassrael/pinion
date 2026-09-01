@@ -376,7 +376,7 @@ impl Timeline {
             }
             // Lane name, vertically centred in its band, right-aligned into the
             // gutter (the same End alignment a y-tick label uses).
-            let name_y = to_u32(band_top + g.lane_h / 2.0).saturating_sub(size / 2 + 1);
+            let name_y = crate::draw::label_y_on(to_u32(band_top + g.lane_h / 2.0), size);
             children.push(label_node(
                 lane.name.clone(),
                 rect.x + 2,

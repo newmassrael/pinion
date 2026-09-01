@@ -1241,9 +1241,13 @@ fn standing_pills(at: Rect, record: &'static spec::RowSpec, ink: Ink) -> Vec<Sce
             6,
         )
         .silenced(Silence::decorative("the tone behind the declaration tag")),
+        // ★★★★★ R1956 — seated in the pill rather than hung five pixels from
+        // its top. A 24-tall pill centres on 12 and a 13-tall run at `+5`
+        // centres on 11, which is the pair `containment::uncentred` reported on
+        // this screen: the word sat a pixel high in the tone behind it.
         label(
             "Declaration",
-            Rect::new(kind.x + 9, kind.y + 5, kind.w - 18, 13),
+            pinion_core::containment::line_rect_in(kind, kind.x + 9, kind.w - 18, FONT_SMALL),
             FONT_SMALL,
             ink.declaration,
         ),
@@ -1257,7 +1261,12 @@ fn standing_pills(at: Rect, record: &'static spec::RowSpec, ink: Ink) -> Vec<Sce
         .silenced(Silence::decorative("the tone behind the resolution pill")),
         label(
             record.health.label(),
-            Rect::new(health.x + 10, health.y + 5, health.w - 20, 13),
+            pinion_core::containment::line_rect_in(
+                health,
+                health.x + 10,
+                health.w - 20,
+                FONT_SMALL,
+            ),
             FONT_SMALL,
             health_ink(record.health, ink),
         ),

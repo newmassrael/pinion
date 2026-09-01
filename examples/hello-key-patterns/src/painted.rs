@@ -41,7 +41,14 @@ use pinion_core::test_fixtures::screen_ink::{
 /// across this tree was measured at 289 of 290 runs on one screen: not a
 /// backlog of slips but a convention that never consulted the face. Lowering
 /// this is the repair, and `containment::line_rect` is how.
-const SHORT_BOX_BUDGET: usize = 82;
+///
+/// ★ R1956 — 82 → 80, as a side effect rather than as work aimed here. That
+/// round seated the two standing pills' words in the pills instead of hanging
+/// them five pixels from the top, and `containment::line_rect_in` takes the
+/// height from the face — so the `13` that had been written against an 18px
+/// line box went with the offset. **A box derived from its face cannot be
+/// short of it**, which is why the centring repair repays this pin too.
+const SHORT_BOX_BUDGET: usize = 80;
 use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::{Frame, Scene};
 

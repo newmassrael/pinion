@@ -449,6 +449,24 @@ pub(crate) const fn label_box_h(size: u32) -> u32 {
     size + 4
 }
 
+/// ★★★★★ R1956 — **the top of a label box that straddles `line`**, which is
+/// what `line - size / 2 - 1` was reaching for and missing.
+///
+/// The box is [`label_box_h`] tall, not `size` tall, so the hand-spelled offset
+/// is short by however much this crate's label box exceeds its face — one pixel
+/// at every odd size. Measured on the assembled analysis tool: five y-tick
+/// labels of a latency chart each sat a pixel below the grid line they name,
+/// and the axis and a bar were reported beside them because all three are drawn
+/// from the same tick.
+///
+/// Two sites spelled the offset — this crate's y-tick labels and its timeline
+/// lane names — which is why this is a derivation rather than a fix at each.
+/// The centring itself is `containment::band_on`, so this crate and the gate
+/// that reads the paint are asking **one rule**; only the height is ours.
+pub(crate) fn label_y_on(line: u32, size: u32) -> u32 {
+    pinion_core::containment::band_on(line, 0, 0, label_box_h(size)).y
+}
+
 /// A filled, rounded, tagged box — the inspect tooltip's backing plate. A
 /// [`box_node`] with a corner radius; kept distinct so the sharp-cornered bars
 /// and the rounded callout do not have to thread a radius through every call.
@@ -778,7 +796,7 @@ pub(crate) fn y_tick_labels(
     let gutter = style.margin.left.saturating_sub(6).max(1);
     let mut out = Vec::new();
     for (k, (&t, &py)) in ticks.iter().zip(y_positions).enumerate() {
-        let ly = to_u32(py).saturating_sub(size / 2 + 1);
+        let ly = label_y_on(to_u32(py), size);
         out.push(label_node(
             format.label(t),
             rect_x + 2,

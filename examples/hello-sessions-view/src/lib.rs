@@ -745,6 +745,42 @@ fn seat(x: u32, y: u32, w: u32, px: u32) -> Rect {
     pinion_core::containment::line_rect(x, y, w, px)
 }
 
+/// ★★★★★ R1956 — **the band one row of a detail list occupies**, which is what
+/// [`seat`] cannot be: `seat` takes a TOP and hands back a box as tall as the
+/// face, so two faces given the same top are top-aligned and their centre lines
+/// are a pixel apart whenever their line boxes differ in parity.
+///
+/// Measured on this view: `sv.detail.timeline` and `sv.detail.channels` put a
+/// [`FONT_BODY`] run and a [`FONT_SMALL`] one on every row from one `top`, and
+/// the gate `containment::uncentred` reported **eleven** pairs standing beside
+/// each other one pixel out. That is R1862's defect — a legend's pin and label,
+/// each given a plausible offset that nothing related — in a second place.
+///
+/// The row is as tall as the **largest** face it holds, so the run that sets
+/// the row's height keeps exactly the rectangle it had and only the smaller
+/// ones move onto its centre line.
+fn row_band(y: u32, w: u32, tallest: u32) -> Rect {
+    Rect::new(0, y, w, pinion_core::containment::line_box(tallest))
+}
+
+/// The nth handshake-timeline row's band.
+fn timeline_row(w: u32, n: usize) -> Rect {
+    let top = BAND_HEAD_H + u32::try_from(n).unwrap_or(0) * TIMELINE_PITCH;
+    row_band(top, w, FONT_BODY)
+}
+
+/// The nth channel row's band.
+fn channel_row(w: u32, n: usize) -> Rect {
+    let top = BAND_HEAD_H + u32::try_from(n).unwrap_or(0) * CHANNEL_PITCH;
+    row_band(top, w, FONT_BODY)
+}
+
+/// A run's box inside a row's band, centred on the band's line rather than
+/// hung from its top. [`seat`]'s counterpart for anything that shares a row.
+fn in_row(row: Rect, x: u32, w: u32, px: u32) -> Rect {
+    pinion_core::containment::line_rect_in(row, x, w, px)
+}
+
 /// ★ A run's box is as tall as its own face, always — the height the caller
 /// passes is DISCARDED. R1947's first sweep reported 53 of 57 runs in a box too
 /// short for their letters, which is one convention rather than 53 slips.
@@ -1208,10 +1244,10 @@ fn timeline_part(session: &spec::SessionSpec, ink: Ink) -> Scene {
         ink,
     )];
     for (n, step) in steps.iter().enumerate() {
-        let top = BAND_HEAD_H + u32::try_from(n).unwrap_or(0) * TIMELINE_PITCH;
+        let row = timeline_row(band.w, n);
         children.push(box_at(
             &format!("sv.detail.timeline.{n}.dot"),
-            Rect::new(0, top + 5, 9, 9),
+            pinion_core::containment::band_in(row, 0, 9, 9),
             severity_ink(step.severity, ink),
             None,
             4,
@@ -1221,13 +1257,13 @@ fn timeline_part(session: &spec::SessionSpec, ink: Ink) -> Scene {
         ));
         children.push(bound_line(
             &format!("sv.detail.timeline.{n}"),
-            Rect::new(19, top, band.w.saturating_sub(19 + 64), 0),
+            in_row(row, 19, band.w.saturating_sub(19 + 64), FONT_BODY),
             (step.label, FONT_BODY, ink.text),
             Some(Silence::part_of("sv.detail.timeline")),
         ));
         children.push(label(
             step.at,
-            Rect::new(band.w.saturating_sub(60), top, 60, 0),
+            in_row(row, band.w.saturating_sub(60), 60, FONT_SMALL),
             FONT_SMALL,
             ink.faint,
         ));
@@ -1245,22 +1281,22 @@ fn channels_part(session: &spec::SessionSpec, ink: Ink) -> Scene {
         ink,
     )];
     for (n, channel) in spec::CHANNELS.iter().enumerate() {
-        let top = BAND_HEAD_H + u32::try_from(n).unwrap_or(0) * CHANNEL_PITCH;
+        let row = channel_row(band.w, n);
         children.push(bound_line(
             &format!("sv.detail.channels.{n}"),
-            Rect::new(0, top, band.w.saturating_sub(150), 0),
+            in_row(row, 0, band.w.saturating_sub(150), FONT_BODY),
             (channel.name, FONT_BODY, ink.text),
             Some(Silence::part_of("sv.detail.channels")),
         ));
         children.push(label(
             channel.reliability,
-            Rect::new(band.w.saturating_sub(148), top, 80, 0),
+            in_row(row, band.w.saturating_sub(148), 80, FONT_SMALL),
             FONT_SMALL,
             ink.dim,
         ));
         children.push(label(
             session.sequence(channel),
-            Rect::new(band.w.saturating_sub(64), top, 64, 0),
+            in_row(row, band.w.saturating_sub(64), 64, FONT_SMALL),
             FONT_SMALL,
             ink.faint,
         ));

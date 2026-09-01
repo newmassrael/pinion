@@ -300,8 +300,78 @@ pub fn stacked_line_rects<const N: usize>(outer: Rect, x: u32, w: u32, px: [u32;
 /// result out of the paint rather than out of the flag that asked for it.
 #[must_use]
 pub const fn band_in(outer: Rect, x: u32, w: u32, h: u32) -> Rect {
-    let mid = outer.y + outer.h / 2;
-    Rect::new(x, mid.saturating_sub(h / 2), w, h)
+    Rect::new(x, centre_line(outer).saturating_sub(h / 2), w, h)
+}
+
+/// ★★★★★ R1956 — **the centre line of a box**, stated in the one place that
+/// gets to say what that means.
+///
+/// [`band_in`] places a box ON this line; [`uncentred`] reads it back off the
+/// paint. Spelling it once is what makes those two **one rule asked at two
+/// moments** rather than two oracles free to disagree — and the disagreement is
+/// not hypothetical here, because the naive `outer.y + (outer.h - h) / 2`
+/// rounds a second time and lands a box one pixel off the line this returns.
+///
+/// # Why this being exact is what lets the gate be exact
+///
+/// Because [`band_in`] is written in terms of this, `centre_line(band_in(seat,
+/// …))` is `centre_line(seat)` for every height — the `h / 2` subtracted at
+/// placement is the same `h / 2` added back when the centre is read. So a gate
+/// comparing two boxes of a seat can demand **equality**, with no allowance. A
+/// second spelling would have forced a one-pixel tolerance, which is exactly
+/// the size of the defect R1862 was built from: a tolerance as large as the
+/// fault cannot see the fault.
+#[must_use]
+pub const fn centre_line(rect: Rect) -> u32 {
+    rect.y + rect.h / 2
+}
+
+/// ★★★★★ R1956 — **a run's box centred ON a line**, where [`line_rect_in`]
+/// centres it in a *seat*.
+///
+/// The case is a label against something that has a position rather than an
+/// extent: an axis tick, a lane's middle, a marker's pixel. Written by hand it
+/// is `line - px / 2 - 1`, and **that is not the same number** — the box is
+/// [`line_box`] tall, not `px` tall, so the hand-spelled offset misses by
+/// however much the shaped line box exceeds the face. Measured: a latency
+/// chart's five y-tick labels each sat one pixel below the grid line they name,
+/// with the axis and a bar reported alongside them because they are drawn from
+/// the same tick.
+///
+/// Two sites spelled it — `chart::draw::y_tick_labels` and
+/// `chart::timeline`'s lane names — which is why this is a derivation rather
+/// than a repair at each.
+///
+/// ```
+/// use pinion_core::containment::{centre_line, line_rect_on};
+///
+/// // The box straddles the line it was given, whatever the face.
+/// assert_eq!(centre_line(line_rect_on(740, 432, 46, 10)), 740);
+/// assert_eq!(centre_line(line_rect_on(740, 432, 46, 17)), 740);
+/// ```
+#[must_use]
+pub const fn line_rect_on(line: u32, x: u32, w: u32, px: u32) -> Rect {
+    band_on(line, x, w, line_box(px))
+}
+
+/// [`band_in`] against a **line** rather than a seat — a band of height `h`
+/// straddling `line`.
+///
+/// [`line_rect_on`] is this with the height taken from the face, and splitting
+/// them is what lets a caller that owns a different box-height rule keep it
+/// while still sharing the centring. `pinion-chart` is that caller: its label
+/// box is `size + 4`, which is not [`line_box`], and forcing the two together
+/// would move every chart label in the tree for a reason that has nothing to do
+/// with centring.
+///
+/// ⚠ That the two box-height rules differ at all is a separate finding and is
+/// **not** repaired here.
+#[must_use]
+pub const fn band_on(line: u32, x: u32, w: u32, h: u32) -> Rect {
+    // A band of no height has the line itself as its centre, so this is
+    // `band_in`'s rule with the seat collapsed onto the line — one spelling of
+    // the arithmetic, not a second.
+    band_in(Rect::new(x, line, w, 0), x, w, h)
 }
 
 /// One run whose own box cannot hold it, as [`short_boxes`] reports it.
@@ -1212,6 +1282,171 @@ pub fn escapes(scene: &Scene, ink_of: InkOf<'_>) -> Vec<Escape> {
         });
     });
     found
+}
+
+/// Two boxes standing side by side in one seat whose centre lines are **one
+/// pixel apart** — the signature [`band_in`]'s rule leaves when it is spelled
+/// by hand instead.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Uncentred {
+    /// Tag of the seat holding both, or [`UNTAGGED`].
+    pub seat: String,
+    /// Address of the leading box, as
+    /// [`lookup_path_ref`](Scene::lookup_path_ref) accepts it.
+    pub first: Vec<String>,
+    /// Its window-absolute rectangle.
+    pub first_rect: Rect,
+    /// Address of the box beside it.
+    pub second: Vec<String>,
+    /// Its window-absolute rectangle.
+    pub second_rect: Rect,
+}
+
+impl Uncentred {
+    /// The two centre lines, leading box first — what a failure message has to
+    /// print for the reader to see the pixel.
+    #[must_use]
+    pub const fn centres(&self) -> (u32, u32) {
+        (centre_line(self.first_rect), centre_line(self.second_rect))
+    }
+}
+
+/// ★★★★★ R1956 — **two things placed side by side in one seat that do not
+/// share its centre line**, which is the axis every other check in this module
+/// leaves open.
+///
+/// [`escapes`] asks whether ink left its box, [`short_boxes`] whether the box
+/// is too small for the face, [`slack`] whether it is too big. All three are
+/// about a box's SIZE. **Nothing asked where a box sits inside the seat it was
+/// placed in**, and a person reading the running application does: R1862 was
+/// opened because a legend's 11px pin sample and 12px label — each given a
+/// plausible `+3` in an 18px row — did not line up, and R1882 because a card's
+/// title and badge did not.
+///
+/// # ⚠ Why this reads BOXES, when [`Slack::off_centre`] already reads ink
+///
+/// [`OffCentre`] carries the warning in its own doc: only its horizontal axis
+/// is answerable from ink, because a string with no descender inks short of the
+/// bottom of its line box and would be reported high of centre while sitting
+/// exactly where the shaper puts it. R1874's rule — *width is measured by ink,
+/// height by the line box* — is why. So the vertical question cannot be asked
+/// on that channel at all, and this one asks it where it IS answerable: of the
+/// rectangles the scene declares.
+///
+/// # The population, and what it deliberately excludes
+///
+/// Two children of one parent, both with extent, that are **beside** each other
+/// — horizontally disjoint and vertically overlapping — **at least one of them
+/// a text run**. A pair stacked one above the other is not in it, because a
+/// stack is not making the claim this checks; [`stacked_line_rects`] is that
+/// shape's own answer and centres the block.
+///
+/// ⚠ **The text clause is not a let-off, it is what the question is about.**
+/// Measured on the assembled application before it was there: the largest group
+/// this reported was the three dots of a rail icon drawn one pixel apart on
+/// purpose — a picture's own strokes, not two things placed side by side, and a
+/// gate calling an icon's shape a defect is a gate nobody can hold at zero. The
+/// defects this exists for are both *a run against the thing beside it*: R1862
+/// a pin sample and its label, R1882 a title and its badge. This module's whole
+/// vocabulary — [`line_box`], [`line_rect_in`] — is built around a line for the
+/// same reason: **a centre line is what a run is placed on**, and two marks in
+/// one drawing share nothing of the kind.
+///
+/// # ⚠ Exactly one pixel, which is a claim about the CAUSE
+///
+/// One pixel is the whole range a second rounding can produce, so the report is
+/// narrow on purpose: it names the pairs whose separation is *the arithmetic*,
+/// not every pair that is not centred. Two boxes 6 pixels apart are top-aligned
+/// or baseline-aligned or wrong for some other reason, and lumping them in
+/// would make this a check nobody can hold at zero — which is how a gate ends
+/// up with a pin instead of a floor.
+///
+/// This is therefore a **weak claim made exactly**, in the direction this
+/// project has repeatedly found to be the right one: it can be demanded at zero
+/// on a real screen, and it goes red on the defect it was built from.
+#[must_use]
+pub fn uncentred(scene: &Scene) -> Vec<Uncentred> {
+    // The children of each seat, in paint order, window-absolute. One pass is
+    // enough where [`escapes`] needs two: that one has to read the PARENT's
+    // rectangle, and this one only needs the parent's identity and tag.
+    let mut seats: HashMap<*const Scene, Vec<Placed>> = HashMap::new();
+    let mut tags: HashMap<*const Scene, String> = HashMap::new();
+    // Insertion order, so the report is stable across runs — a `HashMap`'s is
+    // not, and a gate whose failure text reorders itself cannot be diffed.
+    let mut order: Vec<*const Scene> = Vec::new();
+    scene.for_each_node(&mut |visit| {
+        let Some(parent) = visit.ancestors.last() else {
+            return; // the root sits in no seat
+        };
+        let rect = translate(visit.node.rect(), visit.offset);
+        if rect.w == 0 || rect.h == 0 {
+            // No extent: a grouping node, which is not placed anywhere.
+            return;
+        }
+        let seat = std::ptr::from_ref(*parent);
+        if !seats.contains_key(&seat) {
+            order.push(seat);
+            tags.insert(
+                seat,
+                parent
+                    .tag()
+                    .map_or_else(|| UNTAGGED.to_owned(), str::to_owned),
+            );
+        }
+        seats.entry(seat).or_default().push(Placed {
+            path: visit.path.to_vec(),
+            rect,
+            run: matches!(visit.node, Scene::Text(_)),
+        });
+    });
+
+    let mut found = Vec::new();
+    for seat in order {
+        let kids = &seats[&seat];
+        for (i, first) in kids.iter().enumerate() {
+            for second in &kids[i + 1..] {
+                if !first.run && !second.run {
+                    continue; // two marks of one drawing share no centre line
+                }
+                if !beside(first.rect, second.rect) {
+                    continue;
+                }
+                if centre_line(first.rect).abs_diff(centre_line(second.rect)) != 1 {
+                    continue;
+                }
+                found.push(Uncentred {
+                    seat: tags[&seat].clone(),
+                    first: first.path.clone(),
+                    first_rect: first.rect,
+                    second: second.path.clone(),
+                    second_rect: second.rect,
+                });
+            }
+        }
+    }
+    found
+}
+
+/// One child of a seat, as [`uncentred`] reads it off the paint.
+struct Placed {
+    /// Its address, as [`lookup_path_ref`](Scene::lookup_path_ref) accepts it.
+    path: Vec<String>,
+    /// Its window-absolute rectangle.
+    rect: Rect,
+    /// Whether it is a text run — the clause that keeps a drawing's own strokes
+    /// out of the population. See [`uncentred`]'s own warning for why that is
+    /// what the question is about rather than a let-off.
+    run: bool,
+}
+
+/// Whether two rectangles stand **beside** each other: horizontally disjoint
+/// and vertically overlapping. Saturating, for R1653's reason — a coordinate
+/// arithmetic overflow here is a panic in debug and an absurd answer in
+/// release.
+const fn beside(a: Rect, b: Rect) -> bool {
+    let disjoint = a.x.saturating_add(a.w) <= b.x || b.x.saturating_add(b.w) <= a.x;
+    let overlapping = a.y < b.y.saturating_add(b.h) && b.y < a.y.saturating_add(a.h);
+    disjoint && overlapping
 }
 
 /// ★★★★★ R1811 — **a box far larger than the one thing it holds**, which is
@@ -2487,6 +2722,105 @@ mod tests {
             tall[0].off_centre().x,
             Centring::Within(-8),
             "while the horizontal one still answers",
+        );
+    }
+
+    /// ★★★★★ R1956 — **[`uncentred`] reports the hand-spelled centring and
+    /// not [`band_in`]'s**, which is the whole of its value: a check that
+    /// cannot be held at zero on correct code is a check that gets a pin
+    /// instead of a floor.
+    ///
+    /// The counterfactual is inside the test rather than beside it, because
+    /// what is being asserted is a DIFFERENCE between two placements — running
+    /// only the correct one would pass against a function that reports nothing
+    /// at all, and running only the naive one would pass against a function
+    /// that reports everything.
+    ///
+    /// The four cases are the four answers the population has: placed by the
+    /// framework (silent), placed by hand (named), stacked rather than beside
+    /// (out of it whatever its centres are), and two marks of one drawing with
+    /// no run between them (out of it too — an icon's strokes are not two
+    /// things placed side by side, which is what the first draft of this called
+    /// a defect on a real screen).
+    #[test]
+    fn r1956_the_hand_spelled_centring_is_the_one_reported() {
+        use crate::style::{BoxStyle, Color};
+
+        let seat = Rect::new(0, 0, 200, 36);
+        let ink = Color::rgb(0x40, 0x40, 0x40);
+        // A run, because a centre line is what a run is placed on: the pair
+        // this reports is always *a run against the thing beside it*.
+        let run = |rect: Rect, tag: &'static str| text("x", rect, Some(tag));
+        let boxed = |rect: Rect, tag: &'static str| {
+            Scene::Box(BoxNode::new(rect, BoxStyle::filled(ink)).with_tag(tag))
+        };
+        // Two heights of different parity in one 36px band — the pair R1862 was
+        // opened for. Both are pressed against the seat, side by side.
+        let (short_h, tall_h) = (17, 20);
+        let in_seat = |children: Vec<Scene>| {
+            let mut row = ContainerNode::new(children);
+            row.rect = seat;
+            row.tag = Some("row".to_owned().into());
+            Scene::Container(row)
+        };
+
+        // 1. Placed by `band_in`: nothing to report, and the two centres are
+        //    equal rather than merely close.
+        let a = band_in(seat, 10, 30, short_h);
+        let b = band_in(seat, 50, 30, tall_h);
+        assert_eq!(
+            centre_line(a),
+            centre_line(b),
+            "band_in rounds once, so a seat's bands share one centre exactly"
+        );
+        assert_eq!(
+            uncentred(&in_seat(vec![boxed(a, "pin"), run(b, "label")])),
+            Vec::new(),
+            "the framework's own placement must be reportable at ZERO"
+        );
+
+        // 2. Spelled by hand — `outer.y + (outer.h - h) / 2`, the form every
+        //    site in this tree had — rounds a second time and separates them.
+        let naive = |h: u32, x: u32| Rect::new(x, seat.y + (seat.h - h) / 2, 30, h);
+        let (na, nb) = (naive(short_h, 10), naive(tall_h, 50));
+        let found = uncentred(&in_seat(vec![boxed(na, "pin"), run(nb, "label")]));
+        assert_eq!(found.len(), 1, "expected the one pair, got {found:?}");
+        assert_eq!(found[0].seat, "row", "the report names the seat");
+        assert_eq!(
+            found[0].centres(),
+            (centre_line(na), centre_line(nb)),
+            "and prints both centre lines, so the pixel is legible from the report"
+        );
+        assert_eq!(
+            found[0].centres().0.abs_diff(found[0].centres().1),
+            1,
+            "the separation this reports is the second rounding's whole range"
+        );
+
+        // 3. Stacked rather than beside: out of the population. `naive` puts
+        //    these at centres one apart too — the pair is excluded by WHERE the
+        //    boxes stand, not by how far apart their centres are.
+        let stacked = uncentred(&in_seat(vec![
+            run(Rect::new(10, na.y, 30, short_h), "over"),
+            run(Rect::new(10, nb.y + tall_h, 30, tall_h), "under"),
+        ]));
+        assert_eq!(
+            stacked,
+            Vec::new(),
+            "a stack makes no claim to share a centre line: {stacked:?}"
+        );
+
+        // 4. The same hand-spelled separation between two marks of one
+        //    drawing. An icon's dots are one picture, and a picture's strokes
+        //    stand where its author put them — measured on the assembled
+        //    application, this was the biggest group the first draft reported
+        //    and every one of them was a rail icon, on six destinations.
+        let drawing = uncentred(&in_seat(vec![boxed(na, "dot"), boxed(nb, "dot")]));
+        assert_eq!(
+            drawing,
+            Vec::new(),
+            "two marks of one drawing are not two things placed side by \
+             side: {drawing:?}"
         );
     }
 }

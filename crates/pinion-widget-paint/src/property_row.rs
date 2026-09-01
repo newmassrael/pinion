@@ -56,6 +56,7 @@
 //! [`CellKind::editor_form`]: pinion_core::cell_value::CellKind::editor_form
 
 use pinion_core::cell_value::CellValue;
+use pinion_core::containment::band_in;
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size,
@@ -417,6 +418,22 @@ pub fn layout_property_row(
     let value = Rect::new(x + style.name_col_w, y, style.value_col_w, style.row_h);
     let control_w = style.control_w();
     let control_x = value.x + style.cell_pad;
+    // ★★★★★ R1956 — **the seat every control is centred in, spelled ONCE.**
+    //
+    // Each arm below puts something of its own height in this one band, and
+    // [`band_in`] is what places it: it rounds ONCE from the band's own centre,
+    // so two controls of different heights in the same row share a centre line
+    // exactly. The naive `(row_h - h) / 2` rounds twice and lands them a pixel
+    // apart — the defect R1862 was built from, where a legend's 11px pin and
+    // 12px label were each given a plausible `+3` and a reader reported the
+    // words as not lining up with the box beside them.
+    //
+    // ⚠ The band is a binding rather than a rectangle each arm builds, because
+    // **a seat spelled twice is a seat that can differ.** R1956 found the check
+    // box still carrying its own copy of the arithmetic after this module's
+    // private `centre_offset` had been deleted and the field control moved off
+    // it: removing the shared NAME is what made the surviving copy invisible.
+    let band = Rect::new(control_x, y, control_w, style.row_h);
     let control = match &row.control {
         // The inline editor takes the cell's content box, inset top and bottom
         // so its own frame does not sit on the row's edge.
@@ -429,17 +446,13 @@ pub fn layout_property_row(
         // that agreed with the paint by accident. Predicting it is what made
         // the two disagree out loud.
         ValueControl::Field { .. } => {
-            let h = style.row_h.saturating_sub(6);
-            Rect::new(control_x, y + centre_offset(style.row_h, h), control_w, h)
+            band_in(band, control_x, control_w, style.row_h.saturating_sub(6))
         }
         // The check box is its own size, centred in the row and leading-aligned
         // in the cell — the one control that does not take the cell.
-        ValueControl::Toggle(_) => Rect::new(
-            control_x,
-            y + centre_offset(style.row_h, style.checkbox_size),
-            style.checkbox_size,
-            style.checkbox_size,
-        ),
+        ValueControl::Toggle(_) => {
+            band_in(band, control_x, style.checkbox_size, style.checkbox_size)
+        }
         // Everything else fills the cell's content box.
         //
         // ★ The swatch belongs HERE and not with the check box, which the
@@ -493,10 +506,18 @@ fn swatch_side(style: &PropertyRowStyle) -> u32 {
     style.text_px + 6
 }
 
-/// The offset that centres a box of `inner` extent inside one of `outer`.
-fn centre_offset(outer: u32, inner: u32) -> u32 {
-    outer.saturating_sub(inner) / 2
-}
+// ★★★★★ R1956 — `centre_offset` is gone. It was this module's own
+// `(outer - inner) / 2`, named and private, while
+// `pinion_core::containment::band_in` had owned the rule since R1862 and owns
+// it BETTER: it rounds ONCE from the seat's centre, so two things of different
+// heights placed in one band share a centre line. The naive form rounds twice
+// and puts them a pixel apart — the defect R1862 was built from, where a
+// legend's 11px pin and its 12px label were each given a plausible `+3` and a
+// reader reported the words as not lining up with the box beside them.
+//
+// A rule with a private second implementation is a rule with two authors, and
+// this one had drifted in the direction that is invisible until somebody looks
+// at two parts at once.
 
 /// Paint one property row: `[ indented name | value cell ]`, plus whatever
 /// marks the screen puts at its trailing edge.
@@ -1179,5 +1200,65 @@ mod tests {
                 .map(|e| (e.content.clone(), e.owner.clone(), e.over))
                 .collect::<Vec<_>>()
         );
+    }
+
+    /// ★★★★★ R1956 — **every control of every height shares its row's centre
+    /// line**, which is the property `containment::band_in` exists for and the
+    /// one nothing here was asking.
+    ///
+    /// This module placed its controls with a private `(row_h - h) / 2`, and
+    /// R1956 moved the two call sites onto `band_in`. ⚠ MEASURED FIRST: putting
+    /// the naive form back turned NOTHING red — `pinion-widget-paint`,
+    /// `hello-property-grid` and `hello-inspector` all stayed green — so the
+    /// repair had no gate behind it and could be undone by anybody, silently.
+    ///
+    /// The two forms differ only when `row_h - h` is odd: the naive one rounds
+    /// TWICE (once into the offset, once into the half-height a centre is read
+    /// at) and lands the control's centre a pixel off the row's, while
+    /// `band_in` rounds once from the row's own centre. R1862 was built from
+    /// exactly that pixel — a legend's 11px pin and 12px label, each given a
+    /// plausible `+3`, that a reader saw as not lining up.
+    ///
+    /// So the sweep is over ODD AND EVEN heights together. A test at one size
+    /// is a test that agrees with the defect half the time.
+    #[test]
+    fn r1956_a_control_of_any_height_shares_its_rows_centre_line() {
+        for row_h in [36, 37, 40, 41] {
+            for checkbox_size in [17, 18, 19, 20] {
+                let style = PropertyRowStyle {
+                    row_h,
+                    checkbox_size,
+                    ..PropertyRowStyle::default()
+                };
+                let row_centre = |g: &PropertyRowGeometry| g.row.y + g.row.h / 2;
+                let control_centre = |g: &PropertyRowGeometry| g.control.y + g.control.h / 2;
+                for control in [
+                    ValueControl::Toggle(true),
+                    ValueControl::Field {
+                        state: TextFieldState::default(),
+                        caret: 0,
+                    },
+                ] {
+                    let spec = PropertyRow {
+                        id: "opacity",
+                        label: "Opacity",
+                        depth: 0,
+                        control,
+                        focused: false,
+                        part: None,
+                    };
+                    let geometry = with_owner(|| layout_property_row(&spec, &style, (0, 7)));
+                    assert_eq!(
+                        control_centre(&geometry),
+                        row_centre(&geometry),
+                        "row_h={row_h} checkbox_size={checkbox_size}: the control \
+                         {:?} does not sit on its row's centre line ({:?} in {:?})",
+                        spec.control,
+                        geometry.control,
+                        geometry.row,
+                    );
+                }
+            }
+        }
     }
 }

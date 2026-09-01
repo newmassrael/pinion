@@ -322,10 +322,22 @@ const SIZES: &[(&str, (u32, u32))] = &[
 /// R1894's repair applied three more times, which is the tell that the literal
 /// was the class rather than the site.
 ///
-/// ⚠ 60 IS STILL A BACKLOG, not a floor. The rest are named by the same
+/// ★ R1956 — 60 → 58, and **not from work aimed at this pin**. That round was
+/// centring things in their seats, and two of its repairs replaced a literal
+/// height with the face's own line box on the way: the palette heading's title
+/// (`20`) and the preset chip's name, which now reaches `chrome_label` like the
+/// rest of the bar. A box derived from its face cannot be short of it, so this
+/// axis is repaid as a side effect of any repair that stops picking heights —
+/// which is the argument for deriving rather than choosing, stated as a number.
+///
+/// ⚠ 58 IS STILL A BACKLOG, not a floor. The rest are named by the same
 /// procedure — set this to 0 and read the assertion — and the next group is the
-/// latency distribution's x-axis labels, 3px short each.
-const SHORT_BOX_BUDGET: usize = 60;
+/// latency distribution's x-axis labels, 3px short each. ⚠⚠ Those are
+/// `pinion-chart`'s, and R1956 measured why they are short: that crate has its
+/// OWN line-box rule (`label_box_h(size) = size + 4`) which is not
+/// `containment::line_box`, so the group cannot be repaid from this screen at
+/// all. See `debt-two-line-box-rules-disagree-by-three-pixels`.
+const SHORT_BOX_BUDGET: usize = 58;
 
 /// Where every tag in the painted scene ended up, and every text run with it.
 struct Painted {
@@ -7757,6 +7769,87 @@ fn r1870_the_short_box_census_of_every_destination() {
              green sweep comes to mean nothing",
         );
         short_box_application_report(&per_destination);
+    });
+}
+
+/// ★★★★★ R1956 — **two things standing side by side share the centre line of
+/// the seat that holds them**, asked of every open destination of the assembled
+/// application.
+///
+/// # The axis nothing was asking
+///
+/// `containment` had three checks and all three are about a box's SIZE:
+/// [`escapes`] whether ink left it, [`short_boxes`] whether it is too small for
+/// the face, [`slack`] whether it is too big. **Where a box sits inside its
+/// seat had no gate at all** — and it is the axis two reported defects came in
+/// on. R1862: a legend's 11px pin sample and 12px label, each given a plausible
+/// `+3` in an 18px row, that a reader saw as not lining up. R1882: a card's
+/// title and badge, the same shape. Each was repaired at its own site, and the
+/// repair could be undone anywhere else without anything going red.
+///
+/// # Why this can be held at ZERO, which is the point
+///
+/// [`pinion_core::containment::uncentred`] reports a pair only when its centre
+/// lines are **exactly one pixel** apart, which is the whole range a second
+/// rounding can produce. `band_in` rounds ONCE from the seat's centre, so
+/// everything the framework places is silent here by construction; only the
+/// hand-spelled `outer.y + (outer.h - h) / 2` — the form R1956 counted **15**
+/// live sites of, four in `crates/` and eleven in `examples/` — can separate
+/// them by that pixel. So this is a floor rather than a pin: a magnitude here
+/// would make finishing the repair a red, the inversion
+/// [`r1870_the_short_box_census_of_every_destination`] states above.
+///
+/// ⚠ **Boxes, not ink** — and that is forced, not chosen.
+/// [`pinion_core::containment::OffCentre`] carries the warning in its own doc:
+/// only its horizontal axis is answerable from ink, because a run with no
+/// descender inks short of the bottom of its line box and would be reported
+/// high of centre while sitting exactly where the shaper puts it. The vertical
+/// question is answerable of the rectangles the scene declares, and nowhere
+/// else.
+#[test]
+fn r1956_things_placed_beside_each_other_share_their_seats_centre_line() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let roster = spec::destinations();
+        let mut walked = 0usize;
+        let mut offenders: Vec<String> = Vec::new();
+        for destination in roster.open() {
+            let key = destination.key.as_ref();
+            if key != state.at() {
+                state.go(key).unwrap_or_else(|why| panic!("{key}: {why:?}"));
+            }
+            let (_, scene) = painted_at((WIN_W, WIN_H));
+            walked += 1;
+            for pair in pinion_core::containment::uncentred(&scene) {
+                let (first, second) = pair.centres();
+                offenders.push(format!(
+                    "{key}: seat `{}` puts {} (centre {first}) beside {} (centre \
+                     {second}) — {:?} and {:?}",
+                    pair.seat,
+                    pair.first.join("."),
+                    pair.second.join("."),
+                    pair.first_rect,
+                    pair.second_rect,
+                ));
+            }
+        }
+        // The same floor the short-box census keeps, for the same reason: a
+        // population that shrank silently is how a green sweep comes to mean
+        // nothing.
+        assert!(
+            walked >= 6,
+            "the rail declares {walked} open destination(s), fewer than the six \
+             this walk was written against",
+        );
+        assert!(
+            offenders.is_empty(),
+            "{} pair(s) placed beside each other do not share their seat's \
+             centre line, which is the signature of `(outer.h - h) / 2` spelled \
+             by hand where `containment::band_in` belongs:\n  {}",
+            offenders.len(),
+            offenders.join("\n  "),
+        );
     });
 }
 

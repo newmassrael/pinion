@@ -3179,8 +3179,26 @@ fn palette_row_h() -> u32 {
 /// after a flex spacer, carrying `title="Collapse"`. Reproduced rather than
 /// approximated — the size and the corner are the two things a reader's eye
 /// actually compares.
+/// ★★★★★ R1956 — **the band the palette's heading occupies**, so its title and
+/// its fold control share a centre line by construction rather than by two
+/// people picking `18` and `14`.
+///
+/// They had picked exactly that, and `containment::uncentred` reported the
+/// pair: a 20-tall title at `y: 18` centres on 28, a 26-tall control at
+/// `y: 14` centres on 27. Derived from one band, neither number is anybody's to
+/// choose and a later change to either height carries the other's placement
+/// with it.
+const fn palette_head_band() -> Rect {
+    Rect::new(0, 14, PALETTE_W, 26)
+}
+
+/// The title's box in that band, at the height its own face needs.
+fn palette_head_title_rect() -> Rect {
+    pinion_core::containment::line_rect_in(palette_head_band(), 16, 220, FONT_TITLE)
+}
+
 const fn palette_fold_rect() -> Rect {
-    Rect::new(PALETTE_W - 16 - 26, 14, 26, 26)
+    pinion_core::containment::band_in(palette_head_band(), PALETTE_W - 16 - 26, 26, 26)
 }
 
 /// ★★★★★ R1951 — **the face the palette's own control wears**, asked of the
@@ -7860,13 +7878,25 @@ fn label(text: &str, rect: Rect, px: u32, fg: Color) -> Scene {
 /// so the rectangle comes back in the child coordinates the container's
 /// children use, and a caller does not convert anything.
 fn chrome_label(chrome: Rect, x: u32, w: u32, text: &str, px: u32, fg: Color) -> Scene {
-    let seat = Rect::new(0, 0, chrome.w, chrome.h);
     label(
         text,
-        pinion_core::containment::line_rect_in(seat, x, w, px),
+        pinion_core::containment::line_rect_in(chrome_seat(chrome), x, w, px),
         px,
         fg,
     )
+}
+
+/// ★★★★★ R1956 — **the seat a chrome box's children are placed in**: its own
+/// extent, at the origin those children are laid out from.
+///
+/// Split out of [`chrome_label`] when a second caller needed it — a preset
+/// chip's fold arrow, which is a MARK rather than a run and so wants
+/// [`pinion_core::containment::band_in`] instead of `line_rect_in`, but wants
+/// the same seat. Written twice the two would be free to disagree about what a
+/// chrome box's seat is, and the defect that opened this round is exactly a
+/// rule with two authors.
+const fn chrome_seat(chrome: Rect) -> Rect {
+    Rect::new(0, 0, chrome.w, chrome.h)
 }
 
 /// A kind's three-letter code in its coloured chip, the word seated by the
@@ -8533,14 +8563,20 @@ fn sub_bar_scene(state: &ShellState, palette: Palette) -> Scene {
     let children = vec![
         Scene::Container(
             ContainerNode::new(vec![
-                label(
+                chrome_label(
+                    preset,
+                    12,
+                    preset.w.saturating_sub(38),
                     &state.preset.get(),
-                    Rect::new(12, 8, preset.w.saturating_sub(38), 16),
                     FONT_TITLE,
                     palette.ink,
                 ),
+                // The fold arrow shares the chip's line with the name beside
+                // it. Both were hand-placed (`y: 8` against `y: 13`) and landed
+                // a pixel apart, which is the pair `containment::uncentred`
+                // reported here.
                 strokes(
-                    Rect::new(preset.w - 26, 13, 12, 8),
+                    pinion_core::containment::band_in(chrome_seat(preset), preset.w - 26, 12, 8),
                     &[vec![(0, 0), (5, 5), (10, 0)]],
                     palette.muted,
                     1,
@@ -10278,46 +10314,43 @@ fn latency_stats(quantiles: &Quantiles) -> Vec<(&'static str, String)> {
         .collect()
 }
 
-/// ★★★★★ R1955 — **a stat tile's two lines, stacked so they cannot collide.**
+/// ★★★★★ R1955 — **a stat tile's two lines, stacked so they cannot collide**,
+/// and R1956 — **through the framework's own element rather than a fourth
+/// hand-rolled one.**
 ///
 /// Both stat cards paint the same shape: a bigger line and a smaller one, one
 /// above the other inside a [`STAT_H`] tile. Each wrote FOUR literals for it —
 /// two heights and two `y`s — and the heights were four and five pixels short
 /// of the faces they hold, which is what a reader meets as a cut descender.
 ///
-/// ⚠ Deriving only the heights is what made this function necessary rather than
+/// ⚠ Deriving only the heights is what made a helper necessary rather than
 /// optional: with the boxes grown and the `y`s left as literals, the second line
 /// started one pixel inside the first and `r1649`'s smear gate reported six
 /// pairs painted on top of each other. **A height and the offset of what sits
-/// under it are one fact.** Here the second line begins exactly where the first
-/// one's line box ends, so an overlap is not a defect that can be written.
-fn stat_lines(
-    top: u32,
-    first: (&str, u32, Color),
-    second: (&str, u32, Color),
-    w: u32,
-) -> Vec<Scene> {
+/// under it are one fact.**
+///
+/// ⚠⚠ AND THE FIRST DRAFT OF THIS FUNCTION WAS ITSELF THE DUPLICATION IT WAS
+/// REPAIRING. R1955 wrote its own stacking arithmetic — first line at a given
+/// top, second at `top + line_box(first)` — without asking whether the
+/// framework already owned it. It does:
+/// [`pinion_core::containment::stacked_line_rects`], built at R1874 for exactly
+/// this shape (*a name over its gist, a title over its subtitle*), and it is
+/// STRICTLY better than what R1955 wrote — the block is centred in the seat by
+/// `band_in`'s rule, rounding once, so a one-line stack lands exactly where
+/// `line_rect_in` would put it and the tile's own top offset stops being a
+/// number anybody picks.
+fn stat_lines(first: (&str, u32, Color), second: (&str, u32, Color), seat: Rect) -> Vec<Scene> {
     let (first_text, first_face, first_ink) = first;
     let (second_text, second_face, second_ink) = second;
-    let first_h = pinion_core::containment::line_box(first_face);
+    let [top, bottom] = pinion_core::containment::stacked_line_rects(
+        seat,
+        10,
+        seat.w.saturating_sub(20),
+        [first_face, second_face],
+    );
     vec![
-        label(
-            first_text,
-            Rect::new(10, top, w.saturating_sub(20), first_h),
-            first_face,
-            first_ink,
-        ),
-        label(
-            second_text,
-            Rect::new(
-                10,
-                top + first_h,
-                w.saturating_sub(20),
-                pinion_core::containment::line_box(second_face),
-            ),
-            second_face,
-            second_ink,
-        ),
+        label(first_text, top, first_face, first_ink),
+        label(second_text, bottom, second_face, second_ink),
     ]
 }
 
@@ -10338,10 +10371,9 @@ fn latency_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
         for (n, (key, value)) in stats.iter().enumerate() {
             out.push(Scene::Container(
                 ContainerNode::new(stat_lines(
-                    6,
                     (key, FONT_TINY, palette.muted),
                     (value, FONT_TITLE, palette.ink),
-                    stat_w,
+                    Rect::new(0, 0, stat_w, STAT_H),
                 ))
                 .with_tag(format!("card.{id}.stat.{n}"))
                 .with_style(
@@ -10678,10 +10710,9 @@ fn filter_counts(
     for (n, (value, what)) in spec::FILTER_STATS.iter().enumerate() {
         out.push(Scene::Container(
             ContainerNode::new(stat_lines(
-                7,
                 (value, FONT_TITLE, palette.ink),
                 (what, FONT_TINY, palette.muted),
-                stat_w,
+                Rect::new(0, 0, stat_w, STAT_H),
             ))
             .with_tag(format!("card.{id}.stat.{n}"))
             .with_style(
@@ -12835,7 +12866,7 @@ fn palette_scene(state: &ShellState, palette: Palette) -> Scene {
         cell(
             PALETTE_HEAD_TITLE.to_owned(),
             spec::PALETTE_TITLE,
-            Rect::new(16, 18, 220, 20),
+            palette_head_title_rect(),
             FONT_TITLE,
             palette.ink,
             TextOverflow::Ellipsis,
