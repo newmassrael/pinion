@@ -63,8 +63,15 @@ VIEWPORT = (1400, 900)
 
 # A light colour and a dark one, chosen to land on OPPOSITE sides of the
 # contrast decision so (D) is a real comparison rather than one case twice.
-LIGHT = "#f0e68c"
-DARK = "#2a2a55"
+#
+# ⚠ R1943 — UPPERCASE, and that is a fact about the wire rather than a style:
+# R1940 found this screen writing one colour in two cases (its card register
+# lowercase, its ink register uppercase through a shared helper) so a client
+# comparing a card with the pin it takes its colour from would have found them
+# unequal, and put both through the helper. This walk had been reading the
+# lowercase half.
+LIGHT = "#F0E68C"
+DARK = "#2A2A55"
 
 CHECKS: list[str] = []
 
@@ -144,10 +151,20 @@ def body() -> None:
             "A: and none of them carries a colour",
             all(row["tint"] is None for row in rows.values()),
         )
+        # ⚠ R1943 — this assertion USED to read "nor any derived faces", on the
+        # ground that a card with no authored colour derives nothing. R1940
+        # changed what that means and this walk was not re-run: a kind now says
+        # what its node is drawn as, so an uncoloured card DOES have faces —
+        # they come from the taxonomy rather than from a default nobody chose.
+        # The property this assertion exists to hold is unchanged, and is now
+        # stated as what it always meant: no face is invented HERE.
         ok(
-            "A: ★ nor any derived faces — a card with no colour derives nothing, "
-            "rather than deriving from a default nobody chose",
-            all(row["faces"] is None for row in rows.values()),
+            "A: ★ and any faces they wear come from the KIND, never from an "
+            "authored colour, because there is none to derive from",
+            all(
+                row["faces"] is None or row["drawn"]["says"] != "unstated"
+                for row in rows.values()
+            ),
         )
         bare_fill, bare_ink = card_paint(app, subject)
         ok(f"A: the card is painted in its kind's surface — {bare_fill}", bare_fill)
@@ -248,7 +265,18 @@ def body() -> None:
         app.tick_ms(16)
         back = tints(app, surface)[subject]
         ok("F: the row carries no colour", back["tint"] is None)
-        ok("F: ★ and no faces either", back["faces"] is None)
+        # ⚠ R1943 — this used to read "and no faces either". R1940 made a kind
+        # able to say what its node is drawn as, so clearing an authored colour
+        # hands the card back to its KIND rather than to nothing — which is what
+        # this screen's own success message ("back to its kind's colour") had
+        # been claiming since R1921 while there was no such colour to go back
+        # to. The property that still matters is that the AUTHORED colour is
+        # gone and what remains is not it.
+        ok(
+            f"F: ★ and what it wears now is its kind's, not the colour that was "
+            f"taken away — {back['faces']}",
+            back["faces"] is None or back["faces"]["title"] != LIGHT,
+        )
         gone_fill, gone_ink = card_paint(app, subject)
         ok(
             f"F: ★★★★★ and the frame is EXACTLY as it was before any colour — "

@@ -12152,8 +12152,15 @@ impl ExternalIntrospect for LabOracle {
                         .ok_or_else(|| InvokeError::rejected("no such card"))?;
                     slot.appearance.tint = wanted;
                 }
+                // ⚠ R1943 — through `hex_of`, like every other colour on this
+                // wire. R1940 found the card register and the ink register
+                // writing one colour in two cases and put the REGISTERS through
+                // the helper; this verb's own answer was left behind, so a
+                // client comparing what the verb said with what the register
+                // published would still have found them unequal. Caught by the
+                // demo sweep, which a rustdoc red had been hiding.
                 let shown = match wanted {
-                    Some(t) => format!("#{:02x}{:02x}{:02x}", t.r, t.g, t.b),
+                    Some(t) => hex_of(t),
                     None => "none".to_owned(),
                 };
                 let name = state.name_of(node);
