@@ -67,17 +67,22 @@ use pinion_core::widgets::slider::SliderState;
 use pinion_core::widgets::text_field::TextFieldState;
 
 use crate::checkbox::{CheckboxStyle, view_checkbox_box};
+use crate::indicator::Indicator;
 use crate::slider::{slider_accent_for, slider_track_inactive};
 use crate::state_layer::focus_fill;
 use crate::text_field::{TextFieldStyle, view_field};
 
-/// U+25BE BLACK DOWN-POINTING SMALL TRIANGLE — the closed selector's affordance.
-///
-/// A `const` rather than an inline literal for the reason
-/// [[non-ascii-literal-named-const-escape]] records: a bare non-ASCII glyph in
-/// an expression is unreadable in a diff and indistinguishable from its
-/// neighbours in the same codepoint block.
-const SELECTOR_CHEVRON: &str = "\u{25BE}";
+// ★★★★★ R1952 — the closed selector's affordance was `U+25BE` BLACK
+// DOWN-POINTING SMALL TRIANGLE, typeset in a run beside the option name, until
+// the face this tree ships was asked whether it has that glyph. It does not:
+// `NotoSans-Regular` is a Latin/Greek/Cyrillic text face and geometric shapes
+// live in separate symbol faces. Measured on the analysis shell, that character
+// was painting a `.notdef` box on the settings page's two selectors and on the
+// node lab's routing picker.
+//
+// It is now [`Indicator::Selector`](crate::indicator::Indicator::Selector) — a
+// drawn chevron, from the point set the behaviour reference's own collapse
+// control carries, so the affordance no longer depends on a font at all.
 
 /// The measurements a property row is laid out with.
 ///
@@ -707,11 +712,11 @@ fn selector_control(
                 style,
                 theme.resolve(ColorRole::OnSurface),
             ),
-            run(
-                SELECTOR_CHEVRON,
+            crate::indicator::inline(
+                Indicator::Selector,
                 chevron_w,
-                style,
                 theme.resolve(ColorRole::OnSurfaceMuted),
+                "the selector's chevron; the control it sits in says it opens a list",
             ),
         ])
         .with_layout(

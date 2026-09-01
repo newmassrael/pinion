@@ -1635,7 +1635,23 @@ use pinion_core::test_fixtures::screen_ink::{
 /// palette by census; this one was found by a round making a defect bigger.
 /// Both are what an equality pin is for — a ceiling would have absorbed the
 /// `+2` and said nothing.
-const SHORT_BOX_BUDGET: usize = 75;
+///
+/// ★★★★★ R1952 — **75 → 67, and the eight are a population LEAVING rather than
+/// a box growing.** That round asked the face this tree ships whether it has a
+/// glyph for every character this screen paints, and eight of these rows were
+/// setting `U+21AA` and `U+25BE` — a hooked arrow on each of the author and
+/// source forms' four provenance badges and seat, and the routing picker's
+/// chevron. No face this tree owns has either character, so those eight runs
+/// were painting `.notdef` boxes in boxes that were also too short for them.
+/// They are drawn marks now (`pinion_widget_paint::indicator`) and are not
+/// runs at all.
+///
+/// ⚠ Worth naming because it is the one way this pin can fall *without*
+/// anything being made to fit: a run that stops existing leaves the population.
+/// Both are legitimate — the number counts short runs, and there are eight
+/// fewer — but only one of them means a box was repaired, so a reader of this
+/// history should not count this fall as boxes learning their faces.
+const SHORT_BOX_BUDGET: usize = 67;
 
 /// The one sweep, over every state.
 #[test]

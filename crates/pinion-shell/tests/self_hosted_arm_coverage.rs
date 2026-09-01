@@ -67,7 +67,7 @@ fn header_strip_selected(
         let section = HeaderSection {
             label,
             align,
-            sort_glyph: (sorted == Some(visual)).then_some("\u{25b2}"),
+            sort: (sorted == Some(visual)).then_some(true),
             dragged: false,
             focused: false,
             selection,
@@ -176,17 +176,39 @@ fn a_weight_the_single_face_cannot_serve_leaves_the_arm() {
     }
 }
 
-/// The strip is MIXED once a column sorts: the arrow declares no alignment, so
-/// it stays the arm's while the labels beside it do not. A census that only
-/// counted labels would report a uniform strip that is not uniform.
+/// ★★★★★ R1952 — **sorting a strip no longer changes what the text arm is
+/// asked for, because the indicator stopped being text.**
+///
+/// This test used to be `a_sorted_strip_is_mixed_because_the_arrow_declares_
+/// nothing`, and it was right about a real thing: the arrow was a leaf that
+/// declared no alignment, so it stayed the self-hosted arm's while every label
+/// beside it went to parley, and a census counting only labels would have
+/// reported a uniform strip that was not uniform.
+///
+/// R1952 asked the face this tree ships whether it has a glyph for `U+25B2`
+/// and `U+25BC`. It does not — `NotoSans-Regular` is a Latin/Greek/Cyrillic
+/// text face — so that leaf had been painting a `.notdef` box in every sorted
+/// header in this tree, and it is a drawn mark now
+/// (`pinion_widget_paint::indicator`). A path is not text, so it reaches
+/// neither shaper.
+///
+/// The assertion is kept, pointing the other way, because the property it
+/// protects is the same one: *a sorted strip and an unsorted strip must give
+/// the same answer*, and the way to be wrong about that is for a header to
+/// grow a leaf nobody counted.
 #[test]
-fn a_sorted_strip_is_mixed_because_the_arrow_declares_nothing() {
+fn sorting_a_strip_does_not_change_what_the_arm_is_asked_for() {
     let engine = engine();
-    let (served, declined) = census(&header_strip(TextAlign::Center, Some(2)), &engine);
+    let sorted = census(&header_strip(TextAlign::Center, Some(2)), &engine);
     assert_eq!(
-        (served, declined),
-        (1, HEADERS.len()),
-        "the sort arrow is the one leaf the arm still paints",
+        sorted,
+        (0, HEADERS.len()),
+        "a Center strip is entirely parley's, and the indicator is not text",
+    );
+    assert_eq!(
+        sorted,
+        census(&header_strip(TextAlign::Center, None), &engine),
+        "and the sorted strip asks for exactly what the unsorted one does",
     );
 }
 

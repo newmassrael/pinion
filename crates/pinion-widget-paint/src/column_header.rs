@@ -34,6 +34,8 @@ use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::voice::Silence;
 use pinion_core::widgets::column_layout::{SectionPlacement, SectionSelection};
 
+use crate::indicator::Indicator;
+
 /// Geometry + type scale for a header strip, in logical pixels.
 ///
 /// The defaults are `hello-column-reorder`'s, which is where every one of
@@ -93,8 +95,8 @@ impl ColumnHeaderStyle {
     /// Floored at 1: a zero-width text rect makes `paint_text` pass `None` for
     /// the width, which silently turns alignment back off.
     #[must_use]
-    pub const fn label_box_width(&self, size: u32, has_sort_glyph: bool) -> u32 {
-        let reserved = if has_sort_glyph {
+    pub const fn label_box_width(&self, size: u32, has_sort_indicator: bool) -> u32 {
+        let reserved = if has_sort_indicator {
             self.label_inset * 2 + self.glyph_w
         } else {
             self.label_inset * 2
@@ -126,10 +128,18 @@ pub struct HeaderSection<'a> {
     /// toolkit keeps the two in different places and only the caller knows
     /// both.
     pub align: TextAlign,
-    /// The sort indicator's glyph, already chosen (see
-    /// [`sort_glyph`](crate::glyph::sort_glyph)), or `None` when this section
-    /// is not the sorted one.
-    pub sort_glyph: Option<&'a str>,
+    /// Which way this column's rows run, or `None` when this section is not
+    /// the sorted one.
+    ///
+    /// ★★★★★ R1952 — the DIRECTION, where this used to be the arrow's
+    /// character. The mark is now drawn (`crate::indicator::Indicator::Sort`)
+    /// rather than typeset, because the face this tree ships has no glyph for
+    /// `U+25B2` or `U+25BC` and the arrow was painting a box on the analysis
+    /// shell's alarm feed in every state and at every size. Carrying the
+    /// direction rather than a chosen character also puts the choice in one
+    /// place: a caller can no longer hand this field an arrow that disagrees
+    /// with the order its rows are in.
+    pub sort: Option<bool>,
     /// This section is the one being dragged.
     pub dragged: bool,
     /// This section is the keyboard-focused one.
@@ -245,7 +255,7 @@ pub fn header_label_node(
     style: &ColumnHeaderStyle,
     theme: &Theme,
 ) -> Scene {
-    let w = style.label_box_width(placement_size, section.sort_glyph.is_some());
+    let w = style.label_box_width(placement_size, section.sort.is_some());
     Scene::Text(
         TextNode::styled(
             section.label,
@@ -292,53 +302,43 @@ pub fn view_header_cell(
         style,
         theme,
     )];
-    if let Some(glyph) = section.sort_glyph {
-        // ★★★★★ R1851 — the glyph gets a BOX, and the box is the line its own
-        // face needs.
+    if let Some(mark) = Indicator::of_sort(section.sort) {
+        // ★★★★★ R1952 — the indicator is DRAWN, not typeset.
         //
-        // It had a position and no size, so the layout pass resolved it to the
-        // run's intrinsic height — which is smaller than the line box the face
-        // requires, so the indicator's own descender was authored into a box too
-        // short for it. Measured at R1851 by a per-card zero gate on the analyzer
-        // shell: `"▼" at 11px in a 16px box needs 18`, in every state and at
-        // every size. The workspace's ink census had it inside a screen-wide
-        // ratchet, where one run of one widget is under the noise.
+        // It was `U+25B2` / `U+25BC` in a text run until R1952 asked the face
+        // this tree ships whether it has those glyphs, with
+        // `Font::glyph_id_for`. It does not — `NotoSans-Regular` is a
+        // Latin/Greek/Cyrillic text face and geometric shapes live in separate
+        // symbol faces — so a sorted column was painting a `.notdef` box on
+        // the analysis shell's alarm feed, in every swept state and at every
+        // size, under seven rounds of paint gates that only ever asked where
+        // ink landed.
         //
-        // Sized from [`pinion_core::containment::line_box`] rather than from a
-        // number here, and WIDTH as well as height, because a run with a
-        // zero-width box makes no promise about holding anything and is skipped
-        // by the census that would otherwise catch the next slip.
+        // ★ The slot keeps the box R1851 gave the run, and for R1851's reason
+        // even though the reason has changed shape: the mark needs a rectangle
+        // of its own to be centred in, and a node with a position and no size
+        // resolves to its content's extent. A path's extent is not a line box,
+        // so the height comes from
+        // [`line_box`](pinion_core::containment::line_box) as before — the slot
+        // is the same rectangle, holding a mark instead of a character.
+        //
+        // ★ R1856's declaration is unchanged and travels with the slot: an
+        // arrow is not the fact, the direction is, and the heading it sits in
+        // announces it as `aria-sort`. That pairing is what makes `decorative`
+        // true here rather than a dropped fact.
         let box_h = pinion_core::containment::line_box(style.text_px);
-        children.push(
-            Scene::Text(
-                TextNode::styled(
-                    glyph,
-                    Rect::default(),
-                    TextStyle::new()
-                        .with_size_px(style.text_px)
-                        .with_fg(theme.resolve(ColorRole::Accent)),
-                )
-                .with_tag(format!("{tag_prefix}_sort#{visual}"))
-                .with_layout(
-                    LayoutStyle::new()
-                        .with_absolute_position(sect_w.saturating_sub(style.glyph_w), style.label_y)
-                        .with_size(Size::px(style.glyph_w, box_h)),
-                ),
-            )
-            // ★★★★★ R1856 — ornament, and the claim is CHECKED elsewhere.
-            //
-            // An arrow is not the fact; the direction is, and a heading node
-            // carries it as `aria-sort`. Declaring this leaf decorative is
-            // therefore true only while that stays so — which is why this module's
-            // own zero gate asserts a sorted heading announces its direction.
-            // Without that pairing this declaration would be the worse defect: an
-            // undecided region reads as unfinished, while a wrong `decorative`
-            // reads as handled and silently drops the one fact a reader scanning a
-            // sorted feed needs.
-            .silenced(Silence::decorative(
-                "the sort arrow; the heading it sits in announces the direction",
-            )),
-        );
+        children.push(crate::indicator::slot(
+            format!("{tag_prefix}_sort#{visual}"),
+            mark,
+            Rect::new(
+                sect_w.saturating_sub(style.glyph_w),
+                style.label_y,
+                style.glyph_w,
+                box_h,
+            ),
+            theme.resolve(ColorRole::Accent),
+            "the sort arrow; the heading it sits in announces the direction",
+        ));
     }
     Scene::Container(
         ContainerNode::new(children)
@@ -366,11 +366,11 @@ mod tests {
         }
     }
 
-    fn section(align: TextAlign, glyph: Option<&'static str>) -> HeaderSection<'static> {
+    fn section(align: TextAlign, sort: Option<bool>) -> HeaderSection<'static> {
         HeaderSection {
             label: "Modified",
             align,
-            sort_glyph: glyph,
+            sort,
             dragged: false,
             focused: false,
             selection: SectionSelection::Unselected,
@@ -535,37 +535,78 @@ mod tests {
         );
     }
 
-    /// The sort glyph takes the section's trailing end, and the label yields
-    /// exactly that much — the two must not overlap.
+    /// The sort indicator takes the section's trailing end, and the label
+    /// yields exactly that much — the two must not overlap.
+    ///
+    /// ★ R1952 — the indicator is a `Container` holding a path where it was a
+    /// `Text`, and the geometry this asserts is unchanged by that: the slot is
+    /// the same rectangle. Reading it as a container rather than as a run is
+    /// what makes this test say the mark stopped being a character.
     #[test]
-    fn the_sort_glyph_and_the_label_do_not_overlap() {
+    fn the_sort_indicator_and_the_label_do_not_overlap() {
         let theme = Theme::light();
         let style = ColumnHeaderStyle::new();
         let cell = view_header_cell(
             "colhdr",
             &placement(150),
-            &section(TextAlign::Center, Some("\u{25b2}")),
+            &section(TextAlign::Center, Some(true)),
             &style,
             &theme,
         );
         let Scene::Container(c) = cell else {
             panic!("the cell is a Container");
         };
-        assert_eq!(c.children.len(), 2, "label + glyph");
+        assert_eq!(c.children.len(), 2, "label + indicator");
         let Scene::Text(label) = &c.children[0] else {
             panic!("the label comes first");
         };
-        let Scene::Text(glyph) = &c.children[1] else {
-            panic!("the glyph comes second");
+        let Scene::Container(mark) = &c.children[1] else {
+            panic!("the indicator comes second, and is drawn rather than typeset");
         };
         let SizeValue::Px(label_w) = label.layout.size.width else {
             panic!("the label box is sized in px");
         };
         let label_end = style.label_inset + label_w;
-        let glyph_start = glyph.layout.absolute_position.map_or(0, |(x, _)| x);
+        let mark_start = mark.layout.absolute_position.map_or(0, |(x, _)| x);
         assert!(
-            label_end <= glyph_start,
-            "the label box must end before the glyph starts: {label_end} vs {glyph_start}",
+            label_end <= mark_start,
+            "the label box must end before the indicator starts: {label_end} vs {mark_start}",
         );
+    }
+
+    /// ★★★★★ R1952 — **the header paints no text run but its label.**
+    ///
+    /// The defect this replaced was invisible to every geometry check above:
+    /// the arrow had a box, sat in it, and did not overlap anything — it simply
+    /// had no glyph in the face this tree ships, so what a reader saw in that
+    /// correct rectangle was a box. Asserting the *shape of the node* is what
+    /// catches a mark going back to being a character, which a rectangle check
+    /// never can.
+    #[test]
+    fn r1952_a_sorted_header_typesets_only_its_label() {
+        let theme = Theme::light();
+        let style = ColumnHeaderStyle::new();
+        for sort in [None, Some(true), Some(false)] {
+            let cell = view_header_cell(
+                "colhdr",
+                &placement(150),
+                &section(TextAlign::Center, sort),
+                &style,
+                &theme,
+            );
+            let Scene::Container(c) = cell else {
+                panic!("the cell is a Container");
+            };
+            let runs = c
+                .children
+                .iter()
+                .filter(|child| matches!(child, Scene::Text(_)))
+                .count();
+            assert_eq!(
+                runs, 1,
+                "sort={sort:?}: a header cell typesets its label and nothing \
+                 else — a second run is a mark asking a font for a glyph",
+            );
+        }
     }
 }

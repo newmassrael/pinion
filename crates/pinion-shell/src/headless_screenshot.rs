@@ -3936,7 +3936,7 @@ mod tests {
             let section = HeaderSection {
                 label: LABEL,
                 align,
-                sort_glyph: None,
+                sort: None,
                 dragged: false,
                 focused: false,
                 selection,
@@ -4068,7 +4068,7 @@ mod tests {
             let section = HeaderSection {
                 label: LABEL,
                 align: TextAlign::Center,
-                sort_glyph: None,
+                sort: None,
                 dragged: false,
                 focused: false,
                 selection,

@@ -95,6 +95,20 @@ const ROWS_TAG: &str = "sv.list.rows";
 /// Where a resting description is painted and announced.
 const TOOLTIP_TAG: &str = "sv.tip";
 
+/// The word the detail's peer line opens with.
+///
+/// ★★★★★ R1952 — it was `U+2192` RIGHTWARDS ARROW, and the face this tree
+/// ships has no glyph for it: `NotoSans-Regular` is a Latin/Greek/Cyrillic text
+/// face and arrows live in separate symbol faces. A reader arriving at this
+/// section saw a `.notdef` box where the line begins. A mark inside a sentence
+/// cannot be a drawn path — it has to flow with the words around it — so the
+/// repair is prose, in characters the face can set. It also reads without
+/// decoding, which the arrow never did.
+///
+/// A `const` because the paint and the check that finds the line must not
+/// spell it twice.
+pub const PEER_LEAD: &str = "to";
+
 // ── Geometry ────────────────────────────────────────────────────────────────
 
 const WIN_W: u32 = spec::WIN_W;
@@ -1086,7 +1100,7 @@ fn detail_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
             "sv.detail.peer",
             seat(PAD, 136, pane.w.saturating_sub(PAD * 2), FONT_SMALL),
             vec![label(
-                format!("\u{2192} {} \u{00B7} {}", session.peer, session.zid),
+                format!("{PEER_LEAD} {} \u{00B7} {}", session.peer, session.zid),
                 Rect::new(0, 0, pane.w.saturating_sub(PAD * 2), 0),
                 FONT_SMALL,
                 ink.faint,

@@ -4813,8 +4813,13 @@ impl ShellOracle {
             .resize(&tile_id, w, h)
             .map_err(|why| InvokeError::rejected(why.to_string()))?;
         state.board.set(board);
+        // ★★★★★ R1952 — "is now", where this said `U+2192`. The face this tree
+        // ships has no glyph for that arrow, so every resize a person made put
+        // a `.notdef` box in the middle of the sentence the shell said back to
+        // them. A mark inside a sentence cannot become a drawn path — it has to
+        // flow with the words — so a sentence gets words.
         state.say(Utterance::done(format!(
-            "{} \u{2192} {w}\u{00D7}{h}",
+            "{} is now {w}\u{00D7}{h}",
             label_of(id)
         )));
         Ok(IntrospectValue::Text(format!("{w}x{h}")))

@@ -233,14 +233,21 @@ fn chevron(
     // `placed` makes it pointer-transparent, which is what keeps a press
     // reaching the consumer's hit test over the published rectangle rather than
     // dying on a tag that has no `External`.
+    //
+    // ★★★★★ R1952 — the chevron is DRAWN. It was `U+25BE` in a 10px run until
+    // the face this tree ships was asked whether it has that glyph, with
+    // `Font::glyph_id_for`; it does not, and neither does any other face this
+    // tree owns. A person opening the analysis shell's settings page or the
+    // node lab's routing picker saw a `.notdef` box where the affordance
+    // belongs — on a control whose whole job is to say *there is a list under
+    // here*.
     Scene::Container(
-        ContainerNode::new(vec![Scene::Text(TextNode::styled(
-            "\u{25be}".to_owned(),
-            Rect::default(),
-            run_style()
-                .with_size_px(10)
-                .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
-        ))])
+        ContainerNode::new(vec![crate::indicator::inline(
+            crate::indicator::Indicator::Selector,
+            seat.h.min(seat.w),
+            theme.resolve(ColorRole::OnSurfaceMuted),
+            "the chevron that opens the roster; the chooser announces its state",
+        )])
         .with_tag(tag)
         .with_layout(placed(
             LayoutStyle::new()

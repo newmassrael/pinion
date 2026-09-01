@@ -1368,6 +1368,153 @@ fn r1951_every_button_is_read_by_its_words_or_by_a_mark() {
     );
 }
 
+// -- 3b. Legible: every letter painted is one this tree's face can draw -------
+
+/// The one face this tree renders through, as the font PARSER sees it.
+///
+/// The same `NotoSans-Regular.ttf` `pinion_text::test_font` calls *one face
+/// across the tree* and `pinion-shell` installs for its pixel guards. Asked
+/// here as a font rather than through the shaper, because the question is prior
+/// to shaping: not how wide a run is, but whether the face has a glyph for the
+/// character at all.
+fn tree_face() -> pinion_text_font::Font {
+    const NOTO: &[u8] =
+        include_bytes!("../../../crates/pinion-text-font/tests/fonts/NotoSans-Regular.ttf");
+    pinion_text_font::Font::from_bytes(NOTO.to_vec())
+        .expect("the face this tree ships parses, or every guard below is asking nothing")
+}
+
+/// Every character `shot` paints that [`tree_face`] has no glyph for, filed
+/// under the tag that owns the run, with the number of characters asked.
+fn unfaced(
+    face: &pinion_text_font::Font,
+    shot: &Painted,
+    at: &str,
+    out: &mut BTreeMap<char, BTreeSet<String>>,
+) -> usize {
+    let mut asked = 0;
+    for (content, _, owner) in &shot.runs {
+        for ch in content.chars() {
+            asked += 1;
+            // A real glyph, not `.notdef`. `Some(0)` is the cmap answering
+            // "this maps to the box", which is the very thing being looked for.
+            if matches!(face.glyph_id_for(ch as u32), Some(g) if g != 0) {
+                continue;
+            }
+            let owner = owner.as_deref().unwrap_or("<untagged>");
+            out.entry(ch).or_default().insert(format!("{at}: {owner}"));
+        }
+    }
+    asked
+}
+
+/// ★★★★★ R1952 §5.36 §5.37 — **every letter this screen paints is one the face
+/// this tree ships can draw.**
+///
+/// # The gap this closes
+///
+/// R1951 classified every button as read by its words or read by a mark, and
+/// wrote its own limit into its doc: *a speaking button's words could still be
+/// a glyph the host's font does not carry, which paints a blank or a box.*
+/// That is this axis, and it was open because nothing here had ever asked a
+/// font a question — the checks above ask where ink landed, and ink that never
+/// existed lands nowhere to be measured.
+///
+/// Measured at R1952 with `Font::glyph_id_for`, the shell painted `U+2192` in
+/// the sentence a resize says, and the face this tree ships **has no glyph for
+/// it**. A person gets a box in the middle of a sentence, on a screen seven
+/// rounds of paint gates had passed.
+///
+/// # Why the face and not the host
+///
+/// The claim is deliberately weak and right: not *this draws on every machine*
+/// but *the face this tree ships can draw it*. A codepoint outside that face
+/// renders whatever the machine happens to have — or `.notdef` — and a screen
+/// whose ink depends on the machine is exactly the dependence
+/// [[zero-flake-policy]] forbids and R1674 removed from the commonest mark in
+/// the catalog. Asking the host instead would make this gate's subject the
+/// runner image.
+///
+/// # The population
+///
+/// Every text run the real pipeline paints, in every swept case AND at every
+/// pose of every open destination — the union R1864 established, because a
+/// section is not always one frame and a character on its second frame is one
+/// a reader still sees.
+#[test]
+fn r1952_every_letter_the_screen_paints_is_one_this_trees_face_can_draw() {
+    let face = tree_face();
+    let mut missing: BTreeMap<char, BTreeSet<String>> = BTreeMap::new();
+    let mut asked = 0usize;
+    let mut painted: BTreeSet<char> = BTreeSet::new();
+
+    sweep(|_, shot, _, case| {
+        asked += unfaced(&face, shot, &case.to_string(), &mut missing);
+        painted.extend(shot.runs.iter().flat_map(|(c, _, _)| c.chars()));
+    });
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let roster = spec::destinations();
+        for destination in roster.all() {
+            if !matches!(
+                destination.standing,
+                pinion_core::widgets::destination::Standing::Open
+            ) {
+                continue;
+            }
+            let key = destination.key.as_ref();
+            for (nth, shot) in poses_at_destination(key).iter().enumerate() {
+                asked += unfaced(&face, shot, &format!("{key} pose {nth}"), &mut missing);
+                painted.extend(shot.runs.iter().flat_map(|(c, _, _)| c.chars()));
+            }
+        }
+    });
+
+    assert!(
+        missing.is_empty(),
+        "character(s) this screen paints that the face the tree ships has no \
+         glyph for — each one is a box where a reader expects a mark: {missing:#?}",
+    );
+
+    // ★ Anti-vacuity, and it has a path to zero: a screen that painted no text
+    // at all, or a `Painted` that stopped collecting runs, would make every
+    // line above pass by asking nothing (R1651.1).
+    assert!(
+        asked > 0,
+        "no character was asked about at all, so this gate reports green for \
+         having no population rather than for a legible screen",
+    );
+
+    // ★★★★★ And the marks themselves are PINNED, not merely checked. A
+    // character outside ASCII on this screen is a deliberate choice — a minus
+    // in a stepper, a times between two numbers, the ellipsis an elision
+    // leaves — and the set of them is a census of what this screen asks a FONT
+    // for rather than drawing itself. Pinned so the next one is a decision
+    // somebody makes here, in front of the coverage rule above, instead of
+    // arriving inside a `format!`.
+    //
+    // Measured at R1952, after the four faceless ones were repaired:
+    //
+    // * `U+00B7` MIDDLE DOT — the separator between two facts on one line
+    // * `U+00D7` MULTIPLICATION SIGN — a size reading, `w × h`
+    // * `U+2014` EM DASH — the dash a card shows where it has no value
+    // * `U+2026` HORIZONTAL ELLIPSIS — what an elided run ends with
+    // * `U+2212` MINUS SIGN — the two size steppers
+    //
+    // All five are in the face, which is why the assertion above is silent
+    // about them. They are pinned anyway: coverage is a fact about today's
+    // face, and *this glyph happens to be in the font* is precisely the
+    // reasoning that let four boxes reach a person's screen.
+    let non_ascii: Vec<char> = painted.iter().copied().filter(|c| !c.is_ascii()).collect();
+    assert_eq!(
+        non_ascii,
+        ['\u{00B7}', '\u{00D7}', '\u{2014}', '\u{2026}', '\u{2212}'],
+        "the marks this screen draws as text have changed; each one is a new \
+         font obligation, so it is named here or it is drawn as a path",
+    );
+}
+
 // -- 4. Contained: nothing is painted outside the box it belongs to -----------
 
 /// R1668 — every painted mark lies inside the pane its address puts it in.

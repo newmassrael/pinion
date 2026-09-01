@@ -211,10 +211,18 @@ pub fn scenes(mark: ControlMark, rect: Rect, ink: Color) -> Vec<Scene> {
         )],
         ControlMark::Close => vec![strokes(
             rect,
-            &[
-                vec![(cx - 4, cy - 4), (cx + 4, cy + 4)],
-                vec![(cx + 4, cy - 4), (cx - 4, cy + 4)],
-            ],
+            CROSS
+                .map(|run| {
+                    run.iter()
+                        .map(|(dx, dy)| {
+                            (
+                                u32::try_from(i64::from(cx) + i64::from(*dx)).unwrap_or(0),
+                                u32::try_from(i64::from(cy) + i64::from(*dy)).unwrap_or(0),
+                            )
+                        })
+                        .collect()
+                })
+                .as_ref(),
             ink,
             1,
         )],
@@ -246,14 +254,38 @@ pub fn scenes(mark: ControlMark, rect: Rect, ink: Color) -> Vec<Scene> {
         // module's invention rather than a reproduction; the reference was not
         // asked until the round that first put this mark on a screen the
         // reference also draws.
-        ControlMark::Fold { to } => vec![strokes(
-            rect,
-            &directed(to, (cx, cy), &[&[(2, -5), (-3, 0), (2, 5)]]),
-            ink,
-            1,
-        )],
+        ControlMark::Fold { to } => {
+            vec![strokes(rect, &directed(to, (cx, cy), &[&CHEVRON]), ink, 1)]
+        }
     }
 }
+
+/// **The chevron**, as offsets from the slot's centre, pointing at
+/// [`ChromeEdge::Left`].
+///
+/// ★★★★★ R1951 read this out of the behaviour reference rather than inventing
+/// it: the reference's collapse control is a 20-unit box carrying the polyline
+/// `8,5 13,10 8,15` — a single chevron whose apex is five units from the
+/// centre — and this is that drawing expressed from the centre so it can be
+/// turned onto any edge. R1950 had drawn two chevrons, which was this module's
+/// invention; the reference was not asked until the round that first put the
+/// mark on a screen the reference also draws.
+///
+/// ★ R1952 made it a `const` when [`crate::indicator`] needed the same shape
+/// for a closed selector. A chevron drawn in two places from two literals is
+/// two chances to draw a different shape, and nothing in a screenshot compares
+/// them — the Rule-of-Three miss [[self-grep-count-all-sites-not-just-new-pair]]
+/// names, caught at the pair.
+pub(crate) const CHEVRON: [(i32, i32); 3] = [(2, -5), (-3, 0), (2, 5)];
+
+/// **The cross**, as two runs of offsets from the slot's centre.
+///
+/// ★ R1952 made it a `const` when [`crate::indicator`] needed the same shape
+/// for a row's discard seat — the same reason as [`CHEVRON`] above, caught at
+/// the pair. The two vocabularies stay separate (a band's close control and a
+/// row's seat answer different questions); only the drawing is shared, so the
+/// two crosses cannot come out looking like different ideas.
+pub(crate) const CROSS: [[(i32, i32); 2]; 2] = [[(-4, -4), (4, 4)], [(4, -4), (-4, 4)]];
 
 /// One canonical drawing, pointing at [`ChromeEdge::Left`], turned to point at
 /// `edge` and placed around `centre`.
@@ -333,6 +365,30 @@ pub(crate) fn strokes(rect: Rect, runs: &[Vec<(u32, u32)>], ink: Color, width: u
         PathNode::new(rect, commands, PathStyle::stroked(Stroke::new(ink, width)))
             .with_layout(absolute(rect)),
     )
+}
+
+/// A **filled** closed polygon set in `rect`-local coordinates.
+///
+/// R1952 — the peer of [`strokes`], for a mark whose weight is the point: a
+/// sort indicator is read at a glance beside a word, and an outlined triangle
+/// at that size reads as a smudge. Each run is closed back to its own first
+/// point, so a caller writes the corners and not the return.
+pub(crate) fn fills(rect: Rect, runs: &[Vec<(u32, u32)>], ink: Color) -> Scene {
+    let mut commands = Vec::new();
+    for run in runs {
+        for (n, (x, y)) in run.iter().enumerate() {
+            let at = point(*x, *y);
+            commands.push(if n == 0 {
+                PathCommand::MoveTo(at)
+            } else {
+                PathCommand::LineTo(at)
+            });
+        }
+        if let Some((x, y)) = run.first() {
+            commands.push(PathCommand::LineTo(point(*x, *y)));
+        }
+    }
+    Scene::Path(PathNode::new(rect, commands, PathStyle::filled(ink)).with_layout(absolute(rect)))
 }
 
 #[cfg(test)]

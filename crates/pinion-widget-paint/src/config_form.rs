@@ -57,6 +57,7 @@ use pinion_core::widgets::picker::Picker;
 use pinion_core::widgets::toggle::ToggleState;
 use pinion_core::{Scene, measured_text_extent};
 
+use crate::indicator::Indicator;
 use crate::switch::SwitchStyle;
 
 /// R1654 §5.36 — the base style every run in this form carries.
@@ -1419,41 +1420,50 @@ fn provenance_badges(
             if field.applies() == Applies::Hot {
                 out.push(applies());
             }
-            out.push(source(&format!("{DERIVED_GLYPH} {from}")));
+            out.push(source(&format!("{SOURCE_WORD} {from}")));
             out
         }
         Source::Shared(from) => vec![
             applies(),
             source(&format!(
-                "{DERIVED_GLYPH} {from} {}",
+                "{SOURCE_WORD} {from} {}",
                 field.derived_elements()
             )),
         ],
     }
 }
 
-/// The glyph the seat that takes a row away is drawn with.
+/// The word a source badge opens with, where it used to open with an arrow.
 ///
-/// U+00D7, the multiplication sign — a typographic character in Latin-1 rather
-/// than a letter or a symbol from a font this project would have to vendor.
-/// `x` would read as a value someone typed; the framework already paints
-/// [`pinion_core::text_elide::ELLIPSIS`] from a higher block than this one.
-const REMOVE_GLYPH: &str = "\u{00d7}";
+/// ★★★★★ R1952 — the badge is **prose**, and a badge is the one place in this
+/// module where a drawn mark is the wrong answer: its run is 9px and the
+/// narrowest slot [`Indicator::MIN`](crate::indicator::Indicator::MIN) draws
+/// into is thirteen, so a mark would set the pill's height rather than sit in
+/// it. Prose has to be spellable in the face this tree ships, and `U+21AA` is
+/// not — so the badge says the word. It is also what the row's own description
+/// already said to a reader who cannot see the badge, which is a second reason
+/// the arrow was carrying nothing the words did not.
+const SOURCE_WORD: &str = "from";
 
-/// The glyph a derived row is marked with, and the one its seat is drawn with.
-///
-/// U+21AA, a rightwards arrow with a hook — "this came from over there", which
-/// is what the badge says in one character, and on the seat it is the same
-/// arrow pointing at the person: take it. Latin-1 has no such mark, so this is
-/// the one place the form reaches past it; the face this project ships covers
-/// it, and R1697 recorded what a face's gap looks like when it does not.
-const DERIVED_GLYPH: &str = "\u{21aa}";
-
-/// The glyph the seat of a row with two contributors shows: give my half back.
-///
-/// ★ R1717 — the take-over arrow reversed, because the act is its mirror and a
-/// reader who has learned one has learned the other.
-const GIVE_BACK_GLYPH: &str = "\u{21a9}";
+// ★★★★★ R1952 — **the three seats stopped being characters, and one of them
+// carried a sentence that had gone false.**
+//
+// They were `U+00D7`, `U+21AA` and `U+21A9`, and the middle one's doc said in
+// as many words: *the face this project ships covers it.* Measured at R1952
+// with `Font::glyph_id_for` against `NotoSans-Regular` — the face
+// `pinion_text::test_font` calls *one face across the tree* — it does not, and
+// neither does the other arrow. The analysis shell's node lab was painting
+// `.notdef` boxes on eight rows of its author and source forms.
+//
+// ⚠ `U+00D7` IS in that face, and it moved anyway. The rule cannot be *typeset
+// when the face happens to have the character*: that is exactly the reasoning
+// which produced this round's four defects — every one of them was written by
+// somebody who had checked, or believed they had. A mark a widget draws is
+// drawn. What remains typeset here is prose.
+//
+// The marks are `crate::indicator::Indicator::{Discard, TakeOver, GiveBack}`,
+// and the take-over / give-back pair is still one drawing mirrored, which is
+// what R1717 asked for and what a character pair could never guarantee.
 
 /// The seat at a row's trailing edge: it takes an authored row **out**, takes a
 /// derived row **over**, and gives a shared row's written half **back**.
@@ -1462,20 +1472,20 @@ const GIVE_BACK_GLYPH: &str = "\u{21a9}";
 /// here — the property this module has kept since R1651.1, and the reason it
 /// keeps it is that the two copies drift silently and the press lands nowhere.
 fn view_remove_seat(tag_prefix: &str, row: &RowBox, origin: (u32, u32), theme: &Theme) -> Scene {
-    let glyph = match row.seat {
-        Seat::Remove(_) => REMOVE_GLYPH,
-        Seat::TakeOver(_) => DERIVED_GLYPH,
-        Seat::GiveBack(_) => GIVE_BACK_GLYPH,
+    let mark = match row.seat {
+        Seat::Remove(_) => Indicator::Discard,
+        Seat::TakeOver(_) => Indicator::TakeOver,
+        Seat::GiveBack(_) => Indicator::GiveBack,
     };
+    let seat = row.seat.rect();
     let tag = format!("{tag_prefix}.{}.{}", row.seat.act(), row.key);
     Scene::Container(
-        ContainerNode::new(vec![Scene::Text(TextNode::styled(
-            glyph.to_owned(),
-            Rect::default(),
-            form_run_style()
-                .with_size_px(12)
-                .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
-        ))])
+        ContainerNode::new(vec![crate::indicator::inline(
+            mark,
+            seat.h.min(seat.w),
+            theme.resolve(ColorRole::OnSurfaceMuted),
+            "the seat's mark; the seat itself says the act in words",
+        )])
         .with_tag(tag)
         .with_layout(placed(
             LayoutStyle::new()

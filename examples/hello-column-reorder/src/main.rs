@@ -119,7 +119,6 @@ use pinion_core::widgets::table::{cell_cmp, grid_order_by};
 use pinion_core::{Frame, Intent, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::column_header::{ColumnHeaderStyle, HeaderSection, view_header_cell};
-use pinion_widget_paint::glyph::sort_glyph;
 use std::borrow::Cow;
 use std::rc::Rc;
 
@@ -1108,12 +1107,10 @@ fn section_cell(p: &SectionPlacement, state: &HeaderState, theme: &Theme) -> Sce
             .get(p.logical)
             .copied()
             .unwrap_or(DEFAULT_HEADER_ALIGNMENT),
-        sort_glyph: sort_glyph(
-            state
-                .sort_indicator_shown
-                .then(|| col_sort_dir(state.sort_indicator, p.logical))
-                .flatten(),
-        ),
+        sort: state
+            .sort_indicator_shown
+            .then(|| col_sort_dir(state.sort_indicator, p.logical))
+            .flatten(),
         dragged: state.dragging == Some(p.visual),
         focused: state.focused == Some(p.visual),
         // R1510 — keyed LOGICALLY, like the alignment above it: a selection is a
@@ -2226,9 +2223,13 @@ mod tests {
                 let Scene::Container(c) = &painted else {
                     return false;
                 };
+                // ★ R1952 — the indicator is a drawn mark in a tagged slot, not
+                // a text run: the face this tree ships has no glyph for either
+                // arrow, so a sorted column used to paint a `.notdef` box.
+                // Looked up by the same address it always had.
                 c.children.iter().any(|child| {
-                    matches!(child, Scene::Text(t)
-                        if t.tag.as_deref() == Some(&format!("colhdr_sort#{}", p.visual)))
+                    matches!(child, Scene::Container(slot)
+                        if slot.tag.as_deref() == Some(&format!("colhdr_sort#{}", p.visual)))
                 })
             })
             .map(|p| p.visual)

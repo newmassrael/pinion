@@ -107,6 +107,7 @@ pub mod group_box;
 pub mod group_header;
 pub mod header_feed;
 pub mod hex_dump;
+pub mod indicator;
 pub mod listbox;
 pub mod menu;
 pub mod pages;

@@ -5071,7 +5071,7 @@ fn r1851_the_order_the_arrow_and_the_threshold_cannot_disagree() {
                 .with_sort(sort)
                 .sections()
                 .into_iter()
-                .map(|s| s.sort_glyph)
+                .map(|s| s.sort)
                 .collect::<Vec<_>>()
         };
 
@@ -5090,7 +5090,7 @@ fn r1851_the_order_the_arrow_and_the_threshold_cannot_disagree() {
         assert_ne!(
             glyphs(Some((1, true)))[1],
             glyphs(Some((1, false)))[1],
-            "the two directions draw different glyphs, or the arrow says nothing"
+            "the two directions carry different faces, or the arrow says nothing"
         );
 
         // The opening order really is newest first.

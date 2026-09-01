@@ -344,6 +344,17 @@
       ]
     },
     {
+      "name": "debt-six-catalogue-marks-are-set-in-a-face-that-lacks-them",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links debt-canon-gui-surface-census"
+      ]
+    },
+    {
       "name": "debt-six-declared-destinations-are-never-built",
       "substituted": false,
       "blocked_by": "buildable",

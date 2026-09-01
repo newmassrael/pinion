@@ -28,8 +28,10 @@
 //!
 //! # ★★★★★ The three facts that must not be read twice
 //!
-//! **1. The sort indicator is DERIVED from the sort state.** The glyph comes out
-//! of [`sort_glyph`] applied to
+//! **1. The sort indicator is DERIVED from the sort state.** The direction the
+//! section carries — and, since R1952, the mark
+//! [`Indicator::of_sort`](crate::indicator::Indicator::of_sort) draws for it —
+//! comes out of
 //! [`col_sort_dir`] over the same
 //! `sort` the caller ordered its rows by, so the arrow cannot point one way
 //! while the rows run the other. On the toolkit floor at 6.11.1 the two are
@@ -74,7 +76,6 @@ use pinion_core::widgets::scroll::ScrollState;
 use pinion_core::widgets::virtual_list::{VisibleWindow, compute_visible_range};
 
 use crate::column_header::{ColumnHeaderStyle, HeaderSection, view_header_cell};
-use crate::glyph::sort_glyph;
 use crate::virtual_list::view_virtual_list;
 
 /// One column of a feed's header.
@@ -369,8 +370,8 @@ impl<'a> HeaderFeed<'a> {
             .map(|(n, column)| HeaderSection {
                 label: column.label,
                 align: column.align,
-                sort_glyph: if column.sortable {
-                    sort_glyph(col_sort_dir(self.sort, n))
+                sort: if column.sortable {
+                    col_sort_dir(self.sort, n)
                 } else {
                     None
                 },
@@ -514,7 +515,7 @@ mod tests {
                 .with_sort(sort)
                 .sections()
                 .into_iter()
-                .map(|s| s.sort_glyph)
+                .map(|s| s.sort)
                 .collect::<Vec<_>>()
         };
         assert_eq!(glyphs(None), vec![None, None, None], "unsorted: no arrow");
@@ -775,7 +776,7 @@ mod tests {
                 .sections()
                 .into_iter()
                 .enumerate()
-                .filter(|(_, s)| s.sort_glyph.is_some())
+                .filter(|(_, s)| s.sort.is_some())
                 .map(|(n, _)| n)
                 .collect::<Vec<_>>()
         };

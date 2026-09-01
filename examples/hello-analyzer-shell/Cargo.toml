@@ -70,6 +70,11 @@ pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1" }
 # R1811 — the slack gate measures with the SAME cache the layout shaped with;
 # a stand-in measure would answer about a font nobody painted.
 pinion-text = { path = "../../crates/pinion-text", version = "0.0.1" }
+# ★★★★★ R1952 — the font PARSER, so this screen can be asked whether the face
+# the tree ships has a glyph for each character it paints. `pinion-text` is the
+# shaper and answers how wide a run is; the question here is prior to that —
+# does the face carry the character at all, or does the reader get `.notdef`.
+pinion-text-font = { path = "../../crates/pinion-text-font", version = "0.0.1" }
 
 [build-dependencies]
 pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }

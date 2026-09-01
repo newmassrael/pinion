@@ -51,6 +51,7 @@ use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::widgets::virtual_list::{VisibleWindow, compute_visible_range, content_height};
 use pinion_core::widgets::virtual_select::SelectionExtent;
 
+use crate::indicator::Indicator;
 use crate::virtual_list::{assemble_windowed_flex, uniform_slots};
 
 /// R707 §5.50 — Material-3 data-table paint dimensions. Mirrors the
@@ -562,19 +563,22 @@ fn header_cell(
         section_label_style(style, fg),
         style,
     );
-    // R886.1 — active-column decision + glyph through the two SSOTs
-    // (`col_sort_dir` / `glyph::sort_glyph`); this site was one of the
+    // R886.1 — active-column decision + face through the two SSOTs
+    // (`col_sort_dir` / `Indicator::of_sort`); this site was one of the
     // five private copies of the pair.
-    if let Some(glyph) =
-        crate::glyph::sort_glyph(pinion_core::widgets::grid_sort::col_sort_dir(sort, col))
+    //
+    // ★★★★★ R1952 — DRAWN rather than typeset. It was `U+25B2` / `U+25BC`
+    // until the face this tree ships was asked whether it has those glyphs and
+    // answered no, which is what a reader had been seeing: a `.notdef` box
+    // beside a column heading. The box the mark gets is the line the label's
+    // own face reserves, so the header row's rhythm is the one it had.
+    if let Some(mark) = Indicator::of_sort(pinion_core::widgets::grid_sort::col_sort_dir(sort, col))
     {
-        inner_children.push(Scene::Text(
-            TextNode::styled(
-                glyph.to_string(),
-                Rect::default(),
-                section_label_style(style, fg),
-            )
-            .with_role(TextRole::Presentational),
+        inner_children.push(crate::indicator::inline(
+            mark,
+            pinion_core::containment::line_box(style.header_size_px),
+            fg,
+            "the sort arrow; the heading it sits in announces the direction",
         ));
     }
     let inner = Scene::Container(
@@ -4137,12 +4141,14 @@ mod tests {
                 &TableStyle::m3(),
             )
         });
-        let mut t = Vec::new();
-        collect_text(&unsorted, &mut t);
+        // ★ R1952 — read from the MARKS the grid draws, not from the characters
+        // it typesets. The indicator stopped being a character in R1952 because
+        // the face this tree ships has no glyph for either arrow, and a check
+        // that counts characters would have gone green over a header drawing
+        // nothing at all.
         assert!(
-            !t.iter()
-                .any(|s| s == crate::glyph::SORT_ASCENDING || s == crate::glyph::SORT_DESCENDING),
-            "no glyph when unsorted"
+            crate::indicator::marks_in(&unsorted).is_empty(),
+            "no indicator when unsorted"
         );
 
         let sorted = Owner::new().run(|| {
@@ -4166,18 +4172,11 @@ mod tests {
                 &TableStyle::m3(),
             )
         });
-        let mut t2 = Vec::new();
-        collect_text(&sorted, &mut t2);
         assert_eq!(
-            t2.iter()
-                .filter(|s| *s == crate::glyph::SORT_ASCENDING)
-                .count(),
-            1,
-            "one ascending glyph"
-        );
-        assert!(
-            !t2.iter().any(|s| s == crate::glyph::SORT_DESCENDING),
-            "no descending glyph for ascending sort"
+            crate::indicator::marks_in(&sorted),
+            vec![Indicator::Sort { ascending: true }],
+            "exactly one indicator, on the active column, pointing the way the \
+             rows run",
         );
     }
 
@@ -6434,7 +6433,7 @@ mod tests {
     }
 
     #[test]
-    fn r778_sorted_grid_header_routes_to_sort_tag_and_shows_glyph() {
+    fn r778_sorted_grid_header_routes_to_sort_tag_and_shows_its_direction() {
         let scene = run_vtable_sorted(Some((1, false)), &[0, 1, 2, 3]);
         // Clickable headers route to the sort anchor, not the paint root.
         for col in 0..3 {
@@ -6447,19 +6446,11 @@ mod tests {
                 "header {col} does NOT route to the grid (select) anchor",
             );
         }
-        // Descending glyph on the active column only.
-        let mut text = Vec::new();
-        collect_text(&scene, &mut text);
+        // The descending mark, drawn on the active column only (R1952: drawn,
+        // not typeset — the face this tree ships has no arrow glyphs).
         assert_eq!(
-            text.iter()
-                .filter(|s| *s == crate::glyph::SORT_DESCENDING)
-                .count(),
-            1,
-            "one descending glyph"
-        );
-        assert!(
-            !text.iter().any(|s| s == crate::glyph::SORT_ASCENDING),
-            "no ascending glyph for a descending sort"
+            crate::indicator::marks_in(&scene),
+            vec![Indicator::Sort { ascending: false }],
         );
     }
 

@@ -55,6 +55,11 @@ tracing = { workspace = true }
 # regular `[dependencies]` entry above; the `test-fixtures` feature is only
 # active for test builds, never in production.
 pinion-core = { path = "../pinion-core", version = "0.0.1", features = ["test-fixtures"] }
+# ★★★★★ R1952 — the font PARSER, so `glyph`'s claim about what the bundled
+# faces cover is PERFORMED rather than asserted in a comment. It stood there
+# false for 780 rounds because nothing ever asked a font. Test-only: this crate
+# composes scenes and never shapes.
+pinion-text-font = { path = "../pinion-text-font", version = "0.0.1" }
 # (R684 §5.21 §5.16) Test-only dependency on pinion-runtime so the
 # dock + splitter substrate tests can drive a real `compute_layout`
 # pass over their assembled scenes (the only way to pin "header

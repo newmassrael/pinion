@@ -319,7 +319,7 @@ fn r1948_the_marked_row_and_the_detail_agree_on_one_session() {
         let mut said: Vec<String> = Vec::new();
         scene.for_each_node(&mut |visit| {
             if let pinion_core::Scene::Text(text) = visit.node
-                && text.content.starts_with('\u{2192}')
+                && text.content.starts_with(super::PEER_LEAD)
             {
                 said.push(text.content.clone());
             }
