@@ -4636,6 +4636,8 @@ fn carry_to_middle(state: &std::rc::Rc<ShellState>, shot: &Painted, kind: &str) 
 struct RouterDrag {
     router: pinion_runtime::InputRouter,
     model: Scene,
+    /// The extent each surface was PLACED in, by tag — what `deliver` grants.
+    placed: std::collections::BTreeMap<String, (u32, u32)>,
 }
 
 impl RouterDrag {
@@ -4675,28 +4677,102 @@ impl RouterDrag {
         // forgot a surface: the cursor reported `0,0` and hit nothing.
         let mut known = pinion_runtime::ExternalSizes::default();
         pinion_runtime::announce_external_sizes(&scene, &mut model, &mut known);
+        // ★★★★★ R1958.2 — the rectangle each surface was PLACED in, kept so
+        // every pointer call below can grant it. See `deliver` for why.
+        let mut surfaces: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        model.for_each_node(&mut |visit| {
+            if matches!(visit.node, Scene::External(_)) {
+                if let Some(tag) = visit.node.tag() {
+                    surfaces.insert(tag.to_owned());
+                }
+            }
+        });
+        let mut placed: std::collections::BTreeMap<String, (u32, u32)> =
+            std::collections::BTreeMap::new();
+        scene.for_each_node(&mut |visit| {
+            let (Some(tag), Some(rect)) = (visit.node.tag(), visit.absolute_rect()) else {
+                return;
+            };
+            if surfaces.contains(tag) && rect.w > 0 && rect.h > 0 {
+                placed.insert(tag.to_owned(), (rect.w, rect.h));
+            }
+        });
         let mut router = pinion_runtime::InputRouter::new();
         router.update_paint_scene(scene, &mut model);
-        Self { router, model }
+        Self {
+            router,
+            model,
+            placed,
+        }
+    }
+
+    /// ★★★★★ R1958.2 — **every pointer call runs inside the extent grant the
+    /// surface under the cursor was placed with.**
+    ///
+    /// # The measurement this comes from
+    ///
+    /// `external::layout_size` — what a mounted screen asks for its own window
+    /// — reads three sources in order: the enclosing
+    /// [`with_surface_extent`](pinion_core::external::with_surface_extent)
+    /// grant, then `painting_extent()` when an `Owner` scope is live, then the
+    /// recorded `surface_size`. A sweep runs INSIDE an owner scope, so it took
+    /// the middle branch and handed the mounted screen **the shell's viewport**
+    /// (1440x900) as its own window — while the screen had been PAINTED into a
+    /// 1388x820 region. Measured: the cursor arrived at exactly the right
+    /// place, `767,23` for a control the shell drew at `(805, 63)` in a surface
+    /// at `(52, 52)`, and the screen resolved that point against a toolbar it
+    /// would have laid out in a window 52 pixels wider — so the press hit
+    /// nothing.
+    ///
+    /// The running application does not take that branch: input arrives outside
+    /// any owner scope and falls through to `surface_size`, which
+    /// `announce_external_sizes` has just filled from the same rectangle. So
+    /// granting the placement here is not a special case for tests — it makes
+    /// the sweep read the number production reads, through the source
+    /// `layout_size` documents as beating both others.
+    fn deliver(&mut self, call: impl FnOnce(&mut pinion_runtime::InputRouter, &mut Scene)) {
+        let under = self
+            .router
+            .hover_target(pinion_runtime::PointerId::MOUSE)
+            .and_then(|tag| self.placed.get(tag).map(|extent| (tag.to_owned(), *extent)));
+        match under {
+            Some((tag, extent)) => {
+                let Self { router, model, .. } = self;
+                pinion_core::external::with_surface_extent(&tag, extent, || call(router, model));
+            }
+            None => call(&mut self.router, &mut self.model),
+        }
     }
 
     fn cursor(&mut self, at: (u32, u32)) {
-        self.router.cursor_moved(
-            pinion_runtime::PointerId::MOUSE,
-            f64::from(at.0),
-            f64::from(at.1),
-            &mut self.model,
-        );
+        // ⚠ Two calls: the first establishes the hover (and so the grant the
+        // second runs under), because `deliver` can only grant what the cursor
+        // is already over. A move that crosses INTO a surface is therefore
+        // delivered ungranted and then again granted — which is what the real
+        // sequence does too, since a frame's grant follows the paint that
+        // placed the surface.
+        for _ in 0..2 {
+            self.deliver(|router, model| {
+                router.cursor_moved(
+                    pinion_runtime::PointerId::MOUSE,
+                    f64::from(at.0),
+                    f64::from(at.1),
+                    model,
+                );
+            });
+        }
     }
 
     fn press(&mut self) {
-        self.router
-            .pointer_down(pinion_runtime::PointerId::MOUSE, &mut self.model);
+        self.deliver(|router, model| {
+            router.pointer_down(pinion_runtime::PointerId::MOUSE, model);
+        });
     }
 
     fn release(&mut self) {
-        self.router
-            .pointer_up(pinion_runtime::PointerId::MOUSE, &mut self.model);
+        self.deliver(|router, model| {
+            router.pointer_up(pinion_runtime::PointerId::MOUSE, model);
+        });
     }
 }
 
@@ -7881,28 +7957,38 @@ fn r1956_things_placed_beside_each_other_share_their_seats_centre_line() {
     });
 }
 
-/// ★★★★★ R1958 — **the walk's router holds the same surfaces the running
-/// application does**, which is the first of the things standing between this
-/// walk and a press on a mounted screen's control.
+/// ★★★★★ R1958 — **a press in the assembled tool reaches a mounted screen's
+/// control, and what it opens is readable**, which is rule (7)'s composition
+/// for the defect a person reported on 2026-09-01.
 ///
-/// # What this asserts, and what it deliberately does not
+/// # Three layers stood between this walk and that press, and each was measured
 ///
-/// It asserts the MODEL: the scene the router dispatches into carries the
-/// mounted screen's own `External`, and the press over that screen resolves to
-/// that screen's tag rather than to the host's. Both were false before this
-/// round — [`RouterDrag`] built its model by hand as *the host's External,
-/// alone* — and both are what `CoreShell::state_scene` now derives once for the
-/// application and for anything driving it.
+/// 1. **The model was built by hand** — the host's `External` alone, so a press
+///    that resolved (correctly) to a mounted screen's tag had nowhere to go.
+///    `CoreShell::state_scene` derives it once for the application and for
+///    anything driving it.
+/// 2. **The surface sizes were never announced.** `layout_point` multiplies a
+///    pointer FRACTION by `external::surface_size`, filled once per frame by
+///    `announce_external_sizes` — a frame step a hand-driven router had never
+///    performed, leaving the `(1, 1)` fallback that floors every fraction to
+///    zero (the failure R1826 measured when a second window forgot a surface).
+/// 3. **A sweep runs inside an owner scope, and that changes which window a
+///    mounted screen thinks it is in.** `external::layout_size` reads the
+///    enclosing `with_surface_extent` grant, THEN `painting_extent()` when an
+///    `Owner` is live, then the recorded size. The middle branch handed the
+///    screen the shell's viewport (1440x900) while it had been painted into
+///    1388x820, so it resolved a perfectly-delivered cursor against a toolbar
+///    it would have laid out 52 pixels wider. [`RouterDrag::deliver`] grants
+///    the placement, which is the source `layout_size` documents as beating
+///    both others and is the same number production reads.
 ///
-/// ⚠ **It does not assert that the press MOVES the screen, because measured, it
-/// still does not.** With the model and the surface sizes both right, a press
-/// on `lab.toolbar.more` leaves `toolbar_open` off. That remainder is the
-/// reason `r1957_a_surface_that_opens_is_not_painted_over` still lives in
-/// `hello-node-lab`'s own file instead of here, and it is recorded on the debt
-/// with the three layers this round measured. Claiming more here than was
-/// measured is the thing this repository has a rule about.
+/// ⚠ The cursor was never the problem and the probes proved it in this order:
+/// the hover is `node_lab`, the delivered point is `767,23` for a control the
+/// shell draws at `(805, 63)` in a surface at `(52, 52)` — arithmetic exact —
+/// and the screen still missed, because it was measuring itself against the
+/// wrong window.
 #[test]
-fn r1958_the_walks_router_holds_the_mounted_screens_surface() {
+fn r1958_a_press_reaches_a_mounted_screens_control() {
     let owner = Owner::new();
     owner.run(|| {
         let state = use_shell_state();
@@ -7951,6 +8037,50 @@ fn r1958_the_walks_router_holds_the_mounted_screens_surface() {
         assert!(
             surfaces.iter().any(|tag| tag == super::VIEW_TAG),
             "and the host's own, which the drag cases depend on: {surfaces:?}",
+        );
+
+        // ★★★★★ R1958.2 — and the press LANDS: the mounted screen's own state
+        // moves, which is the thing three layers stood between this walk and.
+        drag.press();
+        drag.release();
+        let (opened, after) = painted_at((WIN_W, WIN_H));
+        let seats: Vec<String> = opened
+            .tags
+            .keys()
+            .filter(|tag| hello_node_lab::in_toolbar_overflow(tag))
+            .cloned()
+            .collect();
+        assert!(
+            !seats.is_empty(),
+            "the router's press on the `…` control opens the MOUNTED screen's \
+             overflow, so its seats are painted; the toolbar's tags are {:?}",
+            opened
+                .tags
+                .keys()
+                .filter(|t| t.starts_with("lab.toolbar"))
+                .collect::<Vec<_>>(),
+        );
+
+        // ★★★★★ And R1957's question, now asked where rule (7) wants it — of
+        // the ASSEMBLED tool, at the size a person runs, which is where the
+        // person who reported the defect was looking.
+        let mut covered: Vec<String> = Vec::new();
+        for seat in &seats {
+            for over in pinion_screen::layering::marks_painted_over(&after, seat) {
+                covered.push(format!(
+                    "`{}` {:?} is painted over `{}` {:?}",
+                    over.host, over.host_rect, over.guest, over.guest_rect,
+                ));
+            }
+        }
+        assert!(
+            covered.is_empty(),
+            "{} covering(s) over {} open overflow seat(s) in the assembled \
+             tool — a surface that opens and is then covered is one a person \
+             cannot read:\n  {}",
+            covered.len(),
+            seats.len(),
+            covered.join("\n  "),
         );
     });
 }
