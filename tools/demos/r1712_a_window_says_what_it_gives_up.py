@@ -86,6 +86,11 @@ SCREENS = [
     ("dashboard", "hello-analyzer-shell"),
     ("key patterns", "hello-key-patterns"),
     ("log view", "hello-log-view"),
+    # ★ R1947 — the topology section, and it was the `shrink population` gate at
+    # the push that put it here rather than anybody remembering: a screen that
+    # declares what it gives up and is asked about it by nothing was never in
+    # the check, which reads as passing and is not.
+    ("topology", "hello-topology-view"),
 ]
 
 #: The one screen that concedes, and what it declares the band costs. Written
