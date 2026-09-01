@@ -71,8 +71,9 @@ use vello::kurbo::{
 };
 use vello::peniko::FontData;
 use vello::peniko::{
-    Blob, Brush as PenikoBrush, Color as PenikoColor, Extend as PenikoExtend, Fill,
-    Gradient as PenikoGradient, ImageAlphaType, ImageBrush, ImageData, ImageFormat, ImageQuality,
+    Blob, Brush as PenikoBrush, BrushRef as PenikoBrushRef, Color as PenikoColor,
+    Extend as PenikoExtend, Fill, Gradient as PenikoGradient, ImageAlphaType, ImageBrush,
+    ImageData, ImageFormat, ImageQuality,
 };
 // R1063 §5.37 → production-paint seam — the self-hosted text engine's CPU AA
 // coverage mask, plus (R1065) the per-glyph [`GlyphAtlas`] surface a per-glyph
@@ -3617,38 +3618,110 @@ fn paint_grid_cursor(
     }
 }
 
+/// R1945 §5.16 §5.2 — the ONE outline a [`BoxStyle`] declares for a rect.
+///
+/// A `BoxStyle` carries `fill` / `gradient` / `border` / `corner_radius` in a
+/// single sidecar, so every reader of that declaration has to agree on the
+/// silhouette. Until R1945 two readers spelled the `corner_radius == 0 ?
+/// sharp : rounded` decision independently and a third — [`stroke_rect`] —
+/// did not spell it at all: it never received the radius and always stroked a
+/// square [`KurboRect`]. A rounded fill therefore wore a square border and the
+/// ground behind the box showed through at all four corners (reported
+/// 2026-09-01 from a running `hello-analyzer-shell` window). `pinion-overlay`'s
+/// focus ring is the sharpest case: it *computes* a concentric ring radius and
+/// three of its tests assert the resulting `corner_radius` — and the two that
+/// assert a NONZERO one were describing a number no pixel ever received. (The
+/// third asserts 0 for a sharp target, and that one was honoured, because a
+/// sharp ring and a square stroke agree by accident.)
+///
+/// Making the decision a type is what stops the readers diverging again — a
+/// caller cannot obtain an outline without saying what radius it has.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum BoxOutline {
+    /// Radius `<= 0` — the legacy zero-cost path (one path, four line
+    /// segments), which is what every Box/Container that sets no
+    /// `corner_radius` still gets.
+    Sharp(KurboRect),
+    /// Radius `> 0` — a single uniform radius on all four corners.
+    /// `kurbo::RoundedRect::new` clamps it to `min(w, h) / 2`, so an
+    /// over-large radius (M3 Filled Button's `radius: 100` against a 40-px
+    /// box) resolves to a pill with no caller-side clamp.
+    ///
+    /// Per-corner asymmetric radii (the design tool's
+    /// `rectangleCornerRadii: [tl, tr, br, bl]`) stay deferred until the first
+    /// asymmetric binding lands; `kurbo::RoundedRectRadii` already has the
+    /// shape, this type wires the single-radius surface `BoxStyle` exposes.
+    Rounded(KurboRoundedRect),
+}
+
+impl BoxOutline {
+    /// The outline of `r` with `radius`, both in device pixels.
+    fn new(r: Rect, radius: f64) -> Self {
+        Self::inset(r, radius, 0.0)
+    }
+
+    /// The outline of `r` moved `offset` px inward on every side (negative =
+    /// outward), **with the radius following the edge**.
+    ///
+    /// A stroke is centred on its path, so a `BorderPlacement::Inside` border
+    /// of width `w` runs along the rect inset by `w / 2` — and the circle that
+    /// edge traces has radius `radius - w / 2`, not `radius`. Moving the edge
+    /// and leaving the radius alone is the second half of the same defect: the
+    /// border would be round but concentric with nothing, missing the fill's
+    /// corners by `w / 2`. Clamped at 0, so a border wider than twice the
+    /// radius degenerates to a square corner rather than an inverted one.
+    fn inset(r: Rect, radius: f64, offset: f64) -> Self {
+        let x0 = f64::from(r.x) + offset;
+        let y0 = f64::from(r.y) + offset;
+        let x1 = f64::from(r.x.saturating_add(r.w)) - offset;
+        let y1 = f64::from(r.y.saturating_add(r.h)) - offset;
+        let radius = (radius - offset).max(0.0);
+        if radius <= 0.0 {
+            Self::Sharp(KurboRect::new(x0, y0, x1, y1))
+        } else {
+            Self::Rounded(KurboRoundedRect::new(x0, y0, x1, y1, radius))
+        }
+    }
+
+    /// Fill this outline with `brush`.
+    fn fill<'b>(
+        self,
+        out: &mut VelloScene,
+        transform: Affine,
+        brush: impl Into<PenikoBrushRef<'b>>,
+    ) {
+        match self {
+            Self::Sharp(rect) => out.fill(Fill::NonZero, transform, brush, None, &rect),
+            Self::Rounded(rect) => out.fill(Fill::NonZero, transform, brush, None, &rect),
+        }
+    }
+
+    /// Stroke this outline with `brush`.
+    fn stroke<'b>(
+        self,
+        out: &mut VelloScene,
+        stroke: &Stroke,
+        transform: Affine,
+        brush: impl Into<PenikoBrushRef<'b>>,
+    ) {
+        match self {
+            Self::Sharp(rect) => out.stroke(stroke, transform, brush, None, &rect),
+            Self::Rounded(rect) => out.stroke(stroke, transform, brush, None, &rect),
+        }
+    }
+}
+
 /// Emit one Vello filled-rectangle path for a pinion (`Rect`, `Color`,
 /// `corner_radius`) triple. Transparent fills are skipped (matches the
 /// pre-R46.3.1 `paint_filled_rect` early-exit).
 ///
-/// R639 §5.16 §5.2 — `corner_radius == 0` paints a sharp [`KurboRect`]
-/// (the legacy zero-cost path used by every Container/Box that does
-/// not set `BoxStyle.corner_radius`). `corner_radius > 0` paints a
-/// [`KurboRoundedRect`] with a single uniform radius applied to all
-/// four corners. `kurbo::RoundedRect::from_rect` auto-clamps the
-/// radius to `min(width, height) / 2`, so an over-large radius (M3
-/// Filled Button's `radius: 100` against a 40-px-tall rect) naturally
-/// resolves to a pill shape without an explicit caller-side clamp.
-///
-/// Per-corner asymmetric radii (the design tool `rectangleCornerRadii: [tl, tr, br, bl]`) deferred to a follow-up
-/// round once the first asymmetric binding lands — `kurbo::RoundedRectRadii` already supports the
-/// shape, this slice only wires the single-radius surface [`BoxStyle.corner_radius`] exposes today.
+/// R639 §5.16 §5.2 — the sharp/rounded decision is [`BoxOutline`]'s since
+/// R1945; this function only says which radius the declaration carries.
 fn fill_rect(out: &mut VelloScene, r: Rect, fill: Color, corner_radius: u32, transform: Affine) {
     if fill == Color::TRANSPARENT {
         return;
     }
-    let x0 = f64::from(r.x);
-    let y0 = f64::from(r.y);
-    let x1 = f64::from(r.x.saturating_add(r.w));
-    let y1 = f64::from(r.y.saturating_add(r.h));
-    let peniko_fill = to_peniko(fill);
-    if corner_radius == 0 {
-        let rect = KurboRect::new(x0, y0, x1, y1);
-        out.fill(Fill::NonZero, transform, peniko_fill, None, &rect);
-    } else {
-        let rounded = KurboRoundedRect::new(x0, y0, x1, y1, f64::from(corner_radius));
-        out.fill(Fill::NonZero, transform, peniko_fill, None, &rounded);
-    }
+    BoxOutline::new(r, f64::from(corner_radius)).fill(out, transform, to_peniko(fill));
 }
 
 /// R710 §5.50 — paint every [`BoxStyle::shadows`] entry behind a box,
@@ -3927,7 +4000,7 @@ fn paint_box_decoration(
     paint_box_shadows(out, r, style, transform);
     fill_box_bg(out, r, style, solid, transform);
     if let Some(border) = style.border {
-        stroke_rect(out, r, border, transform);
+        stroke_rect(out, r, border, style.corner_radius, transform);
     }
 }
 
@@ -4010,17 +4083,7 @@ fn fill_rect_gradient(
     transform: Affine,
 ) {
     let brush = gradient_brush(gradient, r);
-    let x0 = f64::from(r.x);
-    let y0 = f64::from(r.y);
-    let x1 = x0 + f64::from(r.w);
-    let y1 = y0 + f64::from(r.h);
-    if corner_radius == 0 {
-        let rect = KurboRect::new(x0, y0, x1, y1);
-        out.fill(Fill::NonZero, transform, &brush, None, &rect);
-    } else {
-        let rounded = KurboRoundedRect::new(x0, y0, x1, y1, f64::from(corner_radius));
-        out.fill(Fill::NonZero, transform, &brush, None, &rounded);
-    }
+    BoxOutline::new(r, f64::from(corner_radius)).fill(out, transform, &brush);
 }
 
 /// R1358.1 §5.16 — compose `parent` with `origin`'s translation: the
@@ -4104,7 +4167,20 @@ fn to_peniko_extend(extend: pinion_core::style::Extend) -> PenikoExtend {
 /// path-centered; the [`BorderPlacement`] determines whether we inset
 /// (Inside, legacy softbuffer), keep the stroke on the path (Center,
 /// Vello-native), or outset (Outside, CSS content-box).
-fn stroke_rect(out: &mut VelloScene, r: Rect, border: Border, transform: Affine) {
+///
+/// R1945 — `corner_radius` is a parameter, not a thing this function does not
+/// know. Before R1945 it took `(r, border, transform)` and stroked a square
+/// [`KurboRect`] whatever the box declared, so a rounded box wore a square
+/// border and the ground showed through at the corners. The radius travels
+/// with the placement offset through [`BoxOutline::inset`] — see that method
+/// for why moving the edge without moving the radius is the same bug again.
+fn stroke_rect(
+    out: &mut VelloScene,
+    r: Rect,
+    border: Border,
+    corner_radius: u32,
+    transform: Affine,
+) {
     if border.width == 0 {
         return;
     }
@@ -4122,18 +4198,11 @@ fn stroke_rect(out: &mut VelloScene, r: Rect, border: Border, transform: Affine)
         // without losing forward-compat coverage.
         BorderPlacement::Inside | _ => w / 2.0,
     };
-    let rect = KurboRect::new(
-        f64::from(r.x) + offset,
-        f64::from(r.y) + offset,
-        f64::from(r.x.saturating_add(r.w)) - offset,
-        f64::from(r.y.saturating_add(r.h)) - offset,
-    );
-    out.stroke(
+    BoxOutline::inset(r, f64::from(corner_radius), offset).stroke(
+        out,
         &Stroke::new(w),
         transform,
         to_peniko(border.color),
-        None,
-        &rect,
     );
 }
 
@@ -4903,25 +4972,175 @@ mod tests {
         );
     }
 
+    // ─────────────────────────────────────────────────────────────
+    // R1945 §5.16 §5.2 — reading the SHAPE vello was handed
+    //
+    // The assertions below exist because the one that stood here before
+    // them said, in its own comment, "We can't read back Vello's emitted
+    // draw commands; instead we verify the placement field plumbs through
+    // stroke_rect by ensuring no panic on each variant." A border that
+    // ignored `corner_radius` entirely does not panic, so it passed —
+    // for the whole life of the code — until a person looked at a window
+    // on 2026-09-01 and saw square borders on rounded boxes.
+    //
+    // The readback needs no vello-internal API: `Scene::encoding()` is
+    // public (the R639 assertions above already use its counters) and
+    // `Encoding::path_data` is a flat `Vec<u32>` of f32 bit patterns, two
+    // words per point — `vello_encoding::PathEncoder` pushes
+    // `bytemuck::cast_slice(&[x, y])` for every move / line / quad / cubic
+    // control point it records.
+    // ─────────────────────────────────────────────────────────────
+
+    /// Every point vello recorded in `scene`'s path stream, in encode order.
+    fn encoded_points(scene: &VelloScene) -> Vec<(f32, f32)> {
+        scene
+            .encoding()
+            .path_data
+            .chunks_exact(2)
+            .map(|w| (f32::from_bits(w[0]), f32::from_bits(w[1])))
+            .collect()
+    }
+
+    /// Walk a one-box scene and return the outline vello was handed. A
+    /// `Color::TRANSPARENT` fill emits no path (see [`fill_rect`]), so a
+    /// transparent bordered box yields the border's outline alone.
+    fn box_outline_points(node: BoxNode) -> Vec<(f32, f32)> {
+        let mut vello = VelloScene::new();
+        let mut cache = LayoutCache::new();
+        to_vello(&Scene::Box(node), &|_| None, &mut cache, &mut vello);
+        encoded_points(&vello)
+    }
+
+    #[test]
+    fn r1945_a_border_traces_the_outline_the_box_declares() {
+        // ONE rule — "a `BoxStyle` declares one silhouette" — asked at its
+        // TWO readers, rather than re-spelled as a second oracle here: the
+        // expectation is the outline the *fill* reader produces for the very
+        // rect and radius the border's placement lands on.
+        //
+        // The box is 100x60 at (10,10) with radius 12 and an 8-px border, so
+        // the placement offset (w/2 = 4) and all three resulting radii
+        // (12-4, 12, 12+4) are whole pixels and the expectation can be
+        // written as a `BoxStyle` with no arithmetic of its own.
+        use pinion_core::style::{Border, BorderPlacement, BoxStyle};
+        let rect = Rect::new(10, 10, 100, 60);
+        for (placement, edge, radius) in [
+            (BorderPlacement::Inside, Rect::new(14, 14, 92, 52), 8),
+            (BorderPlacement::Center, Rect::new(10, 10, 100, 60), 12),
+            (BorderPlacement::Outside, Rect::new(6, 6, 108, 68), 16),
+        ] {
+            let border = Border::new(Color::rgb(0xff, 0, 0), 8).with_placement(placement);
+            let drawn = box_outline_points(BoxNode::new(
+                rect,
+                BoxStyle::filled(Color::TRANSPARENT)
+                    .with_corner_radius(12)
+                    .with_border(border),
+            ));
+            let declared = box_outline_points(BoxNode::new(
+                edge,
+                BoxStyle::filled(Color::rgb(1, 2, 3)).with_corner_radius(radius),
+            ));
+            // A rounded outline is 4 lines + 4 corner arcs; anything under
+            // that many points means the fill reader emitted nothing and the
+            // comparison below would be vacuous.
+            assert!(
+                declared.len() >= 8,
+                "{placement:?}: the expectation is empty, so nothing is being compared \
+                 ({} point(s))",
+                declared.len()
+            );
+            assert!(
+                drawn.len() >= declared.len(),
+                "{placement:?}: the border outline is shorter than the declared one \
+                 (border {}, declared {})",
+                drawn.len(),
+                declared.len()
+            );
+            // The stroke encoder appends one cap-marker point past the closing
+            // segment (`PathEncoder::insert_stroke_cap_marker_segment`), which
+            // lies on the outline; every point before it must match.
+            assert_eq!(
+                &drawn[..declared.len()],
+                &declared[..],
+                "{placement:?}: the border does not trace the outline the box declares"
+            );
+        }
+    }
+
+    #[test]
+    fn r1945_a_rounded_border_never_reaches_the_corner_a_square_one_does() {
+        // The user-visible statement of the same defect, independent of the
+        // inset arithmetic above: reported 2026-09-01 from a running
+        // `hello-analyzer-shell` window, the border ran straight through the
+        // box's corner while the fill curved away from it, so the panel
+        // ground showed through in between.
+        use pinion_core::style::{Border, BorderPlacement, BoxStyle};
+        let rect = Rect::new(10, 10, 100, 60);
+        // Inside placement, width 8 -> the stroke's own corner is (14, 14).
+        let corner = (14.0_f32, 14.0_f32);
+        for (corner_radius, corner_is_reached) in [(0_u32, true), (12_u32, false)] {
+            let border =
+                Border::new(Color::rgb(0xff, 0, 0), 8).with_placement(BorderPlacement::Inside);
+            let drawn = box_outline_points(BoxNode::new(
+                rect,
+                BoxStyle::filled(Color::TRANSPARENT)
+                    .with_corner_radius(corner_radius)
+                    .with_border(border),
+            ));
+            assert!(
+                !drawn.is_empty(),
+                "radius {corner_radius}: no border outline was emitted at all"
+            );
+            assert_eq!(
+                drawn.contains(&corner),
+                corner_is_reached,
+                "radius {corner_radius}: a square border must reach its corner \
+                 {corner:?} and a rounded one must not; outline was {drawn:?}"
+            );
+        }
+    }
+
     #[test]
     fn stroke_rect_inside_placement_inset_matches_softbuffer_geometry() {
-        // R46.3.2 — the default Border placement (Inside) must inset
-        // the centred stroke by width/2 so the entire stroke lies
-        // within the rect. We can't read back Vello's emitted draw
-        // commands; instead we verify the placement field plumbs
-        // through stroke_rect by ensuring no panic on each variant.
+        // R46.3.2 — the default Border placement (Inside) must inset the
+        // centred stroke by width/2 so the entire stroke lies within the
+        // rect. R1945 performs that promise instead of restating it: the
+        // outline vello was handed is read back and every point of it,
+        // grown by half the stroke width, must still be inside the rect.
         use pinion_core::style::{Border, BorderPlacement, BoxStyle};
-        for placement in [
-            BorderPlacement::Inside,
-            BorderPlacement::Center,
-            BorderPlacement::Outside,
-        ] {
-            let border = Border::new(Color::rgb(0xff, 0, 0), 4).with_placement(placement);
-            let style = BoxStyle::filled(Color::TRANSPARENT).with_border(border);
-            let scene = Scene::Box(BoxNode::new(Rect::new(10, 10, 100, 100), style));
-            let mut vello = VelloScene::new();
-            let mut cache = LayoutCache::new();
-            to_vello(&scene, &|_| None, &mut cache, &mut vello);
+        let rect = Rect::new(10, 10, 100, 100);
+        let width = 4_u32;
+        let half = f32::from(u16::try_from(width).expect("width fits")) / 2.0;
+        for corner_radius in [0_u32, 16] {
+            let border =
+                Border::new(Color::rgb(0xff, 0, 0), width).with_placement(BorderPlacement::Inside);
+            let drawn = box_outline_points(BoxNode::new(
+                rect,
+                BoxStyle::filled(Color::TRANSPARENT)
+                    .with_corner_radius(corner_radius)
+                    .with_border(border),
+            ));
+            assert!(
+                !drawn.is_empty(),
+                "radius {corner_radius}: no border outline was emitted at all"
+            );
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "test geometry is small integer pixels"
+            )]
+            let (x0, y0, x1, y1) = (
+                rect.x as f32,
+                rect.y as f32,
+                (rect.x + rect.w) as f32,
+                (rect.y + rect.h) as f32,
+            );
+            for (px, py) in &drawn {
+                assert!(
+                    px - half >= x0 && px + half <= x1 && py - half >= y0 && py + half <= y1,
+                    "radius {corner_radius}: Inside placement let the stroke at \
+                     ({px}, {py}) reach outside [{x0}, {x1}] x [{y0}, {y1}]"
+                );
+            }
         }
     }
 

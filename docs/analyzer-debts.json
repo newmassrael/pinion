@@ -199,6 +199,17 @@
       ]
     },
     {
+      "name": "debt-a-panel-chrome-button-paints-no-glyph",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "person",
+      "closed_because": "rule:analyzer-debt-repayment-loop",
+      "why": [
+        "links debt-canon-gui-surface-census"
+      ]
+    },
+    {
       "name": "debt-a-pure-rules-oracle-is-a-second-gate-nobody-tests",
       "substituted": false,
       "blocked_by": "buildable",
@@ -218,6 +229,17 @@
       "closed_because": "",
       "why": [
         "links debt-the-canon-is-one-app-and-we-are-many-binaries"
+      ]
+    },
+    {
+      "name": "debt-a-rounded-box-is-stroked-as-a-rectangle",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "person",
+      "closed_because": "rule:analyzer-debt-repayment-loop",
+      "why": [
+        "links debt-canon-gui-surface-census"
       ]
     },
     {
@@ -266,6 +288,17 @@
       ]
     },
     {
+      "name": "debt-every-card-on-the-opening-graph-speaks-one-transport",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "person",
+      "closed_because": "rule:analyzer-debt-repayment-loop",
+      "why": [
+        "links screen-a-vs-canon-operation-census"
+      ]
+    },
+    {
       "name": "debt-five-screens-hand-roll-one-voice-gate",
       "substituted": false,
       "blocked_by": "buildable",
@@ -308,6 +341,17 @@
       "why": [
         "links analyzer-debt-repayment-loop, debt-canon-gui-surface-census",
         "names capture.t0.1, capture.t0.4, capture.t1.10, capture.t2.16, capture.t2.17, lab.t2.14, lab.t2.18"
+      ]
+    },
+    {
+      "name": "debt-six-declared-destinations-are-never-built",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "person",
+      "closed_because": "rule:analyzer-debt-repayment-loop",
+      "why": [
+        "links debt-canon-gui-surface-census, debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
     },
     {
