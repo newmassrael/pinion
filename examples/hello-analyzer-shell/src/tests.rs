@@ -15,8 +15,8 @@ use pinion_screen::ScreenState;
 use std::collections::BTreeMap;
 
 use super::{
-    AnalyzerShellView, BarChip, GRID_COLS, KEYMAP, SOURCES, STEPPERS, SubChip, TABS, cell_at,
-    cell_rect, chrome, def_of, kind_of, kind_span, parse_state, remedy_label, remedy_word, spec,
+    AnalyzerShellView, BarChip, GRID_COLS, KEYMAP, SOURCES, STEPPERS, SubChip, cell_at, cell_rect,
+    chrome, def_of, kind_of, kind_span, parse_state, remedy_label, remedy_word, spec,
     state_sentence, transport_word, type_ink, use_shell_state,
 };
 use pinion_a11y::WidgetA11y;
@@ -162,6 +162,244 @@ fn r1668_the_opening_board_places_every_placeable_entry() {
                     tile.kind
                 );
             }
+        }
+    }
+}
+
+/// ★★★★★ R1946 — **every navigable surface on this screen is derived from a
+/// declaration, and the application bar's view tabs were the one that was not.**
+///
+/// Until this round the bar's tabs were a two-element constant array of titles
+/// in `main.rs`, with their tags spelled a second time inside `BarChip`'s two
+/// hand-written tab arms. The rail has been derived since R1695 — `spec::destinations()`
+/// builds the roster from `spec::RAIL`, `rail_scene` paints from the same
+/// table, `ScreenRoster::new` refuses a mount at a seat the rail closed — and
+/// nothing said the bar had to be. Built without a declaration is the mirror of
+/// declared without being built, and this is the assertion for that direction.
+///
+/// ⚠ The two surfaces are NOT the same list and must not be derived from each
+/// other: the rail is eight sections, the bar is a view switcher over two. The
+/// debt that sent this round here read one against the other; see
+/// `spec::ViewTabSpec` for the measurement.
+#[test]
+fn r1946_every_view_tab_the_bar_presses_is_one_the_specification_declares() {
+    // Forward: the declaration has a chip, and that chip's tag is derived from
+    // the declared key rather than written beside it.
+    for (n, tab) in spec::VIEW_TABS.iter().enumerate() {
+        assert_eq!(
+            BarChip::Tab(n).tag(),
+            format!("shell.appbar.tab.{}", tab.key),
+            "the {:?} tab's chip does not carry its declared key",
+            tab.title
+        );
+    }
+    // Backward, and this is the half a constant length could not make: the bar
+    // presses EXACTLY the declared tabs. A third entry in the specification
+    // with no chip behind it, or a chip with no entry, fails here.
+    let pressed: Vec<String> = BarChip::all()
+        .into_iter()
+        .filter_map(|chip| match chip {
+            BarChip::Tab(n) => Some(BarChip::Tab(n).tag()),
+            _ => None,
+        })
+        .collect();
+    let declared: Vec<String> = spec::VIEW_TABS
+        .iter()
+        .map(|tab| format!("shell.appbar.tab.{}", tab.key))
+        .collect();
+    assert_eq!(
+        pressed, declared,
+        "the bar's tab chips and the specification's tabs are not the same list",
+    );
+    // ★ And the population cannot be empty — an equality over two empty lists
+    // is the shape that passes after the thing it guards has been deleted.
+    assert!(
+        !declared.is_empty(),
+        "the specification declares no view tab, so this assertion compares nothing",
+    );
+}
+
+/// ★★★★★ R1946 — **the north star's condition (A), as a predicate over the
+/// declaration rather than as prose.**
+///
+/// *Every declared destination is reached and paints something.* Measured here
+/// over `spec::RAIL`, which is the population the reproduction command greps:
+/// a seat is either open — and then the roster carries a way to paint it, a
+/// mounted screen or this shell's own judged page — or it is closed, and then
+/// it names the requirement that books it. There is no third state, and a seat
+/// that reached neither would fail both arms.
+///
+/// ⚠ What this does NOT assert is what the page paints: that is
+/// `painted::r1695_each_destination_paints_the_regions_the_specification_gives_it`,
+/// which sweeps the real pipeline. This one is the *roster* half — that no
+/// declared seat is a dead end — and the two are deliberately separate
+/// instruments over the same population.
+#[test]
+fn r1946_every_declared_seat_is_open_with_a_page_or_closed_with_a_reason() {
+    let roster = spec::destinations();
+    let mut open = 0_usize;
+    let mut closed = 0_usize;
+    for seat in spec::RAIL {
+        let destination = roster
+            .get(seat.key)
+            .unwrap_or_else(|| panic!("{} is declared and the roster lacks it", seat.key));
+        match destination.standing.why() {
+            None => {
+                open += 1;
+                assert!(
+                    seat.reserved_for().is_none(),
+                    "{} is open on the roster and reserved on the rail",
+                    seat.key
+                );
+            }
+            Some(why) => {
+                closed += 1;
+                let reason = why.sentence();
+                assert!(
+                    reason.contains("requirement"),
+                    "{} is closed and its reason {reason:?} names no requirement — \
+                     a reader is told the section is missing and not why",
+                    seat.key
+                );
+            }
+        }
+    }
+    assert_eq!(
+        open + closed,
+        spec::RAIL.len(),
+        "every declared seat is accounted for by exactly one arm",
+    );
+    // ★ Rule: can this reach zero? `closed` can — the reference deferring
+    // nothing would open every seat — and `open` cannot, because
+    // `Destinations::new` refuses a roster that opens nothing. Asserting the
+    // floor rather than a number keeps the check honest as the rail grows.
+    assert!(
+        open > 0,
+        "no seat is open, which the roster's own constructor should have refused",
+    );
+}
+
+/// ★★★★★ R1946 — **this build's distance from the BEHAVIOUR reference is a
+/// list, and the list is derived rather than remembered.**
+///
+/// `spec::owed()` measures the distance from the *scope* reference and is
+/// empty; the first-stage reproduction is complete. Nothing measured the other
+/// reference at all, and the two disagree on exactly two seats — which is how
+/// this screen came to report full marks on every instrument it had while two
+/// sections a person went looking for did not exist.
+///
+/// The pin now carries a second standing per seat, and this is its ratchet. It
+/// runs in **both** directions on purpose: a seat that quietly stops being
+/// reproduced fails, and so does one that gets built without the pin being
+/// told. A one-directional check is what lets a remainder drift.
+///
+/// ⚠ This is NOT a first-stage gap. Both seats are locked by the scope mockup
+/// and locked by this build under the same requirement, so the reproduction is
+/// faithful. They are second-stage work — reproduce, then improve past it.
+#[test]
+fn r1946_the_distance_from_the_behaviour_reference_is_exactly_what_the_pin_declares() {
+    let derived = spec::second_phase_owed();
+    let entries = spec::second_phase_owed_declared();
+    let declared: Vec<String> = entries.iter().map(|entry| entry.key.clone()).collect();
+    assert_eq!(
+        derived, declared,
+        "the seats this build closes that the behaviour reference builds are not \
+         the seats `docs/analyzer-rail-spec.json` says they are",
+    );
+    // Each entry's reason is the reference's own doing rather than a restated
+    // key — a remainder whose reason is its own name tells a reader nothing.
+    for entry in &entries {
+        assert!(
+            entry.reason.len() > entry.key.len(),
+            "{}'s reason says no more than its key",
+            entry.key
+        );
+    }
+    // ★ Rule: can this reach zero? Yes — by BUILDING the sections, which is the
+    // only thing that removes a key from the derived side. So the equality is
+    // allowed to compare two empty lists one day, and the assertion below is
+    // what keeps that day from arriving by a parse going quiet instead.
+    assert_eq!(
+        spec::behaviour_built().len(),
+        spec::RAIL.len(),
+        "the behaviour reference builds every seat on this rail — a smaller \
+         number here means the pin stopped being read, not that a seat closed",
+    );
+    // Each entry is a seat that exists and is closed HERE. A key naming no seat,
+    // or naming an open one, would make the remainder describe a screen nobody
+    // has.
+    for key in &derived {
+        let seat = spec::RAIL
+            .iter()
+            .find(|s| s.key == key)
+            .unwrap_or_else(|| panic!("{key} is owed and the rail has no such seat"));
+        assert!(
+            seat.reserved_for().is_some(),
+            "{key} is owed against the behaviour reference and open here",
+        );
+    }
+}
+
+/// ★★★★★ R1946 — **a seat this build is behind the behaviour reference on says
+/// so, in the sentence a reader is shown.**
+///
+/// A person opened the window and asked why two sections are not there at all.
+/// The seat could answer the requirement that books it — the scope mockup's
+/// fact, and true — and was silent about the thing the question was about: the
+/// working reference has both, and this build has not built them. That silence
+/// was not a wording choice. Nothing in this tree held the fact until this
+/// round, so no sentence could have carried it.
+///
+/// The gate runs in **both** directions over the rail, and the second one is
+/// what makes it more than a spell-check: a seat that is NOT behind must not
+/// carry the clause. Today the reserved seats and the owed seats happen to be
+/// the same two, so only the open seats separate the arms — and if a seat is
+/// ever reserved for a reason the reference shares, this is what refuses to let
+/// it claim otherwise.
+///
+/// ⚠ This is the register, not the pixels. That the sentence reaches a looking
+/// reader is `r1916`'s tip painter and its own sweep; what is asserted here is
+/// that the register has the sentence to give it.
+#[test]
+fn r1946_a_seat_this_build_is_behind_the_reference_on_says_so() {
+    const CLAUSE: &str = "the reference draws it and this build does not yet";
+    let described = super::chrome_descriptions();
+    let behind = spec::second_phase_owed();
+    assert!(
+        !behind.is_empty(),
+        "nothing is owed against the behaviour reference, so both arms below \
+         compare an empty population — build the sections and delete this gate, \
+         do not let it pass by having nothing to judge",
+    );
+    for seat in spec::RAIL {
+        let sentence = described
+            .of(&format!("shell.rail.{}", seat.key))
+            .unwrap_or_else(|| panic!("{} carries no description", seat.key));
+        let owed = behind.iter().any(|key| key == seat.key);
+        assert_eq!(
+            sentence.contains(CLAUSE),
+            owed,
+            "{} {} the clause naming the reference, and it is {} owed against it \
+             — sentence: {sentence:?}",
+            seat.key,
+            if sentence.contains(CLAUSE) {
+                "carries"
+            } else {
+                "lacks"
+            },
+            if owed { "" } else { "not" },
+        );
+        if owed {
+            // The requirement is still there. The new clause ADDS to what the
+            // seat said; a reader who wanted the booking must not lose it.
+            let why = seat
+                .reserved_for()
+                .expect("an owed seat is reserved, which the sibling gate asserts");
+            assert!(
+                sentence.contains(why),
+                "{}'s sentence gained the reference clause and dropped its booking",
+                seat.key
+            );
         }
     }
 }
@@ -444,8 +682,9 @@ fn r1649_a_cell_and_its_pixels_are_inverses() {
 fn r1649_no_two_chrome_controls_share_pixels() {
     let overlaps =
         |a: Rect, b: Rect| a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
-    for (i, one) in BarChip::ALL.iter().enumerate() {
-        for other in &BarChip::ALL[i + 1..] {
+    let bar_chips = BarChip::all();
+    for (i, one) in bar_chips.iter().enumerate() {
+        for other in &bar_chips[i + 1..] {
             assert!(
                 !overlaps(one.rect(), other.rect()),
                 "{one:?} and {other:?} overlap"
@@ -467,11 +706,15 @@ fn r1649_no_two_chrome_controls_share_pixels() {
 #[test]
 fn r1649_every_chrome_tag_is_distinct() {
     let mut seen = std::collections::BTreeSet::new();
-    for chip in BarChip::ALL {
+    for chip in BarChip::all() {
         assert!(seen.insert(chip.tag()), "{} is used twice", chip.tag());
     }
     for chip in SubChip::ALL {
-        assert!(seen.insert(chip.tag()), "{} is used twice", chip.tag());
+        assert!(
+            seen.insert(chip.tag().to_owned()),
+            "{} is used twice",
+            chip.tag()
+        );
     }
 }
 
@@ -718,7 +961,10 @@ fn r1649_the_published_vocabularies_have_no_repeats() {
     };
     distinct("steppers", STEPPERS.iter().map(|(v, _)| *v).collect());
     distinct("rail", spec::RAIL.iter().map(|seat| seat.key).collect());
-    distinct("tabs", TABS.to_vec());
+    distinct(
+        "tabs",
+        spec::VIEW_TABS.iter().map(|tab| tab.title).collect(),
+    );
     distinct("keymap", KEYMAP.iter().map(|(c, _)| *c).collect());
 }
 
@@ -2043,7 +2289,7 @@ fn r1699_the_nested_tab_list_is_entered_walked_and_left() {
         let inside = descendant().expect("the cursor is on a tab");
         assert_eq!(
             inside,
-            BarChip::Tab0.tag(),
+            BarChip::Tab(0).tag(),
             "\u{2605} entering lands on the tab list's own cursor"
         );
         assert_ne!(
@@ -2054,7 +2300,7 @@ fn r1699_the_nested_tab_list_is_entered_walked_and_left() {
 
         // The inner axis answers and the outer one does not move.
         assert!(press_key(Some("shell.appbar"), "ArrowRight"));
-        assert_eq!(descendant(), Some(BarChip::Tab1.tag().to_owned()));
+        assert_eq!(descendant(), Some(BarChip::Tab(1).tag()));
         assert_eq!(
             state
                 .cursor_of("shell.appbar")
@@ -2071,7 +2317,11 @@ fn r1699_the_nested_tab_list_is_entered_walked_and_left() {
             before, after,
             "\u{2605} Enter inside the tab list switched the view"
         );
-        assert_eq!(after, TABS[1], "to the tab the cursor was on");
+        assert_eq!(
+            after,
+            spec::VIEW_TABS[1].title,
+            "to the tab the cursor was on"
+        );
 
         // Escape leaves ONE level: back onto the tab list, still in the bar.
         assert!(press_key(Some("shell.appbar"), "Escape"));
@@ -2080,7 +2330,7 @@ fn r1699_the_nested_tab_list_is_entered_walked_and_left() {
             press_key(Some("shell.appbar"), "ArrowRight"),
             "and the bar's own axis answers again"
         );
-        assert_eq!(descendant(), Some(BarChip::Source.tag().to_owned()));
+        assert_eq!(descendant(), Some(BarChip::Source.tag()));
 
         // ★ The narrowing R1699 had to make to R1698's invariant: the off-axis
         // arrow is consumed ONLY where there is something to enter.
@@ -2129,7 +2379,7 @@ fn r1699_the_nested_composite_publishes_its_roster_unentered() {
             .navigation
             .as_ref()
             .expect("\u{2605} a nested composite publishes what its own arrows reach");
-        assert_eq!(tabs_nav.members().len(), TABS.len());
+        assert_eq!(tabs_nav.members().len(), spec::VIEW_TABS.len());
         assert_eq!(
             tabs.orientation,
             pinion_a11y::Orientation::of(tabs_nav.spec().axis),

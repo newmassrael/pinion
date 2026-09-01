@@ -19,6 +19,31 @@
     "order on all three screens, and the only difference between the screens is",
     "which seat is marked current.",
     "",
+    "R1946 — THERE ARE TWO REFERENCES AND THIS FILE COULD NOT SAY WHICH IT",
+    "MEANT. The sentence at the top said `as the behaviour reference draws it`",
+    "and the extraction note beside it said `the three delivered screens`, and",
+    "those are two different artifacts: the SCOPE reference is the first-stage",
+    "screen mockup, and the BEHAVIOUR reference is the working prototype, which",
+    "is a superset of it. Every fact in `canon` came from the scope one. Two",
+    "seats disagree between them, and the disagreement is the whole of what a",
+    "person saw missing when they opened the window on 2026-09-01.",
+    "",
+    "Measured that day, at the command, on both files. The scope mockup draws",
+    "`Topology` and `Sessions` LOCKED, each naming the later-stage requirement",
+    "that books it — that is where `standing: closed` below comes from and it",
+    "is still true of that file. The behaviour prototype BUILDS both: its rail",
+    "moves to either seat like any other, the section-selected predicate exists",
+    "for both, and each has a full view of its own. Its rail has eight seats and",
+    "NOT ONE of them is locked.",
+    "",
+    "So each seat now carries TWO standings, because one field could only ever",
+    "answer for one reference, and a reader had no way to tell which. `standing`",
+    "is the scope mockup's and gates the first-stage reproduction, which is",
+    "complete. `behaviour` is the working prototype's and is what the",
+    "second-stage work is measured against. `second_phase_owed` below is the",
+    "derived difference: a seat this build closes that the behaviour reference",
+    "builds. It is the list that was invisible while there was one field.",
+    "",
     "VOCABULARY. The reference's product, protocol and resource words are",
     "replaced by the words the tool class uses generally. Structure and",
     "behaviour are what is being reproduced; the wording is not.",
@@ -35,31 +60,36 @@
       "ordinal": 1,
       "key": "dashboard",
       "title": "Dashboard",
-      "standing": "open"
+      "standing": "open",
+      "behaviour": "built"
     },
     {
       "ordinal": 2,
       "key": "packets",
       "title": "Packets",
-      "standing": "open"
+      "standing": "open",
+      "behaviour": "built"
     },
     {
       "ordinal": 3,
       "key": "keys",
       "title": "Key Patterns",
-      "standing": "open"
+      "standing": "open",
+      "behaviour": "built"
     },
     {
       "ordinal": 4,
       "key": "logs",
       "title": "Logs",
-      "standing": "open"
+      "standing": "open",
+      "behaviour": "built"
     },
     {
       "ordinal": 5,
       "key": "lab",
       "title": "Node Lab",
-      "standing": "open"
+      "standing": "open",
+      "behaviour": "built"
     },
     {
       "ordinal": 6,
@@ -67,7 +97,19 @@
       "title": "Topology",
       "standing": "closed",
       "kind": "reserved",
-      "$note": "Drawn locked by the reference itself, booked under requirement 12."
+      "behaviour": "built",
+      "$note": "Drawn locked by the reference itself, booked under requirement 12.",
+      "$behaviour_note": [
+        "⚠ `$note` above is the SCOPE mockup's fact and its wording is load-",
+        "bearing — two other crates parse the requirement number out of it, so",
+        "it stays a single string. This is the behaviour reference's fact.",
+        "",
+        "R1946 — BUILT by the behaviour prototype, measured at the command:",
+        "its rail carries the seat unlocked, a section-selected predicate names",
+        "it, and it has a full view with its own header, a layout choice, a",
+        "zoom, a filter side panel and a node-link plot. `behaviour: built` is",
+        "that fact, and it is why this seat is in `second_phase_owed`."
+      ]
     },
     {
       "ordinal": 7,
@@ -75,13 +117,71 @@
       "title": "Sessions",
       "standing": "closed",
       "kind": "reserved",
-      "$note": "Drawn locked by the reference itself, booked under requirement 18."
+      "behaviour": "built",
+      "$note": "Drawn locked by the reference itself, booked under requirement 18.",
+      "$behaviour_note": [
+        "⚠ `$note` above is the SCOPE mockup's fact and its wording is load-",
+        "bearing — see the sibling seat. This is the behaviour reference's.",
+        "",
+        "R1946 — BUILT by the behaviour prototype, measured at the command:",
+        "its rail carries the seat unlocked, a section-selected predicate names",
+        "it, and it has a view of its own — a peer list laid out on an",
+        "eight-column grid, with a per-peer detail beside it."
+      ]
     },
     {
       "ordinal": 8,
       "key": "settings",
       "title": "Settings",
-      "standing": "open"
+      "standing": "open",
+      "behaviour": "built"
+    }
+  ],
+  "$second_phase_comment": [
+    "R1946 — WHERE THIS BUILD IS BEHIND THE BEHAVIOUR REFERENCE, as opposed to",
+    "behind the scope mockup, which `owed` answers and which is empty.",
+    "",
+    "An entry here is a seat whose `behaviour` is `built` and which this",
+    "application still closes. The gate derives that set from the rail and this",
+    "file and asserts it EQUALS the keys listed here — so a seat that quietly",
+    "stops being reproduced fails, and so does one that gets built without this",
+    "list being told. Same ratchet as `owed`, over the other reference.",
+    "",
+    "⚠ These are NOT first-stage reproduction gaps. The scope mockup locks both",
+    "seats and this build locks them the same way, naming the same requirement,",
+    "so the first stage is reproduced. They are the second stage, which the",
+    "owner named on 2026-08-19: reproduce the first stage, then improve past it.",
+    "A person asked for exactly these two on 2026-09-01.",
+    "",
+    "CAN THIS REACH ZERO? Yes, and that is the only way it may: by building the",
+    "sections. Nothing else in the tree removes an entry — the derivation reads",
+    "the live rail, so an entry deleted here without the section being built",
+    "fails the gate on the next run.",
+    "",
+    "NOT THE SAME LIST AS `docs/analyzer-reserved-spec.json`'s `built`, and the",
+    "two are named here so neither is mistaken for the other. That one records",
+    "a seat the SCOPE mockup locks and THIS BUILD has since built — the second",
+    "stage arriving early, us ahead. This one records a seat the BEHAVIOUR",
+    "reference builds and this build still closes — us behind. Dual directions",
+    "of one axis, and R1946 found only this one was ever written down.",
+    "",
+    "⚠ That file's `deferred` register carries the same conflation this one had",
+    "until R1946: it says `as the behaviour reference states it` while every",
+    "fact in it is the scope mockup's. Its subject is which requirement books",
+    "which capability, which the mockup is the right source for, so nothing in",
+    "it is wrong — but the sentence naming its source is, and no gate here",
+    "reaches it. Named rather than left as an absence."
+  ],
+  "second_phase_owed": [
+    {
+      "key": "topology",
+      "round": "R1946",
+      "reason": "The behaviour reference draws a node-link view of the peers with a layout choice, a zoom and a filter panel. This build closes the seat, and a reader is told only that a later requirement books it."
+    },
+    {
+      "key": "sessions",
+      "round": "R1946",
+      "reason": "The behaviour reference draws a peer list on an eight-column grid with a per-peer detail beside it. This build closes the seat, and a reader is told only that a later requirement books it."
     }
   ],
   "$owed_comment": [

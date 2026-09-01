@@ -711,8 +711,17 @@ const SOURCES: [&str; 3] = [
     "file \u{00B7} session-2.capture",
 ];
 
-/// The two view tabs the application bar carries.
-const TABS: [&str; 2] = ["Dashboard", "Design System"];
+/// The view tabs the application bar carries, by title.
+///
+/// ★★★★★ R1946 — derived from [`spec::VIEW_TABS`] rather than written here.
+/// This used to be a two-element constant array of titles in this file, the
+/// only navigable surface on this screen with no declaration behind it, and its
+/// titles were spelled a second time inside the hit-test chip enumeration.
+/// There is one list now, and that the constant no longer exists is the point:
+/// a second list is what the two halves of this bar could disagree through.
+fn tabs() -> Vec<&'static str> {
+    spec::VIEW_TABS.iter().map(|tab| tab.title).collect()
+}
 
 /// A card's id is `<kind>#<n>` — the kind so the definition is recoverable
 /// without a side table, the ordinal so a kind can be placed more than once.
@@ -1785,7 +1794,7 @@ impl ShellState {
             capturing: Signal::new(true),
             search: Signal::new(String::new()),
             searching: Signal::new(false),
-            tab: Signal::new(TABS[0].to_string()),
+            tab: Signal::new(spec::VIEW_TABS[0].title.to_string()),
             journey: Signal::new(
                 Journey::begin(&roster, spec::RAIL_ACTIVE)
                     .expect("the screen opens at a destination it can reach"),
@@ -2098,10 +2107,11 @@ impl ShellState {
                 .with_ends(Ends::Wrap)
                 .with_activation(Activation::Explicit),
         );
-        tabs.seat(vec![
-            Member::new(BarChip::Tab0.tag()),
-            Member::new(BarChip::Tab1.tag()),
-        ]);
+        tabs.seat(
+            (0..spec::VIEW_TABS.len())
+                .map(|n| Member::new(BarChip::Tab(n).tag()))
+                .collect(),
+        );
         tabs
     }
 
@@ -2934,38 +2944,50 @@ const fn stepper_rect(bar: Rect, n: u32) -> Rect {
 }
 
 /// The app bar's pressable regions, left to right.
+///
+/// ★★★★★ R1946 — `Tab` carries WHICH tab, indexing [`spec::VIEW_TABS`], where
+/// the previous `Tab0` / `Tab1` were two hand-written arms that spelled their
+/// tags and rectangles a second time. A tab the specification declares and this
+/// enumeration lacks is now unrepresentable: [`Self::all`] is built from the
+/// table, so the chip set has the declaration's cardinality by construction
+/// rather than by anyone remembering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BarChip {
-    Tab0,
-    Tab1,
+    /// The `n`th entry of [`spec::VIEW_TABS`].
+    Tab(usize),
     Source,
     Capture,
     Search,
 }
 
 impl BarChip {
-    const ALL: [Self; 5] = [
-        Self::Tab0,
-        Self::Tab1,
-        Self::Source,
-        Self::Capture,
-        Self::Search,
-    ];
+    /// Every pressable region of the bar, left to right — the declared tabs
+    /// first, then the three chips that are this bar's own chrome.
+    ///
+    /// A `Vec` rather than the `const [Self; 5]` this was: a constant length is
+    /// exactly the thing that could disagree with the specification, and it did
+    /// for as long as the tabs were two named arms.
+    fn all() -> Vec<Self> {
+        (0..spec::VIEW_TABS.len())
+            .map(Self::Tab)
+            .chain([Self::Source, Self::Capture, Self::Search])
+            .collect()
+    }
 
-    const fn tag(self) -> &'static str {
+    /// This chip's paint tag. A tab's is derived from its declared key, so the
+    /// tag and the table cannot drift.
+    fn tag(self) -> String {
         match self {
-            Self::Tab0 => "shell.appbar.tab.dashboard",
-            Self::Tab1 => "shell.appbar.tab.design",
-            Self::Source => "shell.appbar.source",
-            Self::Capture => "shell.appbar.capture",
-            Self::Search => "shell.appbar.search",
+            Self::Tab(n) => format!("shell.appbar.tab.{}", spec::VIEW_TABS[n].key),
+            Self::Source => "shell.appbar.source".to_owned(),
+            Self::Capture => "shell.appbar.capture".to_owned(),
+            Self::Search => "shell.appbar.search".to_owned(),
         }
     }
 
     fn rect(self) -> Rect {
         match self {
-            Self::Tab0 => Rect::new(168, 10, 108, 32),
-            Self::Tab1 => Rect::new(280, 10, 118, 32),
+            Self::Tab(n) => spec::VIEW_TABS[n].rect,
             Self::Source => Rect::new(416, 10, 268, 32),
             Self::Capture => Rect::new(696, 10, 132, 32),
             Self::Search => Rect::new(win_w() - 300, 10, 288, 32),
@@ -3291,7 +3313,7 @@ impl Hit {
             }
         }
         if py < APP_BAR_H {
-            for chip in BarChip::ALL {
+            for chip in BarChip::all() {
                 if contains(chip.rect(), px, py) {
                     return Self::Chip(chip);
                 }
@@ -3369,7 +3391,7 @@ impl Hit {
     /// tag's painted rectangle. Two independent derivations of the same fact,
     /// with the paint as the arbiter.
     fn of_tag(state: &ShellState, tag: &str) -> Self {
-        if let Some(chip) = BarChip::ALL.into_iter().find(|c| c.tag() == tag) {
+        if let Some(chip) = BarChip::all().into_iter().find(|c| c.tag() == tag) {
             return Self::Chip(chip);
         }
         if let Some(chip) = SubChip::ALL.into_iter().find(|c| c.tag() == tag) {
@@ -5499,7 +5521,7 @@ impl ExternalIntrospect for ShellOracle {
             "search" => text(state.search.get()),
             "theme" => text(theme_word(&state.theme)),
             "tab" => text(state.tab.get()),
-            "tabs" => text(TABS.join(",")),
+            "tabs" => text(tabs().join(",")),
             "spec" | "rail" | "reserved_rail" | "catalogue" | "conformance" => {
                 read_specification(path)
             }
@@ -5704,10 +5726,11 @@ impl ExternalIntrospect for ShellOracle {
             }
             "tab" => {
                 let name = word(&value)?;
-                let chosen = TABS.iter().find(|t| **t == name).ok_or_else(|| {
+                let all = tabs();
+                let chosen = all.iter().find(|t| **t == name).ok_or_else(|| {
                     InterveneError::out_of_range(format!(
                         "{name:?} is not a tab; they are {}",
-                        TABS.join(", ")
+                        all.join(", ")
                     ))
                 })?;
                 state.tab.set((*chosen).to_string());
@@ -6967,12 +6990,10 @@ impl ShellOracle {
 
     fn press_chip(state: &Rc<ShellState>, chip: BarChip) {
         match chip {
-            BarChip::Tab0 | BarChip::Tab1 => {
-                let name = if chip == BarChip::Tab0 {
-                    TABS[0]
-                } else {
-                    TABS[1]
-                };
+            // R1946 — one arm for every declared tab, so a tab added to the
+            // specification presses without a second edit here.
+            BarChip::Tab(n) => {
+                let name = spec::VIEW_TABS[n].title;
                 state.tab.set(name.to_string());
                 state.say(Utterance::done(format!("view {name}")));
             }
@@ -8314,9 +8335,10 @@ fn app_bar_scene(state: &ShellState, palette: Palette) -> Scene {
         dot(16, 18, 16, palette.accent),
         chrome_label(bar, 42, 118, "Analyzer", FONT_TITLE, palette.ink),
     ];
-    for (n, name) in TABS.iter().enumerate() {
-        let chip = if n == 0 { BarChip::Tab0 } else { BarChip::Tab1 };
-        let on = state.tab.get() == *name;
+    for (n, tab) in spec::VIEW_TABS.iter().enumerate() {
+        let name = tab.title;
+        let chip = BarChip::Tab(n);
+        let on = state.tab.get() == name;
         children.push(Scene::Container(
             ContainerNode::new(vec![chrome_label(
                 chip.rect(),
@@ -8336,7 +8358,7 @@ fn app_bar_scene(state: &ShellState, palette: Palette) -> Scene {
     }
     children.push(pill(
         BarChip::Source.rect(),
-        BarChip::Source.tag(),
+        &BarChip::Source.tag(),
         rgb(0x35_C0_8B),
         &state.source.get(),
         palette,
@@ -8344,7 +8366,7 @@ fn app_bar_scene(state: &ShellState, palette: Palette) -> Scene {
     let capturing = state.capturing.get();
     children.push(pill(
         BarChip::Capture.rect(),
-        BarChip::Capture.tag(),
+        &BarChip::Capture.tag(),
         if capturing {
             palette.accent_fg
         } else {
@@ -11829,11 +11851,40 @@ fn read_specification(path: &str) -> Result<IntrospectValue, ReadRefusal> {
                 })
                 .collect();
             let specified = spec::canon_spec().len();
+            // ★★★★★ R1946 — **the distance from the OTHER reference, on the
+            // same surface.**
+            //
+            // Everything above answers for the scope mockup, and its answer is
+            // full marks: eight specified, eight reproduced, nothing owed. It
+            // was that answer, with no second one beside it, that let this
+            // build report conformance while two sections a person went looking
+            // for did not exist. They are not divergences from the mockup — it
+            // locks both seats and so does this build — they are seats the
+            // working reference BUILDS and this one has not.
+            //
+            // An agent asking this path how far the tool is from the reference
+            // now gets both numbers, and the smaller one is the honest one.
+            let behind: Vec<serde_json::Value> = spec::second_phase_owed_declared()
+                .iter()
+                .map(|entry| {
+                    serde_json::json!({
+                        "key": entry.key,
+                        "since": entry.round,
+                        "why": entry.reason,
+                    })
+                })
+                .collect();
+            let builds = spec::behaviour_built().len();
             Ok(IntrospectValue::Json(serde_json::json!({
                 "specified": specified,
                 "reproduced": specified - divergences.len(),
                 "divergences": divergences,
                 "owed": owed,
+                "behaviour": {
+                    "builds": builds,
+                    "reproduced": builds - behind.len(),
+                    "owed": behind,
+                },
             })))
         }
         // Unreachable through the caller's match, which routes exactly the
@@ -13720,12 +13771,27 @@ const SHELL_TIP: &str = "shell.tip";
 /// per seat, so a seat added to [`spec::RAIL`] arrives described.
 fn chrome_descriptions() -> pinion_core::describe::Descriptions {
     let mut described = pinion_core::describe::Descriptions::new();
+    // ★★★★★ R1946 — a seat this build is behind the BEHAVIOUR reference on
+    // says so, and the set is derived from the pin rather than named here.
+    //
+    // A person opened the window and asked why two of these sections are not
+    // there at all. What the seat could answer was the requirement that books
+    // it, which is the SCOPE mockup's fact and true — and silent about the one
+    // thing the question was actually about: the working reference has both
+    // sections, and this build has not built them yet. That silence was not a
+    // wording choice; nothing in this tree held the fact until this round.
+    let behind = spec::second_phase_owed();
     for seat in spec::RAIL {
         let sentence = match seat.reserved_for() {
             // ★ The reserved seats already SAY their requirement — the rail
             // announces it and the refusal repeats it. What they could not do
             // is say it to a reader who is only looking, which is the debt this
             // register closes on this axis.
+            Some(why) if behind.iter().any(|key| key == seat.key) => format!(
+                "{} is not in this release - booked under {why}; the reference draws it \
+                 and this build does not yet",
+                seat.title
+            ),
             Some(why) => format!("{} is not in this release - booked under {why}", seat.title),
             None => format!("Go to {}", seat.title),
         };
@@ -13882,18 +13948,15 @@ fn app_bar_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
         tabs = tabs.with_navigation(&inner);
     }
     let mut nodes = Vec::new();
-    for (n, name) in TABS.iter().enumerate() {
-        let tag = if n == 0 {
-            BarChip::Tab0.tag()
-        } else {
-            BarChip::Tab1.tag()
-        };
-        tabs = tabs.with_child(tag);
+    for (n, tab) in spec::VIEW_TABS.iter().enumerate() {
+        let name = tab.title;
+        let tag = BarChip::Tab(n).tag();
+        tabs = tabs.with_child(&tag);
         nodes.push(
-            AccessNode::new(tag, AriaRole::Tab)
-                .with_name(*name)
-                .with_selected(current == *name)
-                .with_set_position(n, TABS.len()),
+            AccessNode::new(&tag, AriaRole::Tab)
+                .with_name(name)
+                .with_selected(current == name)
+                .with_set_position(n, spec::VIEW_TABS.len()),
         );
     }
     nodes.insert(0, tabs);

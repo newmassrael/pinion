@@ -37,6 +37,7 @@ use pinion_core::edge_panel::{EdgePlacement, EdgePolicy, Resize};
 /// R1697 — the operations table's shape, from the framework rather than from a
 /// second copy of the sibling screen's (see [`OPERATIONS`]).
 pub use pinion_core::operation::Operation as OperationSpec;
+use pinion_core::scene::Rect;
 use pinion_core::style::ChromeEdge;
 use pinion_core::widgets::chip_group::Choice;
 use pinion_core::widgets::destination::{
@@ -52,6 +53,66 @@ pub const WIN_H: u32 = 900;
 
 /// The application bar's height.
 pub const APP_BAR_H: u32 = 52;
+
+/// One view tab in the application bar.
+///
+/// ★★★★★ R1946 — **the app bar's view tabs are a SURFACE OF THEIR OWN, and
+/// until this round they were the only navigable surface on this screen with no
+/// declaration behind them.** The rail is specified ([`RAIL`]), turned into the
+/// framework's roster ([`destinations`]) and compared with a written pin
+/// ([`canon`]); the two chips beside it were a two-element constant array of
+/// titles in `main.rs` with their tags spelled a third time inside the hit-test
+/// chip enumeration. Built without a declaration is the mirror of declared
+/// without being built, and it is the direction nothing here could see.
+///
+/// ⚠ **This is NOT the rail, and conflating the two is what R1946 measured.**
+/// `debt-six-declared-destinations-are-never-built` read the eight `title:`
+/// entries of [`RAIL`] against that two-element array and concluded that six
+/// destinations are never built. Re-measured at this round's open, every clause
+/// of that is false: `destinations()` is already derived from `RAIL`,
+/// `rail_scene` paints all eight seats from the same table, four seats carry a
+/// mounted screen and two more are painted by this shell itself, and the
+/// remaining two are `Seat::Reserved` because the behaviour reference defers
+/// them — `ScreenRoster::new` *refuses* a mount at a closed seat, so they could
+/// not be "built" without contradicting the pin. Deriving these tabs from the
+/// rail, which is what that debt prescribes, would put eight sections into a
+/// two-item view switcher that means something else entirely.
+///
+/// What the debt was right about is the SHAPE of the defect — a list nobody
+/// declared — and this table is where that belongs.
+pub struct ViewTabSpec {
+    /// The tab's key, and the suffix of its paint tag (`shell.appbar.tab.{key}`).
+    pub key: &'static str,
+    /// What a reader calls it.
+    pub title: &'static str,
+    /// Where the tab sits in the application bar, in the bar's own space.
+    ///
+    /// The framework's own geometry type rather than a four-tuple: a tuple has
+    /// to be unpacked at every reader, and four `u32`s in a row are four
+    /// chances to swap two of them silently.
+    pub rect: Rect,
+}
+
+/// The application bar's view tabs, left to right.
+///
+/// `dashboard` names the same page the rail's first seat does — the two
+/// surfaces reach one section by two routes, which is what the reference does
+/// and is not a duplication to remove. `design` is this build's own: a page the
+/// reference has no seat for, kept and *named here* rather than dropped
+/// silently, because a derivation that swallowed it would lose a page a reader
+/// can currently reach.
+pub const VIEW_TABS: &[ViewTabSpec] = &[
+    ViewTabSpec {
+        key: "dashboard",
+        title: "Dashboard",
+        rect: Rect::new(168, 10, 108, 32),
+    },
+    ViewTabSpec {
+        key: "design",
+        title: "Design System",
+        rect: Rect::new(280, 10, 118, 32),
+    },
+];
 /// The layout bar's height — the strip under the application bar carrying the
 /// preset name, the placed count and the two board verbs.
 pub const SUB_BAR_H: u32 = 46;
@@ -423,6 +484,128 @@ pub fn owed() -> Ledger {
     let doc: serde_json::Value =
         serde_json::from_str(RAIL_SPEC_JSON).expect("the rail specification is readable JSON");
     Ledger::from_json(&doc).expect("the rail's declared remainder is a readable ledger")
+}
+
+/// ★★★★★ R1946 — **the seats the BEHAVIOUR reference builds.**
+///
+/// [`canon`] above answers for the *scope* reference — the first-stage screen
+/// mockup — and until this round that was the only reference this pin could
+/// speak for, while its own opening sentence claimed to speak for the other
+/// one. The two disagree on exactly two seats, and that disagreement is what a
+/// person saw missing when they opened the window: the mockup draws `Topology`
+/// and `Sessions` locked under a later requirement, and the working prototype
+/// **builds both**.
+///
+/// One field could only ever answer for one reference and a reader had no way
+/// to tell which, so a seat now carries two standings. This reads the second.
+///
+/// # Panics
+///
+/// If a seat states no `behaviour`, or states one this vocabulary does not
+/// have. ⚠ An unclassified seat is a RED rather than a pass — a missing field
+/// defaulting to *not built* would let a seat leave [`second_phase_owed`]
+/// silently, which is the direction that hides work.
+#[must_use]
+pub fn behaviour_built() -> Vec<String> {
+    let doc: serde_json::Value =
+        serde_json::from_str(RAIL_SPEC_JSON).expect("the rail specification is readable JSON");
+    doc["canon"]
+        .as_array()
+        .expect("the rail specification declares a canon array")
+        .iter()
+        .filter_map(|seat| {
+            let key = seat["key"].as_str().expect("a specified seat has a key");
+            match seat["behaviour"].as_str() {
+                Some("built") => Some(key.to_owned()),
+                Some("locked") => None,
+                other => panic!(
+                    "{key}'s behaviour standing is built or locked, not {other:?} — \
+                     a seat with no standing for the behaviour reference cannot be judged"
+                ),
+            }
+        })
+        .collect()
+}
+
+/// ★★★★★ R1946 — **the second-stage remainder, DERIVED: a seat this build
+/// closes that the behaviour reference builds.**
+///
+/// [`owed`] is the same shape over the *scope* reference and is empty — the
+/// first-stage reproduction is complete, and it was that emptiness, with no
+/// second instrument beside it, that let a screen report full marks while two
+/// sections a person asked for did not exist.
+///
+/// ⚠ These are not first-stage gaps. The mockup locks both seats and this build
+/// locks them the same way, naming the same requirement. They are the second
+/// stage — reproduce, then improve past it (owner, 2026-08-19).
+///
+/// ★ Can this reach zero? Only by building the sections. The set is derived
+/// from the live rail, so deleting an entry from the pin without building
+/// anything fails the gate rather than shrinking the number.
+#[must_use]
+pub fn second_phase_owed() -> Vec<String> {
+    let built = behaviour_built();
+    RAIL.iter()
+        .filter(|seat| seat.reserved_for().is_some())
+        .map(|seat| seat.key.to_owned())
+        .filter(|key| built.contains(key))
+        .collect()
+}
+
+/// ★★★★★ R1946 — one reviewed statement of a seat this build owes the
+/// behaviour reference.
+///
+/// A record rather than the bare key it started as: an agent asking how far
+/// this build is from the working reference needs the *reason* and the round
+/// that entered it, which is what the pin already carries and what a `Vec` of
+/// keys threw away on the way out. The gate compares keys; the wire reports all
+/// three.
+pub struct SecondPhaseEntry {
+    /// The rail seat this is owed on.
+    pub key: String,
+    /// The round that entered it.
+    pub round: String,
+    /// What the reference does here that this build does not.
+    pub reason: String,
+}
+
+/// ★★★★★ R1946 — the same remainder as the pin **declares** it.
+///
+/// The reviewed half of the pair. [`second_phase_owed`] derives the set from
+/// the running rail; this reads what a person wrote down about it, and the gate
+/// asserts they are the same list. One rule asked at two moments, which is what
+/// keeps this from being a second oracle.
+///
+/// # Panics
+///
+/// If an entry names no key, no round or no reason — all defects in the pin,
+/// and all of them must stop the build rather than weaken the comparison.
+#[must_use]
+pub fn second_phase_owed_declared() -> Vec<SecondPhaseEntry> {
+    let doc: serde_json::Value =
+        serde_json::from_str(RAIL_SPEC_JSON).expect("the rail specification is readable JSON");
+    doc["second_phase_owed"]
+        .as_array()
+        .expect("the rail specification declares a second-stage remainder")
+        .iter()
+        .map(|entry| {
+            let key = entry["key"]
+                .as_str()
+                .expect("a second-stage entry names its seat");
+            let field = |name: &str| {
+                entry[name]
+                    .as_str()
+                    .filter(|text| !text.is_empty())
+                    .unwrap_or_else(|| panic!("{key}'s second-stage entry states no {name}"))
+                    .to_owned()
+            };
+            SecondPhaseEntry {
+                key: key.to_owned(),
+                round: field("round"),
+                reason: field("reason"),
+            }
+        })
+        .collect()
 }
 
 /// ★★★★★ R1733 — the BOARD's written specification: the palette row a widget
