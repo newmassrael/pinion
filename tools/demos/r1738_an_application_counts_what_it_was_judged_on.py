@@ -76,7 +76,15 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from analyzer_spec import rail_spec, unjudged_sections  # noqa: E402
+from analyzer_spec import (  # noqa: E402
+    ahead_keys,
+    closed_keys,
+    divergences,
+    rail_keys,
+    rail_spec,
+    unjudged_sections,
+)
+from analyzer_spec import reserved_keys as reserved_rail_keys  # noqa: E402
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
@@ -209,10 +217,19 @@ def section_b(app: RpcSubprocess) -> None:
         f"  [refusal] unjudged {said['unjudged']}, declared {said['declared']}, "
         f"reproduced {said['reproduced']} of {said['specified']}"
     )
-    ok(
+    # ★★★★★ R1953 — *what it always said* is the DECLARED divergence list, not
+    # the empty list.
+    #
+    # This spelled it `== []`, which was the same thing while the rail owed the
+    # reference nothing in either direction. R1947 and R1948 then declared this
+    # build AHEAD of the scope mockup at two seats, so the seat-level verdict
+    # reports two differences — correctly, and this read the correctness as a
+    # correction of the sentence above it.
+    assert_eq(
+        [d["says"] for d in app.query(f"{EXT}/conformance")["divergences"]],
+        [entry["sentence"] for entry in divergences()],
         "B: ★★ and the seat-level verdict still says what it always said, so "
         "this is a second sentence rather than a correction of the first",
-        app.query(f"{EXT}/conformance")["divergences"] == [],
     )
 
 
@@ -546,12 +563,29 @@ def section_e(app: RpcSubprocess) -> None:
     banner("E — a closed seat's row and its refusal are one sentence")
     said = report(app)
     closed = [row for row in said["rows"] if row["standing"] == "closed"]
+    # ★★★★★ R1953 — the seats the reference draws locked LESS the ones this
+    # build declares itself ahead on.
+    #
+    # This read the canon's `reserved` seats straight, which was the same set
+    # while every seat the reference locks was one this build locked too.
+    # R1947 and R1948 opened both and declared the difference, so the report
+    # calls nothing closed — correctly — and this asked for two rows.
     assert_eq(
         [row["key"] for row in closed],
-        [seat["key"] for seat in rail_spec()["canon"] if seat.get("kind") == "reserved"],
+        [key for key in rail_keys() if key in set(closed_keys())],
         "E: the rows this report calls closed are the seats the specification "
-        "draws locked",
+        "draws locked and this build has not opened",
     )
+    if not closed:
+        # The empty case says what makes it empty rather than passing over
+        # (R1651.1): every seat the reference locks is one this build declares
+        # itself ahead on, which is a fact rather than an absence of one.
+        assert_eq(
+            sorted(reserved_rail_keys()),
+            sorted(ahead_keys()),
+            "E: ★ nothing is closed because this build opens every seat the "
+            "reference locks, and says so",
+        )
     for row in closed:
         ok(f"E: `{row['key']}` carries the destination's own reason", bool(row["why"]))
         try:

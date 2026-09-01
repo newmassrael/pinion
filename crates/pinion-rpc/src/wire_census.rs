@@ -2205,6 +2205,7 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("at_centre", WireTy::String, None).nullable(),
                 WireField::new("astray_to", WireTy::String, None).nullable(),
                 WireField::new("verdict", WireTy::String, Some("TargetVerdict")),
+                WireField::new("defect", WireTy::Boolean, None),
             ],
         },
     },

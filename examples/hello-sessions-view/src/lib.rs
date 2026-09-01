@@ -58,8 +58,8 @@ use pinion_a11y::{AccessFocus, AccessNode, AccessState, AriaRole, WidgetA11y};
 use pinion_core::describe::Descriptions;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, PointerTarget, ReadRefusal, RepaintOwner, SchemaArg,
-    SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, PointerTarget, ReadRefusal, RepaintOwner,
+    SchemaArg, SchemaField, ThreadOwnership,
 };
 use pinion_core::input::PointerReading;
 use pinion_core::reactive::Signal;
@@ -316,7 +316,9 @@ const fn channel_rows() -> u32 {
     count
 }
 
-/// One of the detail's two actions.
+/// One of the detail's two actions, **in the detail pane's own space** — which
+/// is the space the pane's children are laid out in, and the space
+/// [`action_row`] paints them at.
 fn action_rect(nth: u32) -> Rect {
     let pane = detail_rect();
     let (_, h) = window_size();
@@ -334,6 +336,33 @@ fn action_rect(nth: u32) -> Rect {
             34,
         )
     }
+}
+
+/// The same action, **as the window sees it**.
+///
+/// ★★★★★ R1953 — the defect this exists to remove: [`Hit::at`] works in the
+/// SCREEN's coordinates (every other rectangle it tests — a chip, a row — is
+/// measured from the window's left edge) and it was testing [`action_rect`],
+/// which is measured from the detail PANE's. The pane starts at
+/// `w - DETAIL_W`, so the two frames differ by that much in `x` and agree in
+/// `y` — which is why the mistake survived: the buttons were dead to a real
+/// mouse, and a press in the LIST pane's bottom-left corner reached them
+/// instead.
+///
+/// ⚠ It survived R1948's own gates because every assertion about these two
+/// actions addressed them BY NAME over the wire, and the wire path never asks
+/// the geometry. `scene/pointer_target` is what asks, and it reported both rows
+/// `astray` the first time this example was measured — which only happened at
+/// all because R1953 registered its missing census rows.
+///
+/// One translation, in one direction, at the one place the frame changes. The
+/// paint keeps the pane's frame, because that is the frame the pane's children
+/// are laid out in; R1948's first draft tried to translate on the paint side
+/// and wrote `close.x - pane.x + pane.x`, a no-op that also underflowed.
+fn action_in_window(nth: u32) -> Rect {
+    let pane = detail_rect();
+    let local = action_rect(nth);
+    Rect::new(pane.x + local.x, pane.y + local.y, local.w, local.h)
 }
 
 const fn contains(rect: Rect, px: u32, py: u32) -> bool {
@@ -548,10 +577,10 @@ impl Hit {
                 return Self::Chip(n);
             }
         }
-        if contains(action_rect(0), px, py) {
+        if contains(action_in_window(0), px, py) {
             return Self::Cross;
         }
-        if contains(action_rect(1), px, py) {
+        if contains(action_in_window(1), px, py) {
             return Self::Close;
         }
         for (visual, session) in state.kept().iter().enumerate() {
@@ -893,7 +922,9 @@ fn list_pane(state: &Rc<ViewState>, ink: Ink) -> Vec<Scene> {
     };
     let (active, closed) = spec::tally();
     let mut out = vec![
-        panel(LIST_TAG, list, ink.ground, None, Vec::new()),
+        // ★ R1953 — the list pane is the other stop; see the note on the
+        // detail pane below for what shipped without either.
+        panel(LIST_TAG, list, ink.ground, None, Vec::new()).with_focusable(true),
         part_box(
             "sv.list.title",
             band(head.x + 18, 110),
@@ -1111,7 +1142,18 @@ fn detail_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
     children.push(timeline_part(session, ink));
     children.push(channels_part(session, ink));
     children.extend(action_row(ink));
-    panel(DETAIL_TAG, pane, ink.surface, Some(ink.border), children)
+    // ★★★★★ R1953 — a keyboard stop, and this section shipped without one.
+    //
+    // Measured: this screen publishes 107 deliverable regions and interactive
+    // ARIA roles, and `focus/next` found NO stop at step 0 — announced as
+    // operable, unreachable by keyboard. The sibling section
+    // (`hello-log-view`) puts one stop on each of its two panes, which is the
+    // WAI-ARIA composite pattern the framework's `focus_stop` doc names: the
+    // container is the stop and a cursor moves among its members.
+    //
+    // ⚠ It went unnoticed because the demo that asks — `r1570_1` — is CI's,
+    // and CI was red for an unrelated reason for four pushes.
+    panel(DETAIL_TAG, pane, ink.surface, Some(ink.border), children).with_focusable(true)
 }
 
 /// The four negotiated values, in the two-by-two grid the reference draws.
@@ -1267,6 +1309,29 @@ fn action_row(ink: Ink) -> Vec<Scene> {
 
 // ── Descriptions ────────────────────────────────────────────────────────────
 
+/// ★★★★★ R1953 — this section's described register, in the shape every OTHER
+/// page of this application publishes it in.
+///
+/// It answered a bare list of tags where the capture viewer, the key-pattern
+/// section and the log view all answer
+/// `{region, marks: [{tag, sentence}]}` — one channel name meaning two shapes,
+/// which is worse than a missing channel because the reader that fails is the
+/// one that trusted the name. The sentences are unchanged; only the wire form
+/// moves.
+fn described_wire() -> serde_json::Value {
+    let described = descriptions();
+    serde_json::json!({
+        "region": TOOLTIP_TAG,
+        "marks": described
+            .tags()
+            .map(|tag| serde_json::json!({
+                "tag": tag,
+                "sentence": described.of(tag).unwrap_or_default(),
+            }))
+            .collect::<Vec<_>>(),
+    })
+}
+
 /// The sentences this screen's marks carry, derived from the declarations they
 /// are built from.
 fn descriptions() -> Descriptions {
@@ -1378,9 +1443,18 @@ fn access_nodes(state: &Rc<ViewState>, focused: Option<&str>) -> Vec<AccessNode>
     ];
     // Every part of both surfaces is named, from the SAME table the pin is
     // compared against — a part the specification gains arrives named.
+    //
+    // ★★★★★ R1953 — LESS every part that gets a declaration of its own below.
+    // `sv.detail.close` was pushed twice, once as a named `Group` here and once
+    // as a disabled `Button` at the end, so one address carried two
+    // accessibility nodes and a reader taking the first got neither the role
+    // nor the refusal. The sibling section had the same defect on five tags.
+    // The skip list is DERIVED from the pushes that would collide rather than
+    // written out, so a control added later cannot re-open it.
+    let mut parts: Vec<AccessNode> = Vec::new();
     for (stem, table) in [("sv.list", spec::LIST), ("sv.detail", spec::DETAIL)] {
         for part in table {
-            nodes.push(
+            parts.push(
                 AccessNode::new(format!("{stem}.{}", part.key), AriaRole::Group)
                     .with_name(part.title),
             );
@@ -1415,6 +1489,16 @@ fn access_nodes(state: &Rc<ViewState>, focused: Option<&str>) -> Vec<AccessNode>
                 ..AccessState::default()
             }),
     );
+    // ★ R1953 — the table's parts, less every tag something above declared for
+    // itself. See the note where `parts` is built.
+    let richer: std::collections::BTreeSet<&str> =
+        nodes.iter().map(|node| node.tag.as_str()).collect();
+    let kept: Vec<AccessNode> = parts
+        .iter()
+        .filter(|part| !richer.contains(part.tag.as_str()))
+        .cloned()
+        .collect();
+    nodes.extend(kept);
     if let Some((tag, sentence)) = description_shown(state) {
         pinion_widget_paint::described::announce_description(
             &mut nodes,
@@ -1547,6 +1631,7 @@ impl ExternalIntrospect for ViewOracle {
                     SchemaField::action("chip", "string"),
                     SchemaField::action("press", "string"),
                     SchemaField::action("point", "string"),
+                    SchemaField::action("send", "string"),
                     SchemaField::action("key", "string"),
                 ]
             },
@@ -1572,9 +1657,7 @@ impl ExternalIntrospect for ViewOracle {
         }
         match path {
             "spec" => Ok(IntrospectValue::Json(spec_json())),
-            "described" => Ok(IntrospectValue::Json(serde_json::json!(
-                descriptions().tags().map(str::to_owned).collect::<Vec<_>>()
-            ))),
+            "described" => Ok(IntrospectValue::Json(described_wire())),
             "conformance" => Ok(IntrospectValue::Json(
                 serde_json::to_value(judge::conformance().to_json())
                     .unwrap_or(serde_json::Value::Null),
@@ -1616,6 +1699,39 @@ impl ExternalIntrospect for ViewOracle {
             "said" => Ok(IntrospectValue::Text(state.said_sentence())),
             _ => Err(ReadRefusal::UnknownPath),
         }
+    }
+
+    /// ★★★★★ R1953 — the pointer LEAVING, which this section could not hear;
+    /// see the twin section's identical arm for what that cost and why it is
+    /// on `invoke` rather than `intervene`.
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        let Some(state) = self.state.clone() else {
+            return Err(InvokeError::UnknownPath);
+        };
+        if path != "send" {
+            return Err(InvokeError::UnknownPath);
+        }
+        let IntrospectValue::Text(event) = args else {
+            return Err(InvokeError::rejected("a pointer event is a word"));
+        };
+        match event.trim() {
+            "PointerDown" | "PointerUp" | "PointerEnter" => {}
+            "PointerLeave" | "PointerCancel" => {
+                state.pointer_inside.set(false);
+                state.resting.set(None);
+            }
+            other => {
+                return Err(InvokeError::rejected(format!(
+                    "{other:?} is not a pointer event; they are PointerDown / \
+                     PointerUp / PointerEnter / PointerLeave / PointerCancel"
+                )));
+            }
+        }
+        Ok(IntrospectValue::Text(event))
     }
 
     fn intervene(&mut self, path: &str, args: IntrospectValue) -> Result<(), InterveneError> {

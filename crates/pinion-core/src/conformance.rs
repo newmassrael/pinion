@@ -946,9 +946,33 @@ impl Ledger {
     /// [`LedgerDefect::Malformed`] for a document that is not that shape, and
     /// the rest as [`new`](Self::new).
     pub fn from_json(doc: &serde_json::Value) -> Result<Self, LedgerDefect> {
-        let Some(entries) = doc.get("owed").and_then(serde_json::Value::as_array) else {
+        Self::from_json_at(doc, "owed")
+    }
+
+    /// ★★★★★ R1953 — the same read, from a NAMED array, because a
+    /// specification can have more than one remainder and they can point in
+    /// opposite directions.
+    ///
+    /// The analysis tool's rail specification had one list meaning *the
+    /// reference has this and this build has not written it*, and two rounds
+    /// wrote entries meaning the opposite into it — the reference LOCKS this
+    /// seat and this build opens it. Both are declared, reviewed remainders and
+    /// both want every condition [`new`](Self::new) imposes; what they must not
+    /// share is the name, because a consumer deriving *what must be shut* from
+    /// the first meaning classified two open seats as closed and fourteen
+    /// demos went red.
+    ///
+    /// ⇒ the *shape* is the framework's and the *name* is the document's.
+    /// [`from_json`](Self::from_json) is this with `"owed"`, which is what a
+    /// specification with a single remainder still spells.
+    ///
+    /// # Errors
+    ///
+    /// As [`from_json`](Self::from_json), naming the array that is missing.
+    pub fn from_json_at(doc: &serde_json::Value, array: &str) -> Result<Self, LedgerDefect> {
+        let Some(entries) = doc.get(array).and_then(serde_json::Value::as_array) else {
             return Err(LedgerDefect::Malformed {
-                what: "the document declares an `owed` array".to_owned(),
+                what: format!("the document declares an `{array}` array"),
             });
         };
         let mut owed = Vec::with_capacity(entries.len());
@@ -959,7 +983,7 @@ impl Ledger {
                     .and_then(serde_json::Value::as_str)
                     .map(str::to_owned)
                     .ok_or_else(|| LedgerDefect::Malformed {
-                        what: format!("owed entry {at} carries a string `{name}`"),
+                        what: format!("`{array}` entry {at} carries a string `{name}`"),
                     })
             };
             let why = match entry.get("why") {
@@ -1016,6 +1040,35 @@ impl Ledger {
                 why,
                 at,
             });
+        }
+        Self::new(owed)
+    }
+
+    /// ★★★★★ R1953 — several named remainders read as **one** ledger, so a key
+    /// two of them declare is unrepresentable rather than merely discouraged.
+    ///
+    /// [`from_json_at`](Self::from_json_at) gives a specification more than one
+    /// remainder; this is what a gate asking for *every* declared difference
+    /// reads, and it is the reason such a gate is not written as a
+    /// concatenation at the call site. [`new`](Self::new) already refuses two
+    /// entries about one key, so pouring the arrays into a single ledger is
+    /// what turns *one seat cannot diverge in two directions at once* from a
+    /// rule somebody remembers into a document that cannot be loaded.
+    ///
+    /// Entry order is the arrays' order and then each array's own, because the
+    /// order a person wrote the entries in is the order a report reads best in.
+    ///
+    /// # Errors
+    ///
+    /// As [`from_json_at`](Self::from_json_at) for each array, and
+    /// [`LedgerDefect::DuplicateKey`] for a key two of them declare.
+    pub fn from_json_across(
+        doc: &serde_json::Value,
+        arrays: &[&str],
+    ) -> Result<Self, LedgerDefect> {
+        let mut owed = Vec::new();
+        for array in arrays {
+            owed.extend(Self::from_json_at(doc, array)?.owed);
         }
         Self::new(owed)
     }
@@ -2421,6 +2474,79 @@ mod tests {
         let doc = serde_json::json!({ "canon": [] });
         assert!(matches!(
             Ledger::from_json(&doc),
+            Err(LedgerDefect::Malformed { .. }),
+        ));
+    }
+
+    /// ★★★★★ R1953 — two remainders pointing opposite ways are ONE ledger, and
+    /// a seat claimed by both cannot be loaded at all.
+    ///
+    /// The defect this closes was not a missing check, it was a missing *type*:
+    /// a specification carried one array meaning *the reference has this and
+    /// this build has not written it* and two rounds wrote entries meaning the
+    /// reverse into it. Every consumer then read one list for two questions.
+    /// Reading them as separate arrays into one ledger makes the collision a
+    /// load failure rather than a rule somebody has to remember, which is the
+    /// same move [`new`](Ledger::new) already made for one array.
+    #[test]
+    fn r1953_two_named_remainders_are_one_ledger_and_cannot_share_a_key() {
+        let why = "A reason long enough to be a reason rather than a shrug at it.";
+        let doc = serde_json::json!({
+            "owed": [{
+                "key": "pattern",
+                "sentence": "`pattern` is specified and this build has no such seat",
+                "since": "R1730",
+                "why": why,
+            }],
+            "ahead": [{
+                "key": "topology",
+                "sentence": "`topology` is specified closed (reserved) and is open",
+                "since": "R1947",
+                "why": why,
+            }],
+        });
+        let both = Ledger::from_json_across(&doc, &["owed", "ahead"])
+            .expect("two remainders pointing opposite ways are one ledger");
+        assert_eq!(
+            both.owed()
+                .iter()
+                .map(|e| e.key.as_str())
+                .collect::<Vec<_>>(),
+            ["pattern", "topology"],
+            "the arrays' order, then each array's own",
+        );
+        assert_eq!(
+            Ledger::from_json_at(&doc, "ahead")
+                .expect("the second array alone")
+                .len(),
+            1,
+            "each array is still readable on its own, which is what a gate \
+             asking only one direction reads",
+        );
+
+        // ⚠ The collision itself: the SAME seat declared in both directions.
+        let collided = serde_json::json!({
+            "owed": [{
+                "key": "topology",
+                "sentence": "`topology` is specified and this build has no such seat",
+                "since": "R1947",
+                "why": why,
+            }],
+            "ahead": doc["ahead"].clone(),
+        });
+        assert_eq!(
+            Ledger::from_json_across(&collided, &["owed", "ahead"]),
+            Err(LedgerDefect::DuplicateKey {
+                key: "topology".to_owned(),
+            }),
+            "one seat cannot diverge in two directions at once",
+        );
+
+        // And a named array that is not there is still a refusal rather than an
+        // empty remainder — the flattering lie the single-array read already
+        // refuses, which the multi-array read must not reintroduce.
+        assert!(matches!(
+            Ledger::from_json_across(&doc, &["owed", "behind"]),
             Err(LedgerDefect::Malformed { .. }),
         ));
     }

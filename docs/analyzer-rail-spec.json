@@ -229,15 +229,39 @@
     "describe a worse build than the one that exists. An EMPTY list is the",
     "strongest form of that: there is nothing left to describe."
   ],
-  "owed": [
+  "owed": [],
+  "$ahead_comment": [
+    "R1953 — the OTHER direction, and it is a separate list because it is a",
+    "separate claim.",
+    "",
+    "`owed` means: the reference has this section working and this build has",
+    "not written it. Every consumer derives from that meaning —",
+    "`analyzer_spec.closed_keys()` adds `owed` to the reserved seats and calls",
+    "the result what this build must declare SHUT.",
+    "",
+    "★★★★★ R1947 and R1948 put entries pointing the opposite way into that",
+    "same list, and said so in the entry itself: *THE FIRST ENTRY HERE THAT",
+    "POINTS THE OTHER WAY*. The prose was right and it was not enforceable.",
+    "Fourteen demos went red, because `closed_keys()` went on classifying both",
+    "seats as shut while the live rail opened them — and the red survived four",
+    "pushes, since the sweep does not gate a push.",
+    "",
+    "⇒ A LIST CANNOT CARRY TWO OPPOSITE CLAIMS. The two entries move here",
+    "verbatim; `owed` keeps its meaning and is empty, which is the true",
+    "statement it was making before R1947 borrowed it. `closed_keys()`",
+    "subtracts this list, and `analyzer_spec.py --selftest` refuses a key that",
+    "is in both, an `ahead` key the reference does not draw locked, and a",
+    "partition that does not cover the rail."
+  ],
+  "ahead": [
     {
       "key": "topology",
       "sentence": "`topology` is specified closed (reserved) and is open",
       "since": "R1947",
       "why": [
-        "★★★★★ THE FIRST ENTRY HERE THAT POINTS THE OTHER WAY. Every earlier",
-        "one said this build was BEHIND the reference and was deleted when the",
-        "section arrived. This one says it is AHEAD: the scope mockup draws",
+        "★★★★★ THE FIRST ENTRY OF THIS KIND. Every `owed` entry said this",
+        "build was BEHIND the reference and was deleted when the section",
+        "arrived. This one says it is AHEAD: the scope mockup draws",
         "this seat locked under requirement 12, and `hello-topology-view` is",
         "the section the BEHAVIOUR reference builds, mounted here at R1947.",
         "",

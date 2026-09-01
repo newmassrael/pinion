@@ -54,11 +54,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from analyzer_spec import (  # noqa: E402
+    ahead_keys,
     opening_board,
     opening_kinds,
     owed_keys,
     palette_bookings,
 )
+from analyzer_spec import closed_keys as closed_rail_keys  # noqa: E402
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
@@ -348,10 +350,25 @@ def body() -> None:
             assert f"shell.palette.{kind}" not in inert, f"B2: {kind} is placeable and live"
         # ★ R1728 — requirement 18, not 14. The reference names the requirement
         # in the seat's own tooltip, and 14 is not among the six it defers.
-        for seat, booking in (("topology", "requirement 12"), ("sessions", "requirement 18")):
+        #
+        # ★★★★★ R1953 — WHICH rail seats those are is derived, and the other
+        # direction is asserted rather than left out. This named `topology` and
+        # `sessions` and asserted both were inert; R1947 and R1948 opened them,
+        # declaring the build AHEAD of the scope mockup at both — a divergence
+        # written down in `docs/analyzer-rail-spec.json`. The pair was still
+        # here, so a screen doing exactly what its specification says read as a
+        # defect.
+        for seat in closed_rail_keys():
             row = inert.get(f"shell.rail.{seat}")
             assert row is not None, f"B2: the {seat} rail seat is reserved and reported live"
-            assert_eq(row["detail"], booking, f"B2: and names what it waits for")
+            ok(f"B2: and {seat} names what it waits for", len(row["detail"]) > 8)
+        for seat in ahead_keys():
+            assert f"shell.rail.{seat}" not in inert, (
+                f"B2: ★ {seat} is declared AHEAD of the reference — the mockup "
+                f"draws it locked and this build opens it — so it must not be "
+                f"reported inert. A divergence that is declared and not "
+                f"delivered is the one this file cannot see from the other side"
+            )
         # ★ R1695 — a SECOND reason joined, and the split is exact: everything
         # inert here is either booked for a later release or built on another
         # surface of this product, and the three that are the second kind are
@@ -423,10 +440,33 @@ def body() -> None:
             "B2: nothing on this screen is inert for any other reason",
         )
         # And the rail refuses on its own channel, by name.
-        assert "reserved for requirement 12" in refused_write(tf, "nav", "topology"), (
-            "B2: ★ a reserved rail seat refuses the write and says why"
-        )
-        assert_eq(q(tf, "nav"), "dashboard", "B2: and the section did not change")
+        #
+        # ★★★★★ R1953 — a SHUT seat, derived, and the open case asserted too.
+        # This wrote `topology` and the phrase its refusal used to carry; that
+        # seat has been open since R1947, so the write succeeded and the demo
+        # reported a correct screen as broken. What replaces it asks the
+        # question in both directions: a shut seat refuses and says why, and a
+        # seat this build declares itself ahead on ACCEPTS — which is the half
+        # that would catch a divergence declared and not delivered.
+        for seat in closed_rail_keys():
+            said = refused_write(tf, "nav", seat)
+            ok(
+                f"B2: ★ the reserved {seat} seat refuses the write and says why",
+                len(said) > 8,
+            )
+            assert_eq(q(tf, "nav"), "dashboard", "B2: and the section did not change")
+        for seat in ahead_keys():
+            tf.intervene(f"{EXT}/nav", seat)
+            tf.tick(16)
+            assert_eq(
+                q(tf, "nav"),
+                seat,
+                f"B2: ★ {seat} is declared ahead of the reference, so the write "
+                f"it locks is one this build takes",
+            )
+        tf.intervene(f"{EXT}/nav", "dashboard")
+        tf.tick(16)
+        assert_eq(q(tf, "nav"), "dashboard", "B2: and back where the rest expects to be")
 
         # ── (B3) ★★ R1671 — the screen and its GESTURE agree about the window
         # after a resize, driven over the wire because that is the only path

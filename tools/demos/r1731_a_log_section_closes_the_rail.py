@@ -51,7 +51,14 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from analyzer_spec import DOCS, rail_spec, surfaces  # noqa: E402
+from analyzer_spec import (  # noqa: E402
+    DOCS,
+    ahead_keys,
+    closed_kinds,
+    divergences,
+    rail_spec,
+    surfaces,
+)
 from rpc_verify import (  # noqa: E402
     RealPointer,
     RealPointerUnavailable,
@@ -278,14 +285,35 @@ def section_e(spec: dict) -> None:
     )
     with RpcSubprocess(SHELL, boot_grace=1.5) as shell:
         conformance = shell.query(f"{EXT}/conformance")
+        # ★★★★★ R1953 — every seat EXCEPT the ones this build declares itself
+        # ahead of the reference on.
+        #
+        # This asked for `len(canon)` and `divergences == []`, and both were
+        # true when R1731 wrote them: the list was empty in the only direction
+        # that existed. R1947 and R1948 then opened two seats the SCOPE mockup
+        # draws locked — a divergence pointing the other way — so the shell
+        # honestly reports two differences and reproduces six of eight.
+        #
+        # Derived from the declared list rather than re-pinned, so the number
+        # follows the specification instead of the specification following it.
         assert_eq(
             conformance["reproduced"],
-            len(rail["canon"]),
-            "E: ★★★ the shell reproduces every seat of the specified rail",
+            len(rail["canon"]) - len(divergences()),
+            "E: ★★★ the shell reproduces every seat of the specified rail it "
+            "does not declare a difference on",
         )
-        assert_eq(conformance["divergences"], [], "E: with no difference at all")
-        # ★ What is still shut is shut because the REFERENCE defers it.
-        shut = [s["key"] for s in rail["canon"] if s["standing"] == "closed"]
+        assert_eq(
+            [d["says"] for d in conformance["divergences"]],
+            [entry["sentence"] for entry in divergences()],
+            "E: and the differences it reports are exactly the declared ones",
+        )
+        # ★ What is still shut is shut because the REFERENCE defers it — less
+        # what this build declares itself ahead on, which is open here.
+        shut = [
+            s["key"]
+            for s in rail["canon"]
+            if s["standing"] == "closed" and s["key"] not in ahead_keys()
+        ]
         rows = {
             row["tag"].rsplit(".", 1)[1]: row
             for row in shell.request("scene/disabled", {}).result["disabled"]
@@ -297,11 +325,22 @@ def section_e(spec: dict) -> None:
             "E: ★★ and the only shut seats are the ones the reference draws "
             "locked itself",
         )
-        ok(
-            "E: ★★★★★ every one of them says `reserved` -- this rail can no "
-            "longer SPELL 'specified and not built', because nothing "
-            "constructs that arm and the compiler said so",
-            {row["reason"] for row in rows.values()} == {"reserved"},
+        # ★★★★★ R1953 — the kinds the rail SPELLS are the kinds the
+        # specification says are shut, derived on both sides.
+        #
+        # This asserted the set equals `{"reserved"}`, which was the whole truth
+        # when R1731 wrote it: this rail can no longer spell `unbuilt` (nothing
+        # constructs that arm and the compiler said so), so `reserved` was the
+        # only word left. R1947 and R1948 then opened both reserved seats and
+        # the rail spells NOTHING — and an equality against a literal set reads
+        # that as a defect rather than as the state the specification describes.
+        assert_eq(
+            sorted({row["reason"] for row in rows.values()}),
+            closed_kinds(),
+            "E: ★★★★★ the kinds of shut this rail spells are the kinds the "
+            "specification says are shut -- and it can no longer spell "
+            "'specified and not built' at all, because nothing constructs that "
+            "arm",
         )
 
         shell.intervene(f"{EXT}/nav", "logs")

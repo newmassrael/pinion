@@ -182,11 +182,31 @@ def section_c(app: RpcSubprocess) -> None:
         "C: the seats the report calls closed are the ones the specification "
         "says are shut",
     )
-    ok(
-        "C: a closed seat is one this demo can ask twice, so the population "
-        "this section stands on is not empty",
-        len(shut) > 0,
-    )
+    # ★★★★★ R1953 — the population is the SPECIFICATION's, and it is allowed to
+    # be empty as long as that is what the specification says.
+    #
+    # This asserted `len(shut) > 0` — a floor written when two seats were shut
+    # and every one of them was. R1947 and R1948 opened both, so the rail has
+    # no closed seat at all and the check demanded one, reporting a build that
+    # exceeds its reference as broken.
+    #
+    # An empty population must not read as a pass either (R1651.1), so the
+    # empty case asserts the fact that MAKES it empty rather than skipping:
+    # every seat is open, and open means reachable.
+    if not shut:
+        assert_eq(
+            sorted(closed_keys()),
+            [],
+            "C: the population is empty because the specification says nothing "
+            "is shut, not because the report lost its rows",
+        )
+        assert_eq(
+            sorted(row["key"] for row in said["rows"]),
+            sorted(open_keys()),
+            "C: ★ and every seat is open — which is the claim that replaces "
+            "this section's subject when there is no closed seat to ask twice",
+        )
+        return
 
     for row in shut:
         ok(f"C: `{row['key']}` carries a reason at all", bool(row.get("why")))
@@ -213,6 +233,18 @@ def section_d(app: RpcSubprocess) -> None:
     said = report(app)
     reasons = [row["why"] for row in said["rows"] if row.get("why")]
 
+    # ★★★★★ R1953 — a reason belongs to a shut seat, so this section's
+    # population is the specification's too. It asserted `len(reasons) > 1`,
+    # written when two seats were shut; R1947 and R1948 opened both and this
+    # demanded a sentence nothing on the rail can carry.
+    if not reasons:
+        assert_eq(
+            sorted(closed_keys()),
+            [],
+            "D: no row carries a reason because the specification says nothing "
+            "is shut, not because the rows lost theirs",
+        )
+        return
     ok(
         "D: there are rows carrying a reason, so this is a claim rather than "
         "an empty one",

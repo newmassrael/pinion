@@ -1287,12 +1287,29 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         if not answered and not report.get("unanswered"):
             return  # nothing painted yet
         if report.get("defects"):
+            # ★★★★★ R1953 — the rows come from the report's OWN `defect` field.
+            #
+            # This filtered `verdict == "unreachable"`, which was the whole rule
+            # when it was written and stopped being one round later: R1736 added
+            # `astray` and taught `TargetVerdict::is_defect` about it, and this
+            # spelling stayed. Measured at R1953 on the two sections R1947 and
+            # R1948 built — three astray rectangles, and this gate refused with
+            # "3 painted rectangle(s) ... — .", naming none of them, because
+            # every defect was of the kind the filter did not know.
+            #
+            # A gate that re-spells its publisher's rule is a second oracle, and
+            # the one that goes stale is the copy nobody runs the mutation on.
             rows = [
-                f"{row['tag']} says {row['by_name']!r} by name and "
-                f"{row['at_centre']!r} at its centre ({row['x']},{row['y']})"
+                f"{row['tag']} is {row['verdict']}: says {row['by_name']!r} by "
+                f"name, {row['at_centre']!r} at its centre, and "
+                f"{row.get('astray_to')!r} at ({row['x']},{row['y']})"
                 for surface in answered
                 for row in surface["rows"]
-                if row["verdict"] == "unreachable"
+                # `.get` for a binary older than the field, which the boot
+                # baseline already tolerates two lines up; falling back to the
+                # stale spelling keeps such a binary reporting SOMETHING rather
+                # than reporting nothing quietly.
+                if row.get("defect", row["verdict"] == "unreachable")
             ]
             raise AssertionError(
                 f"{self.example}: {report['defects']} painted rectangle(s) where "

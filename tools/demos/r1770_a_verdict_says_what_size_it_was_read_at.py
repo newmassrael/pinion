@@ -84,6 +84,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from analyzer_spec import open_keys  # noqa: E402
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
@@ -95,8 +96,25 @@ SHELL = "hello-analyzer-shell"
 EXT = "/external"
 LAB = "/node_lab/external"
 
-#: Every section a reader can arrive at, in the order this demo walks them.
-WALK = ["packets", "keys", "logs", "lab", "settings", "dashboard"]
+#: The order this demo walks the sections in; the POPULATION is the
+#: specification's.
+#:
+#: ★★★★★ R1953 — the same repair as its sibling `r1767`, and the same cause: a
+#: hand-written six survived two rounds opening two more sections, so the walk
+#: stood in 27 of the 32 specified surfaces and the demo reported the shortfall
+#: as the application's. A roster of what exists is the specification's; the
+#: sequence is this file's.
+WALK_ORDER = [
+    "packets",
+    "keys",
+    "logs",
+    "lab",
+    "topology",
+    "sessions",
+    "settings",
+    "dashboard",
+]
+WALK = [key for key in WALK_ORDER if key in set(open_keys())]
 
 #: The window the tool opens in, and the one a person maximises it to.
 SMALL = (1440, 900)
@@ -273,6 +291,9 @@ def section_b(app: RpcSubprocess) -> dict:
 def section_c(app: RpcSubprocess) -> dict:
     banner("C — ★★★★★ the assembled tool conforms, at a size it names")
     resize_and_settle(app, LARGE)
+    # ★ R1953 — a section the specification opens and this order does not name
+    # would be skipped in silence, which is what brought this file here.
+    eq(sorted(WALK), sorted(open_keys()), "C: the walk's order names every open section")
     said = walk(app)
     eq(failing(said), [], "C: no surface of the walk is unreconciled")
     eq(said["stood"], said["surfaces"], "C: every specified surface was stood in")

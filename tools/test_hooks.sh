@@ -218,6 +218,25 @@ if [[ "$1" == "run" && "$2" == "view" ]]; then
     shift 2
     [[ "$1" =~ ^[0-9]+$ ]] || { echo "unknown run id: $1" >&2; exit 1; }
     shift
+    # R1953 — the SAME subcommand answers a second question now: which jobs of
+    # a red run failed. Told apart by `--json`, and each spelling checked
+    # exactly, for the R1495 reason the paragraph above gives.
+    if [[ "$1" == "--json" && "$2" == "jobs" ]]; then
+        shift 2
+        [[ "$1" == "--jq" ]] || { echo "unknown flag: $1" >&2; exit 1; }
+        case "$2" in
+            *"select("*"failure"*"name"*) ;;
+            *) echo "unknown filter: $2" >&2; exit 1 ;;
+        esac
+        shift 2
+        (( $# == 0 )) || { echo "unexpected argument: $1" >&2; exit 1; }
+        [[ "${PINION_STUB_RED_JOBS:-}" == "-" ]] && exit 1
+        # Newline-separated, exactly as `--jq` over a stream emits; empty means
+        # no job of the run reports a failure, which is a state the caller says
+        # something about rather than passing over.
+        printf '%b' "${PINION_STUB_RED_JOBS:-}"
+        exit 0
+    fi
     [[ "$1" == "--json" && "$2" == "headSha" ]] || { echo "unknown flag: $1" >&2; exit 1; }
     shift 2
     [[ "$1" == "--jq" && "$2" == ".headSha" ]] || { echo "unknown flag: $1" >&2; exit 1; }
@@ -336,6 +355,57 @@ ok "an armed override still reports the base as red" \
 ok "and says which rule let it through" \
    "$(with_stub_stderr 1 "$(row completed failure 222)" check_last_ci_run main test \
         | grep -c 'PINION_PUSH_ON_RED=1')" \
+   "1"
+
+# ---------------------------------------------------------------------------
+# R1953 — a red is a SHAPE, not a run id.
+#
+# `ci_report_red_position` answers whether a red is yours. Nothing answered
+# what broke, and the id was the only handle on it: run 33498241879 went red
+# at R1950.1 and FOUR consecutive rounds published over it, each shown that id
+# and none of them opening it. It was fourteen demo failures in one job.
+# ---------------------------------------------------------------------------
+
+ok "an armed override names the job(s) that failed" \
+   "$(PINION_STUB_RED_JOBS='full RPC demo sweep\n' \
+        with_stub_stderr 1 "$(row completed failure 222)" check_last_ci_run main test \
+        | grep -c 'FAILED JOB: full RPC demo sweep')" \
+   "1"
+
+# Both sides of the override, because the reader who refuses also has to know
+# what to fix — and the two paths are separate call sites.
+ok "and so does a refusal" \
+   "$(PINION_STUB_RED_JOBS='clippy + workspace tests\n' \
+        with_stub_stderr - "$(row completed failure 222)" check_last_ci_run main test \
+        | grep -c 'FAILED JOB: clippy + workspace tests')" \
+   "1"
+
+# The bound is on LINES and never on FACTS (the `CI_RED_RANGE_LINES` rule): a
+# run with more failing jobs than fit says how many it did not print.
+ok "more failing jobs than fit are counted rather than dropped" \
+   "$(PINION_STUB_RED_JOBS='a\nb\nc\nd\ne\nf\ng\n' \
+        with_stub_stderr 1 "$(row completed failure 222)" check_last_ci_run main test \
+        | grep -c 'and 2 more failing job(s)')" \
+   "1"
+
+# A run that failed with every job green is a real state — cancelled, or an
+# infrastructure failure — and saying nothing would read as "no job was asked".
+ok "a red run with no failing job says so" \
+   "$(PINION_STUB_RED_JOBS='' \
+        with_stub_stderr 1 "$(row completed failure 222)" check_last_ci_run main test \
+        | grep -c 'the run failed as a whole')" \
+   "1"
+
+# Fails open: a `gh` that cannot answer must never turn into a refused push.
+ok "a gh that cannot answer still publishes under the override" \
+   "$(PINION_STUB_RED_JOBS=- \
+        with_stub 1 "$(row completed failure 222)" check_last_ci_run main test)" \
+   "0"
+
+ok "and says the job list could not be read" \
+   "$(PINION_STUB_RED_JOBS=- \
+        with_stub_stderr 1 "$(row completed failure 222)" check_last_ci_run main test \
+        | grep -c 'which job(s) failed could not be read')" \
    "1"
 
 # ---------------------------------------------------------------------------

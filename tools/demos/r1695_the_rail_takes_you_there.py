@@ -53,7 +53,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from analyzer_spec import closed_keys, owed_keys  # noqa: E402
+from analyzer_spec import closed_keys, closed_kinds, owed_keys  # noqa: E402
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
@@ -167,9 +167,14 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
             "A: and everything else is a destination this application hosts",
         )
         kinds = sorted({rows[k]["kind"] for k in closed})
+        # ★ R1953 — derived from WHICH seats are shut, not from a set with
+        # `reserved` written into it. That spelling was true while a reserved
+        # seat was always shut, and R1947/R1948 opened both of them: the rail
+        # then had no shut seat at all and this asked for a word nothing could
+        # carry.
         assert_eq(
             kinds,
-            sorted({"reserved", *(("unbuilt",) if owed_keys() else ())}),
+            closed_kinds(),
             "A: the ways to be closed, derived from the specification",
         )
         print(f"[demo] roster: {len(rows)} destination(s), {len(opens)} open, {kinds}")

@@ -246,6 +246,23 @@ pub struct TargetRow {
     pub astray_to: Option<String>,
     /// The verdict.
     pub verdict: TargetVerdict,
+    /// ★★★★★ R1953 — whether this row is one of the [`defects`](
+    /// PointerTargetReport::defects), from
+    /// [`TargetVerdict::is_defect`] rather than from a reader's idea of which
+    /// words are bad.
+    ///
+    /// The rule was already published as a method and said so in its own doc —
+    /// *so the rule has one version rather than one per consumer* — and the
+    /// consumer that mattered had a second version anyway: the Python boot gate
+    /// listed the offending rows by filtering `verdict == "unreachable"`, a
+    /// spelling that was complete when it was written and stopped being when
+    /// R1736 added [`Astray`](TargetVerdict::Astray) to the rule. Measured at
+    /// R1953: three astray rectangles on two screens, and the gate refused with
+    /// *"3 painted rectangle(s) ... — ."*, naming none of them.
+    ///
+    /// ⇒ a consumer picking rows out of this report asks THIS field. Spelling
+    /// the rule again off-wire is how a gate comes to count what it cannot name.
+    pub defect: bool,
 }
 
 /// One surface, and the census over the rectangles painted inside it.
@@ -546,6 +563,7 @@ fn judge(
         by_name: cand.by_name.word().map(ToOwned::to_owned),
         at_centre: at_centre.word().map(ToOwned::to_owned),
         astray_to,
+        defect: verdict.is_defect(),
     })
 }
 

@@ -235,6 +235,54 @@ ci_red_position() {
 # mistaken for a range that was short.
 CI_RED_RANGE_LINES=5
 
+# Say, on stderr, WHICH JOBS of a red run failed.
+#
+# ★★★★★ R1953 — the other half of "a defect a reader cannot act on is a number
+# rather than a report".
+#
+# `ci_report_red_position` (R1869) answers *which commit* the red judged, which
+# tells a reader whether it is theirs. It does not say what broke, and the run
+# id it prints is the only handle on that. Measured at R1953: run 33498241879
+# went red at R1950.1 and **four consecutive rounds published over it** —
+# R1951, R1951.1, R1951.2 and R1952 — each of them shown that id and none of
+# them opening it. The red was fourteen demo failures in one job, every one of
+# them on the section this project is judged on, and it took a round of its own
+# to find out.
+#
+# One `gh` call, on the run the gate has already identified, so the SHAPE of
+# the red is in front of whoever is about to override it. Fails open and
+# silently on everything — no gh, no network, an unparseable answer — because
+# an absent report must never turn into an absent push.
+#
+# Returns 0 always; this reports and never decides.
+ci_report_red_jobs() {
+    local id="$1" label="$2" out
+    [[ "$id" =~ ^[0-9]+$ ]] || return 0
+    command -v gh >/dev/null 2>&1 || return 0
+    if ! out="$(gh run view "$id" --json jobs \
+        --jq '.jobs[] | select(.conclusion == "failure") | .name' 2>/dev/null)"; then
+        echo "$label:   which job(s) failed could not be read" >&2
+        return 0
+    fi
+    local shown=0 total=0 line
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        total=$((total + 1))
+        if (( shown < CI_RED_RANGE_LINES )); then
+            echo "$label:   FAILED JOB: $line" >&2
+            shown=$((shown + 1))
+        fi
+    done <<<"$out"
+    if (( total == 0 )); then
+        # A run whose conclusion is failure and whose jobs are all green is a
+        # real state (a cancelled or infrastructure-level failure), and saying
+        # nothing about it would read as "no jobs were checked".
+        echo "$label:   no job of it reports a failure — the run failed as a whole" >&2
+    elif (( total > shown )); then
+        echo "$label:   and $((total - shown)) more failing job(s)" >&2
+    fi
+}
+
 # Say, on stderr, which commit a red verdict actually judged and where it sits.
 #
 # Printed on BOTH sides of the override, because the reader who most needs it
@@ -444,10 +492,12 @@ check_last_ci_run() {
                 echo "$label: last completed CI run on $branch FAILED (run" \
                      "$id) — publishing anyway, PINION_PUSH_ON_RED=1" >&2
                 ci_report_red_position "$id" "$label" "$tip"
+                ci_report_red_jobs "$id" "$label"
                 return 0
             fi
             echo "$label: last completed CI run on $branch FAILED (run $id)" >&2
             ci_report_red_position "$id" "$label" "$tip"
+            ci_report_red_jobs "$id" "$label"
             echo "$label: stop-the-line — fix the red before publishing more" \
                  "on top of it" >&2
             echo "$label:   gh run view $id" >&2

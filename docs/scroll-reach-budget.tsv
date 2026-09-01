@@ -181,6 +181,7 @@ hello-segmented-button	0
 hello-segmented-multi	0
 hello-selection-toolbar	0
 hello-series-toggle	0
+hello-sessions-view	0
 hello-slider	0
 hello-slider-discrete	0
 hello-slider-labeled	0
@@ -215,6 +216,7 @@ hello-toolbar	0
 hello-tooltip	0
 hello-tooltip-rich	0
 hello-topology	0
+hello-topology-view	0
 hello-transcript	0
 hello-transport	0
 hello-tray	0

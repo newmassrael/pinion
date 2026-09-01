@@ -394,8 +394,7 @@ const RAIL_SPEC_JSON: &str = include_str!("../../../docs/analyzer-rail-spec.json
 /// of them must stop the build rather than quietly weaken the comparison.
 #[must_use]
 pub fn canon() -> Destinations {
-    let doc: serde_json::Value =
-        serde_json::from_str(RAIL_SPEC_JSON).expect("the rail specification is readable JSON");
+    let doc = rail_document();
     let seats = doc["canon"]
         .as_array()
         .expect("the rail specification declares a canon array")
@@ -469,9 +468,71 @@ pub fn canon_spec() -> RosterSpec {
 /// do not name their own seat — all defects in the pin.
 #[must_use]
 pub fn owed() -> Ledger {
-    let doc: serde_json::Value =
-        serde_json::from_str(RAIL_SPEC_JSON).expect("the rail specification is readable JSON");
-    Ledger::from_json(&doc).expect("the rail's declared remainder is a readable ledger")
+    Ledger::from_json(&rail_document()).expect("the rail's declared remainder is a readable ledger")
+}
+
+/// The specification, parsed. One place, because four readers below wanted it
+/// and each was parsing the same compiled-in string for itself.
+fn rail_document() -> serde_json::Value {
+    serde_json::from_str(RAIL_SPEC_JSON).expect("the rail specification is readable JSON")
+}
+
+/// ★★★★★ R1953 — **the other direction: the seats the reference draws LOCKED
+/// and this build opens anyway.**
+///
+/// [`owed`] above says the reference has something this build has not written.
+/// This says the reverse, and it is a separate list because it is a separate
+/// claim — R1947 and R1948 wrote entries pointing this way into `owed`, the
+/// entry's own first line said *THE FIRST ENTRY HERE THAT POINTS THE OTHER
+/// WAY*, and the prose was right and unenforceable. Every consumer deriving
+/// *what this build must declare shut* went on classifying two open seats as
+/// closed, and fourteen demos were red for four pushes.
+///
+/// # Panics
+///
+/// As [`owed`] — a pin this cannot be built from is a defect in the pin.
+#[must_use]
+pub fn ahead() -> Ledger {
+    Ledger::from_json_at(&rail_document(), "ahead")
+        .expect("the rail's ahead-of-the-reference list is a readable ledger")
+}
+
+/// ★★★★★ R1953 — **every declared difference, whichever way it points.**
+///
+/// The roster for *"every way the application differs from the reference is a
+/// way somebody wrote down and justified"*. That question wants both
+/// directions; the question *"which seats must this build declare shut"* wants
+/// only one. Reading a single list for both is the defect this round repaired,
+/// so the two questions now have two answers, and a seat claimed by both lists
+/// cannot be loaded at all — [`Ledger::from_json_across`] pours them into one
+/// ledger and [`Ledger::new`]'s duplicate-key refusal is what makes the
+/// collision unrepresentable rather than merely discouraged.
+///
+/// # Panics
+///
+/// As [`owed`], and additionally if one seat is declared in both directions.
+#[must_use]
+pub fn divergences() -> Ledger {
+    Ledger::from_json_across(&rail_document(), &["owed", "ahead"])
+        .expect("the rail's two declared remainders are one readable ledger")
+}
+
+/// ★★★★★ R1953 — **the difference this build's rail ACTUALLY has from the
+/// reference's, derived once.**
+///
+/// Two gates wanted this and each computed it its own way: `r1728` through the
+/// framework's roster diff, `r1668` by walking [`RAIL`]'s bookings against
+/// [`canon`]'s standings. Two spellings of one fact, and when the
+/// specification's classification moved under them only one of the two was
+/// updated — so the second went on asserting against a list that no longer
+/// meant what it reads.
+///
+/// ⇒ the live side is derived here and both gates read it. What each of them
+/// still chooses is which declared direction it judges against, which is the
+/// thing they genuinely differ on.
+#[must_use]
+pub fn rail_divergence() -> Vec<pinion_core::widgets::destination::Divergence> {
+    canon_spec().diff(&destinations())
 }
 
 /// ★★★★★ R1946 — **the seats the BEHAVIOUR reference builds.**
@@ -495,8 +556,7 @@ pub fn owed() -> Ledger {
 /// silently, which is the direction that hides work.
 #[must_use]
 pub fn behaviour_built() -> Vec<String> {
-    let doc: serde_json::Value =
-        serde_json::from_str(RAIL_SPEC_JSON).expect("the rail specification is readable JSON");
+    let doc = rail_document();
     doc["canon"]
         .as_array()
         .expect("the rail specification declares a canon array")
@@ -570,8 +630,7 @@ pub struct SecondPhaseEntry {
 /// and all of them must stop the build rather than weaken the comparison.
 #[must_use]
 pub fn second_phase_owed_declared() -> Vec<SecondPhaseEntry> {
-    let doc: serde_json::Value =
-        serde_json::from_str(RAIL_SPEC_JSON).expect("the rail specification is readable JSON");
+    let doc = rail_document();
     doc["second_phase_owed"]
         .as_array()
         .expect("the rail specification declares a second-stage remainder")

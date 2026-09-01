@@ -68,8 +68,8 @@ use pinion_a11y::{AccessFocus, AccessNode, AccessState, AccessValue, AriaRole, W
 use pinion_core::describe::Descriptions;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, PointerTarget, ReadRefusal, RepaintOwner, SchemaArg,
-    SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, PointerTarget, ReadRefusal, RepaintOwner,
+    SchemaArg, SchemaField, ThreadOwnership,
 };
 use pinion_core::input::PointerReading;
 use pinion_core::reactive::Signal;
@@ -1186,7 +1186,15 @@ fn filter_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
         ink,
         streaming_group(state, ink),
     ));
-    panel(FILTER_TAG, rail, ink.surface, Some(ink.border), children)
+    // ★★★★★ R1953 — a keyboard stop, and this section shipped without one.
+    //
+    // Measured: this screen publishes interactive ARIA roles and `focus/next`
+    // found NO stop anywhere on it — announced as operable, unreachable by
+    // keyboard. Its three panes each become one stop, which is the WAI-ARIA
+    // composite pattern `hello-log-view` follows and the framework's
+    // `focus_stop` doc names: the container is the stop, a cursor moves among
+    // its members.
+    panel(FILTER_TAG, rail, ink.surface, Some(ink.border), children).with_focusable(true)
 }
 
 /// One labelled group of the rail, as the specification's part.
@@ -1349,7 +1357,8 @@ fn graph_pane(state: &Rc<ViewState>, ink: Ink) -> Vec<Scene> {
         pinion_core::containment::line_rect_in(Rect::new(0, 0, w, HEADER_H), 0, w, px)
     };
     let mut out = vec![
-        panel(GRAPH_TAG, graph_rect(), ink.ground, None, Vec::new()),
+        // ★ R1953 — the second of the three stops; see the filter pane.
+        panel(GRAPH_TAG, graph_rect(), ink.ground, None, Vec::new()).with_focusable(true),
         part_box(
             "tv.graph.title",
             band(head.x + 18, 150),
@@ -1387,18 +1396,38 @@ fn graph_pane(state: &Rc<ViewState>, ink: Ink) -> Vec<Scene> {
         )],
     ));
     let fit = fit_rect();
-    out.push(part_box(
+    // ★★★★★ R1953 — the tagged rectangle is the CONTROL's, not the band's.
+    //
+    // It was `band(fit.x, fit.w)` — the header's full height — while
+    // [`fit_rect`] is thirty pixels inset by eight, and `Hit::at` tests against
+    // `fit_rect`. So the paint claimed eight pixels above the button and eight
+    // below that a press reaches nothing, and `scene/pointer_target` reported
+    // this control `astray`: pressable in its middle and dead along its own
+    // declared top edge, which is what a person reports as "it works and then
+    // it doesn't".
+    //
+    // ⚠ Nothing moves on screen. `(HEADER_H - fit.h) / 2` is `(46 - 30) / 2`,
+    // exactly the eight `fit_rect` insets by, so the caption lands where it
+    // always did — only the rectangle the screen CLAIMS shrinks to the one it
+    // can honour. A repair that changed the picture would have been a different
+    // decision hiding inside this one.
+    // ★★★★★ R1953 — and the control is ONE node, not a box inside a box.
+    //
+    // It was a `part_box` holding a faced child, so the enrich pass announced
+    // the container as a `group` while `access_node` declared the same tag a
+    // `button`: measured, FIVE of this screen's controls published TWO
+    // accessibility nodes under one address, and a reader taking the first got
+    // the one carrying neither the role nor `aria-describedby`. The sibling
+    // section states the rule in its own paint helper — *the face is this
+    // node's style rather than a child box* — and this is that rule applied.
+    out.push(captioned_box(
         "tv.graph.fit",
-        band(fit.x, fit.w),
-        vec![captioned_box(
-            "tv.graph.fit.box",
-            Rect::new(0, (HEADER_H - fit.h) / 2, fit.w, fit.h),
-            ink.raised,
-            Some(ink.edge),
-            8,
-            ("Fit", FONT_BODY, ink.dim),
-            Some(Silence::part_of("tv.graph.fit")),
-        )],
+        fit,
+        ink.raised,
+        Some(ink.edge),
+        8,
+        ("Fit", FONT_BODY, ink.dim),
+        None,
     ));
     out.push(canvas(state, ink));
     for (n, closer) in [(0_u32, true), (1_u32, false)] {
@@ -1408,18 +1437,15 @@ fn graph_pane(state: &Rc<ViewState>, ink: Ink) -> Vec<Scene> {
         } else {
             "tv.graph.zoom_out"
         };
-        out.push(part_box(
+        // ★ R1953 — one node per control; see the `Fit` control above.
+        out.push(captioned_box(
             tag,
             rect,
-            vec![captioned_box(
-                &format!("{tag}.box"),
-                Rect::new(0, 0, rect.w, rect.h),
-                ink.surface,
-                Some(ink.edge),
-                8,
-                (if closer { "+" } else { "\u{2212}" }, FONT_TITLE, ink.text),
-                Some(Silence::part_of(tag)),
-            )],
+            ink.surface,
+            Some(ink.edge),
+            8,
+            (if closer { "+" } else { "\u{2212}" }, FONT_TITLE, ink.text),
+            None,
         ));
     }
     let hint = hint_rect();
@@ -1621,7 +1647,8 @@ fn inspector_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
     children.extend(measurement_tiles(node, pane, ink));
     children.push(keys_band(node, pane, ink));
     children.extend(action_row(pane, ink));
-    panel(INSPECTOR_TAG, pane, ink.surface, Some(ink.border), children)
+    // ★ R1953 — the third of the three stops; see the filter pane.
+    panel(INSPECTOR_TAG, pane, ink.surface, Some(ink.border), children).with_focusable(true)
 }
 
 /// The inspector's four measurements, in the two-by-two grid the reference
@@ -1681,18 +1708,16 @@ fn action_row(pane: Rect, ink: Ink) -> Vec<Scene> {
         let nth = u32::try_from(n).unwrap_or(0);
         let rect = action_rect(nth);
         let local = Rect::new(rect.x - pane.x, rect.y, rect.w, rect.h);
-        out.push(part_box(
+        // ★ R1953 — one node per control; see the `Fit` control in the graph
+        // header for the two-nodes-under-one-address defect this removes.
+        out.push(captioned_box(
             &format!("tv.inspector.{}", action.key),
             local,
-            vec![captioned_box(
-                &format!("tv.inspector.{}.box", action.key),
-                Rect::new(0, 0, local.w, local.h),
-                ink.raised,
-                Some(ink.border),
-                8,
-                (action.title, FONT_BODY, ink.faint),
-                Some(Silence::part_of(format!("tv.inspector.{}", action.key))),
-            )],
+            ink.raised,
+            Some(ink.border),
+            8,
+            (action.title, FONT_BODY, ink.faint),
+            None,
         ));
     }
     out
@@ -1770,6 +1795,32 @@ fn keys_band_h() -> u32 {
 }
 
 // ── Descriptions ────────────────────────────────────────────────────────────
+
+/// ★★★★★ R1953 — this section's described register, in the shape every OTHER
+/// page of this application publishes it in.
+///
+/// It answered a bare list of tags. Every sibling page — the capture viewer,
+/// the key-pattern section, the log view — answers
+/// `{region, marks: [{tag, sentence}]}`, and a walk that asks all of them for
+/// the same channel indexed a list with a string and died with a `TypeError`.
+/// One channel name meaning two shapes is worse than a missing channel: the
+/// reader that fails is the one that trusted the name.
+///
+/// The sentences are the same [`descriptions`] register; only the wire form
+/// moves.
+fn described_wire() -> serde_json::Value {
+    let described = descriptions();
+    serde_json::json!({
+        "region": TOOLTIP_TAG,
+        "marks": described
+            .tags()
+            .map(|tag| serde_json::json!({
+                "tag": tag,
+                "sentence": described.of(tag).unwrap_or_default(),
+            }))
+            .collect::<Vec<_>>(),
+    })
+}
 
 /// ★★★★★ R1947 — the sentences this screen's marks carry, by paint tag.
 ///
@@ -1897,13 +1948,29 @@ fn access_nodes(state: &Rc<ViewState>, focused: Option<&str>) -> Vec<AccessNode>
     // specification gains arrives named, and a part named something other than
     // what the pin calls it is caught by
     // `tests::r1947_the_specified_parts_are_the_parts_this_build_tables`.
+    // ★★★★★ R1953 — a part that gets a declaration of its OWN below does not
+    // also get the table's `Group`.
+    //
+    // Measured: FIVE tags — the graph's `fit`, `zoom_in` and `zoom_out`, the
+    // inspector's `isolate` and `detach` — were pushed twice by this function,
+    // once as a named `Group` here and once as a `Button` below. Two
+    // accessibility nodes under ONE address, and a reader taking the first got
+    // the group: no button role, and no `aria-describedby` when the round's
+    // description machinery attached one to the other copy. `r1918` found it
+    // the first time this section was walked.
+    //
+    // ⚠ The skip list is DERIVED — `richer` is filled by the very pushes that
+    // would collide — rather than written out, because a list of five keys
+    // here would be a fourth statement of which parts are controls and the
+    // first one to go stale would go stale silently.
+    let mut parts: Vec<AccessNode> = Vec::new();
     for (stem, table) in [
         ("tv.filters", spec::FILTERS),
         ("tv.graph", spec::GRAPH),
         ("tv.inspector", spec::INSPECTOR),
     ] {
         for part in table {
-            nodes.push(
+            parts.push(
                 AccessNode::new(format!("{stem}.{}", part.key), AriaRole::Group)
                     .with_name(part.title),
             );
@@ -1955,6 +2022,16 @@ fn access_nodes(state: &Rc<ViewState>, focused: Option<&str>) -> Vec<AccessNode>
     nodes.push(AccessNode::new("tv.graph.fit", AriaRole::Button).with_name("Fit"));
     nodes.push(AccessNode::new("tv.graph.zoom_in", AriaRole::Button).with_name("Zoom in"));
     nodes.push(AccessNode::new("tv.graph.zoom_out", AriaRole::Button).with_name("Zoom out"));
+    // ★ R1953 — the table's parts, less every tag something above declared for
+    // itself. See the note where `parts` is built.
+    let richer: std::collections::BTreeSet<&str> =
+        nodes.iter().map(|node| node.tag.as_str()).collect();
+    let kept: Vec<AccessNode> = parts
+        .iter()
+        .filter(|part| !richer.contains(part.tag.as_str()))
+        .cloned()
+        .collect();
+    nodes.extend(kept);
     if let Some((tag, sentence)) = description_shown(state) {
         pinion_widget_paint::described::announce_description(
             &mut nodes,
@@ -2091,6 +2168,7 @@ impl ExternalIntrospect for ViewOracle {
                     SchemaField::action("zoom", "string"),
                     SchemaField::action("point", "string"),
                     SchemaField::action("press", "string"),
+                    SchemaField::action("send", "string"),
                     SchemaField::action("key", "string"),
                 ]
             },
@@ -2116,9 +2194,7 @@ impl ExternalIntrospect for ViewOracle {
         }
         match path {
             "spec" => Ok(IntrospectValue::Json(spec_json())),
-            "described" => Ok(IntrospectValue::Json(serde_json::json!(
-                descriptions().tags().map(str::to_owned).collect::<Vec<_>>()
-            ))),
+            "described" => Ok(IntrospectValue::Json(described_wire())),
             "conformance" => Ok(IntrospectValue::Json(
                 serde_json::to_value(judge::conformance().to_json())
                     .unwrap_or(serde_json::Value::Null),
@@ -2155,6 +2231,54 @@ impl ExternalIntrospect for ViewOracle {
     /// The verb answers nothing on success — the framework's contract — so what
     /// a driver reads afterwards is `said`, which is the same sentence a reader
     /// sees. One account of what happened rather than two.
+    /// ★★★★★ R1953 — the pointer LEAVING, which this section could not hear.
+    ///
+    /// [`External::pointer_move`] told it where the cursor is; nothing told it
+    /// the cursor was GONE, so a description a reader rested on stayed on the
+    /// frame after the pointer left the window. `r1918`'s F leg asks exactly
+    /// that, and it is the first thing ever to ask this section.
+    ///
+    /// ⚠ On `invoke` and not `intervene`, which is where the first draft put
+    /// it: `pinion_runtime` forwards the router's pointer arcs as
+    /// `invoke("send", Text(<name>))` — one channel, named in
+    /// `pinion_core::input`'s own doc — and an arm on the other channel is an
+    /// arm nothing calls. The sibling sections have spelled this since R1845
+    /// (capture viewer) and R1918 (log view); this one and its twin were built
+    /// without it.
+    ///
+    /// Every event is answered rather than only the one that matters: the
+    /// router sends the pair, and an arm that refused `PointerUp` would make an
+    /// ordinary press an error.
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        let Some(state) = self.state.clone() else {
+            return Err(InvokeError::UnknownPath);
+        };
+        if path != "send" {
+            return Err(InvokeError::UnknownPath);
+        }
+        let IntrospectValue::Text(event) = args else {
+            return Err(InvokeError::rejected("a pointer event is a word"));
+        };
+        match event.trim() {
+            "PointerDown" | "PointerUp" | "PointerEnter" => {}
+            "PointerLeave" | "PointerCancel" => {
+                state.pointer_inside.set(false);
+                state.resting.set(None);
+            }
+            other => {
+                return Err(InvokeError::rejected(format!(
+                    "{other:?} is not a pointer event; they are PointerDown / \
+                     PointerUp / PointerEnter / PointerLeave / PointerCancel"
+                )));
+            }
+        }
+        Ok(IntrospectValue::Text(event))
+    }
+
     fn intervene(&mut self, path: &str, args: IntrospectValue) -> Result<(), InterveneError> {
         let state = self
             .state

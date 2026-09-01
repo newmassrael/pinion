@@ -8,6 +8,7 @@
 use pinion_core::reactive::Owner;
 use pinion_core::scene::Rect;
 use pinion_core::widgets::card::{CardAffordance, CardState, Remedy};
+use pinion_core::widgets::destination::{Divergence, Required};
 use pinion_core::widgets::tile_grid::{Tile, TileDrag};
 use pinion_core::widgets::transport::TransportStatus;
 use pinion_screen::ScreenState;
@@ -451,18 +452,51 @@ fn r1668_every_reserved_seat_names_what_it_waits_for() {
             "this rail locks {key}, which the reference does not",
         );
     }
-    let opened: Vec<&String> = specified_locked
-        .iter()
-        .filter(|key| !locked.iter().any(|(k, _)| *k == key.as_str()))
+    // ★★★★★ R1953 — **which seats this build opens that the reference locks is
+    // derived, and it is judged against the list that MEANS that.**
+    //
+    // This read `spec::owed()` — the list meaning *the reference has this and
+    // this build has not written it* — and asked it to excuse the opposite
+    // claim. It passed only while the two happened to share an array, and when
+    // R1953 split them by meaning this gate went red for the honest reason: the
+    // entries it was reading had moved to `ahead`, where they always belonged.
+    //
+    // It also computed the live difference for itself, by walking the rail's
+    // bookings against the specification's standings — a second spelling of
+    // what `r1728` below derives through the framework's roster diff. Both read
+    // `spec::rail_divergence()` now, so the two gates cannot come apart.
+    let declared = spec::ahead();
+    let opened: Vec<String> = spec::rail_divergence()
+        .into_iter()
+        .filter_map(|difference| match difference {
+            Divergence::Standing {
+                key,
+                specified: Required::Closed(_),
+                found: Required::Open,
+            } => Some(key),
+            _ => None,
+        })
         .collect();
-    let declared = spec::owed();
-    for key in opened {
+    for key in &opened {
         assert!(
             declared.owed().iter().any(|entry| &entry.key == key),
             "this rail opens {key}, which the reference locks, and no entry in \
-             `docs/analyzer-rail-spec.json` declares it",
+             `docs/analyzer-rail-spec.json`'s `ahead` declares it",
         );
     }
+    // ⚠ And the derivation has to agree with the standings this test read for
+    // itself, or the filter above is quietly selecting nothing and every
+    // assertion in the loop is vacuous.
+    let by_standing: Vec<String> = specified_locked
+        .iter()
+        .filter(|key| !locked.iter().any(|(k, _)| *k == key.as_str()))
+        .cloned()
+        .collect();
+    assert_eq!(
+        opened, by_standing,
+        "the derived difference and the bookings disagree about which seats \
+         this rail opens that the reference locks",
+    );
     for (key, why) in locked {
         assert!(
             why.starts_with("requirement "),
@@ -565,9 +599,15 @@ fn r1668_every_reserved_seat_names_what_it_waits_for() {
 #[test]
 fn r1728_the_rail_reproduces_the_reference_or_says_where_it_does_not() {
     let built = spec::destinations();
-    let found = spec::canon_spec().diff(&built);
-    let owed = spec::owed();
-    let unreconciled: Vec<String> = owed
+    let found = spec::rail_divergence();
+    // ★★★★★ R1953 — **both directions, because the specification declares
+    // both.** This read `spec::owed()` alone while two entries meaning *the
+    // reference locks this and we open it* sat in that array; the equality then
+    // held for the wrong reason, and split them by meaning and it fails.
+    // `spec::divergences()` is the roster for this question and the ONLY one
+    // that answers it — a seat declared in both directions cannot even load.
+    let declared = spec::divergences();
+    let unreconciled: Vec<String> = declared
         .judge(&found)
         .iter()
         .map(pinion_core::conformance::Unreconciled::sentence)
@@ -579,11 +619,20 @@ fn r1728_the_rail_reproduces_the_reference_or_says_where_it_does_not() {
         unreconciled.join("\n  "),
     );
     // And the reproduction is a number rather than an impression.
-    let reproduced = spec::canon_spec().len() - owed.len();
+    let reproduced = spec::canon_spec().len() - declared.len();
     assert_eq!(
-        reproduced + owed.len(),
+        reproduced + declared.len(),
         built.len(),
-        "every seat is either reproduced or owed, and none is both",
+        "every seat is either reproduced or declared as a difference, and none \
+         is both",
+    );
+    // ⚠ The population is not allowed to be empty: an equality against an empty
+    // ledger judging an empty diff passes while saying nothing, and this rail
+    // has declared differences in exactly one direction since R1947.
+    assert!(
+        !declared.owed().is_empty(),
+        "the specification declares no difference at all, so the equality above \
+         is comparing two empty lists",
     );
 }
 

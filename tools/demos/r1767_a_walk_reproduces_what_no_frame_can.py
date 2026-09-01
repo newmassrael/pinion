@@ -72,6 +72,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from analyzer_spec import open_keys  # noqa: E402
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
@@ -83,8 +84,26 @@ SHELL = "hello-analyzer-shell"
 EXT = "/external"
 LAB = "/node_lab/external"
 
-#: Every section a reader can arrive at, in the order this demo walks them.
-WALK = ["packets", "keys", "logs", "lab", "settings", "dashboard"]
+#: The order this demo walks the sections in — the dashboard last, because the
+#: checks after the walk expect to be standing on it.
+#:
+#: ★★★★★ R1953 — the ORDER is written here and the POPULATION is derived. This
+#: was one list of six, and R1947 and R1948 opened two more sections: the walk
+#: went on visiting six, `unvisited` answered 2, and the demo failed saying two
+#: open sections were not stood in — which was true, and about the demo rather
+#: than the application. A roster of what exists belongs to the specification;
+#: what belongs here is the sequence.
+WALK_ORDER = [
+    "packets",
+    "keys",
+    "logs",
+    "lab",
+    "topology",
+    "sessions",
+    "settings",
+    "dashboard",
+]
+WALK = [key for key in WALK_ORDER if key in set(open_keys())]
 
 #: ★★★★★ R1770 — the window sections A-F stand in, and it is not the one the
 #: tool opens in. The node lab declares it lays out at 1625 wide and clips below
@@ -232,6 +251,14 @@ def drive_the_lab(app: RpcSubprocess) -> tuple[dict, dict]:
 
 def section_c(app: RpcSubprocess) -> tuple[dict, dict, dict]:
     banner("C — the walk accumulates what the reader saw")
+    # ★ R1953 — a section the specification opens and this order does not name
+    # is a section the walk would silently skip, which is the defect one level
+    # up from the one that brought this here.
+    eq(
+        sorted(WALK),
+        sorted(open_keys()),
+        "C: the walk's order names every open section",
+    )
     lab_frames: tuple[dict, dict] = ({}, {})
     for key in WALK:
         if key == "lab":

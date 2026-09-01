@@ -11906,25 +11906,41 @@ fn read_specification(path: &str) -> Result<IntrospectValue, ReadRefusal> {
         // The comparison runs against `docs/analyzer-rail-spec.json`, which is
         // a reviewed artifact rather than a second copy of the table above.
         "conformance" => {
-            let built = spec::destinations();
-            let divergences: Vec<serde_json::Value> = spec::canon_spec()
-                .diff(&built)
+            // ★ R1953 — the live difference is `spec::rail_divergence()`, the
+            // one derivation the two gates read as well. This computed it a
+            // third time, and a fact spelled three times is a fact that moves
+            // in two of them.
+            let found = spec::rail_divergence();
+            let divergences: Vec<serde_json::Value> = found
                 .iter()
                 .map(|d| serde_json::json!({ "key": d.key(), "says": d.sentence() }))
                 .collect();
-            let ledger = spec::owed();
-            let owed: Vec<serde_json::Value> = ledger
-                .owed()
-                .iter()
-                .map(|o| {
-                    serde_json::json!({
-                        "key": o.key,
-                        "says": o.sentence,
-                        "since": o.since,
-                        "why": o.why,
+            // ★★★★★ R1953 — **the wire mirrors the specification's TWO lists.**
+            //
+            // This published one, named `owed`, meaning *the reference has this
+            // seat and this build has not written it*. R1947 and R1948 wrote
+            // entries meaning the reverse into that array, and when R1953 split
+            // them by meaning this field became honestly empty — and by itself
+            // it then told an agent the tool differs from the reference nowhere
+            // by declaration, while two declared differences existed. A field
+            // that goes empty because its meaning was narrowed is a field that
+            // has to gain its counterpart in the same edit.
+            let entries = |ledger: &pinion_core::conformance::Ledger| -> Vec<serde_json::Value> {
+                ledger
+                    .owed()
+                    .iter()
+                    .map(|o| {
+                        serde_json::json!({
+                            "key": o.key,
+                            "says": o.sentence,
+                            "since": o.since,
+                            "why": o.why,
+                        })
                     })
-                })
-                .collect();
+                    .collect()
+            };
+            let owed = entries(&spec::owed());
+            let ahead = entries(&spec::ahead());
             let specified = spec::canon_spec().len();
             // ★★★★★ R1946 — **the distance from the OTHER reference, on the
             // same surface.**
@@ -11955,6 +11971,14 @@ fn read_specification(path: &str) -> Result<IntrospectValue, ReadRefusal> {
                 "reproduced": specified - divergences.len(),
                 "divergences": divergences,
                 "owed": owed,
+                "ahead": ahead,
+                // ★★ R1953 — whether the difference this rail HAS is the
+                // difference it DECLARES, answered by the application rather
+                // than left for a reader to work out by comparing the arrays
+                // above. Two lists side by side are two lists; an agent asking
+                // *can I trust the declared remainder* was being handed the
+                // comparison instead of its result.
+                "reconciles": spec::divergences().reconciles(&found),
                 "behaviour": {
                     "builds": builds,
                     "reproduced": builds - behind.len(),

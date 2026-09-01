@@ -66,7 +66,10 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from analyzer_spec import closed_keys, closed_kinds, divergences, open_keys  # noqa: E402
+from analyzer_spec import owed_keys as owed_rail_keys  # noqa: E402
 from analyzer_spec import rail_spec  # noqa: E402
+from analyzer_spec import reserved_keys as reserved_rail_keys  # noqa: E402
 from rpc_verify import (  # noqa: E402
     RealPointer,
     RealPointerUnavailable,
@@ -126,7 +129,17 @@ def pointer(app: RpcSubprocess):
 def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
     spec = specification()
     canon = spec["canon"]
-    owed = spec["owed"]
+    # ★★★★★ R1953 — EVERY declared difference, whichever way it points.
+    #
+    # This read `spec["owed"]`, the list meaning *the reference has it and this
+    # build has not written it*. R1947 and R1948 wrote entries meaning the
+    # OPPOSITE into it — the seat is locked in the reference and this build
+    # opens it — and the entry said so in its own first line. R1953 split them,
+    # because `analyzer_spec.closed_keys` derives what must be SHUT from the
+    # first meaning and was classifying two open seats as closed.
+    #
+    # The assertions below want both directions: a divergence is a divergence.
+    owed = divergences()
     keys = [seat["key"] for seat in canon]
     ok("the specification declares the reference's eight seats", len(canon) == 8)
     ok(
@@ -160,13 +173,42 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
             len(canon) - len(owed),
             "A: and the reproduction is a number rather than an impression",
         )
+        # ★★★★★ R1953 — the wire carries BOTH declared lists, and the
+        # population is asserted before anything is asserted ABOUT it.
+        #
+        # The two `all()` checks below read `conformance["owed"]` alone. When
+        # the split emptied that array — honestly, because nothing is behind
+        # any more — both went vacuously true, and the wire meanwhile told an
+        # agent this tool differs from the reference nowhere by declaration
+        # while two declared differences existed. A quantifier over a list
+        # nobody sized is a check that stops happening in silence.
+        published = conformance["owed"] + conformance["ahead"]
+        assert_eq(
+            [(e["key"], e["says"]) for e in published],
+            [(e["key"], e["sentence"]) for e in owed],
+            "A: ★★★★★ the wire publishes the specification's two declared "
+            "lists, both of them, in the document's own order -- a field that "
+            "goes empty because its meaning was narrowed has to gain its "
+            "counterpart in the same edit",
+        )
+        ok(
+            "A: and there is something to check -- the reference locks two "
+            "seats this build opens, so this is not a quantifier over nothing",
+            len(published) > 0,
+        )
         ok(
             "A: every accepted difference names the round that accepted it",
-            all(e["since"].startswith("R") for e in conformance["owed"]),
+            all(e["since"].startswith("R") for e in published),
         )
         ok(
             "A: and states why, at length",
-            all(len(e["why"]) > 40 for e in conformance["owed"]),
+            all(len(e["why"]) > 40 for e in published),
+        )
+        ok(
+            "A: ★★ and the application answers whether the difference it HAS "
+            "is the difference it DECLARES, rather than handing a reader two "
+            "lists and the comparison",
+            conformance["reconciles"] is True,
         )
         # ★ The direction a one-sided check cannot see. Nothing on the rail may
         # be a seat the specification does not declare.
@@ -205,9 +247,15 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
                     hand.release()
                     app.tick(16)
                     at = q(app, "nav")
-                    if seat["standing"] == "open" and not any(
-                        e["key"] == key for e in owed
-                    ):
+                    # ★ R1953 — the one derived answer, rather than the canon's
+                    # `standing` re-combined with a divergence list here. A seat
+                    # the reference draws closed and this build declares itself
+                    # AHEAD on is one a press must arrive at, and spelling that
+                    # rule in a demo is how it came to be spelled wrong: the
+                    # condition below asked whether the key appears in the
+                    # divergence list at all, so an ahead seat was expected to
+                    # refuse and arrived.
+                    if key in open_keys():
                         assert_eq(at, key, f"B: a real press on {key} arrives there")
                     else:
                         assert_eq(
@@ -240,11 +288,25 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         # and there are none. A demo that pins the vocabulary a screen happens
         # to be using pins the state of the build, which is the thing under
         # test.
-        reserved_keys = sorted(s["key"] for s in canon if s.get("kind") == "reserved")
-        owed_keys = sorted(entry["key"] for entry in owed)
-        wanted = {"reserved": reserved_keys}
-        if owed_keys:
-            wanted["unbuilt"] = owed_keys
+        # ★★★★★ R1953 — and a seat is only shut if it is SHUT. `reserved` was
+        # here unconditionally, which held while every seat the reference locks
+        # was one this build also locked. R1947 and R1948 opened both, the rail
+        # stopped spelling any kind of shut at all, and this asked for a word
+        # nothing on screen could carry. `closed_kinds` derives the vocabulary
+        # from which seats are shut, so the rail's own state stops being pinned
+        # here — the R1731 lesson three lines up, applied to the other kind.
+        shut = set(closed_keys())
+        wanted = {}
+        if reserved := sorted(set(reserved_rail_keys()) & shut):
+            wanted["reserved"] = reserved
+        if unbuilt := sorted(set(owed_rail_keys()) & shut):
+            wanted["unbuilt"] = unbuilt
+        assert_eq(
+            sorted(wanted),
+            closed_kinds(),
+            "C: the kinds this check asks for are the kinds the specification "
+            "says are shut",
+        )
         assert_eq(
             sorted(by_reason),
             sorted(wanted),
@@ -288,7 +350,11 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         for seat in canon:
             tag = f"shell.rail.{seat['key']}"
             ok(f"D: the {seat['key']} seat is in the tree", tag in tree)
-        for key in owed_keys:
+        # ★ R1953 — the seats that are actually shut FOR THAT REASON, not every
+        # key on the divergence list. An `ahead` divergence names an OPEN seat,
+        # and asking an open seat to announce itself unavailable is asking for
+        # the opposite of what it is.
+        for key in wanted.get("unbuilt", []):
             node = tree[f"shell.rail.{key}"]
             reason = node.get("unavailable")
             ok(

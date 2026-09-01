@@ -119,6 +119,33 @@ def owed_keys() -> list[str]:
     return sorted(entry["key"] for entry in rail_spec()["owed"])
 
 
+def ahead_keys() -> list[str]:
+    """The seats the reference draws LOCKED and this build opens anyway.
+
+    ★★★★★ R1953 — the other direction, and a separate list because it is a
+    separate claim. R1947 and R1948 put entries pointing this way into `owed`,
+    and the entry itself said so: *THE FIRST ENTRY HERE THAT POINTS THE OTHER
+    WAY*. The prose was right and it was not enforceable — `closed_keys` below
+    went on classifying both seats as shut while the live rail opened them, and
+    fourteen demos went red for four pushes.
+    """
+    return sorted(entry["key"] for entry in rail_spec()["ahead"])
+
+
+def divergences() -> list[dict]:
+    """EVERY declared difference between this build's rail and the reference's,
+    in the order the entries were written.
+
+    ★★★★★ R1953 — the roster for *"every way the application differs from the
+    reference is a way somebody wrote down"*. That assertion wants both
+    directions and nothing else; [`closed_keys`] wants only the direction that
+    makes a seat shut. Reading one list for both questions is what R1947 did,
+    and the two answers had already come apart.
+    """
+    rail = rail_spec()
+    return list(rail["owed"]) + list(rail["ahead"])
+
+
 def reserved_keys() -> list[str]:
     """The seats the reference itself draws locked, booked under a requirement
     of a release that has not shipped."""
@@ -128,8 +155,39 @@ def reserved_keys() -> list[str]:
 
 
 def closed_keys() -> list[str]:
-    """Everything the specification says is shut, for either reason."""
-    return sorted(owed_keys() + reserved_keys())
+    """What THIS BUILD is expected to declare shut.
+
+    Not "everything the specification says is shut", which is what this said
+    until R1953 and what its consumers never meant: every consumer compares the
+    answer with a running rail. The specification describes the REFERENCE, and
+    the two directions this build differs from it in are declared —
+    [`owed_keys`] (behind) adds a seat, [`ahead_keys`] (ahead) removes one.
+
+    A key in both lists would be a contradiction and a key in neither is not
+    possible here, because the answer is derived; `selftest` refuses the first
+    and checks the partition covers the rail.
+    """
+    shut = (set(owed_keys()) | set(reserved_keys())) - set(ahead_keys())
+    return sorted(shut)
+
+
+def closed_kinds() -> list[str]:
+    """The `kind` words the shut seats carry, derived from WHICH seats are shut.
+
+    ★ R1953 — a shut seat says which kind of shut it is (`reserved` for a
+    requirement the reference itself books, `unbuilt` for a section this build
+    owes), and the set of words on screen is a consequence of
+    [`closed_keys`] rather than a constant. Two demos wrote `{"reserved", …}`
+    with `reserved` unconditional, which was true while a reserved seat was
+    always shut and became false the round this build opened both of them.
+    """
+    shut = set(closed_keys())
+    kinds = set()
+    if shut & set(reserved_keys()):
+        kinds.add("reserved")
+    if shut & set(owed_keys()):
+        kinds.add("unbuilt")
+    return sorted(kinds)
 
 
 def open_keys() -> list[str]:
@@ -212,3 +270,83 @@ def surfaces(spec: dict) -> list[str]:
     surfaces, which is the rule `pinion_core::conformance::SpecDocument` takes.
     """
     return sorted(key for key in spec if not key.startswith("$"))
+
+
+def selftest() -> int:
+    """★★★★★ R1953 — **the rail's two divergence lists are classified, and the
+    classification is refused when it cannot be.**
+
+    This module derived four rosters from one specification and nothing ever
+    asked whether the specification was self-consistent. It was not: R1947 and
+    R1948 wrote entries meaning *this build is AHEAD* into the list meaning
+    *this build is BEHIND*, [`closed_keys`] concatenated the two, and fourteen
+    demos asserted a live rail against a specification that classified two open
+    seats as shut. The red survived four pushes because the demo sweep does not
+    gate one.
+
+    ⚠ Every check below has a path to failing — each is exercised in the
+    round's mutation log by editing the pin — and none of them is a count that
+    an empty list satisfies: the partition check compares SETS against the
+    rail, so a specification that emptied both lists still has to account for
+    every seat.
+    """
+    rail = rail_spec()
+    problems: list[str] = []
+
+    seats = set(rail_keys())
+    owed, ahead, reserved = set(owed_keys()), set(ahead_keys()), set(reserved_keys())
+
+    both = sorted(owed & ahead)
+    if both:
+        problems.append(
+            f"{both} are declared BOTH owed (the reference has it, this build "
+            f"does not) and ahead (the reference locks it, this build opens "
+            f"it). One seat cannot diverge in two directions at once."
+        )
+
+    stray = sorted(ahead - reserved)
+    if stray:
+        problems.append(
+            f"{stray} are declared ahead of the reference, but the reference "
+            f"does not draw them locked — so there is nothing to be ahead OF. "
+            f"Either the seat's `kind` in `canon` is wrong or the entry is."
+        )
+
+    for name, keys in (("owed", owed), ("ahead", ahead), ("reserved", reserved)):
+        unknown = sorted(keys - seats)
+        if unknown:
+            problems.append(f"`{name}` names {unknown}, which the rail does not draw")
+
+    partition = set(closed_keys()) | set(open_keys())
+    if partition != seats:
+        missing, extra = sorted(seats - partition), sorted(partition - seats)
+        problems.append(
+            f"shut and open do not cover the rail: unaccounted {missing}, "
+            f"invented {extra}. A seat in neither is not a pass, it is a seat "
+            f"nobody classified."
+        )
+
+    for entry in rail["owed"] + rail["ahead"]:
+        for field in ("key", "sentence", "since", "why"):
+            if not entry.get(field):
+                problems.append(f"divergence {entry.get('key')!r} has no `{field}`")
+
+    for problem in problems:
+        print(f"analyzer_spec: {problem}")
+    if problems:
+        print(f"analyzer_spec: {len(problems)} problem(s)")
+        return 1
+    print(
+        f"analyzer_spec selftest: {len(seats)} seat(s), "
+        f"{len(owed)} owed, {len(ahead)} ahead, {len(reserved)} reserved, "
+        f"{len(closed_keys())} shut, {len(open_keys())} open -- OK"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+
+    if "--selftest" in sys.argv:
+        raise SystemExit(selftest())
+    raise SystemExit("usage: analyzer_spec.py --selftest")

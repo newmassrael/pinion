@@ -103,6 +103,31 @@ def demo_population() -> set[str]:
     return set()
 
 
+def demo_expectations() -> set[str]:
+    """The example names the R1712 demo's `CONCEDES` map classifies.
+
+    ★★★★★ R1953 — the second half of the same question. This tool made
+    `SCREENS` total and stopped there, so R1947 and R1948 each added a screen
+    to that list and recorded no expectation about what it gives up. The demo
+    read a missing entry as *concedes nothing*, both screens declare
+    `panning`, and the audit reported two correct screens as defective for four
+    pushes.
+
+    ⇒ a screen is in the check when it is **driven and classified**. Being in
+    one list and not the other is what this now refuses.
+    """
+    tree = ast.parse(DEMO.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        if not any(isinstance(t, ast.Name) and t.id == "CONCEDES" for t in targets):
+            continue
+        keys = getattr(node.value, "keys", [])
+        return {k.value for k in keys if isinstance(k, ast.Constant)}
+    return set()
+
+
 def selftest() -> int:
     """The two claims this tool rests on, checked against their own sources."""
     failures = []
@@ -130,6 +155,12 @@ def selftest() -> int:
 
     if not demo_population():
         failures.append("the demo's SCREENS list did not parse — the comparison would be vacuous")
+    if not demo_expectations():
+        failures.append(
+            "the demo's CONCEDES map did not parse — the classification check "
+            "below would be vacuous, which is exactly how the thing it checks "
+            "went unnoticed"
+        )
 
     for line in failures:
         print(f"shrink population selftest: {line}", file=sys.stderr)
@@ -156,23 +187,38 @@ def main() -> int:
         return 0
 
     judged = demo_population()
+    classified = demo_expectations()
     unjudged = sorted(set(declaring) - judged)
     stray = sorted(judged - set(declaring))
+    # ★ R1953 — driven and not classified, which is the half that was missing.
+    unclassified = sorted(judged - classified)
+    orphaned = sorted(classified - judged)
     print(
         f"shrink population: {len(declaring)} screen(s) declare a policy, "
-        f"{len(judged)} judged by {DEMO.name}"
+        f"{len(judged)} judged by {DEMO.name}, {len(classified)} classified"
     )
     for package in unjudged:
         print(f"  UNJUDGED  {package}  ({', '.join(declaring[package])})")
     for package in stray:
         print(f"  STRAY     {package} is judged and declares no policy")
+    for package in unclassified:
+        print(f"  UNCLASSIFIED  {package} is driven and CONCEDES says nothing about it")
+    for package in orphaned:
+        print(f"  ORPHANED  {package} is classified and never driven")
     if unjudged:
         print(
             "\nA screen that declares what it gives up and is not asked about it is not "
             "passing the check — it was never in it. Add it to SCREENS.",
             file=sys.stderr,
         )
-    return 1 if unjudged else 0
+    if unclassified or orphaned:
+        print(
+            "\nA screen with no recorded expectation is not passing either: the demo "
+            "read a missing entry as 'concedes nothing', and two screens that concede "
+            "were reported as defects for four pushes. Add it to CONCEDES.",
+            file=sys.stderr,
+        )
+    return 1 if (unjudged or unclassified or orphaned) else 0
 
 
 if __name__ == "__main__":

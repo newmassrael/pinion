@@ -533,13 +533,43 @@ def body() -> None:
         )
         # ★ A locked destination cannot be reached even by the wire. The reason
         # says so; the router agrees.
-        app.request("scene/click", {"button": "left", "at": center(rects["shell.rail.topology"])})
-        app.tick(16)
-        assert_eq(
-            nodes_by_tag(app)["shell.rail.settings"].get("current"),
-            "page",
-            "H: ★ pressing a locked destination does not move the reader",
-        )
+        #
+        # ★★★★★ R1953 — WHICH seat is locked is derived. This pressed
+        # `shell.rail.topology` by name, and R1947 opened that seat: the press
+        # arrived, the reader moved, and the assertion read a screen behaving
+        # correctly as a defect.
+        #
+        # ⚠ And the empty case is asserted rather than skipped. `closed_keys`
+        # is empty today — this build opens every seat the reference draws —
+        # so there is no locked destination to press, and saying nothing there
+        # would let this leg report green for having no population (R1651.1).
+        # What is asserted instead is the fact that makes it empty: the live
+        # rail declares no seat unavailable at all.
+        locked_seats = [k for k in closed_rail_keys() if f"shell.rail.{k}" in rects]
+        if locked_seats:
+            app.request(
+                "scene/click",
+                {"button": "left", "at": center(rects[f"shell.rail.{locked_seats[0]}"])},
+            )
+            app.tick(16)
+            assert_eq(
+                nodes_by_tag(app)["shell.rail.settings"].get("current"),
+                "page",
+                f"H: ★ pressing the locked {locked_seats[0]} does not move the reader",
+            )
+        else:
+            live_shut = [
+                row["tag"]
+                for row in app.request("scene/disabled", {}).result["disabled"]
+                if row["tag"].startswith("shell.rail.")
+            ]
+            assert_eq(
+                live_shut,
+                [],
+                "H: ★ the specification declares no shut seat, so the rail must "
+                "declare none either -- there is nothing to press and that is a "
+                "fact rather than an absence of one",
+            )
         # Back where the rest of this demo expects to be.
         app.intervene(f"{EXT}/nav", "dashboard")
         app.tick(16)

@@ -113,7 +113,32 @@ SCREENS = [
 #: Kept as a written-down decision rather than read off the wire, for the reason
 #: the paragraph below already gives: an audit that takes its expectation from
 #: the thing under test passes for a screen that changed its mind quietly.
-CONCEDING = {"hello-node-lab", "hello-key-patterns", "hello-log-view"}
+#:
+#: ★★★★★ R1953 — a MAP, not a set, and the difference is that a screen has no
+#: default here any more.
+#:
+#: As a set, "not in it" meant "does not concede" — a classification nobody
+#: made. R1947 and R1948 each added a screen to `SCREENS` (the `shrink
+#: population` gate made them) and neither recorded an expectation, so both
+#: declared a panning policy while this file said they concede nothing, and the
+#: demo failed for four pushes saying `expected False, got True` — about
+#: screens that were behaving exactly as their source declares. An unclassified
+#: screen is now a refusal rather than a silent `False` (`every screen carries
+#: a recorded expectation` below), and `tools/shrink_population.py` asks for
+#: the same thing at the push gate that made `SCREENS` total.
+CONCEDES: dict[str, bool] = {
+    "hello-node-lab": True,
+    "hello-packet-view": False,
+    "hello-analyzer-shell": False,
+    "hello-key-patterns": True,
+    "hello-log-view": True,
+    # ★ R1953 — both declare `ShrinkPolicy::panning`: below their comfortable
+    # size they move over the band rather than cutting it, which is a
+    # concession and is what the wire has been reporting since they were built.
+    "hello-topology-view": True,
+    "hello-sessions-view": True,
+}
+CONCEDING = {name for name, yes in CONCEDES.items() if yes}
 #: ★★★★★ R1714 — and the screen this file was written against no longer CUTS
 #: what its band costs; it moves over it. The decisions on record are therefore
 #: the floor and the RECOURSE, and the two clauses that were about clipping —
@@ -144,6 +169,12 @@ CONCEDED_FLOOR = {
     "hello-node-lab": (748, 410),
     "hello-key-patterns": (760, 420),
     "hello-log-view": (720, 380),
+    # ★ R1953 — the two sections R1947 and R1948 built, whose floors were never
+    # written down here because neither round recorded that they concede at all.
+    # Both declare `ShrinkPolicy::panning`, and these are the pairs their source
+    # names as the size a person may drag them down to.
+    "hello-topology-view": (720, 380),
+    "hello-sessions-view": (760, 460),
 }
 DISPLAY = 1600
 
@@ -651,6 +682,23 @@ def drive(name: str, example: str, tmp: Path) -> None:
 
 
 def main() -> None:
+    # ★★★★★ R1953 — every screen this demo drives carries a RECORDED
+    # expectation about whether it concedes. Asserted before anything is
+    # launched, because the alternative is what happened twice: a screen joined
+    # `SCREENS`, `CONCEDES` said nothing about it, "nothing" read as `False`,
+    # and the audit reported a screen doing what its source declares as a
+    # defect. An unclassified screen is a refusal, not a default.
+    assert_eq(
+        sorted(CONCEDES),
+        sorted(example for _, example in SCREENS),
+        "every screen carries a recorded expectation about what it concedes",
+    )
+    assert_eq(
+        sorted(CONCEDED_FLOOR),
+        sorted(CONCEDING),
+        "and every conceding screen's floor is a decision on record -- the "
+        "half that raised a KeyError rather than a verdict when it was short",
+    )
     with tempfile.TemporaryDirectory() as d:
         for name, example in SCREENS:
             drive(name, example, Path(d))

@@ -191,6 +191,24 @@ if ! python3 "$repo_root/tools/analyzer_census.py" --selftest >&2; then
     echo "pre-push: the analysis-tool census failed its own tests" >&2
     exit 1
 fi
+# ★★★★★ R1953 — the rail specification's own consistency, which nothing asked.
+#
+# `tools/analyzer_spec.py` derives four rosters from `docs/analyzer-rail-spec.
+# json` and every rail demo compares a running screen against them. R1947 and
+# R1948 wrote entries meaning "this build is AHEAD of the reference" into the
+# list meaning "this build is BEHIND", so `closed_keys` classified two open
+# seats as shut: fourteen demos went red and stayed red for four pushes,
+# because the demo sweep does not gate a push and this did not exist.
+#
+# Cheap (it reads one JSON file), and it refuses exactly what cannot be
+# checked from inside a demo: a key declared in both directions, an `ahead`
+# entry for a seat the reference does not lock, and a shut/open partition that
+# does not cover the rail.
+step "analysis-tool rail spec selftest"
+if ! python3 "$repo_root/tools/analyzer_spec.py" --selftest >&2; then
+    echo "pre-push: the analysis tool's rail specification is inconsistent" >&2
+    exit 1
+fi
 step "analysis-tool census pin"
 if ! python3 "$repo_root/tools/analyzer_census.py" --check-pin >&2; then
     echo "pre-push: docs/analyzer-census.json is malformed" >&2
