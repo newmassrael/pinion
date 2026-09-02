@@ -250,10 +250,48 @@ pub fn open(state: &Rc<LabState>, text: &str) -> Result<String, String> {
         text
     };
     let opening = Archive::<LabNode, Kept>::read(text);
-    if let Some(why) = opening.reason() {
+    // ★★★★★ R1977 — **two failures, and only one of them is "there is no
+    // document".**
+    //
+    // This asked `Opening::reason()`, which folds both, and refused on either.
+    // Measured at R1977 by driving it: a saved graph whose link names a node
+    // that is not there answered *the graph is not sound in 2 ways, starting
+    // with: link 0 in tree 0 names a socket that is not there* and the screen
+    // stayed where it was — so a person whose file had gone structurally wrong
+    // could see one sentence and NOTHING ELSE, on a screen that (since R1976)
+    // can say which card each fault is on.
+    //
+    // The two are not the same kind of failure:
+    //
+    // * **Unreadable** — not the envelope, another revision, a taxonomy this
+    //   build does not have. There is no document to show. Still refused.
+    // * **Violations** — the document parsed and its own invariants do not
+    //   hold. There IS a document, and looking at it is exactly how a person
+    //   repairs it.
+    //
+    // `Opening::take_despite_violations` exists for this and had ZERO callers,
+    // in this tree and in the crate's own tests — the crate built the door and
+    // nobody opened it. This is the caller.
+    //
+    // ⚠ Opening it is not running it: `Document::review` reports every one of
+    // these as a structural fault, `Fitness::Stopped` follows, and the launch
+    // stays shut (R1976). So the graph is visible and still cannot be started,
+    // which is R1689's own rule — *`Dropped` is not a failure, the graph is
+    // here* — applied to the half that was refusing whole documents.
+    //
+    // ★ The behaviour canon is the same shape and weaker: its import checks the
+    // snapshot's SHAPE and says *loaded*, and its validation pass then looks at
+    // field values only — it has no structural axis, so it opens such a graph
+    // and never mentions it.
+    if let Some(why) = unreadable(&opening) {
         state.say(Utterance::refused(&why));
         return Err(why);
     }
+    let unsound: Vec<String> = opening
+        .violations()
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect();
     // ★ What the archive could not carry is said out loud, because this is the
     // one moment a person can act on it. `Dropped` is not a failure — the graph
     // is here — and a screen that swallowed it would be the placeholder the
@@ -263,20 +301,60 @@ pub fn open(state: &Rc<LabState>, text: &str) -> Result<String, String> {
         .iter()
         .map(std::string::ToString::to_string)
         .collect();
-    let archive = opening.take().ok_or_else(|| "unreadable".to_owned())?;
+    let archive = opening
+        .take_despite_violations()
+        .ok_or_else(|| "unreadable".to_owned())?;
     install(state, archive);
-    let said = Utterance::done(if dropped.is_empty() {
-        format!("opened · {} cards", state.cards().len())
-    } else {
-        format!(
-            "opened · {} cards · {} left behind: {}",
-            state.cards().len(),
+    // ★★★★★ R1977 — the sentence names BOTH kinds of remainder, and an unsound
+    // graph is named as unsound rather than as "opened". A person who sees
+    // `opened` and nothing else on a broken file has been told the wrong thing;
+    // the gate will say which card each fault is on, and this is what sends
+    // them to look.
+    let mut clauses = vec![format!("{} cards", state.cards().len())];
+    if !dropped.is_empty() {
+        clauses.push(format!(
+            "{} left behind: {}",
             dropped.len(),
             dropped.join(" · ")
-        )
-    });
+        ));
+    }
+    if !unsound.is_empty() {
+        clauses.push(format!(
+            "{} fault(s) the gate will name: {}",
+            unsound.len(),
+            unsound.join(" · ")
+        ));
+    }
+    // ⚠ `Tone::Done`, and the clause is what carries the trouble. The first
+    // draft reached for a `warned` tone; measured, `Tone` has three arms and no
+    // such thing, and adding one would be this screen inventing a vocabulary
+    // several gates count. `Done` is also the truthful arm: the open HAPPENED,
+    // which is exactly the change this round makes — what is not true of the
+    // graph is in the sentence, and the launch gate is what refuses to run it.
+    let said = Utterance::done(format!("opened · {}", clauses.join(" · ")));
     state.say(said.clone());
     Ok(said.sentence())
+}
+
+/// ★★★★★ R1977 — why there is **no document at all**, as opposed to a document
+/// whose own invariants do not hold.
+///
+/// [`Opening::reason`](pinion_node_graph::Opening::reason) folds the two, which
+/// is right for a caller that only
+/// wants one sentence and wrong for this screen: one of them means *there is
+/// nothing to show you* and the other means *here it is, and here is what is
+/// wrong with it*. Written against `refusal`'s absence rather than against a
+/// list of arms, so an [`Unreadable`](pinion_node_graph::Unreadable) added
+/// upstream is covered without anybody editing this.
+fn unreadable<C>(opening: &pinion_node_graph::Opening<LabNode, C>) -> Option<String> {
+    // A document that parsed is PRESENT whatever its invariants say, so the
+    // only thing that means "nothing to show" is a reason with no violations
+    // behind it — `reason` answers the refusal first and falls through to the
+    // violations, and this keeps only the first of those two.
+    if !opening.violations().is_empty() {
+        return None;
+    }
+    opening.reason()
 }
 
 /// Put the whole screen back to the graph it opens with, and forget the save.
