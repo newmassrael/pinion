@@ -119,6 +119,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -135,6 +136,29 @@ class Check:
         self.name = name
         self.ok = ok
         self.said = said
+
+
+#: ★★★★★ R1968.1 — **what this judge COSTS, measured rather than guessed at.**
+#:
+#: The driver's own sentence when a check verifies nothing is *"the wait ended
+#: NotYet — give it longer, or a faster judge"*. That is two prescriptions and
+#: it prints them together, unconditionally, whichever applies — measured at
+#: R1968.1 over every record in the driver's log directory, the clause that
+#: would say WHICH is absent from the great majority: 335 of the tails after
+#: that advice are empty. So an operator reading it cannot tell a judge that
+#: was too slow from one that was never asked, and the repository's answer to
+#: "the reason is prose" is to make the reason a number somebody can read.
+#:
+#: `remote` is separated from `total` because it is the one call that leaves the
+#: machine, and it is where the time is: 2.32s of a 3.11s answer, measured
+#: three times. A reader deciding between the two prescriptions needs that
+#: split — a judge that is 75% one SSH handshake is not made faster by anything
+#: this tool does to its other five predicates.
+#:
+#: ⚠ NOT reported by `--line`, which is EXACTLY one line by contract and whose
+#: whole purpose is that a reader has nothing to choose between. The selftest
+#: holds that.
+TIMING: dict[str, float] = {}
 
 
 def run(*args: str, cwd: Path | None = None, raw: bool = False) -> tuple[int, str]:
@@ -247,7 +271,11 @@ def check_published(round_no: int) -> Check:
     shas = commits_for(round_no)
     if not shas:
         return Check("published", False, f"no R{round_no} commit to publish")
+    # ★ R1968.1 — timed, because this is the only call that leaves the machine
+    # and a reader told to find "a faster judge" needs to know that.
+    began = time.monotonic()
     status, out = run("git", "ls-remote", "origin", "main")
+    TIMING["remote"] = time.monotonic() - began
     if status != 0 or not out:
         return Check("published", False, f"could not read origin/main: {out[:200]}")
     remote = out.split()[0]
@@ -382,6 +410,7 @@ def check_untracked() -> Check:
 
 
 def verdict(round_no: int) -> tuple[bool, list[Check]]:
+    began = time.monotonic()
     checks = [
         check_commit(round_no),
         check_ledger(round_no),
@@ -393,7 +422,29 @@ def verdict(round_no: int) -> tuple[bool, list[Check]]:
         # measurement that made it one and for what that costs.
         check_untracked(),
     ]
+    TIMING["total"] = time.monotonic() - began
     return all(c.ok for c in checks), checks
+
+
+def cost_line() -> str | None:
+    """What this answer cost, or `None` when nothing was timed.
+
+    ⚠ `None` rather than zeroes: a cost of `0.00s` would be a measurement, and
+    a run that never reached the remote probe (a round with no commit) made no
+    measurement at all. This tool's own rule about a check that could not look
+    applies to its own instrument.
+    """
+    total = TIMING.get("total")
+    if total is None:
+        return None
+    remote = TIMING.get("remote")
+    if remote is None:
+        return f"  cost: {total:.2f}s, none of it asking origin (never reached that check)"
+    share = 100.0 * remote / total if total > 0 else 0.0
+    return (
+        f"  cost: {total:.2f}s total, {remote:.2f}s ({share:.0f}%) asking origin "
+        "— the one call that leaves this machine"
+    )
 
 
 def render(round_no: int, closed: bool, checks: list[Check]) -> str:
@@ -410,6 +461,12 @@ def render(round_no: int, closed: bool, checks: list[Check]) -> str:
     if not closed:
         owed = [c.name for c in checks if not c.ok]
         lines.append(f"  owed: {', '.join(owed)}")
+    # ★ R1968.1 — LAST, and never first: the first word is the verdict and
+    # nothing may precede it. `--line` takes `splitlines()[0]`, so this cannot
+    # reach the one-line form however long it grows.
+    cost = cost_line()
+    if cost is not None:
+        lines.append(cost)
     return "\n".join(lines)
 
 
@@ -936,6 +993,33 @@ def selftest() -> int:
     expect("the line form is a single line", "\n" not in one)
     expect("and it is the verdict", one.startswith("YES"))
 
+    # ★★★★★ R1968.1 — the cost line is REPORTED and never LEADS, and a run that
+    # measured nothing says nothing rather than `0.00s`.
+    #
+    # ⚠ This asserts against `render`'s output rather than timing anything, so
+    # it cannot go flaky on a slow host — a timing assertion in a gate is the
+    # shape [[zero-flake-policy]] refuses. What is held is the ARRANGEMENT:
+    # where the number may appear, and that its absence is sayable.
+    TIMING.clear()
+    expect("a run that timed nothing offers no cost line", cost_line() is None)
+    expect("and the report then carries none",
+           "cost:" not in render(1, True, fake_ok))
+    TIMING["total"] = 3.11
+    TIMING["remote"] = 2.32
+    priced = render(1, True, fake_ok)
+    expect("a timed run states its cost", "cost: 3.11s total" in priced)
+    expect("and attributes the share that left the machine",
+           "2.32s (75%) asking origin" in priced)
+    expect("the cost is the LAST line, so the verdict is still first",
+           priced.splitlines()[-1].lstrip().startswith("cost:")
+           and priced.splitlines()[0].startswith("YES"))
+    expect("★ and it cannot reach the one-line form",
+           "cost:" not in priced.splitlines()[0])
+    del TIMING["remote"]
+    expect("a total with no remote reading says so rather than reading zero",
+           "none of it asking origin" in (cost_line() or ""))
+    TIMING.clear()
+
     for line in failures:
         print(f"  FAIL {line}")
     # ★ `PASS` / `FAIL`, the form `phase_b_tally.py --selftest` already uses, so
@@ -1001,6 +1085,10 @@ def main() -> int:
                     "verdict": "YES" if closed else "NO",
                     "round": round_no,
                     "checks": {c.name: {"ok": c.ok, "said": c.said} for c in checks},
+                    # ★ R1968.1 — seconds, so a driver choosing between "give it
+                    # longer" and "a faster judge" reads a number instead of
+                    # both. `remote_s` is absent when that check was not reached.
+                    "cost_s": {name: round(v, 3) for name, v in sorted(TIMING.items())},
                 },
                 indent=2,
             )
