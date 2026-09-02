@@ -3468,14 +3468,73 @@ fn r1728_no_two_seats_are_drawn_the_same() {
 /// the fold and gains from it: a region another destination owns must be absent
 /// from *every* frame this one has, which is a stronger sentence than the one
 /// this gate used to make.
+///
+/// # ★★★★★ R1972 — the population is the DECLARATION, not a filtered view of it
+///
+/// This swept `roster.open()`. Measured at R1972, all eight declared seats are
+/// open, so the two lists are the same list *today* — and that is exactly what
+/// made the hole invisible: **a seat that gets closed leaves this gate's
+/// population silently**, taking its pixels out of judgement without anything
+/// saying so, and the north star's condition (A) is a sentence about *every
+/// declared destination*. That is the escape hatch this workspace refuses at
+/// the door — unclassified is not a pass — so the sweep is over [`spec::RAIL`]
+/// now and each seat is answered by exactly ONE arm.
+///
+/// Two things the old shape could not say and this one does: every declared
+/// seat **paints something**, which is condition (A)'s own words and holds for
+/// a closed seat as much as an open one; and the count of seats reached equals
+/// the count declared, so an empty roster cannot pass for a clean one.
 #[test]
 fn r1695_each_destination_paints_the_regions_the_specification_gives_it() {
     let owner = Owner::new();
     owner.run(|| {
         let roster = spec::destinations();
-        for destination in roster.open() {
-            let key = destination.key.as_ref();
+        let mut reached_open = 0_usize;
+        let mut reached_closed = 0_usize;
+        for seat in spec::RAIL {
+            let key = seat.key;
+            let destination = roster
+                .get(key)
+                .unwrap_or_else(|| panic!("{key} is declared on the rail and the roster lacks it"));
+            if destination.standing.why().is_some() {
+                reached_closed += 1;
+                continue;
+            }
+            reached_open += 1;
             let shot = painted_over_poses(key);
+            // ★ R1972 — condition (A)'s own words, asked before the per-region
+            // detail below: a destination that painted NOTHING would satisfy
+            // every forward assertion vacuously if the specification happened
+            // to give it no region.
+            assert!(
+                !shot.tags.is_empty(),
+                "at {key}: the screen paints nothing at all, so every check \
+                 below it is asking about an empty frame",
+            );
+            // ★★★★★ R1972 — and from HERE, every declared seat has a mark to
+            // press. That is the other half of condition (A): a reader gets to
+            // a destination by its seat, and a seat nothing paints is a
+            // destination nobody can reach whatever its page would have shown.
+            // Asked at every destination rather than once at home, so the rail
+            // is judged complete from wherever the reader is standing — 8 seats
+            // × 8 destinations of live cases, and no extra navigation to take.
+            //
+            // ⚠ Deliberately NOT an arm of the open/closed split. A first draft
+            // asserted it only for closed seats, and closing one to exercise
+            // that arm is REFUSED at construction (`the mounted screens sit at
+            // open destinations of this rail: DestinationIsClosed`) because
+            // R1948 opened the eighth seat and each now carries a mounted
+            // screen. An arm with no path to being taken is a rule nothing
+            // performs.
+            for other in spec::RAIL {
+                let seat_tag = format!("shell.rail.{}", other.key);
+                assert!(
+                    shot.rect(&seat_tag).is_some(),
+                    "standing at {key}, the rail paints nothing at {seat_tag:?} \
+                     — {} is declared and a reader has no seat to press for it",
+                    other.key,
+                );
+            }
             // Forward: a region this destination owns is painted here.
             for voice in spec::VOICES {
                 if !voice.at.shows_at(key) {
@@ -3506,6 +3565,21 @@ fn r1695_each_destination_paints_the_regions_the_specification_gives_it() {
                 }
             }
         }
+        // ★★ R1972 — every declared seat was answered by exactly one arm, and
+        // the sweep is not empty. Without this a roster that lost its rows
+        // reads as a screen with nothing wrong with it.
+        assert_eq!(
+            reached_open + reached_closed,
+            spec::RAIL.len(),
+            "the rail declares {} seat(s) and this sweep reached {reached_open} \
+             open + {reached_closed} closed",
+            spec::RAIL.len(),
+        );
+        assert!(
+            reached_open > 0,
+            "no declared seat is open, which the roster's own constructor \
+             should have refused before this gate ran",
+        );
     });
 }
 
