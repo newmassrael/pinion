@@ -1198,6 +1198,57 @@ fn r1649_the_published_vocabularies_have_no_repeats() {
 /// The rectangles are the boxes the view GAVE the runs, not the extent of their
 /// glyphs — a string wider than its box still wraps over what is below it, and
 /// nothing here can see that (`debt-a-text-run-cannot-be-elided`).
+/// ★★★★★ R1971 — **nothing this screen paints carries a name and no box.**
+///
+/// The class [`pinion_core::reach::Reach::Unplaced`] names, asked of THIS
+/// screen, because R1971 measured that asking it of the node lab alone was not
+/// enough: with a placement removed from this screen's own icon strokes, the
+/// whole in-process suite here stayed GREEN and only a demo caught it. A gate
+/// that lives on one screen is a gate the next screen does not have.
+///
+/// ⚠ It found three the moment it could see: bare paths `5`, `6` and `8` under
+/// the root, which nothing had ever reported because `walk_marks` returned on a
+/// zero box before this round.
+#[test]
+fn r1971_this_screen_paints_nothing_it_cannot_place() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let mut scene = super::view(ScreenState::default(), pinion_core::Frame::default());
+        let mut cache = pinion_runtime::LayoutCache::new();
+        pinion_runtime::compute_layout(&mut scene, &mut cache, super::WIN_W, super::WIN_H);
+        let window = (super::WIN_W, super::WIN_H);
+        let out = pinion_core::reach::out_of_sight(
+            &scene,
+            window,
+            &mut pinion_core::test_fixtures::screen_ink::stand_in_ink,
+        );
+        let unplaced: Vec<String> = out
+            .iter()
+            .filter(|o| o.reach.is_unplaced())
+            .map(|o| {
+                format!(
+                    "{} (rect {:?})",
+                    o.tag.clone().unwrap_or_else(|| o.path.join("/")),
+                    o.rect,
+                )
+            })
+            .collect();
+        assert!(
+            unplaced.is_empty(),
+            "{} mark(s) carry a name and NO BOX: {unplaced:?}. A primitive whose \
+             own `rect` holds its geometry must be placed with `absolute(rect)`; \
+             put in flow, the layout pass overwrites that rect with the flow box \
+             and every index built from `absolute_rect` drops it.",
+            unplaced.len(),
+        );
+        // ★ The walk reached this screen at all — without a floor an empty
+        // report reads as clean on a scene nothing painted.
+        let mut marks = 0_usize;
+        scene.for_each_node(&mut |_| marks += 1);
+        assert!(marks > 100, "the sweep examined {marks} node(s)");
+    });
+}
+
 #[test]
 fn r1653_no_two_text_runs_of_one_widget_are_painted_on_top_of_each_other() {
     use std::collections::BTreeMap;
@@ -1290,7 +1341,15 @@ fn card_to_scroll_to(o: &pinion_core::reach::OutOfSight) -> Option<(String, (i32
         }
         // R1713 — a card the range reaches only part of has no single offset
         // that shows it, so there is nothing to press towards.
-        pinion_core::reach::Reach::Clipped { .. } | pinion_core::reach::Reach::Lost { .. } => None,
+        // ★ R1971 — and a card with NO BOX has nothing to press towards for a
+        // different reason: there is no rectangle to bring anywhere. Answered
+        // `None` here because this function's question is only *what do I
+        // scroll to*; that it is a defect is reported where the class is
+        // judged, and the caller's own population floor below refuses a sweep
+        // that found no card to scroll to at all.
+        pinion_core::reach::Reach::Clipped { .. }
+        | pinion_core::reach::Reach::Lost { .. }
+        | pinion_core::reach::Reach::Unplaced => None,
     }
 }
 

@@ -209,17 +209,6 @@
       ]
     },
     {
-      "name": "debt-a-mark-with-no-box-is-excused-by-both-readers",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links debt-canon-gui-surface-census, debt-the-canon-is-one-app-and-we-are-many-binaries"
-      ]
-    },
-    {
       "name": "debt-a-new-section-joins-the-application-half-dressed",
       "substituted": false,
       "blocked_by": "buildable",
@@ -340,6 +329,28 @@
       "why": [
         "links analyzer-debt-repayment-loop, analyzer-tool-capability-spec",
         "names dashboard.t2.12"
+      ]
+    },
+    {
+      "name": "debt-a-zero-box-does-not-say-who-made-it-zero",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links debt-canon-gui-surface-census, debt-the-canon-is-one-app-and-we-are-many-binaries"
+      ]
+    },
+    {
+      "name": "debt-absence-is-spelled-as-an-empty-container-everywhere",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links debt-canon-gui-surface-census, debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
     },
     {

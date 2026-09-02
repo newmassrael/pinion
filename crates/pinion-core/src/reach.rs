@@ -344,6 +344,29 @@ pub enum Reach {
         /// loss rather than a cut.
         short_by: Overhang,
     },
+    /// ★★★★★ (R1971) The mark carries a name and **no box**: the author drew
+    /// something and the layout pass gave it nothing to draw in.
+    ///
+    /// # Why this is an arm and not the absence of a row
+    ///
+    /// Until R1971 this module's shared walk returned on `rect.w == 0 || rect.h == 0` with
+    /// the comment *"nothing was drawn, so nothing is being missed"*. True of a
+    /// spacer. **False of a mark whose own rectangle carries its geometry** — a
+    /// [`Scene::Path`] holds a `rect`, and a path put in flow has that rect
+    /// overwritten by the layout pass, so the author drew a line and the box
+    /// went to nothing. R1970 measured what the excuse cost: eight tagged marks
+    /// on one screen were reported by NOTHING — not by [`Self::Lost`], whose own
+    /// documentation calls it *the arm a gate fails on*, but by no row at all —
+    /// while a shipped demo printed `0 lost ... of 435 marks` and passed.
+    ///
+    /// So this is deliberately **not** folded into [`Self::Lost`]. A lost mark
+    /// HAS a rectangle that no offset can bring into view, and its `short_by`
+    /// says by how much; an unplaced one has no rectangle to overhang with, so a
+    /// reader handed `Lost { short_by: 0 }` would be reading a measurement that
+    /// was never taken. Two facts, two arms, and [`Self::is_lost`] stays true to
+    /// its name — [`Self::nothing_reaches_it`] is the union, for the gates whose
+    /// question is *can the reader get to this at all*.
+    Unplaced,
 }
 
 impl Reach {
@@ -354,14 +377,39 @@ impl Reach {
             Self::Scrollable { .. } => "scrollable",
             Self::Clipped { .. } => "clipped",
             Self::Lost { .. } => "lost",
+            Self::Unplaced => "unplaced",
         }
     }
 
-    /// True for the arm a gate fails on: nothing brings any of this mark into
-    /// view.
+    /// True for the arm a gate fails on: this mark has a rectangle and nothing
+    /// brings any of it into view.
+    ///
+    /// ⚠ (R1971) This is about [`Self::Lost`] ALONE, which is what its name
+    /// says. A mark with no box at all answers `false` here and `true` at
+    /// [`Self::is_unplaced`] — ask [`Self::nothing_reaches_it`] for the union,
+    /// which is the question a refusal usually means.
     #[must_use]
     pub const fn is_lost(&self) -> bool {
         matches!(self, Self::Lost { .. })
+    }
+
+    /// (R1971) True for the mark that was never given a box to be drawn in.
+    #[must_use]
+    pub const fn is_unplaced(&self) -> bool {
+        matches!(self, Self::Unplaced)
+    }
+
+    /// ★ (R1971) True when **no offset and no scroll reaches any part of this
+    /// mark** — the union a gate means when it refuses.
+    ///
+    /// Published as its own name rather than widening [`Self::is_lost`], because
+    /// the two arms are different facts and a caller that wants to tell them
+    /// apart must still be able to. Every refusal in this workspace that read
+    /// `is_lost` was, on the evidence of R1970, asking THIS question and getting
+    /// a `false` for the one case it most needed a `true` for.
+    #[must_use]
+    pub const fn nothing_reaches_it(&self) -> bool {
+        matches!(self, Self::Lost { .. } | Self::Unplaced)
     }
 
     /// (R1714) The viewports to move and where to, for the arm that has them.
@@ -373,7 +421,7 @@ impl Reach {
     pub fn moves(&self) -> &[Move] {
         match self {
             Self::Scrollable { moves } => moves,
-            Self::Clipped { .. } | Self::Lost { .. } => &[],
+            Self::Clipped { .. } | Self::Lost { .. } | Self::Unplaced => &[],
         }
     }
 
@@ -382,10 +430,15 @@ impl Reach {
     /// `None` for [`Self::Scrollable`], which is the arm that has no overhang by
     /// definition — so a caller reading the number cannot read it off a mark
     /// that fits.
+    ///
+    /// ⚠ (R1971) Also `None` for [`Self::Unplaced`], for the OPPOSITE reason:
+    /// that mark has no rectangle, so there is nothing for an overhang to be
+    /// measured from. Two reasons for one `None`, which is why the arms are
+    /// asked by name — [`Self::is_unplaced`] — rather than inferred from it.
     #[must_use]
     pub const fn short_by(&self) -> Option<Overhang> {
         match self {
-            Self::Scrollable { .. } => None,
+            Self::Scrollable { .. } | Self::Unplaced => None,
             Self::Clipped { short_by } | Self::Lost { short_by } => Some(*short_by),
         }
     }
@@ -440,7 +493,14 @@ pub fn out_of_sight(scene: &Scene, window: (u32, u32), ink_of: InkOf<'_>) -> Vec
         // range can ever show. Asking only "does all of it fit" gave a wide row
         // whose right edge is unreachable the same word as a glyph nothing can
         // ever bring back.
-        let reach = if short_by.is_contained() {
+        let reach = if mark.rect.w == 0 || mark.rect.h == 0 {
+            // ★★★★★ R1971 — asked FIRST, because every question below it is
+            // about a rectangle and this mark has none. `Overhang::of` on an
+            // empty rect answers "contained", so without this line a boxless
+            // mark would come back `Scrollable` with an empty move list — a row
+            // that says "scroll to reach it" and names nothing to scroll.
+            Reach::Unplaced
+        } else if short_by.is_contained() {
             Reach::Scrollable {
                 moves: chain_moves(mark.rect, &mark.chain),
             }
@@ -542,8 +602,54 @@ fn walk_marks(
             }
             _ => (promised, None),
         };
-        if rect.w == 0 || rect.h == 0 {
-            return; // nothing was drawn, so nothing is being missed
+        // ★★★★★ R1971 — the skip is taken on the CAUSE now, not on the
+        // consequence. What stood here was `if rect.w == 0 || rect.h == 0 {
+        // return; // nothing was drawn, so nothing is being missed }`, and that
+        // sentence is TRUE of a run with no characters and FALSE of a mark
+        // whose own rectangle carries its geometry — a path put in flow has
+        // that rect overwritten by the layout pass, so the author drew a line
+        // and the box went to nothing. Skipping on the zero box could not tell
+        // the two apart and excused BOTH from both public derivations;
+        // [`Reach::Unplaced`] records what that cost.
+        //
+        // ⇒ measured on one screen at R1971: 24 rows of `content: Some("")` —
+        // empty text runs, which have no glyphs BECAUSE THEY HAVE NO
+        // CHARACTERS, against ZERO non-text marks with a zero box. So the empty
+        // string is the population the old excuse was written for, and asking
+        // about the content says so out loud instead of inferring it from a
+        // width. A run that DOES carry characters and still measures nothing is
+        // not excused here — it reaches the classification and comes back
+        // `Unplaced`, which is the right answer for a run that says something
+        // and draws nothing.
+        // ⇒ and the same question of a CONTAINER is *does it hold anything*.
+        // Measured on the analysis shell at R1971: root children 5, 6 and 8 came
+        // back `Rect { w: 1440, h: 0 }` — the preset menu, the settings roster
+        // and the description tip, each spelling *this surface is absent right
+        // now* as `Scene::Container(ContainerNode::new(Vec::new()))`. An empty
+        // container draws nothing because it HOLDS nothing, which is the same
+        // sentence as the empty run and not the same as a denied placement. A
+        // container that DOES hold something and still has no box is not
+        // excused: it reaches the classification.
+        let nothing_to_draw = match visit.node {
+            // ⚠ `trim`, not `is_empty`, and the census is what widened it: a
+            // run of WHITESPACE draws no glyphs for the same reason a run of
+            // nothing does. Measured across one demo per example at R1971,
+            // `hello-row-dissect` paints nine and `hello-virtual-tree` twelve
+            // runs of U+00A0 — the idiom for a blank line — and calling those
+            // defects would have been the meter reporting its own convention.
+            Scene::Text(t) => t.content.trim().is_empty(),
+            Scene::Container(c) => c.children.is_empty(),
+            _ => false,
+        };
+        // ⚠ BOTH halves, and the round got this wrong once: skipping on
+        // `nothing_to_draw` alone also removed empty containers that DO have a
+        // box, and the node lab's fault panel — six rows one scroll below the
+        // fold — stopped being reported at all, taking three gates red. The
+        // question is not *is this empty* but *did something with nothing to
+        // draw end up with nothing to draw it in*, which is the only shape the
+        // old excuse was ever right about.
+        if nothing_to_draw && (rect.w == 0 || rect.h == 0) {
+            return;
         }
         visit_mark(Mark {
             tag: visit.node.tag().map(str::to_owned),
@@ -713,6 +819,14 @@ pub struct Cut {
 pub fn cut(scene: &Scene, window: (u32, u32), ink_of: InkOf<'_>) -> Vec<Cut> {
     let mut found = Vec::new();
     walk_marks(scene, window, ink_of, &mut |mark| {
+        // ★ R1971 — the skip `walk_marks` used to perform for everybody, kept
+        // HERE because it is right for THIS question. A cut is "some of it lies
+        // outside what the viewport can ever show"; a mark with no box shows
+        // nothing anywhere and is not a cut of anything. That it is a defect is
+        // [`out_of_sight`]'s report to make, as [`Reach::Unplaced`].
+        if mark.rect.w == 0 || mark.rect.h == 0 {
+            return;
+        }
         let short_by = Overhang::of(mark.rect, mark.chain.inner.viewport.reachable());
         if short_by.is_contained() {
             return;
@@ -1180,6 +1294,94 @@ mod tests {
         assert_eq!(moves_of(&b.reach), vec![("pane", (0, 152))], "{b:?}");
         assert_eq!(b.viewport.name, "pane");
         assert_eq!(b.viewport.max, (0, 200));
+    }
+
+    /// ★★★★★ R1971 — **a mark with a name and no box is REPORTED, as its own
+    /// arm**, and the two derivations here answer it differently on purpose.
+    ///
+    /// # What this replaces
+    ///
+    /// `walk_marks` used to open with `if rect.w == 0 || rect.h == 0 { return; //
+    /// nothing was drawn, so nothing is being missed }`. R1970 measured the
+    /// cost of that sentence: eight tagged marks on one screen were reported by
+    /// **nothing** — probed with the repair backed out, `out_of_sight` answered
+    /// no row for any of them, not even [`Reach::Lost`], whose own
+    /// documentation calls it *the arm a gate fails on*. A shipped demo printed
+    /// `0 lost, 0 reachable in part, 39 one scroll away, of 435 marks` and
+    /// PASSED throughout. The sentence is true of a spacer and false of a
+    /// primitive whose own `rect` carries its geometry — a path put in flow has
+    /// that rect overwritten by the layout pass.
+    ///
+    /// # Why the arm is asked FIRST, which this test pins
+    ///
+    /// `Overhang::of` on an empty rectangle answers *contained*, so a boxless
+    /// mark reaching the ordinary chain comes back `Scrollable` with an EMPTY
+    /// move list — a row that says "scroll to reach it" and names nothing to
+    /// scroll. That is a worse answer than the silence it replaced, so the
+    /// assertion below is not merely `is_unplaced()`: it names the wrong arm.
+    #[test]
+    fn r1971_a_mark_with_no_box_is_reported_as_unplaced() {
+        let screen = boxed(
+            Rect::new(0, 0, 200, 200),
+            "screen",
+            vec![
+                // Drawn and placed: the control that keeps this fixture from
+                // being one where everything is broken.
+                text("here", Rect::new(10, 10, 40, 12), "mark.placed"),
+                // Named, HOLDING something, and the layout pass gave it nothing
+                // to be drawn in. The child matters: a container that holds
+                // nothing draws nothing because it is empty, which is the
+                // excuse this round kept — so a fixture without it would be
+                // testing the exemption rather than the arm.
+                boxed(
+                    Rect::new(0, 0, 0, 0),
+                    "mark.unplaced",
+                    vec![text("inside", Rect::new(0, 0, 48, 12), "mark.inside")],
+                ),
+            ],
+        );
+        let window = (200, 200);
+        let found = out_of_sight(&screen, window, &mut stub_ink);
+
+        let row = by_tag(&found, "mark.unplaced")
+            .expect("a mark with no box is out of sight and must be REPORTED, not skipped");
+        assert!(
+            row.reach.is_unplaced(),
+            "a boxless mark is `Unplaced`, and `Scrollable` here would be a \
+             recipe that names nothing to scroll: {:?}",
+            row.reach,
+        );
+        // The three predicates, each asked by name, because the round that
+        // added this arm found every refusal in the tree reading the narrow one.
+        assert!(
+            !row.reach.is_lost(),
+            "a loss has a rectangle; this has none"
+        );
+        assert!(
+            row.reach.nothing_reaches_it(),
+            "no offset reaches a mark that was never given a box",
+        );
+        assert_eq!(row.reach.short_by(), None, "no rectangle, no overhang");
+        assert!(row.reach.moves().is_empty(), "nothing to scroll");
+        assert_eq!(row.reach.wire_word(), "unplaced");
+
+        // ★ The placed mark is NOT in the report, so this is a walk that
+        // discriminates rather than one that reports everything it visits.
+        assert!(
+            by_tag(&found, "mark.placed").is_none(),
+            "a mark on screen is not out of sight: {found:?}",
+        );
+
+        // ★★ `cut` asks a DIFFERENT question — can this be shown whole — and a
+        // mark that shows nothing anywhere is not a cut of anything. Pinned so
+        // that moving the skip between the two derivations cannot go unnoticed.
+        let cuts = cut(&screen, window, &mut stub_ink);
+        assert!(
+            !cuts
+                .iter()
+                .any(|c| c.tag.as_deref() == Some("mark.unplaced")),
+            "a boxless mark is not a cut: {cuts:?}",
+        );
     }
 
     /// ★ Half two: a mark past the content extent is lost, and says by how

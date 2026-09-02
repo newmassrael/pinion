@@ -158,6 +158,16 @@ pub struct ScrollReachOutcome {
     /// How many nothing can bring any part of into view. The number a gate
     /// fails on.
     pub lost: usize,
+    /// ★★★★★ (R1971) How many carry a name and **no box at all** — the author
+    /// drew something and the layout pass gave it nothing to draw in.
+    ///
+    /// Counted apart from [`Self::lost`] rather than added to it, for the reason
+    /// [`Self::clipped`] is counted apart: one number could not tell a rule
+    /// which it was looking at, and these two want different repairs — a lost
+    /// mark needs a scrolling pane, an unplaced one needs a placement. Before
+    /// R1971 this class reached no report at all, and a demo printing
+    /// `0 lost ... of 435 marks` passed while eight marks were painted nowhere.
+    pub unplaced: usize,
     /// Every mark that is off screen, in paint order.
     pub out_of_sight: Vec<OutOfSightReport>,
 }
@@ -248,6 +258,7 @@ pub fn report(window: (u32, u32), out: &[OutOfSight], marks: usize) -> ScrollRea
             .filter(|o| matches!(o.reach, Reach::Clipped { .. }))
             .count(),
         lost: out.iter().filter(|o| o.reach.is_lost()).count(),
+        unplaced: out.iter().filter(|o| o.reach.is_unplaced()).count(),
         out_of_sight: out
             .iter()
             .map(|o| {

@@ -1734,9 +1734,58 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
                 f"silence this is the one use that turns the ratchet back into "
                 f"a suggestion."
             )
+        # ★★★★★ R1971 — the class that reached NO report before this round, and
+        # which this gate would have waved through for the same reason it was
+        # invisible: a filter on `reach == "lost"` does not see `"unplaced"`.
+        #
+        # Budgeted at ZERO with no per-example allowance, deliberately. The
+        # backlog file exists because `lost` had a measured population when its
+        # ratchet was built; this one's population was measured at 0 on the
+        # screen that had eight of them a round ago, so a budget would only be a
+        # place for the next one to be filed instead of fixed.
+        unplaced = [
+            o for o in out.get("out_of_sight", []) if o.get("reach") == "unplaced"
+        ]
+        if unplaced:
+            # ★ R1971 — the PATH is the fallback, not a placeholder. Measured on
+            # the shell screen with a placement removed: every one of the eleven
+            # was untagged, so a message that stopped at tag-or-content printed
+            # `'<a mark>'` six times and told the reader nothing about WHICH.
+            # `scene/locate` answers on this address, so the reader can go there.
+            rows = "; ".join(
+                f"{(o.get('tag') or o.get('content') or o.get('path') or '<a mark>')!r}"
+                for o in unplaced[:6]
+            )
+            # ★★★★★ R1971 — REPORTED, not judged, and the census is what
+            # demoted it. The first draft raised here with "there is
+            # deliberately no budget row for this class", on the measured claim
+            # that the population was zero. Run over ONE DEMO PER EXAMPLE — 113
+            # of them, derived from the demos' own `EXAMPLE` declarations — it
+            # was not zero: 13 examples reported marks, and reading them split
+            # into idioms rather than defects. Whitespace runs (`\xa0` for a
+            # blank line, nine in one example and twelve in another) moved into
+            # the substrate's own "nothing to draw"; what REMAINED were boxes
+            # the author DECLARED zero — `Size::px(LINE_W, 0)` on a row that
+            # lets its text's ink overflow, and `Scene::External` nodes that
+            # exist to answer queries rather than to paint.
+            #
+            # ⇒ after the layout pass, a box the author declared zero and one
+            # the pass DENIED are the SAME RECTANGLE, and nothing on this wire
+            # tells them apart. A gate that cannot make that distinction and
+            # fails anyway is a gate that reports a convention as a defect, so
+            # this prints — the idiom this file already uses for a check that
+            # can measure but not yet judge, and which keeps the owed number
+            # visible instead of silent.
+            print(
+                f"[unplaced] {self.example}: {len(unplaced)} mark(s) carry a "
+                f"name and NO BOX — {rows}. REPORTED, not judged: a declared "
+                f"zero and a denied box are one rectangle after layout "
+                f"(debt-a-zero-box-does-not-say-who-made-it-zero)."
+            )
         if lost or allowed or out.get("scrollable") or out.get("clipped"):
             print(
                 f"[scroll-reach] {self.example}: {len(lost)} lost, "
+                f"{len(unplaced)} unplaced, "
                 f"{out.get('clipped', 0)} reachable in part, "
                 f"{out.get('scrollable', 0)} one scroll away, of "
                 f"{out.get('marks', 0)} marks, budget {allowed}"

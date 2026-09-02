@@ -745,9 +745,15 @@ impl Audit {
 /// here. That is what keeps this from being a check that cannot fail.
 #[must_use]
 pub fn audit(policy: ShrinkPolicy, cut: &[Cut], out_of_sight: &[OutOfSight]) -> Audit {
+    // ★★★★★ R1971 — `nothing_reaches_it`, not `is_lost`. This list is named
+    // `unreachable` and the rule it serves is *a concession may clip and may
+    // never lose*; a mark the layout pass gave no box to is not reachable
+    // either, and reading the narrower predicate would have let exactly that
+    // through under a declared concession. The two arms stay distinguishable at
+    // the type — this is the one place whose question is the union.
     let unreachable: Vec<String> = out_of_sight
         .iter()
-        .filter(|mark| mark.reach.is_lost())
+        .filter(|mark| mark.reach.nothing_reaches_it())
         .map(|mark| mark.tag.clone().unwrap_or_else(|| mark.path.join("/")))
         .collect();
     if policy.recourse().pans() {
@@ -1271,6 +1277,36 @@ mod tests {
         // the floor is not also told the list is wrong.
         assert!(report.unnamed().is_empty());
         assert_eq!(report.covered(), 1);
+    }
+
+    /// ★★★★★ R1971 — **and a mark the layout pass gave NO BOX to is unreachable
+    /// too**, which the rule's own words already said and its predicate did not.
+    ///
+    /// The list is named `unreachable` and the rule it serves is *a concession
+    /// may clip and may never lose*. It filtered on `Reach::is_lost`, which is
+    /// true only of a mark that HAS a rectangle no offset can bring into view —
+    /// so a mark with no rectangle at all answered `false` and rode through a
+    /// declared concession. It could not have been reached before this round
+    /// either: `walk_marks` skipped a zero box outright, so the arm this asserts
+    /// on did not exist to be handed here.
+    ///
+    /// ⚠ Written because the mutation said it was needed. Narrowing the
+    /// predicate back to `is_lost` left every test in this module GREEN — the
+    /// widening had no gate, which is the same shape as the defect it repairs.
+    #[test]
+    fn r1971_a_mark_with_no_box_is_unreachable_under_a_concession() {
+        let policy = ShrinkPolicy::conceding((1625, 360), (1506, 333), &["lab.inspector"]);
+        let report = audit(
+            policy,
+            &[mark(Some("lab.inspector"), &["lab.inspector"])],
+            &[sighting("lab.inspector", Reach::Unplaced)],
+        );
+        assert_eq!(
+            report.wire_word(),
+            "unreachable",
+            "a declared concession does not buy a mark with no box",
+        );
+        assert_eq!(report.unreachable(), ["lab.inspector"]);
     }
 
     /// A mark one scroll away is exactly what a floor is allowed to have —

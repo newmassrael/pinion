@@ -2022,6 +2022,9 @@ pub const WIRE_TYPES: &[WireType] = &[
                 // R1713 — a third answer: reachable in part, never whole.
                 WireField::new("clipped", WireTy::Integer, None),
                 WireField::new("lost", WireTy::Integer, None),
+                // R1971 — a fourth answer, and the one nothing could report
+                // before: a mark carrying a name and no box at all.
+                WireField::new("unplaced", WireTy::Integer, None),
                 WireField::new("out_of_sight", WireTy::Array, Some("OutOfSightReport")),
             ],
         },

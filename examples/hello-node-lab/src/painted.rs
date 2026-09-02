@@ -2050,7 +2050,14 @@ fn r1970_every_tagged_mark_is_placed_or_one_scroll_away() {
         let mut seen_scrollable = 0_usize;
         for (when, mutate) in STATES {
             mutate(&state);
-            for size in [(WIN_W, WIN_H), (super::MIN_W, super::MIN_H)] {
+            // ★★★★★ R1971 — [`SIZES`], the population this file already
+            // declares, rather than a pair written out here. R1970 swept two
+            // sizes and the maximised one was not among them, so a state that
+            // paints differently at 2494x1531 was outside this gate while the
+            // sweep next door had it all along. A gate whose population is
+            // spelled beside the declared one is a gate that drifts from it.
+            for (_, size) in SIZES {
+                let size = *size;
                 let (shot, scene) = painted_and_scene(&state, size);
                 // The ROSTER: every tag the scene carries, asked with no
                 // placement predicate at all. A tag painted twice can be placed
@@ -3105,6 +3112,24 @@ fn r1662_every_mark_is_shown_or_reachable_in_every_state_and_size() {
                             out.viewport.content.0,
                             out.viewport.content.1,
                             out.viewport.max,
+                        )),
+                        // ★★★★★ R1971 — counted with the losses and worded
+                        // apart. A mark with no box is not "past" anything and
+                        // has no `short_by` to quote, so folding it into the
+                        // arm above would print a measurement nobody took.
+                        // Before R1971 this arm could not be written: the walk
+                        // returned on a zero box and the class reached no
+                        // report at all.
+                        pinion_core::reach::Reach::Unplaced => lost.push(format!(
+                            "{when} {how}: {} was given NO BOX to be drawn in \
+                             (viewport {}, {}x{})",
+                            out.tag
+                                .clone()
+                                .or_else(|| out.content.clone())
+                                .unwrap_or_else(|| out.path.join("/")),
+                            out.viewport.name,
+                            out.viewport.size.0,
+                            out.viewport.size.1,
                         )),
                     }
                 }
