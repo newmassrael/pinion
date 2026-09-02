@@ -22,6 +22,7 @@ use crate::{
     Stop, Straighten, Stride, SwapError, SwitchRefusal, Tick, Timeline, Tint, TreeId, UngroupError,
     Unreadable, Violation, WatchError, Watches, ZoomRange, crossing,
 };
+use crate::{Fault, Finding, Fitness, Objection, Surroundings, Weight};
 use crate::{PairError, RemoveTreeError, RemovedTree, Used};
 
 /// ★★★★★ R1925 — **an application that declares no two-state socket type is
@@ -17258,4 +17259,225 @@ fn r1936_every_body_this_crate_owns_refuses_to_stand_for_a_definition() {
         "★ and a node that is already an instance may be RE-POINTED, which is \
          the edit the census row was named for"
     );
+}
+
+/// R1974 fixture — **a kind that OBJECTS.**
+///
+/// Every other kind in this file takes the trait's supplied answer, which is
+/// silence (R1941 measured that and made it the witness for the default). So
+/// the judgement half of a review had nothing in this crate that could produce
+/// one, and the join could only ever have been exercised on its structural arm.
+/// This kind exists to make the other arm reachable, one variant per
+/// [`Objection`] weight so the ordering between them is falsifiable.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+enum Judged {
+    /// Takes the default: says nothing.
+    Quiet,
+    /// Will run, and something about it is suspect.
+    Suspect,
+    /// Cannot run as it stands.
+    Refuses,
+    /// Worth knowing, and neither of the above.
+    Remarks,
+}
+
+impl NodeKind for Judged {
+    type Type = LTy;
+    type Value = LVal;
+
+    fn name(&self) -> String {
+        match self {
+            Self::Quiet => "Quiet",
+            Self::Suspect => "Suspect",
+            Self::Refuses => "Refuses",
+            Self::Remarks => "Remarks",
+        }
+        .to_owned()
+    }
+
+    fn inputs(&self) -> Vec<Port<LTy, LVal>> {
+        Vec::new()
+    }
+
+    fn outputs(&self) -> Vec<Port<LTy, LVal>> {
+        vec![Port::new("Out", LTy::Scalar)]
+    }
+
+    fn evaluate(&self, _inputs: &[Option<LVal>]) -> Vec<Option<LVal>> {
+        // One output, one resting scalar: this fixture is about what a kind
+        // SAYS, not about what it computes.
+        vec![Some(LVal::Scalar(0))]
+    }
+
+    fn warning(&self, _around: &Surroundings) -> Option<Objection> {
+        match self {
+            Self::Quiet => None,
+            Self::Suspect => Some(Objection::Warns("suspect".to_owned())),
+            Self::Refuses => Some(Objection::Blocks("refuses".to_owned())),
+            Self::Remarks => Some(Objection::Notes("remarks".to_owned())),
+        }
+    }
+}
+
+/// ★★★★★ R1974 — **one check answers for the whole document, and it is ordered
+/// worst first.**
+///
+/// The module this exercises was written at R1945 and left untracked and
+/// undeclared: `mod review;` was never added, so 486 lines never compiled and
+/// nothing could reach them. What it builds is the join R1941 named and left to
+/// the caller — [`Document::validate`] and [`Document::warnings`] as ONE
+/// ordered list — and the property that makes the join worth having is that the
+/// two halves arrive in one severity order, which neither half can state alone.
+#[test]
+fn r1974_a_review_orders_both_halves_of_what_is_wrong() {
+    let mut doc: Document<Judged> = Document::new("judged");
+    let quiet = doc
+        .add_node(ROOT, NodeBody::Kind(Judged::Quiet), 0, 0)
+        .expect("root tree");
+    let remarks = doc
+        .add_node(ROOT, NodeBody::Kind(Judged::Remarks), 1, 0)
+        .expect("root tree");
+    let suspect = doc
+        .add_node(ROOT, NodeBody::Kind(Judged::Suspect), 2, 0)
+        .expect("root tree");
+    let refuses = doc
+        .add_node(ROOT, NodeBody::Kind(Judged::Refuses), 3, 0)
+        .expect("root tree");
+
+    // The structural half is silent, so this fixture isolates the JUDGEMENT one.
+    assert!(
+        doc.validate().is_empty(),
+        "★ the fixture must isolate the judgement half: {:?}",
+        doc.validate()
+    );
+
+    let review = doc.review();
+    assert_eq!(review.len(), 3, "the quiet node contributes nothing");
+    assert!(!review.is_empty());
+
+    // ★ The ordering is the claim. Blocks, then Warns, then Notes — and NOT the
+    // order they were added in, which is the reverse.
+    let order: Vec<NodeId> = review
+        .findings()
+        .iter()
+        .map(|found| found.site().expect("a judgement is always on one node"))
+        .collect();
+    assert_eq!(
+        order,
+        vec![refuses, suspect, remarks],
+        "★★★★★ the review is worst-first; the nodes were added in the reverse \
+         of this order, so a list that merely echoed insertion would fail here"
+    );
+    assert!(
+        !order.contains(&quiet),
+        "★ a kind that says nothing puts nothing in the list"
+    );
+
+    // Each weight is counted FROM the list, so a count cannot drift from it.
+    assert_eq!(review.counted(Weight::Blocks), 1);
+    assert_eq!(review.counted(Weight::Warns), 1);
+    assert_eq!(review.counted(Weight::Notes), 1);
+    let counted: usize = Weight::ALL.iter().map(|w| review.counted(*w)).sum();
+    assert_eq!(
+        counted,
+        review.len(),
+        "★ every finding is counted under exactly one weight"
+    );
+
+    // The one to take a person to is the head of that order, not a second scan.
+    let worst = review.worst().expect("three findings");
+    assert_eq!(worst.site(), Some(refuses));
+    assert_eq!(worst.weight(), Weight::Blocks);
+
+    // And the verdict over the lot follows the worst, not the count.
+    assert_eq!(review.fitness(), Fitness::Stopped);
+    assert!(!review.fitness().may_run());
+}
+
+/// ★★★★★ R1974 — **every finding names a card, and an empty document is the
+/// other end of the scale.**
+///
+/// [`Document::sites_of`] must name a card rather than leaving a finding
+/// homeless — a finding a screen cannot take a person to is the defect the
+/// module's header says the reference has, where two functions answer "which
+/// node" from two sources that may disagree.
+#[test]
+fn r1974_every_finding_names_a_card_and_an_empty_document_is_clean() {
+    let mut doc: Document<Judged> = Document::new("judged");
+    let refuses = doc
+        .add_node(ROOT, NodeBody::Kind(Judged::Refuses), 0, 0)
+        .expect("root tree");
+
+    // A document with nothing in it is the Clean end, which is what makes
+    // `Stopped` below a measurement rather than a constant.
+    let empty: Document<Judged> = Document::new("empty");
+    let none = empty.review();
+    assert!(none.is_empty());
+    assert_eq!(none.fitness(), Fitness::Clean);
+    assert!(none.fitness().may_run());
+    assert!(none.worst().is_none());
+    for weight in Weight::ALL {
+        assert_eq!(
+            none.counted(weight),
+            0,
+            "★ nothing was found, so no weight is carried"
+        );
+    }
+
+    let review = doc.review();
+    assert_eq!(review.fitness(), Fitness::Stopped);
+    for found in review.findings() {
+        assert!(
+            found.site().is_some(),
+            "★★★★★ a finding with no card is one a screen cannot take a person \
+             to: {found:?}"
+        );
+        assert!(
+            matches!(found.fault, Fault::Judgement(_)),
+            "★ with no structural fault every finding is a judgement"
+        );
+        assert!(
+            found.sentence().contains("refuses"),
+            "★ the sentence carries what the kind said: {}",
+            found.sentence()
+        );
+    }
+    assert_eq!(review.worst().and_then(Finding::site), Some(refuses));
+}
+
+/// ★★★★★ R1974 — **the two vocabularies say what they go onto a wire as, and no
+/// word names two arms.**
+///
+/// [`Weight`] and [`Fitness`] both carry a `wire` word and both derive the
+/// crate's variant census, so an arm added later without a word is a build
+/// failure. What no derive can check is that the words are DISTINCT — two arms
+/// sharing one word would leave a wire reader unable to tell them apart.
+#[test]
+fn r1974_each_verdict_word_names_exactly_one_arm() {
+    let weights: BTreeSet<&str> = Weight::ALL.iter().map(|w| w.wire()).collect();
+    assert_eq!(
+        weights.len(),
+        Weight::ALL.len(),
+        "★ two weights share a wire word, so a reader cannot tell them apart"
+    );
+    let fitnesses: BTreeSet<&str> = Fitness::ALL.iter().map(|f| f.wire()).collect();
+    assert_eq!(
+        fitnesses.len(),
+        Fitness::ALL.len(),
+        "★ two fitnesses share a wire word"
+    );
+
+    // ★ Ordered lightest first, which is what makes `worst` a maximum rather
+    // than a convention the sort has to remember.
+    assert!(Weight::Notes < Weight::Warns && Weight::Warns < Weight::Blocks);
+    assert!(Weight::Blocks.blocks());
+    assert!(!Weight::Warns.blocks() && !Weight::Notes.blocks());
+
+    // ★ And exactly one fitness refuses to run, so `may_run` is not vacuous.
+    let stopped: Vec<Fitness> = Fitness::ALL
+        .iter()
+        .copied()
+        .filter(|f| !f.may_run())
+        .collect();
+    assert_eq!(stopped, vec![Fitness::Stopped]);
 }
