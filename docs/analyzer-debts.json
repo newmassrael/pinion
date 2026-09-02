@@ -520,6 +520,28 @@
       ]
     },
     {
+      "name": "debt-the-entry-point-document-has-no-gate-and-went-fifty-rounds-stale",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links analyzer-debt-repayment-loop"
+      ]
+    },
+    {
+      "name": "debt-the-loops-standing-rules-name-instruments-that-do-not-exist",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links analyzer-debt-repayment-loop"
+      ]
+    },
+    {
       "name": "debt-the-node-lab-reproduces-the-first-release-palette-not-the-behaviour-canon",
       "substituted": false,
       "blocked_by": "buildable",
