@@ -872,6 +872,74 @@ fn r1718_every_speaking_type_on_this_screen_is_driven() {
     );
 }
 
+/// ★★★★★ R1969.1 — **how many declared links land on a card that says nowhere
+/// to reach it**, held to the number somebody measured instead of left to
+/// prose.
+///
+/// # What was measured, and what it corrected
+///
+/// The behaviour canon refuses this outright and TELLS THE PERSON WHY: its
+/// candidate rule drops an acceptor with no listen endpoint before a wire can
+/// follow the cursor, and letting go over one produces *cannot connect · <id>
+/// has no listen endpoint*. Its own comment beside that rule names a node of
+/// its fixture as the case. We draw the link instead, and say nothing.
+///
+/// R1961 recorded the size of that gap as **three of the seven links**. Measured
+/// again at R1969.1, after R1969 removed the scheme comparison that was
+/// producing the other two, it is **ONE** — and the correction matters more than
+/// the number: R1961 read the gap as an artifact of seeding order, which made it
+/// look unrepairable, and the one that remains has nothing to do with seeding.
+/// `T-02` is a subscriber in client mode that declares no listen row at all, at
+/// any moment of the build. ⇒ a FIXTURE defect, not a rule defect.
+///
+/// Two instruments agreed on the one: making the model refuse an acceptor that
+/// says nowhere reddens ten tests with `6 != 7`, and the count below — derived
+/// from the specification alone — is 1.
+///
+/// # Why this is a gate rather than a sentence
+///
+/// The number lived only in `debt-a-listening-node-with-no-address-still-takes-
+/// links`, in prose, and it was WRONG there for eight rounds with nothing able
+/// to notice. A second such link added to the fixture would be a second silent
+/// divergence from the canon; this fails instead. It does not assert the gap is
+/// acceptable — it asserts the gap is the size the debt says it is.
+#[test]
+fn r1969_1_every_declared_link_lands_on_a_card_that_says_where_to_reach_it() {
+    let listens = |id: &str| -> bool {
+        spec::NODES
+            .iter()
+            .find(|n| n.id == id)
+            .is_some_and(|n| n.rows.iter().any(|(key, _)| *key == "listen"))
+    };
+    let blind: Vec<String> = spec::LINKS
+        .iter()
+        .filter(|(_, to)| !listens(to))
+        .map(|(from, to)| format!("{from} -> {to}"))
+        .collect();
+    // ★ Not zero, and that is the DEBT rather than the assertion being weak.
+    // The canon refuses these; this screen draws them. What is held here is the
+    // size, so a third one cannot arrive unremarked while the debt is open.
+    assert_eq!(
+        blind.len(),
+        1,
+        "★★★★★ {} declared link(s) land on a card that declares no listen \
+         address: {blind:?}. The canon drops such an acceptor from its \
+         candidates and names the reason on a toast; while \
+         `debt-a-listening-node-with-no-address-still-takes-links` is open this \
+         screen draws them, and the number is pinned so a new one is a failure \
+         rather than a silence.",
+        blind.len(),
+    );
+    // ★ And every OTHER acceptor really does say where to reach it, so the one
+    // above is a named exception and not the shape of the whole fixture.
+    for (from, to) in spec::LINKS {
+        assert!(
+            listens(to) || blind.contains(&format!("{from} -> {to}")),
+            "{from} -> {to}",
+        );
+    }
+}
+
 #[test]
 fn r1651_the_opening_graph_is_the_specification() {
     let owner = Owner::new();
