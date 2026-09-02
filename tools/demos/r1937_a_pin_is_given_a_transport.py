@@ -129,10 +129,25 @@ def body() -> None:
             f"A: ★ and half a locator is not among them — {offered}",
             not any(t in ("host", "service") for t in offered),
         )
+        # ★★★★★ R1975 — and the register withholds the whole DIAL side, with
+        # the reason. A dial's transport is read off the endpoint it lands on,
+        # so it is not this card's to choose; a register that offered it would
+        # be offering a chooser every use of which the verb refuses (asserted
+        # against the verb itself in D below, so the two cannot drift).
+        dialling = [row for row in for_card(rows, SUBJECT) if row["side"] == "dial"]
+        ok(
+            f"A: ★★★★★ the dial side is withheld ENTIRELY, and the register "
+            f"says why rather than answering an unexplained empty list — "
+            f"{dialling}",
+            len(dialling) > 0
+            and all(not row["takes"] and row["withheld"] for row in dialling),
+        )
         wires_before = len(links(app, surface))
 
         banner("B — ★★★★★ the card becomes the peer that speaks it")
-        said = app.invoke(f"{surface}/set_pin_transport", f"{SUBJECT},dial,udp")
+        # ⚠ R1975 — `dial` here until R1975. The verb is the ACCEPT side's: what
+        # a card accepts is its own fact, what it dials is the wire's.
+        said = app.invoke(f"{surface}/set_pin_transport", f"{SUBJECT},accept,udp")
         app.tick_ms(16)
         ok(
             f"B: the verb says what it did — {said!r}",
@@ -157,10 +172,19 @@ def body() -> None:
         )
 
         banner("D — the refusal says what a peer cannot speak")
-        why = refusal(app, f"{surface}/set_pin_transport", f"{SUBJECT},dial,host")
+        why = refusal(app, f"{surface}/set_pin_transport", f"{SUBJECT},accept,host")
         ok(
             f"D: ★ half a locator is turned away with the reason — {why!r}",
             why is not None,
+        )
+        # ★★★★★ R1975 — and the OTHER refusal, which is what holds the register
+        # in A to the verb: the side A said was withheld is the side the verb
+        # declines, with a reason that names the repair rather than a bare no.
+        why = refusal(app, f"{surface}/set_pin_transport", f"{SUBJECT},dial,udp")
+        ok(
+            f"D: ★★★★★ and the dial side the register withheld is the side the "
+            f"VERB declines — asking and doing agree on it — {why!r}",
+            why is not None and "choose the link's endpoint" in str(why),
         )
 
         banner("E — ★ asking and doing agree, driven rather than asserted")
@@ -170,7 +194,10 @@ def body() -> None:
         accepted = 0
         for word in ("tcp", "tls", "quic", "udp", "ws"):
             expected = any(word.upper() in t.upper() for t in offers)
-            got = refusal(app, f"{surface}/set_pin_transport", f"{SUBJECT},dial,{word}") is None
+            got = (
+                refusal(app, f"{surface}/set_pin_transport", f"{SUBJECT},accept,{word}")
+                is None
+            )
             ok(
                 f"E: {word}: register says {expected}, verb says {got}",
                 expected == got,

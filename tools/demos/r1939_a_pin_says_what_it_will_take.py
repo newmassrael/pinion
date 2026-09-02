@@ -48,7 +48,30 @@ value the same declaration would have taken.
       in a sentence, without being handed a value first.
   (B) ★ the sentence is the PIN's and not one global rule — a pin names the
       transport it speaks, so two cards of different transports want different
-      addresses at the same pin address.
+      addresses at the same pin address, and ONE card wants different addresses
+      at its two pins.
+
+# ★★★★★ R1975 — what (B) drives, and why it changed
+
+(B) used to make the difference by choosing a transport on the subject's own
+DIAL pin. Measured at R1975 through this very surface, that call changed
+nothing on the canvas while answering success, for two reasons that had been
+hidden behind a third:
+
+  * a dial's transport is not the card's fact — it is read off the endpoint the
+    wire lands on, which is the behaviour canon's model exactly (its node has no
+    dial scheme; its verb for re-choosing one is on the LINK). So the write had
+    a second author and the derivation won.
+  * every wire already landed carried a *copy* of the peer's address, so
+    re-scheming the card left the copies behind and no pin moved.
+  * and it had appeared to work only while the type relation severed the wire
+    that would have re-derived it — a rule R1969 removed after measuring that
+    the canon has no such constraint. Removing it is what brought this walk
+    down, which is the honest way round: the walk was leaning on a defect.
+
+So (B) now drives the edit the canon HAS — a card chooses what it ACCEPTS — and
+asserts the chain that follows from it, which is a stronger claim than the one
+it replaced: an edit on one card moves a pin sentence on another.
   (C) ★★★★★ the edit REFUSES what the pin will not take, and nothing changed.
   (D) ★★★★★ the refusal hands back the address the same declaration WOULD
       take, and taking it up is accepted — the permission and the repair are
@@ -150,13 +173,27 @@ def body() -> None:
 
         banner("B — ★ the sentence is the PIN's, not one global rule")
         dials = [row for row in rows if row["pin"] == "dial"]
-        # R1961 — the subject is NAMED and it is a card that LISTENS. Choosing a
-        # transport moves the address the choice is read off, and a card with no
-        # address of its own has none to move: it takes the transport of the
-        # peer it dials, so the verb refuses it (asserted in E below). It used to
-        # be `dials[0]` — the first card, which listens nowhere and only appeared
-        # to work while an escape hatch answered TCP for it.
-        subject = "R-01"
+        # ★★★★★ R1975 — TWO cards are named now, because the edit and the pin it
+        # moves are on different cards, and that is the behaviour canon's own
+        # shape rather than an indirection this walk chose.
+        #
+        # A card chooses what it ACCEPTS — the addresses it listens on. What a
+        # card DIALS is not its own fact at all: the wire lands on one of the
+        # peer's endpoints and speaks that endpoint's scheme, which is why the
+        # canon's node has no dial scheme and its verb for re-choosing one is on
+        # the LINK. So one edit on the listener moves the sentence of every card
+        # dialling it, and this walk asserts exactly that chain.
+        #
+        # ⚠ Until R1975 this section drove `set_pin_transport(R-01, dial, udp)`
+        # and asserted R-01's own dial sentence changed. Measured at R1975, that
+        # call changed NOTHING a person could see while answering success — the
+        # dial write was overwritten by the derivation, and the listen half's
+        # re-scheming never reached the pins because every wire already landed
+        # carried a stale copy of the address. It had appeared to work only
+        # while `conversion` severed the wire that would have re-derived it,
+        # which R1969 removed after measuring that the canon has no such rule.
+        listener = "R-01"
+        subject = "P-01"
         # R1961 — ⚠ this used to read *the opening canvas speaks ONE transport,
         # so the sentences start identical*, and that sentence WAS the defect
         # `debt-every-card-on-the-opening-graph-speaks-one-transport` is open on,
@@ -176,9 +213,16 @@ def body() -> None:
             and any("any value of" in w for w in wants),
         )
         # ★ So the difference is CAUSED rather than found: R1937's verb makes
-        # one card speak another transport, and the sentence has to follow.
-        app.invoke(f"{surface}/set_pin_transport", f"{subject},dial,udp")
+        # one card accept another transport, and every sentence that reads off
+        # that address has to follow.
+        was = pin_of(rows, subject, "dial")["wants"]
+        said = app.invoke(f"{surface}/set_pin_transport", f"{listener},accept,udp")
         app.tick_ms(16)
+        ok(
+            f"B: ★★★★★ the answer says what happened to the WIRES, not just to "
+            f"the card — {said!r}",
+            "wire(s) followed the address" in str(said),
+        )
         rows = takes(app, surface)
         dials = [row for row in rows if row["pin"] == "dial"]
         ok(
@@ -186,10 +230,43 @@ def body() -> None:
             f"{sorted({d['wants'] for d in dials})}",
             len({d["wants"] for d in dials}) > 1,
         )
+        # ★★★★★ The listener's own pins first: an accept pin's type is the
+        # landing item's, so a wire that kept a stale copy of the address is a
+        # pin drawn in a transport the card does not speak. That was the defect.
+        accepting = [
+            row for row in rows if row["card"] == listener and row["pin"] == "accept"
+        ]
         ok(
-            f"B: ★ the changed card's own sentence names the transport it now "
-            f"speaks — {pin_of(rows, subject, 'dial')['wants']!r}",
-            "udp/host:service" in pin_of(rows, subject, "dial")["wants"],
+            f"B: ★★★★★ every accept pin of the card that was edited says the "
+            f"new transport — {sorted({row['wants'] for row in accepting})}",
+            len(accepting) > 1
+            and all("udp/host:service" in row["wants"] for row in accepting),
+        )
+        # ★★★★★ And the chain: the pin that moved is on ANOTHER card, because a
+        # dial reads its scheme off the endpoint it lands on.
+        now = pin_of(rows, subject, "dial")["wants"]
+        ok(
+            f"B: ★★★★★ a card that DIALS the edited one followed it, without "
+            f"being edited — {was!r} -> {now!r}",
+            "udp/host:service" in now and was != now,
+        )
+        # ★★★★★ Two pins of ONE card wanting different addresses is the sharpest
+        # form of this section's claim: no global rule can produce it.
+        subject_accept = pin_of(rows, subject, "accept")["wants"]
+        ok(
+            f"B: ★★★★★ and the SAME card wants different addresses at its two "
+            f"pins — accept {subject_accept!r} vs dial {now!r}",
+            subject_accept != now,
+        )
+        # ★ The other half of the model, stated as a refusal: what a card dials
+        # is the wire's fact, so the verb declines rather than answering a
+        # success the screen does not have.
+        why = refusal(app, f"{surface}/set_pin_transport", f"{listener},dial,tcp")
+        ok(
+            f"B: ★★★★★ and a DIAL is refused, with the repair named — {why!r}",
+            why is not None
+            and "scheme of the endpoint it lands on" in str(why)
+            and "choose the link's endpoint" in str(why),
         )
 
         banner("C — ★★★★★ the edit refuses what the pin will not take")
@@ -261,8 +338,11 @@ def body() -> None:
             f"{speechless}",
             len(speechless) == 1,
         )
+        # ⚠ R1975 — `dial` until R1975, which made that address a refusal of its
+        # own on every card. The claim here is about a card with NO address, so
+        # it is asked on the side the verb owns; the dial refusal is B's.
         why = refusal(
-            app, f"{surface}/set_pin_transport", f"{speechless[0]},dial,udp"
+            app, f"{surface}/set_pin_transport", f"{speechless[0]},accept,udp"
         )
         ok(
             f"E: ★★★★★ and choosing a transport for it is REFUSED, because the "

@@ -364,10 +364,20 @@ impl<K: NodeKind> ItemChange<K> {
 
 /// R1642 — which item edit to run, as a **value**.
 ///
-/// The three edits keep their own methods, because they take different
-/// arguments and answer differently-shaped changes; this names the CHOICE
-/// between them, which is what a caller sends over a wire and what a schema
-/// declares. Exactly the move R1638 made for [`ArrangePass`](crate::ArrangePass),
+/// The edits keep their own methods, because they take different arguments and
+/// answer differently-shaped changes; this names the CHOICE between them, which
+/// is what a caller sends over a wire and what a schema declares.
+///
+/// ⚠ R1975 — this vocabulary is the WIRE's, and it is not every method
+/// [`Document`] has: [`Document::set_item`] restates an item in place and is
+/// deliberately absent here, because the fact it corrects is a per-slot TYPE as
+/// well as a label and no trailing wire argument can carry a `K::Type`. A
+/// caller that needs it drives the document directly. Said here because the
+/// sentence this doc used to open with — *the three edits* — counted the
+/// methods rather than the wire cases, and would have been a false claim the
+/// moment a fourth method existed.
+///
+/// Exactly the move R1638 made for [`ArrangePass`](crate::ArrangePass),
 /// and made here for the same reason: the vocabulary was three string literals
 /// matched at the call site, so it could not be enumerated, offered in a menu,
 /// or published to a client, and every consumer re-wrote the three-way match.
@@ -883,6 +893,60 @@ impl<K: NodeKind> Document<K> {
         let mut items = found.items.clone();
         let carried = items.remove(from as usize);
         items.insert(to as usize, carried);
+        Ok(self.rewrite(&found, items, &correspondence))
+    }
+
+    /// ★★★★★ R1975 — **restate the item at `at`**, keeping every wire on it.
+    ///
+    /// The fourth item edit, and the one whose absence had a cost. A run's item
+    /// carries a label and a per-slot type override, and both are FACTS ABOUT
+    /// SOMETHING ELSE that can change under it — the address a wire dialled,
+    /// the transport that address is written in. Until this existed the only
+    /// way to correct one was `remove_item` then `insert_item`, and removal is
+    /// the direction that costs: it cuts the wires on the item's own ports and
+    /// hands back the values authored on them, which is precisely what a
+    /// correction must not do.
+    ///
+    /// So the run's length does not change, the correspondence is the identity,
+    /// and the change is **lossless by construction** rather than by luck —
+    /// [`ItemChange::is_lossless`] is how a caller holds this to it. Nothing is
+    /// added and nothing is severed; what the answer reports is the port map,
+    /// which is an identity here and is stated rather than omitted — a port
+    /// absent from that map is SEVERED, so the three edits and this one all
+    /// name every port on both sides even when nothing about them moved.
+    ///
+    /// ⚠ **The type override is part of the item**, so restating an item with a
+    /// different type on a slot changes that port's type without asking
+    /// [`NodeKind::conversion`] about the wires already on it. That is the same
+    /// latitude [`Self::insert_item`] has and the same one a kind's own
+    /// derivation has; a caller that needs the type relation enforced asks
+    /// [`Document::set_port_type`](crate::Document::set_port_type) instead,
+    /// which is the verb that owns that question.
+    ///
+    /// The reference toolkit's node editor has no equivalent: there a pin's
+    /// declaration is rebuilt by reconstructing the node, which is why its own
+    /// hooks have to report how many connections that cost.
+    ///
+    /// # Errors
+    ///
+    /// [`ItemError::NotVariadic`] when the kind declares no run on that side,
+    /// and [`ItemError::NoSuchItem`] for a position at or past the end.
+    pub fn set_item(
+        &mut self,
+        tree: TreeId,
+        node: NodeId,
+        side: Side,
+        at: u32,
+        item: Item<K::Type>,
+    ) -> Result<ItemChange<K>, ItemError> {
+        let found = self.find_run(tree, node, side)?;
+        let count = found.count();
+        if at >= count {
+            return Err(found.no_such(at));
+        }
+        let correspondence: Vec<Option<u32>> = (0..count).map(Some).collect();
+        let mut items = found.items.clone();
+        items[at as usize] = item;
         Ok(self.rewrite(&found, items, &correspondence))
     }
 

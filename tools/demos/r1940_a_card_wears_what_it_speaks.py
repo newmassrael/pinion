@@ -193,22 +193,47 @@ def body() -> None:
             f"change — {before['faces']['title']!r} -> {after['faces']['title']!r}",
             after["faces"]["title"] == before["faces"]["title"],
         )
-        # ⚠⚠ R1966 — THE OTHER HALF IS NOT ASSERTED, AND THAT IS A FINDING.
-        # Measured here: the verb answers `R-01.accept now speaks udp, and 0
-        # wire(s) could not cross with it` and NOT ONE PIN COLOUR MOVES. An
-        # accept pin's colour comes from the run ITEM — the address the wire
-        # that landed on it dialled — and re-scheming the card's own
-        # `listen.endpoints` never reaches those items (R1928 records that
-        # `sync_node` deliberately does not sync a form back into an item). So
-        # the action reports success and changes nothing a person can see.
-        # Registered as `debt-an-accept-pin-does-not-follow-the-address-its-
-        # card-now-listens-on` rather than asserted here, because it is a
-        # different defect from the axis this round moved.
+        # ★★★★★ R1975 — THE OTHER HALF, AND IT IS THE ONE THAT MOVED.
+        #
+        # R1966 measured that the verb answered `R-01.accept now speaks udp,
+        # and 0 wire(s) could not cross with it` while NOT ONE PIN COLOUR
+        # MOVED, and registered it rather than fixing it — leaving this
+        # assertion pointing at the defect, so that repaying it would come out
+        # red exactly here. It is repaid, and this is the reversal.
+        #
+        # The cause was a COPY: an accept pin's colour comes from the run ITEM,
+        # whose label is the address the landing wire dialled — a copy of one of
+        # the card's own listen addresses, taken when the wire arrived. So
+        # re-scheming the card left every copy behind. R1928's rule that
+        # `sync_node` must not push a form into an item still stands and is not
+        # what changed: *which* wire took *which* address is the link's fact.
+        # What R1975 added is narrower — when an address the card offers is
+        # RENAMED, the landings holding that exact string follow it, in place
+        # (`Document::set_item`), with no wire cut.
+        pin_after = pin_colour(app, surface, subject, "accept")
         ok(
-            f"C: ⚠ and its accept pin did NOT move, which is a defect this "
-            f"round REGISTERED rather than fixed — {pin_before!r} -> "
-            f"{pin_colour(app, surface, subject, 'accept')!r}",
-            pin_colour(app, surface, subject, "accept") == pin_before,
+            f"C: ★★★★★ and its accept pin DID move, because the wires that "
+            f"landed followed the address — {pin_before!r} -> {pin_after!r}",
+            pin_after != pin_before,
+        )
+        # ★ Not merely different: the colour the transport it now speaks
+        # declares. A pin that moved to some other colour would satisfy the line
+        # above and would still be a defect.
+        # ★ The same register the pin colour came from publishes the taxonomy's
+        # own palette, so the expectation is read off the screen's declaration
+        # rather than written down here as a hex literal that would rot.
+        udp_ink = next(
+            (
+                row["ink"]
+                for row in js(app.query(f"{surface}/inks"))["types"]
+                if row["type"].endswith("udp")
+            ),
+            None,
+        )
+        ok(
+            f"C: ★★★★★ and it is the colour UDP's own declaration names, not "
+            f"merely a different one — {pin_after!r} against {udp_ink!r}",
+            udp_ink is not None and pin_after.lower() == udp_ink.lower(),
         )
         ok(
             f"C: ★ and the body's own sentence still names its kind's colour — "

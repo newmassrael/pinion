@@ -15,8 +15,8 @@ use super::{
     ZOOM_MIN, canvas_rect, card_rect, card_shape_at, content_to_window, deploy, inspector_rect,
     palette_rect, pin_rect, scenario, spec, use_lab_state,
 };
-use crate::graph::{Role, Transport};
-use pinion_node_graph::{Admission, NodeBody, ROOT};
+use crate::graph::{Endpoint, Role, Transport};
+use pinion_node_graph::{Admission, NodeBody, ROOT, Socket};
 use std::collections::BTreeSet;
 
 /// R1788 — the plan's document as a value.
@@ -4764,7 +4764,13 @@ fn r1961_a_chosen_transport_outlives_an_unrelated_edit() {
         let subject = state.node_of("R-01").expect("the specification's router");
         let elsewhere = state.node_of("P-02").expect("the specification's P-02");
 
-        super::set_pin_transport(&state, subject, "dial", "udp").expect("a card that listens may");
+        // ⚠ R1975 — `"dial"` here until R1975, which measured that the verb
+        // could not do it: a dial's transport is derived from the endpoint it
+        // lands on, so the write was a second author and the derivation won.
+        // The claim this test makes is unchanged, and it is about the ACCEPT
+        // side, which is the side the verb owns.
+        super::set_pin_transport(&state, subject, "accept", "udp")
+            .expect("a card that listens may");
         assert_eq!(
             spoken_by(&state, subject),
             Some(Transport::Udp),
@@ -4801,13 +4807,230 @@ fn r1961_a_chosen_transport_outlives_an_unrelated_edit() {
             .into_iter()
             .find(|node| spoken_by(&state, *node).is_none())
             .expect("★ some card speaks nothing");
-        let why = super::set_pin_transport(&state, learner, "dial", "udp")
+        let why = super::set_pin_transport(&state, learner, "accept", "udp")
             .expect_err("★ a card with no address of its own cannot be given one");
         assert!(
             format!("{why:?}").contains("listens nowhere"),
             "★ and the refusal says why: {why:?}",
         );
     });
+}
+
+/// ★★★★★ R1975 — **a card's transport reaches the pins the canvas draws, and
+/// the wires already landed on it move with the address.**
+///
+/// The defect this replaces was measured through the RPC surface, not read:
+/// `set_pin_transport` answered *"R-01.dial now speaks udp, and 0 wire(s) could
+/// not cross with it"* while **every pin sentence on the canvas stayed where it
+/// was**. Two causes, and the test drives both.
+///
+/// ⚠ The assertion is over the PINS, which is what `r1961_a_chosen_transport_
+/// outlives_an_unrelated_edit` did not do — it checked the form and the kind's
+/// derived field, and both of those were already right. A landing item carries
+/// a COPY of the address, and nothing was holding the copies to the original.
+#[test]
+fn r1975_a_chosen_transport_reaches_the_pins_and_the_wires_that_landed() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+        let subject = state.node_of("R-01").expect("the specification's router");
+
+        let dialled_before = super::endpoint_at(&state, Socket::new(subject, 0));
+        assert!(
+            dialled_before
+                .as_deref()
+                .is_some_and(|one| one.starts_with("tcp/")),
+            "★ the fixture: peers land on this card over tcp — {dialled_before:?}"
+        );
+
+        let said = super::set_pin_transport(&state, subject, "accept", "udp")
+            .expect("a card that listens may");
+        assert!(
+            said.contains("wire(s) followed the address"),
+            "★★★★★ the answer says what happened to the wires, rather than \
+             reporting a bare success — {said:?}"
+        );
+
+        // ★★★★★ Every landing on this card now names the address the card
+        // actually has. Written over ALL of them rather than the first, because
+        // the defect was per-copy and one copy is not a population.
+        let landings: Vec<Option<String>> = (0..3)
+            .map(|port| super::endpoint_at(&state, Socket::new(subject, port)))
+            .collect();
+        assert!(
+            landings
+                .iter()
+                .all(|one| one.as_deref().is_some_and(|one| one.starts_with("udp/"))),
+            "★★★★★ every wire that landed followed the address — {landings:?}"
+        );
+
+        // ★★★★★ And the PIN says so, which is the half nobody was checking:
+        // an accept pin's type is the landing item's, so a copy left behind is
+        // a pin drawn in a transport the card does not speak.
+        let doc = state.doc.borrow();
+        let accepting: Vec<Option<Endpoint>> = (0..3_usize)
+            .map(|port| {
+                doc.signature(ROOT, subject)
+                    .and_then(|sig| sig.inputs.get(port).and_then(|p| p.value_type().copied()))
+            })
+            .collect();
+        assert!(
+            accepting
+                .iter()
+                .all(|ty| matches!(ty, Some(Endpoint::Locator(Transport::Udp)))),
+            "★★★★★ and each accept pin carries the chosen transport — {accepting:?}"
+        );
+        // ★ Nothing was cut to achieve it, which is what `Document::set_item`
+        // is for: a remove-and-insert would have lost all three wires.
+        let still = doc.tree(ROOT).map_or(0, |tree| {
+            tree.links()
+                .iter()
+                .filter(|link| link.to.node == subject)
+                .count()
+        });
+        assert_eq!(still, 3, "★★★★★ and no wire was cut to do it");
+    });
+}
+
+/// ★★★★★ R1975 — **and the path a PERSON takes is the same path**: editing the
+/// address in the inspector moves the wires that landed on it.
+///
+/// The debt this repays is about the pin, not about the verb that reached it,
+/// and `set_field` is the reach a person has — the transport chooser is a menu
+/// command. Its own comment claimed *the pins are DERIVED from the form*, which
+/// was false for exactly the pin this is about.
+///
+/// ⚠ And the guard is asserted beside it: an edit that ADDS an address is not a
+/// rename, so nothing follows. Without that line the repair would re-point a
+/// wire at an endpoint nobody chose for it.
+#[test]
+fn r1975_editing_the_address_in_the_inspector_moves_the_wires_too() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+        let subject = state.node_of("R-01").expect("the specification's router");
+        let held = super::endpoints_of(&state, subject);
+        assert_eq!(held.len(), 1, "★ the fixture: one address — {held:?}");
+
+        super::set_value(&state, subject, "listen.endpoints", "quic/0.0.0.0:7447")
+            .expect("a row a person may write");
+        let landed = super::endpoint_at(&state, Socket::new(subject, 0));
+        assert_eq!(
+            landed.as_deref(),
+            Some("quic/0.0.0.0:7447"),
+            "★★★★★ the wire that landed followed the address a person typed"
+        );
+
+        // ★★★★★ An ADD is not a rename, and nothing may follow it: the second
+        // address is new, so pairing by position would re-point the wire at an
+        // endpoint nobody chose.
+        super::set_value(
+            &state,
+            subject,
+            "listen.endpoints",
+            "quic/0.0.0.0:7447, tcp/0.0.0.0:7500",
+        )
+        .expect("a row a person may write");
+        assert_eq!(
+            super::endpoint_at(&state, Socket::new(subject, 0)).as_deref(),
+            Some("quic/0.0.0.0:7447"),
+            "★★★★★ adding an address leaves the landings where they are"
+        );
+
+        // ★★★★★ AND A VALUE THAT IS NOT AN ADDRESS IS NOT A RENAME EITHER.
+        //
+        // ⚠ This guard was demanded by two gates neither of which this round
+        // wrote: `r1691_every_addressable_region_is_classified_in_every_state`
+        // reported `lab.link.label (mumbled)` and R1853's injection walk found
+        // TWO blocking findings where it declares one. A form takes whatever a
+        // person types, so a card holding a non-address is a real state the
+        // launch gate names — carrying it into a landing would make a wire
+        // claim to dial a string nobody can reach.
+        let held = super::endpoint_at(&state, Socket::new(subject, 0));
+        super::set_value(&state, subject, "listen.endpoints", "not-an-address, x")
+            .expect("a row a person may write");
+        assert_eq!(
+            super::endpoint_at(&state, Socket::new(subject, 0)),
+            held,
+            "★★★★★ the landing keeps the address it has until a READABLE one \
+             replaces it"
+        );
+    });
+}
+
+/// ★★★★★ R1975 — **a dial is refused, and the refusal names the repair.**
+///
+/// What a card dials is the wire's fact, not the card's — measured against the
+/// behaviour canon, whose own comment beside the verb that re-chooses an
+/// endpoint says exactly that. So this verb declines rather than answering a
+/// success the screen does not have, which is what it did until R1975.
+#[test]
+fn r1975_a_dial_is_not_this_cards_transport_to_choose() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+        let subject = state.node_of("R-01").expect("the specification's router");
+        let before = spoken_by(&state, subject);
+
+        let why = super::set_pin_transport(&state, subject, "dial", "udp")
+            .expect_err("★★★★★ a dial is not the card's to choose");
+        let said = format!("{why:?}");
+        assert!(
+            said.contains("scheme of the endpoint it lands on"),
+            "★ the refusal states the model rather than a bare no — {said}"
+        );
+        assert!(
+            said.contains("choose the link's endpoint"),
+            "★★★★★ and it names the repair, which is the verb that owns the \
+             fact — {said}"
+        );
+        assert_eq!(
+            spoken_by(&state, subject),
+            before,
+            "★ and nothing changed: a refusal leaves the card as it found it"
+        );
+    });
+}
+
+/// ★★★★★ R1975 — **the accept vocabulary is half the pin vocabulary, and each
+/// of its entries names the accept side.**
+///
+/// The `const` projection cannot check its own halving: `[&str; N/2]` is a
+/// length, and a `PIN_ADDRESSES` that grew a third pin would still fill it —
+/// with whatever `starts_with_accept` matched first. So the two properties a
+/// compiler cannot see are asserted here: the count is exactly the accept half,
+/// and nothing that is not an accept address got in.
+#[test]
+fn r1975_the_accept_vocabulary_is_half_of_the_pin_vocabulary() {
+    let accepting: Vec<&str> = super::PIN_ADDRESSES
+        .into_iter()
+        .filter(|one| one.starts_with("accept"))
+        .collect();
+    assert_eq!(
+        super::ACCEPT_ADDRESSES.to_vec(),
+        accepting,
+        "★★★★★ the projection is the accept half of the pin vocabulary, in its \
+         order — a third pin would break this rather than silently truncate"
+    );
+    // ★★★★★ AND NO SLOT WAS LEFT UNFILLED, which is the projection's real
+    // failure mode and not the one the first draft asserted.
+    //
+    // ⚠ That draft said `!ACCEPT_ADDRESSES.is_empty()`, and clippy refused it:
+    // *this expression always evaluates to false*. It is a fixed-size array, so
+    // the length is a compile-time fact and no run of the program can make that
+    // line fail. What CAN go wrong is the other half of the `const` block — it
+    // starts as `[""; N]` and fills what the filter matches, so a `PIN_ADDRESSES`
+    // whose accept half is shorter than N leaves an EMPTY STRING in the
+    // declaration a client reads. That is a real, reachable state, so the
+    // assertion moved here rather than being deleted.
+    assert!(
+        super::ACCEPT_ADDRESSES.iter().all(|one| !one.is_empty()),
+        "★★★★★ every slot of the projection was filled — {:?}",
+        super::ACCEPT_ADDRESSES
+    );
 }
 
 /// Every string in a published value, wherever in its shape it sits.

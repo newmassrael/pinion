@@ -11479,6 +11479,101 @@ fn r1632_a_move_carries_every_wire_and_every_value() {
     assert_eq!(feeds(&document, blend), before);
 }
 
+/// ★★★★★ R1975 — **restating an item keeps every wire on it, and rebuilding it
+/// does not.**
+///
+/// The measurement that asked for [`Document::set_item`]: an item's label and
+/// its per-slot type are facts about something the application can change under
+/// them, and until this existed the only way to correct one was to remove the
+/// item and insert a replacement. The two halves of this test are the same
+/// correction by both routes, so the difference is the OPERATION rather than
+/// the fixture — and the second half is what makes the first half's claim
+/// falsifiable.
+#[test]
+fn r1975_restating_an_item_keeps_its_wires_where_rebuilding_it_cuts_them() {
+    let (mut document, blend, _) = blended(3);
+    let before = feeds(&document, blend);
+    let restated = Item::plain().named("Pose (corrected)").typed(0, Ty::Text);
+
+    let change = document
+        .set_item(ROOT, blend, Side::Input, 1, restated.clone())
+        .unwrap();
+    assert!(
+        change.is_lossless(),
+        "★★★★★ a restatement costs the graph nothing: {change:?}"
+    );
+    assert_eq!(change.items, 3, "and the run is the same length");
+    assert!(
+        change.added.is_empty(),
+        "nothing is added — the item was already there: {:?}",
+        change.added
+    );
+    assert_eq!(
+        feeds(&document, blend),
+        before,
+        "★★★★★ every wire and every authored value is exactly where it was"
+    );
+
+    // The declaration really did change, on both of the things an item carries.
+    let items = document.items(ROOT, blend, Side::Input).unwrap();
+    assert_eq!(
+        items[1].label.as_deref(),
+        Some("Pose (corrected)"),
+        "the label is the new one"
+    );
+    assert_eq!(
+        document.signature(ROOT, blend).unwrap().inputs[3].value_type(),
+        Some(&Ty::Text),
+        "★ and so is the per-slot type override — item 1's first port, which \
+         the run's stride of 2 puts at input 3"
+    );
+
+    // ★★★★★ The same correction by the route that existed before, on a fresh
+    // graph of the same shape. It is not a worse way of doing this; it is a
+    // DIFFERENT operation, and the assertion names what it costs.
+    let (mut rebuilt, blend2, _) = blended(3);
+    let removed = rebuilt.remove_item(ROOT, blend2, Side::Input, 1).unwrap();
+    rebuilt
+        .insert_item(ROOT, blend2, Side::Input, 1, restated)
+        .unwrap();
+    assert!(
+        !removed.is_lossless(),
+        "★★★★★ and the old route cuts what the new one keeps — {} wire(s) \
+         severed, {} value(s) discarded",
+        removed.severed.len(),
+        removed.discarded.len()
+    );
+    assert_ne!(
+        feeds(&rebuilt, blend2),
+        before,
+        "★ which is visible in the graph and not only in the report"
+    );
+}
+
+/// A restatement refuses a position the run does not have, and says which side.
+#[test]
+fn r1975_a_restatement_refuses_a_position_the_run_does_not_have() {
+    let (mut document, blend, _) = blended(3);
+    assert_eq!(
+        document.set_item(ROOT, blend, Side::Input, 3, Item::plain()),
+        Err(ItemError::NoSuchItem {
+            side: Side::Input,
+            index: 3,
+            items: 3
+        }),
+        "★ three items means positions 0..3, and the refusal carries the count"
+    );
+    assert_eq!(
+        document.set_item(ROOT, blend, Side::Output, 0, Item::plain()),
+        Err(ItemError::NotVariadic {
+            tree: ROOT,
+            node: blend,
+            side: Side::Output
+        }),
+        "★ and a side with no run at all is a different refusal, not the same one"
+    );
+}
+
 /// A run refuses every position and every count outside what its kind declared,
 /// and names which.
 #[test]

@@ -9871,6 +9871,50 @@ const PIN_ADDRESSES: [&str; 6] = [
     "accept.service",
 ];
 
+/// ★★★★★ R1975 — the addresses on the **accept** side, for the verbs whose
+/// edit is a fact about what this card LISTENS on.
+///
+/// Projected from [`PIN_ADDRESSES`] rather than written out, so the two lists
+/// cannot drift: the card draws two pins and the vocabulary above is one entry
+/// per (pin, member) pair, which is why half of it is this. A pin added there
+/// is a build failure here rather than a silently short declaration — R1630's
+/// ratchet, and `r1975_the_accept_vocabulary_is_half_of_the_pin_vocabulary`
+/// holds the halving itself, which no compiler can.
+const ACCEPT_ADDRESSES: [&str; PIN_ADDRESSES.len() / 2] = {
+    let mut out = [""; PIN_ADDRESSES.len() / 2];
+    let mut read = 0;
+    let mut wrote = 0;
+    while read < PIN_ADDRESSES.len() {
+        if starts_with_accept(PIN_ADDRESSES[read]) {
+            out[wrote] = PIN_ADDRESSES[read];
+            wrote += 1;
+        }
+        read += 1;
+    }
+    out
+};
+
+/// Whether a pin address names the accept side, in a `const` context.
+///
+/// `str::starts_with` is not `const`, so the comparison is over bytes. Written
+/// against the pin name the parser reads ([`pin_address`]) rather than a
+/// literal repeated here.
+const fn starts_with_accept(address: &str) -> bool {
+    const ACCEPT: &[u8] = b"accept";
+    let bytes = address.as_bytes();
+    if bytes.len() < ACCEPT.len() {
+        return false;
+    }
+    let mut at = 0;
+    while at < ACCEPT.len() {
+        if bytes[at] != ACCEPT[at] {
+            return false;
+        }
+        at += 1;
+    }
+    true
+}
+
 /// The closed set of fault arms the `inject` verb accepts.
 ///
 /// ★ Projected from `DefectKind::ALL` in a `const` block rather than written
@@ -11347,10 +11391,18 @@ const FIELDS: &[SchemaField] = &{
         // offering the swap has to know which cards are already instances.
         SchemaField::new("standing_for", "json"),
         // ★★★★★ R1937 — give one pin a transport, and the card becomes the peer
-        // that speaks it. The address vocabulary is `split_pin`'s again, and
-        // the transport comes from a CLOSED list built from the taxonomy rather
-        // than spelled here, so an agent cannot be offered a word the edit
-        // would turn away.
+        // that speaks it. The transport comes from a CLOSED list built from the
+        // taxonomy rather than spelled here, so an agent cannot be offered a
+        // word the edit would turn away.
+        //
+        // ★★★★★ R1975 — the address vocabulary is NOT `split_pin`'s any more.
+        // It was, and the half it shared was a lie: a dial's transport is read
+        // off the endpoint it lands on, so `dial` here named an edit this card
+        // cannot make, and the verb answered success while changing nothing a
+        // person could see. A declaration that offers an argument every call
+        // will be refused for is worse than one that omits it — the client
+        // cannot tell the refusal from a defect. `set_pin_transport` still
+        // takes the refusal for a `dial` sent anyway, with the repair named.
         SchemaField::action_with(
             "set_pin_transport",
             "string",
@@ -11358,7 +11410,7 @@ const FIELDS: &[SchemaField] = &{
             const {
                 &[
                     SchemaArg::key("node", "string", "nodes"),
-                    SchemaArg::one_of("address", "string", &PIN_ADDRESSES),
+                    SchemaArg::one_of("address", "string", &ACCEPT_ADDRESSES),
                     SchemaArg::one_of("transport", "string", &TRANSPORT_WORDS),
                 ]
             },
@@ -14364,13 +14416,31 @@ fn set_value(
     // ★★ R1716 — through [`amend`], so the refusal a person meets on a row
     // nobody wrote is the framework's own sentence naming the source, rather
     // than "no such field" from a store that has never heard of it.
+    let was = endpoints_of(state, node);
     let held = amend(state, node, |form| {
         form.set(key, value)?;
         Ok(form.field(key).map(|f| f.value().into_owned()))
     })
     .map_err(|why| InvokeError::rejected(why.to_string()))?;
-    // The pins are DERIVED from the form, so a value that changes an endpoint
-    // has to reach the canvas in the same act that changed it.
+    // ★★★★★ R1975 — the wires that already landed follow a RENAMED address.
+    //
+    // ⚠ The comment that stood on the line below said *the pins are DERIVED
+    // from the form, so a value that changes an endpoint has to reach the
+    // canvas in the same act that changed it*, and the first half of it was
+    // false: an ACCEPT pin's type comes from the run item a landing wire wrote,
+    // which is a COPY of the address, and no derivation crosses from the form
+    // to it. So editing `listen.endpoints` in the inspector moved the card's
+    // own facts and left every pin dialling it drawn in the old transport —
+    // the same defect [`set_pin_transport`] had, by the path a person actually
+    // takes. Repaid here as well as there, from one function, because the debt
+    // is about the pin and not about which verb reached it.
+    let followed = respell_landings(state, node, &was, &endpoints_of(state, node));
+    if followed > 0 {
+        state.say(Utterance::done(format!(
+            "{followed} wire(s) followed the address"
+        )));
+    }
+    // And the card's own derived facts, which DO come from the form.
     sync_node(state, node);
     state.say(Utterance::done(format!("{key} = {value}")));
     Ok(held.unwrap_or_default())
@@ -14985,10 +15055,20 @@ fn adopt_link(state: &Rc<LabState>, from: Socket, to: Socket) -> Result<String, 
 /// Put the picked link on the target's `n`th listening endpoint (R1681).
 ///
 /// The link decides which endpoint it dials — not the node — which is why this
-/// moves the link's end rather than editing anything about the target. The
-/// reference sets an index on the wire and checks nothing; here the endpoint's
-/// own transport is the accept slot's type, so dialling one this link cannot
-/// speak is refused by the model, with both transports named.
+/// moves the link's end rather than editing anything about the target. That
+/// sentence is the behaviour canon's own, and R1975 is what made this screen
+/// keep it on both sides: [`set_pin_transport`] used to offer to set a card's
+/// DIAL transport, which is this fact with a second owner.
+///
+/// ⚠ R1975 — the paragraph that stood here said *the endpoint's own transport
+/// is the accept slot's type, so dialling one this link cannot speak is refused
+/// by the model, with both transports named*. **The second half stopped being
+/// true at R1969**, which measured the canon and found it gates a wire on a
+/// free listen endpoint and never on a scheme — [`NodeKind::conversion`] now
+/// crosses two whole addresses whatever their schemes are, so this verb refuses
+/// nothing on that axis. The first half still holds: the endpoint's transport
+/// IS the accept slot's type, which is why re-choosing an endpoint re-colours
+/// the pin and re-derives what the dialling card speaks.
 fn choose_endpoint(state: &Rc<LabState>, n: usize) -> Result<String, InvokeError> {
     let picked = state
         .selected_link
@@ -17988,6 +18068,40 @@ fn regroup(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError> {
 /// to its peer; there is nothing on the card to write. Before R1961 the escape
 /// hatch hid this — the verb appeared to work and the value survived until the
 /// next unrelated edit.
+///
+/// # ★★★★★ R1975 — it is the **accept** pin's verb, and the wires already
+/// landed move with the address
+///
+/// Two corrections, both found by MEASURING what the verb did to the screen
+/// rather than by reading it. Driven through the RPC surface against the
+/// opening canvas, `set_pin_transport` on `R-01` answered *"R-01.dial now
+/// speaks udp, and 0 wire(s) could not cross with it"* and **not one pin
+/// sentence on the whole canvas changed** — with `accept` for the address it
+/// did the same. The verb was reporting a success the screen did not have.
+///
+/// * **A dial's transport is not this card's fact.** Measured against the
+///   behaviour canon at R1975: a node there has no dial scheme of its own, its
+///   dial socket is drawn in one fixed colour rather than a transport's, and
+///   *which endpoint a wire lands on is the link's choice, not the node's* —
+///   its own comment beside the verb that re-chooses one says exactly that. Our
+///   derivation already agrees ([`transports_spoken`] reads a dial off the
+///   address it lands on), so writing a dial type here was a second author for
+///   a derived fact and the derivation won the moment anything settled. This is
+///   the R1961 defect surviving on the other side: that round fixed the listen
+///   half and left this one, and it was invisible while
+///   [`NodeKind::conversion`] still severed the wire that would have re-derived
+///   it. R1969 removed that severing — correctly, having measured the canon —
+///   and the two demos that had been leaning on the side effect came down.
+///   ⇒ the address vocabulary is `accept` alone, in the declaration as well as
+///   here, and a `dial` is refused with the repair named.
+/// * **The wires that already landed carry the old address**, and that was the
+///   whole reason nothing moved. A landing item's label IS the endpoint it
+///   dialled ([`endpoint_of`]) — a copy of the card's address, taken when the
+///   wire arrived. Re-scheming the form left every copy behind, so the card
+///   said *I listen on udp* while three accept pins said *I am dialled on tcp*.
+///   Each landing is restated in place through [`Document::set_item`], built
+///   for this and lossless by construction: not one wire is cut, where the
+///   remove-and-insert this screen would otherwise have needed cuts all of them.
 fn set_pin_transport(
     state: &Rc<LabState>,
     node: NodeId,
@@ -18000,6 +18114,11 @@ fn set_pin_transport(
         .find(|t| t.word() == word)
         .ok_or_else(|| InvokeError::rejected(format!("{word:?} is not a transport")))?;
     let (side, path) = pin_address(address)?;
+    if let Some(why) = not_this_cards_transport(&name, side) {
+        let said = Utterance::refused(&why);
+        state.say(said.clone());
+        return Err(InvokeError::rejected(said.into_clause()));
+    }
     let held = endpoints_of(state, node);
     if held.is_empty() {
         let said = Utterance::refused(&format!(
@@ -18040,13 +18159,130 @@ fn set_pin_transport(
         form.set("listen.endpoints", moved.join(FieldType::SEPARATOR))
             .ok();
     }
+    // ★★★★★ R1975 — and the wires that already landed here move with it.
+    let followed = respell_landings(state, node, &held, &moved);
     // And now the derivation reads the answer back out of the address, so the
     // stored value has one author again.
     sync_node(state, node);
-    let said =
-        format!("{name}.{address} now speaks {word}, and {lost} wire(s) could not cross with it");
+    let said = format!(
+        "{name}.{address} now speaks {word}; {followed} wire(s) followed the \
+         address and {lost} wire(s) could not cross with it"
+    );
     state.say(Utterance::done(said.clone()));
     Ok(said)
+}
+
+/// ★★★★★ R1975 — **why this screen will not choose a transport on `side`**, or
+/// `None` when it will.
+///
+/// ⚠ **One function because there are TWO askers**, and R1924 paid for learning
+/// what happens when a screen-level rule has only one: the canvas answered
+/// *this will be taken* from the crate alone while the act refused from a rule
+/// the question had never heard of — two oracles, one gesture, and the hand
+/// told the wrong one. So [`set_pin_transport`] and the `choosable` register
+/// that a client reads BEFORE offering a chooser both come here, and neither
+/// can drift from the other.
+///
+/// The rule itself is the behaviour canon's: a node has no dial scheme of its
+/// own, its dial socket is drawn in one fixed colour rather than a transport's,
+/// and which endpoint a wire lands on is the LINK's choice. So a dial's
+/// transport is not a fact this card owns, and the refusal names the verb that
+/// does own it rather than being a bare no.
+fn not_this_cards_transport(name: &str, side: Side) -> Option<String> {
+    (side == Side::Output).then(|| {
+        format!(
+            "what {name} dials is not {name}'s to say — a dial speaks the \
+             scheme of the endpoint it lands on, so choose the link's endpoint \
+             instead. This verb sets what {name} ACCEPTS."
+        )
+    })
+}
+
+/// ★★★★★ R1975 — **the wires already landed on `node` follow its addresses.**
+///
+/// A landing item's label is the endpoint that wire dialled ([`endpoint_of`]) —
+/// a COPY of one of the card's own listen addresses, taken when the wire
+/// arrived. So a card whose addresses are re-schemed has as many stale copies
+/// as it has peers, and the screen then draws a card that listens on one
+/// transport while every pin dialling it names another. Measured on the opening
+/// canvas at R1975: three of them on one card, and the reason
+/// [`set_pin_transport`] appeared to do nothing at all.
+///
+/// `was` and `now` are the card's addresses before and after, in the form's own
+/// order, so the match is on the exact string a landing carries rather than on
+/// a re-parse of it — a wire that dialled an address the card no longer has is
+/// left alone rather than guessed at.
+///
+/// ⚠ **A RENAME only**, and there are two guards, both of which existing gates
+/// demanded before this round's own tests noticed anything.
+///
+/// * **The lists are the same length.** An edit that ADDS or REMOVES an address
+///   is not a rename: the positions no longer correspond, so pairing them by
+///   index would re-point a wire at a different endpoint entirely — which is
+///   the link's own fact and belongs to [`choose_endpoint`], the verb a person
+///   uses to say it.
+/// * **The new spelling READS as an address.** A form takes whatever a person
+///   types, and `listen.endpoints` is a row like any other — so a card whose
+///   address row holds a value that is not a locator is a real state, and the
+///   launch gate is what says so. Carrying that into the landings would make a
+///   wire claim to dial a string nobody can reach, and R1691's classification
+///   walk and R1853's fault-injection walk BOTH went red on exactly that:
+///   `lab.link.label (mumbled)`, and a second blocking finding where the
+///   injection declares one. So a landing keeps the address it has until a
+///   readable one replaces it, which is the truthful state — the wire dialled
+///   somewhere real and the card has since lost the row that named it.
+///
+/// R1928's rule that a form must not be pushed into the items it does not own
+/// is what this stays inside; the narrow thing it claims is that when an
+/// address a landing is holding is RESPELLED as another readable address, the
+/// landing was already on that endpoint and still is.
+///
+/// Each landing is restated **in place** ([`Document::set_item`]), which keeps
+/// the wire: removing the item and inserting a corrected one is the only other
+/// route and it cuts every wire on the item, which is exactly the cost this
+/// correction must not have. The port's authored value moves too, because that
+/// is the copy the split and the inspector read (R1914).
+///
+/// Answers how many followed, so the caller's sentence can say it rather than
+/// report a bare success — the defect this function exists for was a success
+/// nobody could see.
+fn respell_landings(state: &Rc<LabState>, node: NodeId, was: &[String], now: &[String]) -> usize {
+    if was.len() != now.len() {
+        return 0;
+    }
+    let renamed: BTreeMap<&str, &str> = was
+        .iter()
+        .zip(now.iter())
+        .filter(|(before, after)| {
+            before != after && graph::Endpoint::of_written_locator(after).is_some()
+        })
+        .map(|(before, after)| (before.as_str(), after.as_str()))
+        .collect();
+    if renamed.is_empty() {
+        return 0;
+    }
+    let mut doc = state.doc.borrow_mut();
+    let Some(items) = doc.items(ROOT, node, Side::Input) else {
+        return 0;
+    };
+    let follows: Vec<(u32, String)> = items
+        .iter()
+        .enumerate()
+        .filter_map(|(at, item)| {
+            let label = item.label.as_deref()?;
+            let now = renamed.get(label)?;
+            Some((u32::try_from(at).ok()?, (*now).to_owned()))
+        })
+        .collect();
+    let mut followed = 0;
+    for (at, endpoint) in follows {
+        let item = typed_slot_item(Some(&endpoint));
+        if doc.set_item(ROOT, node, Side::Input, at, item).is_ok() {
+            let _ = doc.set_port_value(ROOT, node, PortRef::input(at), endpoint);
+            followed += 1;
+        }
+    }
+    followed
 }
 
 /// ★★★★★ R1939 — **give one pin the address it rests at**, and be told what
@@ -18234,16 +18470,33 @@ fn choosable_wire(state: &Rc<LabState>) -> serde_json::Value {
                             // `takes`, `admits` and `ports` published
                             // `locator/tcp`, so a client matching on the token
                             // saw two vocabularies for one type.
-                            let takes: Vec<String> = Endpoint::all()
-                                .into_iter()
-                                .filter(|ty| doc.may_set_port_type(ROOT, held.id, port, ty))
-                                .map(Endpoint::wire_word)
-                                .collect();
+                            // ★★★★★ R1975 — the SCREEN's rule as well as the
+                            // crate's, from the one function the verb also
+                            // asks. The crate will happily retype a dial port;
+                            // this screen will not, because a dial's transport
+                            // is read off the endpoint it lands on. A register
+                            // that answered the crate alone would offer a
+                            // chooser every use of which is refused — R1924's
+                            // two oracles, in the other direction.
+                            let withheld = not_this_cards_transport(&card, side);
+                            let takes: Vec<String> = if withheld.is_some() {
+                                Vec::new()
+                            } else {
+                                Endpoint::all()
+                                    .into_iter()
+                                    .filter(|ty| doc.may_set_port_type(ROOT, held.id, port, ty))
+                                    .map(Endpoint::wire_word)
+                                    .collect()
+                            };
                             serde_json::json!({
                                 "card": card.clone(),
                                 "side": match side { Side::Input => "accept", Side::Output => "dial" },
                                 "index": index,
                                 "takes": takes,
+                                // ★ And WHY it is empty, because an empty list
+                                // with no reason is indistinguishable from a
+                                // register that has not been taught the pin.
+                                "withheld": withheld,
                             })
                         })
                         .collect::<Vec<_>>()
