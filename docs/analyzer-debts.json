@@ -365,6 +365,17 @@
       ]
     },
     {
+      "name": "debt-no-gate-in-this-file-can-see-a-wire",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links debt-canon-gui-surface-census, debt-the-canon-is-one-app-and-we-are-many-binaries"
+      ]
+    },
+    {
       "name": "debt-node-system-coverage-campaign",
       "substituted": true,
       "blocked_by": "campaign",

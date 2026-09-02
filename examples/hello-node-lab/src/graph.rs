@@ -6,10 +6,16 @@
 //! precisely the part the crate declines to own, and the census row for the
 //! node palette says so: *"which roles exist is the application's"*.
 //!
-//! A pin here is a transport endpoint, and the type relation is the one the
-//! reference draws in its legend: a link may be authored from a **dial** pin to
-//! an **accept** pin of the same transport. That single rule is what makes the
-//! canvas's three pin appearances mean something rather than decorate.
+//! A pin here is a transport endpoint. ⚠ R1969 — this paragraph used to read
+//! *"a link may be authored from a dial pin to an accept pin OF THE SAME
+//! TRANSPORT. That single rule is what makes the canvas's three pin appearances
+//! mean something rather than decorate."* **The second sentence was true and
+//! the first was not the canon's**, measured at R1969 against its own
+//! link-authoring code: it gates a wire on whether the acceptor has a free
+//! listen endpoint and never on a scheme. The pin colours mean something for a
+//! different reason — a dial lands on an endpoint and speaks that endpoint's
+//! scheme, so the colour tells a reader what a link over that pin WILL be, not
+//! what it must match. See [`NodeKind::conversion`] for the whole measurement.
 
 use crate::spec::TrafficParameter;
 use pinion_node_graph::{
@@ -1069,36 +1075,79 @@ impl NodeKind for LabNode {
         vec![inputs.first().cloned().flatten()]
     }
 
-    /// **The transports must agree.**
+    /// ★★★★★ R1969 — **a dial lands on an endpoint and speaks THAT endpoint's
+    /// scheme, so two whole addresses cross whatever their schemes are.**
     ///
-    /// The rule the pin legend draws: an accept pin's colour is its transport,
-    /// and a dial of one transport cannot reach an accept of another. Stating
-    /// it here rather than at each authoring site is what makes the canvas, the
-    /// wire and the validation gate answer the same question.
+    /// # What this replaced, and the measurement that condemned it
+    ///
+    /// From R1651 to R1969 this hook read *"the transports must agree"* and
+    /// refused `(Locator(a), Locator(b))` for `a != b`, with a test named
+    /// `r1651_a_link_across_two_transports_is_refused_by_the_taxonomy` holding
+    /// it. Nothing had ever checked that rule against the behaviour canon.
+    /// Checked at R1969, by extracting the canon's own link-authoring code:
+    ///
+    /// * its candidate rule asks TWO things and neither is a scheme — *does the
+    ///   acceptor listen anywhere at all*, and *has it a free, non-multicast
+    ///   listen endpoint left for this pair*. Its own comment beside the second
+    ///   says why: with a spare endpoint you may draw a SECOND link to the same
+    ///   peer, over a different scheme, deliberately.
+    /// * its refusal toast names exactly two reasons — *already connected*, and
+    ///   *this node has no listen endpoint*. There is no third.
+    /// * its validation pass, read end to end, checks locator FORMAT, port
+    ///   collisions, mode-dependent values, certificate pairs and volumes, and
+    ///   never once compares two nodes' schemes.
+    ///
+    /// ⇒ **the canon has no such constraint anywhere**, and ours produced a
+    /// refusal a person could hit: *node 2.0 carries Locator(Quic), node 5.0
+    /// expects Locator(Tcp)*, which is what took two demos red for five pushes.
+    ///
+    /// # Why the canon is nonetheless RIGHT about schemes
+    ///
+    /// Its comment beside the socket palette says a dial only stands when it
+    /// and the peer's listen speak the same scheme — and it enforces nothing,
+    /// because in that model the constraint **cannot be broken**: a node has no
+    /// dial scheme of its own. It dials the endpoint the peer advertises, and
+    /// the link's scheme is read off THAT (`labProtoAt(peer, ep)`).
+    ///
+    /// So the constraint is real and the enforcement was ours to invent. What
+    /// we invented was a *check that fails*; what the canon has is a shape
+    /// where the disagreement is **unrepresentable**. This hook is now the
+    /// second: the value crossing the wire is already the acceptor's own
+    /// address ([`Self::evaluate`] — a node hands on the locator it was reached
+    /// by), so a landing dial speaks the endpoint's scheme by construction and
+    /// `Direct` is the truthful answer rather than a weakening.
+    ///
+    /// ⚠ What is still refused, and it is the constraint that survives: a HALF
+    /// of an address does not cross with a whole one, nor a host with a
+    /// service. That is R1914's split — a person who pulls a pin apart is
+    /// editing *where to reach it* and *which port*, and wiring one of those to
+    /// an unsplit pin would hand a peer half an address.
+    ///
+    /// ⚠ The match is EXHAUSTIVE with no `_` arm, so a fifth [`Endpoint`] stops
+    /// the build here rather than defaulting. R1965's shape, and the reason is
+    /// the same: this table is the one place the relation is authored, and an
+    /// arm nobody classified is the escape hatch that let the R1651 rule sit
+    /// unexamined for 318 rounds.
     fn conversion(from: &Self::Type, to: &Self::Type) -> Conversion<Self::Value> {
         match (from, to) {
-            _ if from == to => Conversion::Direct,
-            // ★★★★★ R1961 — **an undecided end cannot refuse, and the wire is
-            // what decides it.**
-            //
-            // Both directions, because both are real on this screen: a card
-            // just taken from the palette dials a peer that listens, and a
-            // peer that listens nowhere is dialled by one that does. Refusing
-            // either would make the node's own emptiness the reason a person
-            // cannot fill it in — and before this arm existed the escape hatch
-            // hid that by answering TCP, which let a fresh card reach TCP peers
-            // and silently no others.
-            //
-            // ★★★★★ Measured by taking it away: the OPENING GRAPH does not
-            // build without it. `seed_nodes` runs before `seed_links` (a link
-            // needs two node ids), so a card whose transport comes off a wire
-            // is undecided at the moment its wire is authored — and three of
-            // the seven links were refused, which surfaced not as a wiring
-            // error but as *no card takes its transport from the wire it
-            // dials*. The arm is load-bearing, not a convenience.
-            (Endpoint::Unspoken, Endpoint::Locator(_))
-            | (Endpoint::Locator(_), Endpoint::Unspoken) => Conversion::Direct,
-            _ => Conversion::Refused,
+            // Two whole addresses. `Unspoken` is one of them — an address whose
+            // scheme nothing has named yet (R1961), and the wire is what names
+            // it, which is now the same sentence as the arm above rather than a
+            // special case bolted beside it.
+            (
+                Endpoint::Locator(_) | Endpoint::Unspoken,
+                Endpoint::Locator(_) | Endpoint::Unspoken,
+            ) => Conversion::Direct,
+            // A half crosses with the same half and nothing else.
+            (Endpoint::Host, Endpoint::Host) | (Endpoint::Service, Endpoint::Service) => {
+                Conversion::Direct
+            }
+            (Endpoint::Host, Endpoint::Service)
+            | (Endpoint::Service, Endpoint::Host)
+            | (Endpoint::Host | Endpoint::Service, Endpoint::Locator(_) | Endpoint::Unspoken)
+            | (Endpoint::Locator(_) | Endpoint::Unspoken, Endpoint::Host | Endpoint::Service) => {
+                Conversion::Refused
+            }
         }
     }
 
@@ -1666,33 +1715,69 @@ mod tests {
         }
     }
 
+    /// ★★★★★ R1969 — **every ordered pair of the type relation, and the whole
+    /// halves/wholes split is what it turns on.**
+    ///
+    /// ⚠ This replaces `r1651_a_link_across_two_transports_is_refused_by_the_
+    /// taxonomy`, which asserted the OPPOSITE of the arm above for 318 rounds:
+    /// *tcp must not reach {other}*. Measured against the behaviour canon at
+    /// R1969, the canon gates a wire on whether the acceptor has a free listen
+    /// endpoint and never on a scheme — at authoring, in its refusal toast, and
+    /// in its whole validation pass. The rule was ours, it was never checked,
+    /// and it cost two demos five pushes of red.
+    ///
+    /// The population is EVERY ordered pair of [`Endpoint::all`] rather than
+    /// tcp-against-the-rest, so the relation is asserted whole: a pair added by
+    /// a sixth transport joins it without anybody editing this.
     #[test]
-    fn r1651_a_link_across_two_transports_is_refused_by_the_taxonomy() {
-        // The legend's rule, and the reason an accept pin is coloured.
-        let locator = Endpoint::Locator;
-        assert!(
-            !LabNode::conversion(&locator(Transport::Tcp), &locator(Transport::Tcp)).is_refused(),
-            "same transport crosses"
-        );
-        for other in Transport::ALL {
-            if other == Transport::Tcp {
-                continue;
+    fn r1969_a_whole_address_crosses_with_a_whole_address_and_a_half_only_with_its_half() {
+        let whole = |ty: &Endpoint| matches!(ty, Endpoint::Locator(_) | Endpoint::Unspoken);
+        let mut crossed = 0_usize;
+        let mut refused = 0_usize;
+        for from in Endpoint::all() {
+            for to in Endpoint::all() {
+                let ok = !LabNode::conversion(&from, &to).is_refused();
+                // The DERIVED expectation, not a second table: two wholes
+                // cross, and a half crosses only with itself.
+                let want = if whole(&from) && whole(&to) {
+                    true
+                } else {
+                    from == to
+                };
+                assert_eq!(
+                    ok, want,
+                    "★ {from:?} -> {to:?}: the relation says {ok} and the rule \
+                     it is derived from says {want}",
+                );
+                if ok {
+                    crossed += 1;
+                } else {
+                    refused += 1;
+                }
             }
-            assert!(
-                LabNode::conversion(&locator(Transport::Tcp), &locator(other)).is_refused(),
-                "tcp must not reach {}",
-                other.word()
-            );
         }
-        // ★ R1914 — and the halves of a locator do not cross into a whole one,
-        // which is what keeps a split pin from being wired to an unsplit one.
+        // ★★★★★ Not vacuous in EITHER direction — a relation that crossed
+        // everything and one that refused everything both satisfy a loop.
         assert!(
-            LabNode::conversion(&Endpoint::Host, &locator(Transport::Tcp)).is_refused(),
-            "a host name is not a locator",
+            crossed > 0 && refused > 0,
+            "{crossed} cross, {refused} refuse"
+        );
+        // ★ And the pair a person actually hit is named, because a count does
+        // not say WHICH: `node 2.0 carries Locator(Quic), node 5.0 expects
+        // Locator(Tcp)` is the sentence the two red demos died on.
+        assert!(
+            !LabNode::conversion(
+                &Endpoint::Locator(Transport::Quic),
+                &Endpoint::Locator(Transport::Tcp)
+            )
+            .is_refused(),
+            "★★★★★ a quic dial still cannot land on a tcp listen, which is the \
+             refusal the canon does not have and the one a person hit",
         );
         assert!(
-            !LabNode::conversion(&Endpoint::Host, &Endpoint::Host).is_refused(),
-            "a host reaches a host",
+            LabNode::conversion(&Endpoint::Host, &Endpoint::Locator(Transport::Tcp)).is_refused(),
+            "★ and the constraint that SURVIVES is intact: half an address is \
+             not an address (R1914's split)",
         );
     }
 
@@ -1999,17 +2084,20 @@ mod tests {
         );
     }
 
-    /// ★★★★★ R1961 — **an undecided end cannot refuse a wire, and a decided
-    /// pair still must agree.**
+    /// ★★★★★ R1961 — **an undecided end cannot refuse a wire.**
     ///
-    /// The conversion table, all four shapes, because the arm added this round
-    /// is the one that WEAKENS the rule and a weakening nobody bounded is how a
-    /// type gate stops being one. Two locators of different transports are
-    /// still refused; `Unspoken` crosses with any locator, both ways; and a
-    /// locator still does not reach a HALF of one, which is the refusal R1937
-    /// exists to make reachable.
+    /// ⚠ R1969 — this doc's second clause was *"and a decided pair still must
+    /// agree"*, and the assertion under it read *the rule the legend draws is
+    /// intact: two transports must agree*. Both are gone: the canon has no such
+    /// rule (see [`NodeKind::conversion`]), so `Unspoken` is not a weakening of
+    /// a gate — there is no gate on that axis to weaken, and R1961's arm turns
+    /// out to have been the general case arriving one round early.
+    ///
+    /// What is kept is R1961's own finding, which survives the correction
+    /// unchanged: a card that has been told nothing must still be wireable in
+    /// BOTH directions, because the wire is what tells it.
     #[test]
-    fn r1961_an_unspoken_end_crosses_with_any_locator_and_the_rest_still_refuse() {
+    fn r1961_an_unspoken_end_crosses_with_any_locator() {
         let direct = |from: Endpoint, to: Endpoint| {
             matches!(
                 <LabNode as NodeKind>::conversion(&from, &to),
@@ -2032,16 +2120,26 @@ mod tests {
             );
         }
         assert!(
-            !direct(
-                Endpoint::Locator(Transport::Tcp),
-                Endpoint::Locator(Transport::Quic)
-            ),
-            "★ the rule the legend draws is intact: two transports must agree",
-        );
-        assert!(
             direct(Endpoint::Unspoken, Endpoint::Unspoken),
             "two cards that both speak nothing yet may still be wired",
         );
+        // ★★★★★ R1969 — and `Unspoken` is no longer SPECIAL, which is the shape
+        // of the correction rather than a footnote to it. Whatever this arm can
+        // do, a named locator can do too; the assertion is the EQUALITY, so a
+        // future round that re-narrowed one of them would fail here instead of
+        // leaving two rules that look like one.
+        for transport in Transport::ALL {
+            for other in Transport::ALL {
+                assert_eq!(
+                    direct(Endpoint::Locator(transport), Endpoint::Locator(other)),
+                    direct(Endpoint::Unspoken, Endpoint::Unspoken),
+                    "★ {} -> {} is treated differently from two unspoken ends, \
+                     so the relation has two rules where the canon has one",
+                    transport.word(),
+                    other.word(),
+                );
+            }
+        }
     }
 
     /// ★★★★★ R1961 — **an address with no scheme still comes apart, and comes

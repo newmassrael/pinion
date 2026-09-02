@@ -1930,6 +1930,161 @@ fn r1653_the_painted_screen_invented_nothing() {
     });
 }
 
+/// ★★★★★ R1969 — **a drag from a dial pin to an accept pin of a DIFFERENT
+/// scheme authors a link**, asked of the painted screen.
+///
+/// # What this is for, measured
+///
+/// From R1651 to R1969 the taxonomy refused `(Locator(a), Locator(b))` for
+/// `a != b`, on a rule nobody had checked against the behaviour canon. Checked
+/// at R1969: the canon gates a wire on whether the ACCEPTOR HAS A FREE LISTEN
+/// ENDPOINT and never on a scheme — not when authoring, not in its refusal
+/// toast (which names two reasons, neither this), not anywhere in its
+/// validation pass. So the refusal was ours, and a person driving this screen
+/// hit it: `node 2.0 carries Locator(Quic), node 5.0 expects Locator(Tcp)`.
+///
+/// It cost `r1651_the_node_lab_matches_the_reference.py` and
+/// `r1688_where_the_canvas_is_pointed.py` FIVE PUSHES of red, and the reason
+/// it survived is structural rather than careless: **those are demos, and the
+/// demo sweep does not gate a push.** So the property is asserted HERE, in
+/// `cargo test`, through the same drag a person performs — `drag_between`
+/// presses the painted pin rectangles, so a model that would allow the link
+/// while the gesture cannot reach it fails too.
+///
+/// # The population is DERIVED
+///
+/// The pair is not named. Every card on the opening canvas is asked what scheme
+/// its dial pin carries and what its accept pin carries, and the first pair
+/// that DISAGREES and is not already wired is the one dragged. A gate that
+/// named `T-01 -> P-02` would stop meaning anything the day the fixture moved,
+/// and this repository has paid for exactly that twice.
+///
+/// ⚠ The population is asserted NON-EMPTY, because "no disagreeing pair exists"
+/// is how this check would silently become vacuous — and it is a reachable
+/// state: it is what the canvas looked like before R1962 gave one card a second
+/// transport.
+#[test]
+fn r1969_a_dial_lands_on_an_accept_of_another_scheme_and_the_link_is_authored() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        let shot = painted(&state);
+        let link_count = |s: &std::rc::Rc<LabState>| -> usize {
+            s.doc
+                .borrow()
+                .tree(super::ROOT)
+                .map_or(0, |t| t.links().len())
+        };
+        // What each card's two pins carry, read off the DOCUMENT the screen
+        // paints from rather than off the specification's text.
+        let schemes = |name: &str| -> Option<(Option<super::Transport>, Option<super::Transport>)> {
+            let node = state.node_of(name)?;
+            state
+                .doc
+                .borrow()
+                .tree(super::ROOT)
+                .and_then(|t| t.node(node))
+                .and_then(|n| match &n.body {
+                    pinion_node_graph::NodeBody::Kind(kind) => {
+                        Some((kind.listens_over, kind.dials_over))
+                    }
+                    _ => None,
+                })
+        };
+        let already_wired = |a: &str, b: &str| -> bool {
+            let (Some(from), Some(to)) = (state.node_of(a), state.node_of(b)) else {
+                return false;
+            };
+            state.doc.borrow().tree(super::ROOT).is_some_and(|tree| {
+                tree.links()
+                    .iter()
+                    .any(|l| l.from.node == from && l.to.node == to)
+            })
+        };
+        let mut crossing: Option<(&str, &str)> = None;
+        for dialer in spec::NODES {
+            for acceptor in spec::NODES {
+                if dialer.id == acceptor.id || already_wired(dialer.id, acceptor.id) {
+                    continue;
+                }
+                let (Some((_, dials)), Some((Some(listens), _))) =
+                    (schemes(dialer.id), schemes(acceptor.id))
+                else {
+                    continue;
+                };
+                // A card that dials nothing yet is not the case under test —
+                // `Unspoken` crossed with anything even under the old rule, so
+                // using one would make this pass for the wrong reason.
+                if dials.is_some_and(|d| d != listens) {
+                    crossing = Some((dialer.id, acceptor.id));
+                    break;
+                }
+            }
+            if crossing.is_some() {
+                break;
+            }
+        }
+        let (dialer, acceptor) = crossing.expect(
+            "★★★★★ no card on the opening canvas dials one scheme while another \
+             listens on a different one, so this check has nothing to drive and \
+             would pass over the very refusal it exists to prevent",
+        );
+        let before = link_count(&state);
+        drag_between(
+            &state,
+            &shot,
+            &format!("lab.pin.{dialer}.dial"),
+            &format!("lab.pin.{acceptor}.accept"),
+        );
+        assert_eq!(
+            link_count(&state),
+            before + 1,
+            "★★★★★ dragging {dialer}'s dial pin onto {acceptor}'s accept pin \
+             authored nothing. Their schemes differ, and the canon admits that \
+             link — a dial lands on an endpoint and speaks THAT endpoint's \
+             scheme. This is the refusal `node carries Locator(..), node \
+             expects Locator(..)` come back.",
+        );
+        // ★★★★★ And the wire is DRAWN, not merely in the document: a link the
+        // model holds and the canvas does not show is the half-repair this axis
+        // has produced before.
+        //
+        // ⚠⚠ Asked of the SCENE and not of [`Painted`], and the reason is a
+        // measurement this round made by accident. The first draft counted
+        // `shot.tags` keys under `lab.link.` and got FOUR before and FOUR after
+        // — and the four are `lab.link.{act,label}` and their runs, the
+        // selected link's CHROME. **Not one of the seven wires is in that
+        // index.** A wire is a `Scene::Path` whose layout carries no absolute
+        // rectangle (its bounding box is most of the canvas and it is pointer
+        // transparent by design, R1655), so `Painted::of` sees `absolute_rect()
+        // == None` and returns before recording the tag. Every check in this
+        // file — forward, backward, contained, disjoint, reachable — is
+        // therefore blind to every wire ⇒
+        // `debt-no-gate-in-this-file-can-see-a-wire`.
+        let drawn = |name: &str| -> bool {
+            let scene = painted_scene(&state);
+            let mut found = false;
+            scene.for_each_node(&mut |visit| {
+                if visit.node.tag() == Some(name) {
+                    found = true;
+                }
+            });
+            found
+        };
+        let fresh = state
+            .doc
+            .borrow()
+            .tree(super::ROOT)
+            .and_then(|t| t.links().last().map(|l| l.id.0))
+            .expect("the link just authored");
+        assert!(
+            drawn(&format!("lab.link.{fresh}")),
+            "★ the document gained link {fresh} and the canvas draws no path \
+             for it",
+        );
+    });
+}
+
 /// ★★★★★ R1968 — **every palette row is painted under the heading its own
 /// record names**, and the heading reads that group's word.
 ///

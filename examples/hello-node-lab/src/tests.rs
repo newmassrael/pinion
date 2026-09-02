@@ -4895,16 +4895,25 @@ fn r1962_a_card_listens_on_one_transport_and_dials_another() {
              expects Locator(Tcp)`",
         );
 
-        // ★ And the rule is INTACT where it belongs: two ends that disagree are
-        // still refused. A split that merely stopped asking would satisfy
-        // everything above.
-        let refused = <crate::graph::LabNode as pinion_node_graph::NodeKind>::conversion(
+        // ★★★★★ R1969 — what stood here asserted the REFUSAL as *the rule is
+        // intact where it belongs: two ends that disagree are still refused*,
+        // and the canon has no such rule at all (measured — see
+        // `graph::LabNode::conversion`). It was the guard R1962 put on its own
+        // change, and it guarded the wrong thing: it made the split look like a
+        // narrow exemption from a general law when the general law was the
+        // invention. So the assertion is INVERTED rather than deleted, because
+        // this test's subject — a card that listens on one scheme and dials
+        // another — is exactly the pair that used to be refused.
+        let crossed = <crate::graph::LabNode as pinion_node_graph::NodeKind>::conversion(
             &crate::graph::Endpoint::Locator(Transport::Quic),
             &crate::graph::Endpoint::Locator(Transport::Tcp),
         );
         assert!(
-            matches!(refused, pinion_node_graph::Conversion::Refused),
-            "★ the transports must still agree pin to pin",
+            !matches!(crossed, pinion_node_graph::Conversion::Refused),
+            "★★★★★ a quic dial cannot land on a tcp listen, which is the \
+             refusal that took `r1651_the_node_lab_matches_the_reference` and \
+             `r1688_where_the_canvas_is_pointed` red — and which the canon \
+             does not have",
         );
     });
 }
