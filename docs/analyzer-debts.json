@@ -75,6 +75,17 @@
       ]
     },
     {
+      "name": "debt-a-census-pin-reason-is-false-in-both-its-clauses",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links analyzer-debt-repayment-loop"
+      ]
+    },
+    {
       "name": "debt-a-census-row-is-addressed-by-two-different-numbering-rules",
       "substituted": false,
       "blocked_by": "buildable",
@@ -618,6 +629,17 @@
       "closed_because": "",
       "why": [
         "links debt-canon-gui-surface-census"
+      ]
+    },
+    {
+      "name": "debt-what-lands-on-a-socket-is-spelled-by-four-readers-and-one-counts-half",
+      "substituted": false,
+      "blocked_by": "unmeasured",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links screen-a-vs-canon-operation-census"
       ]
     },
     {
