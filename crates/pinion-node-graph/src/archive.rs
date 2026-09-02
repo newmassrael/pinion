@@ -29,6 +29,12 @@
 //!
 //! [`Archive::read`] does that check pass and **hands you the result**:
 //!
+//! * [`Opening::condition`] is the whole answer as ONE value ([`Condition`]):
+//!   there is no document, or there is one and its own invariants do not hold,
+//!   or there is one and it is sound. Three answers, so a type rather than two
+//!   `Option`s and a precedence rule each caller has to know — R1978 measured
+//!   two callers working that rule out for themselves, and one of them had
+//!   worked out a different answer for a state the other could not produce.
 //! * [`Opening::refusal`] names which of four things stopped it
 //!   ([`Unreadable`]) rather than collapsing them into one word.
 //! * [`Opening::violations`] is [`Document::validate`]'s own verdict, so a
@@ -330,17 +336,16 @@ where
             }
         };
 
-        Opening {
-            refusal: None,
-            violations: document.validate(),
+        Opening::opened(
+            document.validate(),
             dropped,
-            archive: Some(Archive {
+            Archive {
                 document,
                 camera,
                 selection,
                 companion,
-            }),
-        }
+            },
+        )
     }
 }
 
@@ -357,26 +362,94 @@ where
 /// unrelated subjects, and the compiler said so.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Opening<K: NodeKind, C = ()> {
-    refusal: Option<Unreadable>,
-    violations: Vec<Violation>,
-    dropped: Vec<Dropped>,
-    archive: Option<Archive<K, C>>,
+    outcome: Outcome<K, C>,
+}
+
+/// ★★★★★ R1978 — the two shapes [`Archive::read`] can end in, and **nothing
+/// else**.
+///
+/// Private, and the whole of [`Opening`]'s state: every accessor below reads
+/// this, so the crate has one place where "is there a document" is decided.
+///
+/// Before R1978 the same facts were four independent fields — an
+/// `Option<Unreadable>`, a `Vec<Violation>`, a `Vec<Dropped>` and an
+/// `Option<Archive>` — which can spell states `read` never produces (a refusal
+/// carrying violations; no refusal and no archive) and which every caller had
+/// to know could not happen. One of them did not: the node lab's own splitter
+/// answered *openable* for a refusal that carried violations, where
+/// [`Opening::reason`] answered *the refusal*. Neither was reachable, and that
+/// is the point — a disagreement about an unreachable state is a disagreement
+/// waiting for the state to become reachable.
+#[derive(Debug, Clone, PartialEq)]
+enum Outcome<K: NodeKind, C> {
+    /// Nothing was read; this is why.
+    Unreadable(Unreadable),
+    /// A document was read: what [`Document::validate`] said about it, what
+    /// could not come back with it, and the archive itself.
+    ///
+    /// ⚠ The archive is here whatever `violations` says. A document that does
+    /// not satisfy its own invariants is still a document, and looking at it is
+    /// how a person repairs it — see
+    /// [`take_despite_violations`](Opening::take_despite_violations).
+    Read {
+        violations: Vec<Violation>,
+        dropped: Vec<Dropped>,
+        archive: Archive<K, C>,
+    },
 }
 
 impl<K: NodeKind, C> Opening<K, C> {
     fn refused(refusal: Unreadable) -> Self {
         Self {
-            refusal: Some(refusal),
-            violations: Vec::new(),
-            dropped: Vec::new(),
-            archive: None,
+            outcome: Outcome::Unreadable(refusal),
+        }
+    }
+
+    fn opened(violations: Vec<Violation>, dropped: Vec<Dropped>, archive: Archive<K, C>) -> Self {
+        Self {
+            outcome: Outcome::Read {
+                violations,
+                dropped,
+                archive,
+            },
+        }
+    }
+
+    /// ★★★★★ R1978 — **which of three things** reading found, as one value.
+    ///
+    /// The question a caller actually has is not "was it refused" and then "are
+    /// there violations": it is *what is in front of me*, and there are three
+    /// answers, which is one more than an `Option` can carry. Handing back two
+    /// `Option`s plus the rule that a refusal wins asks every caller to
+    /// re-derive the same three-way — and asking is getting it wrong: measured
+    /// at R1978, the two callers in this workspace had each written their own,
+    /// they disagreed, and the disagreement was invisible because it lived in a
+    /// state [`Archive::read`] cannot produce.
+    ///
+    /// [`refusal`](Self::refusal) and [`violations`](Self::violations) remain,
+    /// because a migration wants the revision numbers and a repair tool wants
+    /// the list. What they no longer have to carry is the *decision*.
+    ///
+    /// ⚠ A [`Condition`] borrows, so it cannot outlive the opening it came
+    /// from; take the archive with [`take`](Self::take) or
+    /// [`take_despite_violations`](Self::take_despite_violations) once the
+    /// decision is made.
+    #[must_use]
+    pub fn condition(&self) -> Condition<'_> {
+        match &self.outcome {
+            Outcome::Unreadable(refusal) => Condition::Unreadable(refusal),
+            Outcome::Read { violations, .. } if violations.is_empty() => Condition::Sound,
+            Outcome::Read { violations, .. } => Condition::Unsound(violations),
         }
     }
 
     /// Why there is no document at all, or `None` when there is one.
     #[must_use]
     pub const fn refusal(&self) -> Option<&Unreadable> {
-        self.refusal.as_ref()
+        match &self.outcome {
+            Outcome::Unreadable(refusal) => Some(refusal),
+            Outcome::Read { .. } => None,
+        }
     }
 
     /// What [`Document::validate`] says about the document that was read.
@@ -388,13 +461,19 @@ impl<K: NodeKind, C> Opening<K, C> {
     /// wants the second with the first answered yes.
     #[must_use]
     pub fn violations(&self) -> &[Violation] {
-        &self.violations
+        match &self.outcome {
+            Outcome::Read { violations, .. } => violations,
+            Outcome::Unreadable(_) => &[],
+        }
     }
 
     /// What would not survive the read, named.
     #[must_use]
     pub fn dropped(&self) -> &[Dropped] {
-        &self.dropped
+        match &self.outcome {
+            Outcome::Read { dropped, .. } => dropped,
+            Outcome::Unreadable(_) => &[],
+        }
     }
 
     /// Whether the archive can be installed: a document was read and its own
@@ -405,28 +484,32 @@ impl<K: NodeKind, C> Opening<K, C> {
     /// stale is the failure mode this module was written against.
     #[must_use]
     pub fn opens(&self) -> bool {
-        self.archive.is_some() && self.violations.is_empty()
+        matches!(self.condition(), Condition::Sound)
     }
 
     /// The one sentence to put in front of a person, or `None` when it opens.
     ///
     /// This is the value the `bool` was standing in for.
+    ///
+    /// ★ R1978 — derived from [`condition`](Self::condition), so the rule that
+    /// a refusal outranks a violation list is written once. It used to be
+    /// spelled here and re-spelled by every caller that wanted the two apart.
     #[must_use]
     pub fn reason(&self) -> Option<String> {
-        if let Some(refusal) = &self.refusal {
-            return Some(refusal.to_string());
-        }
-        let first = self.violations.first()?;
-        Some(match self.violations.len() {
-            1 => format!("the graph is not sound: {first}"),
-            n => format!("the graph is not sound in {n} ways, starting with: {first}"),
-        })
+        self.condition().sentence()
     }
 
     /// The archive, if it opens.
     #[must_use]
     pub fn take(self) -> Option<Archive<K, C>> {
-        self.opens().then_some(self.archive).flatten()
+        match self.outcome {
+            Outcome::Read {
+                violations,
+                archive,
+                ..
+            } if violations.is_empty() => Some(archive),
+            _ => None,
+        }
     }
 
     /// The archive even though it does not open — for a tool whose job is to
@@ -436,7 +519,74 @@ impl<K: NodeKind, C> Opening<K, C> {
     /// a caller cannot reach it without saying so.
     #[must_use]
     pub fn take_despite_violations(self) -> Option<Archive<K, C>> {
-        self.archive
+        match self.outcome {
+            Outcome::Read { archive, .. } => Some(archive),
+            Outcome::Unreadable(_) => None,
+        }
+    }
+}
+
+/// ★★★★★ R1978 — what condition the saved graph is in: **one of three**.
+///
+/// The three are exclusive and exhaustive by construction — they are
+/// [`Archive::read`]'s own two endings with the readable one split on whether
+/// the document satisfies its own invariants — so a caller that matches on this
+/// has considered every answer, and a caller written before a fourth answer
+/// existed would stop compiling rather than fall through as openable.
+///
+/// That last property is why this is a type and not a pair of accessors. The
+/// screen this crate was written for had, before R1978, worked the split out
+/// for itself against the *absence* of a refusal, and its own comment recorded
+/// what nothing then asserted: a future opening that reported a third kind of
+/// trouble through neither channel would have been treated as fine.
+///
+/// # Which arm a caller wants
+///
+/// * [`Unreadable`](Self::Unreadable) — there is **no document**. A screen has
+///   nothing to show and says why; nothing it holds should change.
+/// * [`Unsound`](Self::Unsound) — there **is** a document and it breaks its own
+///   invariants. Whether to show it is the caller's call and both answers are
+///   defensible: a tool that runs graphs refuses, a tool whose job is to repair
+///   one opens it and names the faults.
+/// * [`Sound`](Self::Sound) — there is a document and it holds. Note that
+///   [`dropped`](Opening::dropped) can still be non-empty: a stale selection or
+///   an unreadable companion is not the graph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Condition<'a> {
+    /// No document was read, for this reason.
+    Unreadable(&'a Unreadable),
+    /// A document was read and [`Document::validate`] refuses it, for these
+    /// reasons. Never empty — an empty list is [`Sound`](Self::Sound).
+    Unsound(&'a [Violation]),
+    /// A document was read and its own invariants hold.
+    Sound,
+}
+
+impl Condition<'_> {
+    /// The one sentence for this condition, or `None` when there is nothing to
+    /// report.
+    ///
+    /// [`Opening::reason`] is this, and this is where it lives now: a caller
+    /// that has already matched the arm should not have to go back to the
+    /// opening for the words, and a second spelling of them would be a second
+    /// rule. `Sound` answers `None` — the sentence for "it worked" belongs to
+    /// the screen, which knows what it just opened and how it names things.
+    #[must_use]
+    pub fn sentence(&self) -> Option<String> {
+        match self {
+            Self::Unreadable(refusal) => Some(refusal.to_string()),
+            // ⚠ `first()?` rather than an index: the arm's own documentation
+            // says the slice is never empty, and a `?` keeps that promise from
+            // being enforced by a panic.
+            Self::Unsound(violations) => {
+                let first = violations.first()?;
+                Some(match violations.len() {
+                    1 => format!("the graph is not sound: {first}"),
+                    n => format!("the graph is not sound in {n} ways, starting with: {first}"),
+                })
+            }
+            Self::Sound => None,
+        }
     }
 }
 

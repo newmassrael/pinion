@@ -3681,8 +3681,19 @@ impl NodeGraphExternal {
     /// The sentence to put in front of whoever asked, with the graph unchanged.
     fn open_json(&self, json: &str) -> Result<(), String> {
         let opening = Archive::<MaterialOp, EditorState>::read(json);
-        if let Some(reason) = opening.reason() {
-            return Err(reason);
+        // ★★★★★ R1978 — this editor refuses BOTH conditions, and that is a
+        // policy rather than an accident of which accessor was reached for.
+        //
+        // `Condition` (R1978) publishes the three-way: no document, a document
+        // that breaks its own invariants, a sound one. This screen's job is to
+        // *run* a material graph, so the middle one is refused here — where the
+        // node lab, whose job is to *look at* a graph, opens it and names every
+        // fault on a card (R1977). Two screens, two answers, one published
+        // question; `sentence` is `None` for exactly `Sound`, so the two
+        // refusals are one branch on purpose and `editor_refuses_both_kinds`
+        // is what holds them there.
+        if let Some(why) = opening.condition().sentence() {
+            return Err(why);
         }
         let archive = opening.take().ok_or_else(|| "unreadable".to_owned())?;
         match archive.companion() {

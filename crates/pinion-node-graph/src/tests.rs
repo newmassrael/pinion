@@ -10,10 +10,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Admission, Admits, AdoptError, Align, Appearance, Archive, Axis, BeaconError, BreakError,
-    Breakpoints, Bringup, Camera, Carried, Carrying, Command, Composition, ConnectError, Container,
-    Control, Conversion, Crossings, Definitions, Direction, Discovery, Distribute, Document, Drawn,
-    Dropped, DuplicateError, Edge, EditError, EditPath, Extent, ExtractError, Fit, Flow,
-    ForceError, Fragment, GroupError, Grow, Halt, InsertError, Inspectable, Instance,
+    Breakpoints, Bringup, Camera, Carried, Carrying, Command, Composition, Condition, ConnectError,
+    Container, Control, Conversion, Crossings, Definitions, Direction, Discovery, Distribute,
+    Document, Drawn, Dropped, DuplicateError, Edge, EditError, EditPath, Extent, ExtractError, Fit,
+    Flow, ForceError, Fragment, GroupError, Grow, Halt, InsertError, Inspectable, Instance,
     InterfaceSide, Item, ItemError, Layered, LinkId, LinkLayer, Machine, Margin, Multiplicity,
     Naming, NestError, Node, NodeBody, NodeId, NodeKind, NodeSite, ObserveError, Occurrence,
     Organic, Orphaned, ParentError, Passing, PathError, Port, PortPath, PortRef, PortSite,
@@ -15714,6 +15714,116 @@ fn r1689_a_broken_graph_is_refused_by_naming_what_is_broken() {
         opening.take_despite_violations().is_some(),
         "a repair tool can still have it, and has to say so to get it"
     );
+}
+
+/// ★★★★★ R1978 — **one derivation, six readers.**
+///
+/// `Opening` answers seven different questions about one read, and until R1978
+/// each was computed from a different pair of private fields. That is fine
+/// until two of them disagree, and two of them did: the node lab's own splitter
+/// called a refusal-with-violations *openable* where [`Opening::reason`] called
+/// it *refused*. Neither could be reached, which is exactly what made the
+/// disagreement survive — an unreachable state nobody can test is a state
+/// nobody notices going wrong.
+///
+/// [`Opening::condition`] is now the one derivation and every other reader is
+/// asserted **against it** rather than against a hand-written expectation, over
+/// the whole population [`Archive::read`] can produce. A reader that stopped
+/// agreeing would fail here whichever side moved.
+///
+/// ⚠ The population carries two `Sound` rows on purpose: a document with
+/// something *dropped* is sound, because a stale selection is not the graph.
+#[test]
+fn r1978_every_reader_of_an_opening_agrees_with_its_condition() {
+    let good = saved().write().expect("written");
+    let bare = Archive::<Op, Extras>::of(fixture().document)
+        .write()
+        .expect("written");
+
+    // Each row is a text `read` can be given and the condition it must answer.
+    let population: [(&str, String, &str); 7] = [
+        ("nothing has been saved", "   \n ".to_owned(), "unreadable"),
+        (
+            "not the envelope",
+            "{\"revision\": ".to_owned(),
+            "unreadable",
+        ),
+        (
+            "another revision",
+            good.replace("\"revision\": 1", "\"revision\": 0"),
+            "unreadable",
+        ),
+        (
+            "a taxonomy this build does not have",
+            good.replace("\"Add\"", "\"Multiply\""),
+            "unreadable",
+        ),
+        (
+            "a link into a socket that is not there",
+            bare.replacen("\"port\": 0", "\"port\": 9", 1),
+            "unsound",
+        ),
+        ("a whole document", good.clone(), "sound"),
+        (
+            "a document whose saved selection went stale",
+            good.replace("\"selection\": [", "\"selection\": [4242,\n    "),
+            "sound",
+        ),
+    ];
+
+    for (what, text, expected) in population {
+        let opening = Archive::<Op, Extras>::read(&text);
+        let condition = opening.condition();
+        let named = match condition {
+            Condition::Unreadable(_) => "unreadable",
+            Condition::Unsound(violations) => {
+                assert!(
+                    !violations.is_empty(),
+                    "an empty list is `Sound`, so this arm is never empty: {what}"
+                );
+                "unsound"
+            }
+            Condition::Sound => "sound",
+        };
+        assert_eq!(named, expected, "the condition of {what}");
+        let sentence = condition.sentence();
+
+        assert_eq!(
+            opening.refusal().is_some(),
+            named == "unreadable",
+            "refusal answers exactly the unreadable arm: {what}"
+        );
+        assert_eq!(
+            !opening.violations().is_empty(),
+            named == "unsound",
+            "violations answer exactly the unsound arm: {what}"
+        );
+        assert_eq!(
+            opening.opens(),
+            named == "sound",
+            "opens answers exactly the sound arm: {what}"
+        );
+        assert_eq!(
+            opening.reason(),
+            sentence,
+            "the sentence a screen shows is the condition's own: {what}"
+        );
+        assert_eq!(
+            sentence.is_some(),
+            named != "sound",
+            "a sentence for exactly the two troubles: {what}"
+        );
+        assert_eq!(
+            opening.clone().take().is_some(),
+            named == "sound",
+            "take hands out only a sound document: {what}"
+        );
+        assert_eq!(
+            opening.take_despite_violations().is_some(),
+            named != "unreadable",
+            "a repair tool gets a document whenever there IS one: {what}"
+        );
+    }
 }
 
 /// ★ R1689 — every [`Violation`] has a sentence, and no two read alike.

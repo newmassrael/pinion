@@ -3807,6 +3807,48 @@ fn r852_set_graph_rejects_malformed_and_version_mismatch() {
     });
 }
 
+/// ★★★★★ R1978 — **this editor refuses BOTH conditions, and that is a policy.**
+///
+/// `Condition` (R1978) splits what one sentence used to fold: *there is no
+/// document* and *there is a document and it breaks its own invariants*. The
+/// node lab answers those differently — it opens the second one and names every
+/// fault on a card (R1977) — because its job is to look at a graph. This
+/// editor's job is to run one, so it refuses both.
+///
+/// The four refusals above are all the first kind. The second had **no test at
+/// all**: `r852_set_graph_rejects_malformed_and_version_mismatch` never fed it a
+/// document that parses and is unsound, so nothing held this screen to its own
+/// answer and a change of accessor could have quietly flipped it.
+#[test]
+fn r1978_the_editor_refuses_an_unsound_document_as_well_as_an_unreadable_one() {
+    Owner::new().run(|| {
+        let coord = coordinator();
+        let snap = coord.serialized_json();
+        // The simplest structural break there is, and one this editor's own
+        // edits cannot produce: a link landing on a socket that is not there.
+        let unsound = snap.replacen("\"port\": 0", "\"port\": 9", 1);
+        assert_ne!(unsound, snap, "the fixture was actually broken");
+
+        let why = coord
+            .open_json(&unsound)
+            .expect_err("a document that breaks its own invariants is refused");
+        assert!(
+            why.contains("not sound"),
+            "and the refusal says the document is unsound rather than unreadable: {why}"
+        );
+        assert_eq!(
+            coord.node_count(),
+            4,
+            "the graph is where it was, so a refusal is not a half-open"
+        );
+
+        assert!(
+            coord.open_json(&snap).is_ok(),
+            "and the whole document still opens, so the refusal was about the break"
+        );
+    });
+}
+
 #[test]
 fn r852_loaded_counters_resume_monotonic_mint() {
     Owner::new().run(|| {

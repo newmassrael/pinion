@@ -253,7 +253,7 @@ pub use admitted::Admitted;
 pub use appearance::{
     Appearance, Drawn, Faces, Hidden, PutAway, PutAwayRefusal, Tint, VisiblePorts,
 };
-pub use archive::{Archive, Dropped, Opening, REVISION, Unreadable, Unwritable};
+pub use archive::{Archive, Condition, Dropped, Opening, REVISION, Unreadable, Unwritable};
 pub use arrange::{
     Align, ArrangePass, ArrangeTail, Axis, Distribute, Edge, Stack, Straighten, Straightened,
 };

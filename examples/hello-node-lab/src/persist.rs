@@ -48,7 +48,7 @@ use pinion_core::Storage;
 use pinion_core::selection::Selection;
 use pinion_core::utterance::{Tone, Utterance};
 use pinion_core::widgets::config_form::ConfigForm;
-use pinion_node_graph::{Archive, Document, NodeId};
+use pinion_node_graph::{Archive, Condition, Document, NodeId};
 use serde::{Deserialize, Serialize};
 
 use crate::graph::LabNode;
@@ -283,15 +283,26 @@ pub fn open(state: &Rc<LabState>, text: &str) -> Result<String, String> {
     // snapshot's SHAPE and says *loaded*, and its validation pass then looks at
     // field values only — it has no structural axis, so it opens such a graph
     // and never mentions it.
-    if let Some(why) = unreadable(&opening) {
-        state.say(Utterance::refused(&why));
-        return Err(why);
-    }
-    let unsound: Vec<String> = opening
-        .violations()
-        .iter()
-        .map(std::string::ToString::to_string)
-        .collect();
+    //
+    // ★★★★★ R1978 — and the split is now the CRATE'S, matched here rather than
+    // worked out here. R1977 asked whether there were violations and fell
+    // through to `Opening::reason`, which is a re-derivation of a rule the crate
+    // already owns; `Condition` hands back the three-way as one value, so this
+    // screen states its policy — *unreadable is refused, unsound is opened* —
+    // and a fourth answer added upstream stops this compiling instead of
+    // arriving here as "fine".
+    let unsound: Vec<String> = match opening.condition() {
+        Condition::Unreadable(why) => {
+            let why = why.to_string();
+            state.say(Utterance::refused(&why));
+            return Err(why);
+        }
+        Condition::Unsound(violations) => violations
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect(),
+        Condition::Sound => Vec::new(),
+    };
     // ★ What the archive could not carry is said out loud, because this is the
     // one moment a person can act on it. `Dropped` is not a failure — the graph
     // is here — and a screen that swallowed it would be the placeholder the
@@ -334,27 +345,6 @@ pub fn open(state: &Rc<LabState>, text: &str) -> Result<String, String> {
     let said = Utterance::done(format!("opened · {}", clauses.join(" · ")));
     state.say(said.clone());
     Ok(said.sentence())
-}
-
-/// ★★★★★ R1977 — why there is **no document at all**, as opposed to a document
-/// whose own invariants do not hold.
-///
-/// [`Opening::reason`](pinion_node_graph::Opening::reason) folds the two, which
-/// is right for a caller that only
-/// wants one sentence and wrong for this screen: one of them means *there is
-/// nothing to show you* and the other means *here it is, and here is what is
-/// wrong with it*. Written against `refusal`'s absence rather than against a
-/// list of arms, so an [`Unreadable`](pinion_node_graph::Unreadable) added
-/// upstream is covered without anybody editing this.
-fn unreadable<C>(opening: &pinion_node_graph::Opening<LabNode, C>) -> Option<String> {
-    // A document that parsed is PRESENT whatever its invariants say, so the
-    // only thing that means "nothing to show" is a reason with no violations
-    // behind it — `reason` answers the refusal first and falls through to the
-    // violations, and this keeps only the first of those two.
-    if !opening.violations().is_empty() {
-        return None;
-    }
-    opening.reason()
 }
 
 /// Put the whole screen back to the graph it opens with, and forget the save.
