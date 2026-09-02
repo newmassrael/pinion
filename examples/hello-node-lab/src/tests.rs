@@ -810,6 +810,23 @@ fn r1718_every_gate_finding_is_said_distinctly_and_never_names_its_card() {
             }
             .sentence(),
         ),
+        // ★★★★★ R1976 — the eighth situation, and this gate caught its absence
+        // on the first run after the arm was added, exactly as it caught the
+        // fifth, the sixth and the seventh. FOUR for four: an arm nobody drives
+        // is an arm that can say anything.
+        //
+        // ⚠ The sentence is the FRAMEWORK's, carried verbatim, which is the
+        // whole point of this arm — it exists for the faults this screen has no
+        // word of its own for, and a wording here would be the screen answering
+        // a question the crate already answered.
+        (
+            "Structural",
+            super::Finding::Structural(pinion_node_graph::Violation::DanglingLink {
+                tree: ROOT,
+                link: pinion_node_graph::LinkId(4),
+            })
+            .sentence(),
+        ),
     ];
     assert_speaks_of("Finding", CARD, super::Finding::ARMS, &said, &[]);
 }
@@ -5509,6 +5526,173 @@ fn r1961_a_card_learns_what_it_speaks_from_the_wire_it_draws() {
             None,
             "★★★★★ and it stops speaking it — a derived fact that only ever \
              grew would be a stored one wearing a derivation's name",
+        );
+    });
+}
+
+/// ★★★★★ R1976 — **every finding the framework's review found reaches the
+/// gate**, and nothing is dropped between them.
+///
+/// R1945 built `Document::review` as the join of the structural verdict and
+/// every kind's judgement, and R1974's carry recorded that no screen called it.
+/// Measured at R1976, this screen asked `warnings(ROOT)` for one half and
+/// `validate()` for the other, took ONE of `Violation`'s seventeen arms and
+/// dropped the rest with a bare `continue` — so a fault in any other arm, or a
+/// judgement in any tree but `ROOT`, was raised by the framework and never
+/// shown.
+///
+/// ⚠ The assertion is a COUNT over the review's own list rather than a check
+/// that some particular fault appears, because the defect was structural: any
+/// arm the conversion has no case for is a finding that vanishes, and naming
+/// the arms here would be the hand-kept list the conversion exists to avoid.
+#[test]
+fn r1976_every_finding_the_review_found_reaches_the_gate() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+
+        // ★★★★★ The opening canvas is CLEAN, which is a good state for the
+        // screen and no population at all for this test — a conversion that
+        // dropped everything would satisfy an empty list. So a finding is
+        // CAUSED, by the gesture a person actually makes: this taxonomy's
+        // judgement rule is *listening, and nothing on this canvas dials it*,
+        // so taking a wire away puts a card into it.
+        assert!(
+            state.doc.borrow().review().is_empty(),
+            "★ the fixture opens clean, so what follows is caused rather than found"
+        );
+        let subject = state.node_of("R-01").expect("the specification's router");
+        let inbound: Vec<pinion_node_graph::LinkId> = state
+            .doc
+            .borrow()
+            .tree(ROOT)
+            .map(|tree| {
+                tree.links()
+                    .iter()
+                    .filter(|link| link.to.node == subject)
+                    .map(|link| link.id)
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert!(
+            !inbound.is_empty(),
+            "★ the fixture: peers dial this card, so removing them makes it \
+             listen to nobody"
+        );
+        for link in inbound {
+            super::delete_link(&state, link).expect("a wire a person may remove");
+        }
+
+        let reviewed = state.doc.borrow().review();
+        assert!(
+            !reviewed.findings().is_empty(),
+            "★★★★★ and now the review has something to say — a check with an \
+             empty population proves nothing about the reporting path"
+        );
+        // Every finding, converted — the same call the gate makes, so a case
+        // the conversion cannot answer is a compile failure and a case it
+        // answers wrongly is visible here.
+        let converted: Vec<(String, String)> = reviewed
+            .findings()
+            .iter()
+            .map(|found| {
+                let (who, mine) = state.reviewed_finding(found);
+                (who, mine.sentence())
+            })
+            .collect();
+        assert_eq!(
+            converted.len(),
+            reviewed.findings().len(),
+            "★★★★★ the conversion is total: as many findings come out as went in"
+        );
+
+        // And they arrive in the gate's own list, which is what a person reads.
+        let gated = state.defects();
+        for (who, sentence) in &converted {
+            assert!(
+                gated
+                    .iter()
+                    .any(|(name, finding)| name == who && finding.sentence() == *sentence),
+                "★★★★★ the gate carries `{who} · {sentence}` — a finding the \
+                 framework raised and the screen dropped is exactly the defect \
+                 this round repaid"
+            );
+        }
+
+        // ★★★★★ And the WEIGHT travels with it, because a finding that arrives
+        // as a warning when the framework called it blocking is a launch that
+        // opens on a graph that cannot run — R1941's defect, one layer out.
+        for found in reviewed.findings() {
+            let (_, mine) = state.reviewed_finding(found);
+            assert_eq!(
+                mine.blocks(),
+                found.weight().blocks(),
+                "★ {:?} is weighed the same either side of the conversion",
+                found.sentence()
+            );
+        }
+    });
+}
+
+/// ★★★★★ R1976 — **a structural fault the screen has no word for is still
+/// reported**, and it BLOCKS.
+///
+/// The arm the old `continue` threw away. Asked of the conversion with a fault
+/// this screen has no case of its own for, which is what `Finding::Structural`
+/// exists to carry — so the assertion is that the framework's sentence and
+/// weight arrive, not that some wording of ours matches.
+///
+/// ⚠ Built as a VALUE rather than by corrupting a document, and that is the
+/// honest shape: the arms this covers are the ones the enum's own header says
+/// this crate's edits cannot produce, so there is no edit that would make one.
+/// They arrive with a document, which is the path `persist::open` opens.
+#[test]
+fn r1976_a_structural_fault_with_no_screen_wording_is_still_reported() {
+    use pinion_node_graph::{Fault, Violation};
+
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+        let subject = state.node_of("R-01").expect("the specification's router");
+
+        let violation = Violation::DanglingEcho {
+            tree: ROOT,
+            node: subject,
+        };
+        let found = pinion_node_graph::Finding {
+            tree: ROOT,
+            sites: vec![subject],
+            fault: Fault::Structure(violation.clone()),
+        };
+        let (who, mine) = state.reviewed_finding(&found);
+        assert_eq!(who, "R-01", "★ it names the card a person is taken to");
+        assert_eq!(
+            mine.sentence(),
+            violation.to_string(),
+            "★★★★★ the framework's own sentence, verbatim — a paraphrase here \
+             would be a second author on one statement"
+        );
+        assert!(
+            mine.blocks(),
+            "★★★★★ and it BLOCKS, which is the framework's verdict (a tree with \
+             a structural fault is not runnable whatever every kind says) rather \
+             than a judgement made on this screen"
+        );
+
+        // ★ And a fault that no card answers for is still reported, named for
+        // the document rather than dropped for want of a card — the review's
+        // own doc says that is a legitimate answer for some arms.
+        let orphan = pinion_node_graph::Finding {
+            tree: ROOT,
+            sites: Vec::new(),
+            fault: Fault::Structure(violation),
+        };
+        let (who, _) = state.reviewed_finding(&orphan);
+        assert_eq!(
+            who, "the document",
+            "★★★★★ a finding with no site is named, not discarded"
         );
     });
 }

@@ -102,10 +102,10 @@ use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::widgets::wheel::WheelDirection;
 use pinion_core::{CellKind, Frame, Modifiers, Scene, WidgetCore, edit_field_keymap};
 use pinion_node_graph::{
-    Act, Camera, Document, Drawn, Extent, Faces, Fit, Found, InZone, Instance, Item, Judged,
+    Act, Camera, Document, Drawn, Extent, Faces, Fault, Fit, Found, InZone, Instance, Item, Judged,
     LandError, Landfall, LinkId, LinkLayer, Margin, NameSource, Node, NodeBody, NodeId, NodeKind,
     Objection, PortPath, PortRef, PortSite, ROOT, Relinked, Side, Socket, Tint, Violation,
-    WatchError, Watches, ZoomRange, palette_of, type_palette,
+    WatchError, Watches, Weight, ZoomRange, palette_of, type_palette,
 };
 use pinion_platform_storage::AppStorage;
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
@@ -2310,13 +2310,36 @@ impl LabState {
         // ★★★★★ R1941 — the OBJECTION, not just its sentence: the weight comes
         // from the framework too, so this screen does not decide how heavily to
         // take an answer it did not write.
-        let said: BTreeMap<NodeId, Objection> = self
-            .doc
-            .borrow()
-            .warnings(ROOT)
-            .into_iter()
-            .map(|held| (held.node, held.objection))
-            .collect();
+        //
+        // ★★★★★ R1976 — and it is [`Document::review`] that is asked now, which
+        // is the JOIN of that call and the structural verdict. R1945 built it
+        // for exactly this consumer and R1974's carry recorded that no screen
+        // called it; measured at R1976, this screen was asking `warnings(ROOT)`
+        // for one half and `validate()` for the other, taking ONE arm of the
+        // second and dropping the rest with a bare `continue`. Two calls, one
+        // question, and a silent discard between them.
+        //
+        // Three things follow from asking the join instead, and each is
+        // asserted rather than described:
+        //
+        // * **Every tree**, not just `ROOT`. A card standing for a definition
+        //   (R1936) has its own tree, and a judgement inside it was invisible
+        //   here.
+        // * **Every structural arm**, not one. What this screen has no word of
+        //   its own for is carried at the framework's ([`Finding::Structural`]),
+        //   because a fault nobody has a sentence for is still a fault.
+        // * **Worst first**, which is the review's order and not a sort written
+        //   here — so "take me to the first problem" and "what is worst" are
+        //   one answer.
+        // ★★★★★ R1976 — **every finding, through ONE conversion**, so there is
+        // no path on which one is dropped. The first draft of this round had
+        // two loops with a `continue` in each — the shape it was replacing —
+        // and a judgement inside a tree other than `ROOT` still fell through
+        // both. `reviewed_finding` is total over the review's own vocabulary,
+        // and this is its only caller.
+        for found_it in self.doc.borrow().review().findings() {
+            found.push(self.reviewed_finding(found_it));
+        }
         for node in self.cards() {
             let name = self.name_of(node);
             // ★★ R1716 — the form the screen SHOWS. A gate over the stored half
@@ -2357,9 +2380,6 @@ impl LabState {
                 // lives on the kind because it is a fact about this node in
                 // this graph; what belongs to the screen is only where to put
                 // the sentence.
-                if let Some(objection) = said.get(&node) {
-                    found.push((name.clone(), Finding::Unwired(objection.clone())));
-                }
                 if form
                     .field("discovery.multicast.enabled")
                     .is_some_and(|f| f.value().trim() == "true")
@@ -2416,31 +2436,60 @@ impl LabState {
         // only way to be holding one is to have made it legal and then changed
         // a node's build — which is exactly what a person does on this screen,
         // and exactly what a validation pass is for.
-        {
-            let doc = self.doc.borrow();
-            for violation in doc.validate() {
-                let Violation::Incompatible { link, refusal, .. } = violation else {
-                    continue;
-                };
-                let Some(link) = doc.tree(ROOT).and_then(|t| t.link(link)) else {
-                    continue;
-                };
-                // Named on the end the refusal blames, because that is the card
-                // a person has to change; the sentence names the other.
-                let (blamed, peer) = match refusal.end {
-                    Side::Output => (link.from.node, link.to.node),
-                    Side::Input => (link.to.node, link.from.node),
-                };
-                found.push((
-                    self.name_of(blamed),
-                    Finding::Incompatible {
-                        peer: self.name_of(peer),
-                        because: refusal.because.clone(),
-                    },
-                ));
+        found
+    }
+
+    /// ★★★★★ R1976 — **one finding of the framework's review, in this screen's
+    /// words**, with the card to take a person to.
+    ///
+    /// TOTAL over the review's vocabulary, and that is the property that
+    /// matters rather than the wording: what stood here before R1976 read
+    /// `Document::validate()` a second time and matched ONE of `Violation`'s
+    /// seventeen arms, dropping the rest with a bare `continue`, and read
+    /// `warnings(ROOT)` for the other half so a judgement inside any other tree
+    /// was invisible too. The dropped faults are the ones a document can only
+    /// ARRIVE with rather than be edited into — the enum's own header says
+    /// so — and this screen OPENS SAVED DOCUMENTS (`persist::open`, over the
+    /// storage it was given or a string handed to it over the wire). So the
+    /// state was reachable and the gate said nothing about it.
+    ///
+    /// ⚠ The screen's own wording is KEPT where it has one, and that is not a
+    /// hedge: `Violation::Incompatible`'s sentence names a link id and a tree
+    /// id, where this screen names the two CARDS — and a person repairs a card
+    /// (R1924's rule, that the sentence a person reads is the one that has to
+    /// be right). What has no better wording here is carried verbatim at the
+    /// framework's weight, because a fault nobody has a sentence for is still a
+    /// fault.
+    fn reviewed_finding(&self, found: &pinion_node_graph::Finding) -> (String, Finding) {
+        // The card a person is taken to. `site` may legitimately be absent —
+        // the review's own doc says which faults have no card — and this says
+        // so rather than dropping the finding for want of a name.
+        let who = found
+            .site()
+            .map_or_else(|| "the document".to_owned(), |node| self.name_of(node));
+        match &found.fault {
+            Fault::Judgement(objection) => (who, Finding::Unwired(objection.clone())),
+            Fault::Structure(violation) => {
+                if let Violation::Incompatible { link, refusal, .. } = violation
+                    && let Some(link) = self.doc.borrow().tree(ROOT).and_then(|t| t.link(*link))
+                {
+                    // Named on the end the refusal blames, because that is the
+                    // card a person has to change; the sentence names the other.
+                    let (blamed, peer) = match refusal.end {
+                        Side::Output => (link.from.node, link.to.node),
+                        Side::Input => (link.to.node, link.from.node),
+                    };
+                    return (
+                        self.name_of(blamed),
+                        Finding::Incompatible {
+                            peer: self.name_of(peer),
+                            because: refusal.because.clone(),
+                        },
+                    );
+                }
+                (who, Finding::Structural(violation.clone()))
             }
         }
-        found
     }
 
     /// ★★★ R1688 — **the gate's findings with the card each one is ON**, which
@@ -2648,6 +2697,30 @@ enum Finding {
         /// The taxonomy's own sentence, which names both builds and both spans.
         because: String,
     },
+    /// ★★★★★ R1976 — **a structural fault this screen has no word of its own
+    /// for**, carried at the framework's sentence and the framework's weight.
+    ///
+    /// The arm that stops the gate DROPPING things. Until R1976 this screen
+    /// read `Document::validate()` and matched exactly one of `Violation`'s
+    /// seventeen arms, discarding the rest with a bare `continue` — so a
+    /// document holding a dangling link, an overlinked socket, a cycle or a
+    /// broken section was launched with the gate saying nothing. The enum's own
+    /// header explains why nobody noticed: those are states this crate's edits
+    /// cannot produce. They arrive with a document — and this screen opens
+    /// saved documents (`persist::open`, over the storage it was given or a
+    /// string handed to it over the wire).
+    ///
+    /// ⚠ It is the LAST resort and not the first. Where this screen has a
+    /// better sentence it keeps it ([`Self::Incompatible`] names two cards
+    /// where the framework's names two ids), because the sentence a person
+    /// reads is the one that has to be right (R1924). What this arm guarantees
+    /// is that having no better sentence is never a reason to say nothing.
+    ///
+    /// It BLOCKS, and that is the framework's verdict rather than a choice
+    /// made here: `Fault::weight` answers `Blocks` for every structural fault,
+    /// on R1941's sentence that a tree with a structural fault is not runnable
+    /// whatever every kind says.
+    Structural(Violation),
 }
 
 impl Finding {
@@ -2675,6 +2748,13 @@ impl Finding {
             // Neither is a partial picture — the other three arms are — and
             // that is the line this function draws.
             Self::Collision { .. } | Self::Incompatible { .. } => true,
+            // ★★★★★ R1976 — the FRAMEWORK's weight, asked rather than assumed.
+            // Writing `true` here would be the same mistake R1941 found in the
+            // `Unwired` arm: a judgement made on this screen about a verdict
+            // written in the crate. It answers `Blocks` for every structural
+            // fault today, and if that ever stops being so this arm follows it
+            // without anybody editing this line.
+            Self::Structural(violation) => Fault::Structure(violation.clone()).weight().blocks(),
         }
     }
 
@@ -2709,6 +2789,14 @@ impl Finding {
             Self::Incompatible { peer, because } => {
                 format!("cannot reach {peer}: {because}")
             }
+            // ★★★★★ R1976 — the framework's own sentence, verbatim, for the
+            // same reason the two above are verbatim: this screen has no word
+            // for these faults, and inventing one would be a second author on a
+            // statement the crate already makes. It reads less well than the
+            // arms above — it names ids where they name cards — and that is
+            // stated rather than hidden: a sentence a person must decode is
+            // still better than a fault nobody is told about.
+            Self::Structural(violation) => violation.to_string(),
         }
     }
 }
@@ -10931,6 +11019,20 @@ const FIELDS: &[SchemaField] = &{
         SchemaField::new("discovery", "bool"),
         SchemaField::new("cursor", "string"),
         SchemaField::new("verdict", "string"),
+        // ★★★★★ R1976 — **the whole document checked once**, worst first, each
+        // finding naming the card to go to and carrying the framework's own
+        // weight.
+        //
+        // Published beside `verdict` and `gate` rather than replacing them,
+        // because the three answer different questions: `verdict` is two counts
+        // and a bool, `gate` is the panel's lines, and this is the ORDERED list
+        // with a three-valued fitness. The behaviour canon has the first two in
+        // one shape — a flat issue list in emission order plus a boolean gate on
+        // "are there errors" — and this is where the tree is ahead of it: an
+        // emission-ordered list cannot answer *what is worst*, so its own
+        // jump-to-first-issue takes a person to whatever happened to be raised
+        // first. Here the order IS the answer.
+        SchemaField::new("review", "json"),
         SchemaField::new("gate", "string"),
         SchemaField::new("form", "string"),
         // ★★★★★ R1853 — the faults this node's own settings ADMIT, and the
@@ -11744,6 +11846,7 @@ impl ExternalIntrospect for LabOracle {
                     .to_string(),
                 )
             }
+            "review" => text(review_wire(state).to_string()),
             "gate" => text(
                 serde_json::Value::Array(
                     state
@@ -18327,6 +18430,84 @@ fn set_pin_locator(
             Err(InvokeError::rejected(said.into_clause()))
         }
     }
+}
+
+/// ★★★★★ R1976 — **the whole document checked once**, worst first, with the
+/// verdict over the lot.
+///
+/// [`Document::review`] made load-bearing. R1945 built it as the join of the
+/// structural verdict and every kind's judgement, and R1974's carry recorded
+/// that no screen called it; this is the caller. Everything here is read off
+/// the review rather than re-derived, so what this publishes and what the gate
+/// panel shows cannot come to disagree.
+///
+/// # What the behaviour canon has, and where this is ahead of it
+///
+/// Measured at R1976 against its own validation pass: it answers a flat array
+/// of `{card, level, field, sentence}` in EMISSION order, with two levels, and
+/// gates a run on `level === 'error'` being absent. So:
+///
+/// * its **jump-to-first-issue takes a person to `[0]`** — whatever was raised
+///   first, which is the first card its walk reached and not the worst thing
+///   wrong. Here the order is severity, so `worst` and `first` are one.
+/// * its gate is a **boolean over a filter**. Here
+///   [`Fitness`](pinion_node_graph::Fitness) has three arms,
+///   and the middle one is the statement that boolean cannot make: *nothing
+///   stops you, and something was said*. A gate that can only say "open" is how
+///   a partly-specified graph is launched without anybody noticing — which is
+///   `Verdict::sentence`'s own reason for naming warnings even when it opens.
+/// * its walk is over **one graph**. A review is over every tree, so a
+///   judgement inside a definition (R1936) is reported rather than invisible.
+///
+/// ⚠ `site` is the card a person is TAKEN to and may be absent, which the
+/// review's own doc says is legitimate for the faults whose subject is not a
+/// node. It is published as `null` rather than omitted, so a client can tell
+/// *no card answers for this* from *this register does not carry that fact*.
+fn review_wire(state: &Rc<LabState>) -> serde_json::Value {
+    let doc = state.doc.borrow();
+    let reviewed = doc.review();
+    let findings: Vec<serde_json::Value> = reviewed
+        .findings()
+        .iter()
+        .map(|found| {
+            serde_json::json!({
+                "weight": found.weight().wire(),
+                "blocks": found.weight().blocks(),
+                // ★ Which HALF it came from, because the two differ in who may
+                // silence them (the review's own reason for having two arms): a
+                // structural fault is the document's verdict and no application
+                // may add to it, where a judgement is a kind's opinion.
+                "half": match found.fault {
+                    Fault::Structure(_) => "structure",
+                    Fault::Judgement(_) => "judgement",
+                },
+                "site": found.site().map(|node| state.name_of(node)),
+                // Every card involved and not only the first, because a fault
+                // of a PAIR has two and showing one leaves the other looking
+                // clean.
+                "cards": found.sites.iter().map(|node| state.name_of(*node))
+                    .collect::<Vec<_>>(),
+                "sentence": found.sentence(),
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "fitness": reviewed.fitness().wire(),
+        "may_run": reviewed.fitness().may_run(),
+        // Counted from the list rather than kept beside it — the divergence the
+        // review's own header measured in the reference, where two public
+        // methods move a count without adding a message.
+        "counted": Weight::ALL.map(|weight| serde_json::json!({
+            "weight": weight.wire(),
+            "count": reviewed.counted(weight),
+        })).to_vec(),
+        "worst": reviewed.worst().map(|found| serde_json::json!({
+            "weight": found.weight().wire(),
+            "site": found.site().map(|node| state.name_of(node)),
+            "sentence": found.sentence(),
+        })),
+        "findings": findings,
+    })
 }
 
 /// ★★★★★ R1939 — **what every pin on this canvas will TAKE as its resting
