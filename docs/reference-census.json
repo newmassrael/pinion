@@ -895,10 +895,10 @@
       "verdict": "host-framework"
     },
     "node::insert_link": {
-      "covered_by": "a kind cannot intervene when a link is dropped on it; connect decides centrally from the signature and the conversion relation",
+      "covered_by": "NodeKind::berth declares WHERE an arriving end berths among the seats with room, and Document::land keeps deciding what is legal - a policy rather than a hook that edits the graph and answers a bool",
       "mechanism": "node-type",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::dcc_node_insert_link",
+      "verdict": "have"
     },
     "node::labelfunc": {
       "covered_by": "Node::display_name derives from the kind and Node::label overrides it",

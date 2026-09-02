@@ -13842,18 +13842,22 @@ fn open_slot_in(doc: &mut Document<LabNode>, to: NodeId, endpoint: Option<&str>)
 }
 
 /// A slot before `keep` that names no address and holds nothing (R1681).
+///
+/// ★ R1980 — *holds nothing* is [`Document::occupants`]' answer, which counts
+/// the drawn layer and the reported one. This used to walk `links()` and
+/// `observations()` here; so did [`close_slot`], and so did the crate's own
+/// landing planner — except that the planner counted only the first, which is
+/// how an unrelated wire came to take a slot a report was sitting on.
 fn spare_slot(doc: &Document<LabNode>, node: NodeId, keep: u32) -> Option<u32> {
     let items = doc.items(ROOT, node, Side::Input)?;
     (0..keep).find(|port| {
         let empty = items
             .get(*port as usize)
             .is_none_or(|item| item.label.is_none());
-        let socket = Socket::new(node, *port);
         empty
-            && !doc
-                .tree(ROOT)
-                .is_some_and(|t| t.links().iter().any(|l| l.to == socket))
-            && !doc.observations(ROOT).iter().any(|o| o.to == socket)
+            && doc
+                .occupants(ROOT, Socket::new(node, *port), Side::Input)
+                .is_free()
     })
 }
 
@@ -13891,17 +13895,13 @@ fn landing_endpoint(
 /// the links past it, which is the reason this is one crate call and not an
 /// index fixup here.
 fn close_slot(state: &LabState, node: NodeId, port: u32) {
-    let still_used = state
+    // ★ R1980 — one derivation, shared with `spare_slot` and with the crate's
+    // landing planner: *still used* means either layer holds it.
+    let still_used = !state
         .doc
         .borrow()
-        .tree(ROOT)
-        .is_some_and(|t| t.links().iter().any(|l| l.to == Socket::new(node, port)))
-        || state
-            .doc
-            .borrow()
-            .observations(ROOT)
-            .iter()
-            .any(|o| o.to == Socket::new(node, port));
+        .occupants(ROOT, Socket::new(node, port), Side::Input)
+        .is_free();
     if still_used {
         return;
     }
@@ -13918,6 +13918,14 @@ fn close_slot(state: &LabState, node: NodeId, port: u32) {
 /// the same two nodes has to dial a different address, because that is what a
 /// second transport connection is, while two *different* peers may of course
 /// dial the same one.
+///
+/// ⚠ R1980 measured this against [`Document::occupants`] and left it alone:
+/// the debt that prompted the derivation listed this among four readers of *is
+/// anything on this socket*, and it is not one. It asks a different question —
+/// *which addresses has THIS dialler taken on that card* — whose population is
+/// a pair and whose answer is an address rather than a seat. Rewriting it in
+/// terms of a per-socket answer would have made two different questions look
+/// like one, which is the defect this round was repairing.
 fn free_endpoints_in(
     doc: &Document<LabNode>,
     forms: &BTreeMap<NodeId, ConfigForm>,

@@ -230,8 +230,34 @@ round_token_of() {
 # number, which fixes it for anyone using that tool and is therefore advisory.
 # This is the backstop: the first moment a duplicate is knowable from git is
 # the second commit, and this refuses it there.
+#
+# ★★★★★ R1980 — IT COMPARES DECLARATIONS, NOT MENTIONS, and until this round it
+# did not. A subject declares its round in one place — the first token, which is
+# what `round_token_of` reads — but this searched the subject's WHOLE TEXT, so a
+# subject that merely NAMES another round reserved that round forever.
+#
+# ⚠ Driven, not supposed: `86768d69 chore(memory): R1979.1 two remainders of
+# R1980's first measurement` declares R1979.1 and mentions R1980 in a
+# possessive. R1980 was free by every instrument that answers the question —
+# `tools/changelog_rounds.py` said the newest recorded round was R1979, and
+# `docs/phase-b-rounds.tsv` had no 1980 row — and this gate refused it anyway.
+#
+# The two halves were asymmetric, which is what let it hide: extraction already
+# understood that a subject may cite other rounds (`R1760 repay what R1757 got
+# wrong` declares R1760, and `tools/test_hooks.sh` asserts it), while the
+# duplicate check treated every number in the line as a claim. Both halves now
+# read through the same function, so the property is spelled once.
+#
+# ⚠ And the refusal it printed was unfollowable in the same way R1939.3's was:
+# it offered `R1980.1`, which is not a continuation of anything — the round had
+# simply never been used. A gate whose advice is wrong sends the reader in a
+# circle, which is why this is a repair rather than a renumbering.
 round_token_taken() {
-    local token="${1:-}" history="${2:-}"
+    local token="${1:-}" history="${2:-}" subject declared
     [[ -n $token ]] || return 1
-    grep -qE "(^|[^0-9A-Za-z.])${token//./\\.}([^0-9.]|$)" <<<"$history"
+    while IFS= read -r subject; do
+        declared="$(round_token_of "$subject")"
+        [[ $declared == "$token" ]] && return 0
+    done <<<"$history"
+    return 1
 }

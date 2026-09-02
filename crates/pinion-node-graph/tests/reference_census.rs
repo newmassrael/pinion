@@ -44,9 +44,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use pinion_node_graph::{
-    Act, Admits, Admitted, Align, Appearance, Axis, Carrying, Command, ConnectError, Container,
-    Conversion, Crossings, Definitions, Described, Direction, Distribute, Document, Drawn, Edge,
-    EditError, EditPath, Extent, Faces, Fragment, Grow, Hidden, Inspectable, Instance,
+    Act, Admits, Admitted, Align, Appearance, Axis, Berth, Carrying, Command, ConnectError,
+    Container, Conversion, Crossings, Definitions, Described, Direction, Distribute, Document,
+    Drawn, Edge, EditError, EditPath, Extent, Faces, Fragment, Grow, Hidden, Inspectable, Instance,
     InterfacePort, InterfaceSide, Item, ItemError, LandError, Landfall, LinkId, Machine, Matched,
     Multiplicity, Node, NodeBody, NodeId, NodeKind, NodeSite, NotRecombinable, NotSplittable,
     Objection, Passing, Port, PortName, PortPath, PortRef, PortSite, PortValueError, PutAway, ROOT,
@@ -135,6 +135,14 @@ enum Op {
     /// R1912 — `(Go: control, Whole: Pair, Loose: Bag) -> Out: Pair`. The one
     /// kind that makes every arm of the split question reachable.
     Carry,
+    /// R1980 — `(Seat 0, Seat 1, ..) -> Out: Text`, and it declares
+    /// [`Berth::Fresh`]: an arriving end gets a **seat of its own**.
+    ///
+    /// The same port shape as `Bundle` on purpose — the two differ in exactly
+    /// the one declaration under test, which is `Relay`'s relationship to
+    /// `Double` and for the same reason: an assertion that passes for one and
+    /// not the other cannot be reading anything else about them.
+    Roster,
 }
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
@@ -172,6 +180,7 @@ impl NodeKind for Op {
             Self::Bundle => "Bundle",
             Self::Stage(_) => "Stage",
             Self::Carry => "Carry",
+            Self::Roster => "Roster",
         }
         .to_owned()
     }
@@ -476,7 +485,7 @@ impl NodeKind for Op {
         match self {
             // `Bundle` is here for the same reason the sources are: its members
             // are the NODE's, so its kind declares no fixed input at all.
-            Self::Num(_) | Self::Word(_) | Self::Bundle => Vec::new(),
+            Self::Num(_) | Self::Word(_) | Self::Bundle | Self::Roster => Vec::new(),
             Self::Add => vec![
                 Port::new("Augend", Ty::Number).with_default(Val::Number(0)),
                 Port::new("Addend", Ty::Number).with_default(Val::Number(1)),
@@ -547,7 +556,25 @@ impl NodeKind for Op {
             (Self::Bundle, Side::Input) => {
                 Some(Variadic::at(0, vec![Port::new("Member", Ty::Number)]).at_least(1))
             }
+            (Self::Roster, Side::Input) => {
+                Some(Variadic::at(0, vec![Port::new("Seat", Ty::Number)]).at_least(1))
+            }
             _ => None,
+        }
+    }
+
+    /// R1980 — the one declaration that separates `Roster` from `Bundle`.
+    ///
+    /// ★ It says `Fresh` on BOTH sides while only the input side has a run to
+    /// grow, which is deliberate: a taxonomy is free to want a seat of its own
+    /// wherever an end arrives, and the output side is then a kind asking for
+    /// something its own ports cannot give. That is the case
+    /// [`Berth::Fresh`]'s warning is about, and
+    /// `a_preference_is_not_a_promise_of_a_seat` is what performs it.
+    fn berth(&self, _side: Side) -> Berth {
+        match self {
+            Self::Roster => Berth::Fresh,
+            _ => Berth::Earliest,
         }
     }
 
@@ -556,7 +583,9 @@ impl NodeKind for Op {
             Self::Num(_) | Self::Add | Self::Mul | Self::Double | Self::Relay => {
                 vec![Port::new("Out", Ty::Number)]
             }
-            Self::Word(_) | Self::Shout | Self::Bundle => vec![Port::new("Out", Ty::Text)],
+            Self::Word(_) | Self::Shout | Self::Bundle | Self::Roster => {
+                vec![Port::new("Out", Ty::Text)]
+            }
             Self::Choose | Self::Blend => vec![Port::new("Out", Ty::Number)],
             Self::Sink | Self::Sequence => Vec::new(),
             Self::Stage(_) => vec![Port::control("Then"), Port::new("Cost", Ty::Number)],
@@ -643,7 +672,7 @@ impl NodeKind for Op {
                 }
                 vec![Some(Val::Number(total))]
             }
-            Self::Bundle => vec![Some(Val::Text(
+            Self::Bundle | Self::Roster => vec![Some(Val::Text(
                 inputs
                     .iter()
                     .map(|slot| match slot {
@@ -805,7 +834,13 @@ fn proofs() -> Vec<Proof> {
     all.extend(dcc_r1933_proofs());
     all.extend(r1934_reroute_proofs());
     all.extend(r1935_named_reroute_proofs());
+    all.extend(r1980_berth_proofs());
     all
+}
+
+/// R1980 — the kind's say in **where** an arriving end berths.
+fn r1980_berth_proofs() -> Vec<Proof> {
+    vec![proof("dcc", "node::insert_link", dcc_node_insert_link)]
 }
 
 /// R1632 — the VARIADIC-PORT cluster: the engine's ten commands for a node
@@ -4234,6 +4269,305 @@ fn a_node_that_cannot_grow_says_so(chain: &mut Chain) {
             .expect_err("no such node"),
         LandError::NoSuchNode { .. }
     ));
+}
+
+// ============================================ R1980 — which seat an end takes
+
+/// ★★★★★ R1980 — **a kind says WHERE an arriving end berths**, while the
+/// document keeps deciding what is legal.
+///
+/// # The census row, and why its covering sentence was false in both clauses
+///
+/// The row reads *a kind cannot intervene when a link is dropped on it; connect
+/// decides centrally from the signature and the conversion relation*. Measured
+/// at R1979.1 across the reference hook's header, its three consumers and all
+/// 41 sites that install it — re-driven at R1980, where 41 = 15 sharing one
+/// `return true`, 1 bridging to a script-defined function, and 25 doing the
+/// work below:
+///
+/// * a kind CAN intervene — [`NodeKind::admits`] (R1885) refuses a pair, and
+///   [`NodeKind::variadic`] + [`Document::land`] (R1930) grow a port for one;
+/// * `connect` is not the whole of the decision either — `vet` asks admission,
+///   crossing, cycles and multiplicity.
+///
+/// What those 25 per-node implementations actually do is one thing: an
+/// end that touched this node's open end grows a port from the far end's type
+/// and **moves onto it**. Every part of that was here except **which socket**,
+/// which [`Document::free_port_for`] decided alone. This is that part.
+///
+/// # What is asserted
+///
+/// The first two are the SAME act on two kinds that differ in exactly one
+/// declaration; the third holds them to that; and the last two hold the
+/// division of labour — a preference does not make an illegal landing legal,
+/// and a refused one leaves the document alone.
+#[test]
+fn dcc_node_insert_link() {
+    a_kind_that_says_nothing_takes_the_free_seat(&mut seats());
+    a_kind_that_wants_its_own_seat_grows_one(&mut seats());
+    the_two_kinds_differ_in_one_declaration(&seats());
+    a_preference_does_not_make_an_illegal_landing_legal(&mut seats());
+    a_preference_is_not_a_promise_of_a_seat(&mut seats());
+    a_structural_body_has_no_preference_to_state(&mut seats());
+}
+
+/// Two nodes whose ports are the same shape and whose kinds differ in one
+/// declaration, plus a wire to re-aim at either of them.
+struct Seats {
+    document: Document<Op>,
+    /// Declares nothing: [`Berth::Earliest`] by default.
+    bundle: NodeId,
+    /// Declares [`Berth::Fresh`].
+    roster: NodeId,
+    /// A drawn number wire, standing somewhere else.
+    link: LinkId,
+    /// A drawn TEXT wire, which no number seat may take.
+    text: LinkId,
+    /// A group instance — a body with no kind to ask.
+    group: NodeId,
+}
+
+fn seats() -> Seats {
+    let mut document = Document::new("root");
+    let two = num(&mut document, 2);
+    let sink = node(&mut document, Op::Sink);
+    wire(&mut document, two, 0, sink, 0);
+    let link = document
+        .tree(ROOT)
+        .and_then(|tree| tree.links().last().map(|held| held.id))
+        .expect("the number wire");
+    let word = node(&mut document, Op::Word("hi".to_owned()));
+    let shout = node(&mut document, Op::Shout);
+    wire(&mut document, word, 0, shout, 0);
+    let text = document
+        .tree(ROOT)
+        .and_then(|tree| tree.links().last().map(|held| held.id))
+        .expect("the text wire");
+    let bundle = node(&mut document, Op::Bundle);
+    let roster = node(&mut document, Op::Roster);
+    let definition = document.add_definition("seatless");
+    let group = document
+        .add_node(ROOT, NodeBody::Group(definition), 0, 0)
+        .expect("an instance of it");
+    Seats {
+        document,
+        bundle,
+        roster,
+        link,
+        text,
+        group,
+    }
+}
+
+fn seat_count(document: &Document<Op>, node: NodeId) -> usize {
+    document
+        .signature(ROOT, node)
+        .map_or(0, |signature| signature.inputs.len())
+}
+
+/// ★ The kind that says nothing gets what every node got before this could be
+/// asked: the free seat takes the end and no seat appears.
+fn a_kind_that_says_nothing_takes_the_free_seat(seats: &mut Seats) {
+    let was = seat_count(&seats.document, seats.bundle);
+    let fall = seats
+        .document
+        .may_land(ROOT, seats.link, Side::Input, seats.bundle)
+        .expect("a number wire lands on a number run");
+    assert_eq!(
+        fall,
+        Landfall::Takes(Socket::new(seats.bundle, 0)),
+        "the free seat takes it, which is the default and the answer a person expects"
+    );
+    let landed = seats
+        .document
+        .land(ROOT, seats.link, Side::Input, seats.bundle, Item::plain())
+        .expect("and the act goes through");
+    assert_eq!(
+        landed.fall, fall,
+        "the question IS the first half of the act"
+    );
+    assert_eq!(
+        seat_count(&seats.document, seats.bundle),
+        was,
+        "and no seat appeared"
+    );
+}
+
+/// ★★★★★ The capability the row names: the SAME wire on the SAME free seat, and
+/// this kind gets a seat of its own instead.
+fn a_kind_that_wants_its_own_seat_grows_one(seats: &mut Seats) {
+    let was = seat_count(&seats.document, seats.roster);
+    assert!(
+        seats
+            .document
+            .occupants(ROOT, Socket::new(seats.roster, 0), Side::Input)
+            .is_free(),
+        "seat 0 is FREE — so what follows is the kind's doing and not the seat's"
+    );
+    let fall = seats
+        .document
+        .may_land(ROOT, seats.link, Side::Input, seats.roster)
+        .expect("a number wire lands on a number run");
+    assert_eq!(
+        fall,
+        Landfall::Grows(Socket::new(seats.roster, 1)),
+        "★★★★★ the free seat is left alone and the node grows one"
+    );
+    let landed = seats
+        .document
+        .land(ROOT, seats.link, Side::Input, seats.roster, Item::plain())
+        .expect("and the act goes through");
+    assert_eq!(
+        landed.fall, fall,
+        "the question IS the first half of the act"
+    );
+    assert_eq!(
+        seat_count(&seats.document, seats.roster),
+        was + 1,
+        "and the seat it named is the one that appeared"
+    );
+    assert_eq!(landed.relinked.now, Socket::new(seats.roster, 1));
+}
+
+/// ★★★★★ The two kinds differ in ONE declaration, so neither assertion above can
+/// be reading anything else about them.
+fn the_two_kinds_differ_in_one_declaration(seats: &Seats) {
+    assert_eq!(
+        seats.document.berth(ROOT, seats.bundle, Side::Input),
+        Berth::Earliest,
+        "the supplied answer, which is what a taxonomy that never thought about it gets"
+    );
+    assert_eq!(
+        seats.document.berth(ROOT, seats.roster, Side::Input),
+        Berth::Fresh
+    );
+    let shape = |node: NodeId| {
+        seats
+            .document
+            .signature(ROOT, node)
+            .expect("a signature")
+            .inputs
+            .iter()
+            .map(|port| (port.flow.clone(), port.multiplicity(Side::Input)))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        shape(seats.bundle),
+        shape(seats.roster),
+        "★★★★★ same seats, same types, same multiplicity — one declaration apart"
+    );
+}
+
+/// ★★★★★ The kind states a PREFERENCE, not a permission: a text wire is refused
+/// on a number seat however the kind would like to seat it, and the refusal
+/// leaves the document exactly as it was.
+fn a_preference_does_not_make_an_illegal_landing_legal(seats: &mut Seats) {
+    let before = seats.document.clone();
+    let why = seats
+        .document
+        .land(ROOT, seats.text, Side::Input, seats.roster, Item::plain())
+        .expect_err("a text wire cannot land on a number run, Fresh or not");
+    assert!(
+        matches!(why, LandError::Refused(_)),
+        "and it is the wire's own refusal, carried whole: {why}"
+    );
+    assert_eq!(
+        seats.document, before,
+        "★★★★★ no seat was grown and left behind — the reference's consumer leaves one"
+    );
+    assert!(
+        seats
+            .document
+            .may_land(ROOT, seats.text, Side::Input, seats.roster)
+            .is_err(),
+        "and the question said the same, so trying taught nothing asking would not have"
+    );
+}
+
+/// ★★★★★ R1980 — **the declaration is a preference, not a promise of a seat.**
+///
+/// `Berth::Fresh` says *never take a seat that has room, grow one*. A kind that
+/// declares it on a side with **no run to grow** has asked for something its
+/// own ports cannot give, and the answer is the refusal that names exactly
+/// that — not a port appearing from nowhere, and not the free seat it said it
+/// did not want.
+///
+/// ⚠ This performs a sentence [`Berth::Fresh`]'s own documentation makes. This
+/// repository has four consecutive rounds (R1853–R1856) in which a comment
+/// promised a property and nothing carried it out, each time written by the
+/// round that broke it, so a promise in prose now costs an assertion.
+///
+/// ⚠⚠ **The wire has to be one the free seat would legally have taken**, and the
+/// first draft's did not. [`Document::free_port_for`] ends by asking
+/// [`Document::may_relink`] of each candidate, so a seat the wire could not go
+/// on is skipped and the landing answers `NoRoom` **for the type**, by a path
+/// that has nothing to do with the declaration. Driven at R1980: with the
+/// declaration removed the assertion still passed, because two faults were
+/// travelling together (R1845). The repair is to the POPULATION — a text wire,
+/// which that text seat would take — and not to the assertion.
+fn a_preference_is_not_a_promise_of_a_seat(seats: &mut Seats) {
+    let seat = Socket::new(seats.roster, 0);
+    assert_eq!(
+        seats
+            .document
+            .signature(ROOT, seats.roster)
+            .expect("a signature")
+            .outputs
+            .len(),
+        1,
+        "the producing side has exactly one seat, and this kind grows none there"
+    );
+    assert!(
+        seats.document.occupants(ROOT, seat, Side::Output).is_free(),
+        "★ nothing is standing on it — so what follows is not the seat being full"
+    );
+    assert!(
+        seats
+            .document
+            .may_relink(ROOT, seats.text, Side::Output, seat)
+            .is_ok(),
+        "★★★★★ and the wire WOULD be legal on it — this is what makes the refusal \
+         below attributable to the declaration and to nothing else"
+    );
+
+    let why = seats
+        .document
+        .may_land(ROOT, seats.text, Side::Output, seats.roster)
+        .expect_err("it wants a seat of its own and this side grows none");
+    assert!(
+        matches!(why, LandError::NoRoom { .. }),
+        "★★★★★ so it says NO ROOM rather than taking the seat it declared it did \
+         not want: {why}"
+    );
+    let before = seats.document.clone();
+    assert!(
+        seats
+            .document
+            .land(ROOT, seats.text, Side::Output, seats.roster, Item::plain())
+            .is_err(),
+        "the act says what the question said"
+    );
+    assert_eq!(
+        seats.document, before,
+        "★ and left the document alone — no seat appeared from nowhere"
+    );
+}
+
+/// ★ A body with no kind has no preference to state, and is answered the
+/// supplied one rather than having the question refused.
+fn a_structural_body_has_no_preference_to_state(seats: &mut Seats) {
+    assert_eq!(
+        seats.document.berth(ROOT, seats.group, Side::Input),
+        Berth::Earliest,
+        "a group instance's ports are its definition's interface, so a seat of its own \
+         per arrival is not a thing it could mean"
+    );
+    assert_eq!(
+        seats.document.berth(ROOT, NodeId(9999), Side::Input),
+        Berth::Earliest,
+        "and so is a node that is not there — the question has no refusal arm because \
+         every caller of it is already holding one"
+    );
 }
 
 /// Wire a fresh number source into every free input of `node`, and answer how

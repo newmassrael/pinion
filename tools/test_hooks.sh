@@ -1783,7 +1783,8 @@ ok "the declared round is the first token" \
 
 HIST='feat(rpc): R1757 a burst of keys arrives together
 feat(core): R1758 a verdict says what it was read from
-fix(runtime): R1753.1 a count in a comment was never true'
+fix(runtime): R1753.1 a count in a comment was never true
+chore(memory): R1770.1 two remainders of R1771'"'"'s first measurement'
 
 taken() { if round_token_taken "$1" "$HIST"; then echo taken; else echo free; fi; }
 
@@ -1813,6 +1814,18 @@ ok "a continuation does not reserve its parent" "$(taken R1753)" "free"
 # A prefix must not match: R175 is not R1757.
 ok "a shorter number is not a prefix match" "$(taken R175)" "free"
 ok "a longer number is not a match either" "$(taken R17570)" "free"
+# ★★★★★ R1980 — A SUBJECT THAT MENTIONS A ROUND HAS NOT CLAIMED IT. The last
+# line of `HIST` declares R1770.1 and names R1771 in a possessive, which is a
+# shape this history really has: the round refused by this gate was R1980,
+# blocked by `chore(memory): R1979.1 two remainders of R1980's first
+# measurement`. A claim lives in one place — the first token — and both halves
+# of this gate now read it the same way.
+ok "a round only MENTIONED by a subject is still free" "$(taken R1771)" "free"
+ok "and the round that subject DECLARES is taken" "$(taken R1770.1)" "taken"
+# ⚠ The mention is still refused when it is a real declaration elsewhere, so
+# the repair did not turn the backstop off: R1757 is mentioned nowhere and
+# declared on line one.
+ok "the backstop still refuses a genuine duplicate" "$(taken R1757)" "taken"
 ok "an empty token is never taken" "$(taken '')" "free"
 
 # ---------------------------------------------------------------------------

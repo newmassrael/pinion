@@ -17686,3 +17686,150 @@ fn r1974_each_verdict_word_names_exactly_one_arm() {
         .collect();
     assert_eq!(stopped, vec![Fitness::Stopped]);
 }
+
+// ============================================ R1980 — what stands on a socket
+
+/// A graph where one input socket is held by a **report** and by nothing drawn.
+///
+/// `Add` takes two numbers and declares no run, so *the second socket is
+/// occupied* and *this node cannot grow one* are separable answers: the first
+/// is what this round changed, and the second is what the landing then says.
+fn reported_seat() -> (Document<Op>, NodeId, NodeId, LinkId) {
+    let mut document: Document<Op> = Document::new("root");
+    let two = document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(2)), 0, 0)
+        .unwrap();
+    let three = document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(3)), 0, 80)
+        .unwrap();
+    let spare = document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(9)), 0, 160)
+        .unwrap();
+    let add = document
+        .add_node(ROOT, NodeBody::Kind(Op::Add), 200, 40)
+        .unwrap();
+    let sink = document
+        .add_node(ROOT, NodeBody::Kind(Op::Sink), 400, 40)
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(two, 0), Socket::new(add, 0))
+        .unwrap();
+    // The world reported a connection into the SECOND socket. Nothing is drawn
+    // there — that is the whole point.
+    document
+        .observe(ROOT, Socket::new(three, 0), Socket::new(add, 1))
+        .unwrap();
+    // And an unrelated wire, standing somewhere else, to re-aim.
+    document
+        .connect(ROOT, Socket::new(spare, 0), Socket::new(sink, 0))
+        .unwrap();
+    let link = document
+        .tree(ROOT)
+        .and_then(|tree| tree.links().last().map(|held| held.id))
+        .unwrap();
+    (document, add, three, link)
+}
+
+/// ★★★★★ R1980 — **a reported connection occupies the socket it sits on**, so an
+/// unrelated wire re-aimed at that card does not take the seat.
+///
+/// Driven at R1980 on the node lab's opening graph before this existed:
+/// `may_land` answered `Takes` for a socket a report was sitting on, and the
+/// screen then wrote its own address over it. Three readers on that screen had
+/// counted both layers and this crate's planner had counted one — see
+/// [`crate::Occupants`] for the run.
+#[test]
+fn r1980_a_reported_connection_occupies_the_socket_it_sits_on() {
+    let (mut document, add, _three, link) = reported_seat();
+    let seat = Socket::new(add, 1);
+
+    let held = document.occupants(ROOT, seat, Side::Input);
+    assert!(
+        held.drawn().is_empty(),
+        "nothing is DRAWN there — so what follows is the report's doing"
+    );
+    assert_eq!(held.reported().len(), 1, "and the report is");
+    assert!(!held.is_free(), "★★★★★ so the socket is not free");
+
+    // ★★★★★ The consequence, through the public gesture: the landing does not
+    // choose that seat. `Add` declares no run, so with both sockets occupied
+    // there is nowhere to put the end and it says so — which is a different
+    // answer from a refused wire and is fixed by a different action.
+    let why = document
+        .may_land(ROOT, link, Side::Input, add)
+        .expect_err("both seats are taken");
+    assert!(
+        matches!(why, crate::LandError::NoRoom { .. }),
+        "★★★★★ and it is NO ROOM rather than a seat being handed out: {why}"
+    );
+    assert!(
+        document
+            .land(ROOT, link, Side::Input, add, Item::plain())
+            .is_err(),
+        "the act says what the question said"
+    );
+}
+
+/// ⚠★★★★★ R1980 — **adoption still lands on the socket the report is on**, and
+/// that is the distinction this derivation must not erase.
+///
+/// A reported connection occupying a socket is about the AUTOMATIC search: a
+/// seat nobody named must not be chosen for them. Adopting the report *is*
+/// naming it — R1681's own assertion — so it goes exactly where the report was.
+#[test]
+fn r1980_adopting_a_report_still_lands_on_the_socket_it_named() {
+    let (mut document, add, three, _link) = reported_seat();
+    let seat = Socket::new(add, 1);
+    let made = document
+        .adopt(ROOT, Socket::new(three, 0), seat)
+        .expect("the report is one this model can hold");
+    assert_eq!(
+        document.tree(ROOT).unwrap().link(made.link).map(|l| l.to),
+        Some(seat),
+        "⚠★★★★★ the adopted wire is ON the reported seat — erase this and adopting breaks"
+    );
+    let held = document.occupants(ROOT, seat, Side::Input);
+    assert_eq!(held.drawn(), [made.link], "and now BOTH layers hold it");
+    assert_eq!(held.reported().len(), 1);
+}
+
+/// ★ R1980 — the derivation answers the two layers apart, and knows which end
+/// of a connection it is being asked about.
+#[test]
+fn r1980_occupants_answers_both_layers_and_the_right_end() {
+    let (document, add, three, _link) = reported_seat();
+    let taken = Socket::new(add, 0);
+
+    let held = document.occupants(ROOT, taken, Side::Input);
+    assert_eq!(held.drawn().len(), 1, "the first seat is drawn on");
+    assert!(held.reported().is_empty(), "and never reported");
+    assert!(!held.is_free());
+
+    // ★ `without` is what a wire being RE-AIMED needs: the end already standing
+    // here is not a reason it may not stand here.
+    let mine = held.drawn()[0];
+    assert!(
+        document
+            .occupants(ROOT, taken, Side::Input)
+            .without(mine)
+            .is_free(),
+        "★ minus its own end, the seat is free again"
+    );
+
+    // ★ The same socket asked about the other END is a different socket: an
+    // input port and an output port with the same ordinal are not one place.
+    assert!(
+        document.occupants(ROOT, taken, Side::Output).is_free(),
+        "nothing PRODUCES at that address"
+    );
+    assert!(
+        !document
+            .occupants(ROOT, Socket::new(three, 0), Side::Output)
+            .is_free(),
+        "while the reported connection's source end is held"
+    );
+
+    // ★ A tree that is not here answers "nothing is standing there", which is
+    // true, rather than an error arm no caller could act on.
+    assert!(document.occupants(TreeId(77), taken, Side::Input).is_free());
+}

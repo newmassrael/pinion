@@ -79,6 +79,68 @@ pub enum Landfall {
     Grows(Socket),
 }
 
+/// ★★★★★ R1980 — **where an arriving end berths on a node of this kind**, among
+/// the ports that have room for it.
+///
+/// The document decides what is *legal* — which ports exist, which have room
+/// ([`Occupants`](crate::Occupants) and [`Multiplicity`]), and whether the wire
+/// itself may go there — and this is the kind saying which of those it
+/// *prefers*. So a kind cannot name a socket that does not exist, cannot take
+/// one that is occupied, and cannot make an illegal landing legal: the answer
+/// is a policy, not a socket.
+///
+/// # ★ What the reference does, measured at its header, its three consumers and
+/// all 41 sites that install the hook
+///
+/// Its hook is handed the link and returns a bool, and every one of the 25
+/// per-node implementations does the same thing in place: if an end touched
+/// this node's **open** end, grow a port from the far end's type and label and
+/// **move the end onto it**.
+///
+/// ⚠ The other 16 do nothing, and they are not one group: **15** install a
+/// single shared `return true`, and **one** is a bridge that hands the link to
+/// a script-defined function and returns `true` however that answers. R1979.1
+/// recorded this split as "14 are `return true`", which is neither number and
+/// leaves 41 unaccounted for by two; re-measured by driving the counts at
+/// R1980, `15 + 1 + 25 = 41` closes.
+///
+/// Three things follow, and each is why this is a declaration instead:
+///
+/// * **Its two answers are the same value.** The bool means *the drop is
+///   allowed*, and an implementation that already moved the end returns the
+///   same `true` as one that did nothing — so a caller cannot tell *I accepted
+///   this* from *I have already dealt with it*.
+/// * **It runs on a live document.** The hook edits the graph and then the
+///   caller attempts the connection; a refused connection leaves the port
+///   behind. [`Document::land`] does the whole thing to a copy (§2 #3), and a
+///   hook that can only answer [`Berth`] cannot reach inside that.
+/// * **Its two calls are ordered and nothing says so.** Both ends are asked in
+///   turn, so the second implementation sees the first one's edit. A policy
+///   read once per side has no order to depend on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Berth {
+    /// The earliest port with room, in port order; a port is grown only when
+    /// none has room.
+    ///
+    /// The default, and what every node did before a kind could say otherwise:
+    /// the order a person expects, and the one that does not litter a node with
+    /// ports every time a wire is re-aimed onto it.
+    #[default]
+    Earliest,
+    /// A port of its own, every time: never take a port that has room, always
+    /// grow one.
+    ///
+    /// What the reference's 25 overriders express by hand. A node whose ports
+    /// each stand for something — one accepted address, one named argument —
+    /// wants the arriving end on a port nothing else is using, even when an
+    /// older one has gone quiet.
+    ///
+    /// ⚠ It is a preference, not a promise: a kind that declares no run
+    /// ([`NodeKind::variadic`]) has nothing to grow, and the landing is
+    /// [`LandError::NoRoom`] rather than a port appearing from nowhere.
+    Fresh,
+}
+
 impl Landfall {
     /// Where the end ends up, either way.
     #[must_use]
@@ -286,6 +348,24 @@ impl<K: NodeKind> Document<K> {
         Ok(Landfall::Grows(grown))
     }
 
+    /// ★★★★★ R1980 — **which of the ports with room this kind wants the end on.**
+    ///
+    /// One declaration per kind, read here and nowhere else. `NodeBody`'s
+    /// structural arms answer [`Berth::Earliest`]: a group instance, an
+    /// interface end, a frame, a delay, a reroute, a beacon and an echo all
+    /// have ports that stand for something fixed, so *a port of its own every
+    /// time* is not a thing any of them could mean.
+    #[must_use]
+    pub fn berth(&self, tree: TreeId, node: NodeId, side: Side) -> Berth {
+        match self.tree(tree).and_then(|host| host.node(node)) {
+            Some(found) => match &found.body {
+                crate::model::NodeBody::Kind(kind) => kind.berth(side),
+                _ => Berth::Earliest,
+            },
+            None => Berth::Earliest,
+        }
+    }
+
     /// A port of `node` on `end` that has ROOM for this link's end right now.
     ///
     /// ⚠⚠ **Two questions, and asking only the first is a defect this round
@@ -307,7 +387,22 @@ impl<K: NodeKind> Document<K> {
     /// The port the end is already on is skipped: landing a wire where it
     /// already is must not read as an existing port taking it, or a re-drop on
     /// the same card would never grow the slot a person is asking for.
+    ///
+    /// ★★★★★ **R1980 — what is standing on a port is
+    /// [`Document::occupants`](Self::occupants)' answer, both layers of it.**
+    /// This used to walk `links()` here, so a socket a *reported* connection was
+    /// sitting on read as free and an unrelated re-aim took it — driven on the
+    /// node lab's opening graph, where the screen's own three readers had all
+    /// counted both layers and this one had not. See
+    /// [`occupancy`](crate::Occupants) for the run that measured it.
+    ///
+    /// ★ And [`Berth::Fresh`] answers `None` without looking: a kind that wants
+    /// a port of its own every time is not asking which of the free ones to
+    /// take.
     fn free_port_for(&self, tree: TreeId, link: LinkId, end: Side, node: NodeId) -> Option<Socket> {
+        if self.berth(tree, node, end) == Berth::Fresh {
+            return None;
+        }
         let signature = self.signature(tree, node)?;
         let ports = match end {
             Side::Input => signature.inputs,
@@ -322,15 +417,6 @@ impl<K: NodeKind> Document<K> {
                 Side::Input => held.to,
                 Side::Output => held.from,
             })?;
-        let occupied = |socket: Socket| {
-            host.links()
-                .iter()
-                .filter(|held| held.id != link)
-                .any(|held| match end {
-                    Side::Input => held.to == socket,
-                    Side::Output => held.from == socket,
-                })
-        };
         ports
             .iter()
             .enumerate()
@@ -342,7 +428,7 @@ impl<K: NodeKind> Document<K> {
             })
             .filter(|(socket, _)| *socket != standing)
             .filter(|(socket, port)| match port.multiplicity(end) {
-                Multiplicity::One => !occupied(*socket),
+                Multiplicity::One => self.occupants(tree, *socket, end).without(link).is_free(),
                 Multiplicity::Many => true,
             })
             .map(|(socket, _)| socket)

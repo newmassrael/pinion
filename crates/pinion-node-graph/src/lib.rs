@@ -233,6 +233,7 @@ mod naming;
 mod naming_scope;
 mod numbering;
 mod observed;
+mod occupancy;
 mod palette;
 mod partition;
 mod relink;
@@ -275,7 +276,7 @@ pub use group::{
     Violation,
 };
 pub use items::{Item, ItemChange, ItemEdit, ItemEditTail, ItemError, Items, Variadic};
-pub use landing::{LandError, Landed, Landfall};
+pub use landing::{Berth, LandError, Landed, Landfall};
 pub use layout::{Extent, Layered, Organic, Placement, Quality};
 pub use machine::{Committed, ForceError, Machine, Tick};
 pub use model::{
@@ -291,6 +292,7 @@ pub use observed::{
     AdoptError, Discovery, Judgement, Layers, LinkLayer, Observation, ObserveError, Reachability,
     Standing,
 };
+pub use occupancy::Occupants;
 pub use palette::{Palette, palette_of, type_palette};
 pub use partition::{PortChange, RepartitionError, Repartitioned, Sharing};
 pub use relink::{RelinkError, Relinked};

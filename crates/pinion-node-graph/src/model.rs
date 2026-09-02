@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::appearance::Appearance;
 use crate::group::EditPath;
 use crate::items::{Items, Variadic, resolve};
+use crate::landing::Berth;
 use crate::split::Composition;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -915,6 +916,27 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
     fn variadic(&self, side: Side) -> Option<Variadic<Self::Type, Self::Value>> {
         let _ = side;
         None
+    }
+
+    /// ★★★★★ R1980 — **where an arriving end berths** among this kind's ports
+    /// that have room for it, when a wire is released on the node's body
+    /// ([`Document::land`](crate::Document::land)).
+    ///
+    /// A method on `&self` for [`variadic`](Self::variadic)'s reason: whether a
+    /// node wants a port of its own per arrival can depend on what the kind is
+    /// carrying — the same kind configured two ways is two different things to
+    /// land on.
+    ///
+    /// The default is [`Berth::Earliest`], which is what every node did before
+    /// this could be asked, so a taxonomy that has never thought about it keeps
+    /// the answer a person expects.
+    ///
+    /// ★ It answers a POLICY and not a socket. The reference's equivalent is
+    /// handed the link and moves its end itself, which is why its bool cannot
+    /// say whether it did — see [`Berth`] for the three measured consequences.
+    fn berth(&self, side: Side) -> Berth {
+        let _ = side;
+        Berth::Earliest
     }
 
     /// ★★★★★ R1912 — whether this kind's ports **are** the node, so none of

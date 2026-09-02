@@ -5696,3 +5696,87 @@ fn r1976_a_structural_fault_with_no_screen_wording_is_still_reported() {
         );
     });
 }
+
+/// ★★★★★ R1980 — **a wire re-aimed at a card does not take the seat a REPORT is
+/// sitting on**, measured where the debt's own reproduction recipe pointed.
+///
+/// This is the probe R1979.1 prescribed, kept as an assertion. Driven before the
+/// repair, on this same opening graph, it answered:
+///
+/// ```text
+/// port 0: links=["link#4"] obs=[]        port 1: links=[] obs=["obs<-P-01"]
+/// may_land(S-01's wire, Input, P-02)  ->  Takes(port 1)
+/// ```
+///
+/// — the seat the report was on, chosen for a wire nobody had pointed at it, and
+/// then overwritten with that wire's own address by `set_port_address`. The
+/// crate's own tests hold the derivation ([`Document::occupants`]); this holds
+/// the LAB's opening graph, which is the population the debt was written about
+/// and the one a person actually opens.
+#[test]
+fn r1980_a_reported_seat_is_not_taken_by_a_re_aimed_wire() {
+    use pinion_node_graph::Side;
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+        let peer = state.node_of("P-02").expect("on the canvas");
+        let router = state.node_of("R-01").expect("on the canvas");
+        let store = state.node_of("S-01").expect("on the canvas");
+
+        // Which accept seats of the peer are held, and by which layer.
+        let census = || -> Vec<(usize, usize, usize)> {
+            let doc = state.doc.borrow();
+            let items = doc.items(ROOT, peer, Side::Input).unwrap_or_default();
+            (0..items.len())
+                .map(|port| {
+                    let held = doc.occupants(
+                        ROOT,
+                        Socket::new(peer, u32::try_from(port).unwrap_or(u32::MAX)),
+                        Side::Input,
+                    );
+                    (port, held.drawn().len(), held.reported().len())
+                })
+                .collect()
+        };
+
+        let before = census();
+        assert_eq!(
+            before,
+            vec![(0, 1, 0), (1, 0, 1)],
+            "★ the opening graph puts a DRAWN wire on seat 0 and a REPORTED one \
+             on seat 1 — the fixture the debt named, asserted so the check below \
+             cannot pass for a graph that lost it"
+        );
+
+        let link = state
+            .doc
+            .borrow()
+            .tree(ROOT)
+            .and_then(|t| {
+                t.links()
+                    .iter()
+                    .find(|l| l.from.node == store && l.to.node == router)
+                    .map(|l| l.id)
+            })
+            .expect("the store dials the router");
+        let fall = state
+            .doc
+            .borrow()
+            .may_land(ROOT, link, Side::Input, peer)
+            .expect("the peer listens, so the wire may land on it");
+        assert!(
+            fall.is_new(),
+            "★★★★★ a seat APPEARS for it — until R1980 this answered \
+             Takes(seat 1), which is the seat the report is on: {fall:?}"
+        );
+
+        super::relink_to(&state, link, peer).expect("and the act goes through");
+        assert_eq!(
+            census(),
+            vec![(0, 1, 0), (1, 0, 1), (2, 1, 0)],
+            "★★★★★ the report still has seat 1 to itself and the re-aimed wire \
+             is on a seat of its own"
+        );
+    });
+}
