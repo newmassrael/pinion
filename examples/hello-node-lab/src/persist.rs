@@ -48,7 +48,7 @@ use pinion_core::Storage;
 use pinion_core::selection::Selection;
 use pinion_core::utterance::{Tone, Utterance};
 use pinion_core::widgets::config_form::ConfigForm;
-use pinion_node_graph::{Archive, Condition, Document, NodeId};
+use pinion_node_graph::{Archive, Condition, Document, NodeId, Violation};
 use serde::{Deserialize, Serialize};
 
 use crate::graph::LabNode;
@@ -213,18 +213,67 @@ pub fn save(state: &Rc<LabState>) -> String {
     // built a `String` and handed it to the same setter, so a person was told
     // the save failed in the same voice and the same colour as the save
     // succeeding.
+    // ★★★★★ R1979 — **the save says what it is writing.**
+    //
+    // Measured at R1979 by driving it: a document whose link names a card that
+    // is gone SAVED with `saved · 6 cards · 111767 bytes` and nothing else,
+    // while opening those very bytes back answered `opened · 6 cards · 1
+    // fault(s) the gate will name: …`. So the read side named the trouble and
+    // the write side did not, and the person who had just broken their graph
+    // was told the save went fine — which it did, and that is not the whole
+    // truth about what is now on disk.
+    //
+    // ⚠ It is NOT refused, and that is deliberate: refusing to keep a person's
+    // work because the work is unfinished is how an editor loses it. R1977's
+    // rule for the read half applies to the write half — *the graph is here* —
+    // so the act happens, `Tone::Done` is truthful, and the clause carries the
+    // trouble.
+    //
+    // ★ The clause is the SAME derivation `open` uses ([`fault_clause`]), so
+    // the sentence a person reads when they save and the sentence they read
+    // when they open the same bytes cannot drift apart. The walk asserts the
+    // round trip rather than this asserting it every save.
+    let faults = fault_clause(&state.doc.borrow().validate());
     let said = if text.is_empty() {
         Utterance::new(Tone::Refused, "the graph could not be written out")
     } else {
         state.storage.save(STORAGE_KEY, text.as_bytes());
-        Utterance::done(format!(
-            "saved · {} cards · {} bytes",
-            state.cards().len(),
-            text.len()
-        ))
+        let mut clauses = vec![
+            format!("{} cards", state.cards().len()),
+            format!("{} bytes", text.len()),
+        ];
+        clauses.extend(faults);
+        Utterance::done(format!("saved · {}", clauses.join(" · ")))
     };
     state.say(said.clone());
     said.sentence()
+}
+
+/// ★★★★★ R1979 — how a screen names what [`Document::validate`] refuses, or
+/// `None` when it refuses nothing.
+///
+/// One derivation with two callers — the save and the open — because they are
+/// two halves of one round trip and a person who saw them disagree could not
+/// tell which one was lying. R1977 wrote this inline in the open; R1979 found
+/// the save saying nothing at all and lifted it rather than writing a second
+/// copy.
+///
+/// ⚠ `None` for an empty slice, never `Some("0 fault(s) …")`: a clause that
+/// says nothing is wrong is a clause on every sentence, and the whole point of
+/// this one is that it appears when there IS something to say.
+fn fault_clause(violations: &[Violation]) -> Option<String> {
+    if violations.is_empty() {
+        return None;
+    }
+    let named: Vec<String> = violations
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect();
+    Some(format!(
+        "{} fault(s) the gate will name: {}",
+        named.len(),
+        named.join(" · ")
+    ))
 }
 
 /// Open a graph: from `text` when there is any, otherwise from storage.
@@ -291,17 +340,16 @@ pub fn open(state: &Rc<LabState>, text: &str) -> Result<String, String> {
     // screen states its policy — *unreadable is refused, unsound is opened* —
     // and a fourth answer added upstream stops this compiling instead of
     // arriving here as "fine".
-    let unsound: Vec<String> = match opening.condition() {
+    let unsound: Option<String> = match opening.condition() {
         Condition::Unreadable(why) => {
             let why = why.to_string();
             state.say(Utterance::refused(&why));
             return Err(why);
         }
-        Condition::Unsound(violations) => violations
-            .iter()
-            .map(std::string::ToString::to_string)
-            .collect(),
-        Condition::Sound => Vec::new(),
+        // ★ R1979 — the same [`fault_clause`] the save uses, so the two halves
+        // of a round trip cannot say different things about one document.
+        Condition::Unsound(violations) => fault_clause(violations),
+        Condition::Sound => None,
     };
     // ★ What the archive could not carry is said out loud, because this is the
     // one moment a person can act on it. `Dropped` is not a failure — the graph
@@ -329,13 +377,7 @@ pub fn open(state: &Rc<LabState>, text: &str) -> Result<String, String> {
             dropped.join(" · ")
         ));
     }
-    if !unsound.is_empty() {
-        clauses.push(format!(
-            "{} fault(s) the gate will name: {}",
-            unsound.len(),
-            unsound.join(" · ")
-        ));
-    }
+    clauses.extend(unsound);
     // ⚠ `Tone::Done`, and the clause is what carries the trouble. The first
     // draft reached for a `warned` tone; measured, `Tone` has three arms and no
     // such thing, and adding one would be this screen inventing a vocabulary
