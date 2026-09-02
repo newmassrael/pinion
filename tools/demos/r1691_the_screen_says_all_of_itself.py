@@ -99,6 +99,13 @@ def expand(spec: dict, tag: str, population: str) -> list[str]:
         return [tag]
     members = {
         "roles": [r["name"] for r in spec["roles"]],
+        # ★★★★★ R1970 — `role_groups`, added to the wire by R1968 and NOT added
+        # here, so this demo died `KeyError('role_groups')` for two rounds. The
+        # population vocabulary is a Rust enum on one side and this dict on the
+        # other, and only a run tells them apart — R1968 verified with the
+        # `r1651` demo alone and this one is in the sweep, which does not gate a
+        # push. Expanded from the spec's own table, like every row above.
+        "role_groups": [g["label"] for g in spec["role_groups"]],
         "rail": [r["name"] for r in spec["rail"]],
         "nodes": [n["id"] for n in spec["nodes"]],
         "links": [str(i) for i in range(len(spec["links"]))],

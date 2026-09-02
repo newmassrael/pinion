@@ -1870,6 +1870,16 @@ fn r1653_the_painted_screen_invented_nothing() {
             ("lab.palette.pin.", Some(spec::PIN_LEGEND.len())),
             ("lab.palette.protocol.", Some(spec::PROTOCOLS.len())),
             ("lab.link.", None),
+            // ★★★★★ R1970 — the observed layer, which became VISIBLE to this
+            // census the moment a wire started carrying a placement, and which
+            // this gate refused on its first run: *the screen paints 1 tag(s)
+            // the specification does not declare and no family accounts for:
+            // ["lab.observed.P-01.P-02"]*. It had been painted all along; the
+            // index simply could not hold it. Sized from the specification's own
+            // list rather than pinned, because a second observed link would
+            // otherwise pass unremarked — the exact hole the `lab.link` family's
+            // `None` leaves and which this one does not have to.
+            ("lab.observed.", Some(spec::OBSERVED.len())),
             ("lab.gate", None),
             ("lab.node.", None),
             ("lab.pin.", None),
@@ -1927,6 +1937,171 @@ fn r1653_the_painted_screen_invented_nothing() {
                 );
             }
         }
+    });
+}
+
+/// ★★★★★ R1970 — **every tagged mark this screen paints is somewhere: it has a
+/// rectangle, or a scroll would give it one.** A third state — painted nowhere
+/// at all — is what this refuses, and it is not hypothetical.
+///
+/// # What was measured, and how big it turned out to be
+///
+/// R1969 found by accident that not one of the seven wires on the canvas was in
+/// [`Painted`]'s index, and registered it as `debt-no-gate-in-this-file-can-see-
+/// a-wire`. Re-measured here, the debt's own number was **short by 35**: the
+/// walk found **42** tagged nodes the index did not hold — the seven wires, the
+/// observed link, the inspector's restart note, twenty-eight tags of the fault
+/// panel and four of the form's `add` seats.
+///
+/// Splitting those 42 by whether a scroll reaches them is what tells two very
+/// different things apart:
+///
+/// * **34 were one scroll away** — the inspector pane scrolls and they sit
+///   below its fold. Painted nowhere *on this frame*, correctly, and
+///   [`Painted::reachable`] already models exactly that (R1662).
+/// * **8 were LOST** — the wires and the observed link. A `PathNode` holds a
+///   `rect`, which reads like a position and is not one: `dashed_wire` gave the
+///   node `LayoutStyle::new().with_pointer_transparent(true)`, so the layout
+///   pass handed it a flow box of nothing, `translate_rect_into_clip` answered
+///   `None`, and the index dropped the tag before recording it.
+///
+/// ⇒ the repair is one site and not a lift, because the intention was already
+/// spelled once: [`super::absolute`] carries that same transparency flag AND
+/// the placement, and eight other placements on this screen use it. The wire
+/// hand-rolled half of it. `lost` is now **0**.
+///
+/// # Why this is the gate rather than "the wires are in the index"
+///
+/// **Four** of the six properties this file declares in its own header stand on
+/// that index — forward, backward, contained and reachable — and a node missing
+/// from it is not *reported* missing, it is **absent**, which every one of them
+/// reads as nothing to say. That is the escape hatch this workspace refuses at
+/// the door: unclassified is not a pass. So what is asserted is the
+/// classification's totality, over every state and both sizes, and the number
+/// it drives to zero is one this round actually moved from 8.
+///
+/// # ★★★★★ Both instruments were blind, and each for a sentence of its own
+///
+/// Probed at R1970 with the repair backed out:
+/// [`pinion_core::reach::out_of_sight`] — the *other* reader of this scene, and
+/// the one that would have had to notice — answers **nothing at all** for each
+/// of the eight. Not `Reach::Lost`, which is the arm a gate fails on: no row.
+/// The cause is one line of `walk_marks`, and it is a **default wearing a
+/// justification**:
+///
+/// ```text
+/// if rect.w == 0 || rect.h == 0 {
+///     return; // nothing was drawn, so nothing is being missed
+/// }
+/// ```
+///
+/// True of a spacer. False of a wire, where the author drew a line and the
+/// LAYOUT PASS zeroed the box for want of a placement — so the mark most in
+/// need of a report is the one excused from it. Two readers, two locally
+/// reasonable skips, and their intersection is a class no column names ⇒
+/// registered as `debt-a-mark-with-no-box-is-excused-by-both-readers`.
+///
+/// ⚠⚠ And a **shipped consumer was green on top of that blindness**. Run
+/// against the pre-repair binary, `tools/demos/r1656_a_mark_says_the_box_it_
+/// left.py` prints `0 lost, 0 reachable in part, 39 one scroll away, of 435
+/// marks` and PASSes — with eight tagged marks painted nowhere. *An instrument
+/// that counts losses answering zero does not mean there are none.* The same
+/// run's `245 region(s)` is unchanged by the repair, because the accessibility
+/// census reads a different index and always saw them: three readers of one
+/// screen, and exactly two of them blind.
+///
+/// # Where the population comes from, and why it is not spelled twice here
+///
+/// The roster is taken from the scene with **no placement predicate** — every
+/// tag the walk carries, full stop. That is a fact nothing else in this file
+/// states, and asking it this way is what keeps the gate from being a second
+/// copy of [`Painted::of`]'s filter: *placed* is read off `shot.tags` and *one
+/// scroll away* off `shot.reachable`, both the index's own words.
+///
+/// ⚠ The first draft did spell it twice — it re-walked with
+/// `visit.absolute_rect().is_some()`, which is `Painted::of`'s line verbatim,
+/// and then pinned the two copies together with `assert_eq!(placed.len(),
+/// shot.tags.len())`. Asked whether that assertion had a failing path: **no**,
+/// not without editing one of the two copies, because both derive from one walk
+/// over one scene with one predicate. An equality between two spellings of the
+/// same expression is not a check; it is the reason to have one spelling.
+///
+/// ⚠ **Four, not five, and the correction is this round auditing its own
+/// sentence.** The first draft here wrote *five … forward, backward, contained,
+/// disjoint, reachable*. Followed at the call rather than counted by a script:
+/// `assert_forward` filters on `shot.tags` and `shot.reachable`, the backward
+/// check walks the same roster, containment looks each owner up in `shot.tags`,
+/// and `assert_reachable` is handed the shot — four. **Disjointness does not**:
+/// it iterates `shot.runs`, a different column, and a wire has no text run, so
+/// it was never going to have anything to say about one. Blind for a reason of
+/// its own is not blind for this reason, and folding them would have been a
+/// number inflated by one to make a sentence rounder.
+///
+/// ⚠ The instrument that first answered *five* was a script splitting this file
+/// on `#[test]` and grepping each body for `.tags` — and it was WRONG in both
+/// directions, because these checks DELEGATE: it put the forward property in
+/// the "does not read the index" column, which following one call disproved.
+#[test]
+fn r1970_every_tagged_mark_is_placed_or_one_scroll_away() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        let mut seen_placed = 0_usize;
+        let mut seen_scrollable = 0_usize;
+        for (when, mutate) in STATES {
+            mutate(&state);
+            for size in [(WIN_W, WIN_H), (super::MIN_W, super::MIN_H)] {
+                let (shot, scene) = painted_and_scene(&state, size);
+                // The ROSTER: every tag the scene carries, asked with no
+                // placement predicate at all. A tag painted twice can be placed
+                // once and clipped once, and the set collapses that by
+                // construction — what is being asked is whether the screen has
+                // a rectangle for this name ANYWHERE.
+                let mut roster: BTreeSet<String> = BTreeSet::new();
+                scene.for_each_node(&mut |visit| {
+                    if let Some(tag) = visit.node.tag() {
+                        roster.insert(tag.to_owned());
+                    }
+                });
+                // Classified by the index's own two columns, never re-derived.
+                let lost: Vec<&String> = roster
+                    .iter()
+                    .filter(|t| !shot.tags.contains_key(*t) && !shot.reachable.contains_key(*t))
+                    .collect();
+                assert!(
+                    lost.is_empty(),
+                    "★★★★★ {when} at {size:?}: {} of {} tagged mark(s) are \
+                     painted NOWHERE — no rectangle, and no scroll brings one: \
+                     {lost:?}. Every check in this file stands on the index they \
+                     are missing from, so each of them reads this as nothing to \
+                     say — and `reach::out_of_sight` does not report them \
+                     either.",
+                    lost.len(),
+                    roster.len(),
+                );
+                // ★★★★★ PER ITERATION, not over the sweep. The floor below is a
+                // SUM, and a sum cannot see an empty state: a screen that
+                // painted nothing at one size would have an empty roster, an
+                // empty `lost`, and would pass the check above while every other
+                // state carried the total past zero. Asked here, of THIS frame.
+                assert!(
+                    !shot.tags.is_empty(),
+                    "{when} at {size:?}: the index holds no tag at all, so the \
+                     classification above had nothing to classify",
+                );
+                seen_placed += shot.tags.len();
+                seen_scrollable += shot.reachable.len();
+            }
+        }
+        // ★★ Both states of the split are really reached over the sweep, so
+        // "placed or one scroll away" is a disjunction of two live cases rather
+        // than one case and a word.
+        assert!(
+            seen_placed > 0 && seen_scrollable > 0,
+            "the sweep saw {seen_placed} placed and {seen_scrollable} \
+             one-scroll-away mark(s); a split with an empty side is a single \
+             rule wearing two names",
+        );
     });
 }
 

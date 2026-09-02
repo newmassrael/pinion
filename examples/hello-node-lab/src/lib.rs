@@ -7190,7 +7190,28 @@ fn dashed_wire(
         // sometimes it does not". The link stays selectable — `link_at`
         // hit-tests the CHORD in the app's own resolver, which is where a
         // wire's shape lives.
-        .with_layout(LayoutStyle::new().with_pointer_transparent(true)),
+        //
+        // ★★★★★ R1970 — through [`absolute`], which ALREADY carries that
+        // transparency, and carries the placement too. What stood here was
+        // `LayoutStyle::new().with_pointer_transparent(true)` — the same
+        // intention spelled a second way, with the half that says WHERE
+        // dropped. A `PathNode` holds a `rect`, which reads like a position and
+        // is not one (the note on [`label`] says so for text and it is the same
+        // engine): with no absolute placement the layout pass gives the node a
+        // flow box of nothing, `translate_rect_into_clip` finds an empty
+        // rectangle and answers `None`, and `painted.rs`'s index drops the tag
+        // BEFORE recording it.
+        //
+        // ⇒ measured at R1970, every one of the seven wires of the opening
+        // graph read `absolute_rect() == None`, so five of the six properties
+        // that file declares — forward, backward, contained, disjoint,
+        // reachable — could not see a single line on the canvas. That is why a
+        // link defect ran five pushes of CI red with every local gate green.
+        //
+        // ⚠ `absolute` is what the other eight placements on this screen use,
+        // and its transparency flag is the same one, so this is one spelling
+        // rather than a new exception.
+        .with_layout(absolute(bounds)),
     )
 }
 

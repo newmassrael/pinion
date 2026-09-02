@@ -26,6 +26,7 @@ Run from the workspace root:
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -253,10 +254,28 @@ def run(tf: RpcSubprocess) -> None:
     # Derived from the PAINT, never restated: the seats carry their own tags, so
     # "is this aim point under the chrome" has one source and cannot drift from
     # where the chrome actually is.
+    #
+    # ★★★★★ R1970 — and the WIRES are subtracted, by the ids the screen
+    # publishes rather than by a shape of tag. `lab.link.` is a prefix, and a
+    # prefix is an acceptance: until R1970 gave a wire its placement the
+    # seven `lab.link.{id}` paths had no rectangle at all, so this sweep
+    # happened to name only the picked link's seats. The moment they became
+    # visible it named eight more — and a wire's bounding box is most of the
+    # canvas by construction (see `dashed_wire`), so this check reported the
+    # overlay covering two cards it does not touch.
+    #
+    # ⚠ A wire is also POINTER TRANSPARENT, so it could not intercept the press
+    # this loop is about even where it is drawn. The excuse belongs to the
+    # seats, and the seats are what is left when the published links are taken
+    # away.
+    wire_tags = {
+        f"lab.link.{link['id']}"
+        for link in json.loads(tf.query(f"{EXT}/links"))
+    }
     chrome = [
         rect
         for tag, rect in abs_rects_of(tf.snapshot(source="paint")).items()
-        if tag.startswith("lab.link.")
+        if tag.startswith("lab.link.") and tag not in wire_tags
     ]
 
     def under_chrome(px, py):
