@@ -1098,28 +1098,22 @@ fn r1651_the_pin_a_node_shows_is_derived_from_the_form_it_holds() {
     });
 }
 
-#[test]
-fn r1651_the_specification_and_the_taxonomy_agree_about_every_role() {
-    // Both directions. The palette table is the reference's statement of what
-    // the tool offers; `Role` is what the application can actually build. A
-    // role in one and not the other is the drift this whole module exists to
-    // make impossible.
-    let declared: Vec<&str> = spec::ROLES.iter().map(|r| r.name).collect();
-    let built: Vec<&str> = Role::ALL.into_iter().map(Role::name).collect();
-    assert_eq!(declared, built, "same roles, same order");
-    for want in spec::ROLES {
-        let role = Role::from_name(want.name).expect("declared");
-        assert_eq!(role.group(), want.group, "{}", want.name);
-        assert_eq!(role.gist(), want.gist, "{}", want.name);
-        assert_eq!(
-            role.accepts(),
-            want.accepts,
-            "★ {} — whether a role can be dialled decides whether the canvas \
-             draws it an accept pin AND whether a link to it can exist at all",
-            want.name
-        );
-    }
-}
+// ★★★★★ R1968 — `r1651_the_specification_and_the_taxonomy_agree_about_every_role`
+// stood here and is DELETED rather than moved, because there is no longer a
+// way for it to fail.
+//
+// It compared `spec::ROLES` — an authored table of eight records — with the
+// eight `match self` accessors on `Role`, field by field, in both directions.
+// That check was worth its cost while there were two authorings: the four
+// columns it compared (`name`, `gist`, `group`, `accepts`) were spelled twice
+// and could drift. `spec::ROLES` is now `Role::specs()`, so every line of it
+// read one declaration and compared it with itself.
+//
+// An assertion with no failing path is worse than absent: it counts toward
+// coverage, it reads as a guarantee, and it goes green for a reason unrelated
+// to the property. The guarantee it used to give is now structural — one
+// record per role, `RoleSpec`'s fields required — which is the trade this
+// round made, and the trade is only honest if the dead check goes with it.
 
 #[test]
 fn r1651_a_listening_node_takes_as_many_dials_as_reach_it() {

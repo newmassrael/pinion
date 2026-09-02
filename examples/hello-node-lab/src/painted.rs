@@ -723,6 +723,14 @@ fn declared_tags(state: &LabState) -> Vec<String> {
     // body. Same rule as the panes above, one level in: a folded panel's
     // contents are not missing, they are not asked for.
     if !folded_pane(state, &spec::PANES[1]) {
+        // ★★★★★ R1968 — the group headings, demanded from the same derivation
+        // that places them. A heading was an anonymous run until this round, so
+        // the words a reader sorts the palette by were the one part of this pane
+        // no check could see.
+        for run in spec::palette_groups() {
+            want.push(format!("lab.palette.group.{}", run.label));
+        }
+        want.push("lab.palette.legend".to_owned());
         for role in spec::ROLES {
             want.push(format!("lab.palette.role.{}", role.name));
             want.push(format!("lab.palette.swatch.{}", role.name));
@@ -1856,6 +1864,9 @@ fn r1653_the_painted_screen_invented_nothing() {
             ("lab.rail.", Some(spec::RAIL.len())),
             ("lab.palette.role.", Some(spec::ROLES.len())),
             ("lab.palette.swatch.", Some(spec::ROLES.len())),
+            // ★ R1968 — a group heading per RUN of the roster, so a palette
+            // that grew a group grows a heading and one that lost one loses it.
+            ("lab.palette.group.", Some(spec::palette_groups().len())),
             ("lab.palette.pin.", Some(spec::PIN_LEGEND.len())),
             ("lab.palette.protocol.", Some(spec::PROTOCOLS.len())),
             ("lab.link.", None),
@@ -1915,6 +1926,106 @@ fn r1653_the_painted_screen_invented_nothing() {
                      nobody pins is a count nobody notices"
                 );
             }
+        }
+    });
+}
+
+/// ★★★★★ R1968 — **every palette row is painted under the heading its own
+/// record names**, and the heading reads that group's word.
+///
+/// # What this is, measured rather than argued
+///
+/// The palette sorts eight roles under two headings, and until this round the
+/// partition was spelled in FIVE places: each role's `group`, an authored
+/// palette table's `group` column, the painter's `["infrastructure",
+/// "traffic"]` heading list, `palette_row`'s `n / 4`, and `legend_top`'s `2 *`.
+/// Nothing derived any of them from any other. The only thing tying the paint
+/// to the roster was a hand-written `assert_eq!((infra, traffic), (4, 4))` in a
+/// model test — which says nothing about *which* rows a heading covers.
+///
+/// Measured at R1968 by mutation: reorder the roster so the two groups
+/// interleave (`Router, Peer, Client, Publisher, Store, …`), update the
+/// authored table to match, and the palette paints **Publisher under the
+/// infrastructure heading** and **Store under traffic**. `cargo test -p
+/// hello-node-lab` reported `179 passed; 0 failed`.
+///
+/// This asks the screen the question directly: for each role, the nearest
+/// heading painted at or above its row must be the group its record declares.
+/// A geometry that stops following the partition fails here, and so does a
+/// heading list that stops being derived from it.
+///
+/// ⚠ The heading is asked for by TAG, which is itself new: it painted an
+/// anonymous run, so the words a reader sorts this pane by were the one part of
+/// it no check could find.
+#[test]
+fn r1968_every_palette_row_is_under_the_heading_its_role_declares() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        let shot = painted(&state);
+        // The headings, with the top of each — asked of the paint, not of the
+        // geometry helper that placed them. R1653's whole header is about the
+        // difference.
+        let heads: Vec<(&'static str, u32)> = spec::palette_groups()
+            .iter()
+            .map(|run| {
+                let tag = format!("lab.palette.group.{}", run.label);
+                let rect = shot
+                    .tags
+                    .get(&tag)
+                    .unwrap_or_else(|| panic!("{tag} is not painted"));
+                // ★ And it reads the group's word. A heading in the right place
+                // saying something else would pass a purely geometric check.
+                assert_eq!(
+                    shot.said.get(&tag).map(String::as_str),
+                    Some(run.label),
+                    "{tag} is painted and reads something other than its group",
+                );
+                (run.label, rect.y)
+            })
+            .collect();
+        assert!(
+            heads.len() > 1,
+            "★ one heading covers everything, so 'under the right heading' is \
+             true of any arrangement and this check would be vacuous",
+        );
+        for role in spec::ROLES {
+            let tag = format!("lab.palette.role.{}", role.name);
+            let row = shot
+                .tags
+                .get(&tag)
+                .unwrap_or_else(|| panic!("{tag} is not painted"));
+            let over = heads
+                .iter()
+                .filter(|(_, y)| *y <= row.y)
+                .max_by_key(|(_, y)| *y)
+                .map(|(label, _)| *label);
+            assert_eq!(
+                over,
+                Some(role.group),
+                "★★★★★ {} declares the group {:?} and is painted under the \
+                 heading {:?} — the palette's rows and its headings are not \
+                 coming from one declaration",
+                role.name,
+                role.group,
+                over.unwrap_or("<nothing above it>"),
+            );
+        }
+        // ★ And the legend starts below every row, which is the other half of
+        // the same derivation: `legend_top` walks the runs rather than
+        // multiplying a group height by a literal 2.
+        let legend = shot
+            .tags
+            .get("lab.palette.legend")
+            .expect("the pin legend's heading is painted");
+        for role in spec::ROLES {
+            let row = shot.tags[&format!("lab.palette.role.{}", role.name)];
+            assert!(
+                row.y + row.h <= legend.y,
+                "★ the {} row is painted over the pin legend, so the legend's \
+                 top is not following the groups above it",
+                role.name,
+            );
         }
     });
 }
@@ -5509,6 +5620,10 @@ fn voice_population(tag: &str, population: spec::Population) -> Vec<String> {
     match population {
         spec::Population::One => vec![tag.to_owned()],
         spec::Population::Roles => spec::ROLES.iter().map(|r| fill(r.name)).collect(),
+        spec::Population::RoleGroups => spec::palette_groups()
+            .iter()
+            .map(|run| fill(run.label))
+            .collect(),
         spec::Population::Rail => spec::RAIL.iter().map(|(n, _)| fill(n)).collect(),
         spec::Population::Nodes => spec::NODES.iter().map(|n| fill(n.id)).collect(),
         // A link is addressed by the identifier it was minted with, and the

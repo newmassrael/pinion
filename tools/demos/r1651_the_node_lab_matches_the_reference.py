@@ -281,6 +281,14 @@ def body() -> None:
             tag = f"lab.rail.{seat['name']}"
             if tag not in painted:
                 missing.append(tag)
+        # ★★★★★ R1968 — the palette's group headings, read off the wire's own
+        # `role_groups` rather than named here. The screen derives the partition
+        # from the roster now (one heading per run of roles sharing a group), so
+        # a palette that gathers its roles differently moves this check with it.
+        for run in spec["role_groups"]:
+            tag = f"lab.palette.group.{run['label']}"
+            if tag not in painted:
+                missing.append(tag)
         for role in spec["roles"]:
             for tag in (
                 f"lab.palette.role.{role['name']}",
@@ -288,6 +296,9 @@ def body() -> None:
             ):
                 if tag not in painted:
                     missing.append(tag)
+        for tag in ("lab.palette.legend", "lab.palette.discovery.head"):
+            if tag not in painted:
+                missing.append(tag)
         for kind in spec["pin_legend"]:
             tag = f"lab.palette.pin.{kind['kind']}"
             if tag not in painted:
@@ -432,6 +443,12 @@ def body() -> None:
             chrome_of[pane["tag"]] = len(chrome)
         for seat in spec["rail"]:
             declared.add(f"lab.rail.{seat['name']}")
+        for run in spec["role_groups"]:
+            declared.add(f"lab.palette.group.{run['label']}")
+        declared.add("lab.palette.legend")
+        # ⚠ `lab.palette.discovery.head` is NOT declared here — it falls under
+        # the `lab.palette.discovery` family below, whose member count is the
+        # thing that has to move for it.
         for role in spec["roles"]:
             declared.add(f"lab.palette.role.{role['name']}")
             declared.add(f"lab.palette.swatch.{role['name']}")
@@ -682,7 +699,12 @@ def body() -> None:
             # SHAPE. ⇒ R1815's lesson from the other side: a population derived
             # from names cannot see a change to shape, and here the change was
             # a rename that altered a shape a different demo was counting.
-            "lab.palette.discovery": 2,
+            # ★★★★★ R1968 — 3, not 2: the switch's HEADING is a member now.
+            # It was painted all along and carried no tag, which is why it was
+            # never counted here and never announced to a reader either — the
+            # same absence with two faces. Naming it makes it both a member of
+            # this family and a `heading` in the accessibility tree.
+            "lab.palette.discovery": 3,
             # ★★★★ R1720 — the toast, and it arrived here for a reason worth
             # writing down rather than a number worth widening.
             #

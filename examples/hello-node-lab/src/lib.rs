@@ -5149,26 +5149,50 @@ fn inspector_body_across() -> Option<u32> {
     Some(inspector_rect().w.saturating_sub(PAD * 2))
 }
 
-fn palette_row(n: usize) -> Rect {
-    let n = u32::try_from(n).unwrap_or(0);
-    // Two groups of four, each under its own heading.
-    let group = n / 4;
-    let within = n % 4;
-    let (x, y) = palette_body_origin();
-    Rect::new(
-        x + PAD,
-        y + PAL_BODY_TOP
-            + group * (PAL_HEAD_H + 4 * PAL_ROW_H + 12)
-            + PAL_HEAD_H
-            + within * PAL_ROW_H,
-        palette_body_w(),
-        PAL_ROW_H - 5,
-    )
+/// The air between one palette group's last row and the next group's heading.
+const PAL_GROUP_GAP: u32 = 12;
+
+/// How tall a palette group of `rows` rows stands, heading and trailing air
+/// included.
+fn palette_group_h(rows: usize) -> u32 {
+    PAL_HEAD_H + u32::try_from(rows).unwrap_or(0) * PAL_ROW_H + PAL_GROUP_GAP
 }
 
-/// Where the pin legend starts — under both palette groups.
+/// ★★★★★ R1968 — where each palette group's heading strip starts, and where its
+/// rows start, walked from the **declared** grouping.
+///
+/// The one derivation the palette's vertical arrangement comes from. What stood
+/// here was `n / 4` and `n % 4` under a comment reading *"two groups of four"* —
+/// true of this roster and of no other, including every one of the seven groups
+/// the behaviour canon actually has (sizes 4, 5, 3, 3, 2, 3, 1). Worse than
+/// narrow: nothing tied it to the groups the roles declare, so a roster whose
+/// groups interleaved painted a traffic role under the infrastructure heading
+/// with every test green (measured R1968).
+fn palette_group_top(g: usize) -> u32 {
+    let (_, y) = palette_body_origin();
+    let mut top = y + PAL_BODY_TOP;
+    for run in spec::palette_groups().iter().take(g) {
+        top += palette_group_h(run.len);
+    }
+    top
+}
+
+fn palette_row(n: usize) -> Rect {
+    let (x, y) = palette_body_origin();
+    let mut top = y + PAL_BODY_TOP;
+    for run in spec::palette_groups() {
+        if n < run.end() {
+            top += PAL_HEAD_H + u32::try_from(n - run.start).unwrap_or(0) * PAL_ROW_H;
+            break;
+        }
+        top += palette_group_h(run.len);
+    }
+    Rect::new(x + PAD, top, palette_body_w(), PAL_ROW_H - 5)
+}
+
+/// Where the pin legend starts — under every palette group.
 fn legend_top() -> u32 {
-    palette_body_origin().1 + PAL_BODY_TOP + 2 * (PAL_HEAD_H + 4 * PAL_ROW_H + 12)
+    palette_group_top(spec::palette_groups().len())
 }
 
 fn legend_row(n: usize) -> Rect {
@@ -7370,11 +7394,16 @@ fn palette_body(state: &LabState, ink: Ink, rect: Rect) -> Scene {
     // children are stated from now, and not from the panel's: the panel keeps a
     // header band of its own above the body, and subtracting the panel origin
     // would give this strip that band's height as well as its own.
+    // ★ R1968 — the room above the FIRST GROUP'S HEADING, asked of the same
+    // derivation the heading itself is placed by. It was
+    // `palette_row(0).y - origin - PAL_HEAD_H`, which reconstructed that
+    // heading's top by undoing the row arithmetic and so stopped being true the
+    // moment the arithmetic changed.
     let header = Rect::new(
         PAD,
         0,
         body_w,
-        (palette_row(0).y - palette_body_origin().1).saturating_sub(PAL_HEAD_H),
+        palette_group_top(0).saturating_sub(palette_body_origin().1),
     );
     let [title_band, blurb_band] =
         pinion_core::containment::stacked_line_rects(header, PAD, body_w, [FONT_BODY + 1, 10]);
@@ -7383,11 +7412,16 @@ fn palette_body(state: &LabState, ink: Ink, rect: Rect) -> Scene {
         label("click to add one at the centre", blurb_band, 10, ink.text_3),
     ];
 
-    for (group_n, group) in ["infrastructure", "traffic"].into_iter().enumerate() {
-        let head = palette_row(group_n * 4);
+    // ★★★★★ R1968 — the headings the ROLES declare, in the order and at the
+    // heights one derivation gives them. This was `["infrastructure",
+    // "traffic"]` written out here — a third spelling of the partition, free to
+    // disagree with what the roles say they are in, and placed by undoing
+    // `palette_row`'s arithmetic.
+    for (g, run) in spec::palette_groups().iter().enumerate() {
         children.push(palette_heading(
-            group,
-            head.y - palette_body_origin().1 - PAL_HEAD_H,
+            &format!("lab.palette.group.{}", run.label),
+            run.label,
+            palette_group_top(g).saturating_sub(palette_body_origin().1),
             body_w,
             ink,
         ));
@@ -7626,9 +7660,16 @@ fn side_panel(
 /// space `palette_row` and `legend_row` actually leave above themselves. So the
 /// heading follows a change to that constant, which is what it could not do
 /// while its box was a number.
-fn palette_heading(text: &str, strip_top: u32, w: u32, ink: Ink) -> Scene {
+/// ★★★★★ R1968 — a heading a reader can be ASKED about.
+///
+/// It painted an anonymous run, which is why "is this role's row under the
+/// heading its record names" was not a question any gate could put to the
+/// screen: the words were on the canvas and nothing could find them. The tag is
+/// what makes the property askable, and `painted.rs` demands one per group.
+fn palette_heading(tag: &str, text: &str, strip_top: u32, w: u32, ink: Ink) -> Scene {
     let strip = Rect::new(PAD, strip_top, w, PAL_HEAD_H);
-    label(
+    tagged_label(
+        tag,
         text,
         pinion_core::containment::line_rect_in(strip, strip.x, w, 10),
         10,
@@ -7645,6 +7686,7 @@ fn palette_heading(text: &str, strip_top: u32, w: u32, ink: Ink) -> Scene {
 fn palette_legend(ink: Ink) -> Vec<Scene> {
     let local = in_palette_body;
     let mut children = vec![palette_heading(
+        "lab.palette.legend",
         "pins",
         legend_top() - palette_body_origin().1,
         palette_body_w(),
@@ -7784,6 +7826,7 @@ fn palette_determinism(state: &LabState, ink: Ink) -> Vec<Scene> {
     let toggle = local(discovery_rect());
     let on = state.discovery.get();
     children.push(palette_heading(
+        "lab.palette.discovery.head",
         "graph determinism",
         toggle.y - PAL_HEAD_H,
         palette_body_w(),
@@ -13002,6 +13045,10 @@ const fn population_wire(population: spec::Population) -> &'static str {
     match population {
         spec::Population::One => "one",
         spec::Population::Roles => "roles",
+        // ★ R1968 — a run of `roles` sharing a group, which is what the palette
+        // puts one heading over. The wire says which table it comes from, and
+        // the roster it comes from is published beside it.
+        spec::Population::RoleGroups => "role_groups",
         spec::Population::Rail => "rail",
         spec::Population::Nodes => "nodes",
         spec::Population::Links => "links",
@@ -13147,10 +13194,28 @@ fn spec_json() -> serde_json::Value {
             // The canon's own word is deliberately absent — publishing it would
             // undo the substitution this field exists to declare — so what
             // crosses the wire is the judgement and never the vocabulary.
-            "wording": Role::from_name(r.name).map_or("unknown", |role| match role.wording() {
+            //
+            // ⚠ R1968 — read off the role's OWN declaration now. It was
+            // `Role::from_name(r.name).map_or("unknown", …)`: a lookup by
+            // string between two tables that could disagree, with `"unknown"`
+            // standing where the disagreement would land. That third word was
+            // an escape hatch on a field whose whole job is to refuse one — a
+            // role whose words nobody classified is exactly what R1967 wrote
+            // this to catch, and the wire would have published it as a fact.
+            // With one declaration there is no lookup and no third answer.
+            "wording": match r.wording {
                 graph::Wording::AsTheCanon => "as_the_canon",
                 graph::Wording::Neutralised => "neutralised",
-            }),
+            },
+        })).collect::<Vec<_>>(),
+        // ★★★★★ R1968 — the palette's grouping, published so a client can
+        // expand the `role_groups` population a voice family names, and so the
+        // arrangement a person sees is a thing an agent can read rather than
+        // infer from row order. Derived from `roles` above, never authored.
+        "role_groups": spec::palette_groups().iter().map(|run| serde_json::json!({
+            "label": run.label,
+            "roles": spec::ROLES[run.start..run.end()]
+                .iter().map(|r| r.name).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
         "pin_legend": spec::PIN_LEGEND.iter().map(|(k, m)| serde_json::json!({
             "kind": k, "means": m,
@@ -17212,12 +17277,26 @@ fn palette_access(state: &LabState) -> Vec<AccessNode> {
             ))),
     ];
     nodes.extend(side_panel_access(state, SidePanel::Palette));
+    // ★★★★★ R1968 — the heading over each group, so the arrangement a sighted
+    // reader gets for free reaches one who does not see the drawing. The words
+    // and the population are the SAME derivation the ink and the geometry use,
+    // so a heading cannot announce a group the rows below it are not in.
+    for run in spec::palette_groups() {
+        nodes.push(
+            AccessNode::new(
+                format!("lab.palette.group.{}", run.label),
+                AriaRole::Heading,
+            )
+            .with_name(run.label),
+        );
+    }
     for role in spec::ROLES {
         nodes.push(
             AccessNode::new(format!("lab.palette.role.{}", role.name), AriaRole::Button)
                 .with_name(format!("add a {} — {}", role.name, role.gist)),
         );
     }
+    nodes.push(AccessNode::new("lab.palette.legend", AriaRole::Heading).with_name("pins"));
     // The pin legend states what a pin can DO, which is not a fact about
     // colour: a reader who never sees the drawing still needs the vocabulary
     // its announcements use.
@@ -17227,6 +17306,10 @@ fn palette_access(state: &LabState) -> Vec<AccessNode> {
                 .with_name(format!("{kind} pin — {meaning}")),
         );
     }
+    nodes.push(
+        AccessNode::new("lab.palette.discovery.head", AriaRole::Heading)
+            .with_name("graph determinism"),
+    );
     nodes.push(
         AccessNode::new("lab.palette.discovery", AriaRole::Switch)
             .with_name("graph determinism")

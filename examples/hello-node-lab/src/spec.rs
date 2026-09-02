@@ -23,6 +23,7 @@
 //! tool class uses generally; the structure and the behaviour are what is being
 //! reproduced, and those are what the table holds.
 
+use crate::graph::Role;
 use pinion_core::edge_panel::{EdgePlacement, EdgePolicy};
 use pinion_core::style::ChromeEdge;
 
@@ -309,110 +310,90 @@ pub const TRAFFIC_PARAMETERS: &[TrafficParameter] = &[
 ];
 
 /// A palette entry: a role a node can be given.
-pub struct RoleSpec {
-    /// The role's name.
-    pub name: &'static str,
-    /// What it does, in the one line the palette has room for.
-    pub gist: &'static str,
-    /// Which group it sits in.
-    pub group: &'static str,
-    /// Whether it can accept an inbound link at all.
-    pub accepts: bool,
-    /// ★ R1848 — the traffic parameters a node in this role carries.
-    ///
-    /// Empty for every `infrastructure` role, and that emptiness is the
-    /// taxonomy's content rather than an omission: a router carries other
-    /// nodes' traffic and has none of its own, so a parameter here would be a
-    /// claim about somebody else's messages.
-    pub carries: &'static [TrafficParameter],
+///
+/// ★★★★★ R1968 — the type moved to [`crate::graph`], beside the enum whose
+/// variants it describes, and this module no longer authors a second copy of
+/// its rows. It is re-exported rather than renamed because it is what the wire
+/// publishes and what every reader here already calls the palette's entry.
+pub use crate::graph::RoleSpec;
+
+/// The palette, in the order it offers its roles — **derived** from the
+/// taxonomy.
+///
+/// ★★★★★ R1968 — this was an authored table of eight records, four of whose
+/// fields (`name`, `gist`, `group`, `accepts`) were a second spelling of what
+/// [`Role`] already answered, held together by
+/// `r1651_the_specification_and_the_taxonomy_agree_about_every_role` — a test
+/// that existed only because the two could disagree. Deriving it deletes the
+/// possibility rather than the check: there is one declaration per role now,
+/// [`Role::spec`], and this is a view of it.
+///
+/// ⚠ What is NOT lost: this module's contract is that the screen's paint is
+/// compared against a table rather than against anybody's memory, and that
+/// comparison is unchanged — `painted.rs` still derives every demanded tag from
+/// this roster. What went away is a second *authoring*, not the gate.
+pub const ROLES: [&RoleSpec; Role::COUNT] = Role::specs();
+
+/// One run of the palette: a heading, and the consecutive roles under it.
+///
+/// ★★★★★ R1968 — the palette's grouping, **derived from the roster** rather
+/// than written a second time beside the painter. The behaviour canon keeps the
+/// same thing in one declaration of its own — a list of `[group label, member
+/// kinds]` pairs, seven of them, of sizes 4, 5, 3, 3, 2, 3 and 1 — and that
+/// variety is the measurement that condemns what stood here: the painter split
+/// its rows with `n / 4` and its legend with a literal `2 *`, an arrangement
+/// that cannot express a single one of the canon's seven groups.
+pub struct RoleGroup {
+    /// The heading a person reads above these rows.
+    pub label: &'static str,
+    /// The index into [`ROLES`] of the first role under it.
+    pub start: usize,
+    /// How many roles are under it.
+    pub len: usize,
 }
 
-/// The palette, grouped by what a node is *for*. Two groups, because that is
-/// what the reference's first-release palette has — infrastructure that carries
-/// traffic, and the traffic itself.
-pub const ROLES: &[RoleSpec] = &[
-    RoleSpec {
-        name: "Router",
-        gist: "listens, routes",
-        group: "infrastructure",
-        accepts: true,
-        carries: &[],
-    },
-    RoleSpec {
-        name: "Peer",
-        gist: "joins the mesh",
-        group: "infrastructure",
-        accepts: true,
-        carries: &[],
-    },
-    RoleSpec {
-        name: "Client",
-        gist: "one router only",
-        group: "infrastructure",
-        accepts: false,
-        carries: &[],
-    },
-    RoleSpec {
-        name: "Store",
-        gist: "volume, key range",
-        group: "infrastructure",
-        accepts: true,
-        carries: &[],
-    },
-    // ★ R1848 — the four traffic roles, and the assignment is the DOMAIN's call,
-    // which is what the census's `app` verdict means: the framework owns what a
-    // node is and declines to own which parameters a domain's traffic has.
-    // Each line below says why this role has what it has.
-    RoleSpec {
-        name: "Publisher",
-        gist: "sends, with a class",
-        group: "traffic",
-        accepts: false,
-        // It originates messages, so every parameter is its decision.
-        carries: TRAFFIC_PARAMETERS,
-    },
-    RoleSpec {
-        name: "Subscriber",
-        gist: "receives",
-        group: "traffic",
-        accepts: true,
-        // It chooses neither how often nor how large — those are the sender's.
-        // What it does declare is how it wants to be served and whether it will
-        // accept loss.
-        carries: &[TrafficParameter::Priority, TrafficParameter::Reliability],
-    },
-    RoleSpec {
-        name: "Querier",
-        gist: "asks, on a period",
-        group: "traffic",
-        accepts: false,
-        // A period IS a rate, and a query carries a payload; what it cannot
-        // decide is what a congested path does to somebody else's answer.
-        carries: &[
-            TrafficParameter::Rate,
-            TrafficParameter::Payload,
-            TrafficParameter::Priority,
-            TrafficParameter::Reliability,
-        ],
-    },
-    RoleSpec {
-        name: "Responder",
-        gist: "answers",
-        group: "traffic",
-        accepts: true,
-        // It answers when asked, so it has no rate of its own.
-        carries: &[
-            TrafficParameter::Payload,
-            TrafficParameter::Priority,
-            TrafficParameter::Reliability,
-        ],
-    },
-];
+impl RoleGroup {
+    /// The index one past the last role under this heading.
+    #[must_use]
+    pub const fn end(&self) -> usize {
+        self.start + self.len
+    }
+}
+
+/// The palette's headings and their rows, in palette order.
+///
+/// Derived by walking [`ROLES`] and cutting a new run wherever the declared
+/// group changes, so a role is under the heading its own record names — by
+/// construction, at every reader, including the geometry.
+///
+/// ⚠ A group whose roles are **not** consecutive would produce two runs with
+/// one label, and that is a specification error rather than a two-headed group:
+/// the canon lists each group once, and a person reading the palette would see
+/// the same word twice with different rows under it.
+/// `r1968_each_palette_group_is_named_once` is where that is refused.
+#[must_use]
+pub fn palette_groups() -> &'static [RoleGroup] {
+    static GROUPS: std::sync::LazyLock<Vec<RoleGroup>> = std::sync::LazyLock::new(|| {
+        let mut runs: Vec<RoleGroup> = Vec::new();
+        for (n, role) in ROLES.iter().enumerate() {
+            match runs.last_mut() {
+                Some(run) if run.label == role.group => run.len += 1,
+                _ => runs.push(RoleGroup {
+                    label: role.group,
+                    start: n,
+                    len: 1,
+                }),
+            }
+        }
+        runs
+    });
+    &GROUPS
+}
 
 /// The role a node has, if its name is one this palette offers.
 #[must_use]
 pub fn role_of(node: &NodeSpec) -> Option<&'static RoleSpec> {
-    ROLES.iter().find(|role| role.name == node.role)
+    ROLES.iter().copied().find(|role| role.name == node.role)
 }
 
 /// The traffic parameters a node's card actually STATES, of the ones its role
@@ -1354,6 +1335,10 @@ pub enum Population {
     One,
     /// One per [`ROLES`] entry.
     Roles,
+    /// ★ R1968 — one per palette GROUP, from [`palette_groups`]. A group is a
+    /// run of the roster rather than a row of it, so a palette that gathers its
+    /// roles differently moves this without anybody editing a list.
+    RoleGroups,
     /// One per [`RAIL`] seat.
     Rail,
     /// One per [`NODES`] card.
@@ -1440,15 +1425,40 @@ pub const VOICES: &[VoiceSpec] = &[
     // strip is not unchecked — the census asks it the stronger question, that
     // nothing painted is left unclassified in ANY swept state, and the folded
     // state is swept now.
+    // ★★★★★ R1968 — the three HEADINGS this pane sorts itself with. They were
+    // anonymous runs: a reader who never sees the drawing was handed eight
+    // role buttons in a flat row with nothing saying that the first four are
+    // infrastructure and the rest are the traffic, which is the one fact the
+    // palette's arrangement carries. A heading is how that reaches them, and
+    // headings are the primary way such a reader moves through a long pane.
+    //
+    // ⚠ The reference toolkit is judged against here and offers no comparison
+    // at all: a heading is a property its document layout carries and its
+    // accessibility surface has no method that reports block structure.
+    VoiceSpec {
+        tag: "lab.palette.group.{}",
+        role: "heading",
+        population: Population::RoleGroups,
+    },
     VoiceSpec {
         tag: "lab.palette.role.{}",
         role: "button",
         population: Population::Roles,
     },
     VoiceSpec {
+        tag: "lab.palette.legend",
+        role: "heading",
+        population: Population::One,
+    },
+    VoiceSpec {
         tag: "lab.palette.pin.{}",
         role: "group",
         population: Population::PinKinds,
+    },
+    VoiceSpec {
+        tag: "lab.palette.discovery.head",
+        role: "heading",
+        population: Population::One,
     },
     // ★★ A SWITCH, not a button and not a checkbox. R1681.3 reported this
     // control as unreadable on screen; what a reader is TOLD it is has to be

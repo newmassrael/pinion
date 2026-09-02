@@ -11,6 +11,7 @@
 //! an **accept** pin of the same transport. That single rule is what makes the
 //! canvas's three pin appearances mean something rather than decorate.
 
+use crate::spec::TrafficParameter;
 use pinion_node_graph::{
     Admission, Admits, Composition, Conversion, Drawn, NodeKind, Objection, Port, PortName,
     PortRef, Refusal, Side, Tint, Variadic,
@@ -262,6 +263,226 @@ pub enum Role {
     Responder,
 }
 
+/// ★★★★★ R1968 — **everything this taxonomy declares about one role, in one
+/// place.**
+///
+/// # What the canon does, measured this round
+///
+/// The behaviour canon holds its node kinds in a single map from kind to a
+/// record of `{colour, code, label, description}` — extracted at
+/// `labRoles()`, twenty-one entries, one line each — and a second, separate
+/// declaration gives the palette its grouping and its order. Two declarations
+/// for two different questions: *what is this kind* and *where does the palette
+/// put it*.
+///
+/// ⚠ R1966 and R1967 both wrote that record down as `{colour, code, label}`.
+/// Re-measured here at the command, it carries a **fourth** field — the one
+/// line of description this screen calls a [`Role::gist`] — so the sentence
+/// those two rounds carried was short by one.
+///
+/// # What we did, and what it cost
+///
+/// One role's facts were spelled in **eight** separate `match self` blocks over
+/// [`Role`], plus four of them a second time in an authored palette table next
+/// door, reconciled at test time by
+/// `r1651_the_specification_and_the_taxonomy_agree_about_every_role` rather
+/// than by construction. Adding a ninth role meant nine edits and adding a
+/// ninth *fact* meant a ninth match; a role half-declared across them was a
+/// thing a person had to notice.
+///
+/// This is that one place. The eight accessors on [`Role`] read a field of it,
+/// the palette table is derived from it, and a role that is missing a fact does
+/// not compile.
+pub struct RoleSpec {
+    /// The role's name — the label the palette shows and the key a saved
+    /// document names it by.
+    pub name: &'static str,
+    /// The three- or four-letter badge the canvas card carries.
+    pub badge: &'static str,
+    /// The colour a card of this role is drawn in.
+    pub tint: Tint,
+    /// What it does, in the one line the palette has room for.
+    pub gist: &'static str,
+    /// Which palette group it sits in.
+    ///
+    /// The heading a person reads above its row is **derived** from this rather
+    /// than written beside the painter: see `spec::palette_groups`.
+    pub group: &'static str,
+    /// Whether it can accept an inbound link at all.
+    pub accepts: bool,
+    /// The session mode this role implies, when it implies one.
+    pub mode: Option<&'static str>,
+    /// ★★★★★ R1967 — **whether this role's WORDS are the canon's own or a
+    /// deliberate neutral substitution.**
+    ///
+    /// # Why this has to be declared
+    ///
+    /// The canon keeps a kind's colour, its short code, its label and its one
+    /// line of description in one declaration. Extracted and compared at R1967,
+    /// six of the eight roles carry the canon's code AND its label to the
+    /// letter, and two do not.
+    ///
+    /// A difference in a word is not, on this screen, a defect: the standing
+    /// order for this reproduction is that STRUCTURE and BEHAVIOUR match while
+    /// **node names and protocol vocabulary are neutrally substituted**. So a
+    /// word that differs may be exactly right — and until R1967 nothing said
+    /// which, so a substitution and a slip were the same silence. That is the
+    /// escape hatch this closes: an unclassified role is not a pass.
+    ///
+    /// ⚠ The canon's own words are deliberately NOT written here. Recording
+    /// them to prove the comparison would undo the substitution the comparison
+    /// exists to declare. What is carried is the JUDGEMENT; the words stay
+    /// where they are, and re-measuring means extracting from the canon again
+    /// (R1967's ledger entry names the command).
+    ///
+    /// ⚠ Measured, not assumed: `git log -S` puts both words in R1651, which
+    /// predates every canon extraction in this repository. Neither was chosen
+    /// against the canon — they were authored first and the comparison came
+    /// later, so what makes them right is the standing order, not an argument
+    /// anybody made at the time.
+    pub wording: Wording,
+    /// ★ R1848 — the traffic parameters a node in this role carries.
+    ///
+    /// Empty for every `infrastructure` role, and that emptiness is the
+    /// taxonomy's content rather than an omission: a router carries other
+    /// nodes' traffic and has none of its own, so a parameter here would be a
+    /// claim about somebody else's messages.
+    pub carries: &'static [TrafficParameter],
+}
+
+/// The palette group the roles that carry other nodes' traffic sit in.
+///
+/// A named constant because the derivation that partitions the palette reads it
+/// off the records and a reader of one record should see the same token the
+/// next record shows, not a string that merely happens to match.
+const INFRASTRUCTURE: &str = "infrastructure";
+/// The palette group the roles that *are* the traffic sit in.
+const TRAFFIC: &str = "traffic";
+
+const ROUTER: RoleSpec = RoleSpec {
+    name: "Router",
+    badge: "RTR",
+    tint: Tint::rgb(0x9A, 0x00, 0x4F),
+    gist: "listens, routes",
+    group: INFRASTRUCTURE,
+    accepts: true,
+    mode: Some("router"),
+    wording: Wording::AsTheCanon,
+    carries: &[],
+};
+
+const PEER: RoleSpec = RoleSpec {
+    name: "Peer",
+    badge: "PEER",
+    tint: Tint::rgb(0x2D, 0x6C, 0xDF),
+    gist: "joins the mesh",
+    group: INFRASTRUCTURE,
+    accepts: true,
+    mode: Some("peer"),
+    wording: Wording::AsTheCanon,
+    carries: &[],
+};
+
+const CLIENT: RoleSpec = RoleSpec {
+    name: "Client",
+    badge: "CLI",
+    tint: Tint::rgb(0x69, 0x71, 0x80),
+    gist: "one router only",
+    group: INFRASTRUCTURE,
+    accepts: false,
+    mode: Some("client"),
+    wording: Wording::AsTheCanon,
+    carries: &[],
+};
+
+const STORE: RoleSpec = RoleSpec {
+    name: "Store",
+    badge: "STO",
+    tint: Tint::rgb(0x1F, 0x8A, 0x4C),
+    gist: "volume, key range",
+    group: INFRASTRUCTURE,
+    accepts: true,
+    mode: Some("peer"),
+    // ★ Substituted: the word the protocol gives this node is not the word this
+    // screen reads it by. See [`Role::wording`].
+    wording: Wording::Neutralised,
+    carries: &[],
+};
+
+// ★ R1848 — the four traffic roles, and the parameter assignment is the
+// DOMAIN's call: the framework owns what a node is and declines to own which
+// parameters a domain's traffic has. Each record below says why it has what it
+// has.
+const PUBLISHER: RoleSpec = RoleSpec {
+    name: "Publisher",
+    badge: "PUB",
+    // The canon gives its publisher and its subscriber ONE colour, and its
+    // querier and its responder another. Kept as it draws them rather than
+    // split for tidiness: a reader tells a publisher from a subscriber by its
+    // badge, and the colour groups them by what they carry.
+    tint: Tint::rgb(0x8A, 0x5C, 0xF6),
+    gist: "sends, with a class",
+    group: TRAFFIC,
+    accepts: false,
+    mode: None,
+    wording: Wording::AsTheCanon,
+    // It originates messages, so every parameter is its decision.
+    carries: crate::spec::TRAFFIC_PARAMETERS,
+};
+
+const SUBSCRIBER: RoleSpec = RoleSpec {
+    name: "Subscriber",
+    badge: "SUB",
+    tint: Tint::rgb(0x8A, 0x5C, 0xF6),
+    gist: "receives",
+    group: TRAFFIC,
+    accepts: true,
+    mode: None,
+    wording: Wording::AsTheCanon,
+    // It chooses neither how often nor how large — those are the sender's. What
+    // it does declare is how it wants to be served and whether it will accept
+    // loss.
+    carries: &[TrafficParameter::Priority, TrafficParameter::Reliability],
+};
+
+const QUERIER: RoleSpec = RoleSpec {
+    name: "Querier",
+    badge: "QRY",
+    tint: Tint::rgb(0xC7, 0x78, 0x00),
+    gist: "asks, on a period",
+    group: TRAFFIC,
+    accepts: false,
+    mode: None,
+    wording: Wording::AsTheCanon,
+    // A period IS a rate, and a query carries a payload; what it cannot decide
+    // is what a congested path does to somebody else's answer.
+    carries: &[
+        TrafficParameter::Rate,
+        TrafficParameter::Payload,
+        TrafficParameter::Priority,
+        TrafficParameter::Reliability,
+    ],
+};
+
+const RESPONDER: RoleSpec = RoleSpec {
+    name: "Responder",
+    badge: "RSP",
+    tint: Tint::rgb(0xC7, 0x78, 0x00),
+    gist: "answers",
+    group: TRAFFIC,
+    accepts: true,
+    mode: None,
+    // ★ Substituted, in both halves: the code this screen shows and the word it
+    // reads by are its own. See [`Role::wording`].
+    wording: Wording::Neutralised,
+    // It answers when asked, so it has no rate of its own.
+    carries: &[
+        TrafficParameter::Payload,
+        TrafficParameter::Priority,
+        TrafficParameter::Reliability,
+    ],
+};
+
 impl Role {
     /// Every role, in palette order.
     pub const ALL: [Self; 8] = [
@@ -275,19 +496,50 @@ impl Role {
         Self::Responder,
     ];
 
+    /// How many roles the palette offers.
+    pub const COUNT: usize = Self::ALL.len();
+
+    /// ★★★★★ R1968 — **this role's one declaration.**
+    ///
+    /// The single `match` over [`Role`] in this module, and the reason there is
+    /// only one: every fact below is a field of what it answers, so a role
+    /// declares all of them together or does not compile. A ninth variant stops
+    /// the build **here**, once, rather than in eight places that could each be
+    /// answered differently.
+    #[must_use]
+    pub const fn spec(self) -> &'static RoleSpec {
+        match self {
+            Self::Router => &ROUTER,
+            Self::Peer => &PEER,
+            Self::Client => &CLIENT,
+            Self::Store => &STORE,
+            Self::Publisher => &PUBLISHER,
+            Self::Subscriber => &SUBSCRIBER,
+            Self::Querier => &QUERIER,
+            Self::Responder => &RESPONDER,
+        }
+    }
+
+    /// Every role's declaration, in palette order — derived from [`Self::ALL`].
+    ///
+    /// What the palette table next door publishes, so the screen's
+    /// specification and this taxonomy cannot answer differently about a role:
+    /// before R1968 they were two authored tables agreeing by a test.
+    #[must_use]
+    pub const fn specs() -> [&'static RoleSpec; Self::COUNT] {
+        let mut out = [Self::ALL[0].spec(); Self::COUNT];
+        let mut n = 0;
+        while n < Self::COUNT {
+            out[n] = Self::ALL[n].spec();
+            n += 1;
+        }
+        out
+    }
+
     /// The role's name, which is what the palette shows.
     #[must_use]
     pub const fn name(self) -> &'static str {
-        match self {
-            Self::Router => "Router",
-            Self::Peer => "Peer",
-            Self::Client => "Client",
-            Self::Store => "Store",
-            Self::Publisher => "Publisher",
-            Self::Subscriber => "Subscriber",
-            Self::Querier => "Querier",
-            Self::Responder => "Responder",
-        }
+        self.spec().name
     }
 
     /// ★★★★★ R1966 — **the colour a card of this role is drawn in.**
@@ -321,105 +573,52 @@ impl Role {
     /// R1926 moved [`Transport::tint`] here for the same reason and in the same
     /// words. `role_ink` in the view now derives its `Color` from this, so the
     /// palette swatch, the badge and the card cannot answer differently.
+    ///
+    /// ★ R1968 — the value moved once more, the last few inches: into
+    /// [`RoleSpec`], beside the other seven facts this taxonomy states about a
+    /// role. The reasoning above is unchanged and is why it did not go further.
     #[must_use]
     pub const fn tint(self) -> Tint {
-        match self {
-            Self::Router => Tint::rgb(0x9A, 0x00, 0x4F),
-            Self::Peer => Tint::rgb(0x2D, 0x6C, 0xDF),
-            Self::Client => Tint::rgb(0x69, 0x71, 0x80),
-            Self::Store => Tint::rgb(0x1F, 0x8A, 0x4C),
-            // The canon gives `pub` and `sub` one colour, and `qry` and `qbl`
-            // another. Kept as it draws them rather than split for tidiness: a
-            // reader tells a publisher from a subscriber by its badge, and the
-            // colour groups them by what they carry.
-            Self::Publisher | Self::Subscriber => Tint::rgb(0x8A, 0x5C, 0xF6),
-            Self::Querier | Self::Responder => Tint::rgb(0xC7, 0x78, 0x00),
-        }
+        self.spec().tint
     }
 
-    /// ★★★★★ R1967 — **whether this role's WORDS are the canon's own or a
-    /// deliberate neutral substitution.**
-    ///
-    /// # Why this has to be declared
-    ///
-    /// The canon keeps a kind's colour, its short code and its label in one
-    /// declaration, and R1966 brought the colour here beside [`Self::badge`]
-    /// and [`Self::name`]. Extracted and compared this round, six of the eight
-    /// roles carry the canon's code AND its label to the letter, and two do
-    /// not.
-    ///
-    /// A difference in a word is not, on this screen, a defect: the standing
-    /// order for this reproduction is that STRUCTURE and BEHAVIOUR match while
-    /// **node names and protocol vocabulary are neutrally substituted**. So a
-    /// word that differs may be exactly right — and until now nothing said
-    /// which, so a substitution and a slip were the same silence. That is the
-    /// escape hatch this closes: an unclassified role is not a pass.
-    ///
-    /// ⚠ The canon's own words are deliberately NOT written here. Recording
-    /// them to prove the comparison would undo the substitution the comparison
-    /// exists to declare. What is carried is the JUDGEMENT; the words stay
-    /// where they are, and re-measuring means extracting from the canon again
-    /// (the round's ledger entry names the command).
-    ///
-    /// ⚠ Measured, not assumed: `git log -S` puts both words in R1651, which
-    /// predates every canon extraction in this repository. Neither was chosen
-    /// against the canon — they were authored first and the comparison came
-    /// later, so what makes them right is the standing order, not an argument
-    /// anybody made at the time.
-    #[must_use]
-    pub const fn wording(self) -> Wording {
-        match self {
-            // The canon's code and label, letter for letter.
-            Self::Router
-            | Self::Peer
-            | Self::Client
-            | Self::Publisher
-            | Self::Subscriber
-            | Self::Querier => Wording::AsTheCanon,
-            // ★ Substituted. Both are names the protocol gives a node, which
-            // the standing order for this reproduction neutralises — the code
-            // this screen shows and the word it reads by are its own.
-            Self::Store | Self::Responder => Wording::Neutralised,
-        }
-    }
+    // ⚠ R1968 — there is deliberately NO `wording` accessor either, and its
+    // going is the point rather than tidying: the wire read it through
+    // `Role::from_name(name)`, a lookup between two tables with `"unknown"` for
+    // the case where they disagreed. One declaration leaves nothing to look up,
+    // so the field is read where the role is. The reasoning lives on
+    // [`RoleSpec::wording`].
 
-    /// The three-letter badge the canvas card carries.
+    /// The three- or four-letter badge the canvas card carries.
     #[must_use]
     pub const fn badge(self) -> &'static str {
-        match self {
-            Self::Router => "RTR",
-            Self::Peer => "PEER",
-            Self::Client => "CLI",
-            Self::Store => "STO",
-            Self::Publisher => "PUB",
-            Self::Subscriber => "SUB",
-            Self::Querier => "QRY",
-            Self::Responder => "RSP",
-        }
+        self.spec().badge
     }
 
     /// Which palette group this role sits in.
+    ///
+    /// ★★★★★ R1968 — and the palette's headings and row geometry are DERIVED
+    /// from this, by `spec::palette_groups`. Before that round the partition was
+    /// spelled five times: here, in an authored palette table, in the painter's
+    /// two-string heading list, in `palette_row`'s `n / 4`, and in `legend_top`'s
+    /// `2 *` — with nothing but a hand-written `(4, 4)` in a test holding them
+    /// together. Measured: reordering the roster so the groups interleave put a
+    /// traffic role under the *infrastructure* heading and left all 179 tests
+    /// green.
     #[must_use]
     pub const fn group(self) -> &'static str {
-        match self {
-            Self::Router | Self::Peer | Self::Client | Self::Store => "infrastructure",
-            Self::Publisher | Self::Subscriber | Self::Querier | Self::Responder => "traffic",
-        }
+        self.spec().group
     }
 
     /// The one line the palette has room for.
+    ///
+    /// ⚠ R1968 — this is the canon's **fourth** kind field, the one R1966 and
+    /// R1967 both left out of the sentence *"the canon declares
+    /// `{colour, code, label}` in one place"*. Its record carries a description
+    /// too.
     #[must_use]
     pub const fn gist(self) -> &'static str {
-        match self {
-            Self::Router => "listens, routes",
-            Self::Peer => "joins the mesh",
-            Self::Client => "one router only",
-            Self::Store => "volume, key range",
-            Self::Publisher => "sends, with a class",
-            Self::Subscriber => "receives",
-            Self::Querier => "asks, on a period",
-            Self::Responder => "answers",
-        }
+        self.spec().gist
     }
 
     /// Whether a node of this role can be **dialled** — whether it is the sort
@@ -431,10 +630,7 @@ impl Role {
     /// role's half of that, and the node's half lives in its form.
     #[must_use]
     pub const fn accepts(self) -> bool {
-        match self {
-            Self::Router | Self::Peer | Self::Store | Self::Responder | Self::Subscriber => true,
-            Self::Client | Self::Publisher | Self::Querier => false,
-        }
+        self.spec().accepts
     }
 
     /// The session mode this role implies, when it implies one.
@@ -450,13 +646,13 @@ impl Role {
     /// the example programs rather than from the role.
     #[must_use]
     pub const fn mode(self) -> Option<&'static str> {
-        match self {
-            Self::Router => Some("router"),
-            Self::Peer | Self::Store => Some("peer"),
-            Self::Client => Some("client"),
-            Self::Publisher | Self::Subscriber | Self::Querier | Self::Responder => None,
-        }
+        self.spec().mode
     }
+
+    // ⚠ R1968 — there is deliberately NO `carries` accessor. Nothing asks a
+    // `Role` for its traffic parameters; every reader walks the palette table
+    // and reads the field. An accessor with no caller is a signal turned off,
+    // which is the rule `palette_legend` records the argument for.
 
     /// Every mode a session can be in — the options the `mode` row offers a
     /// person who takes it over.
@@ -1271,11 +1467,15 @@ mod tests {
     /// ★★★★★ R1967 — **every role says where its words come from, and the
     /// answer is never nothing.**
     ///
-    /// The population is [`Role::ALL`] and the classification is an exhaustive
-    /// match inside [`Role::wording`], so a role added later stops the build
-    /// until somebody says which it is — the same shape R1965 gave the rail's
+    /// The population is [`Role::ALL`] and the classification is a REQUIRED
+    /// FIELD of [`RoleSpec`], so a role added later stops the build until
+    /// somebody says which it is — the same shape R1965 gave the rail's
     /// divergence kinds, and the reason is the same: a list written out here
     /// would leave the ninth role silently unclassified.
+    ///
+    /// ⚠ R1968 — it was an exhaustive `match` in an accessor, which is the same
+    /// guarantee by a weaker route: the accessor had to exist, be remembered,
+    /// and be one of eight such matches a ninth role had to satisfy separately.
     ///
     /// ⚠ BOTH arms must be reached. A screen where everything is the canon's
     /// word has nothing to declare and this check would be a tautology; a
@@ -1288,7 +1488,7 @@ mod tests {
         let mut canonical = 0_usize;
         let mut neutralised = 0_usize;
         for role in Role::ALL {
-            match role.wording() {
+            match role.spec().wording {
                 Wording::AsTheCanon => canonical += 1,
                 Wording::Neutralised => neutralised += 1,
             }
@@ -1531,19 +1731,85 @@ mod tests {
         );
     }
 
+    /// ★★★★★ R1968 — **every role is in exactly one group, and the palette's
+    /// partition is that grouping rather than a second statement of it.**
+    ///
+    /// ⚠ What this replaces, and why the replacement is not the same check with
+    /// nicer words. It read:
+    ///
+    /// ```text
+    /// match role.group() { "infrastructure" => …, "traffic" => …, other => panic }
+    /// assert_eq!((infra, traffic), (4, 4));
+    /// ```
+    ///
+    /// — the group names written out a second time and the sizes a third, which
+    /// is the shape R1882 wrote the rule about: **a gate must compare against
+    /// the derivation's output, not re-spell the rule.** It was also the only
+    /// thing holding the painter's `n / 4` to the roster, and it held it by
+    /// coincidence: a maintainer who moved a role between groups would have
+    /// updated `(4, 4)` to `(3, 5)` as the failure asked and left the palette
+    /// painting a heading over the wrong rows.
+    ///
+    /// What is asserted now is the property itself — a role's group is the run
+    /// it is in — plus the invariant that makes the partition a partition.
     #[test]
-    fn r1651_every_role_is_in_exactly_one_group_and_the_groups_are_the_palette() {
-        let mut infra = 0;
-        let mut traffic = 0;
-        for role in Role::ALL {
-            match role.group() {
-                "infrastructure" => infra += 1,
-                "traffic" => traffic += 1,
-                other => panic!("{} is in {other:?}, which is not a group", role.name()),
-            }
+    fn r1968_every_role_is_in_exactly_one_group_and_the_palette_deals_from_it() {
+        let runs = crate::spec::palette_groups();
+        assert!(!runs.is_empty(), "the palette has at least one group");
+        // 1. The runs COVER the roster, once each and in order. A run that
+        //    stopped short would leave rows under no heading at all.
+        let covered: usize = runs.iter().map(|run| run.len).sum();
+        assert_eq!(
+            covered,
+            Role::COUNT,
+            "the palette's groups cover {covered} of {} roles",
+            Role::COUNT,
+        );
+        for (n, run) in runs.iter().enumerate() {
+            assert_eq!(
+                run.start,
+                if n == 0 { 0 } else { runs[n - 1].end() },
+                "group {:?} does not begin where the one before it ends",
+                run.label,
+            );
+            assert!(run.len > 0, "group {:?} has no rows", run.label);
+        }
+        // 2. Each role sits in the run whose label its own record names. This
+        //    is what the heading over its row is derived from, so it is the
+        //    property the screen shows.
+        for (n, role) in Role::ALL.into_iter().enumerate() {
+            let run = runs
+                .iter()
+                .find(|run| n >= run.start && n < run.end())
+                .unwrap_or_else(|| panic!("{} is in no palette group", role.name()));
+            assert_eq!(
+                run.label,
+                role.group(),
+                "★ {} declares the group {:?} and the palette deals it into {:?}",
+                role.name(),
+                role.group(),
+                run.label,
+            );
             assert_eq!(Role::from_name(role.name()), Some(role), "round trip");
         }
-        assert_eq!((infra, traffic), (4, 4));
+        // 3. ★★★★★ And a label names ONE run. A roster whose groups interleave
+        //    derives two runs with one word over them — the palette would show
+        //    the same heading twice with different rows under each, and a
+        //    reader sorting by it would be told something false. Measured at
+        //    R1968: with the partition hand-written, exactly that roster left
+        //    all 179 tests green while painting a traffic role under the
+        //    infrastructure heading.
+        let mut seen: Vec<&str> = runs.iter().map(|run| run.label).collect();
+        let before = seen.len();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(
+            seen.len(),
+            before,
+            "★★★★★ a palette group is named twice, so the roster scatters a \
+             group instead of gathering it: {:?}",
+            runs.iter().map(|run| run.label).collect::<Vec<_>>(),
+        );
     }
 
     #[test]
