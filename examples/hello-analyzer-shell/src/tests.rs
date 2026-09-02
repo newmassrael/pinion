@@ -4634,6 +4634,116 @@ fn assert_the_ratchets(all: &pinion_widget_paint::caption::Survey) {
     );
 }
 
+// ── R1973: what the reference gives a reader who cannot see the screen ───────
+
+/// The reference's accessibility surface, pinned. See
+/// `docs/analyzer-voice-spec.json`.
+///
+/// `include_str!` rather than a read at run time, the rule every other pinned
+/// reference document here follows: a document that goes missing must break the
+/// build rather than let a gate pass by finding no file.
+fn voice_pin() -> serde_json::Value {
+    serde_json::from_str(include_str!("../../../docs/analyzer-voice-spec.json"))
+        .expect("the reference's voice surface is readable JSON")
+}
+
+/// ★★★★★ R1973 — **every role the reference declares is reproduced, and what we
+/// have beyond it is SURPLUS rather than drift.**
+///
+/// # Why this is not the gate the round was asked for
+///
+/// The milestone said: measure `spec::VOICES` against the reference. Measured
+/// first, as this project's standing order requires, the premise does not hold —
+/// **the reference has almost no accessibility surface to measure against.**
+/// Its scope document and its behaviour document declare ZERO role attributes
+/// and ZERO `aria-*` attributes between them, and the newest integrated
+/// document declares FIVE in thirty-one megabytes: one role, four states.
+/// Against that, `spec::VOICES` carries dozens of rows across twenty-odd role
+/// kinds. Comparing the two would be measuring a surface against nothing, and
+/// the round that tried it would have deleted the difference or invented a
+/// reference for it.
+///
+/// ⇒ so what is gated is the pair of things that ARE true and were not asked of
+/// anything before: the one role the reference does declare is reproduced *by
+/// name in the tree a reader actually gets*, and our surface is a strict
+/// superset. The second half is what the standing order needs and nothing had —
+/// *do not delete what the reference lacks and we have* is unenforceable while
+/// nobody can tell surplus from divergence, and a round that quietly removed a
+/// voice would have closed the distance with no gate noticing.
+///
+/// ⚠ The reference's four STATE attributes are deliberately not asserted here.
+/// A state is a property of a control at a moment (`selected`, `pressed`), so
+/// asking it of a boot-time tree would pin whichever tab happens to open —
+/// that is `r1696`'s axis and the keyboard walk's, not this one's.
+#[test]
+fn r1973_every_role_the_reference_declares_is_reproduced_and_the_rest_is_surplus() {
+    let pin = voice_pin();
+    let canon_roles: Vec<String> = pin["canon"]["roles"]
+        .as_array()
+        .expect("the pin lists the reference's roles")
+        .iter()
+        .map(|r| r.as_str().expect("a role is a string").to_owned())
+        .collect();
+    assert!(
+        !canon_roles.is_empty(),
+        "the pin declares no reference role, so this gate compares nothing — an \
+         empty reference list is how a comparison stops happening silently",
+    );
+
+    // What the tree a reader gets actually announces, by role, at boot.
+    let owner = Owner::new();
+    owner.run(|| {
+        let nodes = AnalyzerShellView::access_node(&ScreenState::default(), None);
+        let announced: std::collections::BTreeSet<String> = nodes
+            .iter()
+            .map(|node| format!("{:?}", node.role).to_ascii_lowercase())
+            .collect();
+        assert!(
+            !announced.is_empty(),
+            "the screen announces no accessibility node at all, so every \
+             assertion below is about an empty tree",
+        );
+        for role in &canon_roles {
+            assert!(
+                announced.contains(role),
+                "the reference declares {role:?} and this screen's \
+                 accessibility tree announces {announced:?} — the one \
+                 obligation the reference's own accessibility surface carries \
+                 is not reproduced",
+            );
+        }
+
+        // ★★ The surplus, from the SAME source the reproduction arm reads.
+        //
+        // ⚠ A first draft took this from `spec::VOICES` while the arm above
+        // read the tree, and a mutation caught it: two populations for one
+        // question, which is the duplication rule applied to a gate rather than
+        // to a screen. The tree is the right one — a role a reader is never
+        // handed is not a surface we have, whatever a table says — and it also
+        // makes the two arms falsifiable by the same edit.
+        let surplus: Vec<&String> = announced
+            .iter()
+            .filter(|role| !canon_roles.contains(role))
+            .collect();
+        assert!(
+            pin["ours"]["surplus_must_be_positive"]
+                .as_bool()
+                .expect("the pin states whether a surplus is required"),
+            "the pin stopped requiring a surplus, which is the only thing \
+             keeping a deletion from reading as parity",
+        );
+        assert!(
+            !surplus.is_empty(),
+            "this screen announces {} role kind(s) and the reference declares \
+             {}: nothing is left over, so either the reference grew or a round \
+             deleted a voice — and the standing order is that what the \
+             reference lacks and we have is NOT removed",
+            announced.len(),
+            canon_roles.len(),
+        );
+    });
+}
+
 // ── R1832: every locked seat cites a requirement the register books ──────────
 
 /// The deferred register, parsed. See `docs/analyzer-reserved-spec.json`.

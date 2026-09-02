@@ -1,0 +1,58 @@
+{
+  "$comment": [
+    "R1973 — WHAT THE REFERENCE DECLARES FOR A READER WHO CANNOT SEE THE SCREEN,",
+    "measured from the reference documents themselves rather than remembered.",
+    "",
+    "The standing order for this reproduction has two halves: build what the",
+    "reference has and we lack, and do NOT delete what we have and it lacks.",
+    "The second half had no instrument. Nothing in this tree could say whether a",
+    "surface of ours is a reproduction or a second-stage improvement, so 'we are",
+    "ahead' was an assumption, and an assumption cannot tell being ahead from",
+    "having diverged.",
+    "",
+    "MEASURED at R1973, over the reference documents this project reproduces:",
+    "the scope reference declares ZERO role attributes and ZERO aria-* state",
+    "attributes; the behaviour reference declares ZERO of each; the newest",
+    "integrated reference document declares FIVE attributes in thirty-one",
+    "megabytes — one role and four states. Reproduced by",
+    "  grep -o 'role=\"[a-z]*\"' <doc> | wc -l",
+    "  grep -o 'aria-[a-z]*=' <doc> | wc -l",
+    "on the documents named in docs/SEED_PROMPT.md (they are outside the",
+    "repository and under NDA, so what is pinned here is the SHAPE and the",
+    "COUNT, in W3C vocabulary, and never a line of the documents).",
+    "",
+    "=> the accessibility surface of this application is almost entirely SECOND",
+    "STAGE. That is not a licence to stop measuring it: the one role the",
+    "reference does declare is a reproduction obligation like any other, and it",
+    "is asserted by name. What the surplus figure buys is the other direction —",
+    "a round that quietly DELETED a voice would show up as the distance closing,",
+    "and before this nothing would have noticed."
+  ],
+  "canon": {
+    "$comment": [
+      "Roles the reference declares, in W3C names. `tablist` is the whole list:",
+      "one occurrence, on the strip of view tabs.",
+      "",
+      "`states` are the aria-* attributes it sets. They are STATES of a control",
+      "rather than roles, so they are pinned apart — a reader is told what a",
+      "thing IS by the first and what it is DOING by the second, and folding",
+      "them would make a count that cannot answer either question."
+    ],
+    "roles": ["tablist"],
+    "states": ["selected", "pressed"],
+    "role_occurrences": 1,
+    "state_occurrences": 4
+  },
+  "ours": {
+    "$comment": [
+      "Deliberately NOT a pinned count of our own rows. `spec::VOICES` is the",
+      "declaration and the gate derives its size at test time; writing the",
+      "number here as well would be the same fact in two places, which is the",
+      "class this repository has 63 open debts about. What IS pinned is the",
+      "FLOOR: the reproduction is complete only while our surface is a strict",
+      "superset of the reference's, so the gate asserts every canon role is",
+      "reproduced and that the surplus is positive."
+    ],
+    "surplus_must_be_positive": true
+  }
+}
