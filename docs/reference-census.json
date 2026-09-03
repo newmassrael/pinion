@@ -4065,16 +4065,16 @@
       "verdict": "have"
     },
     "script_editor::ZoomToSelection": {
-      "covered_by": "framing the view on the selection — the DCC's `view_selected`",
+      "covered_by": "FRAMING WHAT WAS CHOSEN (R1991): `Fit::selection` fits the same camera over the cards a selection names, refusing rather than skipping a stale id — `Document::selection_host`'s rule, shared with `grow` and `focus` so the three cannot drift. Superior on the count that matters here: this operation's interesting half is what it REFUSES, and the reference reads its selected set and does NOTHING when that set is empty or stale, which its caller cannot tell from a fit that worked and a person reads as a broken button. `Unframed` separates all four — nothing chosen, a stale id, no viewport, and a real choice none of whose cards has a box — and `Fitted::complete` then says whether what DID happen got the whole choice on screen.",
       "mechanism": "script-editor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_script_editor_zoom_to_selection",
+      "verdict": "have"
     },
     "script_editor::ZoomToWindow": {
-      "covered_by": "framing the view on the graph's extent; the crate carries positions and no viewport, and no binding derives one",
+      "covered_by": "FRAMING THE WHOLE GRAPH: `Fit::run` frames every node of a tree the caller answers an extent for, and `Fit::boxes` the same for a screen whose card geometry is painted rather than stored. Past the floor in that `Fitted::complete` reports whether the graph actually went in — the reference returns void, so an editor built on it shows a corner of a too-large graph and reports success. ⚠ This row read `absent` until R1991, with the reason `the crate carries positions and no viewport, and no binding derives one`. Measured: that pin was TRUE when written and went STALE — written at R1612.1 (2026-08-09), `view.rs` landed at R1688 (2026-08-14), and no round re-judged the row a new capability had answered.",
       "mechanism": "script-editor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_script_editor_zoom_to_window",
+      "verdict": "have"
     }
   }
 }

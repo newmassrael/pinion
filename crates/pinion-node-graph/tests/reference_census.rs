@@ -57,6 +57,7 @@ use pinion_node_graph::{
 use pinion_node_graph::{
     Copying, DefinitionAct, DefinitionError, InZone, InsertError, PairError, Renamed, Tree, Used,
 };
+use pinion_node_graph::{Fit, Margin, Unframed, ZoomRange};
 
 // ---------------------------------------------------------------- taxonomy
 
@@ -839,7 +840,146 @@ fn proofs() -> Vec<Proof> {
     all.extend(r1980_berth_proofs());
     all.extend(r1987_autowire_proofs());
     all.extend(r1988_focus_proofs());
+    all.extend(r1991_frame_proofs());
     all
+}
+
+/// R1991 — the script editor's two view operations, *zoom to window* and *zoom
+/// to selection*.
+fn r1991_frame_proofs() -> Vec<Proof> {
+    vec![
+        proof(
+            "engine",
+            "script_editor::ZoomToWindow",
+            engine_script_editor_zoom_to_window,
+        ),
+        proof(
+            "engine",
+            "script_editor::ZoomToSelection",
+            engine_script_editor_zoom_to_selection,
+        ),
+    ]
+}
+
+/// A spread graph: four cards at four places, so a fit over a subset and a fit
+/// over the whole are different boxes rather than the same one.
+fn spread_graph() -> (Document<Op>, [NodeId; 4]) {
+    let mut document = Document::new("root");
+    let at = |document: &mut Document<Op>, x, y| {
+        document
+            .add_node(ROOT, NodeBody::Kind(Op::Add), x, y)
+            .unwrap()
+    };
+    let a = at(&mut document, 0, 0);
+    let b = at(&mut document, 200, 100);
+    let c = at(&mut document, 4_000, 0);
+    let d = at(&mut document, 0, 4_000);
+    (document, [a, b, c, d])
+}
+
+/// ★★★★★ R1991 — **frame the whole graph**, which this crate has had since
+/// R1688 and the census did not know.
+///
+/// ⚠ This row was `absent` with the reason *the crate carries positions and no
+/// viewport, and no binding derives one*. Measured at R1991: **the pin was true
+/// the day it was written and went stale**, which is the ordinary case and
+/// worth saying plainly — it was written at R1612.1 (2026-08-09) and
+/// `view.rs` landed at R1688 (2026-08-14), so a capability arrived and the row
+/// that says it is missing was never re-judged. `git merge-base --is-ancestor`
+/// is the whole check.
+///
+/// Past the floor in the way the module header already claims and this asserts:
+/// the fit reports whether it FITTED. The reference returns void, so an editor
+/// built on it shows a corner of a too-large graph and reports success.
+fn engine_script_editor_zoom_to_window() {
+    let (document, [_, _, _, _]) = spread_graph();
+    let fit = Fit {
+        zoom: ZoomRange::new(0.25, 4.0).expect("a range"),
+        margin: Margin::Canvas(0),
+    };
+    let whole = fit
+        .run(&document, ROOT, (400, 300), |_| Some(Extent::new(100, 50)))
+        .expect("four cards and a viewport");
+    assert_eq!(
+        whole.bounds,
+        (0, 0, 4_100, 4_050),
+        "every card is inside the framed box"
+    );
+    assert!(
+        !whole.complete,
+        "★ and it SAYS it could not hold this one — 4050 units into 300 pixels \
+         is past the 0.25 floor. The reference has no value for this"
+    );
+    let roomy = Fit {
+        zoom: ZoomRange::new(0.01, 4.0).expect("a range"),
+        margin: Margin::Canvas(0),
+    }
+    .run(&document, ROOT, (400, 300), |_| Some(Extent::new(100, 50)))
+    .expect("four cards");
+    assert!(
+        roomy.complete,
+        "★ and reports true when the range does reach, so `complete` is not a \
+         constant"
+    );
+}
+
+/// ★★★★★ R1991 — **frame the selection**: the same fit over the cards a person
+/// chose, and four separable answers when it cannot.
+///
+/// The floor reads its selected set and, where that set is empty or stale,
+/// does nothing at all — indistinguishable by its caller from a fit that
+/// worked. Every arm below is a value here, which is the claim.
+fn engine_script_editor_zoom_to_selection() {
+    let (document, [a, b, c, _d]) = spread_graph();
+    let fit = Fit {
+        zoom: ZoomRange::new(0.25, 4.0).expect("a range"),
+        margin: Margin::Canvas(0),
+    };
+    let boxed = |node: &Node<Op>| Some(((node.x, node.y), Extent::new(100, 50)));
+
+    let near = fit
+        .selection(&document, ROOT, &[a, b], (400, 300), boxed)
+        .expect("two chosen cards");
+    assert_eq!(
+        near.bounds,
+        (0, 0, 300, 150),
+        "★★★★★ the chosen pair, and not the two cards four thousand units away"
+    );
+    assert!(near.complete, "and that subset does fit");
+
+    let far = fit
+        .selection(&document, ROOT, &[a, c], (400, 300), boxed)
+        .expect("two chosen cards");
+    assert_ne!(
+        far.bounds, near.bounds,
+        "★ a different choice is a different frame"
+    );
+
+    // The four refusals, each its own value.
+    assert_eq!(
+        fit.selection(&document, ROOT, &[], (400, 300), boxed),
+        Err(Unframed::Selection(
+            pinion_node_graph::SelectError::NothingSelected(ROOT)
+        )),
+        "★★ choosing nothing is refused, not read as 'frame everything'"
+    );
+    assert!(matches!(
+        fit.selection(&document, ROOT, &[a, NodeId(9_999)], (400, 300), boxed),
+        Err(Unframed::Selection(
+            pinion_node_graph::SelectError::NoSuchNode { .. }
+        ))
+    ));
+    assert_eq!(
+        fit.selection(&document, ROOT, &[a], (0, 300), boxed),
+        Err(Unframed::NoViewport((0, 300))),
+        "★ the window is the caller's problem, not the choice's"
+    );
+    assert_eq!(
+        fit.selection(&document, ROOT, &[a, b], (400, 300), |_| None),
+        Err(Unframed::NothingFramed { selected: 2 }),
+        "★★★★★ a real choice with no boxes — the case that reads as a broken \
+         button, and the count is the choice's own"
+    );
 }
 
 /// R1988 — the two editors' *hide unrelated nodes*, which are two closures.

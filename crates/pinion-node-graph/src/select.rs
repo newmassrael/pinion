@@ -54,7 +54,7 @@
 use std::collections::{BTreeSet, VecDeque};
 use std::fmt;
 
-use crate::model::{Document, Node, NodeBody, NodeId, NodeKind, TreeId};
+use crate::model::{Document, Node, NodeBody, NodeId, NodeKind, Tree, TreeId};
 
 /// How far a relational question travels.
 ///
@@ -206,6 +206,42 @@ impl Affix {
 }
 
 impl<K: NodeKind> Document<K> {
+    /// The tree a selection is *about*, with every id in `selection` checked
+    /// against it — the precondition every question about a selection shares.
+    ///
+    /// ★★★★★ R1991 — **one spelling of a rule three questions ask.**
+    /// [`Self::grow`] and [`Self::focus`](crate::Document::focus) each wrote
+    /// this out, and [`Fit::selection`](crate::Fit::selection) would have been
+    /// the third. A property spelled at each site is one that can drift at any
+    /// of them, and the direction it drifts here is the dangerous one: the
+    /// cheap version of this check is to SKIP an id the tree does not have,
+    /// which silently answers a different question than the one asked.
+    ///
+    /// It deliberately does **not** decide whether an empty selection is legal.
+    /// That is not a property of the selection, it is a property of the
+    /// question: growing an empty selection is answerable (nothing is added)
+    /// and framing or focusing one is not, so each caller states its own rule
+    /// and [`SelectError::NothingSelected`] stays theirs to raise. Checking the
+    /// ids first is equivalent either way, an empty selection having none.
+    ///
+    /// # Errors
+    ///
+    /// [`SelectError::NoSuchTree`] when `tree` is not in this document, and
+    /// [`SelectError::NoSuchNode`] naming the first id that is not in it.
+    pub(crate) fn selection_host(
+        &self,
+        tree: TreeId,
+        selection: &[NodeId],
+    ) -> Result<&Tree<K>, SelectError> {
+        let host = self.tree(tree).ok_or(SelectError::NoSuchTree(tree))?;
+        for &id in selection {
+            if host.node(id).is_none() {
+                return Err(SelectError::NoSuchNode { tree, node: id });
+            }
+        }
+        Ok(host)
+    }
+
     /// Grow `selection` in `tree` by one question, answering the new selection
     /// and what it added.
     ///
@@ -216,14 +252,8 @@ impl<K: NodeKind> Document<K> {
     ///
     /// See [`SelectError`].
     pub fn grow(&self, tree: TreeId, selection: &[NodeId], by: Grow) -> Result<Grown, SelectError> {
-        let host = self.tree(tree).ok_or(SelectError::NoSuchTree(tree))?;
-        let mut held: BTreeSet<NodeId> = BTreeSet::new();
-        for &id in selection {
-            if host.node(id).is_none() {
-                return Err(SelectError::NoSuchNode { tree, node: id });
-            }
-            held.insert(id);
-        }
+        self.selection_host(tree, selection)?;
+        let held: BTreeSet<NodeId> = selection.iter().copied().collect();
 
         let found = match by {
             Grow::Downstream(reach) => self.reachable(tree, &held, reach, Direction::Down),

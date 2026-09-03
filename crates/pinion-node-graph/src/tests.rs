@@ -20,8 +20,8 @@ use crate::{
     PortRef, PortSite, PortValueError, ROOT, Reach, Relabelled, Relatedness, RelinkError, Renamed,
     RepartitionError, RetypeError, Route, RunError, SectionId, SelectError, Session, Severed,
     Sharing, Side, Socket, Stack, Standing, Stop, Straighten, Stride, SwapError, SwitchRefusal,
-    Tick, Tie, Timeline, Tint, TreeId, UngroupError, Unreadable, Violation, WatchError, Watches,
-    ZoomRange, crossing,
+    Tick, Tie, Timeline, Tint, TreeId, Unframed, UngroupError, Unreadable, Violation, WatchError,
+    Watches, ZoomRange, crossing,
 };
 use crate::{DefinitionAct, DefinitionError, PairError, RemovedTree, Used};
 use crate::{Fault, Finding, Fitness, Objection, Surroundings, Weight};
@@ -15753,6 +15753,164 @@ fn r1688_a_fit_over_a_document_frames_what_the_caller_answers_for() {
         .is_none()
     );
     let _ = (near, also);
+}
+
+/// ★★★★★ R1991 — **framing the selection frames the selection**, and the
+/// unselected cards are not in the box even when they are the far ones.
+///
+/// The selected pair is deliberately the NEAR pair while a third card sits far
+/// away, so an implementation that quietly framed the whole tree produces a
+/// wildly different box rather than a rounding difference — and the assertion
+/// is against `run`'s answer on the same document, which is the operation this
+/// one has to differ from.
+#[test]
+fn r1991_framing_a_selection_frames_only_the_selected_cards() {
+    let mut document = Document::new("root");
+    let near = document
+        .add_node(ROOT, NodeBody::Kind(Op::Add), 0, 0)
+        .unwrap();
+    let also = document
+        .add_node(ROOT, NodeBody::Kind(Op::Add), 200, 100)
+        .unwrap();
+    let far = document
+        .add_node(ROOT, NodeBody::Kind(Op::Add), 9_000, 9_000)
+        .unwrap();
+    let fit = Fit {
+        zoom: zooms(),
+        margin: Margin::Canvas(0),
+    };
+    // ★ R1991 — the box, which is what a screen with painted geometry answers.
+    // A consumer with stored positions says exactly this.
+    let boxed = |node: &Node<Op>| Some(((node.x, node.y), Extent::new(100, 50)));
+
+    let picked = fit
+        .selection(&document, ROOT, &[near, also], (400, 300), boxed)
+        .expect("two selected cards with boxes");
+    assert_eq!(
+        picked.bounds,
+        (0, 0, 300, 150),
+        "the unselected far card is not in the box"
+    );
+    assert!(picked.complete);
+
+    let everything = fit
+        .run(&document, ROOT, (400, 300), |_| Some(Extent::new(100, 50)))
+        .expect("three cards");
+    assert_eq!(everything.bounds, (0, 0, 9_100, 9_050));
+    assert_ne!(
+        picked.camera, everything.camera,
+        "★ framing a selection and framing everything are different answers"
+    );
+
+    // Selecting the far one alone frames THAT, so the operation reads the
+    // selection rather than preferring the first cards it finds.
+    let lonely = fit
+        .selection(&document, ROOT, &[far], (400, 300), boxed)
+        .expect("one selected card");
+    assert_eq!(lonely.bounds, (9_000, 9_000, 9_100, 9_050));
+}
+
+/// Where a card is and how big — what [`Fit::selection`] asks its caller, and
+/// the reason it differs from [`Fit::run`]'s extent-only question.
+type BoxOf = fn(&Node<Op>) -> Option<((i32, i32), Extent)>;
+
+/// ★★★★★ R1991 — **the four ways this can fail are four answers**, where the
+/// floor has one silent no-op and `Fit::boxes` has one `None`.
+///
+/// Each arm is reached on its own, and the fit that CAN happen is checked in
+/// the same test so none of these is satisfiable by a function that always
+/// refuses.
+#[test]
+fn r1991_the_ways_a_selection_cannot_be_framed_are_told_apart() {
+    let f = fixture();
+    let fit = Fit {
+        zoom: zooms(),
+        margin: Margin::Canvas(0),
+    };
+    let boxed: BoxOf = |node| Some(((node.x, node.y), Extent::new(100, 50)));
+    let framed =
+        |sel: &[NodeId], viewport, at: BoxOf| fit.selection(&f.document, ROOT, sel, viewport, at);
+
+    assert!(
+        framed(&[f.two], (400, 300), boxed).is_ok(),
+        "the premise: this same call works"
+    );
+    assert_eq!(
+        framed(&[], (400, 300), boxed),
+        Err(Unframed::Selection(SelectError::NothingSelected(ROOT))),
+        "★★ an empty selection is refused, NOT read as 'frame everything' — \
+         which is the reading that would move the canvas without being asked"
+    );
+    assert_eq!(
+        framed(&[f.two, NodeId(9_999)], (400, 300), boxed),
+        Err(Unframed::Selection(SelectError::NoSuchNode {
+            tree: ROOT,
+            node: NodeId(9_999),
+        })),
+        "★★★ a stale id is REFUSED, not skipped — framing the rest would \
+         answer a question nobody asked"
+    );
+    assert_eq!(
+        framed(&[f.two], (0, 300), boxed),
+        Err(Unframed::NoViewport((0, 300))),
+        "★ an empty window is the caller's problem and not the selection's"
+    );
+    assert_eq!(
+        framed(&[f.two, f.three], (400, 300), |_| None),
+        Err(Unframed::NothingFramed { selected: 2 }),
+        "★★★★★ the case that reads as a broken button: a real selection, and \
+         nothing in it has a box. The count is the selection's, so the \
+         sentence can say how many"
+    );
+    assert_eq!(
+        fit.selection(&f.document, TreeId(97), &[f.two], (400, 300), boxed),
+        Err(Unframed::Selection(SelectError::NoSuchTree(TreeId(97)))),
+        "★ and a missing tree is named — where `run` answers a bare `None`"
+    );
+}
+
+/// ★★★★★ R1991 — **one precondition, three questions**: growing, focusing and
+/// framing refuse the same stale selection the same way.
+///
+/// The property `Document::selection_host` exists for. Before it, that rule was
+/// written out at each site and framing would have been the third copy; a test
+/// that asked only "does framing refuse?" would pass just as well against a
+/// third spelling free to drift from the other two, so this asserts the three
+/// answers are EQUAL rather than merely each an error.
+#[test]
+fn r1991_a_stale_selection_is_refused_alike_by_every_question_that_takes_one() {
+    let f = fixture();
+    let stale = NodeId(4_242);
+    let expected = SelectError::NoSuchNode {
+        tree: ROOT,
+        node: stale,
+    };
+
+    let grown = f.document.grow(ROOT, &[f.two, stale], Grow::SameKind);
+    let focused = f.document.focus(ROOT, &[f.two, stale], Focus::Lineage);
+    let fitted = Fit {
+        zoom: zooms(),
+        margin: Margin::Canvas(0),
+    }
+    .selection(&f.document, ROOT, &[f.two, stale], (400, 300), |node| {
+        Some(((node.x, node.y), Extent::new(100, 50)))
+    });
+
+    assert_eq!(grown.unwrap_err(), expected);
+    assert_eq!(focused.unwrap_err(), expected);
+    assert_eq!(fitted.unwrap_err(), Unframed::Selection(expected));
+
+    // And the emptiness rule is each question's OWN, which is why it is not in
+    // the shared precondition: growing nothing is answerable, framing nothing
+    // and focusing nothing are not.
+    assert!(
+        f.document.grow(ROOT, &[], Grow::SameKind).is_ok(),
+        "growing an empty selection adds nothing, which is an answer"
+    );
+    assert_eq!(
+        f.document.focus(ROOT, &[], Focus::Lineage).unwrap_err(),
+        SelectError::NothingSelected(ROOT)
+    );
 }
 
 /// ★★★ R1688 — **a fit is idempotent**: framing an already-framed graph answers

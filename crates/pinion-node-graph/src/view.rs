@@ -66,10 +66,13 @@
 //! consumer that stores a scroll *offset* instead (the opposite sign) converts
 //! at its own boundary; both of this tree's canvases do, in one place each.
 
+use core::fmt;
+
 use serde::{Deserialize, Serialize};
 
 use crate::layout::Extent;
-use crate::model::{Document, Node, NodeKind, TreeId};
+use crate::model::{Document, Node, NodeId, NodeKind, TreeId};
+use crate::select::SelectError;
 
 /// The scales a canvas may be shown at.
 ///
@@ -280,6 +283,57 @@ pub struct Fitted {
     pub complete: bool,
 }
 
+/// Why [`Fit::selection`] could not point the canvas anywhere.
+///
+/// ★★★★★ R1991 — four outcomes that a shorter list cannot tell apart, and one
+/// value each. [`Fit::boxes`] answers `Option` because it is handed boxes and
+/// genuinely has only *nothing to frame* to report; the moment the question is
+/// asked about a **selection** the causes separate, and collapsing them is the
+/// defect this repository has repaired repeatedly — a screen that cannot say
+/// which of them happened has to tell the person "nothing happened".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Unframed {
+    /// The selection could not be read: no such tree, a stale id, or empty.
+    ///
+    /// Carries [`SelectError`] rather than restating its arms, so the sentence
+    /// a person reads about a stale selection is the same one every other
+    /// question about a selection gives them.
+    Selection(SelectError),
+    /// The viewport has no area, so there is no screen to fit anything to.
+    ///
+    /// Distinct from having nothing to frame: this is the caller's window, not
+    /// the person's selection, and a screen would report a bug rather than a
+    /// refusal.
+    NoViewport((u32, u32)),
+    /// Every selected node was declined by the `extent` callback, so the
+    /// selection is real and there is still no box to frame.
+    ///
+    /// The case that reads as a broken button: the person selected something,
+    /// pressed *frame selection*, and the canvas did not move. Naming it lets
+    /// the screen say why.
+    NothingFramed {
+        /// How many nodes the selection named.
+        selected: usize,
+    },
+}
+
+impl fmt::Display for Unframed {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Selection(why) => write!(f, "{why}"),
+            Self::NoViewport((w, h)) => {
+                write!(f, "a {w}x{h} viewport has no room to frame anything in")
+            }
+            Self::NothingFramed { selected } => write!(
+                f,
+                "none of the {selected} selected node(s) has a box to frame"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for Unframed {}
+
 /// Point the canvas at everything: the **fit-to-view** of a node editor.
 ///
 /// Configure, then [`run`](Self::run) or [`boxes`](Self::boxes) — the shape
@@ -346,6 +400,86 @@ impl Fit {
                 .filter_map(|node| extent(node).map(|e| ((node.x, node.y), e))),
             viewport,
         )
+    }
+
+    /// Frame **the selection** — the *frame selected* of a node editor, beside
+    /// [`run`](Self::run)'s *frame everything*.
+    ///
+    /// ★★★★★ R1991 — the same fit over a named subset, and the reason it is a
+    /// method rather than a note telling callers to filter [`boxes`](Self::boxes)
+    /// themselves: the interesting part of this operation is **what it refuses**,
+    /// and a caller filtering a list cannot refuse anything. It has already
+    /// thrown away the difference between *you selected nothing*, *your
+    /// selection names a card this tree does not have* and *none of what you
+    /// selected has a box to frame* by the time it holds a shorter list.
+    ///
+    /// # Past the floor
+    ///
+    /// The engine's *zoom to selection* reads the selected set, and where that
+    /// set is empty or stale it simply does nothing — its caller cannot tell
+    /// that from a fit that worked, and neither can the person, who sees a
+    /// canvas that did not move. Every one of the four outcomes here is
+    /// distinguishable, and [`Fitted::complete`] then says whether the fit that
+    /// DID happen got the whole selection on screen.
+    ///
+    /// A stale id is **refused, not skipped** — `Document::selection_host`'s
+    /// rule, shared with [`Document::grow`](crate::Document::grow) and
+    /// [`Document::focus`](crate::Document::focus), because framing a selection
+    /// minus the card that is no longer there is answering a question nobody
+    /// asked.
+    ///
+    /// # Why `box_of` answers the whole box and not only an extent
+    ///
+    /// ★★ [`run`](Self::run) takes an extent and reads the position off
+    /// [`Node::x`]. That serves a consumer whose positions are *stored*, and
+    /// [`boxes`](Self::boxes) exists beside it for the one whose card geometry
+    /// is **painted** — a screen whose card height is a function of the rows it
+    /// draws knows the box and the document does not.
+    ///
+    /// This is the operation both of those consumers want, so it takes the half
+    /// that serves both: the caller answers the box. Measured on the consumer
+    /// that forced it — the node lab keeps its cards' drawn boxes in canvas
+    /// units offset from a world origin, so `(node.x, node.y)` is **not** where
+    /// its cards are, and an extent-only callback would have framed the
+    /// selection in a different coordinate frame than the screen's own
+    /// fit-to-view. A consumer with stored positions answers
+    /// `Some(((node.x, node.y), extent))` and is no worse off.
+    ///
+    /// `None` means *this node is not framed*, exactly as in [`run`](Self::run).
+    /// Selecting only such nodes is [`Unframed::NothingFramed`] rather than a
+    /// silent no-op.
+    ///
+    /// # Errors
+    ///
+    /// See [`Unframed`].
+    pub fn selection<K: NodeKind>(
+        &self,
+        document: &Document<K>,
+        tree: TreeId,
+        selection: &[NodeId],
+        viewport: (u32, u32),
+        box_of: impl Fn(&Node<K>) -> Option<((i32, i32), Extent)>,
+    ) -> Result<Fitted, Unframed> {
+        let host = document
+            .selection_host(tree, selection)
+            .map_err(Unframed::Selection)?;
+        if selection.is_empty() {
+            return Err(Unframed::Selection(SelectError::NothingSelected(tree)));
+        }
+        if viewport.0 == 0 || viewport.1 == 0 {
+            return Err(Unframed::NoViewport(viewport));
+        }
+        let boxes: Vec<((i32, i32), Extent)> = selection
+            .iter()
+            .filter_map(|&id| host.node(id))
+            .filter_map(&box_of)
+            .collect();
+        // `boxes` cannot answer `None` for the viewport here — it was just
+        // checked — so the only remaining cause is an empty box list, and that
+        // is the one this arm names.
+        self.boxes(boxes, viewport).ok_or(Unframed::NothingFramed {
+            selected: selection.len(),
+        })
     }
 
     /// The arithmetic, once: choose the scale, then centre the box under it.

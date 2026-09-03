@@ -12043,7 +12043,16 @@ const FIELDS: &[SchemaField] = &{
         // ★ They answer the sentence the toast shows, like `export` and
         // `script`, so an agent learns what a person would have learnt — which
         // for `fit` includes whether the whole graph actually went in.
+        //
+        // ★★★★★ R1991 — `frame_selection` is the third, and it takes no
+        // argument EITHER. The sentence above said a verb naming a subset would
+        // invent a scope this screen has no affordance for; that was true when
+        // it was written and is not now — the screen has a selection, and
+        // `copy`, `duplicate` and `group` are already verbs that read it. So
+        // the subset is not named by the caller, it is the one the person made,
+        // which is the same shape and not the exception it would have been.
         SchemaField::action("fit", "string"),
+        SchemaField::action("frame_selection", "string"),
         SchemaField::action("go_to_problem", "string"),
         SchemaField::action("run", "bool"),
         // ★★★★★ R1789 — **the scenario**: what happens to this graph and when,
@@ -13941,6 +13950,11 @@ impl ExternalIntrospect for LabOracle {
             // the one the reference cannot say: that the graph is larger than
             // the zoom range can shrink it to.
             "fit" => Ok(IntrospectValue::Text(fit_view(&state))),
+            // ★★★★★ R1991 — and the third, which REFUSES: an empty or stale
+            // selection is an `InvokeError` carrying the crate's own sentence,
+            // where the floor's equivalent silently does nothing and leaves a
+            // caller unable to tell that from a fit that worked.
+            "frame_selection" => Ok(IntrospectValue::Text(frame_selection(&state)?)),
             "go_to_problem" => Ok(IntrospectValue::Text(go_to_problem(&state))),
             // ★★ R1687 — through the same two functions the seats press, so the
             // artifact an agent gets and the one a person gets cannot differ.
@@ -17779,6 +17793,72 @@ fn fit_view(state: &LabState) -> String {
     });
     state.say(said.clone());
     said.sentence()
+}
+
+/// ★★★★★ R1991 — **point the canvas at what is selected**, and say why when it
+/// cannot.
+///
+/// The sibling of [`fit_view`], and the difference between them is the whole
+/// point: that one is a function of the graph, this one of the person's own
+/// choice. It goes through [`Fit::selection`] rather than filtering
+/// [`drawn_boxes`] because the interesting part of this operation is what it
+/// REFUSES, and a caller that has already filtered a list cannot refuse
+/// anything — it has thrown away the difference between *nothing is selected*,
+/// *the selection names a card this tree no longer has* and *none of what is
+/// selected has a box*.
+///
+/// ⚠ The extent callback answers `drawn_box_of`, not `(node.x, node.y)`: a
+/// card's box on this canvas is PAINTED — its height is a function of the rows
+/// it draws — and its drawn position is offset from [`WORLD_ORIGIN`]. That is
+/// the same reason [`fit_view`] uses `boxes` rather than `run`, and it is the
+/// consumer that forced `Fit::selection` to take a box rather than an extent.
+fn frame_selection(state: &LabState) -> Result<String, InvokeError> {
+    let chosen: Vec<NodeId> = state.selection.get().members().to_vec();
+    let canvas = canvas_rect();
+    let here = state.here();
+    let fitted = Fit {
+        zoom: zoom_range(),
+        margin: Margin::Canvas(FIT_PAD),
+    }
+    .selection(
+        &state.doc.borrow(),
+        here,
+        &chosen,
+        (canvas.w, canvas.h),
+        |node| drawn_box_of(state, node.id),
+    )
+    .map_err(|why| {
+        // ★ The refusal's OWN sentence, from the crate — so the reason a person
+        // reads for a stale selection is the one every other selection verb
+        // gives them, rather than a fourth paraphrase written here.
+        let said = Utterance::refused(&why.to_string());
+        state.say(said.clone());
+        InvokeError::rejected(said.into_clause())
+    })?;
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a zoom the range clamped into ZOOM_MIN..=ZOOM_MAX is a percentage"
+    )]
+    let percent = (fitted.camera.zoom * 100.0).floor() as u32;
+    point_canvas_at(state, percent, fitted.camera, canvas_middle());
+    let said = Utterance::done(if fitted.complete {
+        format!(
+            "{} selected card(s), at {}%",
+            chosen.len(),
+            state.zoom.get()
+        )
+    } else {
+        // The same admission `fit_view` makes, for the same reason: the button
+        // did what it could and a person who is not told reads it as broken.
+        format!(
+            "as much of {} selected card(s) as {}% shows — wider than the view can hold",
+            chosen.len(),
+            state.zoom.get()
+        )
+    });
+    state.say(said.clone());
+    Ok(said.sentence())
 }
 
 /// How much clear canvas a jump keeps around the card it brings into view.

@@ -314,7 +314,7 @@ pub use split::{
     RoundTrip, SplitChange, Splittable, round_trips,
 };
 pub use swap::{Carried, RetypeError, SwapError, Swapped};
-pub use view::{Camera, Fit, Fitted, Margin, ZoomRange};
+pub use view::{Camera, Fit, Fitted, Margin, Unframed, ZoomRange};
 pub use warning::{Objection, Surroundings, Warning};
 
 /// Re-exported so a consumer can name the boundary derivation this crate's

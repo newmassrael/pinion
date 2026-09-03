@@ -284,14 +284,13 @@ impl<K: NodeKind> Document<K> {
         selection: &[NodeId],
         focus: Focus,
     ) -> Result<Focused, SelectError> {
-        let host = self.tree(tree).ok_or(SelectError::NoSuchTree(tree))?;
+        // ★ R1991 — through the shared precondition. `NothingSelected` stays
+        // here, because whether an empty selection is answerable is a property
+        // of the QUESTION and not of the selection: `grow` says yes and this
+        // says no.
+        let host = self.selection_host(tree, selection)?;
         if selection.is_empty() {
             return Err(SelectError::NothingSelected(tree));
-        }
-        for &id in selection {
-            if host.node(id).is_none() {
-                return Err(SelectError::NoSuchNode { tree, node: id });
-            }
         }
 
         let mut ties: BTreeMap<NodeId, BTreeSet<Tie>> = BTreeMap::new();

@@ -8180,8 +8180,40 @@ fn lab_slot(state: &std::rc::Rc<ShellState>, slot: &str) -> serde_json::Value {
         pinion_core::external::IntrospectValue::Text(t) => {
             serde_json::from_str(&t).unwrap_or(serde_json::Value::String(t))
         }
-        other => panic!("expected json or text from `{slot}`, got {other:?}"),
+        // ★ R1991 — an int and a bool are JSON values too, and this arm used to
+        // panic on them: reading the lab's `zoom` through this helper died with
+        // `got Int(84)`. Widened rather than worked around at the one call
+        // site, because the next reader of a numeric slot would have hit the
+        // same wall.
+        pinion_core::external::IntrospectValue::Int(i) => serde_json::Value::from(i),
+        pinion_core::external::IntrospectValue::Bool(b) => serde_json::Value::from(b),
+        other => panic!("expected json, text, int or bool from `{slot}`, got {other:?}"),
     }
+}
+
+/// Drive one of the mounted lab's verbs, and hand back what it answered —
+/// **including its refusal**.
+///
+/// ★★★★★ R1991 — the sibling of [`lab_slot`], reaching the same handle. It
+/// returns the `Result` rather than unwrapping because the operation this round
+/// adds is one whose REFUSALS are the interesting half, and a helper that
+/// panicked on them could only test the happy path.
+fn lab_invoke(
+    state: &std::rc::Rc<ShellState>,
+    verb: &str,
+    arg: &str,
+) -> Result<String, pinion_core::external::InvokeError> {
+    let mut externals = state.screens.externals(&state.journey.get());
+    let lab = externals
+        .iter_mut()
+        .filter_map(|e| e.handle.introspect_mut())
+        .find(|it| it.query("waiting").is_ok())
+        .expect("the lab section publishes `waiting`, which is how it is found");
+    lab.invoke(verb, IntrospectValue::Text(arg.to_owned()))
+        .map(|answered| match answered {
+            IntrospectValue::Text(t) => t,
+            other => format!("{other:?}"),
+        })
 }
 
 /// ★★★★★ R1987 — **a wire let go over empty canvas waits, and the card chosen
@@ -10419,6 +10451,161 @@ fn one_more_press_shows_the_graph_whole_again(state: &std::rc::Rc<ShellState>) {
          {alphas:?} over {} card(s)",
         cards.len(),
     );
+}
+
+/// ★★★★★ R1991 — **the assembled tool points the canvas at what a person
+/// chose, and REFUSES by name when it cannot** — driven on the shell, over one
+/// walk.
+///
+/// # What this reproduces, and what the census row was wrong about
+///
+/// The engine's script editor spells two view operations, *zoom to window* and
+/// *zoom to selection*. Re-measuring at the open disproved the pinned reason
+/// for the second in both of its clauses — it said *the crate carries positions
+/// and no viewport, and no binding derives one*, and R1688's `view` module had
+/// carried a validated zoom range, a camera and a viewport-taking fit for three
+/// hundred rounds, with the lab's own `fit` seat bound to it. What was actually
+/// absent was the SUBSET: every path into a fit read the whole graph.
+///
+/// # ⚠ What this walk does NOT drive, measured rather than assumed
+///
+/// The refusals — an empty selection, a stale id, a selection with no boxes —
+/// are proven in `pinion-node-graph`'s own tests and **not here**, because they
+/// are not reachable from this screen: the lab opens with a card already chosen,
+/// dragging empty canvas PANS, and no gesture or verb on this screen clears a
+/// selection. The first draft of this test asserted the graph opens with
+/// nothing chosen and was told `["P-01"]`, which is how that was found.
+///
+/// The assertion is therefore kept where it can stand rather than deleted or
+/// weakened, and the gap it exposed — *a person cannot deselect* — is recorded
+/// as its own finding instead of being quietly worked around here. The floor's
+/// editors both deselect on an empty-canvas click.
+///
+/// What IS driven here is the half only an assembled application can answer:
+/// that framing follows the person's own choice, that it is a different camera
+/// from framing the graph, and that it does not depend on where the canvas
+/// already was.
+#[test]
+fn r1991_the_assembled_tool_frames_what_is_chosen_and_refuses_by_name() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        // The walk first: the claim is about the assembled application.
+        let report = crate::tests::walk_the_application(&state);
+        assert!(
+            report.conforms(),
+            "the application did not reproduce its specification over the walk: {}",
+            report.why().unwrap_or_default()
+        );
+        assert!(
+            report.itinerary().iter().any(|key| key == "lab"),
+            "the walk must stand in the node lab: {:?}",
+            report.itinerary()
+        );
+
+        state.go("lab").expect("the node lab section is open");
+        exactly_one_card_is_chosen_when_the_lab_opens(&state);
+        let card = choosing_a_card_and_framing_it_moves_the_canvas(&state);
+        framing_the_choice_is_not_framing_the_graph(&state, &card);
+    });
+}
+
+/// Phase 0 — the premise, stated as an assertion rather than assumed: this
+/// screen opens with exactly one card chosen.
+///
+/// ★ It is here because the first draft assumed the opposite and the run said
+/// so. A premise a later round could change — the opening graph, or which card
+/// the screen starts on — should break this test loudly rather than quietly
+/// make the phases below test nothing.
+fn exactly_one_card_is_chosen_when_the_lab_opens(state: &std::rc::Rc<ShellState>) {
+    let chosen = lab_slot(state, "selection");
+    assert_eq!(
+        chosen.as_array().map(Vec::len),
+        Some(1),
+        "the lab opens with exactly one card chosen, which is what makes \
+         `frame_selection` answerable at all from this screen — {chosen}"
+    );
+}
+
+/// Phase 1 — choosing a card by pressing it, then framing: the canvas moves and
+/// the sentence counts what it framed.
+fn choosing_a_card_and_framing_it_moves_the_canvas(state: &std::rc::Rc<ShellState>) -> String {
+    let opened_on = lab_slot(state, "selection")[0]
+        .as_str()
+        .expect("phase 0 asserted exactly one chosen card")
+        .to_owned();
+    let (shot, scene) = painted_at((WIN_W, WIN_H));
+    // ★ A card the screen did NOT open on, so this proves the frame follows the
+    // person's choice rather than the screen's starting state.
+    let card = shot
+        .tags
+        .keys()
+        .filter_map(|tag| tag.strip_prefix("lab.node."))
+        .filter(|rest| !rest.contains('.'))
+        .find(|rest| **rest != opened_on)
+        .expect("the opening graph paints more than one card")
+        .to_owned();
+
+    // Pressed, not wired: the selection this frames is the one a person makes.
+    let mut press = RouterDrag::over(state, scene);
+    press.cursor(aim(&shot, &format!("lab.node.{card}")));
+    press.press();
+    press.release();
+    let chosen = lab_slot(state, "selection");
+    assert_eq!(
+        chosen,
+        serde_json::json!([card]),
+        "pressing {card} chose it, and only it — {chosen}"
+    );
+
+    let before = camera_of(state);
+    let said =
+        lab_invoke(state, "frame_selection", "").expect("one chosen card with a box on the canvas");
+    assert!(
+        said.contains("1 selected card"),
+        "★★ the sentence says how many cards it framed, which is what a person \
+         reads and therefore what an agent gets: {said:?}"
+    );
+    assert_ne!(
+        camera_of(state),
+        before,
+        "★★★★★ framing the choice POINTED the canvas — this is the assertion a \
+         silent no-op passes and this one does not"
+    );
+    card
+}
+
+/// Phase 2 — and it is a different answer from framing the whole graph, which
+/// is the operation this one had to be distinguished from.
+fn framing_the_choice_is_not_framing_the_graph(state: &std::rc::Rc<ShellState>, card: &str) {
+    let on_the_choice = camera_of(state);
+    lab_invoke(state, "fit", "").expect("framing the whole graph is always answerable");
+    let on_the_graph = camera_of(state);
+    assert_ne!(
+        on_the_choice, on_the_graph,
+        "★★★★★ one card and the whole graph are different cameras — an \
+         implementation that read the graph either way passes every phase \
+         above and fails here"
+    );
+
+    // And back, so the difference is a property of the two operations rather
+    // than of the order they were run in.
+    lab_invoke(state, "frame_selection", "")
+        .unwrap_or_else(|why| panic!("{card} is still chosen and still framable: {why:?}"));
+    assert_eq!(
+        camera_of(state),
+        on_the_choice,
+        "★★ and framing the same choice again answers the same camera, so \
+         neither operation depends on where the canvas already was"
+    );
+}
+
+/// Where the mounted lab's canvas is pointed, as the pair its wire publishes.
+fn camera_of(state: &std::rc::Rc<ShellState>) -> (String, String) {
+    (
+        lab_slot(state, "zoom").to_string(),
+        lab_slot(state, "pan").to_string(),
+    )
 }
 
 #[test]
