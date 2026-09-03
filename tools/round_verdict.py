@@ -513,6 +513,43 @@ CHECKER_UNANSWERED = re.compile(
     r"the checker was started and never answered: the wait ended (\w+)"
 )
 
+#: ★★★★★ R1982.1 — the driver's THIRD sentence, and a fourth failure mode.
+#:
+#: ``the checker was asked for a structured answer and printed \"{...}\"`` — the
+#: judge's own harness returned its ENVELOPE (``duration_api_ms``,
+#: ``stop_reason``, ``session_id``) where the answer should have been. So the
+#: checker may well have judged; what came back was the transport's metadata.
+#:
+#: ⚠⚠ THIS IS R1906's CLASS RECURRING, AND IT RECURRED THE SAME WAY: a census
+#: built from the failures somebody had seen could not count the failure that
+#: arrived next, and it did not report a gap — the record simply fell outside
+#: every pattern. R1906 wrote that lesson down after finding the second
+#: sentence; the third then went unseen until a person reported a milestone
+#: check that verified nothing.
+#:
+#: ⇒ So this round does not only add the pattern. `sentence_kinds` below counts
+#: what the driver ACTUALLY WRITES, and the census REFUSES when it meets a
+#: sentence shape it has no bucket for. A list of known failures cannot be made
+#: complete by adding to it; it can only be made to say when it is incomplete.
+CHECKER_ENVELOPE = re.compile(
+    r"the checker was asked for a structured answer and printed"
+)
+
+#: Every ``the checker …`` sentence the driver writes, by its opening words.
+#:
+#: The population this census must account for, read from the log rather than
+#: from this file's list of patterns — which is the only way the two can be
+#: compared at all.
+CHECKER_SENTENCE = re.compile(r"the checker (?:was )?[a-z]+(?: [a-z]+)*")
+
+#: The sentence openings this census HAS a bucket for. Anything else is a
+#: refusal, not a zero.
+KNOWN_SENTENCES: tuple[str, ...] = (
+    "the checker answered",
+    "the checker was started and never answered",
+    "the checker was asked for a structured answer and printed",
+)
+
 #: ★★★★★ R1963 — **what the driver says about the PANE**, on a check that never
 #: answered, and the phrase it says it with.
 #:
@@ -598,6 +635,38 @@ def extract_unanswered(text: str) -> list[str]:
     return [m.group(1) for m in CHECKER_UNANSWERED.finditer(text)]
 
 
+def extract_envelopes(text: str) -> int:
+    """★ R1982.1 — how many checks came back as the judge's own ENVELOPE.
+
+    A third thing entirely: not an unreadable answer and not a silent judge, but
+    the harness's metadata (`duration_api_ms`, `stop_reason`, `session_id`)
+    where the answer belonged. The judge may have decided; the transport is what
+    failed, and the repair is neither a prompt requirement nor a longer wait.
+    """
+    return len(CHECKER_ENVELOPE.findall(text))
+
+
+def sentence_kinds(text: str) -> dict[str, int]:
+    """Every ``the checker …`` sentence in the log, by its opening words.
+
+    ★★★★★ R1982.1 — THE POPULATION, read from the driver rather than from this
+    file's patterns. Without it the census can only say what it already knows
+    how to see: R1906 found a second sentence shape it had been blind to, wrote
+    the lesson down, and the census was then blind to a THIRD in exactly the
+    same way — silently, because an unmatched record produces no bucket, no
+    refusal and no zero.
+
+    Counting the sentences separately is what lets [`census`] compare what it
+    classified against what is there, and REFUSE when they disagree.
+    """
+    found: dict[str, int] = {}
+    for match in CHECKER_SENTENCE.finditer(text):
+        phrase = match.group(0)
+        known = next((k for k in KNOWN_SENTENCES if phrase.startswith(k)), None)
+        found[known or phrase] = found.get(known or phrase, 0) + 1
+    return found
+
+
 def unanswered_cause(text: str, at: int) -> str:
     """★ R1963 — which of [`UNANSWERED_CAUSE`] the driver named for the record
     that starts at `at`, or ``unclassified`` when it named none.
@@ -655,14 +724,39 @@ def census(from_dir: Path | None) -> tuple[bool, str]:
     buckets: dict[str, list[str]] = {"verdict": [], "prose": [], "contentless": []}
     waits: list[str] = []
     causes: list[str] = []
+    envelopes = 0
+    kinds: dict[str, int] = {}
     for log in logs:
         text = log.read_text(errors="replace")
         for answer in extract_answers(text):
             buckets[classify(answer)].append(answer)
         waits.extend(extract_unanswered(text))
         causes.extend(extract_unanswered_causes(text))
+        envelopes += extract_envelopes(text)
+        for phrase, n in sentence_kinds(text).items():
+            kinds[phrase] = kinds.get(phrase, 0) + n
+    # ★★★★★ R1982.1 — REFUSE on a sentence shape this has no bucket for, rather
+    # than reporting the buckets it does know and saying nothing about the rest.
+    #
+    # This is the repair R1906's lesson asked for and did not make. That round
+    # found a second driver sentence the census had been blind to, added a
+    # pattern for it, and wrote down that "an instrument built from the failures
+    # you have seen cannot count the failure that stopped you seeing" — then
+    # left the instrument still built that way. A THIRD sentence appeared and
+    # went unseen until a person reported a milestone check that verified
+    # nothing. A list of known failures cannot be completed by adding to it; it
+    # can only be made to say when it is incomplete.
+    unknown = {p: n for p, n in kinds.items() if p not in KNOWN_SENTENCES}
+    if unknown:
+        rows = ", ".join(f"{p!r} x{n}" for p, n in sorted(unknown.items()))
+        return False, (
+            f"NO — the driver writes {len(unknown)} sentence shape(s) this census "
+            f"has no bucket for, so what it would report is a subset of what "
+            f"happened and it will not say which: {rows}. Add a bucket, or say "
+            f"why that shape needs none."
+        )
     answered = sum(len(v) for v in buckets.values())
-    total = answered + len(waits)
+    total = answered + len(waits) + envelopes
     if total == 0:
         return False, (
             f"NO — could not look: {len(logs)} run log(s) under {where} and not "
@@ -671,7 +765,7 @@ def census(from_dir: Path | None) -> tuple[bool, str]:
             f"shape; both are 'unclassified', which is not a pass."
         )
     unreadable = len(buckets["prose"]) + len(buckets["contentless"])
-    unverified = unreadable + len(waits)
+    unverified = unreadable + len(waits) + envelopes
     head = "YES" if unverified == 0 else "NO"
     firsts = {
         (a.strip('\\"').strip('"').split() or [""])[0]
@@ -686,7 +780,8 @@ def census(from_dir: Path | None) -> tuple[bool, str]:
     )
     lines = [
         f"{head} — {total} recorded check(s) that verified nothing: "
-        f"{answered} answered unreadably, {len(waits)} never answered",
+        f"{answered} answered unreadably, {len(waits)} never answered, "
+        f"{envelopes} came back as the judge's envelope",
         f"  contentless {len(buckets['contentless']):3d}  no words at all; a prompt "
         f"requirement has NO path to zero here",
         f"  prose       {len(buckets['prose']):3d}  words, but not a verdict first; "
@@ -712,6 +807,14 @@ def census(from_dir: Path | None) -> tuple[bool, str]:
         f"reached a pane a judge reads",
         f"      unclassified {causes.count('unclassified'):3d}  the driver named no "
         f"cause; NOT folded into any of the three above",
+        # ★★★★★ R1982.1 — its own line, not a share of `prose` or `unanswered`.
+        # The judge may well have decided: what came back was its harness's
+        # metadata where the answer belonged. So NONE of the three recorded
+        # prescriptions reaches it — not a prompt requirement (there is no
+        # answer to lead), not a parser that disputes unreadable text (the text
+        # is not the checker's), and not a longer wait (it did not time out).
+        f"  envelope    {envelopes:3d}  the judge's harness returned its metadata "
+        f"where the answer belonged; no recorded prescription reaches these",
         f"  {len(firsts)} distinct first token(s) among the unreadable",
         "  numerator only: the driver records a check ONLY when it failed to "
         "verify, so no rate can be taken from this",
@@ -847,6 +950,14 @@ def selftest() -> int:
         'NotYet — give it longer, or a faster judge\\" — it was shown the '
         "agent's own account of this turn"
     )
+    # ★★★★★ R1982.1 — the driver's THIRD sentence, verbatim from a run log. The
+    # judge's harness returned its own envelope where the answer belonged, so
+    # this is neither an unreadable answer nor a silent judge.
+    real_envelope = (
+        "the checker was asked for a structured answer and printed "
+        '\\"{\\\\"duration_api_ms\\\\":56163,\\\\"stop_reason\\\\":'
+        '\\\\"stop_sequence\\\\"}\\"'
+    )
     real_run_ended = (
         'it said: \\"the checker was started and never answered: the wait ended '
         'RunEnded — give it longer, or a faster judge\\" — the run ended between '
@@ -964,6 +1075,34 @@ def selftest() -> int:
                "unanswered    2" in said_both)
         expect("with the wait reasons broken out, commonest first",
                "NotYet 1, RunEnded 1" in said_both)
+
+    # ★★★★★ R1982.1 — the THIRD sentence, and the refusal that exists because
+    # there will be a fourth.
+    #
+    # Two properties, and the second is the one that matters: this census can
+    # count the envelope shape now, AND it refuses when the driver writes a
+    # shape it cannot count. R1906 added a pattern for the second sentence and
+    # left the instrument still built from known failures; the third then went
+    # unseen until a person reported a check that verified nothing. Adding a
+    # fourth pattern would repeat that. Saying "I do not know this one" cannot.
+    with tempfile.TemporaryDirectory() as tmp:
+        (Path(tmp) / "run1.log").write_text(real_envelope + "\n" + real_unanswered + "\n")
+        seen_env, said_env = census(Path(tmp))
+        expect("an envelope answer is not a clean bill", not seen_env)
+        expect("it is counted in the population",
+               "2 recorded check(s)" in said_env)
+        expect("and reported on its OWN line, not folded into prose or unanswered",
+               "envelope      1" in said_env)
+        expect("it is not miscounted as an unreadable answer",
+               "0 answered unreadably" in said_env)
+    with tempfile.TemporaryDirectory() as tmp:
+        (Path(tmp) / "run1.log").write_text(
+            "the checker mumbled a shape nobody has a bucket for\n"
+        )
+        seen_new, said_new = census(Path(tmp))
+        expect("a sentence shape with no bucket is a REFUSAL", not seen_new)
+        expect("and the refusal quotes the shape so it can be given one",
+               "no bucket for" in said_new and "mumbled" in said_new)
         # ★★★★★ R1963 — this case asserted the sentence *NEITHER prescription
         # reaches them*, and the sentence turned out to be FALSE. Measured
         # against the driver's own logs: of eighteen unanswered records it
