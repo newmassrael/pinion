@@ -1525,6 +1525,15 @@ pub const VOICES: &[VoiceSpec] = &[
         role: "status",
         population: Population::One,
     },
+    // ★★★★★ R1981 — WHERE a person is standing in the document. A status and
+    // not a heading: it is the one mark that changes meaning under a reader
+    // rather than labelling something, and going inside a subgraph changes what
+    // every card on the canvas means.
+    VoiceSpec {
+        tag: "lab.crumb",
+        role: "status",
+        population: Population::One,
+    },
     // The inspector.
     VoiceSpec {
         tag: "lab.inspector",
@@ -1644,6 +1653,9 @@ pub const SILENCES: &[(&str, Population, &str)] = &[
     ("lab.gate.head", Population::One, "name_of"),
     ("lab.gate.verdict", Population::One, "part_of"),
     ("lab.hint.text", Population::One, "name_of"),
+    // ★ `.caption` and not `.text`: the run is `caption::captioned`'s child and
+    // the framework names it, so this cannot drift from what is painted.
+    ("lab.crumb.caption", Population::One, "name_of"),
     ("lab.inspector.degree.text", Population::One, "name_of"),
     ("lab.inspector.selcount.text", Population::One, "name_of"),
     ("lab.inspector.reach.text", Population::One, "name_of"),

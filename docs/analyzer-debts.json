@@ -465,17 +465,6 @@
       ]
     },
     {
-      "name": "debt-the-assembled-tool-cannot-open-a-subgraph",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links analyzer-debt-repayment-loop"
-      ]
-    },
-    {
       "name": "debt-the-canon-census-counts-markup-and-not-pixels",
       "substituted": false,
       "blocked_by": "campaign",

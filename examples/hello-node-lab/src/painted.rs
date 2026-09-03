@@ -671,6 +671,13 @@ fn declared_tags(state: &LabState) -> Vec<String> {
         "lab.gate.verdict".into(),
         "lab.hint".into(),
         "lab.hint.text".into(),
+        // ★★★★★ R1981 — the breadcrumb, demanded UNCONDITIONALLY for the reach
+        // meter's reason one block down: it is a fact about where a person is
+        // standing, and the top of the document is a place like any other. A
+        // chip that appeared only inside a subgraph would leave "am I at the
+        // top" answered by an absence.
+        "lab.crumb".into(),
+        "lab.crumb.caption".into(),
         // ★★★ R1690 — the reach meter, demanded UNCONDITIONALLY. It is a fact
         // about the palette rather than about the selection, so a screen with
         // nothing selected still has to carry it — and the states below include
@@ -1014,6 +1021,7 @@ fn owning_pane(tag: &str) -> Option<Rect> {
         || tag.starts_with("lab.link.")
         || tag.starts_with("lab.gate")
         || tag.starts_with("lab.hint")
+        || tag.starts_with("lab.crumb")
         || tag.starts_with("lab.pin.")
     {
         return Some(canvas_rect());
@@ -1889,6 +1897,7 @@ fn r1653_the_painted_screen_invented_nothing() {
             ("lab.toolbar.", None),
             ("lab.appbar.", None),
             ("lab.hint.", None),
+            ("lab.crumb", None),
             ("lab.palette.discovery", None),
         ];
         let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
@@ -2454,7 +2463,7 @@ fn r1653_a_pan_past_the_edge_stops_painting_the_graph() {
         );
 
         // And the chrome that floats over the canvas does not pan with it.
-        for tag in ["lab.gate", "lab.hint", "lab.toolbar.title"] {
+        for tag in ["lab.gate", "lab.hint", "lab.crumb", "lab.toolbar.title"] {
             assert!(shot.tags.contains_key(tag), "{tag} is chrome, not content");
         }
 

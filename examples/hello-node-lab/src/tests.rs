@@ -5311,7 +5311,7 @@ fn r1961_the_opening_canvas_speaks_the_addresses_it_carries() {
                 .get(&node)
                 .and_then(|form| form.field("listen.endpoints"))
                 .map_or(String::new(), |f| f.value().into_owned());
-            let dialled = super::dialled_endpoint(&state.doc.borrow(), node);
+            let dialled = super::dialled_endpoint(&state.doc.borrow(), state.here(), node);
             let (listens_over, dials_over) = super::transports_spoken(&listen, dialled.as_deref());
             let want = listens_over.or(dials_over);
             assert_eq!(
@@ -5778,5 +5778,246 @@ fn r1980_a_reported_seat_is_not_taken_by_a_re_aimed_wire() {
             "★★★★★ the report still has seat 1 to itself and the re-aimed wire \
              is on a seat of its own"
         );
+    });
+}
+
+// ================================ R1981 — which tree this screen is showing
+
+/// ★★★★★ R1981 — **this screen asks WHICH TREE it is showing, and the count of
+/// places that name the root outright is a ratchet.**
+///
+/// # What it is for
+///
+/// Before this round the screen named the root as a constant at 197 call sites,
+/// so it could only ever show one graph — the defect
+/// `debt-the-assembled-tool-cannot-open-a-subgraph` measured. They now ask
+/// [`LabState::here`], and the twelve that remain are CONSTRUCTION: `opening`
+/// and the `seed_*` helpers build the opening graph INTO the root, where the
+/// root is the right answer and not an assumption.
+///
+/// # Why a count rather than prose
+///
+/// A prose rule saying "read `here()`, not the constant" is a rule nobody
+/// performs — this repository's own recurring finding. The number may fall and
+/// may not rise: a new site is either construction, and belongs in one of the
+/// three functions below, or it is a screen read that has quietly gone back to
+/// assuming there is one graph. The failure message says which is which so the
+/// next author does not have to work it out.
+///
+/// ⚠ It reads THIS FILE'S SIBLING and not the built binary, so it is a check on
+/// what was written. That is the point: the defect it guards is authorial.
+///
+/// ⚠⚠ **There is no budget to raise.** The first draft of this was a hand-written
+/// count — `BUDGET: usize = 12` — and a counterfactual that changed it to 999
+/// went UNCAUGHT, which is this repository's recorded class (R1964–R1968): when
+/// one hand-written constant is the whole of a gate, the constant is not the
+/// gate, it is the accomplice. What is asserted instead is a PROPERTY with no
+/// number in it — every site that names the root outright is inside one of the
+/// three functions that BUILD the root — so a new read cannot be admitted by
+/// editing a figure, and a new construction site needs no edit at all.
+#[test]
+fn r1981_the_screen_names_the_root_only_where_it_builds_it() {
+    /// The functions that build the opening graph INTO the root, where naming
+    /// it is the answer rather than an assumption.
+    const BUILDERS: [&str; 3] = ["opening", "seed_nodes", "seed_links"];
+    let source = include_str!("lib.rs");
+    // Assembled rather than written out, so this file does not itself carry the
+    // spelling it counts — which would make the census count its own gate.
+    let naming = format!("({}", "ROOT");
+
+    // Which function each line is in, by walking down and remembering the last
+    // `fn` header — the same derivation the round used to plan the change.
+    let mut holder = "<before any fn>";
+    let mut stray: Vec<(usize, &str, String)> = Vec::new();
+    let mut inside = 0_usize;
+    for (n, line) in source.lines().enumerate() {
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("fn ")
+            && let Some(name) = rest.split(['(', '<']).next()
+        {
+            holder = name;
+        }
+        let hits = line.matches(naming.as_str()).count();
+        if hits == 0 {
+            continue;
+        }
+        if BUILDERS.contains(&holder) {
+            inside += hits;
+        } else {
+            stray.push((n + 1, holder, trimmed.to_owned()));
+        }
+    }
+
+    assert!(
+        stray.is_empty(),
+        "★★★★★ {} site(s) name the root tree outright OUTSIDE the three \
+         functions that build it ({BUILDERS:?}). A read this screen makes has \
+         to ask `LabState::here()`, or the tool can only ever show one graph — \
+         which is the defect R1981 repaired at 185 sites. {stray:#?}",
+        stray.len()
+    );
+    // ★ And the builders really do name it, so the check above is a statement
+    // about WHERE rather than a vacuous pass over an empty population.
+    assert!(
+        inside > 0,
+        "the opening graph is built INTO the root, so the builders name it"
+    );
+}
+
+/// ★★★★★ R1981 — **the tree a person is standing in is one derivation, and
+/// three things read it.**
+///
+/// `here` says which tree, `breadcrumb` says the way to it, and `inside` says
+/// whether there is anywhere above. They are three renderings of ONE path, and
+/// a screen that let them drift would tell a person they were at the top while
+/// painting a subgraph's cards.
+///
+/// ⚠ The first draft of `inside` guessed that `depth` and `breadcrumb` counted
+/// the same thing. They do not — `EditPath::depth` counts DESCENTS and answers
+/// 0 at the root, where the breadcrumb already has one entry — and the walk
+/// caught it on the opening frame. This holds the relation the model states.
+#[test]
+fn r1981_where_this_screen_stands_is_one_answer_in_three_renderings() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+
+        assert_eq!(state.here(), ROOT, "it opens on the root");
+        assert!(!state.inside(), "with nowhere above");
+        assert_eq!(
+            state.breadcrumb().len(),
+            state.path.borrow().depth() + 1,
+            "★★★★★ the way in is always one longer than the descent count — the \
+             relation the first draft of `inside` got wrong"
+        );
+
+        // Fold two cards and go inside, through the same verbs the wire calls.
+        let cards = state.cards();
+        let (first, second) = (cards[0], cards[1]);
+        state
+            .selection
+            .set(pinion_core::selection::Selection::group([first, second]));
+        super::group_selection(&state, "part").expect("two cards make a subgraph");
+        let part = state.node_of("part").expect("the instance is a card here");
+        // ★★★★★ The INSTANCE is a card of this canvas. Until R1981 `cards()`
+        // answered only application kinds, so a part a person had just folded
+        // was in the document and on no frame — measured by driving the fold
+        // and reading 8 cards, then 6, with the part in neither list.
+        assert!(
+            state.cards().contains(&part),
+            "★★★★★ the folded part is a card out here — {:?}",
+            state
+                .cards()
+                .iter()
+                .map(|n| state.name_of(*n))
+                .collect::<Vec<_>>()
+        );
+        super::enter_card(&state, part).expect("and it can be entered");
+
+        assert_ne!(state.here(), ROOT, "★ the screen is showing another tree");
+        assert!(state.inside());
+        assert_eq!(
+            state.breadcrumb().len(),
+            state.path.borrow().depth() + 1,
+            "the relation holds one tree down too"
+        );
+        assert_eq!(
+            state.breadcrumb().last().map(String::as_str),
+            Some("part"),
+            "★ and the way in ends at the part a person folded"
+        );
+        assert!(
+            state.cards().contains(&first) || state.cards().contains(&second),
+            "★★★★★ the cards it shows are the folded ones, which is the whole of \
+             what going inside means — {:?}",
+            state.cards()
+        );
+        // ★★★★★ And the INTERFACE ends are cards too, because they are what a
+        // person edits a subgraph's own face through — and because they carry
+        // this crate's only per-node refusal, which no screen could reach until
+        // one of them was on a frame.
+        let ends = state
+            .cards()
+            .into_iter()
+            .filter(|node| {
+                state.doc.borrow().tree(state.here()).is_some_and(|tree| {
+                    tree.node(*node)
+                        .is_some_and(|slot| matches!(slot.body, NodeBody::Interface(_)))
+                })
+            })
+            .count();
+        assert!(
+            ends > 0,
+            "★★★★★ a subgraph's interface ends are cards in here — {:?}",
+            state
+                .cards()
+                .iter()
+                .map(|n| state.name_of(*n))
+                .collect::<Vec<_>>()
+        );
+        // ★★★★★ And every name this screen SHOWS is a name it TAKES. The
+        // interface ends carry no stored label — their name is derived — so
+        // until R1981 `node_of` answered nothing for a card the same screen had
+        // just put on the frame, and `delete_node "Group Input"` was refused
+        // with *no node is called "Group Input"*. A published address that does
+        // not work is worse than no address.
+        for node in state.cards() {
+            let shown = state.name_of(node);
+            assert_eq!(
+                state.node_of(&shown),
+                Some(node),
+                "★★★★★ the screen shows {shown:?} and does not take it back"
+            );
+        }
+
+        super::leave_subgraph(&state).expect("and back out");
+        assert_eq!(state.here(), ROOT);
+        assert!(!state.inside());
+    });
+}
+
+/// ⚠★★★★★ R1981 — **nothing keyed by a per-tree number survives a descent.**
+///
+/// `NodeId` and `LinkId` are minted per tree (`Tree::next_node`), so the same
+/// number names a different card in every tree. A selection, a picked wire or a
+/// stacking order carried through a descent would not be EMPTY — it would name
+/// whatever card in the new tree happens to hold that number, which is a defect
+/// with nothing to see. `stand_in` is the one place that drops them, and this
+/// is what performs it.
+#[test]
+fn r1981_a_per_tree_number_does_not_travel_through_the_door() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+        let cards = state.cards();
+        state
+            .selection
+            .set(pinion_core::selection::Selection::group([
+                cards[0], cards[1],
+            ]));
+        super::group_selection(&state, "part").expect("two cards make a subgraph");
+        let part = state.node_of("part").expect("the instance");
+
+        // Put something keyed by a per-tree number in hand, then descend.
+        state
+            .selection
+            .set(pinion_core::selection::Selection::one(part));
+        state.stacking.borrow_mut().push(part);
+        assert!(!state.selection.get().is_empty());
+        assert!(!state.stacking.borrow().is_empty());
+
+        super::enter_card(&state, part).expect("go inside");
+        assert!(
+            state.selection.get().is_empty(),
+            "★★★★★ nothing is selected in here — a NodeId that meant the part out \
+             there means some other card in this tree"
+        );
+        assert!(
+            state.stacking.borrow().is_empty(),
+            "★ nor is anything raised"
+        );
+        assert!(state.selected_link.get().is_none(), "★ nor any wire picked");
     });
 }

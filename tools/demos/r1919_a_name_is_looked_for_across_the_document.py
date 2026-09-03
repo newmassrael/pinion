@@ -58,15 +58,23 @@ either. Both are exercised by `pinion-node-graph::dcc_find_node`. Asserting a
 vocabulary the screen cannot produce is what R1885 recorded the cost of — so
 this walk asks the screen what it CAN produce and states the answer.
 
-★★★★★ AND THE FIRST OF THOSE TWO IS NOT A PROPERTY OF SEARCH — IT IS A GAP IN
-THE ASSEMBLED TOOL. `pinion-node-graph` makes, enters, leaves, ungroups and
-separates subgraphs; ten reference-census rows say so and all ten are proven by
-crate tests. **No screen in this workspace constructs one** — measured this
-round: nothing outside the crate names its group body or its editing position.
-So (E) asserts `len(through) == 1` deliberately, as a tripwire: it goes RED on
-the day the assembled tool can open a subgraph, and whoever makes that day come
-has to assert the deeper path here instead. Registered as
-`debt-the-assembled-tool-cannot-open-a-subgraph`.
+★★★★★ AND THE FIRST OF THOSE TWO WAS NOT A PROPERTY OF SEARCH — IT WAS A GAP IN
+THE ASSEMBLED TOOL, AND R1981 CLOSED IT. `pinion-node-graph` makes, enters,
+leaves, ungroups and separates subgraphs; twelve reference-census rows say so
+and every one of them was proven by a crate test. No screen in this workspace
+constructed one until R1981 gave the node lab `group` / `enter` / `exit`.
+
+⚠★★★★★ THIS WALK'S OWN TRIPWIRE DID NOT FIRE, AND THAT IS THE LESSON. (E) used
+to assert `len(through) == 1` and say it would go RED on the day the tool could
+descend. It did not: run against the tool that CAN descend, this walk still
+passes, because it never folds anything — an assertion is about the graph the
+walk itself builds, never about what the tool is capable of. A tripwire in a
+fixture nobody deepens is a comment, not a gate.
+
+So (E) now asserts what is true at ANY depth — that the two halves of a hit's
+answer agree, `len(through) == depth + 1` — and the DEEP case is driven where it
+belongs, in a walk that makes a subgraph:
+`tools/demos/r1981_a_part_of_the_graph_becomes_a_graph.py` (E).
 
 Run from the workspace root:
     cargo build --release -p hello-analyzer-shell
@@ -277,23 +285,23 @@ def body() -> None:
         # TOOL: every way in is one entry long, which is to say the assembled
         # tool opens exactly ONE tree and there is no second one to descend to.
         #
-        # ⚠ This assertion is a TRIPWIRE and is meant to be. `pinion-node-graph`
-        # can make and enter a subgraph — ten reference-census rows say so, all
-        # ten proven by crate tests — and NO screen in this workspace constructs
-        # one. The day the assembled tool can, this check goes RED and whoever
-        # made it so has to come here and assert the deeper path instead. That
-        # is the repayment, and it is registered as its own debt rather than
-        # left as a sentence: debt-the-assembled-tool-cannot-open-a-subgraph.
+        # ⚠★★★★★ R1981 — this used to assert `len(way) == 1` as a TRIPWIRE for
+        # the day the assembled tool could descend. That day came and this walk
+        # STILL PASSED, because it never folds a subgraph: what a walk asserts
+        # is a property of the graph the walk builds. The deep case is driven in
+        # r1981_a_part_of_the_graph_becomes_a_graph.py (E); what belongs here is
+        # the invariant that holds at every depth — the two halves of a hit's
+        # answer agree, so neither can drift from the other unnoticed.
         app.invoke(f"{surface}/find", subject)
         app.tick_ms(16)
-        ways = [h["through"] for h in found(app, surface)["hits"]]
+        hits = found(app, surface)["hits"]
+        ways = [h["through"] for h in hits]
         ok(f"E: every hit publishes the way IN to it — {ways}", ways and all(ways))
         ok(
-            "E: ★★★★★ and each is ONE tree long, which is this tool saying it "
-            f"opens exactly one graph — {ways}. RED here is the DAY the "
-            "assembled tool can open a subgraph, and the day this walk has to "
-            "assert the deeper path instead",
-            all(len(way) == 1 for way in ways),
+            "E: ★★★★★ and each way in is one longer than the hit's own depth, "
+            "so `depth` and `through` are two renderings of one answer rather "
+            f"than two answers — {[(h['depth'], h['through']) for h in hits]}",
+            all(len(h["through"]) == h["depth"] + 1 for h in hits),
         )
 
         banner("F — the hits are a DERIVATION, not a stored list")

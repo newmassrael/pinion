@@ -102,10 +102,10 @@ use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::widgets::wheel::WheelDirection;
 use pinion_core::{CellKind, Frame, Modifiers, Scene, WidgetCore, edit_field_keymap};
 use pinion_node_graph::{
-    Act, Camera, Document, Drawn, Extent, Faces, Fault, Fit, Found, InZone, Instance, Item, Judged,
-    LandError, Landfall, LinkId, LinkLayer, Margin, NameSource, Node, NodeBody, NodeId, NodeKind,
-    Objection, PortPath, PortRef, PortSite, ROOT, Relinked, Side, Socket, Tint, Violation,
-    WatchError, Watches, Weight, ZoomRange, palette_of, type_palette,
+    Act, Camera, Document, Drawn, EditPath, Extent, Faces, Fault, Fit, Found, InZone, Instance,
+    Item, Judged, LandError, Landfall, LinkId, LinkLayer, Margin, NameSource, Node, NodeBody,
+    NodeId, NodeKind, Objection, PortPath, PortRef, PortSite, ROOT, Relinked, Side, Socket, Tint,
+    TreeId, Violation, WatchError, Watches, Weight, ZoomRange, palette_of, type_palette,
 };
 use pinion_platform_storage::AppStorage;
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
@@ -1494,6 +1494,22 @@ const EDIT_TAG: &str = "lab.edit";
 /// Everything the screen is.
 struct LabState {
     doc: Tracked<Document<LabNode>>,
+    /// ★★★★★ R1981 — **which tree this screen is showing**, and the way back up.
+    ///
+    /// The document has always been able to hold more than one tree; until this
+    /// round the screen could only ever show the root, because every read it
+    /// made named [`ROOT`] as a constant. 197 of them, measured — and the
+    /// measurement is what made the shape obvious, because 160 of those sites
+    /// were already inside something holding a `&LabState` or a `&self`, so the
+    /// question *which tree* had a place to be asked from and simply was not
+    /// being asked.
+    ///
+    /// [`EditPath`] rather than a bare `TreeId` because *where am I* and *how
+    /// do I get back* are one fact: the path is a stack of the instances
+    /// descended through, so [`EditPath::exit`] cannot return to a tree nobody
+    /// came from and [`EditPath::breadcrumb`] is the sentence the screen shows
+    /// without a second walk to derive it.
+    path: Tracked<EditPath>,
     forms: Tracked<BTreeMap<NodeId, ConfigForm>>,
     frames: RefCell<BTreeMap<NodeId, String>>,
     /// ★★ R1679 — where each card came into being: its canvas position and the
@@ -1983,7 +1999,7 @@ impl LabState {
         // ★ R1961 — the wires are on now, so the cards that read their
         // transport off one can be told what it is. `seed_nodes` above could
         // only ask the forms.
-        settle_transports_in(&mut doc, &forms);
+        settle_transports_in(&mut doc, ROOT, &forms);
 
         let selection = ids
             .get(spec::SELECTED_NODE)
@@ -2013,6 +2029,12 @@ impl LabState {
         // map that dies at the end of this function cannot drift from anything.
         Self {
             doc: Tracked::new(doc),
+            // ★★★★★ R1981 — the screen opens ON THE ROOT and can now be
+            // somewhere else. `Tracked` because entering a subgraph changes
+            // every card the canvas paints, so it has to be a thing the view
+            // depends on rather than a field somebody remembers to redraw
+            // after.
+            path: Tracked::new(EditPath::root()),
             forms: Tracked::new(forms),
             frames: RefCell::new(frames),
             opened_at: RefCell::new(opened_at),
@@ -2113,8 +2135,67 @@ impl LabState {
     /// calling the same card two different things. The model owns names now —
     /// it is the thing that can *refuse* a name already taken — so there is one
     /// record and no way to update half of it.
+    /// ★★★★★ R1981 — **and it answers the name this screen SHOWS.**
+    ///
+    /// The stored label first, which is the document's own index and the only
+    /// name a rename can make unique. Then the DISPLAYED name, because a node
+    /// that carries no label still has one on the canvas — [`Node::display_name`]
+    /// derives it — and [`LabState::name_of`] publishes exactly that.
+    ///
+    /// ⚠ Driven, not supposed. Until this round the two halves disagreed and
+    /// nothing could reach the disagreement: every card a person could address
+    /// carried a label. The moment the tool could go inside a subgraph, the
+    /// interface ends were on the frame, in the `nodes` list, in `editable` —
+    /// and `delete_node "Group Input"` answered *no node is called "Group
+    /// Input"* about a card the same screen had just named. A screen that
+    /// shows a name it will not take is publishing an address that does not
+    /// work.
     fn node_of(&self, id: &str) -> Option<NodeId> {
-        self.doc.borrow().node_labelled(ROOT, id)
+        let doc = self.doc.borrow();
+        let here = self.here();
+        doc.node_labelled(here, id).or_else(|| {
+            doc.tree(here)?
+                .nodes()
+                .find(|node| node.display_name() == id)
+                .map(|node| node.id)
+        })
+    }
+
+    /// ★★★★★ R1981 — **the tree this screen is showing.**
+    ///
+    /// The single answer to a question that used to be a constant at 197 sites.
+    /// Every read the canvas, the inspector, the palette and the wire make goes
+    /// through here, so *what a person is looking at* and *what a verb acts on*
+    /// cannot come apart — which they would have, had the canvas learned to
+    /// descend while the verbs kept naming [`ROOT`].
+    ///
+    /// ⚠ Not every reader of the document wants this. The graph is CONSTRUCTED
+    /// into the root ([`LabState::opening`] and the `seed_*` helpers), the file
+    /// on disk is the whole document, and the review walks every tree there is
+    /// — those name [`ROOT`] or nothing on purpose, and `tools/tree_reads.py`
+    /// is what keeps that population from quietly growing back.
+    fn here(&self) -> TreeId {
+        self.path.borrow().current()
+    }
+
+    /// ★★★★★ R1981 — the trees a person has descended through, root first.
+    ///
+    /// The framework's own sentence ([`EditPath::breadcrumb`]) rather than a
+    /// walk written here, so *where am I* has one derivation and the screen
+    /// cannot label a tree something the model would not.
+    fn breadcrumb(&self) -> Vec<String> {
+        self.path.borrow().breadcrumb(&self.doc.borrow())
+    }
+
+    /// Whether this screen is standing inside a subgraph rather than at the top.
+    ///
+    /// ⚠ [`EditPath::depth`] counts DESCENTS and answers `0` at the root, while
+    /// [`EditPath::breadcrumb`] has one entry there. The first draft of this
+    /// read `depth() > 1` — a guess that the two counted the same thing — and
+    /// the walk said `depth: 0, through: ['mesh-failover']` on the opening
+    /// frame. One derivation, asked the model's way.
+    fn inside(&self) -> bool {
+        self.path.borrow().depth() > 0
     }
 
     /// The card the inspector follows — the leader of whatever is selected.
@@ -2129,13 +2210,13 @@ impl LabState {
     fn name_of(&self, node: NodeId) -> String {
         self.doc
             .borrow()
-            .tree(ROOT)
+            .tree(self.here())
             .and_then(|tree| tree.node(node))
             .map_or_else(|| format!("#{}", node.0), Node::display_name)
     }
 
     fn role_of(&self, node: NodeId) -> Option<Role> {
-        match self.doc.borrow().tree(ROOT)?.node(node)?.body {
+        match self.doc.borrow().tree(self.here())?.node(node)?.body {
             NodeBody::Kind(ref kind) => Some(kind.role),
             _ => None,
         }
@@ -2157,7 +2238,7 @@ impl LabState {
     /// plan, the inspector's own placement row, and the address a drawn link
     /// dials.
     fn frame_of(&self, node: NodeId) -> Option<String> {
-        let parent = self.doc.borrow().tree(ROOT)?.node(node)?.parent?;
+        let parent = self.doc.borrow().tree(self.here())?.node(node)?.parent?;
         self.frames.borrow().get(&parent).cloned()
     }
 
@@ -2199,12 +2280,33 @@ impl LabState {
             .filter_map(|n| self.node_of(n.id))
             .collect();
         let doc = self.doc.borrow();
-        let Some(tree) = doc.tree(ROOT) else {
+        // ★ R1981 — the tree being SHOWN. `opening` above is the specification's
+        // roster and names cards of the root, so inside a subgraph it is empty
+        // by construction and this answers that tree's own cards — which is
+        // what makes descending visible at all.
+        let Some(tree) = doc.tree(self.here()) else {
             return opening;
         };
         let mut all = opening.clone();
         for node in tree.nodes() {
-            if matches!(node.body, NodeBody::Kind(_)) && !opening.contains(&node.id) {
+            // ★★★★★ R1981 — **three bodies, not one.** A card is what this
+            // canvas addresses by name, and until this round that was only an
+            // application kind — so a group INSTANCE was folded into the tree
+            // and then invisible, and the interface ends of a subgraph could
+            // not be seen from inside it. Both were measured by driving the
+            // fold: the walk read 8 cards, folded two, and read 6 with the part
+            // nowhere in the list.
+            //
+            // ⚠ `Reroute` and `Beacon` are deliberately still out. They are
+            // wire furniture on this screen — `insert_reroute` and
+            // `spread_reroute` address them through the LINK they sit on, never
+            // by a card name — and making them cards is a different question
+            // from this one. Stated rather than left to the shape of the match.
+            let shown = matches!(
+                node.body,
+                NodeBody::Kind(_) | NodeBody::Group(_) | NodeBody::Interface(_)
+            );
+            if shown && !opening.contains(&node.id) {
                 all.push(node.id);
             }
         }
@@ -2314,7 +2416,7 @@ impl LabState {
         // ★★★★★ R1976 — and it is [`Document::review`] that is asked now, which
         // is the JOIN of that call and the structural verdict. R1945 built it
         // for exactly this consumer and R1974's carry recorded that no screen
-        // called it; measured at R1976, this screen was asking `warnings(ROOT)`
+        // called it; measured at R1976, this screen was asking `warnings(state.here())`
         // for one half and `validate()` for the other, taking ONE arm of the
         // second and dropping the rest with a bare `continue`. Two calls, one
         // question, and a silent discard between them.
@@ -2446,7 +2548,7 @@ impl LabState {
     /// matters rather than the wording: what stood here before R1976 read
     /// `Document::validate()` a second time and matched ONE of `Violation`'s
     /// seventeen arms, dropping the rest with a bare `continue`, and read
-    /// `warnings(ROOT)` for the other half so a judgement inside any other tree
+    /// `warnings(state.here())` for the other half so a judgement inside any other tree
     /// was invisible too. The dropped faults are the ones a document can only
     /// ARRIVE with rather than be edited into — the enum's own header says
     /// so — and this screen OPENS SAVED DOCUMENTS (`persist::open`, over the
@@ -2471,7 +2573,11 @@ impl LabState {
             Fault::Judgement(objection) => (who, Finding::Unwired(objection.clone())),
             Fault::Structure(violation) => {
                 if let Violation::Incompatible { link, refusal, .. } = violation
-                    && let Some(link) = self.doc.borrow().tree(ROOT).and_then(|t| t.link(*link))
+                    && let Some(link) = self
+                        .doc
+                        .borrow()
+                        .tree(self.here())
+                        .and_then(|t| t.link(*link))
                 {
                     // Named on the end the refusal blames, because that is the
                     // card a person has to change; the sentence names the other.
@@ -2580,13 +2686,16 @@ impl LabState {
     }
 
     fn link_count(&self) -> usize {
-        self.doc.borrow().tree(ROOT).map_or(0, |t| t.links().len())
+        self.doc
+            .borrow()
+            .tree(self.here())
+            .map_or(0, |t| t.links().len())
     }
 
     /// How many links arrive at, and leave, a node.
     fn degree(&self, node: NodeId) -> (usize, usize) {
         let doc = self.doc.borrow();
-        let Some(tree) = doc.tree(ROOT) else {
+        let Some(tree) = doc.tree(self.here()) else {
             return (0, 0);
         };
         let inbound = tree.links().iter().filter(|l| l.to.node == node).count();
@@ -2980,7 +3089,7 @@ impl ResetScope {
             Self::Fields => state.forms.borrow().values().any(ConfigForm::edited),
             Self::Links => {
                 let doc = state.doc.borrow();
-                let Some(tree) = doc.tree(ROOT) else {
+                let Some(tree) = doc.tree(state.here()) else {
                     return false;
                 };
                 let mut now: Vec<(String, String)> = tree
@@ -3046,7 +3155,7 @@ impl ResetScope {
                 let mut drop_these: Vec<LinkId> = Vec::new();
                 {
                     let doc = state.doc.borrow();
-                    if let Some(tree) = doc.tree(ROOT) {
+                    if let Some(tree) = doc.tree(state.here()) {
                         for link in tree.links() {
                             let pair = (state.name_of(link.from.node), state.name_of(link.to.node));
                             // One `want` entry per live link, so a duplicated
@@ -3064,7 +3173,7 @@ impl ResetScope {
                 {
                     let mut doc = state.doc.borrow_mut();
                     for link in drop_these {
-                        doc.disconnect(ROOT, link).ok();
+                        doc.disconnect(state.here(), link).ok();
                     }
                 }
                 for (from, to) in want {
@@ -3078,7 +3187,7 @@ impl ResetScope {
                     .zip(state.node_of(spec::SELECTED_LINK.1))
                     .and_then(|(a, b)| {
                         let doc = state.doc.borrow();
-                        let tree = doc.tree(ROOT)?;
+                        let tree = doc.tree(state.here())?;
                         tree.links()
                             .iter()
                             .find(|l| l.from.node == a && l.to.node == b)
@@ -3139,7 +3248,7 @@ fn put_node_set_back(state: &Rc<LabState>) {
     {
         let mut doc = state.doc.borrow_mut();
         for node in &strays {
-            doc.remove_node(ROOT, *node).ok();
+            doc.remove_node(state.here(), *node).ok();
         }
     }
     state
@@ -3195,11 +3304,11 @@ fn put_cards_back(state: &Rc<LabState>) {
                 .map(|(id, _)| *id)
         });
         let mut doc = state.doc.borrow_mut();
-        if let Some(slot) = doc.tree_mut(ROOT).and_then(|t| t.node_mut(node)) {
+        if let Some(slot) = doc.tree_mut(state.here()).and_then(|t| t.node_mut(node)) {
             slot.x = opened.at.0;
             slot.y = opened.at.1;
         }
-        doc.set_parent(ROOT, node, frame).ok();
+        doc.set_parent(state.here(), node, frame).ok();
     }
 }
 
@@ -3251,7 +3360,7 @@ struct Placement {
 fn placed_as_opened(state: &LabState, node: NodeId) -> Option<bool> {
     let opened = state.opened_at.borrow().get(&node).cloned()?;
     let doc = state.doc.borrow();
-    let slot = doc.tree(ROOT).and_then(|t| t.node(node))?;
+    let slot = doc.tree(state.here()).and_then(|t| t.node(node))?;
     let host = slot
         .parent
         .and_then(|f| state.frames.borrow().get(&f).cloned());
@@ -3288,10 +3397,10 @@ fn seed_links(
         };
         // ★ R1681 — the SAME endpoint arithmetic the canvas uses, not a second
         // copy of it. Port 0 on the dial side: the taxonomy declares one.
-        let Ok(endpoint) = landing_endpoint(doc, forms, a, b) else {
+        let Ok(endpoint) = landing_endpoint(doc, ROOT, forms, a, b) else {
             continue;
         };
-        let Some(port) = open_slot_in(doc, b, endpoint.as_deref()) else {
+        let Some(port) = open_slot_in(doc, ROOT, b, endpoint.as_deref()) else {
             continue;
         };
         match doc.connect(ROOT, Socket::new(a, 0), Socket::new(b, port)) {
@@ -3313,10 +3422,10 @@ fn seed_links(
         let (Some(&a), Some(&b)) = (ids.get(*from), ids.get(*to)) else {
             continue;
         };
-        let Ok(endpoint) = landing_endpoint(doc, forms, a, b) else {
+        let Ok(endpoint) = landing_endpoint(doc, ROOT, forms, a, b) else {
             continue;
         };
-        let Some(port) = open_slot_in(doc, b, endpoint.as_deref()) else {
+        let Some(port) = open_slot_in(doc, ROOT, b, endpoint.as_deref()) else {
             continue;
         };
         if doc
@@ -3364,7 +3473,7 @@ fn seed_links(
         // port out0, which that port will not admit`, from a save that would
         // not reopen. A pin's resting value has to be one its own type admits,
         // and the dial pin's type is what it dials.
-        let dialled = dialled_endpoint(doc, node);
+        let dialled = dialled_endpoint(doc, ROOT, node);
         for index in 0..u32::try_from(signature.outputs.len()).unwrap_or(0) {
             let at = PortRef::output(index);
             if doc.port_value(ROOT, node, at).is_none() {
@@ -3785,7 +3894,7 @@ fn card_collapsed(state: &LabState, node: NodeId) -> bool {
     state
         .doc
         .borrow()
-        .tree(ROOT)
+        .tree(state.here())
         .and_then(|tree| tree.node(node))
         .is_some_and(|slot| slot.appearance.collapsed)
 }
@@ -3987,7 +4096,7 @@ fn card_shape(state: &LabState, node: NodeId) -> Option<CardShape> {
 fn card_shape_at(state: &LabState, node: NodeId, zoom: u32) -> Option<CardShape> {
     let (nx, ny) = {
         let doc = state.doc.borrow();
-        let held = doc.tree(ROOT)?.node(node)?;
+        let held = doc.tree(state.here())?.node(node)?;
         (held.x, held.y)
     };
     let scaled = |v: u32| scaled_by(v, zoom);
@@ -4194,7 +4303,7 @@ fn pin_rect(state: &LabState, card: Rect, dial: bool) -> Rect {
 fn frames_of(state: &LabState) -> Vec<(NodeId, String)> {
     let frames = state.frames.borrow();
     let doc = state.doc.borrow();
-    let Some(tree) = doc.tree(ROOT) else {
+    let Some(tree) = doc.tree(state.here()) else {
         return Vec::new();
     };
     let mut out: Vec<(NodeId, String)> = tree
@@ -4209,7 +4318,7 @@ fn frames_of(state: &LabState) -> Vec<(NodeId, String)> {
 /// The nodes inside `frame`.
 fn members_of(state: &LabState, frame: NodeId) -> Vec<NodeId> {
     let doc = state.doc.borrow();
-    doc.tree(ROOT).map_or_else(Vec::new, |tree| {
+    doc.tree(state.here()).map_or_else(Vec::new, |tree| {
         tree.nodes()
             .filter(|n| n.parent == Some(frame) && !matches!(n.body, NodeBody::Frame))
             .map(|n| n.id)
@@ -4254,7 +4363,7 @@ fn frame_rect_at(state: &LabState, frame: NodeId, zoom: u32) -> Rect {
         let (x, y) = state
             .doc
             .borrow()
-            .tree(ROOT)
+            .tree(state.here())
             .and_then(|t| t.node(frame).map(|n| (n.x, n.y)))
             .unwrap_or((0, 0));
         let (cx, cy) = to_content_at(x, y, zoom);
@@ -5016,7 +5125,7 @@ impl Hit {
 /// surface's own coordinates.
 fn link_at(state: &LabState, px: i64, py: i64) -> Option<LinkId> {
     let doc = state.doc.borrow();
-    let tree = doc.tree(ROOT)?;
+    let tree = doc.tree(state.here())?;
     for link in tree.links() {
         let (Some(a), Some(b)) = (
             card_rect(state, link.from.node),
@@ -5054,7 +5163,7 @@ fn link_at(state: &LabState, px: i64, py: i64) -> Option<LinkId> {
 /// and not one because what they answer with is different — an observation has
 /// no id — and folding them together would mean inventing one.
 fn observed_at(state: &LabState, px: i64, py: i64) -> Option<(Socket, Socket)> {
-    for seen in state.doc.borrow().observations(ROOT) {
+    for seen in state.doc.borrow().observations(state.here()) {
         let (Some(a), Some(b)) = (
             card_rect(state, seen.from.node),
             card_rect(state, seen.to.node),
@@ -5092,7 +5201,7 @@ fn observed_at(state: &LabState, px: i64, py: i64) -> Option<(Socket, Socket)> {
 fn link_into_pin(state: &LabState, node: NodeId, at: (i64, i64)) -> Option<LinkId> {
     let doc = state.doc.borrow();
     let mut best: Option<(u64, LinkId)> = None;
-    for link in doc.tree(ROOT)?.links() {
+    for link in doc.tree(state.here())?.links() {
         if link.to.node != node {
             continue;
         }
@@ -6332,6 +6441,79 @@ fn hint_rect() -> Rect {
     Rect::new(canvas.x + 12, canvas.y + canvas.h - 34, w, 24)
 }
 
+/// ★★★★★ R1981 — where the breadcrumb chip sits: the canvas's top-left.
+///
+/// The same two rules [`hint_rect`] follows and for the same measured reasons —
+/// sized to its own sentence (R1700) and bounded by the room beside the launch
+/// panel (a constant would paint over that panel at another window size).
+/// ★★★★★ R1981 — **where a person is standing**, on the canvas that changes
+/// when they move.
+///
+/// On the CANVAS and not in the lab's own app bar, which was this round's first
+/// draft: mounted in the shell that app bar is never painted — the shell draws
+/// its own — so the one place a person looks for *which graph am I in* would
+/// have been the one place the assembled tool does not show. Driven, not
+/// supposed: the frame was asked for `lab.appbar.graph` and answered nothing.
+fn canvas_crumb(state: &LabState, ink: Ink, rect: Rect) -> Vec<Scene> {
+    let local = |r: Rect| Rect::new(r.x - rect.x, r.y - rect.y, r.w, r.h);
+    let text = state.breadcrumb().join("  /  ");
+    let seat = local(crumb_rect(&text));
+    // ★★★★★ Through `caption::captioned` and NOT a box beside a label. The first
+    // draft was the sibling pair this screen has been removing since R1792, and
+    // two of this application's gates said so at the commit: `r1812` counted it
+    // as two more captions paired with their box by nothing but where they
+    // landed (148 -> 150), and `r1956` caught the run's centre line a pixel off
+    // a neighbour's because the offsets were arithmetic against a rectangle the
+    // word was not inside. Here the run IS a child of the box, the shaper
+    // measures it, and the module centres it.
+    let (chip, _) = captioned(
+        "lab.crumb",
+        seat,
+        BoxStyle::filled(ink.surface)
+            .with_corner_radius(8)
+            .with_border(Border::new(ink.outline, 1)),
+        &caption::Caption::new(
+            &text,
+            run_style(9, if state.inside() { ink.text } else { ink.text_3 }),
+        )
+        .centred()
+        // The chip is what announces where a person is; the run inside is the
+        // whole of its content, which is the gesture strip's rule beside it.
+        .silent(Silence::name_of("lab.crumb")),
+        // A statement, not a control: a press falls through to the canvas.
+        caption::Pointer::Transparent,
+    );
+    // ⚠ NOT wrapped in `quiet`. The chip itself SPEAKS — it is the `AccessNode`
+    // that says where a reader is standing — and declaring a silence over a
+    // region that is announced is a claim nobody acts on, which this screen's
+    // own voice gate refuses by name.
+    vec![chip]
+}
+
+fn crumb_rect(text: &str) -> Rect {
+    let canvas = canvas_rect();
+    let room = gate_panel_x().saturating_sub(canvas.x + 24);
+    let w = (seat_w(text) + 4).min(room).max(80);
+    // ⚠★★★★★ The canvas's TOP left, which is where a person looks for *which
+    // graph am I in* — and getting it there took two refusals from this
+    // application's own gates, both worth recording because they are the same
+    // defect one layer apart.
+    //
+    // R1792 refused it first: the chip's word sat on a wire's address label in
+    // two of twelve swept states, and the run was judged against *the smallest
+    // box containing its centre*, which was the wire's. It was moved to the
+    // bottom-left chrome column to get away from the content — and R1956 then
+    // refused THAT, because the box's centre line landed a pixel off the launch
+    // panel's third row.
+    //
+    // Neither was about the place. Both were about the run being a SIBLING of
+    // its box, related to it by geometry and therefore relatable to anything
+    // else nearby. Through `caption::captioned` the run is the box's child and
+    // the pairing is a fact the scene carries, so the chip can sit where it
+    // belongs.
+    Rect::new(canvas.x + 12, canvas.y + 10, w, 24)
+}
+
 // ── The inspector ───────────────────────────────────────────────────────────
 
 fn selected_form(state: &LabState) -> Option<ConfigForm> {
@@ -6512,14 +6694,14 @@ fn dialled_row(state: &LabState, node: NodeId, stored: &ConfigForm) -> Option<Co
 fn dialled_from(state: &LabState, node: NodeId) -> Vec<String> {
     let landings: Vec<(NodeId, String)> = {
         let doc = state.doc.borrow();
-        let Some(tree) = doc.tree(ROOT) else {
+        let Some(tree) = doc.tree(state.here()) else {
             return Vec::new();
         };
         tree.links()
             .iter()
             .filter(|link| link.from.node == node)
             .filter_map(|link| {
-                let endpoint = endpoint_of(&doc, link.to)?;
+                let endpoint = endpoint_of(&doc, state.here(), link.to)?;
                 (!endpoint.trim().is_empty()).then_some((link.to.node, endpoint))
             })
             .collect()
@@ -7317,6 +7499,14 @@ fn app_bar(state: &LabState, ink: Ink) -> Scene {
             quiet(
                 tagged_label(
                     "lab.appbar.graph",
+                    // ⚠ R1981 — the breadcrumb is NOT here, and that was this
+                    // round's first draft. Mounted in the shell this whole app
+                    // bar is not painted at all — the shell draws its own
+                    // (`shell.appbar.*`) — so a person using the ASSEMBLED tool
+                    // would never have seen it. Measured by asking the frame
+                    // for the tag and getting nothing back. It is on the canvas
+                    // instead (`lab.crumb`), which both the standalone binary
+                    // and the shell paint.
                     spec::GRAPH_NAME,
                     Rect::new(118, 20, 200, 14),
                     FONT_SMALL,
@@ -8552,7 +8742,7 @@ fn link_chrome(state: &LabState) -> Option<LinkChrome> {
     let pick = state.selected_link.get()?;
     let (from_socket, to_socket, adopt) = match pick {
         LinkPick::Authored(id) => {
-            let link = state.doc.borrow().tree(ROOT)?.link(id).copied()?;
+            let link = state.doc.borrow().tree(state.here())?.link(id).copied()?;
             (link.from, link.to, false)
         }
         LinkPick::Observed(from, to) => (from, to, true),
@@ -8925,7 +9115,7 @@ fn canvas_wires(state: &LabState, ink: Ink) -> Vec<Scene> {
     };
     {
         let doc = state.doc.borrow();
-        if let Some(tree) = doc.tree(ROOT) {
+        if let Some(tree) = doc.tree(state.here()) {
             for link in tree.links() {
                 if moving == Some(link.id) {
                     continue;
@@ -8954,7 +9144,7 @@ fn canvas_wires(state: &LabState, ink: Ink) -> Vec<Scene> {
         // sibling screen drawing these same two layers already uses for a
         // reported link; R1681 said this primitive had no dash and reached for
         // colour alone, which was false.
-        for seen in doc.observations(ROOT) {
+        for seen in doc.observations(state.here()) {
             let (Some(a), Some(b)) = (
                 card_rect(state, seen.from.node),
                 card_rect(state, seen.to.node),
@@ -9014,7 +9204,10 @@ fn canvas_wires(state: &LabState, ink: Ink) -> Vec<Scene> {
 /// the census rows this closes could not have: both references keep a result
 /// list built when the query ran, and both then have to invalidate it.
 fn found(state: &LabState) -> Vec<Found> {
-    state.doc.borrow().find(ROOT, &state.searching.get())
+    state
+        .doc
+        .borrow()
+        .find(state.here(), &state.searching.get())
 }
 
 /// The nodes the search is currently showing, as a set the painter can ask.
@@ -9214,7 +9407,7 @@ fn pin_announcement(
     match state
         .doc
         .borrow()
-        .port_label(ROOT, node, at)
+        .port_label(state.here(), node, at)
         .and_then(|held| held.text)
     {
         Some(name) => format!("{card} {kind} · {name} — {verb}"),
@@ -9262,7 +9455,7 @@ fn canvas_pins(state: &LabState, node: NodeId, card: Rect, role: Role, ink: Ink)
     // The lab's dial pin is output 0 and its accept pin is input 0 — the
     // variadic run's first item — which is the mapping `LabNode`'s signature
     // declares.
-    let drawn = state.doc.borrow().visible_ports(ROOT, node);
+    let drawn = state.doc.borrow().visible_ports(state.here(), node);
     let shows = |side: Side, index: u32| -> bool {
         drawn.as_ref().is_none_or(|v| {
             let list = match side {
@@ -9291,7 +9484,7 @@ fn canvas_pins(state: &LabState, node: NodeId, card: Rect, role: Role, ink: Ink)
         let socket = state
             .doc
             .borrow()
-            .tree(ROOT)
+            .tree(state.here())
             .and_then(|t| t.node(node))
             .and_then(|n| match &n.body {
                 NodeBody::Kind(kind) => Some(kind.accept_type()),
@@ -9390,7 +9583,7 @@ fn member_pins(
     state
         .doc
         .borrow()
-        .resolved_ports(ROOT, node, side)
+        .resolved_ports(state.here(), node, side)
         .into_iter()
         .filter(|(path, _)| path.depth() > 0)
         .collect()
@@ -9511,6 +9704,8 @@ fn canvas_overlays(state: &LabState, ink: Ink) -> Vec<Scene> {
             ink.text_2,
         ));
     }
+
+    children.extend(canvas_crumb(state, ink, rect));
 
     let hint = local(hint_rect());
     children.push(box_at("lab.hint", hint, ink.surface, Some(ink.outline), 8));
@@ -9830,7 +10025,7 @@ fn card_switches(state: &LabState, node: NodeId) -> (bool, bool) {
     state
         .doc
         .borrow()
-        .tree(ROOT)
+        .tree(state.here())
         .and_then(|tree| tree.node(node))
         .map_or((false, false), |slot| {
             (slot.appearance.collapsed, slot.disabled)
@@ -9846,7 +10041,7 @@ fn pins_are_away(state: &LabState, node: NodeId) -> bool {
     state
         .doc
         .borrow()
-        .visible_ports(ROOT, node)
+        .visible_ports(state.here(), node)
         .is_some_and(|v| !v.put_away_inputs.is_empty() || !v.put_away_outputs.is_empty())
 }
 
@@ -10243,7 +10438,7 @@ fn identity_caption(state: &LabState, node: NodeId) -> String {
     let frame = state
         .doc
         .borrow()
-        .tree(ROOT)
+        .tree(state.here())
         .and_then(|t| t.node(node))
         .and_then(|n| n.parent)
         .and_then(|p| state.frames.borrow().get(&p).cloned())
@@ -10809,7 +11004,7 @@ impl LabOracle {
             return state
                 .doc
                 .borrow()
-                .tree(ROOT)
+                .tree(state.here())
                 .and_then(|t| {
                     t.links()
                         .iter()
@@ -10831,7 +11026,7 @@ impl LabOracle {
         state
             .doc
             .borrow()
-            .tree(ROOT)
+            .tree(state.here())
             .and_then(|t| t.link(LinkId(id)).map(|_| LinkId(id)))
             .ok_or_else(|| InvokeError::rejected(format!("no link {id} is drawn")))
     }
@@ -10896,7 +11091,7 @@ impl LabOracle {
         state
             .doc
             .borrow()
-            .observations(ROOT)
+            .observations(state.here())
             .into_iter()
             .find(|o| o.from.node == a && o.to.node == b)
             .map(|o| LinkPick::Observed(o.from, o.to))
@@ -10954,6 +11149,12 @@ const FIELDS: &[SchemaField] = &{
         // answers with the way IN to it. The census's six search rows.
         SchemaField::new("searching", "string"),
         SchemaField::new("found", "json"),
+        // ★★★★★ R1981 — WHERE a person is standing in the document, and whether
+        // there is anywhere above. Published as its own row because until this
+        // round the answer was a constant and every reader was entitled to
+        // assume it: a client that never asks would keep reading the root's
+        // cards and calling them the graph.
+        SchemaField::new("standing", "json"),
         // ★★★★★ R1920 — which edits this screen would ALLOW, published as a
         // read rather than asked one card at a time: an agent choosing what to
         // act on needs the whole row before it acts on any of it.
@@ -11011,6 +11212,16 @@ const FIELDS: &[SchemaField] = &{
         SchemaField::new("conformance", "json"),
         SchemaField::new("graph", "string"),
         SchemaField::new("selected", "string"),
+        // ★★★★★ R1981 — the WHOLE selection, and not only the card the
+        // inspector follows.
+        //
+        // The model has held a set since R1706 and this wire could say one
+        // name, so "selected" over six chosen cards was true of the inspector
+        // and false of the canvas — `say_selection` states exactly that in the
+        // sentence it gives a person, and the wire had no way to. It became
+        // load-bearing this round: `group` folds the selection, so a client
+        // that cannot read the selection cannot tell what it is about to fold.
+        SchemaField::new("selection", "json"),
         SchemaField::new("selected_ids", "string"),
         SchemaField::new("selected_link", "string"),
         SchemaField::new("zoom", "int"),
@@ -11372,6 +11583,41 @@ const FIELDS: &[SchemaField] = &{
             ArgForm::Scalar,
             const { &[SchemaArg::open("needle", "string")] },
         ),
+        // ★★★★★ R1981 — **a part of this graph becomes a graph**, and a person
+        // can go inside it and come back.
+        //
+        // Four verbs and not three. `group` folds THE SELECTION, which is the
+        // reference's own gesture and the only shape that keeps the pointer and
+        // the wire doing one thing — but until this round nothing could BUILD a
+        // selection of more than one card from the wire, so an agent could not
+        // reach the gesture at all. `select_also` is that half: the screen's
+        // model has held a set since R1706 and the wire could only ever say
+        // "this one".
+        //
+        // ⚠ `group` declares one open argument and not a list of cards. A list
+        // is not expressible in the argument grammar (`ArgForm` has no repeated
+        // form), and inventing a comma convention here would put the roster in a
+        // string this screen parses and nothing declares — the shape R1637 made
+        // declaration a precondition of dispatch to end.
+        SchemaField::action_with(
+            "select_also",
+            "string",
+            ArgForm::Scalar,
+            const { &[SchemaArg::key("card", "string", "nodes")] },
+        ),
+        SchemaField::action_with(
+            "group",
+            "string",
+            ArgForm::Scalar,
+            const { &[SchemaArg::open("name", "string")] },
+        ),
+        SchemaField::action_with(
+            "enter",
+            "string",
+            ArgForm::Scalar,
+            const { &[SchemaArg::key("card", "string", "nodes")] },
+        ),
+        SchemaField::action("exit", "string"),
         // ★★★★★ R1912 — put a card's pins away, or bring them back. The scope
         // vocabulary is CLOSED and built from `PIN_SCOPES` rather than spelled
         // here, so the words an agent is offered cannot drift from the ones the
@@ -11711,6 +11957,18 @@ impl ExternalIntrospect for LabOracle {
         let text = |s: String| Ok(IntrospectValue::Text(s));
         match path {
             "spec" => text(spec_json().to_string()),
+            // ★★★★★ R1981 — where in the document this screen is standing.
+            //
+            // `through` is the same word `found` publishes for a hit's way in
+            // (R1919) and is the same derivation — [`EditPath::breadcrumb`] —
+            // so "where am I" and "how would I get to that" are answered in one
+            // vocabulary rather than two.
+            "standing" => Ok(IntrospectValue::Json(serde_json::json!({
+                "through": state.breadcrumb(),
+                "depth": state.path.borrow().depth(),
+                "inside": state.inside(),
+                "cards": state.cards().len(),
+            }))),
             // ★★★★★ R1918 — what the marks on this frame say about themselves.
             "described" => Ok(IntrospectValue::Json(described_wire(state))),
             // ★★★★★ R1919 — what a reader is looking for, and what answers.
@@ -11750,6 +12008,17 @@ impl ExternalIntrospect for LabOracle {
             >())),
             "graph" => text(spec::GRAPH_NAME.to_owned()),
             "selected" => text(state.active_card().map(|n| state.name_of(n)).unwrap_or_default()),
+            // ★★★★★ R1981 — every chosen card, in the model's own order, and
+            // `selected` above is its leader.
+            "selection" => Ok(IntrospectValue::Json(serde_json::Value::Array(
+                state
+                    .selection
+                    .get()
+                    .members()
+                    .iter()
+                    .map(|node| serde_json::Value::String(state.name_of(*node)))
+                    .collect(),
+            ))),
             // ★★★ R1706 — the whole selection, in arrival order, beside the
             // leader `selected` already answered. Added rather than folded in,
             // because an agent that reads `selected` to name "the" card is
@@ -12065,7 +12334,7 @@ impl ExternalIntrospect for LabOracle {
             "links" => {
                 let doc = state.doc.borrow();
                 let tree = doc
-                .tree(ROOT)
+                .tree(state.here())
                 .ok_or_else(|| ReadRefusal::no_such_member("the document has no root tree"))?;
                 text(
                     serde_json::Value::Array(
@@ -12098,15 +12367,16 @@ impl ExternalIntrospect for LabOracle {
                 let doc = state.doc.borrow();
                 text(
                     serde_json::Value::Array(
-                        doc.observations(ROOT)
+                        doc.observations(state.here())
                             .into_iter()
                             .map(|seen| {
                                 serde_json::json!({
                                     "from": state.name_of(seen.from.node),
                                     "to": state.name_of(seen.to.node),
-                                    "endpoint": endpoint_of(&doc, seen.to).unwrap_or_default(),
+                                    "endpoint": endpoint_of(&doc, state.here(), seen.to)
+                                        .unwrap_or_default(),
                                     "layer": doc
-                                        .link_layer(ROOT, seen.from, seen.to)
+                                        .link_layer(state.here(), seen.from, seen.to)
                                         .map(LinkLayer::name)
                                         .unwrap_or_default(),
                                 })
@@ -12158,7 +12428,7 @@ impl ExternalIntrospect for LabOracle {
                         .into_iter()
                         .filter_map(|node| {
                             let doc = state.doc.borrow();
-                            let slot = doc.tree(ROOT)?.node(node)?;
+                            let slot = doc.tree(state.here())?.node(node)?;
                             Some((
                                 state.name_of(node),
                                 serde_json::json!([slot.x, slot.y]),
@@ -12192,7 +12462,7 @@ impl ExternalIntrospect for LabOracle {
                         .into_iter()
                         .filter_map(|node| {
                             let doc = state.doc.borrow();
-                            let slot = doc.tree(ROOT)?.node(node)?;
+                            let slot = doc.tree(state.here())?.node(node)?;
                             Some((
                                 slot.display_name(),
                                 serde_json::json!({
@@ -12206,7 +12476,7 @@ impl ExternalIntrospect for LabOracle {
                                     // conjunction, the other deletes the pin.
                                     // A client offering "bring it back" needs
                                     // to know the answer is a person's.
-                                    "pins": pins_json(&doc, node),
+                                    "pins": pins_json(&doc, state.here(), node),
                                 }),
                             ))
                         })
@@ -12356,6 +12626,22 @@ impl ExternalIntrospect for LabOracle {
                 let node = Self::card(&state, name.trim())?;
                 delete_card(&state, node).map(IntrospectValue::Text)
             }
+            // ★★★★★ R1981 — a part of this graph becomes a graph, and back.
+            "select_also" => {
+                let name = Self::text(&args)?;
+                let node = Self::card(&state, name.trim())?;
+                Ok(IntrospectValue::Text(select_also(&state, node)))
+            }
+            "group" => {
+                let name = Self::text(&args)?;
+                group_selection(&state, name.trim()).map(IntrospectValue::Text)
+            }
+            "enter" => {
+                let name = Self::text(&args)?;
+                let node = Self::card(&state, name.trim())?;
+                enter_card(&state, node).map(IntrospectValue::Text)
+            }
+            "exit" => leave_subgraph(&state).map(IntrospectValue::Text),
             "rename" => {
                 let raw = Self::text(&args)?;
                 let (which, to) = raw.split_once(',').ok_or_else(|| {
@@ -12537,7 +12823,7 @@ impl ExternalIntrospect for LabOracle {
                 {
                     let mut doc = state.doc.borrow_mut();
                     let slot = doc
-                        .tree_mut(ROOT)
+                        .tree_mut(state.here())
                         .and_then(|host| host.node_mut(node))
                         .ok_or_else(|| InvokeError::rejected("no such card"))?;
                     slot.description = wanted;
@@ -12545,7 +12831,7 @@ impl ExternalIntrospect for LabOracle {
                 let now = state
                     .doc
                     .borrow()
-                    .description(ROOT, node)
+                    .description(state.here(), node)
                     .map_or("none", |d| d.source.wire_word());
                 let name = state.name_of(node);
                 state.say(Utterance::done(format!("{name} now speaks from its {now}")));
@@ -12561,7 +12847,7 @@ impl ExternalIntrospect for LabOracle {
                 {
                     let mut doc = state.doc.borrow_mut();
                     let slot = doc
-                        .tree_mut(ROOT)
+                        .tree_mut(state.here())
                         .and_then(|host| host.node_mut(node))
                         .ok_or_else(|| InvokeError::rejected("no such card"))?;
                     slot.appearance.tint = wanted;
@@ -13050,7 +13336,7 @@ impl ExternalIntrospect for LabOracle {
                 let seen = state
                     .doc
                     .borrow()
-                    .observations(ROOT)
+                    .observations(state.here())
                     .into_iter()
                     .find(|o| o.from.node == a && o.to.node == b)
                     .ok_or_else(|| {
@@ -13585,7 +13871,7 @@ fn sync_node(state: &Rc<LabState>, node: NodeId) {
     if let Some(slot) = state
         .doc
         .borrow_mut()
-        .tree_mut(ROOT)
+        .tree_mut(state.here())
         .and_then(|t| t.node_mut(node))
     {
         if let NodeBody::Kind(kind) = &mut slot.body {
@@ -13615,7 +13901,8 @@ fn sync_node(state: &Rc<LabState>, node: NodeId) {
 /// drawing a stale colour.
 fn settle_transports(state: &Rc<LabState>) {
     let forms = state.forms.borrow();
-    settle_transports_in(&mut state.doc.borrow_mut(), &forms);
+    let here = state.here();
+    settle_transports_in(&mut state.doc.borrow_mut(), here, &forms);
 }
 
 /// [`settle_transports`] over a document that is not in a [`LabState`] yet.
@@ -13623,9 +13910,13 @@ fn settle_transports(state: &Rc<LabState>) {
 /// `LabState::opening` builds the graph before there is a state to borrow it
 /// out of, and a reset re-seeds the same way — so the derivation takes the two
 /// things it actually reads rather than the screen that happens to hold them.
-fn settle_transports_in(doc: &mut Document<LabNode>, forms: &BTreeMap<NodeId, ConfigForm>) {
+fn settle_transports_in(
+    doc: &mut Document<LabNode>,
+    here: TreeId,
+    forms: &BTreeMap<NodeId, ConfigForm>,
+) {
     let nodes: Vec<NodeId> = doc
-        .tree(ROOT)
+        .tree(here)
         .map(|tree| tree.nodes().map(|node| node.id).collect())
         .unwrap_or_default();
     for node in nodes {
@@ -13633,9 +13924,9 @@ fn settle_transports_in(doc: &mut Document<LabNode>, forms: &BTreeMap<NodeId, Co
             form.field("listen.endpoints")
                 .map_or(String::new(), |f| f.value().into_owned())
         });
-        let dialled = dialled_endpoint(doc, node);
+        let dialled = dialled_endpoint(doc, here, node);
         let (listens_over, dials_over) = transports_spoken(&listen, dialled.as_deref());
-        if let Some(slot) = doc.tree_mut(ROOT).and_then(|t| t.node_mut(node)) {
+        if let Some(slot) = doc.tree_mut(here).and_then(|t| t.node_mut(node)) {
             if let NodeBody::Kind(kind) = &mut slot.body {
                 kind.listens_over = listens_over;
                 kind.dials_over = dials_over;
@@ -13676,14 +13967,14 @@ fn endpoints_of(state: &LabState, node: NodeId) -> Vec<String> {
 /// item's **label is the endpoint**. That is the whole of the endpoint model:
 /// one fact, in the place the model already keeps per-slot facts, so nothing
 /// maintains a parallel table of which wire took which address.
-fn endpoint_of(doc: &Document<LabNode>, socket: Socket) -> Option<String> {
-    doc.items(ROOT, socket.node, Side::Input)?
+fn endpoint_of(doc: &Document<LabNode>, here: TreeId, socket: Socket) -> Option<String> {
+    doc.items(here, socket.node, Side::Input)?
         .get(socket.port as usize)
         .and_then(|item| item.label.clone())
 }
 
 fn endpoint_at(state: &LabState, socket: Socket) -> Option<String> {
-    endpoint_of(&state.doc.borrow(), socket)
+    endpoint_of(&state.doc.borrow(), state.here(), socket)
 }
 
 /// Make an accept slot on `to` that dials `endpoint`, and answer its port.
@@ -13779,12 +14070,12 @@ fn transports_spoken(
 /// "the first" and "the only one that could be there" are the same set — but
 /// the order is stated because a document loaded from disk could carry a state
 /// this screen would not author.
-fn dialled_endpoint(doc: &Document<LabNode>, node: NodeId) -> Option<String> {
-    doc.tree(ROOT)?
+fn dialled_endpoint(doc: &Document<LabNode>, here: TreeId, node: NodeId) -> Option<String> {
+    doc.tree(here)?
         .links()
         .iter()
         .filter(|link| link.from.node == node)
-        .find_map(|link| endpoint_of(doc, link.to))
+        .find_map(|link| endpoint_of(doc, here, link.to))
 }
 
 /// ★★★★★ R1960 — **what a link's landing pin carries**, in one place.
@@ -13811,10 +14102,15 @@ fn typed_slot_item(endpoint: Option<&str>) -> Item<graph::Endpoint> {
     }
 }
 
-fn open_slot_in(doc: &mut Document<LabNode>, to: NodeId, endpoint: Option<&str>) -> Option<u32> {
-    let arity = u32::try_from(doc.signature(ROOT, to)?.inputs.len()).unwrap_or(0);
+fn open_slot_in(
+    doc: &mut Document<LabNode>,
+    here: TreeId,
+    to: NodeId,
+    endpoint: Option<&str>,
+) -> Option<u32> {
+    let arity = u32::try_from(doc.signature(here, to)?.inputs.len()).unwrap_or(0);
     let item = typed_slot_item(endpoint);
-    doc.insert_item(ROOT, to, Side::Input, arity, item).ok()?;
+    doc.insert_item(here, to, Side::Input, arity, item).ok()?;
     let mut port = arity;
     // ★ The run declares `at_least(1)`, so a node that has never been dialled
     // still carries one slot — and appending beside it would leave every
@@ -13822,8 +14118,8 @@ fn open_slot_in(doc: &mut Document<LabNode>, to: NodeId, endpoint: Option<&str>)
     // one per accepting node, found by a census that counts BOTH directions.
     // Dropped here rather than never created, because the floor is the crate's
     // and this is the first moment a real slot exists to replace it.
-    if let Some(dead) = spare_slot(doc, to, port) {
-        if doc.remove_item(ROOT, to, Side::Input, dead).is_ok() && dead < port {
+    if let Some(dead) = spare_slot(doc, here, to, port) {
+        if doc.remove_item(here, to, Side::Input, dead).is_ok() && dead < port {
             port -= 1;
         }
     }
@@ -13836,7 +14132,7 @@ fn open_slot_in(doc: &mut Document<LabNode>, to: NodeId, endpoint: Option<&str>)
     // in them — which is exactly the state the reference's split avoids by
     // parsing the parent's value on the way down.
     if let Some(one) = endpoint {
-        let _ = doc.set_port_value(ROOT, to, PortRef::input(port), one.to_owned());
+        let _ = doc.set_port_value(here, to, PortRef::input(port), one.to_owned());
     }
     Some(port)
 }
@@ -13848,21 +14144,22 @@ fn open_slot_in(doc: &mut Document<LabNode>, to: NodeId, endpoint: Option<&str>)
 /// `observations()` here; so did [`close_slot`], and so did the crate's own
 /// landing planner — except that the planner counted only the first, which is
 /// how an unrelated wire came to take a slot a report was sitting on.
-fn spare_slot(doc: &Document<LabNode>, node: NodeId, keep: u32) -> Option<u32> {
-    let items = doc.items(ROOT, node, Side::Input)?;
+fn spare_slot(doc: &Document<LabNode>, here: TreeId, node: NodeId, keep: u32) -> Option<u32> {
+    let items = doc.items(here, node, Side::Input)?;
     (0..keep).find(|port| {
         let empty = items
             .get(*port as usize)
             .is_none_or(|item| item.label.is_none());
         empty
             && doc
-                .occupants(ROOT, Socket::new(node, *port), Side::Input)
+                .occupants(here, Socket::new(node, *port), Side::Input)
                 .is_free()
     })
 }
 
 fn open_slot(state: &LabState, to: NodeId, endpoint: Option<&str>) -> Option<u32> {
-    open_slot_in(&mut state.doc.borrow_mut(), to, endpoint)
+    let here = state.here();
+    open_slot_in(&mut state.doc.borrow_mut(), here, to, endpoint)
 }
 
 /// The endpoint a new link from `from` would dial on `to`, or why it cannot be
@@ -13875,6 +14172,7 @@ fn open_slot(state: &LabState, to: NodeId, endpoint: Option<&str>) -> Option<u32
 /// different peers may of course dial the same address.
 fn landing_endpoint(
     doc: &Document<LabNode>,
+    here: TreeId,
     forms: &BTreeMap<NodeId, ConfigForm>,
     from: NodeId,
     to: NodeId,
@@ -13882,7 +14180,7 @@ fn landing_endpoint(
     if endpoints_in(forms, to).is_empty() {
         return Ok(None);
     }
-    free_endpoints_in(doc, forms, from, to)
+    free_endpoints_in(doc, here, forms, from, to)
         .into_iter()
         .next()
         .map_or(Err(()), |one| Ok(Some(one)))
@@ -13900,7 +14198,7 @@ fn close_slot(state: &LabState, node: NodeId, port: u32) {
     let still_used = !state
         .doc
         .borrow()
-        .occupants(ROOT, Socket::new(node, port), Side::Input)
+        .occupants(state.here(), Socket::new(node, port), Side::Input)
         .is_free();
     if still_used {
         return;
@@ -13908,7 +14206,7 @@ fn close_slot(state: &LabState, node: NodeId, port: u32) {
     state
         .doc
         .borrow_mut()
-        .remove_item(ROOT, node, Side::Input, port)
+        .remove_item(state.here(), node, Side::Input, port)
         .ok();
 }
 
@@ -13928,6 +14226,7 @@ fn close_slot(state: &LabState, node: NodeId, port: u32) {
 /// like one, which is the defect this round was repairing.
 fn free_endpoints_in(
     doc: &Document<LabNode>,
+    here: TreeId,
     forms: &BTreeMap<NodeId, ConfigForm>,
     from: NodeId,
     to: NodeId,
@@ -13936,7 +14235,7 @@ fn free_endpoints_in(
     // that claimed the same one would be describing a connection that is not
     // the one out there.
     let landed = doc
-        .tree(ROOT)
+        .tree(here)
         .map(|t| {
             t.links()
                 .iter()
@@ -13946,14 +14245,14 @@ fn free_endpoints_in(
         })
         .unwrap_or_default();
     let reported = doc
-        .observations(ROOT)
+        .observations(here)
         .into_iter()
         .filter(|o| o.from.node == from && o.to.node == to)
         .map(|o| o.to);
     let used: Vec<String> = landed
         .into_iter()
         .chain(reported)
-        .filter_map(|socket| endpoint_of(doc, socket))
+        .filter_map(|socket| endpoint_of(doc, here, socket))
         .collect();
     endpoints_in(forms, to)
         .into_iter()
@@ -13992,7 +14291,7 @@ fn connect_at(
         state
             .doc
             .borrow()
-            .index_of(ROOT, node, side, at)
+            .index_of(state.here(), node, side, at)
             .ok_or_else(|| {
                 let said = Utterance::refused(&format!(
                     "{} has no {} pin — split it first",
@@ -14005,10 +14304,11 @@ fn connect_at(
     };
     let out = addressed(from, from_at, Side::Output)?;
     let into = addressed(to, to_at, Side::Input)?;
-    let made = state
-        .doc
-        .borrow_mut()
-        .connect(ROOT, Socket::new(from, out), Socket::new(to, into));
+    let made =
+        state
+            .doc
+            .borrow_mut()
+            .connect(state.here(), Socket::new(from, out), Socket::new(to, into));
     match made {
         Ok(made) => {
             state.selected_link.set(Some(LinkPick::Authored(made.link)));
@@ -14037,8 +14337,13 @@ fn connect_at(
 
 fn connect(state: &Rc<LabState>, from: NodeId, to: NodeId) -> Result<String, InvokeError> {
     let name = state.name_of(to);
-    let Ok(endpoint) = landing_endpoint(&state.doc.borrow(), &state.forms.borrow(), from, to)
-    else {
+    let Ok(endpoint) = landing_endpoint(
+        &state.doc.borrow(),
+        state.here(),
+        &state.forms.borrow(),
+        from,
+        to,
+    ) else {
         // ★★★ R1719 — the shape this file carries eight times: one sentence,
         // said to the person and handed to the agent. The person's copy is
         // framed (`refused: …`) and the agent's is not, because the agent's
@@ -14065,10 +14370,11 @@ fn connect(state: &Rc<LabState>, from: NodeId, to: NodeId) -> Result<String, Inv
         state.say(said.clone());
         return Err(InvokeError::rejected(said.into_clause()));
     };
-    let made = state
-        .doc
-        .borrow_mut()
-        .connect(ROOT, Socket::new(from, 0), Socket::new(to, port));
+    let made =
+        state
+            .doc
+            .borrow_mut()
+            .connect(state.here(), Socket::new(from, 0), Socket::new(to, port));
     match made {
         Ok(made) => {
             state.selected_link.set(Some(LinkPick::Authored(made.link)));
@@ -14101,7 +14407,7 @@ fn connect(state: &Rc<LabState>, from: NodeId, to: NodeId) -> Result<String, Inv
 
 /// Remove a link somebody drew, and close the slot it was landing on (R1681).
 fn delete_link(state: &Rc<LabState>, link: LinkId) -> Result<String, InvokeError> {
-    let gone = state.doc.borrow_mut().disconnect(ROOT, link);
+    let gone = state.doc.borrow_mut().disconnect(state.here(), link);
     match gone {
         Ok(gone) => {
             close_slot(state, gone.to.node, gone.to.port);
@@ -14136,6 +14442,142 @@ fn delete_link(state: &Rc<LabState>, link: LinkId) -> Result<String, InvokeError
 /// the inspector, the gate panel and every affordance keyed to a selected node
 /// vanish at once — a state a person reaches by pressing delete one time too
 /// many and cannot leave.
+/// ★★★★★ R1981 — **add a card to the selection, or take it out again.**
+///
+/// [`Selection::toggle`] is the framework's own, so *what is selected* answers
+/// the same way whether a pointer or the wire asked. The screen's model has
+/// held a SET since R1706 and the wire could only ever say "this one", which is
+/// why [`group_selection`] had no way to be reached from a script.
+fn select_also(state: &Rc<LabState>, node: NodeId) -> String {
+    let mut selection = state.selection.get();
+    let _ = selection.toggle(node);
+    let names: Vec<String> = selection
+        .members()
+        .iter()
+        .map(|card| state.name_of(*card))
+        .collect();
+    state.selection.set(selection);
+    let said = format!("selected: {}", names.join(", "));
+    state.say(Utterance::done(&said));
+    said
+}
+
+/// ★★★★★ R1981 — **fold the selected cards into a subgraph of their own.**
+///
+/// [`Document::group`] does the whole of it: the crossing links become the new
+/// graph's interface, the internal ones move across, and an instance is left in
+/// this tree wired where the selection was. A refused collapse leaves the
+/// document untouched — every check runs before the first mutation — so this
+/// is one call and not a sequence with a half-done state in the middle.
+///
+/// ⚠ The selection is CLEARED rather than re-pointed at the instance. The cards
+/// a person had chosen are not in this tree any more, and a selection naming
+/// nodes of another tree is exactly the confusion `NodeId` being per-tree
+/// invites (see [`LabState::here`]).
+fn group_selection(state: &Rc<LabState>, name: &str) -> Result<String, InvokeError> {
+    let chosen: Vec<NodeId> = state.selection.get().members().to_vec();
+    if chosen.len() < 2 {
+        let said =
+            Utterance::refused(&"a subgraph is made of at least two cards — select another first");
+        state.say(said.clone());
+        return Err(InvokeError::rejected(said.into_clause()));
+    }
+    let name = if name.trim().is_empty() {
+        fresh_label(&state.doc.borrow(), state.here(), "part")
+    } else {
+        name.trim().to_owned()
+    };
+    let here = state.here();
+    let made = state
+        .doc
+        .borrow_mut()
+        .group(here, &chosen, name.clone())
+        .map_err(|why| {
+            let said = Utterance::refused(&why.to_string());
+            state.say(said.clone());
+            InvokeError::rejected(said.into_clause())
+        })?;
+    // The instance is a card of this tree like any other, so it gets a name a
+    // person can address it by — the same rule every card here follows.
+    if let Some(slot) = state
+        .doc
+        .borrow_mut()
+        .tree_mut(here)
+        .and_then(|tree| tree.node_mut(made.node))
+    {
+        slot.label = Some(name.clone());
+    }
+    state.selection.set(Selection::empty());
+    state.selected_link.set(None);
+    let said = format!(
+        "{name}: {} card(s) folded in, {} left behind",
+        chosen.len(),
+        made.orphaned.len()
+    );
+    state.say(Utterance::done(&said));
+    Ok(said)
+}
+
+/// ★★★★★ R1981 — **go inside the subgraph this card stands for.**
+///
+/// [`EditPath::enter`] refuses a card that is not an instance and refuses a
+/// descent that would re-enter a tree already on the path, so *what may be
+/// entered* is the model's answer and not a test written here.
+fn enter_card(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError> {
+    let name = state.name_of(node);
+    let mut path = state.path.borrow().clone();
+    let inner = path.enter(&state.doc.borrow(), node).map_err(|why| {
+        let said = Utterance::refused(&format!("{name}: {why}"));
+        state.say(said.clone());
+        InvokeError::rejected(said.into_clause())
+    })?;
+    stand_in(state, path);
+    let said = format!(
+        "inside {name}: {} card(s) — {}",
+        state.cards().len(),
+        state.breadcrumb().join(" / ")
+    );
+    let _ = inner;
+    state.say(Utterance::done(&said));
+    Ok(said)
+}
+
+/// ★★★★★ R1981 — **come back out to the tree this one was entered from.**
+fn leave_subgraph(state: &Rc<LabState>) -> Result<String, InvokeError> {
+    let mut path = state.path.borrow().clone();
+    path.exit().map_err(|why| {
+        let said = Utterance::refused(&format!("{why}"));
+        state.say(said.clone());
+        InvokeError::rejected(said.into_clause())
+    })?;
+    stand_in(state, path);
+    let said = format!(
+        "back in {}: {} card(s)",
+        state.breadcrumb().last().cloned().unwrap_or_default(),
+        state.cards().len()
+    );
+    state.say(Utterance::done(&said));
+    Ok(said)
+}
+
+/// ★★★★★ R1981 — **stand in another tree**, and drop what named the last one.
+///
+/// One place rather than a pair of near-identical tails on [`enter_card`] and
+/// [`leave_subgraph`], because every one of these is the same class of fact: a
+/// `NodeId` and a `LinkId` are minted PER TREE, so a selection, a picked wire,
+/// a stacking order or a hover carried across a descent would not be wrong in a
+/// way anybody could see — it would name a different card with the same number.
+fn stand_in(state: &Rc<LabState>, path: EditPath) {
+    state.selection.set(Selection::empty());
+    state.selected_link.set(None);
+    state.stacking.borrow_mut().clear();
+    state.rewire_targets.borrow_mut().clear();
+    state.rewire_over.set(None);
+    state.pressed.borrow_mut().take();
+    state.editing.set(None);
+    state.path.update(|standing| *standing = path);
+}
+
 fn delete_card(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError> {
     let name = state.name_of(node);
     if state.cards().len() <= 1 {
@@ -14148,7 +14590,7 @@ fn delete_card(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError
     let taken = state
         .doc
         .borrow_mut()
-        .remove_node(ROOT, node)
+        .remove_node(state.here(), node)
         .map_err(|why| InvokeError::rejected(why.to_string()))?;
     // Every accept run this card was dialling keeps a slot per link, so the
     // links it took with it have to give their seats back — the same close the
@@ -14382,7 +14824,7 @@ fn move_frame(state: &Rc<LabState>, host: &str, delta: (i32, i32)) -> Result<Str
 /// how the two channels drift.
 fn shift_cards(state: &LabState, members: &[NodeId], frame: NodeId, delta: (i32, i32)) {
     let mut doc = state.doc.borrow_mut();
-    let Some(tree) = doc.tree_mut(ROOT) else {
+    let Some(tree) = doc.tree_mut(state.here()) else {
         return;
     };
     for id in members.iter().copied().chain(std::iter::once(frame)) {
@@ -14703,7 +15145,7 @@ fn rename_card(state: &Rc<LabState>, node: NodeId, to: &str) -> Result<String, I
     let done = state
         .doc
         .borrow_mut()
-        .relabel(ROOT, node, Some(to))
+        .relabel(state.here(), node, Some(to))
         .map_err(|why| {
             let said = Utterance::refused(&why);
             state.say(said.clone());
@@ -14732,7 +15174,7 @@ fn collapse_card(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeErr
     let now = {
         let mut doc = state.doc.borrow_mut();
         let slot = doc
-            .tree_mut(ROOT)
+            .tree_mut(state.here())
             .and_then(|tree| tree.node_mut(node))
             .ok_or_else(|| InvokeError::rejected("no such card"))?;
         slot.appearance.collapsed = !slot.appearance.collapsed;
@@ -14781,15 +15223,15 @@ fn put_away_pins(state: &Rc<LabState>, node: NodeId, which: &str) -> Result<Stri
         let mut doc = state.doc.borrow_mut();
         if which == "restore" {
             let back = doc
-                .restore_ports(ROOT, node)
+                .restore_ports(state.here(), node)
                 .ok_or_else(|| InvokeError::rejected("no such card"))?;
             format!("{name}: {back} pin(s) back")
-        } else if which == "unwired" && pins_are_away_in(&doc, node) {
+        } else if which == "unwired" && pins_are_away_in(&doc, state.here(), node) {
             // ★ The reference's toggle, and this is the half a scope word
             // cannot carry: what "hide unused" means the SECOND time is
             // "show them again".
             let back = doc
-                .restore_ports(ROOT, node)
+                .restore_ports(state.here(), node)
                 .ok_or_else(|| InvokeError::rejected("no such card"))?;
             format!("{name}: {back} pin(s) back")
         } else {
@@ -14806,7 +15248,7 @@ fn put_away_pins(state: &Rc<LabState>, node: NodeId, which: &str) -> Result<Stri
                 }
             };
             let done = doc
-                .put_away_ports(ROOT, node, scope)
+                .put_away_ports(state.here(), node, scope)
                 .map_err(|why| InvokeError::rejected(why.to_string()))?;
             format!("{name}: {} pin(s) away", done.len())
         }
@@ -14910,7 +15352,7 @@ fn split_pin(state: &Rc<LabState>, node: NodeId, address: &str) -> Result<String
         let mut doc = state.doc.borrow_mut();
         if folding {
             let back = doc
-                .recombine_port(ROOT, node, side, &path)
+                .recombine_port(state.here(), node, side, &path)
                 .map_err(|why| InvokeError::rejected(why.to_string()))?;
             let became = back
                 .composed
@@ -14921,7 +15363,7 @@ fn split_pin(state: &Rc<LabState>, node: NodeId, address: &str) -> Result<String
             )
         } else {
             let apart = doc
-                .split_port(ROOT, node, side, &path)
+                .split_port(state.here(), node, side, &path)
                 .map_err(|why| InvokeError::rejected(why.to_string()))?;
             format!(
                 "{name}: {word} apart into {} pin(s), {} pin(s) moved",
@@ -14935,8 +15377,12 @@ fn split_pin(state: &Rc<LabState>, node: NodeId, address: &str) -> Result<String
 }
 
 /// Whether any of `node`'s pins are away, read from a document already borrowed.
-fn pins_are_away_in(doc: &pinion_node_graph::Document<graph::LabNode>, node: NodeId) -> bool {
-    doc.visible_ports(ROOT, node)
+fn pins_are_away_in(
+    doc: &pinion_node_graph::Document<graph::LabNode>,
+    here: TreeId,
+    node: NodeId,
+) -> bool {
+    doc.visible_ports(here, node)
         .is_some_and(|v| !v.put_away_inputs.is_empty() || !v.put_away_outputs.is_empty())
 }
 
@@ -14948,10 +15394,14 @@ fn pins_are_away_in(doc: &pinion_node_graph::Document<graph::LabNode>, node: Nod
 ///
 /// The two pins are the two this lab draws, named the way the canvas tags name
 /// them: the dial is output 0 and the accept is the first of the variadic run.
-fn pins_json(doc: &pinion_node_graph::Document<graph::LabNode>, node: NodeId) -> serde_json::Value {
+fn pins_json(
+    doc: &pinion_node_graph::Document<graph::LabNode>,
+    here: TreeId,
+    node: NodeId,
+) -> serde_json::Value {
     use pinion_node_graph::Side;
 
-    let Some(seen) = doc.visible_ports(ROOT, node) else {
+    let Some(seen) = doc.visible_ports(here, node) else {
         return serde_json::Value::Null;
     };
     let word = |side: Side, index: u32| -> &'static str {
@@ -14964,10 +15414,10 @@ fn pins_json(doc: &pinion_node_graph::Document<graph::LabNode>, node: NodeId) ->
     // (*not all pins are shown*); neither reference publishes the other half,
     // so a client cannot tell a seat that will do nothing from one that will.
     let wired_out = doc
-        .tree(ROOT)
+        .tree(here)
         .is_some_and(|t| t.links().iter().any(|l| l.from == Socket::new(node, 0)));
     let wired_in = doc
-        .tree(ROOT)
+        .tree(here)
         .and_then(|t| t.link_into(Socket::new(node, 0)))
         .is_some();
     let mut wired: Vec<&str> = Vec::new();
@@ -14986,7 +15436,7 @@ fn pins_json(doc: &pinion_node_graph::Document<graph::LabNode>, node: NodeId) ->
     // The vocabulary is the model's (`NotSplittable::wire_word`), not spelled
     // here: a second list drifts the first time an arm is added.
     let splits = |side: Side, index: u32| -> &'static str {
-        doc.splittable(ROOT, node, side, index)
+        doc.splittable(here, node, side, index)
             .map_or_else(|why| why.wire_word(), |_| "yes")
     };
     // ★★★★★ R1914 — and what each pin has COME APART INTO, if anything: one
@@ -14998,11 +15448,11 @@ fn pins_json(doc: &pinion_node_graph::Document<graph::LabNode>, node: NodeId) ->
     // whole reason the model carries both. A client that stored an index would
     // be re-pointed by the next split it did not perform.
     let members = |side: Side| -> Vec<serde_json::Value> {
-        doc.resolved_ports(ROOT, node, side)
+        doc.resolved_ports(here, node, side)
             .into_iter()
             .filter(|(path, _)| path.depth() > 0)
             .map(|(path, port)| {
-                let at = doc.index_of(ROOT, node, side, &path);
+                let at = doc.index_of(here, node, side, &path);
                 serde_json::json!({
                     "address": format!(
                         "{}.{}",
@@ -15016,7 +15466,9 @@ fn pins_json(doc: &pinion_node_graph::Document<graph::LabNode>, node: NodeId) ->
                     "name": port.name,
                     "at": at,
                     "carries": at
-                        .and_then(|index| doc.port_value(ROOT, node, PortRef { side, index }).cloned())
+                        .and_then(|index| {
+                            doc.port_value(here, node, PortRef { side, index }).cloned()
+                        })
                         .or_else(|| port.flow.default_value().cloned()),
                 })
             })
@@ -15032,10 +15484,10 @@ fn pins_json(doc: &pinion_node_graph::Document<graph::LabNode>, node: NodeId) ->
     // was not being shared out at all. Measured at R1914, and the repair is to
     // publish the fact the comparison needs rather than to assert harder.
     let carries = |side: Side| -> Option<String> {
-        doc.port_value(ROOT, node, PortRef { side, index: 0 })
+        doc.port_value(here, node, PortRef { side, index: 0 })
             .cloned()
             .or_else(|| {
-                doc.resolved_ports(ROOT, node, side)
+                doc.resolved_ports(here, node, side)
                     .first()
                     .and_then(|(_, port)| port.flow.default_value().cloned())
             })
@@ -15086,14 +15538,14 @@ fn disable_card(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeErro
     let was = state
         .doc
         .borrow()
-        .tree(ROOT)
+        .tree(state.here())
         .and_then(|tree| tree.node(node))
         .map(|slot| slot.disabled)
         .ok_or_else(|| InvokeError::rejected("no such card"))?;
     state
         .doc
         .borrow_mut()
-        .set_disabled(ROOT, node, !was)
+        .set_disabled(state.here(), node, !was)
         .map_err(|why| InvokeError::rejected(why.to_string()))?;
     let name = state.name_of(node);
     state.say(Utterance::done(format!(
@@ -15127,7 +15579,7 @@ fn relink_to(state: &Rc<LabState>, link: LinkId, to: NodeId) -> Result<String, I
     let source = state
         .doc
         .borrow()
-        .tree(ROOT)
+        .tree(state.here())
         .and_then(|t| t.link(link).map(|l| l.from.node));
     move_end(state, link, to, endpoint.as_deref()).map(|_| {
         let word = match source {
@@ -15146,7 +15598,7 @@ fn relink_to(state: &Rc<LabState>, link: LinkId, to: NodeId) -> Result<String, I
 /// That refusal is the finding the whole two-layer idea exists to produce, and
 /// it is why this is not "copy the observation into the links list".
 fn adopt_link(state: &Rc<LabState>, from: Socket, to: Socket) -> Result<String, InvokeError> {
-    let taken = state.doc.borrow_mut().adopt(ROOT, from, to);
+    let taken = state.doc.borrow_mut().adopt(state.here(), from, to);
     match taken {
         Ok(made) => {
             state.selected_link.set(Some(LinkPick::Authored(made.link)));
@@ -15189,7 +15641,7 @@ fn choose_endpoint(state: &Rc<LabState>, n: usize) -> Result<String, InvokeError
     let to = state
         .doc
         .borrow()
-        .tree(ROOT)
+        .tree(state.here())
         .and_then(|t| t.link(picked).map(|l| l.to.node))
         .ok_or_else(|| InvokeError::rejected("the picked link is not drawn"))?;
     let endpoints = endpoints_of(state, to);
@@ -15241,12 +15693,13 @@ fn would_take(state: &LabState, link: LinkId, to: NodeId) -> Result<Option<Strin
     let held = state
         .doc
         .borrow()
-        .tree(ROOT)
+        .tree(state.here())
         .and_then(|t| t.link(link).copied())
         .ok_or_else(|| format!("no link {} is drawn", link.0))?;
     let name = state.name_of(to);
     let endpoint = landing_endpoint(
         &state.doc.borrow(),
+        state.here(),
         &state.forms.borrow(),
         held.from.node,
         to,
@@ -15270,7 +15723,7 @@ fn would_land(state: &LabState, link: LinkId, to: NodeId) -> Result<Landfall, St
     state
         .doc
         .borrow()
-        .may_land(ROOT, link, Side::Input, to)
+        .may_land(state.here(), link, Side::Input, to)
         .map_err(|why| match why {
             // ⚠ R1930 — the ONE arm this screen re-words, and the crate's own
             // header says so. Every other refusal names something the model
@@ -15348,7 +15801,7 @@ fn landing_for(state: &LabState, link: LinkId, card: NodeId) -> Landing {
     let standing = state
         .doc
         .borrow()
-        .tree(ROOT)
+        .tree(state.here())
         .and_then(|t| t.link(link).map(|l| l.to.node));
     if standing == Some(card) {
         return Landing::Standing;
@@ -15379,7 +15832,7 @@ fn rewire_targets_of(state: &LabState, link: LinkId) -> BTreeSet<NodeId> {
     let cards: Vec<NodeId> = state
         .doc
         .borrow()
-        .tree(ROOT)
+        .tree(state.here())
         .map(|t| t.nodes().map(|n| n.id).collect())
         .unwrap_or_default();
     cards
@@ -15417,7 +15870,7 @@ fn move_end(
     let was = state
         .doc
         .borrow()
-        .tree(ROOT)
+        .tree(state.here())
         .and_then(|t| t.link(link).map(|l| l.to))
         .ok_or_else(|| InvokeError::rejected(format!("no link {} is drawn", link.0)))?;
     // What a grown pin would carry: the address this wire dials, as a label the
@@ -15428,7 +15881,7 @@ fn move_end(
     let done = state
         .doc
         .borrow_mut()
-        .land(ROOT, link, Side::Input, to, item);
+        .land(state.here(), link, Side::Input, to, item);
     match done {
         Ok(landed) => {
             if let Some(one) = endpoint {
@@ -15547,7 +16000,7 @@ fn move_cursor(state: &Rc<LabState>, px: u32, py: u32) {
             if let Some(slot) = state
                 .doc
                 .borrow_mut()
-                .tree_mut(ROOT)
+                .tree_mut(state.here())
                 .and_then(|t| t.node_mut(node))
             {
                 // ★ R1654 — no second clamp here. `clamp_to_world` above is the
@@ -15628,7 +16081,7 @@ fn press(state: &Rc<LabState>) {
             let (cx, cy) = state
                 .doc
                 .borrow()
-                .tree(ROOT)
+                .tree(state.here())
                 .and_then(|t| t.node(*node))
                 .map_or((0, 0), |n| (n.x, n.y));
             let (ux, uy) = to_canvas(state, px, py);
@@ -15646,7 +16099,11 @@ fn press(state: &Rc<LabState>) {
             // ★ The address the press carried, resolved to the port it names
             // right now. A pin the model cannot locate starts no drag, which is
             // a refusal rather than a wire from port 0.
-            if let Some(port) = state.doc.borrow().index_of(ROOT, *node, Side::Output, at) {
+            if let Some(port) = state
+                .doc
+                .borrow()
+                .index_of(state.here(), *node, Side::Output, at)
+            {
                 state.drag.set(Some(Drag::Wire { from: *node, port }));
             }
         }
@@ -15672,7 +16129,7 @@ fn press(state: &Rc<LabState>) {
                 let source = state
                     .doc
                     .borrow()
-                    .tree(ROOT)
+                    .tree(state.here())
                     .and_then(|t| t.link(link).map(|l| l.from.node));
                 if let Some(from) = source {
                     state.selected_link.set(Some(LinkPick::Authored(link)));
@@ -15721,7 +16178,7 @@ fn apply_frame(state: &Rc<LabState>, node: NodeId) {
     let held = state
         .doc
         .borrow()
-        .tree(ROOT)
+        .tree(state.here())
         .and_then(|t| t.node(node).and_then(|n| n.parent));
     if landed == held {
         return;
@@ -15729,7 +16186,7 @@ fn apply_frame(state: &Rc<LabState>, node: NodeId) {
     if state
         .doc
         .borrow_mut()
-        .set_parent(ROOT, node, landed)
+        .set_parent(state.here(), node, landed)
         .is_ok()
     {
         let name = state.name_of(node);
@@ -15767,7 +16224,10 @@ fn finish_drag(state: &Rc<LabState>, drag: Drag, now: &Hit) {
             // verb takes. A port that stopped existing between press and
             // release answers nothing, and a wire from nowhere is refused
             // rather than silently made from port 0.
-            let leaving = state.doc.borrow().path_of(ROOT, from, Side::Output, port);
+            let leaving = state
+                .doc
+                .borrow()
+                .path_of(state.here(), from, Side::Output, port);
             match (landing, leaving) {
                 (Some((node, onto)), Some(out)) if node != from => {
                     connect_at(state, from, &out, node, &onto).ok();
@@ -15792,7 +16252,7 @@ fn finish_drag(state: &Rc<LabState>, drag: Drag, now: &Hit) {
                 let landed = state
                     .doc
                     .borrow()
-                    .tree(ROOT)
+                    .tree(state.here())
                     .and_then(|t| t.link(link).map(|l| l.to.node));
                 if landed == Some(node) {
                     // Picked up and put back down where it was. The reference
@@ -16329,7 +16789,7 @@ fn go_to_problem(state: &Rc<LabState>) -> String {
         state
             .doc
             .borrow()
-            .tree(ROOT)
+            .tree(state.here())
             .and_then(|tree| tree.node(node))
             .map(|held| (held.x, held.y)),
         card_extent(state, node),
@@ -16823,7 +17283,7 @@ fn set_build_on(state: &Rc<LabState>, node: NodeId, stack: Stack) -> String {
     };
     let changed = {
         let mut doc = state.doc.borrow_mut();
-        match doc.tree_mut(ROOT).and_then(|t| t.node_mut(node)) {
+        match doc.tree_mut(state.here()).and_then(|t| t.node_mut(node)) {
             Some(slot) => match &mut slot.body {
                 NodeBody::Kind(kind) if kind.implementation != want => {
                     kind.implementation = want;
@@ -16916,7 +17376,7 @@ fn add_node(state: &Rc<LabState>, role: Role) {
     if let Some(slot) = state
         .doc
         .borrow_mut()
-        .tree_mut(ROOT)
+        .tree_mut(state.here())
         .and_then(|t| t.node_mut(id))
     {
         slot.label = Some(name.clone());
@@ -16930,7 +17390,7 @@ fn add_node(state: &Rc<LabState>, role: Role) {
     if let Some(slot) = state
         .doc
         .borrow_mut()
-        .tree_mut(ROOT)
+        .tree_mut(state.here())
         .and_then(|t| t.node_mut(id))
     {
         slot.x = cx;
@@ -17622,7 +18082,7 @@ fn wire_access(state: &LabState) -> Vec<AccessNode> {
     let mut nodes = Vec::new();
     let selected = state.selected_link.get();
     let doc = state.doc.borrow();
-    let Some(tree) = doc.tree(ROOT) else {
+    let Some(tree) = doc.tree(state.here()) else {
         return nodes;
     };
     for link in tree.links() {
@@ -17637,7 +18097,7 @@ fn wire_access(state: &LabState) -> Vec<AccessNode> {
     // ★ A reported link is NOT in the graph, and its announcement has to say so
     // — the drawing says it with a dash rhythm and a warning colour, which is
     // the half a reader never receives.
-    for seen in doc.observations(ROOT) {
+    for seen in doc.observations(state.here()) {
         let from = state.name_of(seen.from.node);
         let to = state.name_of(seen.to.node);
         nodes.push(
@@ -17753,7 +18213,7 @@ fn pin_descriptions(state: &LabState) -> Descriptions {
     let doc = state.doc.borrow();
     for node in state.cards() {
         let name = state.name_of(node);
-        let Some(seen) = doc.visible_ports(ROOT, node) else {
+        let Some(seen) = doc.visible_ports(state.here(), node) else {
             continue;
         };
         for side in [Side::Output, Side::Input] {
@@ -17761,12 +18221,16 @@ fn pin_descriptions(state: &LabState) -> Descriptions {
                 Side::Output => &seen.outputs,
                 Side::Input => &seen.inputs,
             };
-            for (index, (path, _)) in doc.resolved_ports(ROOT, node, side).into_iter().enumerate() {
+            for (index, (path, _)) in doc
+                .resolved_ports(state.here(), node, side)
+                .into_iter()
+                .enumerate()
+            {
                 let index = u32::try_from(index).unwrap_or(u32::MAX);
                 if !drawn.contains(&index) {
                     continue;
                 }
-                if let Some(tip) = doc.port_tooltip(ROOT, node, side, &path) {
+                if let Some(tip) = doc.port_tooltip(state.here(), node, side, &path) {
                     described.describe(
                         format!("lab.pin.{name}.{}", pin_word(side, &path)),
                         tip.sentence(),
@@ -17791,7 +18255,7 @@ fn notes_wire(state: &Rc<LabState>) -> serde_json::Value {
         .cards()
         .into_iter()
         .map(|node| {
-            let said = doc.description(ROOT, node);
+            let said = doc.description(state.here(), node);
             serde_json::json!({
                 "node": state.name_of(node),
                 "sentence": said.as_ref().map(|d| d.sentence.clone()),
@@ -17829,12 +18293,12 @@ fn accepts_wire(state: &Rc<LabState>) -> serde_json::Value {
             "interface-output",
             NodeBody::Interface(pinion_node_graph::InterfaceSide::Output),
         ),
-        ("group-of-this-tree", NodeBody::Group(ROOT)),
+        ("group-of-this-tree", NodeBody::Group(state.here())),
     ];
     let rows: Vec<serde_json::Value> = probes
         .into_iter()
         .map(|(word, body)| {
-            let asked = doc.admits(ROOT, &body);
+            let asked = doc.admits(state.here(), &body);
             serde_json::json!({
                 "body": word,
                 "verdict": if asked.is_ok() { "allowed" } else { "refused" },
@@ -17861,7 +18325,7 @@ fn expose_pin(state: &Rc<LabState>, node: NodeId, address: &str) -> Result<Strin
     let (side, path) = pin_address(address.trim())?;
     let mut doc = state.doc.borrow_mut();
     let port = doc
-        .resolved_ports(ROOT, node, side)
+        .resolved_ports(state.here(), node, side)
         .into_iter()
         .find(|(at, _)| *at == path)
         .map(|(_, port)| port)
@@ -17871,7 +18335,7 @@ fn expose_pin(state: &Rc<LabState>, node: NodeId, address: &str) -> Result<Strin
         Side::Output => pinion_node_graph::InterfaceSide::Output,
     };
     let at = doc
-        .expose(ROOT, face, port)
+        .expose(state.here(), face, port)
         .map_err(|why| InvokeError::rejected(why.to_string()))?;
     drop(doc);
     let said = format!("{name}.{address} is on the face at {at}");
@@ -17893,14 +18357,14 @@ fn expose_pin(state: &Rc<LabState>, node: NodeId, address: &str) -> Result<Strin
 fn admits_wire(state: &Rc<LabState>) -> serde_json::Value {
     let doc = state.doc.borrow();
     let offers: Option<Vec<String>> = doc
-        .offered_types(ROOT)
+        .offered_types(state.here())
         .map(|these| these.iter().map(|ty| ty.wire_word()).collect());
     let every: Vec<serde_json::Value> = graph::Endpoint::all()
         .into_iter()
         .map(|ty| {
             serde_json::json!({
                 "type": ty.wire_word(),
-                "admitted": doc.admits_type(ROOT, &ty),
+                "admitted": doc.admits_type(state.here(), &ty),
             })
         })
         .collect();
@@ -17908,7 +18372,7 @@ fn admits_wire(state: &Rc<LabState>) -> serde_json::Value {
         "offers": offers,
         "types": every,
         "unadmitted": doc
-            .unadmitted_ports(ROOT)
+            .unadmitted_ports(state.here())
             .into_iter()
             .map(|(side, index)| serde_json::json!({
                 "side": if side == pinion_node_graph::InterfaceSide::Input { "in" } else { "out" },
@@ -17944,13 +18408,13 @@ fn insert_reroute(
     }
     let mut doc = state.doc.borrow_mut();
     let index = doc
-        .index_of(ROOT, node, side, &path)
+        .index_of(state.here(), node, side, &path)
         .ok_or_else(|| InvokeError::rejected(format!("{name} has no pin at {address:?}")))?;
     let source = Socket::new(node, index);
     // Every wire leaving that pin, with the point a line drawn between the two
     // cards would have crossed it at.
     let cuts: Vec<(pinion_node_graph::LinkId, i32, i32)> = doc
-        .tree(ROOT)
+        .tree(state.here())
         .map(|host| {
             host.links()
                 .iter()
@@ -17968,7 +18432,7 @@ fn insert_reroute(
         })
         .unwrap_or_default();
     let made = doc
-        .insert_reroutes(ROOT, &cuts)
+        .insert_reroutes(state.here(), &cuts)
         .map_err(|why| InvokeError::rejected(why.to_string()))?;
     let point = *made
         .made
@@ -17977,8 +18441,8 @@ fn insert_reroute(
     let count = made.rerouted.len();
     // R1935 — label it, so the name this screen is about to publish for it is a
     // name that can be handed back. See `fresh_label` for the defect.
-    let minted = fresh_label(&doc, "bend");
-    let _ = doc.relabel(ROOT, point, Some(&minted));
+    let minted = fresh_label(&doc, state.here(), "bend");
+    let _ = doc.relabel(state.here(), point, Some(&minted));
     drop(doc);
     let called = state.name_of(point);
     let said = format!("{count} wire(s) leaving {name}.{address} now bend at {called}");
@@ -18010,10 +18474,10 @@ fn insert_reroute(
 /// So every card this screen makes is labelled, and the label is unique here
 /// even for bodies the model leaves free to repeat: free means the MODEL does
 /// not require uniqueness, not that a screen may publish an ambiguous address.
-fn fresh_label(doc: &Document<LabNode>, stem: &str) -> String {
+fn fresh_label(doc: &Document<LabNode>, here: TreeId, stem: &str) -> String {
     for index in 1.. {
         let candidate = format!("{stem}-{index:02}");
-        if doc.node_labelled(ROOT, &candidate).is_none() {
+        if doc.node_labelled(here, &candidate).is_none() {
             return candidate;
         }
     }
@@ -18031,18 +18495,18 @@ fn name_bend(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError> 
     let was = state.name_of(node);
     let mut doc = state.doc.borrow_mut();
     let spread = doc
-        .spread_reroute(ROOT, node)
+        .spread_reroute(state.here(), node)
         .map_err(|why| InvokeError::rejected(why.to_string()))?;
     let count = spread.echoes.len();
     // R1935 — both halves are labelled, for `fresh_label`'s reason. The
     // endpoint's name is the ADDRESS the value crosses to, so it is the one a
     // person renames; the far ends are labelled only so this screen's own
     // register publishes an address that can be handed back.
-    let minted = fresh_label(&doc, "name");
-    let _ = doc.relabel(ROOT, spread.beacon, Some(&minted));
+    let minted = fresh_label(&doc, state.here(), "name");
+    let _ = doc.relabel(state.here(), spread.beacon, Some(&minted));
     for &echo in &spread.echoes {
-        let tag = fresh_label(&doc, "far");
-        let _ = doc.relabel(ROOT, echo, Some(&tag));
+        let tag = fresh_label(&doc, state.here(), "far");
+        let _ = doc.relabel(state.here(), echo, Some(&tag));
     }
     drop(doc);
     let called = state.name_of(spread.beacon);
@@ -18057,11 +18521,11 @@ fn unname_bend(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError
     let was = state.name_of(node);
     let mut doc = state.doc.borrow_mut();
     let gathered = doc
-        .gather_beacon(ROOT, node)
+        .gather_beacon(state.here(), node)
         .map_err(|why| InvokeError::rejected(why.to_string()))?;
     let folded = gathered.gone.len();
-    let minted = fresh_label(&doc, "bend");
-    let _ = doc.relabel(ROOT, gathered.reroute, Some(&minted));
+    let minted = fresh_label(&doc, state.here(), "bend");
+    let _ = doc.relabel(state.here(), gathered.reroute, Some(&minted));
     drop(doc);
     let called = state.name_of(gathered.reroute);
     let said = format!("{folded} card(s) around {was} fold back into the bend {called}");
@@ -18080,16 +18544,16 @@ fn unname_bend(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError
 fn names_wire(state: &Rc<LabState>) -> serde_json::Value {
     let doc = state.doc.borrow();
     let every: Vec<NodeId> = doc
-        .tree(ROOT)
+        .tree(state.here())
         .map(|host| host.nodes().map(|held| held.id).collect())
         .unwrap_or_default();
     let mut endpoints = Vec::new();
     let mut far = Vec::new();
     for node in every {
-        let reaches = doc.echoes_of(ROOT, node);
+        let reaches = doc.echoes_of(state.here(), node);
         if !reaches.is_empty()
             || matches!(
-                doc.tree(ROOT)
+                doc.tree(state.here())
                     .and_then(|host| host.node(node))
                     .map(|held| &held.body),
                 Some(pinion_node_graph::NodeBody::Beacon)
@@ -18103,16 +18567,16 @@ fn names_wire(state: &Rc<LabState>) -> serde_json::Value {
                     .collect::<Vec<_>>(),
             }));
         }
-        if let Some(shown) = doc.echo_display_name(ROOT, node) {
+        if let Some(shown) = doc.echo_display_name(state.here(), node) {
             far.push(serde_json::json!({
                 "card": state.name_of(node),
                 "shows": shown,
-                "endpoint": doc.beacon_of(ROOT, node).map(|end| state.name_of(end)),
+                "endpoint": doc.beacon_of(state.here(), node).map(|end| state.name_of(end)),
             }));
         }
     }
     let dangling: Vec<String> = doc
-        .dangling_echoes(ROOT)
+        .dangling_echoes(state.here())
         .into_iter()
         .map(|node| state.name_of(node))
         .collect();
@@ -18134,9 +18598,9 @@ fn names_wire(state: &Rc<LabState>) -> serde_json::Value {
 fn regroup(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError> {
     let name = state.name_of(node);
     let mut doc = state.doc.borrow_mut();
-    let minted = fresh_label(&doc, "def");
+    let minted = fresh_label(&doc, state.here(), "def");
     let (definition, swapped) = doc
-        .set_new_definition(ROOT, node, minted.clone())
+        .set_new_definition(state.here(), node, minted.clone())
         .map_err(|why| InvokeError::rejected(why.to_string()))?;
     let lost = swapped.severed.len();
     drop(doc);
@@ -18252,7 +18716,7 @@ fn set_pin_transport(
     }
     let mut doc = state.doc.borrow_mut();
     let index = doc
-        .index_of(ROOT, node, side, &path)
+        .index_of(state.here(), node, side, &path)
         .ok_or_else(|| InvokeError::rejected(format!("{name} has no pin at {address:?}")))?;
     let port = match side {
         Side::Input => PortRef::input(index),
@@ -18262,7 +18726,7 @@ fn set_pin_transport(
     // refusal must leave the form as it found it. It is also what severs the
     // wires that cannot cross, which no form edit would do.
     let swapped = doc
-        .set_port_type(ROOT, node, port, &Endpoint::Locator(transport))
+        .set_port_type(state.here(), node, port, &Endpoint::Locator(transport))
         .map_err(|why| InvokeError::rejected(why.to_string()))?;
     let lost = swapped.severed.len();
     drop(doc);
@@ -18373,7 +18837,7 @@ fn respell_landings(state: &Rc<LabState>, node: NodeId, was: &[String], now: &[S
         return 0;
     }
     let mut doc = state.doc.borrow_mut();
-    let Some(items) = doc.items(ROOT, node, Side::Input) else {
+    let Some(items) = doc.items(state.here(), node, Side::Input) else {
         return 0;
     };
     let follows: Vec<(u32, String)> = items
@@ -18388,8 +18852,11 @@ fn respell_landings(state: &Rc<LabState>, node: NodeId, was: &[String], now: &[S
     let mut followed = 0;
     for (at, endpoint) in follows {
         let item = typed_slot_item(Some(&endpoint));
-        if doc.set_item(ROOT, node, Side::Input, at, item).is_ok() {
-            let _ = doc.set_port_value(ROOT, node, PortRef::input(at), endpoint);
+        if doc
+            .set_item(state.here(), node, Side::Input, at, item)
+            .is_ok()
+        {
+            let _ = doc.set_port_value(state.here(), node, PortRef::input(at), endpoint);
             followed += 1;
         }
     }
@@ -18414,13 +18881,13 @@ fn set_pin_locator(
     let (side, path) = pin_address(address)?;
     let mut doc = state.doc.borrow_mut();
     let index = doc
-        .index_of(ROOT, node, side, &path)
+        .index_of(state.here(), node, side, &path)
         .ok_or_else(|| InvokeError::rejected(format!("{name} has no pin at {address:?}")))?;
     let port = match side {
         Side::Input => PortRef::input(index),
         Side::Output => PortRef::output(index),
     };
-    let written = doc.set_port_value(ROOT, node, port, locator.to_owned());
+    let written = doc.set_port_value(state.here(), node, port, locator.to_owned());
     drop(doc);
     match written {
         Ok(_) => {
@@ -18530,14 +18997,14 @@ fn review_wire(state: &Rc<LabState>) -> serde_json::Value {
 fn takes_wire(state: &Rc<LabState>) -> serde_json::Value {
     let doc = state.doc.borrow();
     let rows: Vec<serde_json::Value> = doc
-        .tree(ROOT)
+        .tree(state.here())
         .map(|host| {
             host.nodes()
                 .filter(|held| matches!(held.body, NodeBody::Kind(_)))
                 .flat_map(|held| {
                     let card = state.name_of(held.id);
                     let (ins, outs) = doc
-                        .signature(ROOT, held.id)
+                        .signature(state.here(), held.id)
                         .map_or((0, 0), |s| (s.inputs.len(), s.outputs.len()));
                     let ports: Vec<(Side, u32)> = (0..ins)
                         .map(|i| (Side::Input, u32::try_from(i).unwrap_or(0)))
@@ -18550,8 +19017,8 @@ fn takes_wire(state: &Rc<LabState>) -> serde_json::Value {
                                 Side::Input => PortRef::input(index),
                                 Side::Output => PortRef::output(index),
                             };
-                            let declared = doc.takes(ROOT, held.id, port)?;
-                            let carries = doc.port_value(ROOT, held.id, port).cloned();
+                            let declared = doc.takes(state.here(), held.id, port)?;
+                            let carries = doc.port_value(state.here(), held.id, port).cloned();
                             // ★ The judgement is the DECLARATION's, asked here
                             // rather than re-derived, so what this register says
                             // and what the edit does cannot disagree.
@@ -18631,14 +19098,14 @@ fn containers_wire(state: &Rc<LabState>) -> serde_json::Value {
 fn choosable_wire(state: &Rc<LabState>) -> serde_json::Value {
     let doc = state.doc.borrow();
     let rows: Vec<serde_json::Value> = doc
-        .tree(ROOT)
+        .tree(state.here())
         .map(|host| {
             host.nodes()
                 .filter(|held| matches!(held.body, NodeBody::Kind(_)))
                 .flat_map(|held| {
                     let card = state.name_of(held.id);
                     let (ins, outs) = doc
-                        .signature(ROOT, held.id)
+                        .signature(state.here(), held.id)
                         .map_or((0, 0), |s| (s.inputs.len(), s.outputs.len()));
                     let ports: Vec<(Side, u32)> = (0..ins)
                         .map(|i| (Side::Input, u32::try_from(i).unwrap_or(0)))
@@ -18673,7 +19140,7 @@ fn choosable_wire(state: &Rc<LabState>) -> serde_json::Value {
                             } else {
                                 Endpoint::all()
                                     .into_iter()
-                                    .filter(|ty| doc.may_set_port_type(ROOT, held.id, port, ty))
+                                    .filter(|ty| doc.may_set_port_type(state.here(), held.id, port, ty))
                                     .map(Endpoint::wire_word)
                                     .collect()
                             };
@@ -18704,7 +19171,7 @@ fn choosable_wire(state: &Rc<LabState>) -> serde_json::Value {
 fn standing_for_wire(state: &Rc<LabState>) -> serde_json::Value {
     let doc = state.doc.borrow();
     let rows: Vec<serde_json::Value> = doc
-        .tree(ROOT)
+        .tree(state.here())
         .map(|host| {
             host.nodes()
                 .map(|held| {
@@ -18732,15 +19199,15 @@ fn standing_for_wire(state: &Rc<LabState>) -> serde_json::Value {
 fn passing_wire(state: &Rc<LabState>) -> serde_json::Value {
     let doc = state.doc.borrow();
     let every: Vec<NodeId> = doc
-        .tree(ROOT)
+        .tree(state.here())
         .map(|host| host.nodes().map(|held| held.id).collect())
         .unwrap_or_default();
     let rows: Vec<serde_json::Value> = every
         .into_iter()
         .filter_map(|node| {
-            let through = doc.passing(ROOT, node)?;
+            let through = doc.passing(state.here(), node)?;
             let carries = doc
-                .signature(ROOT, node)
+                .signature(state.here(), node)
                 .and_then(|signature| signature.inputs.first().map(|port| port.flow.clone()))
                 .map_or("none", |flow| match flow {
                     pinion_node_graph::Flow::Undecided => "undecided",
@@ -18771,7 +19238,7 @@ fn naming_wire(state: &Rc<LabState>) -> serde_json::Value {
     // whose answer differs, and a register built from the card list would have
     // published only the rows that all say the same thing.
     let every: Vec<NodeId> = doc
-        .tree(ROOT)
+        .tree(state.here())
         .map(|host| host.nodes().map(|held| held.id).collect())
         .unwrap_or_default();
     let rows: Vec<serde_json::Value> = every
@@ -18779,7 +19246,7 @@ fn naming_wire(state: &Rc<LabState>) -> serde_json::Value {
         .map(|node| {
             serde_json::json!({
                 "card": state.name_of(node),
-                "unique": match doc.naming(ROOT, node) {
+                "unique": match doc.naming(state.here(), node) {
                     pinion_node_graph::Naming::InTree => "tree",
                     pinion_node_graph::Naming::InDocument => "document",
                     pinion_node_graph::Naming::Free => "free",
@@ -18807,7 +19274,11 @@ fn port_names_wire(state: &Rc<LabState>) -> serde_json::Value {
     for node in state.cards() {
         let card = state.name_of(node);
         for side in [Side::Output, Side::Input] {
-            for (index, held) in doc.port_labels(ROOT, node, side).into_iter().enumerate() {
+            for (index, held) in doc
+                .port_labels(state.here(), node, side)
+                .into_iter()
+                .enumerate()
+            {
                 rows.push(serde_json::json!({
                     "card": card,
                     "side": if side == Side::Output { "dial" } else { "accept" },
@@ -18846,7 +19317,7 @@ fn wrong_wire(state: &Rc<LabState>) -> serde_json::Value {
             let said = state
                 .doc
                 .borrow()
-                .warning(ROOT, node)
+                .warning(state.here(), node)
                 .map(|held| held.sentence().to_owned());
             let worst = troubled.get(&node).copied();
             serde_json::json!({
@@ -18896,7 +19367,7 @@ fn inks_wire(state: &Rc<LabState>) -> serde_json::Value {
     let mut pins = Vec::new();
     for node in state.cards() {
         for side in [Side::Output, Side::Input] {
-            for (path, port) in doc.resolved_ports(ROOT, node, side) {
+            for (path, port) in doc.resolved_ports(state.here(), node, side) {
                 let held = palette_of::<graph::LabNode>(&port.flow);
                 pins.push(serde_json::json!({
                     "pin": format!("{}.{}", state.name_of(node), pin_word(side, &path)),
@@ -18916,7 +19387,7 @@ fn inks_wire(state: &Rc<LabState>) -> serde_json::Value {
 /// framework, and this is the one place the two meet.
 fn section_command(state: &Rc<LabState>, word: &str, rest: &str) -> Result<String, InvokeError> {
     let named = |doc: &Document<LabNode>, name: &str| {
-        doc.tree(ROOT)
+        doc.tree(state.here())
             .map(pinion_node_graph::Tree::interface)
             .and_then(|face| {
                 face.sections()
@@ -18937,7 +19408,7 @@ fn section_command(state: &Rc<LabState>, word: &str, rest: &str) -> Result<Strin
                      is how the wire names one"
                 )));
             }
-            doc.add_section(ROOT, rest)
+            doc.add_section(state.here(), rest)
                 .map_err(|why| InvokeError::rejected(why.to_string()))?;
             Ok(rest.to_owned())
         }
@@ -18948,7 +19419,7 @@ fn section_command(state: &Rc<LabState>, word: &str, rest: &str) -> Result<Strin
                 InvokeError::rejected(format!("this face has no section called {name:?}"))
             })?;
             if word == "remove" {
-                doc.remove_section(ROOT, held)
+                doc.remove_section(state.here(), held)
                     .map_err(|why| InvokeError::rejected(why.to_string()))?;
                 return Ok(name.to_owned());
             }
@@ -18959,7 +19430,7 @@ fn section_command(state: &Rc<LabState>, word: &str, rest: &str) -> Result<Strin
                     return Err(InvokeError::rejected(format!("{other:?} is not on / off")));
                 }
             };
-            doc.set_section_folded(ROOT, held, folded)
+            doc.set_section_folded(state.here(), held, folded)
                 .map_err(|why| InvokeError::rejected(why.to_string()))?;
             Ok(format!("{name},{tail}"))
         }
@@ -18989,7 +19460,9 @@ fn section_command(state: &Rc<LabState>, word: &str, rest: &str) -> Result<Strin
 /// failing.
 fn sections_wire(state: &Rc<LabState>) -> serde_json::Value {
     let doc = state.doc.borrow();
-    let interface = doc.tree(ROOT).map(pinion_node_graph::Tree::interface);
+    let interface = doc
+        .tree(state.here())
+        .map(pinion_node_graph::Tree::interface);
     let sections: Vec<serde_json::Value> = interface
         .map(|face| {
             face.sections()
@@ -19015,7 +19488,7 @@ fn sections_wire(state: &Rc<LabState>) -> serde_json::Value {
     let named = interface
         .and_then(|face| face.sections().first().map(pinion_node_graph::Section::id))
         .unwrap_or(pinion_node_graph::SectionId(0));
-    let asked = doc.may_new_section_switch(ROOT, named);
+    let asked = doc.may_new_section_switch(state.here(), named);
     let switchable = <LabNode as pinion_node_graph::NodeKind>::switch_type().is_some();
     serde_json::json!({
         "sections": sections,
@@ -19051,7 +19524,7 @@ fn rewire_wire(state: &Rc<LabState>) -> serde_json::Value {
     let cards: Vec<NodeId> = state
         .doc
         .borrow()
-        .tree(ROOT)
+        .tree(state.here())
         .map(|t| t.nodes().map(|n| n.id).collect())
         .unwrap_or_default();
     let rows: Vec<serde_json::Value> = cards
@@ -19105,7 +19578,7 @@ fn parse_tint(raw: &str) -> Result<Option<Tint>, InvokeError> {
 /// property of the document rather than of each of the three sites below that
 /// paint with it.
 fn card_faces(state: &LabState, node: NodeId) -> Option<Faces> {
-    state.doc.borrow().faces(ROOT, node)
+    state.doc.borrow().faces(state.here(), node)
 }
 
 /// ★★★★★ R1921 — the colour a person gave this card, if any.
@@ -19118,7 +19591,7 @@ fn card_tint(state: &LabState, node: NodeId) -> Option<Tint> {
     state
         .doc
         .borrow()
-        .tree(ROOT)
+        .tree(state.here())
         .and_then(|host| host.node(node))
         .and_then(|held| held.appearance.tint)
 }
@@ -19221,7 +19694,7 @@ fn zones_wire(state: &Rc<LabState>) -> serde_json::Value {
         .cards()
         .into_iter()
         .map(|node| {
-            let stood = doc.in_zone(ROOT, node);
+            let stood = doc.in_zone(state.here(), node);
             serde_json::json!({
                 "card": state.name_of(node),
                 "in_zone": match stood {
@@ -19256,7 +19729,7 @@ fn watchable_wire(state: &Rc<LabState>) -> serde_json::Value {
     let mut rows = Vec::new();
     for node in state.cards() {
         for side in [Side::Output, Side::Input] {
-            for (path, _port) in doc.resolved_ports(ROOT, node, side) {
+            for (path, _port) in doc.resolved_ports(state.here(), node, side) {
                 if path.depth() > 0 {
                     continue;
                 }
@@ -19264,7 +19737,7 @@ fn watchable_wire(state: &Rc<LabState>) -> serde_json::Value {
                     Side::Input => PortRef::input(path.port),
                     Side::Output => PortRef::output(path.port),
                 };
-                let site = PortSite::at(ROOT, node, at, Instance::root());
+                let site = PortSite::at(state.here(), node, at, Instance::root());
                 // ⚠ A scratch set: arming is what answers the question, and a
                 // register must not change what it reports on.
                 let mut scratch = Watches::default();
@@ -19309,7 +19782,7 @@ fn watchable_wire(state: &Rc<LabState>) -> serde_json::Value {
 fn drawn_wire(state: &Rc<LabState>, node: NodeId) -> serde_json::Value {
     let doc = state.doc.borrow();
     let said = doc
-        .tree(ROOT)
+        .tree(state.here())
         .and_then(|host| host.node(node))
         .map(|held| match &held.body {
             NodeBody::Kind(kind) => kind.drawn_as(),
@@ -19391,7 +19864,7 @@ fn editable_wire(state: &Rc<LabState>) -> serde_json::Value {
     let doc = state.doc.borrow();
     let mut rows: Vec<serde_json::Value> = Vec::new();
     for node in state.cards() {
-        let asked = doc.may(ROOT, Act::Delete(node));
+        let asked = doc.may(state.here(), Act::Delete(node));
         rows.push(serde_json::json!({
             "node": state.name_of(node),
             "delete": if asked.is_ok() { "allowed" } else { "refused" },
@@ -19578,6 +20051,21 @@ fn gate_access(state: &LabState) -> Vec<AccessNode> {
                 .collect::<Vec<_>>()
                 .join("; "),
         ),
+    );
+    // ★★★★★ R1981 — WHERE a reader is standing, said rather than only drawn.
+    //
+    // A `Status` for the strip's reason: it is not a label for something else
+    // on the frame, it is a fact about the frame that changes under the reader.
+    // The sentence says the WAY IN and not just the tree, because "inside
+    // capture-side" answers a different question from "inside capture-side, of
+    // mesh-failover" — the second is the one a reader who wants to get back out
+    // needs.
+    nodes.push(
+        AccessNode::new("lab.crumb", AriaRole::Status).with_name(if state.inside() {
+            format!("inside {}", state.breadcrumb().join(", of "))
+        } else {
+            format!("in {}, at the top", state.breadcrumb().join(", of "))
+        }),
     );
     // ★★★★★ R1691 — **the toast, and the sweep is what found it.** It is the
     // one place several of this screen's operations report what they did (the

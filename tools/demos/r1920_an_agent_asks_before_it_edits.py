@@ -179,21 +179,52 @@ def body() -> None:
         ok(f"E: ★ the verb refuses an unheld name — {said[:90]}", refused)
         ok("E: and says the name back", "no card is called this" in said)
 
-        banner("F — ⚠ TRIPWIRE: nothing on this screen can refuse a delete yet")
-        # ★★★★★ R1920 — asserted rather than skipped. The one refusal that
-        # exists is `EditError::InterfaceEnd`, and reaching it needs a subgraph
-        # — which `pinion-node-graph` can build and NO screen in this workspace
-        # does. So this states the gap in the tool's own output instead of
-        # leaving the walk quietly silent about it. The day the assembled tool
-        # can open a subgraph, this goes RED and whoever made it so asserts the
-        # refusal here instead. `debt-the-assembled-tool-cannot-open-a-subgraph`.
+        banner("F — ★★★★★ the one refusal that exists, DRIVEN")
+        # ⚠★★★★★ R1981 — this used to assert that every card on this screen was
+        # deletable and to say it would go RED on the day the assembled tool
+        # could open a subgraph. That day came and it did NOT go red: the
+        # assertion is about the graph THIS walk builds, which has no subgraph
+        # in it. A tripwire in a fixture nobody deepens is a comment, not a gate.
+        #
+        # A permission walk has to drive the permission. `EditError::InterfaceEnd`
+        # — a tree's own interface end may not be deleted — is this crate's only
+        # per-node refusal and it lives inside a subgraph, so this walk makes one.
         verdicts = {row["delete"] for row in now.values()}
         ok(
-            f"F: every card here is deletable — {sorted(verdicts)}. RED is the "
-            "day this tool can build a subgraph, whose interface ends REFUSE; "
-            "that refusal is proven by pinion-node-graph::engine_may_edit",
+            f"F: ★ out here every card is deletable, which is the control — "
+            f"{sorted(verdicts)}",
             verdicts == {"allowed"},
         )
+        pair = sorted(after)[:2]
+        app.invoke(f"{surface}/select", pair[0])
+        app.tick_ms(16)
+        app.invoke(f"{surface}/select_also", pair[1])
+        app.tick_ms(16)
+        app.invoke(f"{surface}/group", "inner")
+        app.tick_ms(16)
+        app.invoke(f"{surface}/enter", "inner")
+        app.tick_ms(16)
+        inside = editable(app, surface)
+        refused_rows = sorted(
+            name for name, row in inside.items() if row["delete"] == "refused"
+        )
+        ok(
+            f"F: ★★★★★ and inside a subgraph a card REFUSES — {refused_rows}, of "
+            f"{sorted(inside)}. What this screen publishes is no longer a constant",
+            refused_rows,
+        )
+        blocked = ""
+        try:
+            app.invoke(f"{surface}/delete_node", refused_rows[0])
+        except Exception as why:  # noqa: BLE001 - the refusal is the subject
+            blocked = str(why)
+        ok(
+            f"F: ★★★★★ the ROW and the ACT agree, and the act quotes the model — "
+            f"{blocked[:110]}",
+            "interface" in blocked.lower(),
+        )
+        app.invoke(f"{surface}/exit", "")
+        app.tick_ms(16)
 
     print(f"\n{len(CHECKS)} check(s) held.")
 
