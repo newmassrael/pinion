@@ -398,6 +398,17 @@
       ]
     },
     {
+      "name": "debt-four-per-card-tables-are-keyed-by-a-number-that-means-something-else-next-door",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links analyzer-debt-repayment-loop"
+      ]
+    },
+    {
       "name": "debt-node-system-coverage-campaign",
       "substituted": true,
       "blocked_by": "campaign",
