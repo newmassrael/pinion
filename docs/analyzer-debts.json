@@ -153,6 +153,17 @@
       ]
     },
     {
+      "name": "debt-a-focus-mode-is-lost-the-moment-the-graph-it-was-aimed-from-changes",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links analyzer-debt-repayment-loop, screen-a-vs-canon-operation-census"
+      ]
+    },
+    {
       "name": "debt-a-fragment-run-arrives-backwards-in-the-capture",
       "substituted": false,
       "blocked_by": "buildable",

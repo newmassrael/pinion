@@ -6517,3 +6517,66 @@ fn r1984_a_name_two_cards_hold_reaches_neither() {
         );
     });
 }
+
+/// ★★★★★ R1988 — **the clause a card's announcement gains from the focus says
+/// nothing about a card the answer never saw.**
+///
+/// # Why this test exists, and it is a FINDING rather than a flourish
+///
+/// A counterfactual found it. Rewriting `focus_aside`'s test from
+/// `is_unrelated()` to `!is_related()` — which makes a card the answer knows
+/// nothing about be announced as *out of play for focus lineage* — left the
+/// whole shell suite **green**, and R1845's rule says a counterfactual that
+/// passes is a statement about the POPULATION rather than about the assertion.
+/// It was: every caller of `focus_aside` walks the current tree
+/// (`LabState::cards`, `frames_of`), so `Relatedness::Foreign` is unreachable
+/// from the screen and the careful spelling was a comment nothing performed.
+///
+/// This is the population, driven directly: all three answers over one focus,
+/// so the third one has a failing path.
+#[test]
+fn a_cards_announcement_carries_its_tie_and_says_nothing_about_a_stranger() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        let head = state
+            .node_of("T-01")
+            .expect("the opening graph draws the card the specification names");
+        let sibling = state
+            .node_of("Q-01")
+            .expect("and the card that feeds what it feeds");
+        super::select_card(&state, Some(head));
+        super::set_focus(&state, Some(pinion_node_graph::Focus::Lineage));
+
+        let lit = super::focus_aside(&state, head);
+        assert!(
+            lit.contains("in play") && lit.contains("selected"),
+            "★ a card in play is announced WITH the reason: {lit:?}"
+        );
+        let dim = super::focus_aside(&state, sibling);
+        assert!(
+            dim.contains("out of play") && dim.contains("lineage"),
+            "★ and one out of play says which closure set it aside: {dim:?}"
+        );
+        // ★★★★★ The case the counterfactual found nothing driving. A card of
+        // another tree is not one this focus set aside, and telling a reader it
+        // was would be the screen inventing a fact — `Relatedness::Foreign` is
+        // the crate's third answer precisely so this is sayable.
+        assert_eq!(
+            super::focus_aside(&state, NodeId(9999)),
+            String::new(),
+            "★ nothing is announced about a card this answer never saw"
+        );
+
+        // ★ And with no focus on, no card gains a clause at all — so the
+        // opening screen's announcements are unchanged by this round.
+        super::set_focus(&state, None);
+        for node in [head, sibling] {
+            assert_eq!(
+                super::focus_aside(&state, node),
+                String::new(),
+                "with nothing focused there is no relation to announce"
+            );
+        }
+    });
+}

@@ -10045,6 +10045,382 @@ fn r1911_the_claims_at(screens: &pinion_screen::ScreenRoster, key: &str, open: &
     }
 }
 
+/// The alpha a tagged box or container is **painted** with, read off the scene.
+///
+/// A fade is a paint fact, so it is read from the paint rather than from the
+/// state that caused it — the same rule the lit-byte census in this module
+/// follows.
+fn painted_alpha(scene: &Scene, tag: &str) -> Option<u8> {
+    let mut found = None;
+    scene.for_each_node(&mut |visit| {
+        if visit.node.tag() != Some(tag) {
+            return;
+        }
+        let alpha = match visit.node {
+            Scene::Box(node) => Some(node.style.fill.a),
+            Scene::Container(node) => Some(node.style.fill.a),
+            _ => None,
+        };
+        if let Some(alpha) = alpha {
+            found = found.or(Some(alpha));
+        }
+    });
+    found
+}
+
+/// What the mounted lab's `focus` wire says about one card, as `(in play, the
+/// tie words)`.
+fn focus_standing(wire: &serde_json::Value, card: &str) -> (bool, Vec<String>) {
+    let rows = wire["standing"]
+        .as_array()
+        .unwrap_or_else(|| panic!("`standing` is an array while a focus is on: {wire}"));
+    let row = rows
+        .iter()
+        .find(|row| row["node"].as_str() == Some(card))
+        .unwrap_or_else(|| panic!("the focus wire says nothing about {card}: {wire}"));
+    (
+        row["in_play"].as_bool().expect("`in_play` is a boolean"),
+        row["ties"]
+            .as_array()
+            .expect("`ties` is an array")
+            .iter()
+            .map(|tie| tie.as_str().unwrap_or_default().to_owned())
+            .collect(),
+    )
+}
+
+/// Press the mounted lab's focus chip once, wherever the toolbar has put it.
+///
+/// ★ At the size a person runs this application the lab's toolbar **overflows**
+/// and the focus group is the first one given up, so the chip is behind the `…`
+/// control — which is why this opens the overflow rather than aiming at a seat
+/// the row does not have. Neither case is assumed: the seat is looked for on
+/// the row first.
+fn press_the_focus_chip(state: &std::rc::Rc<ShellState>) {
+    let (shot, scene) = painted_at((WIN_W, WIN_H));
+    if shot.rect("lab.toolbar.focus").is_none() {
+        let mut open = RouterDrag::over(state, scene);
+        open.cursor(aim(&shot, "lab.toolbar.more"));
+        open.press();
+        open.release();
+    }
+    let (shot, scene) = painted_at((WIN_W, WIN_H));
+    let mut press = RouterDrag::over(state, scene);
+    press.cursor(aim(&shot, "lab.toolbar.focus"));
+    press.press();
+    press.release();
+}
+
+/// ★★★★★ R1988 — **the assembled tool focuses a card and says why every other
+/// card is in play or out of it** — driven on the shell, over one walk.
+///
+/// # What this reproduces, and what the two census rows were wrong about
+///
+/// The engine spells *hide unrelated nodes* twice, in two editors, and the
+/// census had both rows down as *fading nodes not reachable from the selection*
+/// with the reachability half already answered here. Re-measuring split that:
+///
+/// * The two are **different closures**. The script editor's walks the exec and
+///   the value graph in both directions and splits on whether the selected node
+///   is a pure value node; the material editor's has no such split and instead
+///   carries an option that collects, for every node found downstream, that
+///   node's own upstream closure — **siblings**, which the lineage reaches in
+///   neither direction. Neither editor can express the other.
+/// * "The reachability half exists" understated what was missing: `Grow`
+///   answers one direction per call, so the union across directions, the
+///   sibling closure, and — the part no closure gives — **which of them is why
+///   a card is lit** were all absent. Both editors record the outcome as one
+///   bit per node, so that last one is not recoverable there at all.
+/// * And the comment case is not reachability. Both editors exempt comment
+///   nodes and then decide each one in the *widget* layer, from whether some
+///   related card's top-left **corner** falls inside the comment's drawn
+///   rectangle. This tree has a declared containment relation (R1589), so a
+///   frame is related by what it **holds**.
+///
+/// # Which analyzer screen this lands on
+///
+/// **Screen A, the Node Graph Lab**, and it is second-pass work rather than
+/// first-pass reproduction: measured against the behaviour canon, that document
+/// has no relatedness vocabulary at all — a scan of its script for the stem
+/// finds *relative*, fourteen times, and nothing else. The ordering rule is
+/// explicit that the canon is the thing to reproduce and not a ceiling, and
+/// this is the operation a person tracing one peer's session through a graph of
+/// eight cards on two hosts actually needs.
+///
+/// # What the walk drives
+///
+/// A press on a card, then presses on the focus chip — each one through the
+/// router against the shell's real surface set, and through the overflow when
+/// the toolbar has put the chip there. Every assertion is read either off the
+/// **paint** (the fade) or off the **published wire** (the reason), and the two
+/// are required to agree.
+#[test]
+fn r1988_the_assembled_tool_says_which_cards_a_selection_is_about() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        // The walk first: rule (7)'s claim is about a section of an
+        // application, not about a screen standing on its own.
+        let report = crate::tests::walk_the_application(&state);
+        assert!(
+            report.conforms(),
+            "the application did not reproduce its specification over the walk: {}",
+            report.why().unwrap_or_default()
+        );
+        assert!(
+            report.itinerary().iter().any(|key| key == "lab"),
+            "the walk must stand in the node lab: {:?}",
+            report.itinerary()
+        );
+
+        state.go("lab").expect("the node lab section is open");
+        the_graph_opens_whole(&state);
+        let head = a_card_at_the_head_of_the_chain_is_selected(&state);
+        the_lineage_of_that_card_leaves_its_siblings_out(&state, &head);
+        the_whole_chain_takes_the_siblings_back_in(&state, &head);
+        one_more_press_shows_the_graph_whole_again(&state);
+    });
+}
+
+/// Phase 0 — nothing is focused when the screen opens, so every later phase is
+/// a change and not a state that was already there.
+fn the_graph_opens_whole(state: &std::rc::Rc<ShellState>) {
+    let wire = lab_slot(state, "focus");
+    assert!(
+        wire["mode"].is_null(),
+        "★ the graph opens whole, which is also the reference's default: {wire}"
+    );
+    assert!(
+        wire["standing"].is_null(),
+        "and with no focus there is nothing to stand in relation to: {wire}"
+    );
+    assert_eq!(
+        wire["next"].as_str(),
+        Some("lineage"),
+        "and the chip's next press is the narrower closure: {wire}"
+    );
+    // ★ The vocabulary comes back with the answer, so a caller does not have to
+    // know it in advance — and it is the crate's list, not a second one.
+    assert_eq!(
+        wire["modes"]
+            .as_array()
+            .expect("`modes` is an array")
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect::<Vec<_>>(),
+        ["off", "lineage", "chain"],
+        "{wire}"
+    );
+}
+
+/// The card the focus is aimed from, and the cards it must leave out.
+struct Head {
+    /// The card pressed — the head of a chain, chosen because a card in the
+    /// MIDDLE of this graph relates every other one and would prove nothing.
+    card: String,
+    /// The cards that feed what this one feeds, reaching it in neither
+    /// direction. **Computed from the published links**, not written down, so a
+    /// changed opening graph moves the case instead of turning this red.
+    siblings: Vec<String>,
+}
+
+/// Phase 1 — a press on a card selects it, and the card is the head of a chain.
+fn a_card_at_the_head_of_the_chain_is_selected(state: &std::rc::Rc<ShellState>) -> Head {
+    let links = lab_slot(state, "links");
+    let edges: Vec<(String, String)> = links
+        .as_array()
+        .expect("`links` is an array")
+        .iter()
+        .filter_map(|row| {
+            Some((
+                row["from"].as_str()?.to_owned(),
+                row["to"].as_str()?.to_owned(),
+            ))
+        })
+        .collect();
+    // A head: nothing feeds it. Among the heads, one whose successor is fed by
+    // something else as well — which is what makes a sibling exist at all.
+    let head = edges
+        .iter()
+        .map(|(from, _)| from.clone())
+        .find(|from| {
+            !edges.iter().any(|(_, to)| to == from)
+                && edges.iter().any(|(a, mid)| {
+                    a == from && edges.iter().any(|(b, other)| other == mid && b != from)
+                })
+        })
+        .expect("the opening graph has a head whose successor something else feeds");
+    let mut feeds: Vec<String> = Vec::new();
+    let mut front = vec![head.clone()];
+    while let Some(here) = front.pop() {
+        for (from, to) in &edges {
+            if *from == here && !feeds.contains(to) {
+                feeds.push(to.clone());
+                front.push(to.clone());
+            }
+        }
+    }
+    let mut siblings: Vec<String> = edges
+        .iter()
+        .filter(|(from, to)| feeds.contains(to) && *from != head && !feeds.contains(from))
+        .map(|(from, _)| from.clone())
+        .collect();
+    siblings.sort();
+    siblings.dedup();
+    assert!(
+        !siblings.is_empty(),
+        "this case needs a card that feeds what the head feeds and is not on \
+         its lineage; the opening graph's links are {edges:?}"
+    );
+
+    let (shot, scene) = painted_at((WIN_W, WIN_H));
+    let mut press = RouterDrag::over(state, scene);
+    press.cursor(aim(&shot, &format!("lab.node.{head}")));
+    press.press();
+    press.release();
+    let wire = lab_slot(state, "focus");
+    assert!(
+        wire["mode"].is_null(),
+        "selecting a card does not turn a focus on by itself: {wire}"
+    );
+    Head {
+        card: head,
+        siblings,
+    }
+}
+
+/// Phase 2 — the narrower closure: the head's descendants are in play and the
+/// cards that merely share a descendant are not.
+fn the_lineage_of_that_card_leaves_its_siblings_out(state: &std::rc::Rc<ShellState>, head: &Head) {
+    press_the_focus_chip(state);
+    let wire = lab_slot(state, "focus");
+    assert_eq!(
+        wire["mode"].as_str(),
+        Some("lineage"),
+        "one press on the chip puts the canvas into the narrower closure: {wire}"
+    );
+    let (in_play, ties) = focus_standing(&wire, &head.card);
+    assert!(in_play, "the card pressed is in play: {wire}");
+    assert_eq!(ties, ["selected"], "and says so of itself: {wire}");
+
+    for sibling in &head.siblings {
+        let (in_play, ties) = focus_standing(&wire, sibling);
+        assert!(
+            !in_play,
+            "★ {sibling} feeds what {} feeds and neither reaches the other, so \
+             the lineage leaves it out: {wire}",
+            head.card,
+        );
+        assert!(ties.is_empty(), "and nothing ties it: {wire}");
+    }
+    assert!(
+        wire["out_of_play"]
+            .as_u64()
+            .is_some_and(|out| out >= head.siblings.len() as u64),
+        "★ and the count the chip announces comes from the same derivation, so \
+         it holds at least the siblings: {wire}"
+    );
+
+    // ★★★★★ And the PAINT agrees with the wire, which is the half a person
+    // sees. Read as a comparison rather than against a pinned alpha: what has
+    // to be true is that a card out of play is drawn back from one in play.
+    let (_, scene) = painted_at((WIN_W, WIN_H));
+    let lit = painted_alpha(&scene, &format!("lab.node.{}", head.card))
+        .expect("the card in play is painted");
+    for sibling in &head.siblings {
+        let dim = painted_alpha(&scene, &format!("lab.node.{sibling}"))
+            .unwrap_or_else(|| panic!("{sibling} is still painted, only faded"));
+        assert!(
+            dim < lit,
+            "★ {sibling} is out of play, so it is painted back from {} \
+             ({dim} against {lit}) \u{2014} a fade and not a removal, because a \
+             card a person can no longer see is a card they cannot press to \
+             re-aim the focus",
+            head.card,
+        );
+    }
+}
+
+/// Phase 3 — the wider closure, which is the option the material editor carries
+/// and the script editor has not got: the siblings come back in, under their
+/// own word.
+fn the_whole_chain_takes_the_siblings_back_in(state: &std::rc::Rc<ShellState>, head: &Head) {
+    press_the_focus_chip(state);
+    let wire = lab_slot(state, "focus");
+    assert_eq!(
+        wire["mode"].as_str(),
+        Some("chain"),
+        "a second press widens the closure rather than turning it off: {wire}"
+    );
+    for sibling in &head.siblings {
+        let (in_play, ties) = focus_standing(&wire, sibling);
+        assert!(in_play, "★ the whole chain takes {sibling} in: {wire}");
+        assert_eq!(
+            ties,
+            ["chain"],
+            "★ under its OWN word \u{2014} a reader is not told {sibling} feeds \
+             the selection, which it does not: {wire}",
+        );
+    }
+    // ★ And a frame comes in with what it holds, by MEMBERSHIP: the reference
+    // decides a comment's fade from one corner of one card against a drawn
+    // rectangle, and this canvas never measures a rectangle to answer it.
+    let holders: Vec<&serde_json::Value> = wire["standing"]
+        .as_array()
+        .expect("`standing` is an array")
+        .iter()
+        .filter(|row| {
+            row["ties"]
+                .as_array()
+                .is_some_and(|ties| ties.iter().any(|tie| tie.as_str() == Some("holding")))
+        })
+        .collect();
+    assert!(
+        !holders.is_empty(),
+        "★ the opening graph draws its cards inside frames, so something is in \
+         play for holding what is: {wire}"
+    );
+}
+
+/// Phase 4 — and the mode has a way out, which is the same one press: the
+/// reference's fade can be left only from the button that started it.
+fn one_more_press_shows_the_graph_whole_again(state: &std::rc::Rc<ShellState>) {
+    press_the_focus_chip(state);
+    let wire = lab_slot(state, "focus");
+    assert!(
+        wire["mode"].is_null(),
+        "★ a third press leaves the focus rather than cycling inside it: {wire}"
+    );
+    assert!(
+        wire["standing"].is_null(),
+        "and with no focus nothing stands in relation to anything: {wire}"
+    );
+    // ★ Nothing on the canvas is faded any more, read off the paint: every card
+    // is painted at one opacity again.
+    let (shot, scene) = painted_at((WIN_W, WIN_H));
+    let cards: Vec<String> = shot
+        .tags
+        .keys()
+        .filter(|tag| {
+            tag.strip_prefix("lab.node.")
+                .is_some_and(|rest| !rest.contains('.'))
+        })
+        .cloned()
+        .collect();
+    assert!(cards.len() > 2, "this reads the whole canvas: {cards:?}");
+    let alphas: std::collections::BTreeSet<u8> = cards
+        .iter()
+        .filter_map(|tag| painted_alpha(&scene, tag))
+        .collect();
+    assert_eq!(
+        alphas.len(),
+        1,
+        "★ with no focus on, every card is painted at one opacity; measured \
+         {alphas:?} over {} card(s)",
+        cards.len(),
+    );
+}
+
 #[test]
 fn r1875_no_run_in_the_decode_tree_sits_in_a_box_too_short_for_its_face() {
     /// The pane whose content this gate judges, as it appears in a run's path.

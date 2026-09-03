@@ -103,10 +103,10 @@ use pinion_core::widgets::wheel::WheelDirection;
 use pinion_core::{CellKind, Frame, Modifiers, Scene, WidgetCore, edit_field_keymap};
 use pinion_node_graph::{
     Act, Arrival, Camera, Crossings, Definitions, Document, Drawn, EditPath, Extent, Faces, Fault,
-    Fit, Found, Fragment, InZone, Instance, Item, Judged, LandError, Landfall, LinkId, LinkLayer,
-    Margin, NameSource, Node, NodeBody, NodeId, NodeKind, Objection, PortPath, PortRef, PortSite,
-    ROOT, Relinked, Sharing, Side, Socket, Tint, TreeId, Violation, WatchError, Watches, Weight,
-    ZoomRange, palette_of, type_palette,
+    Fit, Focus, Focused, Found, Fragment, InZone, Instance, Item, Judged, LandError, Landfall,
+    LinkId, LinkLayer, Margin, NameSource, Node, NodeBody, NodeId, NodeKind, Objection, PortPath,
+    PortRef, PortSite, ROOT, Relinked, Sharing, Side, Socket, Tint, TreeId, Violation, WatchError,
+    Watches, Weight, ZoomRange, palette_of, type_palette,
 };
 use pinion_platform_storage::AppStorage;
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
@@ -1723,6 +1723,21 @@ struct LabState {
     /// wire is pending the palette is what a person is being asked to look at,
     /// and the toast says so.
     pending_wire: Signal<Option<PendingWire>>,
+    /// ★★★★★ R1988 — **which closure the canvas is focusing the selection
+    /// through**, or `None` for no focus at all.
+    ///
+    /// `Option<Focus>` and not a bool beside a mode: the reference keeps
+    /// exactly those two, a `bHideUnrelatedNodes` on the editor and a
+    /// `bFocusWholeChain` checkbox in a dropdown behind the same button, so
+    /// *on with no closure chosen* is a state it can be in and this cannot.
+    /// One value also means the control has one thing to announce.
+    ///
+    /// NOT persisted, and that is the same judgement R1923 made about a derived
+    /// description: this is what a person is looking at right now, and freezing
+    /// it into the saved graph would reopen someone else's file with two thirds
+    /// of it faded for a selection they never made. The reference does persist
+    /// its bool, in editor settings.
+    focus: Signal<Option<Focus>>,
     pressed: RefCell<Option<Hit>>,
     /// ★★★★★ R1719 — the last thing this screen SAID, and what kind of thing
     /// it was.
@@ -2124,6 +2139,9 @@ impl LabState {
             rewire_over: Cell::new(None),
             // ★ R1987 — nothing is waiting for a card on the opening frame.
             pending_wire: Signal::new(None),
+            // ★ R1988 — and nothing is focused: the graph opens whole, which is
+            // also the reference's default.
+            focus: Signal::new(None),
             pressed: RefCell::new(None),
             // ★ R1778 — silent at open, which every screen of this tool now
             // spells the same way: a holder with nothing said yet.
@@ -4515,6 +4533,18 @@ enum Hit {
     Zoom(bool),
     /// ★★ R1688 — point the canvas at the whole graph.
     Fit,
+    /// ★★★★★ R1988 — **widen what the selection is focused through, or turn the
+    /// focus off.**
+    ///
+    /// One seat and three states, which is a decision the reference's shape
+    /// makes for us rather than a saving: there the mode is a toggle button
+    /// plus a *focus whole chain* checkbox in a dropdown behind it, and a
+    /// person looking at the toolbar cannot see which closure is running. This
+    /// canvas draws no menus (the behaviour canon has none), so the closure is
+    /// what the seat SAYS and pressing widens it — off, lineage, whole chain,
+    /// off — with the seat's own caption and accessible name naming where it is
+    /// and what the next press does.
+    Focus,
     /// ★★ R1688 — the launch chip, which is the way to the first thing wrong.
     ///
     /// The verdict and the way to what caused it are one control on the
@@ -5161,6 +5191,14 @@ impl Hit {
             Self::DiscoveryToggle => "discovery".into(),
             Self::Zoom(up) => format!("zoom:{}", if *up { "in" } else { "out" }),
             Self::Fit => "fit".into(),
+            // ★ R1988 — the word carries what the press WOULD DO, not the state
+            // it is in: one seat with three states, so `focus` alone would
+            // answer the same for a press that widens the closure and one that
+            // turns it off.
+            Self::Focus => format!(
+                "focus:{}",
+                focus_after(state.focus.get()).map_or(FOCUS_OFF_WORD, Focus::word)
+            ),
             Self::Problem => "problem".into(),
             // ★ R1982 — named by the TREE it stands for and not by its depth,
             // because the word is what a reader is told a press would reach and
@@ -5688,6 +5726,15 @@ fn file_rect(n: usize) -> Rect {
 /// as one pill. Grouping is how a stated decision survives a narrow window.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum ToolGroup {
+    /// ★★★★★ R1988 — the seat that focuses the selection.
+    ///
+    /// Its own group and not part of [`Self::Zoom`], though both are canvas
+    /// controls: the zoom group is one drawn pill and this is a chip whose
+    /// caption changes, so folding it in would put a widening word inside a
+    /// pill of steppers. Leftmost, so it is the first thing a narrow toolbar
+    /// gives up — the graph still reads whole without it, which is not true of
+    /// the zoom read-out or the launch seat.
+    Focus,
     /// The zoom steppers, the read-out and the fit seat — the canvas controls.
     Zoom,
     /// The pair that takes the plan off the screen.
@@ -5706,11 +5753,12 @@ enum ToolGroup {
 impl ToolGroup {
     /// Left to right, which is the order a reader meets them in and therefore
     /// the order [`overflow::lay`] gives them up from the end of.
-    const IN_ROW: [Self; 4] = [Self::Zoom, Self::Export, Self::File, Self::Run];
+    const IN_ROW: [Self; 5] = [Self::Focus, Self::Zoom, Self::Export, Self::File, Self::Run];
 
     /// What this group needs, its own seats and their inner gaps.
     fn width(self) -> u32 {
         match self {
+            Self::Focus => focus_w(),
             Self::Zoom => {
                 ZOOM_BTN + PILL_GAP + view_read_w() + PILL_GAP + ZOOM_BTN + PILL_GAP + fit_w()
             }
@@ -5724,6 +5772,7 @@ impl ToolGroup {
     /// appear in the overflow menu when the group has moved.
     const fn seats(self) -> &'static [&'static str] {
         match self {
+            Self::Focus => &["lab.toolbar.focus"],
             Self::Zoom => &[
                 "lab.toolbar.zoom.out",
                 "lab.reset.view",
@@ -5751,6 +5800,9 @@ impl ToolGroup {
     const fn labels(self) -> &'static [&'static str] {
         match self {
             Self::Zoom => &["lab.toolbar.zoom"],
+            // ★ R1988 — the chip's caption is `caption::captioned`'s own tag,
+            // painted inside it, so a moved group takes its word along.
+            Self::Focus => &["lab.toolbar.focus.caption"],
             Self::Export | Self::File | Self::Run => &[],
         }
     }
@@ -5767,6 +5819,7 @@ impl ToolGroup {
     /// The tag the overflow control lists this group under.
     const fn word(self) -> &'static str {
         match self {
+            Self::Focus => "focus",
             Self::Zoom => "zoom",
             Self::Export => "export",
             Self::File => "file",
@@ -5903,6 +5956,144 @@ fn script_right() -> u32 {
     group_right(ToolGroup::Export).unwrap_or(0)
 }
 
+/// ★★★★★ R1988 — the focus chip's width, DERIVED from the widest thing it can
+/// say rather than pinned.
+///
+/// The caption is the mode's own word, and those come from [`Focus::ALL`], so a
+/// third closure added to the crate widens this chip instead of overflowing it.
+fn focus_w() -> u32 {
+    let widest = Focus::ALL
+        .into_iter()
+        .map(|one| one.word().len())
+        .chain(std::iter::once(FOCUS_OFF_CAPTION.len()))
+        .max()
+        .unwrap_or(0);
+    // Six pixels a character at this size plus the chip's own padding, which is
+    // the same arithmetic `seat_w` does for the file pill.
+    u32::try_from(widest).unwrap_or(8) * 6 + 28
+}
+
+/// What the focus chip says when no focus is on — an invitation rather than a
+/// state, because that is what the control does next.
+const FOCUS_OFF_CAPTION: &str = "focus";
+
+/// The word the focus verb takes for *no focus at all*.
+///
+/// Not a [`Focus`] word, and deliberately not one: *off* is the absence of a
+/// closure, so putting it in [`Focus::ALL`] would make `Focus::from_word("off")`
+/// answer with a mode and give the crate an arm meaning "no arm".
+const FOCUS_OFF_WORD: &str = "off";
+
+/// ★★★★★ R1988 — the closed set of words the `focus` verb accepts.
+///
+/// **Built from [`Focus::ALL`]**, not spelled here: a closure added to the crate
+/// joins the verb's vocabulary without this list being edited, which is what
+/// keeps the words an agent is offered from drifting from the ones the verb
+/// takes (R1912's rule, and R1637's reason for having a declaration at all).
+const FOCUS_WORDS: [&str; Focus::ALL.len() + 1] = {
+    let mut words = [FOCUS_OFF_WORD; Focus::ALL.len() + 1];
+    let mut at = 0;
+    while at < Focus::ALL.len() {
+        words[at + 1] = Focus::ALL[at].word();
+        at += 1;
+    }
+    words
+};
+
+/// Where the focus chip sits, in from the toolbar's right edge.
+fn focus_rect() -> Rect {
+    let bar = toolbar_rect();
+    let inset = group_right(ToolGroup::Focus).unwrap_or(0);
+    Rect::new(
+        bar.x + bar.w - inset - focus_w(),
+        bar.y + 11,
+        focus_w(),
+        ZOOM_BTN,
+    )
+}
+
+/// ★★★★★ R1988 — **what the focus chip says**, which is one derivation read by
+/// the caption, by the accessible name and by the wire.
+///
+/// The word the chip shows is the closure in force, or [`FOCUS_OFF_CAPTION`]
+/// when there is none — so a person can see from the toolbar which of the two
+/// closures is running, which the reference's toggle-plus-hidden-checkbox
+/// cannot tell them.
+fn focus_caption(state: &LabState) -> &'static str {
+    state.focus.get().map_or(FOCUS_OFF_CAPTION, Focus::word)
+}
+
+/// ★★★★★ R1988 — **the clause a card's announcement gains from the focus**:
+/// empty when nothing is focused, and otherwise why this card is in play or
+/// out of it.
+///
+/// One derivation for both the cards and the frames, and the WORDS come from
+/// the crate's own tie vocabulary — so a reader hears the same reason the wire
+/// publishes and the same one the crate decided by. The reference has no
+/// equivalent at any layer: its outcome is an opacity, and an opacity says
+/// nothing to a reader.
+fn focus_aside(state: &LabState, node: NodeId) -> String {
+    let Some(answer) = canvas_focus(state) else {
+        return String::new();
+    };
+    let where_it_stands = answer.relatedness(node);
+    if where_it_stands.is_related() {
+        return format!(
+            ", in play \u{2014} {}",
+            where_it_stands
+                .ties()
+                .iter()
+                .map(|tie| tie.word())
+                .collect::<Vec<_>>()
+                .join(" and ")
+        );
+    }
+    // ★ `Relatedness::Foreign` says nothing rather than saying "out of play":
+    // a card this answer never saw is not one the focus set aside, and telling
+    // a reader it was would be the screen inventing a fact.
+    if where_it_stands.is_unrelated() {
+        format!(", out of play for focus {}", answer.focus())
+    } else {
+        String::new()
+    }
+}
+
+/// What pressing the focus chip does next — off, lineage, whole chain, off.
+///
+/// The cycle is [`Focus::ALL`]'s order and then out, so a closure added to the
+/// crate joins the cycle without this function being edited.
+fn focus_after(now: Option<Focus>) -> Option<Focus> {
+    match now {
+        None => Focus::ALL.first().copied(),
+        Some(here) => Focus::ALL
+            .iter()
+            .position(|one| *one == here)
+            .and_then(|at| Focus::ALL.get(at + 1))
+            .copied(),
+    }
+}
+
+/// ★★★★★ R1988 — **what the focus chip announces**: where it is, what the next
+/// press does, and — when the focus is on — how much of the graph is out of
+/// play.
+///
+/// The count is the fact a reader who cannot see the fade has no other way to
+/// get, and it is read off the same [`canvas_focus`] answer the paint uses. A
+/// focus that is on with nothing selected says THAT, rather than announcing a
+/// closure whose question the crate refused.
+fn focus_name(state: &LabState) -> String {
+    let next = focus_after(state.focus.get()).map_or(FOCUS_OFF_WORD, Focus::word);
+    match (state.focus.get(), canvas_focus(state)) {
+        (None, _) => format!("focus the selection, {next} next"),
+        (Some(one), None) => format!("focus {one}, nothing selected to focus on, {next} next",),
+        (Some(one), Some(answer)) => format!(
+            "focus {one}, {} of {} card(s) out of play, {next} next",
+            answer.unrelated().len(),
+            answer.unrelated().len() + answer.related().len(),
+        ),
+    }
+}
+
 /// Where the zoom pill's right edge sits, in from the toolbar's right edge.
 fn pill_right() -> u32 {
     group_right(ToolGroup::Zoom).unwrap_or(0)
@@ -6017,6 +6208,16 @@ fn toolbar_seats(state: &LabState) -> Vec<ToolbarSeat> {
                 1 => "gate: 1 finding, go to it".to_owned(),
                 n => format!("gate: {n} findings, go to the first"),
             },
+        ),
+        // ★★★★★ R1988 — the focus chip. Its name says where it is AND what the
+        // next press does, because one seat carries three states and a reader
+        // told only "focus the selection" has not been told which closure is
+        // running.
+        seat(
+            "lab.toolbar.focus",
+            focus_rect(),
+            Hit::Focus,
+            focus_name(state),
         ),
         seat(
             "lab.toolbar.zoom.out",
@@ -6266,6 +6467,7 @@ fn seat_group(tag: &str) -> Option<ToolGroup> {
         "lab.toolbar.zoom.out" | "lab.toolbar.zoom.in" | "lab.reset.view" | "lab.toolbar.fit" => {
             Some(ToolGroup::Zoom)
         }
+        "lab.toolbar.focus" => Some(ToolGroup::Focus),
         "lab.toolbar.config" | "lab.toolbar.script" => Some(ToolGroup::Export),
         "lab.toolbar.save" | "lab.toolbar.open" | "lab.toolbar.clear" => Some(ToolGroup::File),
         "lab.toolbar.run" => Some(ToolGroup::Run),
@@ -8511,6 +8713,47 @@ fn toolbar(state: &LabState, ink: Ink) -> Scene {
     panel("lab.toolbar", bar, ink.surface, Some(ink.outline), children)
 }
 
+/// ★★★★★ R1988 — **the focus chip**, at the seat the toolbar's own layout gave
+/// it (which may be a row seat or an overflow-menu row — this function is
+/// handed the rectangle either way).
+///
+/// Filled in the accent when a focus is on, because it is a MODE and not an
+/// action: the reference draws its own as a toggle button for the same reason,
+/// and a chip that looked the same on and off would leave a person guessing why
+/// two thirds of the graph is faded.
+///
+/// ★★★★★ Through `caption::captioned`, not a box beside a label — and that was
+/// this application's own gate speaking, not a preference: the first draft was
+/// the sibling pair, and `r1812` counted it as two more captions paired with
+/// their box by nothing but where they landed (148 -> 150), exactly as it did
+/// to R1982's breadcrumb.
+fn focus_chip(state: &LabState, ink: Ink, seat: Rect) -> Scene {
+    let on = state.focus.get().is_some();
+    let (chip, _) = captioned(
+        "lab.toolbar.focus",
+        seat,
+        BoxStyle::filled(if on { ink.accent_soft } else { ink.raised })
+            .with_corner_radius(6)
+            .with_border(Border::new(if on { ink.accent } else { ink.outline }, 1)),
+        &caption::Caption::new(
+            focus_caption(state),
+            run_style(10, if on { ink.text } else { ink.text_2 }),
+        )
+        .centred()
+        // ★ The chip's own name already carries the word and the count, so a
+        // stop on the run would read the mode out twice before saying anything
+        // new.
+        .silent(Silence::name_of("lab.toolbar.focus")),
+        // ⚠ TRANSPARENT, for the reason the breadcrumb's chips are: every
+        // control on this canvas is resolved from COORDINATES by `Hit::at`, and
+        // a tagged node that takes the pointer is resolved by the router as the
+        // hit target, which then looks for an External with that tag and
+        // forwards nothing.
+        caption::Pointer::Transparent,
+    );
+    chip
+}
+
 /// The toolbar's right-hand cluster: zoom, the configuration read-out, and the
 /// run control the gate governs.
 fn toolbar_controls(state: &LabState, ink: Ink) -> Vec<Scene> {
@@ -8524,6 +8767,9 @@ fn toolbar_controls(state: &LabState, ink: Ink) -> Vec<Scene> {
     let laid = right_cluster();
     let showing = |group: ToolGroup| laid.shown().contains(&group);
     children.extend(toolbar_overflow(state, bar, ink));
+    if showing(ToolGroup::Focus) {
+        children.push(focus_chip(state, ink, local(focus_rect())));
+    }
     for plus in [false, true] {
         if !showing(ToolGroup::Zoom) {
             break;
@@ -8771,6 +9017,11 @@ fn canvas_world(state: &LabState, ink: Ink) -> Vec<Scene> {
         Some(Drag::Frame { frame, .. }) => Some(frame),
         _ => None,
     };
+    // ★★★★★ R1988 — a frame goes back with what it holds, from the same one
+    // derivation the cards read. The crate answers this by MEMBERSHIP, so a
+    // frame whose cards are all out of play fades whether or not any of them
+    // happens to be drawn inside its rectangle.
+    let focused = canvas_focus(state);
     for (id, name) in frames_of(state) {
         let box_rect = frame_rect_of(state, id);
         let gist = spec::FRAMES
@@ -8800,15 +9051,20 @@ fn canvas_world(state: &LabState, ink: Ink) -> Vec<Scene> {
             .padding(12, 3)
             .silent(Silence::name_of(format!("lab.frame.{name}")));
         let (title, _) = caption::inside(&format!("lab.frame.{name}"), box_rect, &cap);
+        let apart = focused
+            .as_ref()
+            .is_some_and(|answer| answer.relatedness(id).is_unrelated());
+        let fill = Color::rgba(0x16, 0x18, 0x1D, 0x6b);
+        let edge = if dragged_frame == Some(id) {
+            ink.accent
+        } else {
+            ink.outline_2
+        };
         children.push(box_holding(
             &format!("lab.frame.{name}"),
             box_rect,
-            Color::rgba(0x16, 0x18, 0x1D, 0x6b),
-            Some(if dragged_frame == Some(id) {
-                ink.accent
-            } else {
-                ink.outline_2
-            }),
+            if apart { unrelated_ink(fill) } else { fill },
+            Some(if apart { unrelated_ink(edge) } else { edge }),
             12,
             vec![title],
         ));
@@ -9389,6 +9645,49 @@ fn found_nodes(state: &LabState) -> Vec<NodeId> {
     found(state).into_iter().map(|hit| hit.node).collect()
 }
 
+/// ★★★★★ R1988 — **what focusing the selection says about this canvas**, or
+/// `None` when nothing is focused.
+///
+/// One derivation, read by the cards, by the frames, by the accessible names,
+/// by the toolbar seat's own caption and by the wire. Written in any two of
+/// those places they would drift, and the drift here is the one a person cannot
+/// see past: a card told it is unrelated while it is painted lit.
+///
+/// `None` covers two cases on purpose, and the toolbar seat is what tells them
+/// apart in words: no focus is on, or one is and the crate **refused** the
+/// question because nothing is selected. Both mean *paint the graph whole* —
+/// which is the point of the refusal (see [`Document::focus`]) rather than a
+/// guess made here.
+fn canvas_focus(state: &LabState) -> Option<Focused> {
+    let focus = state.focus.get()?;
+    let selection = state.selection.get();
+    state
+        .doc
+        .borrow()
+        .focus(state.here(), selection.members(), focus)
+        .ok()
+}
+
+/// ★★★★★ R1988 — what a mark keeps of its own opacity when nothing ties its
+/// card to the focused selection.
+///
+/// A **fraction of what the mark already had**, not a replacement alpha: the
+/// frames on this canvas are drawn translucent to begin with, so one number
+/// would make a faded frame *more* solid than the card standing on it.
+///
+/// Near the framework's Material disabled fade because a person reads "not in
+/// play" the same way — and declared here rather than borrowed from it, because
+/// an unrelated card is **not disabled**. It is still pressable, selecting it
+/// re-aims the focus, and routing it through `resolve_disabled` would make it
+/// inert and announce a recourse that does not exist.
+const UNRELATED_OPACITY: (u32, u32) = (36, 100);
+
+/// `colour` at [`UNRELATED_OPACITY`] of its own alpha.
+fn unrelated_ink(colour: Color) -> Color {
+    let faded = u32::from(colour.a) * UNRELATED_OPACITY.0 / UNRELATED_OPACITY.1;
+    colour.with_alpha(u8::try_from(faded).unwrap_or(colour.a))
+}
+
 /// One card per node: its identity band, its digest rows, and its pins.
 ///
 /// ★ R1656 — the card's parts are its CHILDREN, not its siblings.
@@ -9418,6 +9717,9 @@ fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
     // ★★★★★ R1927 — which cards have a problem, and whether the worst of it
     // blocks, worked out ONCE for the whole canvas.
     let troubled = troubled_cards(state);
+    // ★★★★★ R1988 — and which cards the focused selection is about, from the
+    // one derivation every reader of it shares.
+    let focused = canvas_focus(state);
     for node in state.cards() {
         let Some(shape) = card_shape(state, node) else {
             continue;
@@ -9433,6 +9735,14 @@ fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
         // one card selected plus five that are not.
         let chosen = selection.is_active(&node);
         let in_selection = selection.contains(&node);
+        // ★★★★★ R1988 — nothing ties this card to the focused selection, so it
+        // is drawn back. A FOURTH axis over a card, beside selection, the
+        // search's hits and R1927's trouble — and independent of all three: a
+        // card can be found by a search and unrelated to the selection at once,
+        // which is exactly when a person needs to see both.
+        let apart = focused
+            .as_ref()
+            .is_some_and(|answer| answer.relatedness(node).is_unrelated());
         let mut parts: Vec<Scene> = Vec::new();
         // ★ R1691 — the identifier and the role chip are what the CARD is
         // called and what it is. Its own announcement carries both, so a node
@@ -9445,6 +9755,14 @@ fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
             let letters = faces.title_text;
             Color::rgba(letters.r, letters.g, letters.b, 255)
         });
+        // ★ R1988 — the letters go back with the fill they were chosen against,
+        // so the contrast rule `Faces::title_text` enforces is preserved rather
+        // than undone by fading one of the pair.
+        let ink_for_name = if apart {
+            unrelated_ink(ink_for_name)
+        } else {
+            ink_for_name
+        };
         parts.push(quiet(
             tagged_label(
                 &format!("lab.node.{name}.id"),
@@ -9536,6 +9854,7 @@ fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
             let title = faces.title;
             Color::rgba(title.r, title.g, title.b, 255)
         });
+        let fill = if apart { unrelated_ink(fill) } else { fill };
         let mut style = BoxStyle::filled(fill).with_corner_radius(9);
         let edge = if chosen {
             ink.accent
@@ -9544,6 +9863,11 @@ fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
         } else {
             ink.outline_2
         };
+        // ★ R1988 — and its outline with it, or a faded card reads as a hole
+        // rather than as a card that is out of play. A card that is BOTH
+        // selected and unrelated is not reachable — the selection is what the
+        // focus is derived from — so this never dims the accent.
+        let edge = if apart { unrelated_ink(edge) } else { edge };
         style = style.with_border(Border::new(edge, if found_here { 3 } else { 1 }));
         children.push(Scene::Container(
             ContainerNode::new(parts)
@@ -11356,6 +11680,24 @@ const FIELDS: &[SchemaField] = &{
         // a screen an agent cannot drive. The reference's equivalent is a modal
         // menu: nothing outside it can ask what it is holding.
         SchemaField::new("waiting", "json"),
+        // ★★★★★ R1988 — **which closure the selection is focused through, and
+        // for every card WHY it is in play or out of it.**
+        //
+        // The reference publishes neither: the mode is a bool plus a hidden
+        // checkbox, and the outcome is one bit written onto each node, so an
+        // agent there cannot ask which closure ran nor why a card is faded.
+        SchemaField::new("focus", "json"),
+        // ★★★★★ R1988 — and the verb. `off` is one of the words, because a
+        // state a person can enter by pointing and an agent cannot leave is
+        // half a surface — and the closure words come from `Focus::ALL` rather
+        // than being spelled here, so what an agent is offered cannot drift
+        // from what the verb accepts (R1912's rule).
+        SchemaField::action_with(
+            "focus",
+            "string",
+            ArgForm::Scalar,
+            const { &[SchemaArg::one_of("mode", "string", &FOCUS_WORDS)] },
+        ),
         // ★★★★★ R1928 — what each card calls its own ports, and WHO chose each
         // name: the kind's declaration, the item's authored label, or the
         // node's own answer. Published so the sentence a reader hears on a pin
@@ -12245,6 +12587,7 @@ impl ExternalIntrospect for LabOracle {
             // why each card that refuses it does.
             "rewire" => Ok(IntrospectValue::Json(rewire_wire(state))),
             "waiting" => Ok(IntrospectValue::Json(waiting_wire(state))),
+            "focus" => Ok(IntrospectValue::Json(focus_wire(state))),
             "sections" => Ok(IntrospectValue::Json(sections_wire(state))),
             "inks" => Ok(IntrospectValue::Json(inks_wire(state))),
             "wrong" => Ok(IntrospectValue::Json(wrong_wire(state))),
@@ -12924,6 +13267,30 @@ impl ExternalIntrospect for LabOracle {
             }
             // ★★★★★ R1985 — a copy asks the questions the original had to
             // answer.
+            // ★★★★★ R1988 — focus the selection, widen the closure, or turn it
+            // off. The words are `FOCUS_WORDS`, and the declaration is what
+            // refuses anything else before it reaches here (R1637).
+            "focus" => {
+                let word = Self::text(&args)?;
+                let word = word.trim();
+                let want = if word == FOCUS_OFF_WORD {
+                    None
+                } else {
+                    Some(Focus::from_word(word).ok_or_else(|| {
+                        InvokeError::rejected(format!(
+                            "{word:?} is not a focus this screen offers \u{2014} {}",
+                            FOCUS_WORDS.join(", ")
+                        ))
+                    })?)
+                };
+                set_focus(&state, want);
+                // ★ The word that took, not the word that was asked: a caller
+                // that sent `off` and one that sent a closure read back the
+                // same field and can tell what the screen is now doing.
+                Ok(IntrospectValue::Text(
+                    want.map_or(FOCUS_OFF_WORD, Focus::word).to_owned(),
+                ))
+            }
             "copy" => copy_selection(&state).map(IntrospectValue::Text),
             "paste" => paste_clipboard(&state).map(IntrospectValue::Text),
             "duplicate" => duplicate_selection(&state).map(IntrospectValue::Text),
@@ -16944,6 +17311,11 @@ fn release(state: &Rc<LabState>) {
         Hit::Fit => {
             fit_view(state);
         }
+        // ★★★★★ R1988 — widen the focus, or turn it off, through the same one
+        // function the wire verb calls.
+        Hit::Focus => {
+            set_focus(state, focus_after(state.focus.get()));
+        }
         // ★★★★★ R1982 — stand where that step names, by walking the model's own
         // path back rather than jumping to a tree id this screen worked out.
         Hit::Crumb(depth) => {
@@ -18056,6 +18428,38 @@ fn take_pending_wire(state: &Rc<LabState>, waiting: PendingWire, arriving: NodeI
     let _ = connect_at(state, waiting.from, &out, arriving, &took.at);
 }
 
+/// ★★★★★ R1988 — **put the canvas into a focus, or out of one**, and say what
+/// happened.
+///
+/// One function, because three things reach it — the toolbar chip, the wire
+/// verb, and `Escape` — and a mode a person can enter three ways and leave two
+/// is a mode whose sentence depends on how they got there.
+///
+/// The sentence is the one fact a person cannot read off the fade: **how many
+/// cards went out of play**, and — when the crate refused the question — that
+/// nothing is selected to focus on. Turning a focus off says so plainly, which
+/// is what tells a reader the graph they are now looking at is whole.
+fn set_focus(state: &Rc<LabState>, want: Option<Focus>) {
+    state.focus.set(want);
+    let Some(one) = want else {
+        state.say(Utterance::done("focus off, the whole graph is shown"));
+        return;
+    };
+    match canvas_focus(state) {
+        // ★ The refusal reaches the person as the reason it is: the question is
+        // about a selection and there is not one. `Document::focus` is what
+        // decided that, so this screen is not guessing.
+        None => state.say(Utterance::refused(&format!(
+            "focus {one} needs a selected card \u{2014} nothing is selected"
+        ))),
+        Some(answer) => state.say(Utterance::done(format!(
+            "focus {one}: {} of {} card(s) out of play",
+            answer.unrelated().len(),
+            answer.unrelated().len() + answer.related().len(),
+        ))),
+    }
+}
+
 /// ★★★★★ R1987 — let the waiting wire go, answering whether one was waiting.
 ///
 /// One place, because three things end the gesture — `Escape`, a press on the
@@ -18119,6 +18523,14 @@ fn key(state: &Rc<LabState>, chord: &str) -> bool {
             // the only one of the three that a person entered on purpose and
             // could otherwise not leave.
             drop_pending_wire(state);
+            // ★★★★★ R1988 — and a focus goes with it, for the same reason and
+            // one more: the reference's own toggle is the ONLY way out of its
+            // fade, so a person who cannot find that button is stuck looking at
+            // a mostly-faded graph. Second, because a wire waiting is the more
+            // local state of the two.
+            if state.focus.get().is_some() {
+                set_focus(state, None);
+            }
             state.drag.set(None);
             state.selected_link.set(None);
             true
@@ -18713,8 +19125,15 @@ fn canvas_access(state: &LabState) -> Vec<AccessNode> {
             card = card.with_current(AriaCurrent::True);
         }
         nodes.push(card.with_value(AccessValue::Text(format!(
-            "{}, {inbound} inbound, {outbound} outbound",
-            role.name()
+            "{}, {inbound} inbound, {outbound} outbound{}",
+            role.name(),
+            // ★★★★★ R1988 — **the fade reaches a reader who cannot see it**,
+            // with the reason and not only the fact. The reference's is an
+            // opacity on the node widget and nothing else, so its own fade is
+            // invisible to assistive technology: a person there is told about a
+            // card the screen has visually set aside and cannot tell that it
+            // has been.
+            focus_aside(state, node),
         ))));
     }
     for (frame, name) in frames_of(state) {
@@ -18729,8 +19148,9 @@ fn canvas_access(state: &LabState) -> Vec<AccessNode> {
                 // hears has to CONTAIN what a reader sees.
                 .with_name(format!("host {}", frame_caption(&name, gist)))
                 .with_value(AccessValue::Text(format!(
-                    "{} cards",
-                    members_of(state, frame).len()
+                    "{} cards{}",
+                    members_of(state, frame).len(),
+                    focus_aside(state, frame),
                 ))),
         );
     }
@@ -20221,6 +20641,64 @@ fn rewire_wire(state: &Rc<LabState>) -> serde_json::Value {
         "picked": link.0,
         "carried": matches!(state.drag.get(), Some(Drag::Rewire { .. })),
         "cards": rows,
+    })
+}
+
+/// ★★★★★ R1988 — **which closure the selection is focused through, and for
+/// every card WHY it is in play or out of it.**
+///
+/// # What the reference cannot answer, measured
+///
+/// Both of its editors keep the mode as a bool on the editor plus a *whole
+/// chain* checkbox inside a dropdown, and write the outcome as **one bit** onto
+/// each node. So an agent there cannot ask which closure ran, and cannot ask
+/// why a card is faded — and a card that is both an ancestor of one selected
+/// card and a descendant of another has one bit that says neither.
+///
+/// `mode` is `null` when no focus is on. `standing` is `null` when a focus IS
+/// on and the crate **refused** the question, which is a different statement
+/// from an empty roster and the one a caller needs to tell "the graph is whole
+/// because nobody asked" from "the graph is whole because nothing is selected".
+fn focus_wire(state: &Rc<LabState>) -> serde_json::Value {
+    let mode = state.focus.get();
+    let answer = canvas_focus(state);
+    let standing = answer.as_ref().map(|answer| {
+        let rows: Vec<serde_json::Value> = state
+            .cards()
+            .into_iter()
+            .chain(frames_of(state).into_iter().map(|(id, _)| id))
+            .map(|node| {
+                let where_it_stands = answer.relatedness(node);
+                serde_json::json!({
+                    "node": state.name_of(node),
+                    // ★ The three answers, spelled — a card of another tree is
+                    // not "unrelated", and a client handed only a related list
+                    // could not tell those apart.
+                    "in_play": where_it_stands.is_related(),
+                    // ★★★★★ The half the reference's bit destroys: EVERY reason,
+                    // in the crate's own words.
+                    "ties": where_it_stands
+                        .ties()
+                        .iter()
+                        .map(|tie| tie.word())
+                        .collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        rows
+    });
+    serde_json::json!({
+        "mode": mode.map(Focus::word),
+        // ★ The whole vocabulary the verb takes, so a caller does not have to
+        // know it in advance.
+        "modes": FOCUS_WORDS,
+        // What the next press of the chip does — the same derivation the chip's
+        // own accessible name reads, so the two cannot disagree.
+        "next": focus_after(mode).map_or(FOCUS_OFF_WORD, Focus::word),
+        "out_of_play": answer
+            .as_ref()
+            .map(|answer| answer.unrelated().len()),
+        "standing": standing,
     })
 }
 

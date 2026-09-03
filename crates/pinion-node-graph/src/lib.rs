@@ -223,6 +223,7 @@ mod definition;
 mod deploy;
 mod describe;
 mod eval;
+mod focus;
 mod fragment;
 mod frame;
 mod group;
@@ -271,6 +272,7 @@ pub use definition::{DefinitionAct, DefinitionError, RemovedTree, Used};
 pub use deploy::{Bringup, Configured, Deployed, Placed, Plan, Uncarried, Unplannable};
 pub use describe::{Carrying, PortTooltip};
 pub use eval::{Descent, Evaluator};
+pub use focus::{Focus, Focused, Relatedness, Tie};
 pub use fragment::{
     Crossings, Definitions, DuplicateError, ExtractError, Fragment, InsertError, Inserted, Renamed,
     Severed,

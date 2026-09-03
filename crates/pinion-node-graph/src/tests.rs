@@ -13,14 +13,14 @@ use crate::{
     BeaconError, BreakError, Breakpoints, Bringup, Camera, Carried, Carrying, Command, Composition,
     Condition, ConnectError, Container, Control, Conversion, Copying, Crossings, Definitions,
     Direction, Discovery, Distribute, Document, Drawn, Dropped, DuplicateError, Edge, EditError,
-    EditPath, Extent, ExtractError, Fit, Flow, ForceError, Fragment, GroupError, Grow, Halt,
+    EditPath, Extent, ExtractError, Fit, Flow, Focus, ForceError, Fragment, GroupError, Grow, Halt,
     InsertError, Inspectable, Instance, InterfaceSide, Item, ItemError, Layered, LinkId, LinkLayer,
     Machine, Margin, Multiplicity, Naming, NestError, Node, NodeBody, NodeId, NodeKind, NodeSite,
     ObserveError, Occurrence, Organic, Orphaned, ParentError, Passing, PathError, Port, PortPath,
-    PortRef, PortSite, PortValueError, ROOT, Reach, Relabelled, RelinkError, Renamed,
+    PortRef, PortSite, PortValueError, ROOT, Reach, Relabelled, Relatedness, RelinkError, Renamed,
     RepartitionError, RetypeError, Route, RunError, SectionId, SelectError, Session, Severed,
     Sharing, Side, Socket, Stack, Standing, Stop, Straighten, Stride, SwapError, SwitchRefusal,
-    Tick, Timeline, Tint, TreeId, UngroupError, Unreadable, Violation, WatchError, Watches,
+    Tick, Tie, Timeline, Tint, TreeId, UngroupError, Unreadable, Violation, WatchError, Watches,
     ZoomRange, crossing,
 };
 use crate::{DefinitionAct, DefinitionError, PairError, RemovedTree, Used};
@@ -18694,4 +18694,288 @@ fn r1987_a_refusal_a_person_reads_uses_the_prose_word_not_the_wire_token() {
              start accepting it because a sentence was improved"
         );
     }
+}
+
+/// A graph with a **sibling**: `one -> both`, `other -> both`, `both -> end`.
+///
+/// The shape that makes the two focuses differ. `other` reaches `one` in
+/// neither direction, so lineage from `one` leaves it out and the whole chain
+/// takes it in — which is the material editor's option and the only reason
+/// [`Focus`] has two arms.
+///
+/// Each of `one` and `other` is inside a frame of its own, so a frame is
+/// related under one focus and not the other. That case is what the reference
+/// decides from a comment rectangle and one corner of a card.
+///
+/// ★ `island` is wired to nothing and held by nothing, so **every** answer over
+/// this document has at least one unrelated card. Without it the widest focus
+/// relates the whole graph, and an `is_unrelated` assertion would have no
+/// population to be false over — which is the shape R1845 records.
+struct Siblings {
+    document: Document<Op>,
+    one: NodeId,
+    other: NodeId,
+    both: NodeId,
+    end: NodeId,
+    /// The frame holding `one`.
+    near: NodeId,
+    /// The frame holding `other`.
+    far: NodeId,
+    /// Wired to nothing, held by nothing.
+    island: NodeId,
+}
+
+fn siblings() -> Siblings {
+    let mut document = Document::new("root");
+    let one = document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(2)), 0, 0)
+        .unwrap();
+    let other = document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(3)), 0, 120)
+        .unwrap();
+    let both = document
+        .add_node(ROOT, NodeBody::Kind(Op::Add), 200, 40)
+        .unwrap();
+    let end = document
+        .add_node(ROOT, NodeBody::Kind(Op::Sink), 400, 40)
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(one, 0), Socket::new(both, 0))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(other, 0), Socket::new(both, 1))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(both, 0), Socket::new(end, 0))
+        .unwrap();
+    let near = document.add_node(ROOT, NodeBody::Frame, -20, -20).unwrap();
+    let far = document.add_node(ROOT, NodeBody::Frame, -20, 100).unwrap();
+    document.set_parent(ROOT, one, Some(near)).unwrap();
+    document.set_parent(ROOT, other, Some(far)).unwrap();
+    let island = document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(9)), 0, 400)
+        .unwrap();
+    Siblings {
+        document,
+        one,
+        other,
+        both,
+        end,
+        near,
+        far,
+        island,
+    }
+}
+
+/// The ties a focus answer gives one node, as words.
+fn tie_words(answer: &crate::Focused, node: NodeId) -> Vec<&'static str> {
+    answer
+        .relatedness(node)
+        .ties()
+        .iter()
+        .map(|tie| tie.word())
+        .collect()
+}
+
+/// ★★★★★ R1988 — **a focused selection says which cards it is about AND why
+/// each one is**, and the two focuses are two different closures.
+#[test]
+fn a_focus_names_every_tie_and_the_two_closures_differ() {
+    let s = siblings();
+    let lineage = s.document.focus(ROOT, &[s.one], Focus::Lineage).unwrap();
+    assert_eq!(
+        lineage.focus(),
+        Focus::Lineage,
+        "the answer carries its mode"
+    );
+    assert_eq!(tie_words(&lineage, s.one), ["selected"]);
+    assert_eq!(tie_words(&lineage, s.both), ["downstream"]);
+    assert_eq!(tie_words(&lineage, s.end), ["downstream"]);
+    // ★ The frame holding the selection is related BY WHAT IT HOLDS, which is
+    // the tie the reference decides from a rectangle and one card corner.
+    assert_eq!(tie_words(&lineage, s.near), ["holding"]);
+    // ★★★★★ And the sibling is out, together with the frame that holds it —
+    // the fact lineage cannot see and the whole reason there is a second arm.
+    assert_eq!(
+        lineage.unrelated(),
+        {
+            let mut want = vec![s.other, s.far, s.island];
+            want.sort_unstable();
+            want
+        },
+        "lineage reaches the sibling in neither direction, nothing else holds \
+         it, and the island is wired to nothing at all"
+    );
+    assert!(lineage.relatedness(s.other).is_unrelated());
+
+    let chain = s.document.focus(ROOT, &[s.one], Focus::Chain).unwrap();
+    assert_eq!(chain.focus(), Focus::Chain);
+    assert_eq!(
+        tie_words(&chain, s.other),
+        ["chain"],
+        "the whole chain takes in what feeds what the selection feeds, and \
+         says so in its own word rather than calling it upstream"
+    );
+    assert_eq!(
+        tie_words(&chain, s.far),
+        ["holding"],
+        "and the frame holding it comes in with it — the case that makes \
+         `Tie::Holding` falsifiable rather than always true"
+    );
+    assert_eq!(
+        chain.unrelated(),
+        [s.island],
+        "★ and the widest focus is still not everything: the island is wired to \
+         nothing, so no closure reaches it"
+    );
+    // ★ The widening is a property of the pair and not of one call: everything
+    // lineage related, the chain relates too.
+    for node in lineage.related() {
+        assert!(
+            chain.relatedness(node).is_related(),
+            "the chain is a superset of the lineage; {node:?} fell out"
+        );
+    }
+}
+
+/// ★★★★★ R1988 — **one node, two ties at once** — the fact the reference's
+/// single bit per node destroys.
+#[test]
+fn a_card_between_two_selected_cards_is_upstream_and_downstream_at_once() {
+    let s = siblings();
+    let answer = s
+        .document
+        .focus(ROOT, &[s.one, s.end], Focus::Lineage)
+        .unwrap();
+    assert_eq!(
+        tie_words(&answer, s.both),
+        ["upstream", "downstream"],
+        "★ the adder feeds one of the selected cards and is fed by the other, \
+         and BOTH are why it is lit"
+    );
+    // ★ And the selected pair say so of themselves, rather than being reported
+    // by whichever closure happened to reach them.
+    assert_eq!(tie_words(&answer, s.one), ["selected"]);
+    assert_eq!(tie_words(&answer, s.end), ["selected"]);
+    // ★★★★★ Written the other way round first, and the measurement refuted it:
+    // selecting the far end of the chain makes the sibling UPSTREAM of it, so
+    // lineage takes it in without the whole-chain arm at all. The claim was
+    // mine and the run is what corrected it — the second selected card is what
+    // relates the sibling, not a licence to relate everything.
+    assert_eq!(
+        tie_words(&answer, s.other),
+        ["upstream"],
+        "selecting the far end brings the sibling in as an ancestor of it"
+    );
+    assert_eq!(
+        answer.relatedness(s.island),
+        Relatedness::Unrelated,
+        "and a second selected card is still not a licence to relate \
+         everything: the island is wired to nothing"
+    );
+}
+
+/// ★★★★★ R1988 — **three answers, so a type**: a card of another tree is not
+/// unrelated, and a caller handed one list of related nodes cannot tell those
+/// apart.
+#[test]
+fn a_card_this_answer_never_saw_is_not_reported_as_unrelated() {
+    let s = siblings();
+    let answer = s.document.focus(ROOT, &[s.one], Focus::Lineage).unwrap();
+    assert_eq!(
+        answer.relatedness(NodeId(9999)),
+        Relatedness::Foreign,
+        "★ nothing is claimed about a card this tree does not have — including \
+         that it is unrelated, which is what a screen would fade"
+    );
+    assert!(!answer.relatedness(NodeId(9999)).is_unrelated());
+    assert!(!answer.relatedness(NodeId(9999)).is_related());
+    assert!(
+        answer.relatedness(s.other).is_unrelated() && !answer.relatedness(s.other).is_related(),
+        "whereas a card of this tree that nothing ties IS unrelated"
+    );
+}
+
+/// ★★★★★ R1988 — **a question about a selection is refused when there is not
+/// one**, and refused rather than answered with the set-theoretic truth.
+#[test]
+fn focusing_nothing_is_refused_by_name_and_a_stale_card_still_refuses() {
+    let s = siblings();
+    assert_eq!(
+        s.document.focus(ROOT, &[], Focus::Lineage),
+        Err(SelectError::NothingSelected(ROOT)),
+        "★ the honest set answer — every card unrelated — is one a screen would \
+         paint as a graph faded to nothing, so the caller is told instead"
+    );
+    assert!(
+        format!("{}", SelectError::NothingSelected(ROOT)).contains("nothing is selected"),
+        "and the refusal says so in words: {}",
+        SelectError::NothingSelected(ROOT)
+    );
+    // ★ The empty case is checked BEFORE the tree, because a missing tree is
+    // the more specific fault of the two.
+    assert_eq!(
+        s.document.focus(TreeId(77), &[], Focus::Lineage),
+        Err(SelectError::NoSuchTree(TreeId(77)))
+    );
+    // ★ A stale selection is refused, not skipped — the same rule `grow` has,
+    // asserted here because a second vet is a second place to get it wrong.
+    assert_eq!(
+        s.document
+            .focus(ROOT, &[s.one, NodeId(9999)], Focus::Lineage),
+        Err(SelectError::NoSuchNode {
+            tree: ROOT,
+            node: NodeId(9999)
+        })
+    );
+}
+
+/// ★★★★★ R1988 — **the focus vocabulary is this type's**, so a client's words
+/// cannot drift from the ones the verb accepts (R1912's rule).
+#[test]
+fn every_focus_round_trips_through_its_word_and_no_other_word_is_one() {
+    for focus in Focus::ALL {
+        assert_eq!(Focus::from_word(focus.word()), Some(focus));
+        assert_eq!(format!("{focus}"), focus.word());
+    }
+    assert_eq!(
+        Focus::from_word("off"),
+        None,
+        "off is the absence of a focus, not one of them"
+    );
+    assert_eq!(Focus::from_word(""), None);
+    // ★ And the tie words are distinct, because a client groups its reasons by
+    // them: two ties sharing a word would report one reason for two facts.
+    let mut words: Vec<&str> = [
+        Tie::Selected,
+        Tie::Upstream,
+        Tie::Downstream,
+        Tie::Chain,
+        Tie::Holding,
+    ]
+    .iter()
+    .map(|tie| tie.word())
+    .collect();
+    let spelled = words.len();
+    words.sort_unstable();
+    words.dedup();
+    assert_eq!(words.len(), spelled, "two ties share a word: {words:?}");
+}
+
+/// ★★★★★ R1988 — **asking does not change the document.** The reference's
+/// equivalent writes a bit onto every node and its own undo does not carry it.
+#[test]
+fn focusing_leaves_the_document_exactly_as_it_was() {
+    let s = siblings();
+    let before = serde_json::to_string(&s.document).expect("a document serialises");
+    for focus in Focus::ALL {
+        s.document.focus(ROOT, &[s.one], focus).unwrap();
+        s.document.focus(ROOT, &[s.both, s.end], focus).unwrap();
+    }
+    assert_eq!(
+        serde_json::to_string(&s.document).expect("a document serialises"),
+        before,
+        "a focus is a pure query (§2 #3), so a screen may ask what it WOULD \
+         show without showing it"
+    );
 }

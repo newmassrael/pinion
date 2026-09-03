@@ -46,13 +46,13 @@ use serde::{Deserialize, Serialize};
 use pinion_node_graph::{
     Act, Admits, Admitted, Align, Appearance, Arrival, AutowireError, Axis, Berth, Carrying,
     Command, ConnectError, Container, Conversion, Crossings, Definitions, Described, Direction,
-    Distribute, Document, Drawn, Edge, EditError, EditPath, Extent, Faces, Fragment, Grow, Hidden,
-    Inspectable, Instance, InterfacePort, InterfaceSide, Item, ItemError, LandError, Landfall,
-    LinkId, Machine, Matched, Multiplicity, Node, NodeBody, NodeId, NodeKind, NodeSite,
+    Distribute, Document, Drawn, Edge, EditError, EditPath, Extent, Faces, Focus, Fragment, Grow,
+    Hidden, Inspectable, Instance, InterfacePort, InterfaceSide, Item, ItemError, LandError,
+    Landfall, LinkId, Machine, Matched, Multiplicity, Node, NodeBody, NodeId, NodeKind, NodeSite,
     NotRecombinable, NotSplittable, Objection, Passing, Port, PortName, PortPath, PortRef,
-    PortSite, PortValueError, PutAway, ROOT, Reach, RelinkError, RetypeError, SectionId, Session,
-    Sharing, Side, Socket, Stack, Straighten, Stride, SwapError, SwitchRefusal, Tint, TreeId,
-    Variadic, Violation, WatchError, Watches, palette_of, type_palette,
+    PortSite, PortValueError, PutAway, ROOT, Reach, Relatedness, RelinkError, RetypeError,
+    SectionId, Session, Sharing, Side, Socket, Stack, Straighten, Stride, SwapError, SwitchRefusal,
+    Tie, Tint, TreeId, Variadic, Violation, WatchError, Watches, palette_of, type_palette,
 };
 use pinion_node_graph::{
     Copying, DefinitionAct, DefinitionError, InZone, InsertError, PairError, Renamed, Tree, Used,
@@ -838,7 +838,130 @@ fn proofs() -> Vec<Proof> {
     all.extend(r1935_named_reroute_proofs());
     all.extend(r1980_berth_proofs());
     all.extend(r1987_autowire_proofs());
+    all.extend(r1988_focus_proofs());
     all
+}
+
+/// R1988 — the two editors' *hide unrelated nodes*, which are two closures.
+fn r1988_focus_proofs() -> Vec<Proof> {
+    vec![
+        proof(
+            "engine",
+            "script_editor::ToggleHideUnrelatedNodes",
+            engine_script_editor_toggle_hide_unrelated_nodes,
+        ),
+        proof(
+            "engine",
+            "MaterialEditor::ToggleHideUnrelatedNodes",
+            engine_material_editor_toggle_hide_unrelated_nodes,
+        ),
+    ]
+}
+
+/// ★★★★★ R1988 — **the script editor's shape**: a selection's ancestors and
+/// descendants, and every node outside that pair of closures is faded.
+///
+/// Two rows and not one, because the two editors measured differently: this
+/// one has no *whole chain* option at all, and its sibling proof below is the
+/// one that carries it. What they share is that the outcome is **one bit per
+/// node** — so the reason a node is lit is not recoverable there, which is what
+/// [`Relatedness`] answers here.
+fn engine_script_editor_toggle_hide_unrelated_nodes() {
+    let c = chain();
+    let answer = c.document.focus(ROOT, &[c.two], Focus::Lineage).unwrap();
+    assert_eq!(answer.focus(), Focus::Lineage);
+    assert_eq!(
+        answer.relatedness(c.two).ties(),
+        [Tie::Selected],
+        "the selected card says so of itself"
+    );
+    assert_eq!(answer.relatedness(c.add).ties(), [Tie::Downstream]);
+    assert_eq!(answer.relatedness(c.sink).ties(), [Tie::Downstream]);
+    // ★ The fading half, which is what the reference's bit drives: the other
+    // addend is reachable in NEITHER direction from this one.
+    assert_eq!(
+        answer.unrelated(),
+        [c.three],
+        "and it is the set a screen fades, published rather than written onto \
+         the nodes"
+    );
+    assert_eq!(answer.relatedness(c.three), Relatedness::Unrelated);
+
+    // ★★★★★ The reason a node is lit is recoverable, which one bit cannot do:
+    // select both ends and the adder is upstream AND downstream at once.
+    let both = c
+        .document
+        .focus(ROOT, &[c.two, c.sink], Focus::Lineage)
+        .unwrap();
+    assert_eq!(
+        both.relatedness(c.add).ties(),
+        [Tie::Upstream, Tie::Downstream],
+        "★ two ties on one card — the fact a single bit per node destroys"
+    );
+
+    // ★ And the question is refused when it has no subject, rather than
+    // answered with "everything is unrelated". The reference guards the same
+    // case with a hidden bool and silently resets.
+    assert!(c.document.focus(ROOT, &[], Focus::Lineage).is_err());
+}
+
+/// ★★★★★ R1988 — **the material editor's shape**: the same fade, plus the
+/// *whole chain* option this crate spells [`Focus::Chain`].
+///
+/// Measured: that editor's downstream walk, with the option on, also collects
+/// the upstream closure of every node it finds — so a **sibling** contributing
+/// to the same result comes in, which the lineage above reaches in neither
+/// direction. The option is a checkbox in a dropdown beside a bool on the
+/// editor, so *on* and *on, whole chain* are two facts there and one value
+/// here.
+fn engine_material_editor_toggle_hide_unrelated_nodes() {
+    let mut c = chain();
+    // A frame holding the sibling, so the containment leg is exercised on the
+    // one card the two closures disagree about — which is what makes
+    // `Tie::Holding` falsifiable rather than always true.
+    let holder = c.document.add_node(ROOT, NodeBody::Frame, 0, 0).unwrap();
+    c.document.set_parent(ROOT, c.three, Some(holder)).unwrap();
+
+    let lineage = c.document.focus(ROOT, &[c.two], Focus::Lineage).unwrap();
+    let whole = c.document.focus(ROOT, &[c.two], Focus::Chain).unwrap();
+    assert_eq!(
+        lineage.relatedness(c.three),
+        Relatedness::Unrelated,
+        "lineage leaves the sibling out"
+    );
+    assert_eq!(
+        lineage.relatedness(holder),
+        Relatedness::Unrelated,
+        "★ and so is the frame holding it — a frame is related by WHAT IT \
+         HOLDS, which the reference decides from a comment rectangle and one \
+         corner of a card"
+    );
+    assert_eq!(
+        whole.relatedness(c.three).ties(),
+        [Tie::Chain],
+        "★ and the whole chain takes it in — under its OWN word, so a reader is \
+         not told the sibling feeds the selection when it does not"
+    );
+    assert_eq!(
+        whole.relatedness(holder).ties(),
+        [Tie::Holding],
+        "and the frame comes in with what it holds"
+    );
+    assert!(
+        whole.unrelated().is_empty(),
+        "this graph is one chain: {:?}",
+        whole.unrelated()
+    );
+    // ★ The widening is a property of the pair: the chain relates everything
+    // the lineage did.
+    for node in lineage.related() {
+        assert!(whole.relatedness(node).is_related(), "{node:?} fell out");
+    }
+    // ★ And the mode travels on the answer, so a screen publishing its reasons
+    // cannot publish them under the wrong closure.
+    assert_eq!(lineage.focus(), Focus::Lineage);
+    assert_eq!(whole.focus(), Focus::Chain);
+    assert_eq!(Focus::from_word("chain"), Some(Focus::Chain));
 }
 
 /// R1987 — the wire the arriving node was created by.

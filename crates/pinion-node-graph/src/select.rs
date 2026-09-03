@@ -148,6 +148,17 @@ pub enum SelectError {
         /// The node that is not in it.
         node: NodeId,
     },
+    /// ★★★★★ R1988 — the question is **about** a selection and there is not
+    /// one.
+    ///
+    /// Raised by [`Document::focus`](crate::Document::focus) and not by
+    /// [`Document::grow`](crate::Document::grow), which is a difference in the
+    /// questions and not an inconsistency: growing an empty selection by one
+    /// relation is answerable — nothing is added — whereas *which nodes is this
+    /// selection about* has no subject, and the set-theoretic answer to it
+    /// (every node is unrelated) is one a screen would paint as a graph faded
+    /// to nothing.
+    NothingSelected(TreeId),
 }
 
 impl fmt::Display for SelectError {
@@ -156,6 +167,9 @@ impl fmt::Display for SelectError {
             Self::NoSuchTree(tree) => write!(f, "no tree {}", tree.0),
             Self::NoSuchNode { tree, node } => {
                 write!(f, "tree {} has no node {}", tree.0, node.0)
+            }
+            Self::NothingSelected(tree) => {
+                write!(f, "nothing is selected in tree {}", tree.0)
             }
         }
     }

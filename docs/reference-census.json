@@ -2553,10 +2553,10 @@
       "verdict": "have"
     },
     "MaterialEditor::ToggleHideUnrelatedNodes": {
-      "covered_by": "fading nodes not reachable from the selection; the reachability half exists and no appearance is derived from it",
+      "covered_by": "RELATEDNESS, THE WIDER CLOSURE (R1988): the same fade as the script editor's row, plus this editor's *focus whole chain* option — measured, its downstream walk then collects each found node's own upstream closure, taking in SIBLINGS the lineage reaches in neither direction. `Focus::Chain` is that closure and `Tie::Chain` is its own word for it, so a reader is not told a sibling feeds the selection when it does not. Two rows because the two editors compute different sets and neither can express the other; there the mode is a bool on the editor plus a checkbox in a dropdown, so *on* and *on, whole chain* are two facts free to disagree, and one `Focus` value here. And a FRAME is related by what it CONTAINS (`Tie::Holding`), where the reference decides a comment's fade in the widget layer from whether some related card's top-left CORNER falls inside the comment's drawn rectangle.",
       "mechanism": "MaterialEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_material_editor_toggle_hide_unrelated_nodes",
+      "verdict": "have"
     },
     "MaterialEditor::ToggleLivePreview": {
       "covered_by": "live shader compilation of the preview",
@@ -4059,10 +4059,10 @@
       "verdict": "app-content"
     },
     "script_editor::ToggleHideUnrelatedNodes": {
-      "covered_by": "fading nodes not reachable from the selection. `Reach` answers the reachability half; no appearance is derived from it",
+      "covered_by": "RELATEDNESS (R1988): `Document::focus` answers, for a selection, which nodes it is about and WHY each one is — `Focus::Lineage` is this editor's shape, the union of the ancestor and descendant closures, and every other node of the tree is the set a screen fades. Superior on three measured counts, all from the reference recording the outcome as ONE BIT per node: (a) a card between two selected cards is upstream AND downstream and one bit says neither, where `Relatedness::Related` carries every `Tie`; (b) a card of another tree and a card nothing ties are the same answer there, and `Relatedness::Foreign` is a third one here; (c) the answer is a value and the document is untouched (§2 #3), where the reference writes the bit onto the nodes and its undo does not carry it.",
       "mechanism": "script-editor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_script_editor_toggle_hide_unrelated_nodes",
+      "verdict": "have"
     },
     "script_editor::ZoomToSelection": {
       "covered_by": "framing the view on the selection — the DCC's `view_selected`",
