@@ -134,8 +134,32 @@ def crumb_text(app: RpcSubprocess) -> str:
     show, and only asking the frame says which.
     """
     snap = app.snapshot(source="paint", viewport=VIEWPORT)
-    mark = find_by_tag(snap, "lab.crumb.caption") or {}
-    return mark.get("content") or mark.get("text") or ""
+
+    def words(node, out):
+        if isinstance(node, dict):
+            tag = node.get("tag")
+            if isinstance(tag, str) and tag.startswith("lab.crumb"):
+                for kid in node.get("children") or []:
+                    words(kid, out)
+                text = node.get("content") or node.get("text")
+                if text:
+                    out.append(text)
+                return
+            for value in node.values():
+                words(value, out)
+        elif isinstance(node, list):
+            for value in node:
+                words(value, out)
+
+    # ⚠ R1982 — EVERY crumb chip, not one. R1981 drew the whole path in a single
+    # chip; R1982 split it into a chip per step so each one above could be
+    # pressed, and this read went from "the joined sentence" to "the step a
+    # person is standing on". What the check below is about is unchanged — that
+    # the FRAME says the way in — so the reader was widened rather than the
+    # assertion weakened.
+    out: list[str] = []
+    words(snap, out)
+    return "  /  ".join(out)
 
 
 def body() -> None:

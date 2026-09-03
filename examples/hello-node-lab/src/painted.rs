@@ -408,6 +408,39 @@ const STATES: &[SweptState] = &[
     }),
 ];
 
+// ⚠⚠★★★★★ R1982 — **THIS SWEEP DOES NOT VISIT A DESCENDED SCREEN, AND THAT IS
+// A REGISTERED GAP RATHER THAN AN OVERSIGHT.**
+//
+// R1981 gave the assembled tool the descent into a subgraph and left this sweep
+// at the root, so the screen a person sees after entering is covered here by
+// nothing: no voice classification, no containment, no short-box check, no
+// press reach. A mark that exists only in a state nobody sweeps is unclassified
+// BY CONSTRUCTION — R1981's tripwire lesson one layer down.
+//
+// R1982 added the state and DROVE it. Five gates went red, each for its own
+// structural reason, and none of them is a defect in the state:
+//
+//   * `r1653` — the specification tables describe the ROOT screen, so six
+//     declared elements (the two host frames, their captions, the two group
+//     pins) cannot be painted from inside a subgraph. `spec::VOICE` and its
+//     siblings would have to say WHICH screen they describe.
+//   * `r1691` — `lab.pin.Group Output.accept` is unvoiced: an interface card's
+//     pins are painted by the same code as any card's and the voice table has
+//     no row for them.
+//   * `r1655` (drag) — dragging `Group Output` moves nothing; an interface end
+//     is a card that cannot be placed, which nothing here says.
+//   * `r1684` — the settings form paints no control, because entering clears
+//     the selection (`stand_in`, deliberately) and the inspector then has no
+//     card to show.
+//   * `r1655` (pointer) — was this round's own defect and IS fixed: the
+//     breadcrumb's step chips took the pointer instead of being resolved from
+//     coordinates.
+//
+// The first four are one round's work on the specification tables, not this
+// one's. Registered as `debt-the-paint-sweep-never-stands-inside-a-subgraph`
+// with those five measurements, and the descended screen is covered meanwhile
+// by `tools/demos/r1982_a_person_walks_back_out_of_a_subgraph.py`.
+
 /// The window sizes the screen is swept at.
 ///
 /// ★ R1656 — **size was never an axis here, and that is why five defects got

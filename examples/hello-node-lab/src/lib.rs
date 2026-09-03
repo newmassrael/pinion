@@ -2091,6 +2091,19 @@ impl LabState {
         // `launch_order` itself and handed the sequence to a plan builder
         // living in this binary, so nothing stopped the two from disagreeing
         // and no second consumer could reach either.
+        // ★★★★★ R1982 — the ROOT, deliberately, and this is the one read on
+        // this screen for which that is the answer rather than an assumption.
+        //
+        // A deployment is what this DOCUMENT launches, not what the canvas
+        // happens to be showing: a person who has stepped inside a subgraph to
+        // look at part of it has not narrowed what runs, and a plan that
+        // shrank when they descended would be this screen quietly redefining
+        // the artifact under them. `LabState::here()` is the paint-and-edit
+        // question; this is not one of those.
+        //
+        // ⚠ It was ROOT before R1982 too — by accident, not by decision, and
+        // R1981's ratchet could not see it. Written down now so the next reader
+        // finds a judgement instead of a leftover.
         self.doc.borrow().deployment(
             ROOT,
             |node| self.host_of(node),
@@ -4441,6 +4454,20 @@ enum Hit {
     Problem,
     /// R1678 — an affordance that puts one scope back to what it opened as.
     Reset(ResetScope),
+    /// ★★★★★ R1982 — **a step of the breadcrumb**, pressed to stand there.
+    ///
+    /// Carries the DEPTH to return to rather than a tree id, because that is
+    /// what [`EditPath`] can act on without this screen re-deriving the way
+    /// back: exiting `depth - step` times is the model's own operation, and a
+    /// tree id would have to be searched for among the entries and could name
+    /// one the path does not hold.
+    ///
+    /// ⚠ Until R1982 the breadcrumb only SAID where a person was. `exit` was
+    /// reachable from the wire and from nothing on the frame, so a person with
+    /// a pointer or a keyboard could enter a subgraph and not come out — the
+    /// sharpest half of `debt-the-assembled-tools-subgraph-surface-is-half-built`,
+    /// and the half that is about a person rather than a census row.
+    Crumb(usize),
     /// ★★ R1687 — the seat that takes the whole graph's configuration off the
     /// screen. It sat here answering the SELECTED card's key count, which is a
     /// different question from a different scope and belonged to nothing.
@@ -4817,6 +4844,14 @@ impl Hit {
                 return Self::Reset(scope);
             }
         }
+        // ★★★★★ R1982 — the breadcrumb's steps, for the same reason and before
+        // the canvas: the chip floats over the world, and this is the ONLY way
+        // out of a subgraph a person has who is not driving the wire.
+        for (step, seat) in crumb_seats(state) {
+            if contains(seat, px, py) {
+                return Self::Crumb(step);
+            }
+        }
         if contains(canvas_rect(), px, py) {
             return Self::on_canvas(state, px, py);
         }
@@ -5057,6 +5092,17 @@ impl Hit {
             Self::Zoom(up) => format!("zoom:{}", if *up { "in" } else { "out" }),
             Self::Fit => "fit".into(),
             Self::Problem => "problem".into(),
+            // ★ R1982 — named by the TREE it stands for and not by its depth,
+            // because the word is what a reader is told a press would reach and
+            // "crumb:2" answers nothing a person could check.
+            Self::Crumb(depth) => format!(
+                "crumb:{}",
+                state
+                    .breadcrumb()
+                    .get(*depth)
+                    .cloned()
+                    .unwrap_or_else(|| depth.to_string())
+            ),
             Self::Reset(scope) => format!("reset:{}", scope.wire()),
             Self::Config => "config".into(),
             Self::Script => "script".into(),
@@ -6397,6 +6443,12 @@ fn toast_rect(state: &LabState) -> Option<Rect> {
 
 /// The clearance the toast keeps between its frame and its content.
 const TOAST_PAD: u32 = 6;
+
+/// ★ R1982 — the gap between two steps of the breadcrumb.
+///
+/// Wide enough that two chips read as two controls rather than one long one,
+/// which is what a person has to be able to tell before pressing.
+const CRUMB_GAP: u32 = 6;
 /// The dot the reference draws before the message, and the gap after it.
 const TOAST_DOT: u32 = 18;
 /// A toast is never narrower than this, however little room the canvas has —
@@ -6441,23 +6493,70 @@ fn hint_rect() -> Rect {
     Rect::new(canvas.x + 12, canvas.y + canvas.h - 34, w, 24)
 }
 
-/// ★★★★★ R1981 — where the breadcrumb chip sits: the canvas's top-left.
-///
-/// The same two rules [`hint_rect`] follows and for the same measured reasons —
-/// sized to its own sentence (R1700) and bounded by the room beside the launch
-/// panel (a constant would paint over that panel at another window size).
 /// ★★★★★ R1981 — **where a person is standing**, on the canvas that changes
 /// when they move.
+///
+/// ⚠ The canvas's TOP left, and getting it there took two refusals from this
+/// application's own gates at R1981, both the same defect one layer apart:
+/// R1792 judged the word against *the smallest box containing its centre* —
+/// a wire's address label — and R1956 caught the box's centre line a pixel off
+/// the launch panel's third row after it was moved away. Neither was about the
+/// place. Both were about the run being a SIBLING of its box, and through
+/// `caption::captioned` the run is the box's child and the pairing is a fact
+/// the scene carries.
 ///
 /// On the CANVAS and not in the lab's own app bar, which was this round's first
 /// draft: mounted in the shell that app bar is never painted — the shell draws
 /// its own — so the one place a person looks for *which graph am I in* would
 /// have been the one place the assembled tool does not show. Driven, not
 /// supposed: the frame was asked for `lab.appbar.graph` and answered nothing.
+/// ★★★★★ R1982 — **one seat per step of the way in**, laid left to right, in
+/// window coordinates.
+///
+/// The paint and the press both read THIS, so a step cannot be drawn where it
+/// cannot be pressed. That is R1736's rule for the diagram applied to the
+/// chrome: two derivations of one rectangle is the shape this screen has
+/// repaired by hand four times.
+///
+/// Each entry is `(depth, name, rect)`, and `depth` is the number of descents
+/// that step stands at — which is what [`EditPath`] can be walked back to
+/// without this screen searching for a tree id it might not hold.
+fn crumb_steps(state: &LabState) -> Vec<(usize, String, Rect)> {
+    let canvas = canvas_rect();
+    let room = gate_panel_x().saturating_sub(canvas.x + 24);
+    let mut x = canvas.x + 12;
+    let mut out = Vec::new();
+    for (depth, name) in state.breadcrumb().into_iter().enumerate() {
+        let w = seat_w(&name) + 4;
+        // ⚠ Bounded by the room beside the launch panel, which is `hint_rect`'s
+        // rule (R1700): a path deep enough to run past it would paint over the
+        // panel's last finding, and the text-smear gate refuses that screen on
+        // its next boot.
+        if x + w > canvas.x + 12 + room {
+            break;
+        }
+        out.push((depth, name, Rect::new(x, canvas.y + 10, w, 24)));
+        x += w + CRUMB_GAP;
+    }
+    out
+}
+
+/// The steps a press may reach: every one ABOVE where the person is standing.
+///
+/// The last step is where they already are, and a control that does nothing is
+/// worse than no control — so it is drawn and not offered.
+fn crumb_seats(state: &LabState) -> Vec<(usize, Rect)> {
+    let here = state.path.borrow().depth();
+    crumb_steps(state)
+        .into_iter()
+        .filter(|(depth, _, _)| *depth < here)
+        .map(|(depth, _, seat)| (depth, seat))
+        .collect()
+}
+
 fn canvas_crumb(state: &LabState, ink: Ink, rect: Rect) -> Vec<Scene> {
     let local = |r: Rect| Rect::new(r.x - rect.x, r.y - rect.y, r.w, r.h);
-    let text = state.breadcrumb().join("  /  ");
-    let seat = local(crumb_rect(&text));
+    let here = state.path.borrow().depth();
     // ★★★★★ Through `caption::captioned` and NOT a box beside a label. The first
     // draft was the sibling pair this screen has been removing since R1792, and
     // two of this application's gates said so at the commit: `r1812` counted it
@@ -6466,52 +6565,57 @@ fn canvas_crumb(state: &LabState, ink: Ink, rect: Rect) -> Vec<Scene> {
     // a neighbour's because the offsets were arithmetic against a rectangle the
     // word was not inside. Here the run IS a child of the box, the shaper
     // measures it, and the module centres it.
-    let (chip, _) = captioned(
-        "lab.crumb",
-        seat,
-        BoxStyle::filled(ink.surface)
-            .with_corner_radius(8)
-            .with_border(Border::new(ink.outline, 1)),
-        &caption::Caption::new(
-            &text,
-            run_style(9, if state.inside() { ink.text } else { ink.text_3 }),
-        )
-        .centred()
-        // The chip is what announces where a person is; the run inside is the
-        // whole of its content, which is the gesture strip's rule beside it.
-        .silent(Silence::name_of("lab.crumb")),
-        // A statement, not a control: a press falls through to the canvas.
-        caption::Pointer::Transparent,
-    );
-    // ⚠ NOT wrapped in `quiet`. The chip itself SPEAKS — it is the `AccessNode`
-    // that says where a reader is standing — and declaring a silence over a
-    // region that is announced is a claim nobody acts on, which this screen's
-    // own voice gate refuses by name.
-    vec![chip]
-}
-
-fn crumb_rect(text: &str) -> Rect {
-    let canvas = canvas_rect();
-    let room = gate_panel_x().saturating_sub(canvas.x + 24);
-    let w = (seat_w(text) + 4).min(room).max(80);
-    // ⚠★★★★★ The canvas's TOP left, which is where a person looks for *which
-    // graph am I in* — and getting it there took two refusals from this
-    // application's own gates, both worth recording because they are the same
-    // defect one layer apart.
-    //
-    // R1792 refused it first: the chip's word sat on a wire's address label in
-    // two of twelve swept states, and the run was judged against *the smallest
-    // box containing its centre*, which was the wire's. It was moved to the
-    // bottom-left chrome column to get away from the content — and R1956 then
-    // refused THAT, because the box's centre line landed a pixel off the launch
-    // panel's third row.
-    //
-    // Neither was about the place. Both were about the run being a SIBLING of
-    // its box, related to it by geometry and therefore relatable to anything
-    // else nearby. Through `caption::captioned` the run is the box's child and
-    // the pairing is a fact the scene carries, so the chip can sit where it
-    // belongs.
-    Rect::new(canvas.x + 12, canvas.y + 10, w, 24)
+    crumb_steps(state)
+        .into_iter()
+        .map(|(depth, name, seat)| {
+            // ★★★★★ R1982 — the step a person is STANDING on keeps the tag the
+            // paint tables already demand (`lab.crumb`, one per screen), and
+            // the ones above it are the controls. So the mark that says *where
+            // am I* is present on every frame — including the opening one,
+            // where there is nowhere to go — and the pressable steps appear
+            // only when there is somewhere to go.
+            let (tag, above) = if depth == here {
+                ("lab.crumb".to_owned(), false)
+            } else {
+                (format!("lab.crumb.up.{depth}"), true)
+            };
+            let (chip, _) = captioned(
+                &tag,
+                local(seat),
+                // ★ A step you can go to is tinted the way this screen tints
+                // the active rail seat, so *pressable* looks the same wherever
+                // it appears rather than being invented here.
+                BoxStyle::filled(if above { ink.accent_soft } else { ink.surface })
+                    .with_corner_radius(8)
+                    .with_border(Border::new(ink.outline, 1)),
+                &caption::Caption::new(
+                    &name,
+                    run_style(9, if above { ink.accent } else { ink.text_3 }),
+                )
+                .centred()
+                // The chip is what announces it; the run inside is the whole of
+                // its content, which is the gesture strip's rule beside it.
+                .silent(Silence::name_of(tag.clone())),
+                // ⚠★★★★★ TRANSPARENT even for the steps that ARE controls, and
+                // this screen's own gate is what said so: a tagged node that
+                // takes the pointer is resolved by the router as the hit
+                // target, which then looks for an External with that tag, finds
+                // none, and forwards nothing — the screen goes dead to a real
+                // mouse wherever it is painted. Every control on this canvas is
+                // resolved from COORDINATES by `Hit::at`, and `crumb_seats` is
+                // where these are. The first draft used `Target` because that
+                // reads like what a button is, and
+                // `r1655_every_tag_but_the_root_is_pointer_transparent` named
+                // the chip in one line.
+                caption::Pointer::Transparent,
+            );
+            // ⚠ NOT wrapped in `quiet`. Each chip SPEAKS — an `AccessNode` says
+            // what it is — and declaring a silence over a region that is
+            // announced is a claim nobody acts on, which this screen's own
+            // voice gate refuses by name.
+            chip
+        })
+        .collect()
 }
 
 // ── The inspector ───────────────────────────────────────────────────────────
@@ -14542,6 +14646,29 @@ fn enter_card(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError>
     Ok(said)
 }
 
+/// ★★★★★ R1982 — **stand at the step of the way in that `depth` names.**
+///
+/// Walks [`EditPath::exit`] until the path is that deep — the model's own
+/// operation, repeated — rather than seeking a tree id. A `TreeId` would have
+/// to be found among the entries and could name one the path does not hold;
+/// a depth cannot be wrong in that way, and `exit` refuses at the root, which
+/// bounds the loop without a count written here.
+///
+/// This is the only way OUT of a subgraph a person has who is not driving the
+/// wire, which is the sharpest half of
+/// `debt-the-assembled-tools-subgraph-surface-is-half-built`.
+fn climb_to(state: &Rc<LabState>, depth: usize) {
+    let mut path = state.path.borrow().clone();
+    while path.depth() > depth && path.exit().is_ok() {}
+    stand_in(state, path);
+    let said = format!(
+        "back in {}: {} card(s)",
+        state.breadcrumb().last().cloned().unwrap_or_default(),
+        state.cards().len()
+    );
+    state.say(Utterance::done(&said));
+}
+
 /// ★★★★★ R1981 — **come back out to the tree this one was entered from.**
 fn leave_subgraph(state: &Rc<LabState>) -> Result<String, InvokeError> {
     let mut path = state.path.borrow().clone();
@@ -15914,9 +16041,15 @@ fn move_end(
 /// and inspector read, and R1914 measured what a locator that lives only in a
 /// name costs when the pin comes apart.
 fn set_port_address(state: &LabState, socket: Socket, endpoint: &str) {
+    // ★★★★★ R1982 — the tree being SHOWN. This named the root outright and
+    // R1981's ratchet could not see it, because the token sits on a line of its
+    // own inside a wrapped call and that gate matched `(ROOT`. A wire re-aimed
+    // inside a subgraph would have written its address onto whatever card held
+    // that number in the root.
+    let here = state.here();
     let mut doc = state.doc.borrow_mut();
     let _ = doc.set_port_value(
-        ROOT,
+        here,
         socket.node,
         PortRef::input(socket.port),
         endpoint.to_owned(),
@@ -16383,6 +16516,11 @@ fn release(state: &Rc<LabState>) {
         }
         Hit::Fit => {
             fit_view(state);
+        }
+        // ★★★★★ R1982 — stand where that step names, by walking the model's own
+        // path back rather than jumping to a tree id this screen worked out.
+        Hit::Crumb(depth) => {
+            climb_to(state, depth);
         }
         Hit::Problem => {
             go_to_problem(state);
@@ -17347,9 +17485,16 @@ fn add_node(state: &Rc<LabState>, role: Role) {
     // throughout, because that is what a node's stored position is in — the
     // card is painted at `zoom` times this, and so is every other card.
     let id = {
+        // ★★★★★ R1982 — the card joins the tree a person is LOOKING AT. This
+        // named the root outright, so from inside a subgraph the palette put a
+        // card somewhere the person could not see and the canvas did not
+        // change. R1981 made descending possible and left this behind; its
+        // ratchet could not see the site because the token is on a line of its
+        // own in a wrapped call.
+        let here = state.here();
         let mut doc = state.doc.borrow_mut();
         doc.add_node(
-            ROOT,
+            here,
             NodeBody::Kind(LabNode {
                 role,
                 // ★★★★★ R1961 — a card just taken from the palette listens
@@ -20072,6 +20217,21 @@ fn gate_access(state: &LabState) -> Vec<AccessNode> {
             format!("in {}, at the top", state.breadcrumb().join(", of "))
         }),
     );
+    // ★★★★★ R1982 — and each step ABOVE is a BUTTON, said as one.
+    //
+    // A `Status` for the step a person is on and a `Button` for the ones they
+    // can go to, because those are two different things to a reader and the
+    // difference is exactly what this round built: before it, the whole chip
+    // was a statement and there was no way out of a subgraph that did not go
+    // through the wire.
+    for (depth, name, _) in crumb_steps(state) {
+        if depth < state.path.borrow().depth() {
+            nodes.push(
+                AccessNode::new(format!("lab.crumb.up.{depth}"), AriaRole::Button)
+                    .with_name(format!("go back to {name}")),
+            );
+        }
+    }
     // ★★★★★ R1691 — **the toast, and the sweep is what found it.** It is the
     // one place several of this screen's operations report what they did (the
     // export, the script, the reset that put something back), so a reader who

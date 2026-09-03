@@ -5820,30 +5820,79 @@ fn r1981_the_screen_names_the_root_only_where_it_builds_it() {
     /// The functions that build the opening graph INTO the root, where naming
     /// it is the answer rather than an assumption.
     const BUILDERS: [&str; 3] = ["opening", "seed_nodes", "seed_links"];
+    /// The reads whose subject is the WHOLE DOCUMENT rather than the tree on
+    /// screen, where the root is the answer and not an assumption.
+    ///
+    /// ⚠ Kept apart from `BUILDERS` on purpose. Folding them into one list
+    /// would make "allowed to name the root" a single undifferentiated
+    /// exemption, and an exemption nobody has to justify is the escape hatch
+    /// this session's rule (6) names. These two lists mean different things and
+    /// a new entry has to say which it is.
+    const WHOLE_DOCUMENT: [&str; 1] = ["plan"];
     let source = include_str!("lib.rs");
     // Assembled rather than written out, so this file does not itself carry the
     // spelling it counts — which would make the census count its own gate.
-    let naming = format!("({}", "ROOT");
+    let naming: String = ["RO", "OT"].concat();
 
     // Which function each line is in, by walking down and remembering the last
     // `fn` header — the same derivation the round used to plan the change.
     let mut holder = "<before any fn>";
     let mut stray: Vec<(usize, &str, String)> = Vec::new();
     let mut inside = 0_usize;
+    let mut classified_stray = 0_usize;
+    let mut present = 0_usize;
     for (n, line) in source.lines().enumerate() {
         let trimmed = line.trim_start();
+        // ★★★★★ R1982 — comments and the import are not call sites, and the
+        // TOKEN is what is counted rather than `(ROOT`.
+        //
+        // ⚠⚠ R1981's draft matched `(ROOT`, which has a discard path: a
+        // multi-line call puts `ROOT,` on a line of its own and the `(` is on
+        // the line above. Measured at R1982 — 25 tokens in code, 12 visible to
+        // that pattern, and THREE of the thirteen it could not see were real
+        // screen sites, including the one the palette adds a card through. The
+        // gate that was written to stop this class going back had the class
+        // inside it. R1976's rule, one level up: pick the shape with no path
+        // that discards, not the longer match.
+        // ⚠ The import is a `use` list wrapped over several lines, so its
+        // continuation lines start with a type name rather than `use`. Bounded
+        // by POSITION and not by shape: everything above the first `fn` in this
+        // file is imports and attributes, and a call site cannot live there.
+        // A `starts_with("use ")` exemption would have let any wrapped list
+        // through, which is the escape-hatch shape this session's rule (6)
+        // names — an exemption that quietly widens past what it was for.
+        // ⚠ The header is read FIRST. The draft of this skipped before it, so
+        // the first `fn` line was skipped as "above any fn", `holder` never
+        // advanced, and every site read as exempt — a gate that passed by
+        // seeing nothing at all. The `inside > 0` floor below is what said so,
+        // which is why that floor is here rather than being obvious.
         if let Some(rest) = trimmed.strip_prefix("fn ")
             && let Some(name) = rest.split(['(', '<']).next()
         {
             holder = name;
         }
+        if trimmed.starts_with("//") || holder == "<before any fn>" {
+            continue;
+        }
+        // ★★★★★ R1982 — the SAME population, counted two ways. `present` is a
+        // word scan and `hits` is the pattern under test, so a pattern that
+        // cannot see a site makes the two disagree. The population must be
+        // identical or the comparison is about the filters instead: the first
+        // draft of this scanned a different set of lines and reported 22
+        // against 18, which is a difference between two filters and says
+        // nothing about the pattern.
+        present += line
+            .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+            .filter(|word| *word == "ROOT")
+            .count();
         let hits = line.matches(naming.as_str()).count();
         if hits == 0 {
             continue;
         }
-        if BUILDERS.contains(&holder) {
+        if BUILDERS.contains(&holder) || WHOLE_DOCUMENT.contains(&holder) {
             inside += hits;
         } else {
+            classified_stray += hits;
             stray.push((n + 1, holder, trimmed.to_owned()));
         }
     }
@@ -5861,6 +5910,30 @@ fn r1981_the_screen_names_the_root_only_where_it_builds_it() {
     assert!(
         inside > 0,
         "the opening graph is built INTO the root, so the builders name it"
+    );
+
+    // ★★★★★ R1982 — **and the classification covered EVERY occurrence**, counted
+    // a second way that shares no code with the first.
+    //
+    // ⚠⚠ Without this the gate cannot see its own blind spot, and it had one:
+    // R1981's pattern was `(ROOT`, which a wrapped call defeats by putting the
+    // token on a line of its own. Measured at R1982 — 25 tokens in this file's
+    // code, 12 of them visible to that pattern — and three of the thirteen it
+    // could not see were real screen sites, including the one the palette adds
+    // a card through. A counterfactual that put the weak pattern back went
+    // UNCAUGHT by everything above, because with the sites repaired there was
+    // nothing left for it to miss. So what is asserted is COVERAGE: the sum of
+    // what was classified equals what is there.
+    //
+    // The second count is a word scan and not a substring search, so a change
+    // to `naming` moves one side of this equation and not the other.
+    assert_eq!(
+        inside + classified_stray,
+        present,
+        "★★★★★ the classification saw {} occurrence(s) and the same lines carry \
+         {present}. A pattern that cannot see a site cannot judge it, which is \
+         how the palette's own call hid from R1981's draft of this gate",
+        inside + classified_stray
     );
 }
 
@@ -5974,6 +6047,95 @@ fn r1981_where_this_screen_stands_is_one_answer_in_three_renderings() {
         super::leave_subgraph(&state).expect("and back out");
         assert_eq!(state.here(), ROOT);
         assert!(!state.inside());
+    });
+}
+
+/// ★★★★★ R1982 — **the way out is on the frame, and a press finds it.**
+///
+/// The sharpest half of `debt-the-assembled-tools-subgraph-surface-is-half-built`:
+/// R1981's breadcrumb SAID where a person was and could not be pressed, so
+/// `exit` was reachable from the wire and from nothing a pointer or a keyboard
+/// could touch. A person could go into a subgraph and not come out.
+///
+/// Driven through `Hit::at`, which is what a real press goes through — not
+/// through `crumb_seats` directly, because a seat nobody resolves is a
+/// rectangle rather than a control.
+#[test]
+fn r1982_a_person_inside_a_subgraph_has_a_way_out_on_the_frame() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+
+        assert!(
+            super::crumb_seats(&state).is_empty(),
+            "★ at the top there is nowhere to go, so nothing is offered"
+        );
+
+        let pair: Vec<_> = state.cards().into_iter().take(2).collect();
+        state
+            .selection
+            .set(pinion_core::selection::Selection::group(pair));
+        super::group_selection(&state, "part").expect("two cards make a subgraph");
+        let part = state.node_of("part").expect("the instance");
+        super::enter_card(&state, part).expect("go inside");
+
+        let seats = super::crumb_seats(&state);
+        assert_eq!(
+            seats.len(),
+            1,
+            "★★★★★ one step above, so one way out is offered — {seats:?}"
+        );
+        let (step, seat) = seats[0];
+        // ★★★★★ Through the press path. `Hit::at` is what a pointer reaches,
+        // and a seat it does not resolve is not a control.
+        let hit = super::Hit::at(&state, seat.x + seat.w / 2, seat.y + seat.h / 2);
+        assert_eq!(
+            hit,
+            super::Hit::Crumb(step),
+            "★★★★★ a press at the middle of that step reaches it — {hit:?}"
+        );
+
+        super::climb_to(&state, step);
+        assert!(
+            !state.inside(),
+            "★★★★★ and acting on it puts the person back at the top"
+        );
+    });
+}
+
+/// ★★★★★ R1982 — **a step climbs to the tree it NAMES**, not one level.
+///
+/// From two descents down, pressing the top step lands at the top — the
+/// affordance a repeated `exit` does not give, and the reference's own path
+/// does. A step that always climbed one would be a differently-drawn `exit`.
+#[test]
+fn r1982_a_step_climbs_to_the_tree_it_names() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+        for name in ["outer", "inner"] {
+            let pair: Vec<_> = state.cards().into_iter().take(2).collect();
+            state
+                .selection
+                .set(pinion_core::selection::Selection::group(pair));
+            super::group_selection(&state, name).expect("two cards make a subgraph");
+            let made = state.node_of(name).expect("the instance");
+            super::enter_card(&state, made).expect("go inside");
+        }
+        assert_eq!(state.path.borrow().depth(), 2, "two descents down");
+
+        let seats = super::crumb_seats(&state);
+        assert_eq!(seats.len(), 2, "★ a step for EACH tree above — {seats:?}");
+
+        super::climb_to(&state, 0);
+        assert_eq!(
+            state.path.borrow().depth(),
+            0,
+            "★★★★★ pressing the first step climbs ALL the way, which is what \
+             makes it a path rather than a differently-drawn exit"
+        );
     });
 }
 
