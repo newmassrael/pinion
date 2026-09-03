@@ -54,7 +54,7 @@ use pinion_node_graph::{
     Stride, SwapError, SwitchRefusal, Tint, TreeId, Variadic, Violation, WatchError, Watches,
     palette_of, type_palette,
 };
-use pinion_node_graph::{InZone, PairError, RemoveTreeError, Used};
+use pinion_node_graph::{Copying, InZone, InsertError, PairError, RemoveTreeError, Renamed, Used};
 
 // ---------------------------------------------------------------- taxonomy
 
@@ -1148,11 +1148,23 @@ fn description_proofs() -> Vec<Proof> {
 /// `schema::CanCreateNewNodes` CITE it in the pin, which is how this file says
 /// *one mechanism, several rows* — the same shape R1919's search rows have.
 fn engine_permission_proofs() -> Vec<Proof> {
-    vec![proof(
-        "engine",
-        "node::CanUserDeleteNode",
-        engine_node_can_user_delete_node,
-    )]
+    vec![
+        proof(
+            "engine",
+            "node::CanUserDeleteNode",
+            engine_node_can_user_delete_node,
+        ),
+        // ★★★★★ R1985 — the COPY half of the same surface, and one proof for
+        // two rows for this registry's own stated reason: the reference asks
+        // *may you be pasted here* of a node about a destination and *may you
+        // be duplicated* of a node about where it already is, and one
+        // declaration answers both ends. `node::CanPasteHere` CITES it.
+        proof(
+            "engine",
+            "node::CanDuplicateNode",
+            engine_node_can_duplicate_node,
+        ),
+    ]
 }
 
 /// ★★★★★ R1924 — the RELINKING cluster: the engine's three, which are one
@@ -5320,6 +5332,128 @@ fn engine_node_can_user_delete_node() {
     );
 }
 
+/// ★★★★★ R1985 — **may a copy of this node be made, and may it land here.**
+///
+/// Two census rows, one mechanism, and the reference is what says they are one:
+/// its paste-permission hook is asked of a NODE about a TARGET GRAPH, and one
+/// of its TEN overriding classes answers by gathering every name the
+/// destination already uses and declining if this one is among them. Its
+/// duplicate hook is the same question with the destination being where the
+/// node already is — seventeen classes override it and TEN refuse outright,
+/// and those ten are the graph's fixed ends: a root, a result, an entry, a pin
+/// base, each a node a graph has exactly one of.
+///
+/// ⚠ Both rows' pin reasons said the EDIT did not exist here — *no clipboard
+/// and no paste verb*, *no verb that duplicates a node* — and both were false
+/// when they were written at R1920: `extract`, `insert` and `duplicate` landed
+/// at R1578, 342 rounds earlier. What was absent is what this proves.
+#[test]
+fn engine_node_can_duplicate_node() {
+    /// A kind that is the graph's fixed end: there is one of these, under that
+    /// name, and a second under another name is not what was asked for.
+    #[derive(Debug, Clone, PartialEq)]
+    struct Entry;
+    impl NodeKind for Entry {
+        type Type = ();
+        type Value = ();
+        fn name(&self) -> String {
+            "entry".to_owned()
+        }
+        fn inputs(&self) -> Vec<Port<(), ()>> {
+            Vec::new()
+        }
+        fn outputs(&self) -> Vec<Port<(), ()>> {
+            Vec::new()
+        }
+        fn evaluate(&self, _: &[Option<()>]) -> Vec<Option<()>> {
+            Vec::new()
+        }
+        fn copying(&self) -> Copying {
+            Copying::Refused
+        }
+    }
+
+    let mut document: Document<Entry> = Document::new("root");
+    let entry = document
+        .add_node(ROOT, NodeBody::Kind(Entry), 0, 0)
+        .unwrap();
+    document.relabel(ROOT, entry, Some("Begin")).unwrap();
+
+    // ★ `CanDuplicateNode` — refused, and the document is untouched, because
+    // the decision is made in the plan and not part way through the writing.
+    let before = document.tree(ROOT).unwrap().node_count();
+    let why = document
+        .duplicate(
+            ROOT,
+            &[entry],
+            (0, 200),
+            Crossings::Drop,
+            Definitions::Share,
+        )
+        .unwrap_err();
+    assert!(matches!(
+        why,
+        pinion_node_graph::DuplicateError::Place(InsertError::NameTaken { .. })
+    ));
+    assert_eq!(document.tree(ROOT).unwrap().node_count(), before);
+
+    // ★★★★★ PAST THE REFERENCE: its hook answers a bare `bool`, so *I refuse*
+    // and *nothing to say* are the same value, and at its own paste site a
+    // refusal breaks that node's links and continues — a person is left with a
+    // node missing its wires and nothing said. This names the node, the name,
+    // and who here already answers to it.
+    let said = why.to_string();
+    assert!(
+        said.contains("Begin"),
+        "the name is in the sentence: {said}"
+    );
+
+    // ★ `CanPasteHere` is the same question asked of a destination: the very
+    // same node lands wherever nothing answers to its name.
+    let cut = document.extract(ROOT, &[entry]).unwrap();
+    let mut elsewhere: Document<Entry> = Document::new("elsewhere");
+    let landed = elsewhere
+        .insert(ROOT, &cut, (0, 0), Crossings::Drop, Definitions::Share)
+        .unwrap();
+    assert_eq!(landed.nodes.len(), 1);
+    assert!(landed.renamed.is_empty(), "nothing had to change");
+
+    // ★★★★★ AND THE OTHER ANSWER IS A DECLARATION, NOT THE ONLY ONE. The DCC
+    // renames the copy instead of refusing it — its copy helper calls its own
+    // unique-name routine on the destination tree — and neither reference can
+    // express the other. A kind says which, and either way the insertion
+    // REPORTS what happened, which neither reference does.
+    let mut plain: Document<Op> = Document::new("root");
+    let node = plain.add_node(ROOT, NodeBody::Kind(Op::Add), 0, 0).unwrap();
+    plain.relabel(ROOT, node, Some("Begin")).unwrap();
+    let copied = plain
+        .duplicate(ROOT, &[node], (0, 200), Crossings::Drop, Definitions::Share)
+        .unwrap();
+    assert_eq!(
+        copied.renamed,
+        vec![Renamed {
+            node: copied.nodes[0],
+            from: "Begin".to_owned(),
+            to: "Begin-01".to_owned(),
+        }]
+    );
+
+    // ★★★★★ THE LAW THIS ROUND EXISTS FOR: the copy path and the permission
+    // surface are one decision. Before R1985 `duplicate` built the state
+    // `may(Act::Rename)` refuses — two nodes answering to one name — and
+    // `node_labelled` then addressed NEITHER.
+    assert_eq!(plain.node_labelled(ROOT, "Begin"), Some(node));
+    assert_eq!(plain.node_labelled(ROOT, "Begin-01"), Some(copied.nodes[0]));
+    for id in [node, copied.nodes[0]] {
+        let held = plain.tree(ROOT).unwrap().node(id).unwrap();
+        let name = held.display_name();
+        assert!(
+            plain.may(ROOT, Act::Rename(id, Some(&name))).is_ok(),
+            "every card holds a name it is ALLOWED to hold: {name}"
+        );
+    }
+}
+
 /// ★★★★★ R1924 — **may this wire's end be picked up at all**, asked before the
 /// drag starts.
 ///
@@ -8304,6 +8438,12 @@ fn dcc_node_can_sync_sockets() {
 /// destructures its source, so a field added to a node fails to compile until
 /// someone says whether a copy carries it — where a hand-written copy silently
 /// drops it (the defect R1589 found in this crate's own `move_nodes`).
+///
+/// ⚠ R1985 — the LABEL is the one field a copy does not carry verbatim, and
+/// the DCC is where that rule comes from: its copy helper gives the copy a name
+/// unique in the destination tree. Everything else here is unchanged, which is
+/// the point of the distinction — the label is an ADDRESS in this tree and the
+/// rest is what the node is.
 #[test]
 fn dcc_node_copyfunc() {
     let mut chain = chain();
@@ -8343,7 +8483,11 @@ fn dcc_node_copyfunc() {
         .unwrap()
         .node(copy.nodes[0])
         .unwrap();
-    assert_eq!(made.label.as_deref(), Some("stage"));
+    assert_eq!(
+        made.label.as_deref(),
+        Some("stage-01"),
+        "the address is the one field that cannot be carried verbatim"
+    );
     assert!(made.bypassed);
     assert!(made.appearance.collapsed);
     assert_eq!(made.values.get(&PortRef::input(0)), Some(&Val::Number(7)));
@@ -8696,6 +8840,14 @@ fn engine_node_on_pin_removed() {
 /// The engine's node is told it was renamed. Here a label is a field of the
 /// node, so a rename is an assignment — and it travels with a copy, which is
 /// what makes it a property of the node rather than of the editor.
+///
+/// ⚠★★★★★ R1985 — *travels with a copy* used to be asserted as *travels
+/// UNCHANGED*, and that was asserting a defect: a copy landing in the tree it
+/// came from under its original's name leaves two nodes answering to one, which
+/// `may(Act::Rename)` refuses to create and `node_labelled` then cannot address.
+/// What is a property of the node is that the copy arrives NAMED — carrying its
+/// original's name where nothing here answers to it, and a name derived from it
+/// where something does. Both are asserted now.
 #[test]
 fn engine_node_on_rename_node() {
     let mut chain = chain();
@@ -8725,8 +8877,39 @@ fn engine_node_on_rename_node() {
             .unwrap()
             .label
             .as_deref(),
+        Some("Total-01")
+    );
+    // ★ and the copy SAYS where its name came from, which the reference's own
+    // rename notification cannot: it is handed the node and nothing else.
+    assert_eq!(
+        copy.renamed,
+        vec![Renamed {
+            node: copy.nodes[0],
+            from: "Total".to_owned(),
+            to: "Total-01".to_owned(),
+        }]
+    );
+    // ★★★★★ The original still answers to its own name, so the rename that
+    // travelled did not cost the graph an address.
+    assert_eq!(chain.document.node_labelled(ROOT, "Total"), Some(chain.add));
+
+    // ★ Into a tree that has never heard of it, the name comes across whole.
+    let cut = chain.document.extract(ROOT, &[chain.add]).unwrap();
+    let mut elsewhere: Document<Op> = Document::new("elsewhere");
+    let landed = elsewhere
+        .insert(ROOT, &cut, (0, 0), Crossings::Drop, Definitions::Share)
+        .unwrap();
+    assert_eq!(
+        elsewhere
+            .tree(ROOT)
+            .unwrap()
+            .node(landed.nodes[0])
+            .unwrap()
+            .label
+            .as_deref(),
         Some("Total")
     );
+    assert!(landed.renamed.is_empty());
 }
 
 /// The engine's comment node is told its text changed. A frame's label is the

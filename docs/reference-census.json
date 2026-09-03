@@ -2715,10 +2715,10 @@
       "verdict": "have"
     },
     "node::CanDuplicateNode": {
-      "covered_by": "the permission surface exists (Document::may) but the edit it would gate does not: this crate has no verb that duplicates a node. Measured R1920 over Document's own edit verbs",
+      "covered_by": "NodeKind::copying() -> Copying, enforced by Document::duplicate. ⚠ R1920's reason for this row — 'this crate has no verb that duplicates a node' — was FALSE WHEN WRITTEN: Document::duplicate landed at R1578, 342 rounds earlier. What was absent is that the copy path asked nothing: it copied a label verbatim and so built the state may(Act::Rename) refuses, two nodes answering to one name, with node_labelled then addressing NEITHER and validate() reporting nothing. Of the reference's seventeen overriders TEN refuse outright, and those ten are the graph's fixed ends — a root, a result, an entry, a pin base — a node a graph has exactly one of, which is what Copying::Refused says. PAST IT: its hook answers a bare bool, so 'I refuse' and 'nothing to say' are one value, and at its own paste site a refusal breaks that node's links and continues; this names the node, the name and the holder, and refuses before the first mutation. R1985",
       "mechanism": "graph-node",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_node_can_duplicate_node",
+      "verdict": "have"
     },
     "node::CanJumpToDefinition": {
       "covered_by": "the engine's visual script/asset subject matter",
@@ -2727,10 +2727,10 @@
       "verdict": "app-content"
     },
     "node::CanPasteHere": {
-      "covered_by": "the permission surface exists (Document::may) but the edit it would gate does not: this crate has no clipboard and no paste verb. Measured R1920 over Document's own edit verbs",
+      "covered_by": "NodeKind::copying() -> Copying, enforced by Document::insert against the DESTINATION. ⚠ R1920's reason — 'this crate has no clipboard and no paste verb' — was FALSE WHEN WRITTEN: Fragment, extract and insert landed at R1578, and a Fragment is serializable, which is what a clipboard is. Measured from ONE of the reference's ten overriders of it — the only one that reaches its answer this way — this asks whether the destination already answers to the pasted node's name — it gathers every name in use in the blueprint and declines — so it is one mechanism with node::CanDuplicateNode and the same declaration answers both ends. The two references DISAGREE about the outcome, which is why this is a kind's declaration rather than a rule: the DCC renames the copy (its copy helper calls its own unique-name routine on the destination tree) and the engine refuses. Either way the insertion REPORTS what happened — Inserted::renamed, InsertError::NameTaken — and neither reference reports either. R1985",
       "mechanism": "graph-node",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_node_can_duplicate_node",
+      "verdict": "have"
     },
     "node::CanSplitPin": {
       "covered_by": "CAN this port be split, and when not, WHICH of six reasons. The reference answers a conjunction of five conditions as one boolean — the pin is this node's, it is connectable, NOTHING IS LINKED TO IT, its type is a struct, and the base class says no so a kind opts in — with a sixth in its schema at the moment of splitting: not a container. Each wants a different repair, so each is a named arm here, and the member ports come back with the answer. R1914 built the ACT (Document::split_port / recombine_port) and added a SEVENTH arm the reference cannot reach: already split, which its own predicate answers with the same `false` as cannot-be-split though the repairs are opposite. The address form is Document::splittable_at, which asks the same question of a member",
@@ -3267,7 +3267,7 @@
       "verdict": "have"
     },
     "schema::CanDuplicateGraph": {
-      "covered_by": "the permission surface exists (Document::may) but the edit it would gate does not: no verb copies a definition tree. Measured R1920 over Document's own edit verbs",
+      "covered_by": "⚠ R1920's reason said 'no verb copies a definition tree' and R1985 measured that clause FALSE: Document::insert with Definitions::Fork adds every carried definition as a new one and reports them in Inserted::definitions_added, which the test a_fragment_crosses_into_a_document_that_never_had_the_definition has driven since R1578. What is genuinely absent is a definition tree duplicated ON ITS OWN — the reference gates duplicating a graph AS a graph, with no instance to carry it — and the permission surface (Document::may) covers nodes, so there is no act to gate. R1985 corrected the clause without claiming the row; R1919's price is why: fixing a reason without building the thing makes the remaining distance LOOK smaller",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "absent"

@@ -102,11 +102,11 @@ use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::widgets::wheel::WheelDirection;
 use pinion_core::{CellKind, Frame, Modifiers, Scene, WidgetCore, edit_field_keymap};
 use pinion_node_graph::{
-    Act, Camera, Document, Drawn, EditPath, Extent, Faces, Fault, Fit, Found, InZone, Instance,
-    Item, Judged, LandError, Landfall, LinkId, LinkLayer, Margin, NameSource, Node, NodeBody,
-    NodeId, NodeKind, Objection, PortPath, PortRef, PortSite, ROOT, Relinked, Sharing, Side,
-    Socket, Tint, TreeId, Violation, WatchError, Watches, Weight, ZoomRange, palette_of,
-    type_palette,
+    Act, Camera, Crossings, Definitions, Document, Drawn, EditPath, Extent, Faces, Fault, Fit,
+    Found, Fragment, InZone, Instance, Item, Judged, LandError, Landfall, LinkId, LinkLayer,
+    Margin, NameSource, Node, NodeBody, NodeId, NodeKind, Objection, PortPath, PortRef, PortSite,
+    ROOT, Relinked, Sharing, Side, Socket, Tint, TreeId, Violation, WatchError, Watches, Weight,
+    ZoomRange, palette_of, type_palette,
 };
 use pinion_platform_storage::AppStorage;
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
@@ -1564,6 +1564,19 @@ struct LabState {
     stacking: RefCell<Vec<NodeId>>,
     selection: Signal<Selection<NodeId>>,
     selected_link: Signal<Option<LinkPick>>,
+    /// ★★★★★ R1985 — **what has been copied**, held as the value the crate
+    /// already makes of a piece of a graph.
+    ///
+    /// A [`Fragment`] and not a list of ids, because ids do not survive what a
+    /// clipboard is for: the cards a person copied can be deleted, the tree
+    /// they were in can be left, and this still holds a graph. It is also the
+    /// only shape that can be pasted somewhere the originals never were — the
+    /// crate's own round-trip test pastes one into a document that has never
+    /// heard of its definitions.
+    ///
+    /// ⚠ It is NOT cleared by navigating, because that is what a person copying
+    /// in one subgraph to paste in another is doing.
+    clipboard: RefCell<Option<Fragment<LabNode>>>,
     /// ★★★★★ R1919 — **what a reader is looking for**, and nothing more.
     ///
     /// The HITS are not kept beside it: they are derived from this and the
@@ -2044,6 +2057,9 @@ impl LabState {
             stacking: RefCell::new(Vec::new()),
             selection: Signal::new(selection),
             selected_link: Signal::new(selected_link),
+            // Nothing has been copied yet, which is a real state and not a
+            // placeholder: `paste` refuses with that as its reason.
+            clipboard: RefCell::new(None),
             searching: Signal::new(String::new()),
             zoom: Signal::new(spec::OPENING_ZOOM),
             pan: Signal::new((0, 0)),
@@ -11768,6 +11784,21 @@ const FIELDS: &[SchemaField] = &{
                 ]
             },
         ),
+        // ★★★★★ R1985 — **copy, paste and duplicate.** The crate has answered
+        // all three since R1578 and no screen could reach any of them, which is
+        // the same shape R1981-R1983 found for the subgraph verbs.
+        //
+        // ⚠ None of them takes an argument. `copy` and `duplicate` act on the
+        // SELECTION, which is what `group` established as this canvas's way of
+        // saying "these cards" and what a person has actually got hold of;
+        // `paste` acts on the clipboard and lands where the person is standing.
+        // A card name here would be a second way to mean the same thing.
+        SchemaField::action("copy", "string"),
+        SchemaField::action("paste", "string"),
+        SchemaField::action("duplicate", "string"),
+        // What is on the clipboard, so a reader can ask before pasting rather
+        // than pasting to find out.
+        SchemaField::new("clipboard", "json"),
         // ★★★★★ R1912 — put a card's pins away, or bring them back. The scope
         // vocabulary is CLOSED and built from `PIN_SCOPES` rather than spelled
         // here, so the words an agent is offered cannot drift from the ones the
@@ -12119,6 +12150,13 @@ impl ExternalIntrospect for LabOracle {
                 "inside": state.inside(),
                 "cards": state.cards().len(),
             }))),
+            // ★★★★★ R1985 — what is on the clipboard.
+            //
+            // The names are the cards' OWN names, not what a paste would call
+            // them: what a copy ends up called depends on the tree it lands in,
+            // and answering the destination's question here would be answering
+            // it before the destination is known.
+            "clipboard" => Ok(IntrospectValue::Json(clipboard_wire(state))),
             // ★★★★★ R1918 — what the marks on this frame say about themselves.
             "described" => Ok(IntrospectValue::Json(described_wire(state))),
             // ★★★★★ R1919 — what a reader is looking for, and what answers.
@@ -12812,6 +12850,11 @@ impl ExternalIntrospect for LabOracle {
                 let part = Self::card(&state, into.trim())?;
                 insert_card(&state, node, part).map(IntrospectValue::Text)
             }
+            // ★★★★★ R1985 — a copy asks the questions the original had to
+            // answer.
+            "copy" => copy_selection(&state).map(IntrospectValue::Text),
+            "paste" => paste_clipboard(&state).map(IntrospectValue::Text),
+            "duplicate" => duplicate_selection(&state).map(IntrospectValue::Text),
             "rename" => {
                 let raw = Self::text(&args)?;
                 let (which, to) = raw.split_once(',').ok_or_else(|| {
@@ -14791,6 +14834,124 @@ fn insert_card(state: &Rc<LabState>, node: NodeId, into: NodeId) -> Result<Strin
     let said = format!("{name} moved into {part}: {} card(s)", moved.moved.len());
     state.say(Utterance::done(&said));
     Ok(said)
+}
+
+/// ★★★★★ R1985 — **copy the selected cards.**
+///
+/// [`Document::extract`] leaves the document untouched, which is exactly what
+/// a copy is; the clipboard holds the fragment it answers. The severed
+/// boundary comes with it, so a paste can offer to re-feed the copies from
+/// whatever still produces those values here — see [`paste_clipboard`].
+fn copy_selection(state: &Rc<LabState>) -> Result<String, InvokeError> {
+    let chosen: Vec<NodeId> = state.selection.get().members().to_vec();
+    let here = state.here();
+    let cut = state.doc.borrow().extract(here, &chosen).map_err(|why| {
+        let said = Utterance::refused(&why.to_string());
+        state.say(said.clone());
+        InvokeError::rejected(said.into_clause())
+    })?;
+    let said = format!("copied: {} card(s)", cut.node_count());
+    *state.clipboard.borrow_mut() = Some(cut);
+    state.say(Utterance::done(&said));
+    Ok(said)
+}
+
+/// ★★★★★ R1985 — **paste what was copied, here.**
+///
+/// `here` is [`LabState::here`] and not the root, which is R1981's rule for
+/// every verb on this canvas: a person standing inside a subgraph is looking at
+/// the tree their paste belongs in. R1982 is what made that reachable at all.
+///
+/// ⚠ [`Crossings::KeepInbound`] rather than `Drop`: the reference's own paste
+/// re-feeds a copy from the socket that fed its original where that socket is
+/// still there, and a copy arriving with its inputs cut is a copy a person has
+/// to re-wire by hand. What could NOT be re-fed is reported rather than
+/// dropped, which is the half neither reference has.
+///
+/// ★★★★★ And the RENAMES are said out loud. A copy whose name this tree already
+/// answers to takes one of its own (R1985 `Copying::Renamed`), and a person who
+/// is not told that has to work out for themselves why their card is called
+/// something else. The DCC renames in silence; the engine refuses in silence.
+fn paste_clipboard(state: &Rc<LabState>) -> Result<String, InvokeError> {
+    let held = state.clipboard.borrow().clone();
+    let Some(cut) = held else {
+        let said = Utterance::refused(&"nothing has been copied yet");
+        state.say(said.clone());
+        return Err(InvokeError::rejected(said.into_clause()));
+    };
+    let here = state.here();
+    let at = (
+        cut.origin().0.saturating_add(spec::PASTE_OFFSET.0),
+        cut.origin().1.saturating_add(spec::PASTE_OFFSET.1),
+    );
+    let landed = state
+        .doc
+        .borrow_mut()
+        .insert(here, &cut, at, Crossings::KeepInbound, Definitions::Share)
+        .map_err(|why| {
+            let said = Utterance::refused(&why.to_string());
+            state.say(said.clone());
+            InvokeError::rejected(said.into_clause())
+        })?;
+    state.selection.set(Selection::empty());
+    state.selected_link.set(None);
+    let said = describe_landing("pasted", &landed);
+    state.say(Utterance::done(&said));
+    Ok(said)
+}
+
+/// ★★★★★ R1985 — **copy the selected cards beside themselves**, which the
+/// crate does as one call because it is a cut and a paste that never leave the
+/// tree.
+///
+/// It deliberately does NOT go through the clipboard: a person who duplicates
+/// has not asked for what they copied earlier to be thrown away, and both
+/// references keep the two separate for that reason.
+fn duplicate_selection(state: &Rc<LabState>) -> Result<String, InvokeError> {
+    let chosen: Vec<NodeId> = state.selection.get().members().to_vec();
+    let here = state.here();
+    let made = state
+        .doc
+        .borrow_mut()
+        .duplicate(
+            here,
+            &chosen,
+            spec::PASTE_OFFSET,
+            Crossings::KeepInbound,
+            Definitions::Share,
+        )
+        .map_err(|why| {
+            let said = Utterance::refused(&why.to_string());
+            state.say(said.clone());
+            InvokeError::rejected(said.into_clause())
+        })?;
+    state.selection.set(Selection::empty());
+    state.selected_link.set(None);
+    let said = describe_landing("duplicated", &made);
+    state.say(Utterance::done(&said));
+    Ok(said)
+}
+
+/// What an insertion did, in one sentence a person reads and an agent parses.
+///
+/// One function because `paste` and `duplicate` land the same value and a
+/// second sentence would be a second vocabulary for one fact.
+fn describe_landing(verb: &str, landed: &pinion_node_graph::Inserted) -> String {
+    use std::fmt::Write as _;
+
+    let mut said = format!("{verb}: {} card(s)", landed.nodes.len());
+    if !landed.renamed.is_empty() {
+        let renames: Vec<String> = landed
+            .renamed
+            .iter()
+            .map(|it| format!("{} is now {}", it.from, it.to))
+            .collect();
+        let _ = write!(said, ", renamed: {}", renames.join(", "));
+    }
+    if !landed.unattached.is_empty() {
+        let _ = write!(said, ", {} input(s) not re-fed", landed.unattached.len());
+    }
+    said
 }
 
 /// ★ R1983 — the tree this screen is standing IN, and the instance it came
@@ -18780,10 +18941,24 @@ fn insert_reroute(
 /// So every card this screen makes is labelled, and the label is unique here
 /// even for bodies the model leaves free to repeat: free means the MODEL does
 /// not require uniqueness, not that a screen may publish an ambiguous address.
+/// ⚠★★★★★ R1985 — **this asks `nodes_labelled`, not `node_labelled`, and the
+/// difference is a defect it had.** `node_labelled` answers `None` for *nobody
+/// holds it* AND for *more than one does* — that is its documented contract —
+/// so a name two cards already answered to read as FREE here and this minted it
+/// a third time. Counting is the question being asked.
+///
+/// ⚠ And this is deliberately NOT
+/// [`Document::numbered_label`](pinion_node_graph::Document::numbered_label),
+/// which R1985 built for the copy path. That one searches the KIND's naming
+/// scope, so for a body the model leaves [`pinion_node_graph::Naming::Free`] it
+/// finds nothing and
+/// would answer `bend-01` every time. This screen's question is the one the
+/// paragraph above states — a caption no card here shows — and folding two
+/// different questions into one call is the defect R1980 recorded not making.
 fn fresh_label(doc: &Document<LabNode>, here: TreeId, stem: &str) -> String {
     for index in 1.. {
         let candidate = format!("{stem}-{index:02}");
-        if doc.node_labelled(here, &candidate).is_none() {
+        if doc.nodes_labelled(here, &candidate).is_empty() {
             return candidate;
         }
     }
@@ -20194,6 +20369,29 @@ fn editable_wire(state: &Rc<LabState>) -> serde_json::Value {
 /// descend to the hit and select it, and a caller there cannot ask how far away
 /// it is before going. `because` keeps the two kinds of hit apart — a node a
 /// person named, and one matched by the word its kind describes itself with.
+/// ★★★★★ R1985 — **what has been copied**, answered from the fragment itself.
+///
+/// `held` is empty and `cards` is `[]` when nothing has been copied, which is a
+/// state a reader can act on rather than a hole: `paste` refuses with exactly
+/// that reason.
+///
+/// ⚠ `severed` is the count of inputs the copies were cut away from, and it is
+/// published because a paste is where they either come back or are reported
+/// lost — a reader who is choosing WHERE to paste is choosing how many of them
+/// survive.
+fn clipboard_wire(state: &Rc<LabState>) -> serde_json::Value {
+    let held = state.clipboard.borrow();
+    let Some(cut) = held.as_ref() else {
+        return serde_json::json!({ "held": false, "cards": [], "severed": 0 });
+    };
+    let cards: Vec<String> = cut.nodes().map(Node::display_name).collect();
+    serde_json::json!({
+        "held": true,
+        "cards": cards,
+        "severed": cut.inbound().len(),
+    })
+}
+
 fn found_wire(state: &Rc<LabState>) -> serde_json::Value {
     let doc = state.doc.borrow();
     serde_json::json!({

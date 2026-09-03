@@ -268,7 +268,8 @@ pub use deploy::{Bringup, Configured, Deployed, Placed, Plan, Uncarried, Unplann
 pub use describe::{Carrying, PortTooltip};
 pub use eval::{Descent, Evaluator};
 pub use fragment::{
-    Crossings, Definitions, DuplicateError, ExtractError, Fragment, InsertError, Inserted, Severed,
+    Crossings, Definitions, DuplicateError, ExtractError, Fragment, InsertError, Inserted, Renamed,
+    Severed,
 };
 pub use frame::{Enframed, Orphaned, ParentError};
 pub use group::{
@@ -287,7 +288,7 @@ pub use model::{
     RemoveTreeError, Removed, RemovedTree, Side, Signature, Socket, Tree, TreeId, Used, crossing,
 };
 pub use naming::{Labelled, NameSource, PortName};
-pub use naming_scope::Naming;
+pub use naming_scope::{Copying, Naming};
 pub use observed::{
     AdoptError, Discovery, Judgement, Layers, LinkLayer, Observation, ObserveError, Reachability,
     Standing,

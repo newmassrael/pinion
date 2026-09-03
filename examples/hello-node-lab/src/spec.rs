@@ -801,6 +801,14 @@ pub const GRAPH_NAME: &str = "mesh-failover";
 /// The zoom percentage the screen opens at.
 pub const OPENING_ZOOM: u32 = 84;
 
+/// ★ R1985 — how far a pasted or duplicated card sits from the one it copies.
+///
+/// Down and to the right, so the copy does not hide its original and the two
+/// read as a pair. Both references offset rather than stacking, for that
+/// reason; neither publishes the step, so this is ours and it is stated once
+/// rather than written at each of the two verbs that place a copy.
+pub const PASTE_OFFSET: (i32, i32) = (40, 40);
+
 /// The gestures the canvas advertises on its hint strip, and which this screen
 /// therefore has to answer.
 pub const GESTURES: &[(&str, &str)] = &[

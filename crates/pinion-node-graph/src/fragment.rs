@@ -74,6 +74,7 @@ use crate::model::{
     Document, InterfaceSide, Link, LinkId, Node, NodeBody, NodeId, NodeKind, ROOT, Sink, Socket,
     Tree, TreeId, centroid, crossing,
 };
+use crate::naming_scope::Copying;
 use crate::numbering::Numbering;
 
 /// One value that used to cross a fragment's boundary.
@@ -300,6 +301,26 @@ pub struct Inserted {
     /// Copies whose original's frame could not take them, with that frame named
     /// — the fragment went to a different tree, or the frame is gone.
     pub unframed: Vec<Orphaned>,
+    /// ★★★★★ R1985 — copies that could not keep the name they arrived with,
+    /// and what they are called instead.
+    ///
+    /// Empty is the ordinary answer: a copy keeps its name wherever the
+    /// destination does not already answer to it. Neither reference reports
+    /// this at all — the DCC renames in silence, the engine refuses in silence
+    /// — and it is the difference between a person seeing `Total-01` and
+    /// wondering what happened to their paste, and being told.
+    pub renamed: Vec<Renamed>,
+}
+
+/// ★★★★★ R1985 — one copy that had to take a name of its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Renamed {
+    /// The copy, in the destination tree.
+    pub node: NodeId,
+    /// The name it arrived holding.
+    pub from: String,
+    /// The name it is called now.
+    pub to: String,
 }
 
 /// Why a selection could not be lifted out.
@@ -367,6 +388,25 @@ pub enum InsertError {
         /// The containment chain the insertion would close.
         chain: Vec<TreeId>,
     },
+    /// ★★★★★ R1985 — a carried node's kind declares
+    /// [`crate::Copying::Refused`] and the destination
+    /// already answers to its name.
+    ///
+    /// The engine's answer to *may you be pasted here*, which one of its ten
+    /// overriding classes reaches by gathering every name the destination uses.
+    /// Refused **before** the first mutation, and naming all three things its
+    /// `bool` cannot: which carried node, under what name, and who here holds
+    /// it — where the reference's call site breaks that node's links and
+    /// continues.
+    NameTaken {
+        /// The carried node, addressed in the fragment.
+        node: NodeId,
+        /// The name it holds.
+        label: String,
+        /// The node already answering to it, and the tree that one is in — the
+        /// scope may be the whole document.
+        held_by: (TreeId, NodeId),
+    },
 }
 
 impl fmt::Display for InsertError {
@@ -388,6 +428,16 @@ impl fmt::Display for InsertError {
                 }
                 f.write_str(", which would then contain the first")
             }
+            Self::NameTaken {
+                node,
+                label,
+                held_by,
+            } => write!(
+                f,
+                "node {} is called {label:?} and its kind refuses to be copied under \
+                 another name, but node {} in tree {} already answers to it",
+                node.0, held_by.1.0, held_by.0.0
+            ),
         }
     }
 }
@@ -723,13 +773,77 @@ impl<K: NodeKind> Document<K> {
             }
         }
 
+        // ★★★★★ R1985 — the names, last, because a name is decided against the
+        // destination as it stands AND against the copies this same insertion
+        // is about to place. Neither is in the document while this runs, which
+        // is why `avoid` exists: asking the document about a name the previous
+        // copy has claimed would answer "free" and mint it twice.
+        let names = self.plan_names(tree, fragment, &resolved)?;
+
         Ok(InsertPlan {
             resolved,
             added,
             reused,
+            names,
             reattach,
             unattached,
         })
+    }
+
+    /// ★★★★★ R1985 — **what each copy will be called**, decided before
+    /// anything is written.
+    ///
+    /// Its own function and not a paragraph of [`Self::plan_insert`] because it
+    /// is its own decision: everything above resolves *where the carried
+    /// definitions land*, and this resolves *what the copies are named*, which
+    /// is the question [`Copying`] answers and the one the crate got wrong for
+    /// 407 rounds.
+    ///
+    /// ⚠ `claimed` is what the document cannot be asked about. Two copies in
+    /// one paste are neither of them in the document while this runs, so asking
+    /// it whether a name is free answers *yes* for the second one and mints it
+    /// twice — measured by a counterfactual, and by the walk, which needed a
+    /// card and its own copy pasted together before it could reach the case.
+    ///
+    /// # Errors
+    ///
+    /// [`InsertError::NameTaken`] when a carried node's kind declares
+    /// [`Copying::Refused`] and the destination already answers to its name.
+    fn plan_names(
+        &self,
+        tree: TreeId,
+        fragment: &Fragment<K>,
+        resolved: &BTreeMap<TreeId, TreeId>,
+    ) -> Result<BTreeMap<NodeId, String>, InsertError> {
+        let mut names: BTreeMap<NodeId, String> = BTreeMap::new();
+        let mut claimed: BTreeSet<String> = BTreeSet::new();
+        for node in fragment.nodes() {
+            let Some(was) = node.label.as_deref() else {
+                continue;
+            };
+            let body = remapped_body(&node.body, resolved);
+            let Some(fresh) = self.copy_label(tree, &body, was, &claimed) else {
+                // It keeps the name it came with, and no later copy in this
+                // batch may take it.
+                claimed.insert(was.to_owned());
+                continue;
+            };
+            if self.copying_of(&body) == Copying::Refused {
+                let held_by = self
+                    .holders_of(tree, &body, was)
+                    .into_iter()
+                    .next()
+                    .unwrap_or((tree, node.id));
+                return Err(InsertError::NameTaken {
+                    node: node.id,
+                    label: was.to_owned(),
+                    held_by,
+                });
+            }
+            claimed.insert(fresh.clone());
+            names.insert(node.id, fresh);
+        }
+        Ok(names)
     }
 
     /// Whether a value can still travel from the producer that sits in `tree`
@@ -791,6 +905,7 @@ impl<K: NodeKind> Document<K> {
         }
 
         let mut renamed: BTreeMap<NodeId, NodeId> = BTreeMap::new();
+        let mut took_a_name = Vec::new();
         let mut nodes = Vec::new();
         for node in fragment.nodes() {
             let body = remapped_body(&node.body, &plan.resolved);
@@ -804,6 +919,19 @@ impl<K: NodeKind> Document<K> {
             };
             if let Some(slot) = self.tree_mut(tree).and_then(|t| t.node_mut(fresh)) {
                 slot.adopt_from(node);
+                // ★★★★★ R1985 — `adopt_from` brings the label across verbatim,
+                // which is what left two nodes answering to one name in a scope
+                // `may(Act::Rename)` refuses to create that state in. The plan
+                // decided this before anything was written.
+                if let Some(taken) = plan.names.get(&node.id) {
+                    let was = slot.label.clone().unwrap_or_default();
+                    slot.label = Some(taken.clone());
+                    took_a_name.push(Renamed {
+                        node: fresh,
+                        from: was,
+                        to: taken.clone(),
+                    });
+                }
             }
             renamed.insert(node.id, fresh);
             nodes.push(fresh);
@@ -865,6 +993,7 @@ impl<K: NodeKind> Document<K> {
             unattached,
             reframed,
             unframed,
+            renamed: took_a_name,
         }
     }
 
@@ -979,6 +1108,12 @@ struct InsertPlan {
     resolved: BTreeMap<TreeId, TreeId>,
     added: Vec<TreeId>,
     reused: Vec<TreeId>,
+    /// ★★★★★ R1985 — the fragment nodes whose copy may not keep its name, and
+    /// what it is called instead. Decided here rather than during the
+    /// insertion for the same reason the crossings are (§2 #3): a refusal must
+    /// leave the document untouched, and by the time a node is being written
+    /// the previous ones already are.
+    names: BTreeMap<NodeId, String>,
     /// Producer in the destination -> the fragment's own consumer sockets, for
     /// the crossings that survived the check.
     reattach: Vec<(Socket, Vec<Sink>)>,

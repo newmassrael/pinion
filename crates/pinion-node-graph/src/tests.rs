@@ -9,18 +9,19 @@ use pinion_graph::Sugiyama;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Admission, Admits, AdoptError, Align, Appearance, Archive, Axis, BeaconError, BreakError,
+    Act, Admission, Admits, AdoptError, Align, Appearance, Archive, Axis, BeaconError, BreakError,
     Breakpoints, Bringup, Camera, Carried, Carrying, Command, Composition, Condition, ConnectError,
-    Container, Control, Conversion, Crossings, Definitions, Direction, Discovery, Distribute,
-    Document, Drawn, Dropped, DuplicateError, Edge, EditError, EditPath, Extent, ExtractError, Fit,
-    Flow, ForceError, Fragment, GroupError, Grow, Halt, InsertError, Inspectable, Instance,
-    InterfaceSide, Item, ItemError, Layered, LinkId, LinkLayer, Machine, Margin, Multiplicity,
-    Naming, NestError, Node, NodeBody, NodeId, NodeKind, NodeSite, ObserveError, Occurrence,
-    Organic, Orphaned, ParentError, Passing, PathError, Port, PortPath, PortRef, PortSite,
-    PortValueError, ROOT, Reach, Relabelled, RelinkError, RepartitionError, RetypeError, Route,
-    RunError, SectionId, SelectError, Session, Severed, Sharing, Side, Socket, Stack, Standing,
-    Stop, Straighten, Stride, SwapError, SwitchRefusal, Tick, Timeline, Tint, TreeId, UngroupError,
-    Unreadable, Violation, WatchError, Watches, ZoomRange, crossing,
+    Container, Control, Conversion, Copying, Crossings, Definitions, Direction, Discovery,
+    Distribute, Document, Drawn, Dropped, DuplicateError, Edge, EditError, EditPath, Extent,
+    ExtractError, Fit, Flow, ForceError, Fragment, GroupError, Grow, Halt, InsertError,
+    Inspectable, Instance, InterfaceSide, Item, ItemError, Layered, LinkId, LinkLayer, Machine,
+    Margin, Multiplicity, Naming, NestError, Node, NodeBody, NodeId, NodeKind, NodeSite,
+    ObserveError, Occurrence, Organic, Orphaned, ParentError, Passing, PathError, Port, PortPath,
+    PortRef, PortSite, PortValueError, ROOT, Reach, Relabelled, RelinkError, Renamed,
+    RepartitionError, RetypeError, Route, RunError, SectionId, SelectError, Session, Severed,
+    Sharing, Side, Socket, Stack, Standing, Stop, Straighten, Stride, SwapError, SwitchRefusal,
+    Tick, Timeline, Tint, TreeId, UngroupError, Unreadable, Violation, WatchError, Watches,
+    ZoomRange, crossing,
 };
 use crate::{Fault, Finding, Fitness, Objection, Surroundings, Weight};
 use crate::{PairError, RemoveTreeError, RemovedTree, Used};
@@ -2255,15 +2256,43 @@ fn a_copy_evaluates_to_what_the_original_evaluates_to() {
     assert!(f.document.validate().is_empty());
 }
 
+/// ★★★★★ R1985 — **a label survives the round trip, and is made its own where
+/// the destination already answers to it.**
+///
+/// ⚠ The first half is all this test asserted from R1578 to R1985, and it
+/// asserted it about a duplicate **into the same tree** — so what it was
+/// actually pinning down was the defect. Measured at R1985's open on this very
+/// fixture: two nodes answered to `Total`, [`Document::node_labelled`] then
+/// answered `None`, and `may(Act::Rename(copy, Some("Total")))` answered
+/// `LabelTaken` about a state this crate's own verb had just created.
+///
+/// Both halves are here now, because a rule with only its permissive half
+/// asserted is a rule nothing performs.
 #[test]
-fn a_label_survives_the_round_trip() {
+fn a_label_survives_the_round_trip_and_is_made_its_own_where_it_is_taken() {
     let mut f = fixture();
-    f.document
-        .tree_mut(ROOT)
-        .unwrap()
-        .node_mut(f.add)
-        .unwrap()
-        .label = Some("Total".to_owned());
+    f.document.relabel(ROOT, f.add, Some("Total")).unwrap();
+
+    // ★ Into a document that has never heard of it: the name comes across
+    // untouched, because there is nothing here to collide with.
+    let cut = f.document.extract(ROOT, &[f.add]).unwrap();
+    let mut elsewhere = Document::new("elsewhere");
+    let landed = elsewhere
+        .insert(ROOT, &cut, (0, 0), Crossings::Drop, Definitions::Share)
+        .unwrap();
+    assert_eq!(
+        elsewhere
+            .tree(ROOT)
+            .unwrap()
+            .node(landed.nodes[0])
+            .unwrap()
+            .display_name(),
+        "Total"
+    );
+    assert!(landed.renamed.is_empty(), "nothing had to change");
+
+    // ★★★★★ Into the tree it came from: the original still answers to `Total`
+    // and the copy does not, so the name still ADDRESSES one node.
     let out = f
         .document
         .duplicate(
@@ -2274,8 +2303,288 @@ fn a_label_survives_the_round_trip() {
             Definitions::Share,
         )
         .unwrap();
-    let copy = f.document.tree(ROOT).unwrap().node(out.nodes[0]).unwrap();
-    assert_eq!(copy.display_name(), "Total");
+    let copy = out.nodes[0];
+    assert_eq!(
+        out.renamed,
+        vec![Renamed {
+            node: copy,
+            from: "Total".to_owned(),
+            to: "Total-01".to_owned(),
+        }],
+        "★ and the insertion SAYS so — neither reference reports this"
+    );
+    assert_eq!(f.document.nodes_labelled(ROOT, "Total"), vec![f.add]);
+    assert_eq!(f.document.node_labelled(ROOT, "Total"), Some(f.add));
+    assert_eq!(f.document.node_labelled(ROOT, "Total-01"), Some(copy));
+
+    // ★★★★★ The property the whole repair is for: the copy path and the
+    // permission surface now agree. Before this round `may` refused the state
+    // that `duplicate` had just built.
+    assert!(
+        f.document
+            .may(ROOT, Act::Rename(copy, Some("Total-01")))
+            .is_ok(),
+        "the name it was given is one it is allowed to hold"
+    );
+
+    // ★ A copy of a copy numbers from the stem rather than growing a tail.
+    let again = f
+        .document
+        .duplicate(ROOT, &[copy], (0, 400), Crossings::Drop, Definitions::Share)
+        .unwrap();
+    assert_eq!(again.renamed[0].to, "Total-02");
+}
+
+/// ★★★★★ R1985 — **a kind that refuses to be copied under another name**, and
+/// the refusal names all three things the reference's `bool` cannot.
+#[test]
+fn a_kind_may_refuse_a_copy_rather_than_take_a_name_of_its_own() {
+    #[derive(Debug, Clone, PartialEq)]
+    struct OnlyOne;
+    impl NodeKind for OnlyOne {
+        type Type = ();
+        type Value = ();
+        fn name(&self) -> String {
+            "only-one".to_owned()
+        }
+        fn inputs(&self) -> Vec<Port<(), ()>> {
+            Vec::new()
+        }
+        fn outputs(&self) -> Vec<Port<(), ()>> {
+            Vec::new()
+        }
+        fn evaluate(&self, _: &[Option<()>]) -> Vec<Option<()>> {
+            Vec::new()
+        }
+        fn copying(&self) -> Copying {
+            Copying::Refused
+        }
+    }
+
+    let mut document: Document<OnlyOne> = Document::new("root");
+    let entry = document
+        .add_node(ROOT, NodeBody::Kind(OnlyOne), 0, 0)
+        .unwrap();
+    document.relabel(ROOT, entry, Some("Begin")).unwrap();
+
+    // ★ Refused, and the document is untouched — the check runs in the plan.
+    let before = document.tree(ROOT).unwrap().node_count();
+    let why = document
+        .duplicate(
+            ROOT,
+            &[entry],
+            (0, 200),
+            Crossings::Drop,
+            Definitions::Share,
+        )
+        .unwrap_err();
+    assert_eq!(
+        why,
+        DuplicateError::Place(InsertError::NameTaken {
+            node: entry,
+            label: "Begin".to_owned(),
+            held_by: (ROOT, entry),
+        })
+    );
+    assert_eq!(document.tree(ROOT).unwrap().node_count(), before);
+    let said = why.to_string();
+    assert!(
+        said.contains("Begin"),
+        "the name is in the sentence: {said}"
+    );
+
+    // ★★★★★ And it refuses the NAME, not the kind: the same node lands
+    // wherever nothing answers to it. The reference's `CanPasteHere` overrider
+    // reaches its answer the same way — by gathering the names in use.
+    let cut = document.extract(ROOT, &[entry]).unwrap();
+    let mut elsewhere: Document<OnlyOne> = Document::new("elsewhere");
+    let landed = elsewhere
+        .insert(ROOT, &cut, (0, 0), Crossings::Drop, Definitions::Share)
+        .unwrap();
+    assert_eq!(landed.nodes.len(), 1);
+    assert!(landed.renamed.is_empty());
+}
+
+/// ★★★★★ R1985 — **a name whose scope is the whole document**, driven.
+///
+/// ⚠ This test exists because a counterfactual **PASSED**. R1932 built
+/// [`Naming::InDocument`] and R1985 made [`Document::holders_of`] the one place
+/// that reads it, so collapsing that arm to a single tree is one edit — and
+/// with the arm collapsed the whole suite stayed green. Measured: the word
+/// `InDocument` did not occur anywhere in this file. An arm nothing drives is
+/// an arm that is right by nobody's checking, which is R1845's rule about
+/// repairing the population rather than the assertion.
+///
+/// Both readers of the scope are here, because the two coming apart is exactly
+/// what one home for the rule is meant to make impossible: the permission
+/// surface a person meets when they rename, and the copy path.
+#[test]
+fn a_document_wide_name_is_taken_by_a_node_in_another_tree() {
+    #[derive(Debug, Clone, PartialEq)]
+    struct Everywhere;
+    impl NodeKind for Everywhere {
+        type Type = ();
+        type Value = ();
+        fn name(&self) -> String {
+            "everywhere".to_owned()
+        }
+        fn inputs(&self) -> Vec<Port<(), ()>> {
+            Vec::new()
+        }
+        fn outputs(&self) -> Vec<Port<(), ()>> {
+            Vec::new()
+        }
+        fn evaluate(&self, _: &[Option<()>]) -> Vec<Option<()>> {
+            Vec::new()
+        }
+        fn naming() -> Naming {
+            Naming::InDocument
+        }
+    }
+
+    let mut document: Document<Everywhere> = Document::new("root");
+    let elsewhere = document.add_definition("elsewhere");
+    let here = document
+        .add_node(ROOT, NodeBody::Kind(Everywhere), 0, 0)
+        .unwrap();
+    let there = document
+        .add_node(elsewhere, NodeBody::Kind(Everywhere), 0, 0)
+        .unwrap();
+    document.relabel(ROOT, here, Some("Once")).unwrap();
+
+    // ★ The permission surface reaches ACROSS trees, and names the holder in
+    // the tree it is actually in.
+    assert_eq!(
+        document.may(elsewhere, Act::Rename(there, Some("Once"))),
+        Err(EditError::LabelTaken {
+            tree: ROOT,
+            label: "Once".to_owned(),
+            held_by: here,
+        })
+    );
+
+    // ★★★★★ And so does the copy path: pasting into a DIFFERENT tree still
+    // has to take a name of its own, because the scope is the document.
+    let cut = document.extract(ROOT, &[here]).unwrap();
+    let landed = document
+        .insert(
+            elsewhere,
+            &cut,
+            (0, 200),
+            Crossings::Drop,
+            Definitions::Share,
+        )
+        .unwrap();
+    assert_eq!(
+        landed.renamed,
+        vec![Renamed {
+            node: landed.nodes[0],
+            from: "Once".to_owned(),
+            to: "Once-01".to_owned(),
+        }]
+    );
+    assert_eq!(document.nodes_labelled_anywhere("Once"), vec![(ROOT, here)]);
+}
+
+/// ★★★★★ R1985 — **a caption is not an address, so a copy keeps it.**
+///
+/// ⚠ The other half of the copy rule, and the closing audit is why it exists.
+/// It censused all 34 tests that call `duplicate`/`insert` and asked which one
+/// copies a [`Naming::Free`] body AND checks its name: **none**. The three
+/// touching a frame are about serialization, joining a frame by number, and
+/// refusing to frame nothing. So the decision this round WROTE — a caption
+/// need not identify, therefore a copy has nothing to be made unique against —
+/// was performed by nothing at all.
+///
+/// That is the same shape as the [`Naming::InDocument`] gap a counterfactual
+/// caught earlier in this round, found by census instead of by mutation, and
+/// it is the third undriven arm this round has had to close. The two halves
+/// are asserted TOGETHER because they are one call making opposite decisions:
+/// `Total` gets a name of its own, a caption does not.
+#[test]
+fn a_caption_is_not_an_address_so_a_copy_keeps_it() {
+    let mut f = framed();
+    f.document
+        .tree_mut(ROOT)
+        .and_then(|t| t.node_mut(f.outer))
+        .unwrap()
+        .label = Some("inputs".to_owned());
+    assert_eq!(f.document.naming(ROOT, f.outer), Naming::Free);
+
+    let out = f
+        .document
+        .duplicate(
+            ROOT,
+            &[f.outer],
+            (0, 400),
+            Crossings::Drop,
+            Definitions::Share,
+        )
+        .unwrap();
+    let copy = out.nodes[0];
+
+    // ★★★★★ Verbatim, and the insertion says nothing had to change.
+    assert_eq!(
+        f.document
+            .tree(ROOT)
+            .unwrap()
+            .node(copy)
+            .unwrap()
+            .label
+            .as_deref(),
+        Some("inputs")
+    );
+    assert!(out.renamed.is_empty(), "a caption has no clash to repair");
+
+    // ★★★★★ And TWO frames answering to one caption is LEGAL here — that is
+    // what `Naming::Free` means, and it is the state `may` refuses to create
+    // for a node the graph is addressed by.
+    assert_eq!(
+        f.document.nodes_labelled(ROOT, "inputs"),
+        vec![f.outer, copy]
+    );
+    assert!(
+        f.document
+            .may(ROOT, Act::Rename(copy, Some("inputs")))
+            .is_ok(),
+        "the uniqueness rule is OFF for this body, not merely satisfied"
+    );
+}
+
+/// ★★★★★ R1985 — **two copies of one name in a single paste**, which is the
+/// case the document cannot be asked about: while the plan is being made
+/// neither copy is there yet.
+#[test]
+fn a_batch_of_copies_does_not_mint_one_name_twice() {
+    let mut f = fixture();
+    f.document.relabel(ROOT, f.two, Some("Feed")).unwrap();
+    let out = f
+        .document
+        .duplicate(
+            ROOT,
+            &[f.two],
+            (0, 400),
+            Crossings::Drop,
+            Definitions::Share,
+        )
+        .unwrap();
+    let first = out.nodes[0];
+
+    // Both originals now answer to a name, so a paste carrying both has to
+    // number twice and may not answer `Feed-01` for the second.
+    let cut = f.document.extract(ROOT, &[f.two, first]).unwrap();
+    let out = f
+        .document
+        .insert(ROOT, &cut, (0, 900), Crossings::Drop, Definitions::Share)
+        .unwrap();
+    let minted: Vec<&str> = out.renamed.iter().map(|r| r.to.as_str()).collect();
+    assert_eq!(minted, vec!["Feed-02", "Feed-03"]);
+    for name in &minted {
+        assert!(
+            f.document.node_labelled(ROOT, name).is_some(),
+            "★ {name} addresses exactly one node"
+        );
+    }
 }
 
 #[test]

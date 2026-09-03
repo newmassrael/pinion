@@ -1250,6 +1250,29 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
         crate::Naming::InTree
     }
 
+    /// ★★★★★ R1985 — **what a copy of one of these nodes does about a name its
+    /// destination already holds.**
+    ///
+    /// Asked by [`Document::insert`] and [`Document::duplicate`], and only
+    /// where [`Self::naming`] requires uniqueness — a free name is a caption
+    /// and has no clash to have a policy about.
+    ///
+    /// The supplied answer is [`Copying::Renamed`](crate::Copying::Renamed),
+    /// which is the DCC's, and it is what this crate did *implicitly and
+    /// wrongly* before this round: it copied the label verbatim, leaving two
+    /// nodes answering to one name in a scope its own
+    /// [`Document::may`] refuses to create that state in. See
+    /// [`Copying`](crate::Copying) for both references' behaviour, measured.
+    ///
+    /// ⚠ Answered per node rather than per kind — unlike [`Self::naming`],
+    /// which is a static — because the reference's own overriders are
+    /// instance-sensitive: its event class decides by what the destination
+    /// already implements, not by being an event.
+    #[must_use]
+    fn copying(&self) -> crate::Copying {
+        crate::Copying::Renamed
+    }
+
     /// ★★★★★ R1928 — **what this node calls the port at `at`**, given the name
     /// the port was declared with.
     ///
@@ -3239,18 +3262,15 @@ impl<K: NodeKind> Document<K> {
                 // nor turn it off, and a frame (this crate's comment) was held
                 // to the same uniqueness as a node the graph is addressed by.
                 if let Some(name) = wanted.as_deref() {
-                    let clash = match self.naming(tree, node) {
-                        crate::Naming::Free => None,
-                        crate::Naming::InTree => self
-                            .nodes_labelled(tree, name)
-                            .into_iter()
-                            .find(|other| *other != node)
-                            .map(|other| (tree, other)),
-                        crate::Naming::InDocument => self
-                            .nodes_labelled_anywhere(name)
-                            .into_iter()
-                            .find(|(where_, other)| !(*where_ == tree && *other == node)),
-                    };
+                    // ★ R1985 — the scope dispatch this arm used to spell out
+                    // is `holders_of` now, because the copy path is its second
+                    // reader and two inlined copies of one rule is how two
+                    // consumers come to disagree.
+                    let held = self.held(tree, node)?;
+                    let clash = self
+                        .holders_of(tree, &held.body, name)
+                        .into_iter()
+                        .find(|(where_, other)| !(*where_ == tree && *other == node));
                     if let Some((where_, held_by)) = clash {
                         return Err(EditError::LabelTaken {
                             tree: where_,
@@ -3528,6 +3548,14 @@ impl<K: NodeKind> Document<K> {
     /// refuses to *create* that state; a direct write to the public
     /// [`label`](Node::label) field still can, and this is what happens then.
     /// [`Self::nodes_labelled`] says which case it was.
+    ///
+    /// ⚠★★★★★ R1985 — **that second sentence was false for 407 rounds, and it
+    /// was this crate's own copy verb that made it so.** Measured at R1985's
+    /// open: [`Self::duplicate`] copied a label verbatim, so duplicating a node
+    /// called `Total` left two answering to it, this answered `None`, and
+    /// `may(Act::Rename(copy, Some("Total")))` answered `LabelTaken` about a
+    /// state the crate had just built. A direct field write was never the only
+    /// way in. It is now: see [`Copying`](crate::Copying).
     #[must_use]
     pub fn node_labelled(&self, tree: TreeId, label: &str) -> Option<NodeId> {
         let holders = self.nodes_labelled(tree, label);
