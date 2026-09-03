@@ -104,8 +104,9 @@ use pinion_core::{CellKind, Frame, Modifiers, Scene, WidgetCore, edit_field_keym
 use pinion_node_graph::{
     Act, Camera, Document, Drawn, EditPath, Extent, Faces, Fault, Fit, Found, InZone, Instance,
     Item, Judged, LandError, Landfall, LinkId, LinkLayer, Margin, NameSource, Node, NodeBody,
-    NodeId, NodeKind, Objection, PortPath, PortRef, PortSite, ROOT, Relinked, Side, Socket, Tint,
-    TreeId, Violation, WatchError, Watches, Weight, ZoomRange, palette_of, type_palette,
+    NodeId, NodeKind, Objection, PortPath, PortRef, PortSite, ROOT, Relinked, Sharing, Side,
+    Socket, Tint, TreeId, Violation, WatchError, Watches, Weight, ZoomRange, palette_of,
+    type_palette,
 };
 use pinion_platform_storage::AppStorage;
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
@@ -11722,6 +11723,39 @@ const FIELDS: &[SchemaField] = &{
             const { &[SchemaArg::key("card", "string", "nodes")] },
         ),
         SchemaField::action("exit", "string"),
+        // ★★★★★ R1983 — **the other half of a subgraph's life.** R1981 gave the
+        // screen make/enter/exit; these three are what a person does to a part
+        // once it exists: pull it back apart, move a card out of it, move a card
+        // into it.
+        //
+        // ⚠ `separate` and `insert` name the CARD and not the instance, because
+        // the card is what a person has hold of — the instance is derived from
+        // where they are standing (inside it, or with it selected). The crate's
+        // own verbs take both; asking a person for both would be asking them to
+        // restate where they already are.
+        SchemaField::action_with(
+            "ungroup",
+            "string",
+            ArgForm::Scalar,
+            const { &[SchemaArg::key("card", "string", "nodes")] },
+        ),
+        SchemaField::action_with(
+            "separate",
+            "string",
+            ArgForm::Scalar,
+            const { &[SchemaArg::key("card", "string", "nodes")] },
+        ),
+        SchemaField::action_with(
+            "insert",
+            "string",
+            ArgForm::Delimited(','),
+            const {
+                &[
+                    SchemaArg::key("card", "string", "nodes"),
+                    SchemaArg::key("into", "string", "nodes"),
+                ]
+            },
+        ),
         // ★★★★★ R1912 — put a card's pins away, or bring them back. The scope
         // vocabulary is CLOSED and built from `PIN_SCOPES` rather than spelled
         // here, so the words an agent is offered cannot drift from the ones the
@@ -12746,6 +12780,26 @@ impl ExternalIntrospect for LabOracle {
                 enter_card(&state, node).map(IntrospectValue::Text)
             }
             "exit" => leave_subgraph(&state).map(IntrospectValue::Text),
+            // ★★★★★ R1983 — the other half of a subgraph's life.
+            "ungroup" => {
+                let name = Self::text(&args)?;
+                let node = Self::card(&state, name.trim())?;
+                ungroup_card(&state, node).map(IntrospectValue::Text)
+            }
+            "separate" => {
+                let name = Self::text(&args)?;
+                let node = Self::card(&state, name.trim())?;
+                separate_card(&state, node).map(IntrospectValue::Text)
+            }
+            "insert" => {
+                let raw = Self::text(&args)?;
+                let (which, into) = raw.split_once(',').ok_or_else(|| {
+                    InvokeError::rejected(format!("{raw:?} is not <card>,<into>"))
+                })?;
+                let node = Self::card(&state, which.trim())?;
+                let part = Self::card(&state, into.trim())?;
+                insert_card(&state, node, part).map(IntrospectValue::Text)
+            }
             "rename" => {
                 let raw = Self::text(&args)?;
                 let (which, to) = raw.split_once(',').ok_or_else(|| {
@@ -14644,6 +14698,101 @@ fn enter_card(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError>
     let _ = inner;
     state.say(Utterance::done(&said));
     Ok(said)
+}
+
+/// ★★★★★ R1983 — **pull a folded part back apart**, its cards returning to this
+/// tree where they were.
+///
+/// [`Document::ungroup`] does the whole of it — the definition's nodes are
+/// copied back in, the instance's links are re-aimed at what they were wired to
+/// inside, and the instance goes. The screen's job is to say what happened and
+/// to stop pointing at a card that no longer exists.
+fn ungroup_card(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError> {
+    let name = state.name_of(node);
+    let here = state.here();
+    let back = state.doc.borrow_mut().ungroup(here, node).map_err(|why| {
+        let said = Utterance::refused(&format!("{name}: {why}"));
+        state.say(said.clone());
+        InvokeError::rejected(said.into_clause())
+    })?;
+    // The instance is gone, so anything naming it is naming nothing — the same
+    // reason `delete_card` clears the selection it was holding.
+    state.selection.set(Selection::empty());
+    state.selected_link.set(None);
+    let said = format!("{name} unfolded: {} card(s) back here", back.nodes.len());
+    state.say(Utterance::done(&said));
+    Ok(said)
+}
+
+/// ★★★★★ R1983 — **move a card OUT of the part it is in**, into the tree the
+/// part sits in.
+///
+/// Addressed by the CARD, which is what a person has hold of; the instance is
+/// derived from where they are standing. `Sharing::Shared` because this screen
+/// has one instance per definition — a person who has not made a second one
+/// cannot have meant "only this copy", and offering the choice before the
+/// second instance exists would be asking about a distinction they cannot see.
+fn separate_card(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError> {
+    let name = state.name_of(node);
+    let Some((host, instance)) = standing_in(state) else {
+        let said = Utterance::refused(&"nothing to separate from — you are at the top");
+        state.say(said.clone());
+        return Err(InvokeError::rejected(said.into_clause()));
+    };
+    let moved = state
+        .doc
+        .borrow_mut()
+        .group_separate(host, instance, &[node], Sharing::Shared)
+        .map_err(|why| {
+            let said = Utterance::refused(&format!("{name}: {why}"));
+            state.say(said.clone());
+            InvokeError::rejected(said.into_clause())
+        })?;
+    state.selection.set(Selection::empty());
+    state.selected_link.set(None);
+    let said = format!("{name} moved out: {} card(s)", moved.moved.len());
+    state.say(Utterance::done(&said));
+    Ok(said)
+}
+
+/// ★★★★★ R1983 — **move a card INTO a part**, the mirror of [`separate_card`].
+///
+/// Both cards are named because both are on THIS tree and a person can see
+/// them: the one being moved and the part it is moving into. That is the one
+/// place where naming two is telling the screen something it does not already
+/// know from where the person is standing.
+fn insert_card(state: &Rc<LabState>, node: NodeId, into: NodeId) -> Result<String, InvokeError> {
+    let name = state.name_of(node);
+    let part = state.name_of(into);
+    let here = state.here();
+    let moved = state
+        .doc
+        .borrow_mut()
+        .group_insert(here, into, &[node], Sharing::Shared)
+        .map_err(|why| {
+            let said = Utterance::refused(&format!("{name} into {part}: {why}"));
+            state.say(said.clone());
+            InvokeError::rejected(said.into_clause())
+        })?;
+    state.selection.set(Selection::empty());
+    state.selected_link.set(None);
+    let said = format!("{name} moved into {part}: {} card(s)", moved.moved.len());
+    state.say(Utterance::done(&said));
+    Ok(said)
+}
+
+/// ★ R1983 — the tree this screen is standing IN, and the instance it came
+/// through, or `None` at the top.
+///
+/// One derivation because both [`separate_card`] and any future verb about
+/// "the part I am inside" need the same pair, and working it out twice is how
+/// the two would come to disagree about which instance a person meant.
+fn standing_in(state: &LabState) -> Option<(TreeId, NodeId)> {
+    let path = state.path.borrow();
+    let entries = path.entries();
+    let last = entries.last()?;
+    let host = entries.get(entries.len().checked_sub(2)?)?.tree;
+    Some((host, last.via?))
 }
 
 /// ★★★★★ R1982 — **stand at the step of the way in that `depth` names.**

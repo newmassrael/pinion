@@ -476,17 +476,6 @@
       ]
     },
     {
-      "name": "debt-the-assembled-tools-subgraph-surface-is-half-built",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links analyzer-debt-repayment-loop, screen-a-vs-canon-operation-census"
-      ]
-    },
-    {
       "name": "debt-the-canon-census-counts-markup-and-not-pixels",
       "substituted": false,
       "blocked_by": "campaign",

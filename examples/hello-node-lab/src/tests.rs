@@ -16,7 +16,7 @@ use super::{
     palette_rect, pin_rect, scenario, spec, use_lab_state,
 };
 use crate::graph::{Endpoint, Role, Transport};
-use pinion_node_graph::{Admission, NodeBody, ROOT, Socket};
+use pinion_node_graph::{Admission, NodeBody, NodeId, ROOT, Socket};
 use std::collections::BTreeSet;
 
 /// R1788 — the plan's document as a value.
@@ -6181,5 +6181,266 @@ fn r1981_a_per_tree_number_does_not_travel_through_the_door() {
             "★ nor is anything raised"
         );
         assert!(state.selected_link.get().is_none(), "★ nor any wire picked");
+    });
+}
+
+/// ★★★★★ R1983 — **separating asks the tree the part SITS IN, not the root.**
+///
+/// Driven two levels down, where those are different trees. One level down they
+/// are the same, so a walk that only ever descends once cannot tell a screen
+/// that reads the path's parent from one that reads its first entry — measured:
+/// a counterfactual swapping the two went uncaught by everything else in this
+/// round, including the walk.
+#[test]
+fn r1983_separating_asks_the_tree_the_part_sits_in() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+        for name in ["outer", "inner"] {
+            let pair: Vec<_> = state.cards().into_iter().take(2).collect();
+            state
+                .selection
+                .set(pinion_core::selection::Selection::group(pair));
+            super::group_selection(&state, name).expect("two cards make a subgraph");
+            let made = state.node_of(name).expect("the instance");
+            super::enter_card(&state, made).expect("go inside");
+        }
+        assert_eq!(state.path.borrow().depth(), 2, "two descents down");
+
+        let here = state.here();
+        let card = *state
+            .cards()
+            .iter()
+            .find(|node| {
+                state.doc.borrow().tree(here).is_some_and(|tree| {
+                    tree.node(**node)
+                        .is_some_and(|slot| matches!(slot.body, NodeBody::Kind(_)))
+                })
+            })
+            .expect("a card to move out");
+
+        // ⚠ By NAME and not by id. `Sharing::Shared` moves the card out for
+        // every instance of the definition, so what arrives in the host tree is
+        // a node of that tree with its OWN number — measured: asserting on the
+        // id failed here while the move was correct. `NodeId` is per tree, which
+        // is this session's other finding read from the other side.
+        let moved = state.name_of(card);
+        super::separate_card(&state, card).expect("★★★★★ separating it is allowed");
+        let names =
+            |s: &LabState| -> Vec<String> { s.cards().iter().map(|n| s.name_of(*n)).collect() };
+        assert!(
+            !names(&state).contains(&moved),
+            "★ it has left the tree it was in — {:?}",
+            names(&state)
+        );
+        super::leave_subgraph(&state).expect("come out one level");
+        assert!(
+            names(&state).contains(&moved),
+            "★★★★★ and it is in the tree the part SITS IN — one level up, not the \
+             root. A screen that read the path's first entry would have moved it \
+             all the way out and this is where that shows — {:?}",
+            names(&state)
+        );
+    });
+}
+
+/// ★ R1983 — the keys of the form a card SHOWS, or `None` when it shows none.
+///
+/// Its own function because the comparison this round needs is by KEYS and not
+/// by count — a count is a comparison two different forms pass by coincidence —
+/// and spelling that derivation twice is how the two readings would come apart.
+fn shown_keys(state: &LabState, node: NodeId) -> Option<Vec<String>> {
+    super::shown_form(state, node)
+        .map(|form| form.fields().iter().map(|f| f.key().to_owned()).collect())
+}
+
+/// ★★★★★ R1983 — **a card made INSIDE a subgraph gets its own configuration**,
+/// and does not inherit the root card that happens to hold its number.
+///
+/// # The premise this performs, and why it could not be driven before
+///
+/// `debt-four-per-card-tables-are-keyed-by-a-number-that-means-something-else-next-door`
+/// was registered at R1981 with its premise UNMEASURED: `NodeId` is minted per
+/// tree (`Tree::next_node`), the screen keeps four per-card tables keyed by it,
+/// and a card created inside a subgraph could be minted with a number a root
+/// card already holds. R1981 could not drive it — the palette added to the root
+/// whatever tree was on screen, so there was no way to create a card inside one
+/// at all. R1982 moved that to `LabState::here()`, and this is the first round
+/// in which the recipe the debt wrote down can actually be run.
+///
+/// ⚠ The number collision is REAL and this asserts it rather than assuming it:
+/// the fixture checks that the card made inside holds an id the root also
+/// holds, so a change that stopped the ids colliding would fail here loudly
+/// rather than making this pass for a reason it is not about.
+#[test]
+fn r1983_a_card_made_inside_a_subgraph_has_its_own_configuration() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+
+        let pair: Vec<_> = state.cards().into_iter().take(2).collect();
+        state
+            .selection
+            .set(pinion_core::selection::Selection::group(pair));
+        super::group_selection(&state, "part").expect("two cards make a subgraph");
+        let part = state.node_of("part").expect("the instance");
+        let outside: Vec<NodeId> = state.cards();
+        // What every root card's configuration is BEFORE anything happens
+        // inside. This is the thing that must not move.
+        let root_forms: Vec<(NodeId, Option<Vec<String>>)> = outside
+            .iter()
+            .map(|node| (*node, shown_keys(&state, *node)))
+            .collect();
+
+        super::enter_card(&state, part).expect("go inside");
+        let before = state.cards();
+        super::add_node(&state, Role::Responder);
+        let made = *state
+            .cards()
+            .iter()
+            .find(|node| !before.contains(node))
+            .expect("★ the palette added a card to the tree on screen (R1982)");
+
+        // ★★★★★ THE FIXTURE'S OWN PRECONDITION: the number really is shared.
+        // Without it this could pass on a tree where nothing collided, and
+        // would be saying nothing about the defect it is named for.
+        assert!(
+            outside.contains(&made),
+            "★★★★★ the card made INSIDE holds a number a ROOT card also holds — \
+             {made:?} against {outside:?}. `Tree::next_node` is minted per tree, \
+             which is this debt's whole premise; if that ever stops being true \
+             this assertion has gone vacuous and must be re-aimed rather than \
+             deleted"
+        );
+
+        // ★★★★★ AND THE COLLIDING ROOT CARD HAS A FORM TO LOSE. Without this
+        // the check below could pass because the number happened to land on a
+        // card the tables say nothing about, which would be a fixture agreeing
+        // with itself rather than a statement about the defect.
+        assert_eq!(
+            root_forms
+                .iter()
+                .find(|(node, _)| *node == made)
+                .map(|(_, form)| form.is_some()),
+            Some(true),
+            "★★★★★ the root card whose number was re-used HAS a configuration, so \
+             an overwrite would be visible — {made:?} in {root_forms:?}"
+        );
+
+        // ★★★★★ AND THE CARD INSIDE IS MADE DISTINCTIVE, because two cards of
+        // the same role have the SAME field keys and a comparison that cannot
+        // tell them apart would pass whatever happened. Authoring a row is what
+        // a person does to a card, and it changes this one's form and no other.
+        state
+            .selection
+            .set(pinion_core::selection::Selection::one(made));
+        // ⚠ A key this card actually HAS. `author_row` turns a derived row into
+        // an authored one and refuses a key the node does not carry — measured:
+        // `this node has no field connect.endpoints`. So the row is taken from
+        // the card's own form rather than named here, which also keeps this
+        // working when the palette's opening form changes.
+        let grown = super::shown_form(&state, made)
+            .and_then(|form| {
+                form.fields()
+                    .iter()
+                    .find(|f| matches!(f.source(), super::Source::Derived(_)))
+                    .map(|f| f.key().to_owned())
+            })
+            .expect("a palette card opens with a derived row to author");
+        super::author_row(&state, made, &grown).expect("and authoring it is allowed");
+        super::add_element(&state, &grown);
+        let inside_keys = shown_keys(&state, made);
+
+        // ★★★★★ THE TABLE ITSELF, which is what the debt is about, and it IS
+        // shared: the entry under this number is the one the card inside put
+        // there. `shown_form` is a derivation (R1716) and does not read it in a
+        // way that reaches the root card, which is why the two halves of this
+        // round's finding are asserted apart —
+        // `r1983_the_stored_form_table_is_shared_across_the_door` holds this one.
+        let stored_inside = state.forms.borrow().get(&made).cloned();
+        assert!(
+            stored_inside.is_some(),
+            "★ the palette's card put a form in the table under {made:?}"
+        );
+
+        super::leave_subgraph(&state).expect("come back out");
+        let after: Vec<(NodeId, Option<Vec<String>>)> = outside
+            .iter()
+            .map(|node| (*node, shown_keys(&state, *node)))
+            .collect();
+        assert_eq!(
+            after, root_forms,
+            "★★★★★ making a card INSIDE a subgraph changed a card OUT HERE — \
+             the four per-card tables are keyed by a number that means something \
+             else next door"
+        );
+        // ★★★★★ THE DECISIVE ONE: the root card of that number does NOT show
+        // the row a person authored on the card inside. Two cards of one role
+        // share their keys, so only a row that exists on exactly one of them can
+        // tell "unchanged" from "identical by coincidence".
+        assert_ne!(
+            after.iter().find(|(node, _)| *node == made).map(|(_, k)| k),
+            Some(&inside_keys),
+            "★★★★★ the root card of {made:?} is showing the form of the card made \
+             INSIDE the subgraph — the four per-card tables are keyed by a number \
+             that means something else next door"
+        );
+    });
+}
+
+/// ⚠★★★★★ R1983 — **the stored table IS shared across the door**, and that is
+/// the half of the finding the screen currently hides.
+///
+/// `debt-four-per-card-tables-are-keyed-by-a-number-that-means-something-else-next-door`
+/// predicted that a card made inside a subgraph would take over the root card
+/// of its number. Driven: the id collision is real and the `forms` MAP really
+/// does end up holding the inside card's row under that number — but
+/// `LabState::shown_form` re-derives from the node, so nothing a person looks at
+/// changes. The corruption is LATENT, not absent, and the two are different
+/// things to repair: absent needs no work, latent needs the key fixed before a
+/// reader of the stored half appears.
+///
+/// This is asserted on its own so that a future reader who DOES read the map —
+/// a save, an export — fails here rather than shipping somebody else's row.
+#[test]
+fn r1983_the_stored_form_table_is_shared_across_the_door() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+        let pair: Vec<_> = state.cards().into_iter().take(2).collect();
+        state
+            .selection
+            .set(pinion_core::selection::Selection::group(pair));
+        super::group_selection(&state, "part").expect("two cards make a subgraph");
+        let part = state.node_of("part").expect("the instance");
+        let outside = state.cards();
+        super::enter_card(&state, part).expect("go inside");
+
+        let before = state.cards();
+        super::add_node(&state, Role::Responder);
+        let made = *state
+            .cards()
+            .iter()
+            .find(|node| !before.contains(node))
+            .expect("the palette added a card to the tree on screen");
+        assert!(
+            outside.contains(&made),
+            "★ the number is shared, which is what makes the rest of this a \
+             statement about the defect — {made:?} against {outside:?}"
+        );
+        let stored_inside = state.forms.borrow().get(&made).cloned();
+        assert!(stored_inside.is_some(), "the card inside has a stored form");
+
+        super::leave_subgraph(&state).expect("come back out");
+        assert_eq!(
+            state.forms.borrow().get(&made).cloned(),
+            stored_inside,
+            "⚠★★★★★ out here, the entry under {made:?} is the one the card INSIDE \
+             put there. Nothing on the frame reads it that way today; a reader of \
+             the STORED half would get somebody else's row"
+        );
     });
 }
