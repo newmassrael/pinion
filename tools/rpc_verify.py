@@ -46,9 +46,24 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, NoReturn, Optional, Sequence
 
 from build_gate import BuildError, ensure_built
+import driven_binaries
 
 
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
+
+#: ★★★★★ R1984 — the example binaries THIS demo process launched, and where
+#: each one was on disk.
+#:
+#: Filled in by `RpcSubprocess._enter_inner`, drained by `run_demo` when the
+#: body passes. It is the evidence half of the push gate that refuses to publish
+#: an edit to an example nothing has driven: R1981, R1982 and R1983 each edited
+#: `examples/hello-node-lab/src/lib.rs`, each ran the walks it called its blast
+#: radius, and all of those walks launched `hello-analyzer-shell` — so CI failed
+#: the STANDALONE lab's walk three commits later. One screen, two binaries.
+#:
+#: A list rather than a set because the order a demo launched things in is
+#: readable evidence, and a demo legitimately launches one package twice.
+_DRIVEN: list[tuple[str, Optional[Path]]] = []
 
 # R1330 — when set, the caller has ALREADY built every example it will drive
 # (the sweep does one workspace build up front), so a per-launch rebuild is
@@ -923,6 +938,12 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
 
     def _enter_inner(self) -> "RpcSubprocess":
         binary = self._resolve_binary()
+        # R1984 — registered BEFORE the boot gates, and on purpose: what this
+        # records is *which binary this demo drove*, and a demo that dies in a
+        # boot gate still drove it. Whether the run counts as evidence is
+        # `run_demo`'s decision, taken once, on the body's verdict — putting
+        # that judgment here as well would give the property two authors.
+        _DRIVEN.append((self.example, binary))
         cmd = [str(binary)] if binary else self._cargo_run_cmd()
         # R835 §5.16 — windowless-by-default env. Hidden unless the demo
         # asked for a visible window (x11grab screen capture) or the caller
@@ -6650,6 +6671,22 @@ def run_demo(name: str, body) -> NoReturn:
         sys.exit(3)
     elapsed = time.monotonic() - started
     print(f"[demo] PASS ({elapsed:.2f}s)")
+    # ★★★★★ R1984 — a PASS is the evidence the push gate reads.
+    #
+    # Written here, at the one place that knows the body succeeded, for every
+    # binary this demo launched. `driven_binaries.write_record` refuses a launch
+    # with no artifact behind it (a `cargo run` fallback), because a record with
+    # no binary identity is evidence of nothing.
+    #
+    # ⚠ It never fails the demo. This is bookkeeping about a run that already
+    # passed, and a walk that reported FAIL because its own record could not be
+    # written would be a harness turning a green claim red for a reason the
+    # claim has nothing to do with.
+    for package, binary in _DRIVEN:
+        try:
+            driven_binaries.write_record(package, binary, name)
+        except OSError as why:  # pragma: no cover — a full or read-only target/
+            print(f"[demo] (could not record the run of {package}: {why})")
     sys.exit(0)
 
 

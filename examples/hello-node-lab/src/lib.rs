@@ -2168,10 +2168,22 @@ impl LabState {
         let doc = self.doc.borrow();
         let here = self.here();
         doc.node_labelled(here, id).or_else(|| {
-            doc.tree(here)?
+            // ⚠⚠★★★★★ EXACTLY ONE (R1984), and a published red is why. The
+            // crate's own index answers `None` for a name two nodes hold —
+            // that is `NameSource::Free`'s stated cost, asserted by
+            // `r1932_a_kind_says_what_its_name_must_be` — and R1981's first
+            // draft of this fallback used `find`, which silently picked the
+            // first. So a name that identifies nobody started resolving to
+            // somebody, and the walk that exists for that trade went red in CI.
+            //
+            // A fallback has to keep the discipline of the index it falls back
+            // from, or it is not a fallback, it is a second answer.
+            let mut held = doc
+                .tree(here)?
                 .nodes()
-                .find(|node| node.display_name() == id)
-                .map(|node| node.id)
+                .filter(|node| node.display_name() == id);
+            let one = held.next()?;
+            held.next().is_none().then_some(one.id)
         })
     }
 

@@ -53,6 +53,8 @@
 # Usage:
 #   tools/sweep_headless.sh                 # run all demos (realgpu mode)
 #   tools/sweep_headless.sh r719 r697       # run only demos whose filename matches a substring
+#   tools/sweep_headless.sh --radius        # run exactly what the STAGED change reaches
+#   tools/sweep_headless.sh --radius A..B   # ... what that revision range reaches
 #   PINION_SWEEP_MODE=xvfb tools/sweep_headless.sh   # legacy Xvfb + GL path
 #
 # Exit 0 iff every selected demo passed.
@@ -80,8 +82,53 @@ cd "$ROOT" || exit 2
 PINION_SWEEP_MODE="${PINION_SWEEP_MODE:-realgpu}"
 
 # --- demo selection -------------------------------------------------------
+#
+# ★★★★★ R1984 — `--radius [<rev-range>]` runs exactly the demos a change can
+# reach, computed by `tools/demo_radius.py`, instead of the handful a person
+# typed. The two halves of this had never been composable: the tool answered
+# *which demos* from R1797 on, and getting them into this script meant reading
+# 118 lines and re-typing a selection — which is choosing by eye with an extra
+# step. R1981, R1982 and R1983 each did exactly that and each missed the same
+# 33 (the standalone lab's), and CI failed one of them three commits later.
+#
+# With no range it reads the STAGED change, which is what a round has in hand
+# when it wants to know what it must drive.
 declare -a demos=()
-if [ "$#" -gt 0 ]; then
+radius_requested=0
+if [ "${1:-}" = "--radius" ]; then
+    radius_requested=1
+    radius_range="${2:-}"
+    if [ -n "$radius_range" ]; then
+        mapfile -t radius_demos < <(python3 tools/demo_radius.py \
+            --mode range --range "$radius_range")
+    else
+        mapfile -t radius_demos < <(python3 tools/demo_radius.py --mode staged)
+    fi
+    set --
+    for row in "${radius_demos[@]}"; do
+        # `path  (target, target)` — the path is the first field, and the
+        # selection below matches BASENAMES, so the directory has to come off
+        # or nothing matches at all.
+        [ -z "$row" ] && continue
+        radius_path="${row%% *}"
+        set -- "$@" "${radius_path##*/}"
+    done
+    echo "[sweep] --radius: ${#} demo(s) this change can reach" >&2
+    # ⚠ An EMPTY radius must not fall through to "run everything" — a request
+    # for what a change reaches, answered by running all 711.
+    #
+    # TWO LAYERS, and the second one is why the first can be safely tested. The
+    # message below is what a person reads; `radius_requested` is what makes the
+    # dangerous behaviour UNREACHABLE, because the selection test is `$# -gt 0`
+    # and zero patterns after `--radius` must mean "nothing matched" rather than
+    # "no selection given". Without that, the counterfactual for this very rule
+    # would start the full sweep inside `tools/test_hooks.sh`.
+    if [ "$#" -eq 0 ]; then
+        echo "[sweep] --radius: this change reaches no demo — nothing to run" >&2
+        exit 0
+    fi
+fi
+if [ "$#" -gt 0 ] || [ "$radius_requested" -eq 1 ]; then
   for f in tools/demos/*.py; do
     base="$(basename "$f")"
     for pat in "$@"; do

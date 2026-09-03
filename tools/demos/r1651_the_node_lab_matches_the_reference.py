@@ -610,6 +610,22 @@ def body() -> None:
             "lab.toolbar": 17,
             "lab.gate": 7,
             "lab.hint": 2,
+            # ★★★★★ R1984 — the breadcrumb, ONE at the opening frame.
+            #
+            # R1981 put a chip on the canvas saying where a person is standing
+            # and R1982 made it a chip PER STEP, each of the ones above being a
+            # control. This screen opens at the root, where there is exactly one
+            # step and nowhere to go — so one box, whose caption this check
+            # already strips.
+            #
+            # ⚠ It is pinned at 1 rather than left out, and CI is what said so:
+            # the sweep refused `['lab.crumb', 'lab.crumb']` — the box and its
+            # caption, both reduced to the same stripped tag — two rounds after
+            # the mark landed. This walk drives the STANDALONE lab, which the
+            # blast-radius sweeps of those rounds did not include; the shell's
+            # own walks all passed, which is exactly why one screen having two
+            # binaries needs both driven.
+            "lab.crumb": 1,
             # ★ R1681 — the picked link now carries its own affordances: the
             # endpoint caption (a panel and its run) and the act seat (ditto).
             # Still derived, still not a constant.

@@ -2434,5 +2434,72 @@ ok "the pre-commit hook actually calls the pending arm" \
 ok "the pre-push hook actually calls the range arm" \
     "$(grep -c 'ident_gate_range' "$repo_root/.githooks/pre-push")" 1
 
+# ── R1984: the third radius axis, and the only one that REFUSES ─────────────
+#
+# `blast_radius.py` answers which packages, `demo_radius.py` which demos, and
+# `driven_binaries.py` which example BINARIES a round had to drive. The first
+# two report; this one refuses, so what has to be asserted is both that it is
+# WIRED IN and that its verdict is reachable in both directions.
+driven_self="$(python3 "$repo_root/tools/driven_binaries.py" --selftest 2>&1 || true)"
+ok "the driven-binaries gate passes its own selftest" \
+   "$(grep -c 'package(s) some demo launches' <<<"$driven_self")" \
+   "1"
+# ★ THE WIRING. Greps the hook text for the same reason the identity block
+# above does: running `pre-push` here would drag in every other gate. Both
+# lines are asserted — the selftest step and the step that actually refuses —
+# because either one alone is a gate that cannot fail.
+ok "the push gate runs the driven-binaries selftest" \
+   "$(grep -c 'driven_binaries\.py" --selftest' "$repo_root/.githooks/pre-push")" 1
+ok "the push gate actually checks the driven binaries" \
+   "$(grep -c 'driven_binaries\.py" \\' "$repo_root/.githooks/pre-push")" 1
+# ★★★★★ AND IT REFUSES. A gate whose refusal nobody performs is a report with
+# an exit status: this drives `check` over the very path class that produced it
+# (`examples/<name>/src/lib.rs`) in a throwaway tree where no record exists, and
+# then over a path class that must demand nothing.
+driven_verdict="$(python3 - "$repo_root" <<'PY' 2>&1 || true
+import subprocess, sys, tempfile
+from pathlib import Path
+sys.path.insert(0, sys.argv[1] + "/tools")
+import driven_binaries as db
+
+db.launchable = lambda root=None: {"lab", "shell"}
+with tempfile.TemporaryDirectory() as tmp:
+    base = Path(tmp)
+    subprocess.run(["git", "init", "-q", str(base)], check=True)
+    graph = Path("/w")
+    refused = db.check(
+        ["examples/lab/src/lib.rs"], base, metadata=db.FIXTURE, graph_root=graph
+    )[0]
+    silent = db.check(
+        ["crates/pinion-core/src/lib.rs"], base, metadata=db.FIXTURE, graph_root=graph
+    )[0]
+print(f"edited-example={refused} crate-only={silent}")
+PY
+)"
+ok "an edited example with no walk behind it is REFUSED" \
+   "$driven_verdict" "edited-example=1 crate-only=0"
+
+# ★ THE EVIDENCE HALF'S WIRING. The gate reads `target/demo-runs/`, and the only
+# thing that writes there is `run_demo` on a PASS. Nothing else in this suite
+# would notice that call going away, and its absence turns the refusal above
+# into a gate that refuses EVERY push.
+ok "a passing walk records the binary it drove" \
+   "$(grep -c 'driven_binaries\.write_record(package, binary, name)' \
+      "$repo_root/tools/rpc_verify.py")" 1
+ok "and the launch is what registers the binary" \
+   "$(grep -c '_DRIVEN\.append' "$repo_root/tools/rpc_verify.py")" 1
+
+# ★★★★★ AND `--radius` MUST NOT READ "REACHES NOTHING" AS "RUN EVERYTHING".
+# `sweep_headless.sh` selects by `$# -gt 0`, so an empty radius would fall
+# through to the 711-demo sweep — a request to run what a change reaches
+# answered by running the lot. `HEAD..HEAD` is an empty range by construction,
+# so this asserts the property without pinning a commit that a rebase could
+# lose. It exits before anything touches a display.
+radius_empty="$(cd "$repo_root" && tools/sweep_headless.sh --radius HEAD..HEAD 2>&1)"
+ok "an empty radius runs nothing rather than everything" \
+   "$(grep -c 'reaches no demo' <<<"$radius_empty")" 1
+ok "and it does not start the sweep" \
+   "$(grep -c '^\[sweep  *1/' <<<"$radius_empty")" 0
+
 printf '[hooks] %d passed, %d failed\n' "$pass" "$fail"
 [[ "$fail" -eq 0 ]]

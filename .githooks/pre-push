@@ -418,6 +418,18 @@ if ! python3 "$repo_root/tools/demo_radius.py" --selftest >&2; then
     exit 1
 fi
 
+# R1984 — the third axis of the same computation, and the only one that
+# refuses: which example BINARIES a change obliges a round to have driven. Its
+# selftest asserts the DIRECTION (editing a library demands the binaries built
+# on it; editing a binary demands nothing of the library) and that a lockfile
+# edit demands nothing — without that last one the gate would ask for a walk
+# per example on any dependency bump.
+step "driven binaries selftest"
+if ! python3 "$repo_root/tools/driven_binaries.py" --selftest >&2; then
+    echo "pre-push: the driven-binaries computation failed its own tests" >&2
+    exit 1
+fi
+
 # R1798 — the same class one property over: `r1712`'s gate reads a screen's
 # concession verdict and refuses `unreachable`, and its population was a
 # hand-written list of three. Two screens grew a policy later, were never added,
@@ -618,6 +630,33 @@ if [[ -n "$base_sha" && ! "$base_sha" =~ ^0+$ ]]; then
         echo "pre-push: this push edits tracked data these demo(s) assert against:" >&2
         printf '%s\n' "$pinned" | sed 's/^/pre-push:   /' >&2
         echo "pre-push:   the sweep is what runs them — this is so they are not invisible" >&2
+    fi
+
+    # ★★★★★ R1984 — and the example BINARIES this push edits must have been
+    # DRIVEN. This one REFUSES, where the two axes above report.
+    #
+    # R1981, R1982 and R1983 each edited `examples/hello-node-lab/src/lib.rs`
+    # and each ran the walks it called its blast radius — eight, eleven, eight,
+    # all green, all launching `hello-analyzer-shell`. None launched
+    # `hello-node-lab`, and CI failed `r1651_the_node_lab_matches_the_reference`
+    # three commits later. One screen, two binaries, sharing one library and
+    # painting different things.
+    #
+    # Every instrument here was already working: `consumer_test_gate` above ran
+    # BOTH packages' tests and they passed (the difference is what gets painted
+    # in a window), and `demo_radius.py` already knew all 118 demos — the pins
+    # axis just prints the narrow subset, which for that change was empty. What
+    # was missing is a gate that knows which binaries the round actually drove.
+    #
+    # It refuses rather than reports because the set is SMALL, measured: across
+    # 231 example packages the largest "edited example plus the examples built
+    # on it" is three and the median is one. R1858 reported instead of refusing
+    # because its alternative was hundreds of demos; here it is one walk.
+    step "example binaries driven"
+    if ! python3 "$repo_root/tools/driven_binaries.py" \
+             --mode range --range "$base_sha..HEAD"; then
+        echo "pre-push: an example this push edits has no passing walk behind it" >&2
+        exit 1
     fi
 fi
 

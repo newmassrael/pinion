@@ -6444,3 +6444,76 @@ fn r1983_the_stored_form_table_is_shared_across_the_door() {
         );
     });
 }
+
+/// ★★★★★ R1984 — **a name two cards hold reaches NEITHER of them**, and this
+/// is the fallback keeping the discipline of the index it falls back from.
+///
+/// [`LabState::node_of`] asks the document's label index first and then, since
+/// R1981, the name the canvas SHOWS — because a card with no label still has a
+/// name up there and every verb here takes a card by name. R1981's draft of
+/// that second half used `find`, so it answered the FIRST match.
+///
+/// ⚠ That is a different rule from the one the model states.
+/// [`pinion_node_graph::Naming::Free`] means the model does not require the
+/// name to be unique, and its stated cost is that such a name identifies
+/// nobody — `node_labelled` answers `None` for it. A fallback picking the first
+/// match quietly replaced *reaches neither* with *reaches whichever came
+/// first*, and `r1932_a_kind_says_what_its_name_must_be` — the walk that exists
+/// for exactly that trade — went red in CI three commits later.
+///
+/// Driven here rather than only on the wire because that walk drives the
+/// ASSEMBLED shell, and this is a property of the library BOTH binaries share.
+#[test]
+fn r1984_a_name_two_cards_hold_reaches_neither() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+        let here = state.here();
+
+        // The frames are the bodies whose kind answers `Free`; the cards answer
+        // `InTree`. Derived from the document rather than named, so a screen
+        // that stops shipping two frames fails HERE instead of quietly making
+        // this test vacuous.
+        let free: Vec<NodeId> = {
+            let doc = state.doc.borrow();
+            doc.tree(here)
+                .map(|host| {
+                    host.nodes()
+                        .map(|held| held.id)
+                        .filter(|node| {
+                            matches!(doc.naming(here, *node), pinion_node_graph::Naming::Free)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        assert!(
+            free.len() >= 2,
+            "★ the opening graph must ship two bodies the model lets share a \
+             name, or there is nothing here to collide — found {}",
+            free.len()
+        );
+
+        let (first, second) = (free[0], free[1]);
+        let shared = state.name_of(first);
+        assert_eq!(
+            state.node_of(&shared),
+            Some(first),
+            "before the collision the name reaches its one holder"
+        );
+
+        super::rename_card(&state, second, &shared)
+            .expect("★ the model LETS these two share a caption — that is `Free`");
+        assert_eq!(state.name_of(second), shared);
+        assert_eq!(state.name_of(first), shared, "and the first still holds it");
+
+        assert_eq!(
+            state.node_of(&shared),
+            None,
+            "★★★★★ two cards hold {shared:?}, so it addresses NEITHER. A \
+             fallback that answered {first:?} here would be a second rule the \
+             model does not state — and it is what published a red"
+        );
+    });
+}
