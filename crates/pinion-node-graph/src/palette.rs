@@ -185,156 +185,20 @@ impl<K: NodeKind> Document<K> {
             .map(|held| palette_of::<K>(&held.flow))
     }
 
-    /// ★★★★★ R1940 — **the faces this node is actually drawn with**, or `None`
-    /// when neither the person nor the kind has said.
-    ///
-    /// The one place the two sources are ranked, and that ranking is the whole
-    /// of what this function decides:
-    ///
-    /// 1. **What a person authored wins** ([`Appearance::tint`]). A colour
-    ///    somebody chose is not a suggestion, and a kind that recomputed over
-    ///    the top of it would make the author's gesture silently ineffective.
-    /// 2. **Else what the kind says** ([`NodeKind::drawn_as`]) — its own
-    ///    colour, or the colour of a type, resolved through the same
-    ///    [`type_colour`](NodeKind::type_colour) a PORT of that type is drawn
-    ///    with.
-    /// 3. **Else nothing**, which the application draws however it draws a
-    ///    node. `None` and not a black: a colour nobody chose is not a colour,
-    ///    and the reference's port-colour hook is measured returning an actual
-    ///    black for exactly this case, where *nobody coloured this* and
-    ///    *somebody chose black* become one answer.
-    ///
-    /// ⚠ ★ Ranked HERE and not at each drawing site, which is the difference
-    /// from the reference: there, the choose-the-override-else-the-fixed-class
-    /// expression is written out at BOTH of its consumers, and the authored
-    /// colour is a third path again — three places that can disagree about what
-    /// a node looks like. One function is what makes "the register a screen
-    /// reads and the colour it paints cannot differ" a property rather than a
-    /// habit.
-    ///
-    /// ⚠ A **structural** body has no kind to ask — a group instance, a frame,
-    /// an interface end, a delay — so it reaches step 3 unless a person
-    /// authored a colour. Stated rather than left implicit, because a group
-    /// instance is precisely where the reference's own third implementation
-    /// does something (it reads the colour tag of the definition the instance
-    /// stands for), and this crate does not yet carry a colour on a definition
-    /// to read.
-    ///
-    /// [`Appearance::tint`]: crate::Appearance::tint
-    /// ★★★★★ R1944 — **every node that stands for this definition**, as (the
-    /// tree it is in, the node).
-    ///
-    /// `instance_count` has answered *how many* since groups existed; this
-    /// answers *where*, which is what a refusal has to carry to be actionable
-    /// and what a removal has to report to be undoable.
-    #[must_use]
-    pub fn instances_of(&self, definition: TreeId) -> Vec<(TreeId, NodeId)> {
-        let mut found: Vec<(TreeId, NodeId)> = self
-            .trees()
-            .flat_map(|held| {
-                held.nodes()
-                    .filter(|node| node.body == crate::NodeBody::Group(definition))
-                    .map(move |node| (held.id, node.id))
-            })
-            .collect();
-        found.sort_unstable();
-        found
-    }
-
-    /// ★★★★★ R1944 — **remove a definition from the document**, saying what
-    /// went with it.
-    ///
-    /// # What forced it, measured in the reference this round
-    ///
-    /// Its schema is asked to delete a graph, and the editor falls back to its
-    /// own procedure when the schema declines. Counted: **one declaration
-    /// (answering NO), ZERO overriders, one consumer** — so that extension
-    /// point has never once been taken, and every deletion goes down the
-    /// fallback. R1938's shape: a hook whose refusal is never exercised is a
-    /// hook nobody has had to think about.
-    ///
-    /// The fallback is what the capability really is, and it does three things
-    /// this answers differently:
-    ///
-    /// * **It removes every node bound to that graph, unconditionally**, and
-    ///   answers `void`. A caller cannot report what it cost, and a person who
-    ///   deleted a definition in use loses the nodes that used it without being
-    ///   asked. Here [`Used`](crate::Used) makes the caller choose, and
-    ///   `Refuse` names the sites.
-    /// * **Whether a graph may go at all is a FLAG on the graph**
-    ///   (`bAllowDeletion`), so *why not* has no answer. Here the refusals are
-    ///   named ([`RemoveTreeError`](crate::RemoveTreeError)).
-    /// * **It does not look for definitions orphaned by the removal.** A
-    ///   definition can hold instances of another, so removing one can leave a
-    ///   chain with nothing pointing at it; those are removed and REPORTED here.
-    ///
-    /// # Errors
-    ///
-    /// [`RemoveTreeError`](crate::RemoveTreeError).
-    pub fn remove_definition(
-        &mut self,
-        definition: TreeId,
-        used: crate::Used,
-    ) -> Result<crate::RemovedTree, crate::RemoveTreeError> {
-        use crate::{RemoveTreeError, RemovedTree, Used};
-        if definition == crate::ROOT {
-            return Err(RemoveTreeError::TheRoot);
-        }
-        if self.tree(definition).is_none() {
-            return Err(RemoveTreeError::NoSuchTree(definition));
-        }
-        let standing = self.instances_of(definition);
-        if used == Used::Refuse && !standing.is_empty() {
-            return Err(RemoveTreeError::StillUsed { by: standing });
-        }
-        // ⚠ Taken BEFORE anything is removed: which definitions currently have
-        // an instance is what tells an orphan this removal MADE from one that
-        // was already standing alone.
-        let was_used: std::collections::BTreeSet<TreeId> = self
-            .definitions()
-            .map(|held| held.id)
-            .filter(|id| !self.instances_of(*id).is_empty())
-            .collect();
-        // ⚠ The instances go FIRST and from every tree, including the one being
-        // removed: a definition may hold an instance of itself's peer, and
-        // dropping the tree without clearing them would leave a node whose body
-        // names a tree that is gone.
-        let mut went = RemovedTree {
-            instances: standing.clone(),
-            definitions: vec![definition],
-        };
-        // ★ Through `remove_node`, not by reaching into the tree: that verb
-        // already drops the links a removed node was on and reports what it
-        // orphaned, and a second removal path here would be a second set of
-        // invariants free to drift from it.
-        for (tree, node) in &standing {
-            let _ = self.remove_node(*tree, *node);
-        }
-        self.drop_tree(definition);
-        // ★ And then whatever THIS REMOVAL orphaned, transitively.
-        //
-        // ⚠ Only what it orphaned. A definition that already stood alone —
-        // authored and not yet placed — is a legitimate state this must not
-        // sweep up, so the population is the ones that HAD an instance before
-        // and have none now. That distinction is the reason `was_used` is taken
-        // before anything is removed rather than derived afterwards.
-        loop {
-            let orphaned: Vec<TreeId> = self
-                .definitions()
-                .map(|held| held.id)
-                .filter(|id| was_used.contains(id) && self.instances_of(*id).is_empty())
-                .collect();
-            if orphaned.is_empty() {
-                break;
-            }
-            for id in orphaned {
-                self.drop_tree(id);
-                went.definitions.push(id);
-            }
-        }
-        went.definitions.sort_unstable();
-        Ok(went)
-    }
+    // ★ R1986 — `instances_of` and `remove_definition` moved to
+    // `definition.rs`, beside the two verbs R1986 added and the permission
+    // surface all three are now decided by. They were here because R1944 wrote
+    // them next to the definition palette; the family is what they belong to.
+    //
+    // ⚠ AND MOVING THEM SURFACED A DEFECT THIS FILE HAD CARRIED SINCE R1944.
+    // The R1940 block explaining `faces` sat HERE, a hundred lines from that
+    // function, so it documented whichever item came next — which since R1944
+    // was `instances_of`, published as "the faces this node is actually drawn
+    // with". Nothing could see it: rustdoc renders a doc comment against the
+    // item that follows it, and both of these are `pub`, so the pages were
+    // wrong rather than missing. It is back on `faces` below, where it says
+    // what it means. Clippy names it as an empty line after a doc comment only
+    // once the item between them goes away.
 
     /// ★★★★★ R1943 — **make two nodes a zone**: one opens it, the other closes
     /// it, and the region between them is derived rather than stored.
@@ -437,6 +301,45 @@ impl<K: NodeKind> Document<K> {
         }
     }
 
+    /// ★★★★★ R1940 — **the faces this node is actually drawn with**, or `None`
+    /// when neither the person nor the kind has said.
+    ///
+    /// The one place the two sources are ranked, and that ranking is the whole
+    /// of what this function decides:
+    ///
+    /// 1. **What a person authored wins** ([`Appearance::tint`]). A colour
+    ///    somebody chose is not a suggestion, and a kind that recomputed over
+    ///    the top of it would make the author's gesture silently ineffective.
+    /// 2. **Else what the kind says** ([`NodeKind::drawn_as`]) — its own
+    ///    colour, or the colour of a type, resolved through the same
+    ///    [`type_colour`](NodeKind::type_colour) a PORT of that type is drawn
+    ///    with.
+    /// 3. **Else nothing**, which the application draws however it draws a
+    ///    node. `None` and not a black: a colour nobody chose is not a colour,
+    ///    and the reference's port-colour hook is measured returning an actual
+    ///    black for exactly this case, where *nobody coloured this* and
+    ///    *somebody chose black* become one answer.
+    ///
+    /// ⚠ ★ Ranked HERE and not at each drawing site, which is the difference
+    /// from the reference: there, the choose-the-override-else-the-fixed-class
+    /// expression is written out at BOTH of its consumers, and the authored
+    /// colour is a third path again — three places that can disagree about what
+    /// a node looks like. One function is what makes "the register a screen
+    /// reads and the colour it paints cannot differ" a property rather than a
+    /// habit.
+    ///
+    /// ⚠ A **structural** body has no kind to ask — a group instance, a frame,
+    /// an interface end, a delay — so it reaches step 3 unless a person
+    /// authored a colour. Stated rather than left implicit, because a group
+    /// instance is precisely where the reference's own third implementation
+    /// does something (it reads the colour tag of the definition the instance
+    /// stands for), and this crate does not yet carry a colour on a definition
+    /// to read.
+    ///
+    /// ⚠ ★ R1986 — this block was a hundred lines above until this round, where
+    /// it documented `instances_of` instead. See the note there.
+    ///
+    /// [`Appearance::tint`]: crate::Appearance::tint
     #[must_use]
     pub fn faces(&self, tree: TreeId, node: NodeId) -> Option<crate::Faces> {
         let held = self.tree(tree)?.node(node)?;

@@ -3243,16 +3243,16 @@
       "verdict": "have"
     },
     "schema::CanBeDeleted": {
-      "covered_by": "the permission surface exists (Document::may) and covers NODES; a definition tree has no removal verb to gate — add_definition has no inverse. Measured R1920 over Document's own edit verbs",
+      "covered_by": "Document::may_definition(tree, DefinitionAct::Remove(used)) — R1986. The permission is the same decision remove_definition makes, because that verb asks it, and the refusal NAMES every instance that still stands for the definition. ⚠ R1920's clause 'a definition tree has no removal verb to gate' was measured FALSE at R1986: R1944 built remove_definition, 41 rounds before, and the pin was never re-read",
       "mechanism": "graph-schema",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_schema_can_be_deleted",
+      "verdict": "have"
     },
     "schema::CanBeRenamed": {
-      "covered_by": "the permission surface exists (Document::may) and covers NODES; a definition tree's name is fixed at add_definition and no verb changes it. Measured R1920 over Document's own edit verbs",
+      "covered_by": "Document::may_definition(tree, DefinitionAct::Rename(name)) — R1986, the same decision rename_definition makes. ⚠ A name another definition holds is deliberately ADMITTED: the fragment path adds a carried definition under the name it arrives with, and the matcher reads that name, so a uniqueness rule would make a paste grow a copy. definition_named answers None when a name is ambiguous, which is where the price is paid",
       "mechanism": "graph-schema",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_schema_can_be_renamed",
+      "verdict": "have"
     },
     "schema::CanCreateConnection": {
       "covered_by": "Document::connect checks four things and NAMES whichever failed, including the path a refused wire would close",
@@ -3267,10 +3267,10 @@
       "verdict": "have"
     },
     "schema::CanDuplicateGraph": {
-      "covered_by": "⚠ R1920's reason said 'no verb copies a definition tree' and R1985 measured that clause FALSE: Document::insert with Definitions::Fork adds every carried definition as a new one and reports them in Inserted::definitions_added, which the test a_fragment_crosses_into_a_document_that_never_had_the_definition has driven since R1578. What is genuinely absent is a definition tree duplicated ON ITS OWN — the reference gates duplicating a graph AS a graph, with no instance to carry it — and the permission surface (Document::may) covers nodes, so there is no act to gate. R1985 corrected the clause without claiming the row; R1919's price is why: fixing a reason without building the thing makes the remaining distance LOOK smaller",
+      "covered_by": "Document::duplicate_definition + Document::may_definition(tree, DefinitionAct::Duplicate) — R1986 built the thing R1985's corrected clause named as genuinely absent: a definition tree duplicated ON ITS OWN, with no instance to carry it (fork_definition needs one and rebinds it). The copy takes a name of its own, numbered from the stem, so the original stays addressable by name",
       "mechanism": "graph-schema",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_schema_can_duplicate_graph",
+      "verdict": "have"
     },
     "schema::CanEncapuslateNode": {
       "covered_by": "Document::group refuses by REACHABILITY and names the walk",
@@ -3579,10 +3579,10 @@
       "verdict": "host-framework"
     },
     "schema::HandleGraphBeingDeleted": {
-      "covered_by": "no notification when a definition goes away",
+      "covered_by": "Document::would_remove_definition — R1986. The notification as a QUESTION asked before the act: it answers the same RemovedTree the removal reports, from the same derivation, so a caller holding anything keyed to a definition reads the departing trees while they are still there. It names the whole cascade and every node INSIDE each departing tree, where the reference's listener is handed one graph, cannot see what the removal orphaned (its own path does not cascade) and walks the contents itself",
       "mechanism": "graph-schema",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_schema_handle_graph_being_deleted",
+      "verdict": "have"
     },
     "schema::InsertAdditionalActions": {
       "covered_by": "which node kinds a palette offers, and how it is searched",
@@ -3825,10 +3825,10 @@
       "verdict": "have"
     },
     "schema::TryRenameGraph": {
-      "covered_by": "a tree's name is fixed at add_definition",
+      "covered_by": "Document::rename_definition — R1986. Answers the name it REPLACED rather than a bool, so the edit is undoable and reportable; the reference's hook answers 'I handled it', which makes a refusal and 'nothing to say' one value, and its single overrider (measured across the whole tree) renames a root graph and then answers false anyway, so the caller's fallback rename runs on top of a rename that already happened. A refused rename here leaves the name untouched",
       "mechanism": "graph-schema",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_schema_try_rename_graph",
+      "verdict": "have"
     },
     "schema::TrySetDefaultObject": {
       "covered_by": "the engine's visual script/asset subject matter",

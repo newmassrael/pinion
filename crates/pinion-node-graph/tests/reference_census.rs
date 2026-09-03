@@ -54,7 +54,9 @@ use pinion_node_graph::{
     Stride, SwapError, SwitchRefusal, Tint, TreeId, Variadic, Violation, WatchError, Watches,
     palette_of, type_palette,
 };
-use pinion_node_graph::{Copying, InZone, InsertError, PairError, RemoveTreeError, Renamed, Used};
+use pinion_node_graph::{
+    Copying, DefinitionAct, DefinitionError, InZone, InsertError, PairError, Renamed, Tree, Used,
+};
 
 // ---------------------------------------------------------------- taxonomy
 
@@ -985,6 +987,35 @@ fn hook_round_proofs() -> Vec<Proof> {
             "engine",
             "schema::TryDeleteGraph",
             engine_schema_try_delete_graph,
+        ),
+        // R1986 — the three definition verbs and the one question that decides
+        // them. Five rows, five proofs: the permission is a different capability
+        // from the verb it gates, which is exactly why the reference publishes
+        // both and why counting them as one would hide the half that is absent.
+        proof(
+            "engine",
+            "schema::CanBeDeleted",
+            engine_schema_can_be_deleted,
+        ),
+        proof(
+            "engine",
+            "schema::CanBeRenamed",
+            engine_schema_can_be_renamed,
+        ),
+        proof(
+            "engine",
+            "schema::TryRenameGraph",
+            engine_schema_try_rename_graph,
+        ),
+        proof(
+            "engine",
+            "schema::CanDuplicateGraph",
+            engine_schema_can_duplicate_graph,
+        ),
+        proof(
+            "engine",
+            "schema::HandleGraphBeingDeleted",
+            engine_schema_handle_graph_being_deleted,
         ),
     ]
 }
@@ -2282,7 +2313,7 @@ fn engine_schema_try_delete_graph() {
     // removes what was bound.
     assert_eq!(
         document.remove_definition(definition, Used::Refuse),
-        Err(RemoveTreeError::StillUsed {
+        Err(DefinitionError::StillUsed {
             by: vec![(ROOT, one), (ROOT, two)]
         })
     );
@@ -2330,6 +2361,446 @@ fn engine_schema_try_delete_graph() {
         document.tree(ROOT).is_some(),
         "★ and the root is still reachable by its own id after a gap opened \
          before it in the list"
+    );
+}
+
+/// ★★★★★ R1986 — **may this definition be removed?**, asked before removing it.
+///
+/// # The measurement
+///
+/// The reference publishes *may this be deleted* on the **palette entry**, not
+/// on the graph, and it answers `false` when nobody overrides it. Measured
+/// across the whole tree, plugins included: **nobody overrides it** — the only
+/// two sites are the declaration and one consumer, and that consumer reaches it
+/// only as the last `else if` of a chain that has already handled every subject
+/// that matters, a definition graph two branches earlier by reading a stored
+/// bit on the graph. So for this subject the published permission hook is dead
+/// code and the real answer is a flag, which can say *no* but never *why not*.
+///
+/// ★★★★★ What is asserted here is the property that makes the surface worth
+/// having: the question and the edit are **one decision**. R1920 built that for
+/// nodes; this is the definition tree's.
+#[test]
+fn engine_schema_can_be_deleted() {
+    let mut document: Document<Op> = Document::new("root");
+    let definition = document.add_definition("shared");
+    let one = document
+        .add_node(ROOT, NodeBody::Group(definition), 40, 0)
+        .expect("root tree");
+
+    // (A) ★ The root is not a definition, so no definition verb applies to it —
+    // and the refusal says which of the two reasons it is.
+    assert_eq!(
+        document.may_definition(ROOT, DefinitionAct::Remove(Used::Refuse)),
+        Err(DefinitionError::TheRoot)
+    );
+    assert_eq!(
+        document.may_definition(TreeId(4242), DefinitionAct::Remove(Used::Refuse)),
+        Err(DefinitionError::NoSuchTree(TreeId(4242)))
+    );
+
+    // (B) ★★★★★ The refusal NAMES the sites, before anything is attempted. The
+    // reference's flag answers a bare no.
+    assert_eq!(
+        document.may_definition(definition, DefinitionAct::Remove(Used::Refuse)),
+        Err(DefinitionError::StillUsed {
+            by: vec![(ROOT, one)]
+        })
+    );
+    assert!(
+        document.tree(definition).is_some(),
+        "★ and asking changed nothing"
+    );
+
+    // (C) ★★★★★ THE PROPERTY: asking and doing cannot disagree, because the
+    // verb asks. Driven over both arms rather than asserted in prose.
+    for used in [Used::Refuse, Used::TakeThemToo] {
+        let mut scratch = document.clone();
+        let asked = scratch.may_definition(definition, DefinitionAct::Remove(used));
+        let done = scratch.remove_definition(definition, used);
+        assert_eq!(
+            asked.is_ok(),
+            done.is_ok(),
+            "★★★★★ {used:?}: the permission and the edit answered differently"
+        );
+        if let (Err(why), Err(refused)) = (asked, done) {
+            assert_eq!(why, refused, "★ and for the same stated reason");
+        }
+    }
+
+    // (D) ★ The destructive arm is a different question rather than a weaker
+    // check: the caller has said what happens to the instances.
+    assert_eq!(
+        document.may_definition(definition, DefinitionAct::Remove(Used::TakeThemToo)),
+        Ok(())
+    );
+}
+
+/// ★★★★★ R1986 — **may this definition be renamed?**, asked before renaming it.
+///
+/// # The measurement
+///
+/// *May this be renamed* is published beside *may this be deleted*, on the
+/// palette entry, and answers `true` by default. Measured across the whole
+/// tree it has **four** overriders: three refuse (a placeholder entry, a
+/// state-machine node, a visual-scripting event) and one answers **yes**,
+/// restating the default. And the consumer that actually renames a graph does
+/// not consult it at all: it gates on *may be deleted OR may be renamed*, read
+/// off two stored bits. ⚠ **A rename permitted because deletion is** — which is
+/// what one decision spelled in three places drifts into.
+///
+/// ⚠ The clause this proof does NOT assert is the interesting one: a name
+/// another definition already holds is **admitted** here. See
+/// `definition.rs`'s header — the fragment path adds a carried definition under
+/// the name it arrives with, and the derivation that decides whether a carried
+/// definition is one this document already has reads that name. A uniqueness
+/// rule would make a paste grow a copy every time.
+#[test]
+fn engine_schema_can_be_renamed() {
+    let mut document: Document<Op> = Document::new("root");
+    let first = document.add_definition("Filter");
+    let second = document.add_definition("Sink");
+
+    assert_eq!(
+        document.may_definition(ROOT, DefinitionAct::Rename("anything")),
+        Err(DefinitionError::TheRoot),
+        "★ the root's name is the document's, not a definition's"
+    );
+    assert_eq!(
+        document.may_definition(first, DefinitionAct::Rename("   ")),
+        Err(DefinitionError::NameEmpty { tree: first }),
+        "★★★★★ and a name that is empty once trimmed is refused with a reason, \
+         where the reference answers a bool meaning `I did not handle it`"
+    );
+
+    // ★★★★★ The measured divergence, asserted rather than assumed: a taken name
+    // is ALLOWED, and the price is paid at the lookup.
+    assert_eq!(
+        document.may_definition(second, DefinitionAct::Rename("Filter")),
+        Ok(())
+    );
+    document
+        .rename_definition(second, "Filter")
+        .expect("permitted above");
+    assert_eq!(document.definitions_named("Filter"), vec![first, second]);
+    assert_eq!(
+        document.definition_named("Filter"),
+        None,
+        "★★★★★ a name two definitions hold addresses NEITHER — the discipline \
+         `node_labelled` has, one level up"
+    );
+
+    // ★ And asking cannot disagree with doing, over every refusal above.
+    for (subject, name) in [(ROOT, "x"), (first, "  "), (first, "Renamed")] {
+        let mut scratch = document.clone();
+        let asked = scratch.may_definition(subject, DefinitionAct::Rename(name));
+        let done = scratch.rename_definition(subject, name);
+        assert_eq!(asked.is_ok(), done.is_ok(), "★★★★★ {name:?} disagreed");
+    }
+}
+
+/// ★★★★★ R1986 — **a definition can be given another name**, and the rename
+/// says which name it replaced.
+///
+/// # The measurement
+///
+/// The reference publishes *rename this graph* on the schema, answering `bool`
+/// meaning *I handled it*, so a refusal and *nothing to say* are the same
+/// value and the caller learns neither what the name was nor why it could not
+/// change.
+///
+/// ★★★★★ Measured across the whole tree it has exactly **one** overrider, in a
+/// plugin, and that one is the argument: on a **root** graph it performs the
+/// rename through its client host and then falls out to `return false`, so the
+/// caller's fallback rename runs **on top of a rename that already happened**.
+/// Only its non-root branch answers `true`. A bool that means *I handled it*
+/// cannot be got right by the one implementation that exists.
+///
+/// ⚠ This round's first draft said *no overrider at all*, measured over the
+/// engine source alone. The closing audit measured the whole tree and it was
+/// false — see this module's `definition.rs` header note.
+#[test]
+fn engine_schema_try_rename_graph() {
+    let mut document: Document<Op> = Document::new("root");
+    let definition = document.add_definition("Filter");
+    let instance = document
+        .instantiate(ROOT, definition, 0, 0)
+        .expect("a definition to stand for");
+
+    // (A) ★★★★★ The previous name is the ANSWER, which is what makes the edit
+    // undoable and reportable.
+    assert_eq!(
+        document.rename_definition(definition, "  Sifter  "),
+        Ok("Filter".to_owned()),
+        "★ and the wanted name is trimmed, as a node label is"
+    );
+    assert_eq!(
+        document.tree(definition).map(|held| held.name.as_str()),
+        Some("Sifter")
+    );
+
+    // (B) ★ The rename reaches what a person reads. `GetGraphDisplayInformation`
+    // is answered from this same field, so a screen showing the old name would
+    // be showing a second copy of it.
+    let mut path = EditPath::root();
+    path.enter(&document, instance)
+        .expect("into the definition");
+    assert_eq!(
+        path.breadcrumb(&document),
+        vec!["root".to_owned(), "Sifter".to_owned()],
+        "★★★★★ the breadcrumb is derived, so it cannot lag the rename"
+    );
+
+    // (C) ★ A refused rename leaves the name exactly where it was — the
+    // reference's routine has no such guarantee to make, because its refusal
+    // path is the caller's.
+    assert_eq!(
+        document.rename_definition(definition, "\t\n "),
+        Err(DefinitionError::NameEmpty { tree: definition })
+    );
+    assert_eq!(
+        document.tree(definition).map(|held| held.name.as_str()),
+        Some("Sifter"),
+        "★★★★★ untouched by the refusal"
+    );
+
+    // (D) ★ And nothing else moved: the instance still stands for it, which is
+    // the property a rename must not quietly cost.
+    assert_eq!(document.instances_of(definition), vec![(ROOT, instance)]);
+}
+
+/// ★★★★★ R1986 — **a definition can be duplicated ON ITS OWN**, with no
+/// instance to carry the copy, and the copy takes a name of its own.
+///
+/// # The measurement
+///
+/// *May this graph be duplicated* is the hook of this family with the most
+/// overriders — **eight**, measured across the whole tree — and they answer
+/// **by what the graph IS**: one reads the graph's type and admits two of them,
+/// one refuses the root animation graph by name and by class, and **six**
+/// answer a flat no. Its verb's supplied answer is a null pointer — a duplicate
+/// that produced nothing, with no reason.
+///
+/// ⚠ `fork_definition` is NOT this. It needs an instance, and it rebinds that
+/// instance to the copy; what the reference gates is duplicating a graph **as a
+/// graph**, from a palette listing the document's definitions, where there is
+/// no instance at all. That distinction is what the census row said was
+/// missing, and it is asserted at (C).
+#[test]
+fn engine_schema_can_duplicate_graph() {
+    let mut document: Document<Op> = Document::new("root");
+    let definition = document.add_definition("Filter");
+    let inner = document
+        .add_node(definition, NodeBody::Kind(Op::Double), 0, 0)
+        .expect("the definition");
+    let standing = document
+        .instantiate(ROOT, definition, 0, 0)
+        .expect("a definition to stand for");
+
+    // (A) ★ The permission, before the act. A copy of the root would BE a
+    // definition rather than a copy of one, so it is refused — the reference
+    // refuses its own root graph too, by comparing its name.
+    assert_eq!(
+        document.may_definition(ROOT, DefinitionAct::Duplicate),
+        Err(DefinitionError::TheRoot)
+    );
+    assert_eq!(
+        document.may_definition(TreeId(77), DefinitionAct::Duplicate),
+        Err(DefinitionError::NoSuchTree(TreeId(77)))
+    );
+    assert_eq!(
+        document.may_definition(definition, DefinitionAct::Duplicate),
+        Ok(())
+    );
+
+    // (B) ★★★★★ The copy takes a NAME OF ITS OWN, numbered from the stem.
+    let copy = document
+        .duplicate_definition(definition)
+        .expect("permitted above");
+    assert_eq!(
+        document.tree(copy).map(|held| held.name.as_str()),
+        Some("Filter-01")
+    );
+    assert_eq!(
+        document.definition_named("Filter"),
+        Some(definition),
+        "★★★★★ so the original is still addressable by name — a copy that kept \
+         the name would make both of them address nothing"
+    );
+
+    // (C) ★★★★★ NOTHING STANDS FOR THE COPY. This is the whole difference from
+    // `fork_definition`, which exists to rebind the instance it was given.
+    assert_eq!(document.instances_of(copy), Vec::new());
+    assert_eq!(
+        document.instances_of(definition),
+        vec![(ROOT, standing)],
+        "★ and the original's instance did not move to the copy"
+    );
+
+    // (D) ★ The copy carries the contents, and the two are independent.
+    assert_eq!(
+        document.tree(copy).map(Tree::node_count),
+        document.tree(definition).map(Tree::node_count)
+    );
+    document
+        .add_node(copy, NodeBody::Kind(Op::Sink), 40, 0)
+        .expect("the copy");
+    assert_eq!(
+        document.tree(definition).map(Tree::node_count),
+        Some(1),
+        "★★★★★ editing the copy did not reach the original"
+    );
+    assert!(
+        document
+            .tree(definition)
+            .is_some_and(|held| held.node(inner).is_some())
+    );
+
+    // (E) ★ A copy of the copy numbers from the STEM rather than growing a
+    // tail, which is R1985's rule on the node axis reused here.
+    let again = document
+        .duplicate_definition(copy)
+        .expect("a copy may be copied");
+    assert_eq!(
+        document.tree(again).map(|held| held.name.as_str()),
+        Some("Filter-02")
+    );
+}
+
+/// ★★★★★ R1986 — **what a removal will take is answerable before it takes it**,
+/// which is this crate's form of *the graph is going away*.
+///
+/// # The measurement
+///
+/// The reference publishes that notification on the schema and, measured across
+/// the whole tree, it has **six** overriders. Reading **all six** is what said
+/// what it is for: every one of them finds the node bound to the departing
+/// graph and deletes it, and one does more — it also drops the graph from the
+/// recently-edited list and clears the breakpoints inside it. ⇒ the capability
+/// is *everything keyed to this definition is told, before it goes*.
+///
+/// Two things there make that half a capability:
+///
+/// * the listener is handed **one graph**, and the reference's own removal path
+///   does not cascade, so it cannot be told about a chain it orphaned;
+/// * it is handed the graph and left to walk it, so what was inside is
+///   something each listener re-derives.
+///
+/// Here it is a question, answered before the act, and the removal is that same
+/// answer applied.
+#[test]
+fn engine_schema_handle_graph_being_deleted() {
+    let mut document: Document<Op> = Document::new("root");
+    let outer = document.add_definition("Outer");
+    let inner = document.add_definition("Inner");
+    let shared = document.add_definition("Shared");
+    // ★ The chain: the root stands for Outer, and Outer stands for Inner. So
+    // removing Outer orphans Inner — the case the reference cannot report.
+    let standing = document
+        .instantiate(ROOT, outer, 0, 0)
+        .expect("a definition to stand for");
+    let nested = document
+        .instantiate(outer, inner, 0, 0)
+        .expect("a definition to stand for");
+    // ★★★★★ AND THE CASE THAT SEPARATES *orphaned* FROM *touched*: `Shared` has
+    // one instance inside the departing tree and one that survives it, so it
+    // must NOT be swept. Added because a counterfactual that weakened the rule
+    // from "every instance is going" to "any instance is going" was **caught by
+    // nothing** on the fixture without it — the population, not the assertion,
+    // was what could not tell them apart (R1845's class).
+    let shared_here = document
+        .instantiate(ROOT, shared, 80, 0)
+        .expect("a definition to stand for");
+    let shared_in = document
+        .instantiate(outer, shared, 80, 0)
+        .expect("a definition to stand for");
+    let leaf = document
+        .add_node(inner, NodeBody::Kind(Op::Double), 40, 0)
+        .expect("the inner definition");
+    let kept = document.add_definition("Unplaced");
+
+    let before: BTreeSet<(TreeId, NodeId)> = (0..document.tree_count())
+        .filter_map(|index| document.tree(TreeId(u32::try_from(index).unwrap_or(u32::MAX))))
+        .flat_map(|held| held.nodes().map(move |node| (held.id, node.id)))
+        .collect();
+
+    // (A) ★★★★★ Asked BEFORE, and it names the chain.
+    let coming = document
+        .would_remove_definition(outer, Used::TakeThemToo)
+        .expect("the caller named the destructive arm");
+    assert_eq!(
+        coming.definitions,
+        vec![outer, inner],
+        "★★★★★ the orphaned definition is in the report, which is what the \
+         reference's one-graph notification cannot say"
+    );
+    assert!(
+        !coming.definitions.contains(&kept),
+        "★ and a definition that was ALREADY standing alone is not swept up"
+    );
+    assert!(
+        !coming.definitions.contains(&shared),
+        "★★★★★ nor one that merely HAS an instance inside the departing tree — \
+         another instance survives it, so it is not orphaned"
+    );
+
+    // (B) ★★★★★ The departing trees can still be READ while the answer is held,
+    // which is the whole reason the question comes before the act.
+    assert_eq!(
+        coming
+            .definitions
+            .iter()
+            .filter_map(|id| document.tree(*id))
+            .map(|held| held.name.clone())
+            .collect::<Vec<_>>(),
+        vec!["Outer".to_owned(), "Inner".to_owned()],
+        "★ a report of bare ids after the fact could not answer this at all"
+    );
+
+    // (C) ★★★★★ And it names the nodes INSIDE them, not only the ones that
+    // stood for them — the half a side table keyed by (tree, node) needs.
+    assert_eq!(coming.instances, vec![(ROOT, standing), (outer, nested)]);
+    assert_eq!(
+        coming.nodes,
+        vec![(outer, nested), (outer, shared_in), (inner, leaf)]
+    );
+
+    // (D) ★ The removal reports exactly what the question predicted, because it
+    // IS that derivation applied.
+    let went = document
+        .remove_definition(outer, Used::TakeThemToo)
+        .expect("the same answer");
+    assert_eq!(went, coming);
+
+    // (E) ★★★★★ THE COMPLETENESS ASSERTION: the report is the whole population.
+    // Counted two ways — what the report says went, and what the document no
+    // longer holds — and the two must agree. A notification that names some of
+    // what left is worse than none, because a listener trusts it.
+    let after: BTreeSet<(TreeId, NodeId)> = (0..document.tree_count())
+        .filter_map(|index| document.tree(TreeId(u32::try_from(index).unwrap_or(u32::MAX))))
+        .flat_map(|held| held.nodes().map(move |node| (held.id, node.id)))
+        .collect();
+    let reported: BTreeSet<(TreeId, NodeId)> = went
+        .instances
+        .iter()
+        .chain(went.nodes.iter())
+        .copied()
+        .collect();
+    assert_eq!(
+        before.difference(&after).copied().collect::<BTreeSet<_>>(),
+        reported,
+        "★★★★★ every node that left is named, and nothing that stayed is"
+    );
+    assert!(document.tree(kept).is_some());
+    assert!(
+        document.tree(shared).is_some()
+            && document.instances_of(shared) == vec![(ROOT, shared_here)],
+        "★ and the surviving instance still stands for a definition that is here"
+    );
+    assert!(
+        document.validate().is_empty(),
+        "★★★★★ nothing is left naming a tree that is gone: {:?}",
+        document.validate()
     );
 }
 

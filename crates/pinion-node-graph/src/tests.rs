@@ -23,8 +23,8 @@ use crate::{
     Tick, Timeline, Tint, TreeId, UngroupError, Unreadable, Violation, WatchError, Watches,
     ZoomRange, crossing,
 };
+use crate::{DefinitionAct, DefinitionError, PairError, RemovedTree, Used};
 use crate::{Fault, Finding, Fitness, Objection, Surroundings, Weight};
-use crate::{PairError, RemoveTreeError, RemovedTree, Used};
 
 /// ★★★★★ R1925 — **an application that declares no two-state socket type is
 /// told THAT**, whatever section it names.
@@ -17358,18 +17358,18 @@ fn r1944_the_root_and_a_used_definition_are_both_refused() {
     let mut document: Document<LOp> = Document::new("lattice");
     assert_eq!(
         document.remove_definition(ROOT, Used::Refuse),
-        Err(RemoveTreeError::TheRoot),
+        Err(DefinitionError::TheRoot),
         "★ the root is where the document lives"
     );
     assert_eq!(
         document.remove_definition(ROOT, Used::TakeThemToo),
-        Err(RemoveTreeError::TheRoot),
+        Err(DefinitionError::TheRoot),
         "★★★★★ and NOT even with the destructive arm — the root's refusal is \
          not something a caller can opt out of"
     );
     assert_eq!(
         document.remove_definition(TreeId(9999), Used::TakeThemToo),
-        Err(RemoveTreeError::NoSuchTree(TreeId(9999)))
+        Err(DefinitionError::NoSuchTree(TreeId(9999)))
     );
     // ★ An unplaced definition goes freely, which is what makes the refusal
     // below about being USED rather than about being a definition.
@@ -17379,6 +17379,7 @@ fn r1944_the_root_and_a_used_definition_are_both_refused() {
         Ok(RemovedTree {
             instances: Vec::new(),
             definitions: vec![spare],
+            nodes: Vec::new(),
         })
     );
     // ★★★★★ AND THE ID IS NOT HANDED BACK. Asserted HERE rather than beside
@@ -17397,6 +17398,81 @@ fn r1944_the_root_and_a_used_definition_are_both_refused() {
     );
     assert!(document.tree(spare).is_none());
     assert!(document.tree(after).is_some());
+}
+
+/// ★★★★★ R1986 — **two definitions may share a name, and the reason is
+/// load-bearing rather than an omission.**
+///
+/// Written because the round's own header says so, and a claim in prose is a
+/// claim: `definition.rs` argues that a uniqueness rule here would break the
+/// fragment path, and this is that argument DRIVEN. `forking_gives_the_copy_a_definition_of_its_own`
+/// already shows the fork adds a definition; what is asserted here is the part
+/// that decides the rule — it adds it **under the name it arrived with**, so a
+/// crate that refused a taken definition name could not have that arm at all.
+///
+/// ⚠ And the price is asserted beside the reason, which is the half a
+/// permissive rule usually leaves out: the ambiguous name addresses NEITHER
+/// definition. `find`-the-first would have made *which one* a person edited
+/// depend on insertion order, and that is what the node lab did until this
+/// round.
+#[test]
+fn r1986_a_shared_definition_name_is_the_fork_paths_price() {
+    let mut g = grouped();
+    let carried = g.document.tree(g.definition).unwrap().name.clone();
+    let cut = g.document.extract(ROOT, &[g.instance]).unwrap();
+    let out = g
+        .document
+        .insert(ROOT, &cut, (900, 0), Crossings::Drop, Definitions::Fork)
+        .unwrap();
+    let forked = out.definitions_added[0];
+
+    // ★★★★★ THE REASON. The fork lands under the carried name, so the two
+    // definitions now share one — with no rename anywhere on that path.
+    assert_eq!(
+        g.document.tree(forked).map(|held| held.name.clone()),
+        Some(carried.clone()),
+        "★★★★★ a uniqueness rule on definition names would have to break this"
+    );
+    assert_eq!(
+        g.document.definitions_named(&carried),
+        vec![g.definition, forked]
+    );
+
+    // ★★★★★ THE PRICE, stated where it is paid rather than left implicit.
+    assert_eq!(
+        g.document.definition_named(&carried),
+        None,
+        "★★★★★ the shared name addresses NEITHER — the discipline `node_labelled` \
+         has, one level up"
+    );
+
+    // ★ And the permission agrees with the model rather than with a habit: a
+    // rename INTO a taken name is admitted, because the state is one the fork
+    // path creates anyway.
+    let spare = g.document.add_definition("spare");
+    assert_eq!(
+        g.document
+            .may_definition(spare, DefinitionAct::Rename(&carried)),
+        Ok(())
+    );
+    assert_eq!(
+        g.document.rename_definition(spare, &carried),
+        Ok("spare".to_owned())
+    );
+    assert_eq!(g.document.definitions_named(&carried).len(), 3);
+
+    // ★ A DUPLICATE, by contrast, never makes the state: it is a copy nobody
+    // asked to be confusable with its original, so it numbers from the stem.
+    let copy = g.document.duplicate_definition(g.definition).unwrap();
+    assert_eq!(
+        g.document.tree(copy).map(|held| held.name.clone()),
+        Some(format!("{carried}-01"))
+    );
+    assert_eq!(
+        g.document.definition_named(&format!("{carried}-01")),
+        Some(copy)
+    );
+    assert!(g.document.validate().is_empty());
 }
 
 /// ★★★★★ R1943 — **the DEFAULT answer to "what closes the zone this kind

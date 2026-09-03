@@ -11997,6 +11997,27 @@ const FIELDS: &[SchemaField] = &{
                 ]
             },
         ),
+        // ★★★★★ R1986 — give a definition another name, answering the name it
+        // replaced. Both arguments are OPEN: the first because a definition's
+        // name is not a closed vocabulary, and the second because the whole
+        // point is that the crate judges the name offered and says what is
+        // wrong with it — a closed second argument would make the refusal
+        // unreachable, which is R1939's rule on this screen.
+        SchemaField::action_with(
+            "rename_definition",
+            "string",
+            ArgForm::Delimited(','),
+            const {
+                &[
+                    SchemaArg::open("definition", "string"),
+                    SchemaArg::open("name", "string"),
+                ]
+            },
+        ),
+        // ★★★★★ R1986 — copy a definition ON ITS OWN, with nothing standing for
+        // the copy. Not `duplicate`, which copies a CARD and so gives a second
+        // instance of the same definition; this gives a second definition.
+        SchemaField::action("copy_definition", "string"),
         // ★★★★★ R1939 — give one pin the address it rests at. The locator is
         // deliberately an OPEN argument: the point of the round is that the pin
         // judges it and says what it wants, so a closed vocabulary here would
@@ -13131,6 +13152,14 @@ impl ExternalIntrospect for LabOracle {
             "drop_definition" => {
                 let raw = Self::text(&args)?;
                 drop_definition(&state, &raw).map(IntrospectValue::Text)
+            }
+            "rename_definition" => {
+                let raw = Self::text(&args)?;
+                rename_definition(&state, &raw).map(IntrospectValue::Text)
+            }
+            "copy_definition" => {
+                let raw = Self::text(&args)?;
+                copy_definition(&state, &raw).map(IntrospectValue::Text)
             }
             "regroup" => {
                 let raw = Self::text(&args)?;
@@ -20085,6 +20114,8 @@ fn card_tint(state: &LabState, node: NodeId) -> Option<Tint> {
 /// is a flag on the graph and the deletion takes what was bound to it without
 /// saying so.
 fn definitions_wire(state: &Rc<LabState>) -> serde_json::Value {
+    use pinion_node_graph::DefinitionAct;
+
     let doc = state.doc.borrow();
     let rows: Vec<serde_json::Value> = doc
         .definitions()
@@ -20099,14 +20130,73 @@ fn definitions_wire(state: &Rc<LabState>) -> serde_json::Value {
                     })
                 })
                 .collect();
+            // ★★★★★ R1986 — what may be done to this definition, asked of the
+            // crate's ONE permission surface rather than derived here. A screen
+            // that greys a control has to be able to say why it is greyed, so
+            // the value is the refusal's own sentence and `null` means allowed.
+            //
+            // ⚠ The removal is asked with the SAFE arm. A row that reported the
+            // destructive answer would say "yes" for every definition, which is
+            // true and useless: what a person needs to know before pressing is
+            // whether pressing costs them work.
+            let refusal = |act: DefinitionAct<'_>| {
+                doc.may_definition(held.id, act)
+                    .err()
+                    .map_or(serde_json::Value::Null, |why| {
+                        serde_json::Value::String(why.to_string())
+                    })
+            };
             serde_json::json!({
                 "definition": held.name.clone(),
                 "id": held.id.0,
                 "used_by": used,
+                "may": {
+                    "remove": refusal(DefinitionAct::Remove(pinion_node_graph::Used::Refuse)),
+                    "rename": refusal(DefinitionAct::Rename(&held.name)),
+                    "duplicate": refusal(DefinitionAct::Duplicate),
+                },
+                // ★★★★★ R1986 — and what removing it WOULD take, counted before
+                // anyone presses. The reference's notification fires after the
+                // decision has been made; this is what a confirmation dialog
+                // needs in order to state the cost.
+                "removal_would_take": doc
+                    .would_remove_definition(held.id, pinion_node_graph::Used::TakeThemToo)
+                    .map_or_else(
+                        |_| serde_json::json!(null),
+                        |going| serde_json::json!({
+                            "definitions": going.definitions.len(),
+                            "cards": going.instances.len() + going.nodes.len(),
+                        }),
+                    ),
             })
         })
         .collect();
     serde_json::json!({ "definitions": rows })
+}
+
+/// ★★★★★ R1986 — the definition a name addresses, or why it addresses none.
+///
+/// ⚠ **Not `definitions().find(..)`**, which is what this screen did until this
+/// round: two definitions may answer to one name (see the crate's
+/// `definition.rs` header for why that is load-bearing rather than a defect),
+/// and `find` picked whichever came first — so *which* definition a person
+/// renamed or removed depended on insertion order. `definition_named` answers
+/// `None` for an ambiguous name, and this turns that `None` into a sentence
+/// that says which of the two cases it was. R1983's rule: a fallback that does
+/// not keep the discipline of the index it stands in for is a second answer.
+fn definition_addressed(
+    doc: &Document<LabNode>,
+    wanted: &str,
+) -> Result<pinion_node_graph::TreeId, InvokeError> {
+    if let Some(id) = doc.definition_named(wanted) {
+        return Ok(id);
+    }
+    let holders = doc.definitions_named(wanted).len();
+    Err(InvokeError::rejected(if holders == 0 {
+        format!("no definition named {wanted:?}")
+    } else {
+        format!("{holders} definitions answer to {wanted:?}, so the name addresses none of them")
+    }))
 }
 
 /// ★★★★★ R1944 — **remove a definition**, refusing while anything stands for
@@ -20130,11 +20220,7 @@ fn drop_definition(state: &Rc<LabState>, raw: &str) -> Result<String, InvokeErro
     };
     let wanted = name.trim();
     let mut doc = state.doc.borrow_mut();
-    let id = doc
-        .definitions()
-        .find(|held| held.name == wanted)
-        .map(|held| held.id)
-        .ok_or_else(|| InvokeError::rejected(format!("no definition named {wanted:?}")))?;
+    let id = definition_addressed(&doc, wanted)?;
     match doc.remove_definition(id, used) {
         Ok(went) => {
             let said = format!(
@@ -20144,6 +20230,64 @@ fn drop_definition(state: &Rc<LabState>, raw: &str) -> Result<String, InvokeErro
             );
             drop(doc);
             state.say(Utterance::done(said.clone()));
+            Ok(said)
+        }
+        Err(why) => {
+            let said = why.to_string();
+            drop(doc);
+            state.say(Utterance::refused(&said));
+            Err(InvokeError::rejected(said))
+        }
+    }
+}
+
+/// ★★★★★ R1986 — **give a definition another name**, and say which name it
+/// replaced.
+///
+/// The screen half of the crate's `rename_definition`. What it publishes that
+/// the reference cannot is the previous name: there the rename hook answers
+/// *did the schema handle this*, so a person who mistypes has no way back and a
+/// log has nothing to record.
+fn rename_definition(state: &Rc<LabState>, raw: &str) -> Result<String, InvokeError> {
+    let (name, wanted) = raw
+        .split_once(',')
+        .ok_or_else(|| InvokeError::rejected(format!("{raw:?} is not <definition>,<name>")))?;
+    let mut doc = state.doc.borrow_mut();
+    let id = definition_addressed(&doc, name.trim())?;
+    match doc.rename_definition(id, wanted) {
+        Ok(was) => {
+            let said = format!("{was} is now {}", wanted.trim());
+            drop(doc);
+            state.say(Utterance::done(said.clone()));
+            Ok(said)
+        }
+        Err(why) => {
+            let said = why.to_string();
+            drop(doc);
+            state.say(Utterance::refused(&said));
+            Err(InvokeError::rejected(said))
+        }
+    }
+}
+
+/// ★★★★★ R1986 — **copy a definition on its own**, with nothing standing for
+/// the copy, and say what the copy is called.
+///
+/// ⚠ Not the same act as duplicating a CARD. A card that stands for a
+/// definition is an instance; duplicating it gives a second instance of the
+/// *same* definition. This gives a second definition — the reference's
+/// *duplicate a graph as a graph*, reached from a palette listing the
+/// document's definitions, where there is no instance in the picture at all.
+fn copy_definition(state: &Rc<LabState>, raw: &str) -> Result<String, InvokeError> {
+    let mut doc = state.doc.borrow_mut();
+    let id = definition_addressed(&doc, raw.trim())?;
+    match doc.duplicate_definition(id) {
+        Ok(copy) => {
+            let said = doc
+                .tree(copy)
+                .map_or_else(|| format!("tree {}", copy.0), |held| held.name.clone());
+            drop(doc);
+            state.say(Utterance::done(format!("{} copied to {said}", raw.trim())));
             Ok(said)
         }
         Err(why) => {

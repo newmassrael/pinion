@@ -5066,76 +5066,9 @@ pub type PortValueResult<K> = Result<
     PortValueError<<K as NodeKind>::Type, <K as NodeKind>::Value>,
 >;
 
-/// ★★★★★ R1944 — what a caller wants done about the instances of a definition
-/// it is removing.
-///
-/// Two arms and the caller must pick one, which is the whole decision: the
-/// reference has no such choice — its delete-a-graph path removes the nodes
-/// bound to that graph unconditionally and says nothing about having done it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Used {
-    /// Refuse while anything still stands for this definition, and name what
-    /// does. The safe answer, and the default a screen should offer: a
-    /// reference that disappears with its target is data loss the person did
-    /// not ask for.
-    Refuse,
-    /// Remove them too, and REPORT what went.
-    TakeThemToo,
-}
-
-/// ★★★★★ R1944 — why a definition could not be removed.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum RemoveTreeError {
-    /// No such tree.
-    NoSuchTree(TreeId),
-    /// The root is where a document lives; removing it would leave nothing.
-    TheRoot,
-    /// Something still stands for this definition, and this says what.
-    ///
-    /// ⚠ The SITES, not a count. `instance_count` could already answer *how
-    /// many*, and a person told "3 instances" still has to find them; the
-    /// reference answers neither, because it never refuses.
-    StillUsed {
-        /// Every instance, as (the tree it is in, the node).
-        by: Vec<(TreeId, NodeId)>,
-    },
-}
-
-impl fmt::Display for RemoveTreeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NoSuchTree(tree) => write!(f, "no tree {tree}"),
-            Self::TheRoot => f.write_str("the root tree cannot be removed"),
-            Self::StillUsed { by } => write!(
-                f,
-                "{} node(s) still stand for it, the first in tree {}",
-                by.len(),
-                by.first().map_or(ROOT, |(tree, _)| *tree)
-            ),
-        }
-    }
-}
-
-impl std::error::Error for RemoveTreeError {}
-
-/// ★★★★★ R1944 — what a removal took with it.
-///
-/// Returned rather than done silently, which is the measured difference: the
-/// reference's path removes every node bound to the graph and answers `void`,
-/// so a caller cannot undo, report or even count what it cost.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct RemovedTree {
-    /// Every instance node that went with it, as (the tree it was in, the node).
-    pub instances: Vec<(TreeId, NodeId)>,
-    /// Every definition that went with it because only it stood for them.
-    ///
-    /// ⚠ A definition can hold instances of ANOTHER definition, so removing one
-    /// can orphan a chain. Named rather than left: the reference's path does
-    /// not look, so a nested definition simply stays in the document with
-    /// nothing pointing at it.
-    pub definitions: Vec<TreeId>,
-}
+// ★ R1986 — `Used`, `RemoveTreeError` (now `DefinitionError`) and `RemovedTree`
+// moved to `definition.rs`, which owns the definition-tree verbs and their one
+// permission surface. A module that owns a capability owns its vocabulary.
 
 /// ★★★★★ R1943 — why two nodes could not be made a zone.
 ///

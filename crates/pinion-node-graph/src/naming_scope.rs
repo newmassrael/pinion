@@ -307,7 +307,12 @@ impl<K: NodeKind> Document<K> {
 
     /// `was` with a trailing `-NN` taken off, which is the stem a further copy
     /// numbers from.
-    fn stem_of(was: &str) -> &str {
+    ///
+    /// ★ R1986 made it crate-visible rather than writing a second one: the
+    /// definition-tree copy path needs the same stem, and R1963's rule is that
+    /// what matters about a property spelled in two places is what holds them
+    /// together. This is what holds them together.
+    pub(crate) fn stem_of(was: &str) -> &str {
         match was.rsplit_once('-') {
             Some((head, tail))
                 if !head.is_empty()

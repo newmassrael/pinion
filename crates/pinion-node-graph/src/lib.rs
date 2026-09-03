@@ -218,6 +218,7 @@ mod arrange;
 mod beacon;
 mod bypass;
 mod debug;
+mod definition;
 mod deploy;
 mod describe;
 mod eval;
@@ -264,6 +265,7 @@ pub use debug::{
     BreakError, Breakpoints, Command, Direction, Halt, Inspectable, Landing, NodeSite, Occurrence,
     Paused, PortSite, Reading, Session, Stride, Timeline, WatchError, Watches,
 };
+pub use definition::{DefinitionAct, DefinitionError, RemovedTree, Used};
 pub use deploy::{Bringup, Configured, Deployed, Placed, Plan, Uncarried, Unplannable};
 pub use describe::{Carrying, PortTooltip};
 pub use eval::{Descent, Evaluator};
@@ -285,7 +287,7 @@ pub use model::{
     Description, Document, DroppedLink, EditError, Flow, Found, InZone, Instance, Interface,
     InterfaceSide, Judged, KindPort, Link, LinkId, Matched, Multiplicity, Node, NodeBody, NodeId,
     NodeKind, PairError, Port, PortRef, PortValueError, PortValueResult, ROOT, Refusal, Relabelled,
-    RemoveTreeError, Removed, RemovedTree, Side, Signature, Socket, Tree, TreeId, Used, crossing,
+    Removed, Side, Signature, Socket, Tree, TreeId, crossing,
 };
 pub use naming::{Labelled, NameSource, PortName};
 pub use naming_scope::{Copying, Naming};

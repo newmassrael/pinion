@@ -254,6 +254,17 @@
       ]
     },
     {
+      "name": "debt-a-permission-is-published-and-no-control-is-greyed-by-it",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links screen-a-vs-canon-operation-census"
+      ]
+    },
+    {
       "name": "debt-a-pure-rules-oracle-is-a-second-gate-nobody-tests",
       "substituted": false,
       "blocked_by": "buildable",
@@ -606,6 +617,17 @@
       "closed_because": "",
       "why": [
         "links analyzer-behaviour-canon-is-the-standalone-prototype"
+      ]
+    },
+    {
+      "name": "debt-two-holders-of-one-name-are-refused-by-every-verb-and-reported-by-nothing",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links screen-a-vs-canon-operation-census"
       ]
     },
     {
