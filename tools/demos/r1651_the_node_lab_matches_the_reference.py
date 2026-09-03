@@ -607,7 +607,18 @@ def body() -> None:
             # seat. That is the whole of what this round changed here: the pin
             # is the roster, and the paint is the roster less what is behind the
             # control.
-            "lab.toolbar": 17,
+            # ★★ R1989 — 18, not 17: R1988's focus chip (`lab.toolbar.focus`),
+            # which says which closure the selection is aimed through. It
+            # gained one and lost none, so the pin moving by exactly one is what
+            # says the seat arrived rather than one arriving as another left.
+            #
+            # ⚠ R1988 ADDED IT AND DID NOT MOVE THE PIN, and this walk is the
+            # only thing that would have said so — that round also declared
+            # `focus` on both channels of the schema, and THAT failure aborted
+            # this walk before it ever reached the roster. One unrun walk hid
+            # two defects, and the second became visible only once the first was
+            # repaired. A round that edits an example runs that example's walk.
+            "lab.toolbar": 18,
             "lab.gate": 7,
             "lab.hint": 2,
             # ★★★★★ R1984 — the breadcrumb, ONE at the opening frame.

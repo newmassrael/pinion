@@ -1664,7 +1664,14 @@ impl ExternalIntrospect for ViewOracle {
                         const { &[SchemaArg::open("x", "int"), SchemaArg::open("y", "int")] },
                     ),
                     SchemaField::action("select", "string"),
-                    SchemaField::action("chip", "string"),
+                    // ★ R1989 — `choose_chip`, not `chip`, which is the READ
+                    // seven lines above. `field_for` is a first-match, so that
+                    // read shadowed this verb and the surface published an
+                    // action no client could reach through the declaration.
+                    // The word is the name of the function the arm calls, so
+                    // the published verb and the code's verb cannot drift;
+                    // `selected`/`select` beside it is the same shape.
+                    SchemaField::action("choose_chip", "string"),
                     SchemaField::action("press", "string"),
                     SchemaField::action("point", "string"),
                     SchemaField::action("send", "string"),
@@ -1791,7 +1798,7 @@ impl ExternalIntrospect for ViewOracle {
                 }
                 select_session(&state, &id);
             }
-            "chip" => {
+            "choose_chip" => {
                 let key = word(&args)?;
                 let nth = spec::CHIPS
                     .iter()

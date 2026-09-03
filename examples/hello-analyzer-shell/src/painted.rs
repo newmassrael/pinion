@@ -10185,7 +10185,7 @@ fn r1988_the_assembled_tool_says_which_cards_a_selection_is_about() {
 /// Phase 0 — nothing is focused when the screen opens, so every later phase is
 /// a change and not a state that was already there.
 fn the_graph_opens_whole(state: &std::rc::Rc<ShellState>) {
-    let wire = lab_slot(state, "focus");
+    let wire = lab_slot(state, "focused");
     assert!(
         wire["mode"].is_null(),
         "★ the graph opens whole, which is also the reference's default: {wire}"
@@ -10278,7 +10278,7 @@ fn a_card_at_the_head_of_the_chain_is_selected(state: &std::rc::Rc<ShellState>) 
     press.cursor(aim(&shot, &format!("lab.node.{head}")));
     press.press();
     press.release();
-    let wire = lab_slot(state, "focus");
+    let wire = lab_slot(state, "focused");
     assert!(
         wire["mode"].is_null(),
         "selecting a card does not turn a focus on by itself: {wire}"
@@ -10293,7 +10293,7 @@ fn a_card_at_the_head_of_the_chain_is_selected(state: &std::rc::Rc<ShellState>) 
 /// cards that merely share a descendant are not.
 fn the_lineage_of_that_card_leaves_its_siblings_out(state: &std::rc::Rc<ShellState>, head: &Head) {
     press_the_focus_chip(state);
-    let wire = lab_slot(state, "focus");
+    let wire = lab_slot(state, "focused");
     assert_eq!(
         wire["mode"].as_str(),
         Some("lineage"),
@@ -10346,7 +10346,7 @@ fn the_lineage_of_that_card_leaves_its_siblings_out(state: &std::rc::Rc<ShellSta
 /// own word.
 fn the_whole_chain_takes_the_siblings_back_in(state: &std::rc::Rc<ShellState>, head: &Head) {
     press_the_focus_chip(state);
-    let wire = lab_slot(state, "focus");
+    let wire = lab_slot(state, "focused");
     assert_eq!(
         wire["mode"].as_str(),
         Some("chain"),
@@ -10386,7 +10386,7 @@ fn the_whole_chain_takes_the_siblings_back_in(state: &std::rc::Rc<ShellState>, h
 /// reference's fade can be left only from the button that started it.
 fn one_more_press_shows_the_graph_whole_again(state: &std::rc::Rc<ShellState>) {
     press_the_focus_chip(state);
-    let wire = lab_slot(state, "focus");
+    let wire = lab_slot(state, "focused");
     assert!(
         wire["mode"].is_null(),
         "★ a third press leaves the focus rather than cycling inside it: {wire}"

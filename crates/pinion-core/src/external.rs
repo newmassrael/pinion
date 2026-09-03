@@ -1860,6 +1860,63 @@ impl IntrospectSchema {
     pub fn field_for(&self, probe: &str) -> Option<&SchemaField> {
         self.fields.iter().find(|f| f.addresses(probe))
     }
+
+    /// ★★★★★ R1989 — the first path this schema **declares and then shadows**:
+    /// a path whose own declaration is not the one
+    /// [`field_for`](Self::field_for) hands back.
+    ///
+    /// # Why a schema can be wrong about itself
+    ///
+    /// `field_for` is a linear first-match, so two fields spelling one path do
+    /// not both exist as far as any consumer is concerned — the later one is
+    /// unreachable, and nothing said so. Measured across this tree at R1989,
+    /// four such declarations were live on three screens, every one of them a
+    /// **state read and its own verb** sharing a noun.
+    ///
+    /// What that costs is not the dispatch — an action still fires, because
+    /// the invoke channel reaches the impl and the impl knows the word. It is
+    /// the **description**: the schema publishes the shadowed field, the
+    /// transport judges the channel from the shadowing one, and everything the
+    /// hidden declaration said — an action's argument grammar, its conditional
+    /// cases, the words it is willing to take — is published by nobody. A
+    /// surface that declares a verb precisely so an agent's offer cannot drift
+    /// from what the verb accepts thereby offers the agent nothing.
+    ///
+    /// # Why it asks `field_for` rather than comparing paths
+    ///
+    /// Shadowing is a property of *the lookup that actually runs*, and a
+    /// separate spelling of it would be a second definition free to disagree
+    /// with the first — including over a parametric family, where a template
+    /// and a scalar can address one probe without being equal as strings. So
+    /// this walks the declarations and asks the schema's own resolver which
+    /// field owns each one; a declaration the resolver does not return to its
+    /// own author is shadowed, whatever the two channels are.
+    ///
+    /// Same channel or different, both are defects: a doubled read publishes a
+    /// type twice and answers with one of them, and a read over an action
+    /// publishes a verb no client can reach through the declaration.
+    ///
+    /// # And a declaration nobody owns counts
+    ///
+    /// ★ The first draft asked `position(..)?`, so a path **no** field
+    /// addresses — not even the one that declared it — left the closure early
+    /// and was reported clean. A counterfactual found it: with
+    /// [`SchemaField::addresses`] broken so a template stops matching itself,
+    /// every parametric surface in the tree becomes undescribable and this
+    /// answered `None`. It is reachable without breaking anything, too — a
+    /// template whose placeholders have no literal between them (`a.<x><y>`)
+    /// is undelimitable and matches nothing, its own spelling included, so a
+    /// surface can declare an address no client can ever reach.
+    ///
+    /// The question is *is this declaration the one that answers for its own
+    /// path*, and **nobody answers for it** is a `no`, not an exemption.
+    #[must_use]
+    pub fn shadowed(&self) -> Option<&'static str> {
+        self.fields.iter().enumerate().find_map(|(mine, field)| {
+            let owner = self.fields.iter().position(|f| f.addresses(field.path));
+            (owner != Some(mine)).then_some(field.path)
+        })
+    }
 }
 
 /// R1480 §5.15 — JSON text a producer has **already encoded**, carried to
@@ -6792,5 +6849,136 @@ mod drop_target_default_tests {
         // And the commit's default is inert, so even a caller that ignored the
         // verdict changes nothing.
         surface.drop_left();
+    }
+}
+
+#[cfg(test)]
+mod schema_shadowing_tests {
+    //! R1989 — a schema's account of **itself**: which of the paths it declares
+    //! it also hides behind an earlier declaration.
+
+    /// ★★★★★ R1989 — [`IntrospectSchema::shadowed`] over the four shapes a
+    /// schema can take, because a detector asserted only against schemas that
+    /// are CLEAN is asserted about nothing.
+    ///
+    /// This is the population half of the round's gate. The census over the
+    /// assembled analyzer can only say *these screens are clean*; weakening the
+    /// detector leaves that census green, because it has nothing left to
+    /// detect. So the fixtures here are deliberately dirty, and one of them is
+    /// dirty across channels — which is the live defect R1989 found, four
+    /// times, and the one a same-channel equality test would miss.
+    #[test]
+    fn r1989_a_schema_says_which_of_its_own_paths_it_shadows() {
+        use crate::external::{IntrospectSchema, SchemaArg, SchemaChannel, SchemaField};
+
+        // (1) Clean: every declaration is the one `field_for` hands back.
+        let clean = IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("focused", "json"),
+                    SchemaField::action("focus", "string"),
+                    SchemaField::new("selected", "string"),
+                    SchemaField::action("select", "string"),
+                ]
+            },
+        );
+        assert_eq!(clean.shadowed(), None);
+
+        // (2) A read over its own verb — the live shape, four times over.
+        let across = IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("focus", "json"),
+                    SchemaField::action("focus", "string"),
+                ]
+            },
+        );
+        assert_eq!(
+            across.shadowed(),
+            Some("focus"),
+            "the action is unreachable through the declaration and the schema \
+             must be able to say so",
+        );
+        // And the reason it matters, stated as the fact it is: the channel a
+        // consumer reads for that path is the SHADOWING field's.
+        assert_eq!(
+            across.field_for("focus").map(|f| f.channel),
+            Some(SchemaChannel::Read),
+            "a verb declared under a state's noun is described as a state",
+        );
+
+        // (3) Same channel, which is a defect too: the second declaration's
+        // type is published and never answered from.
+        let doubled = IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("count", "int"),
+                    SchemaField::new("count", "string"),
+                ]
+            },
+        );
+        assert_eq!(doubled.shadowed(), Some("count"));
+
+        // (4) A family and a scalar its template addresses. This is why the
+        // question is asked through `field_for` rather than by comparing paths:
+        // these two are not equal as strings, and the scalar is unreachable all
+        // the same.
+        let family = IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::parametric(
+                        "hit.<x>",
+                        "string",
+                        const { &[SchemaArg::open("x", "int")] },
+                    ),
+                    SchemaField::new("hit.origin", "string"),
+                ]
+            },
+        );
+        assert_eq!(
+            family.shadowed(),
+            Some("hit.origin"),
+            "the template owns the scalar's address, so the scalar declares a \
+             type nobody can reach",
+        );
+        // The template itself is NOT reported: it is the owner of its own
+        // address, and a gate that called a family self-shadowing would refuse
+        // every parametric surface in the tree.
+        let lone = IntrospectSchema::new(
+            const {
+                &[SchemaField::parametric(
+                    "hit.<x>",
+                    "string",
+                    const { &[SchemaArg::open("x", "int")] },
+                )]
+            },
+        );
+        assert_eq!(lone.shadowed(), None);
+
+        // (5) ★ And a declaration NOBODY owns — the case a counterfactual
+        // found the first draft returning `None` for. Two placeholders with no
+        // literal between them cannot be delimited, so this template matches
+        // nothing at all, its own spelling included: a surface declaring it
+        // publishes an address no client can ever reach.
+        let undelimitable = IntrospectSchema::new(
+            const {
+                &[SchemaField::parametric(
+                    "a.<x><y>",
+                    "string",
+                    const { &[SchemaArg::open("x", "int"), SchemaArg::open("y", "int")] },
+                )]
+            },
+        );
+        assert_eq!(
+            undelimitable.field_for("a.<x><y>").map(|f| f.path),
+            None,
+            "the premise: this template does not address its own spelling",
+        );
+        assert_eq!(
+            undelimitable.shadowed(),
+            Some("a.<x><y>"),
+            "a path nothing answers for is not exempt from the question — it \
+             is the strongest way to fail it",
+        );
     }
 }

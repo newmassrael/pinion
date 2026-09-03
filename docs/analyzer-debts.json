@@ -331,6 +331,17 @@
       ]
     },
     {
+      "name": "debt-a-schema-outside-the-assembled-app-can-shadow-its-own-path",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links analyzer-debt-repayment-loop, debt-the-canon-is-one-app-and-we-are-many-binaries"
+      ]
+    },
+    {
       "name": "debt-a-second-windows-surface-is-presented-before-it-is-configured",
       "substituted": false,
       "blocked_by": "buildable",

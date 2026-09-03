@@ -11686,7 +11686,14 @@ const FIELDS: &[SchemaField] = &{
         // The reference publishes neither: the mode is a bool plus a hidden
         // checkbox, and the outcome is one bit written onto each node, so an
         // agent there cannot ask which closure ran nor why a card is faded.
-        SchemaField::new("focus", "json"),
+        //
+        // ★ R1989 — `focused`, the state, and not `focus`, which is the verb
+        // below. R1988 spelled both `focus`, and since `field_for` is a
+        // first-match the read SHADOWED the action: the argument grammar the
+        // verb declares was published by nobody, so the drift this pair was
+        // written to prevent was the drift it caused. The state/verb pair on
+        // this surface is `selected`/`select`, and this is that pair's shape.
+        SchemaField::new("focused", "json"),
         // ★★★★★ R1988 — and the verb. `off` is one of the words, because a
         // state a person can enter by pointing and an agent cannot leave is
         // half a surface — and the closure words come from `Focus::ALL` rather
@@ -12587,7 +12594,7 @@ impl ExternalIntrospect for LabOracle {
             // why each card that refuses it does.
             "rewire" => Ok(IntrospectValue::Json(rewire_wire(state))),
             "waiting" => Ok(IntrospectValue::Json(waiting_wire(state))),
-            "focus" => Ok(IntrospectValue::Json(focus_wire(state))),
+            "focused" => Ok(IntrospectValue::Json(focus_wire(state))),
             "sections" => Ok(IntrospectValue::Json(sections_wire(state))),
             "inks" => Ok(IntrospectValue::Json(inks_wire(state))),
             "wrong" => Ok(IntrospectValue::Json(wrong_wire(state))),

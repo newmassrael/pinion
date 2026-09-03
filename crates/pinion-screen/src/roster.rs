@@ -1204,6 +1204,34 @@ impl ScreenRoster {
             .filter(|key| self.screens.contains_key(*key))
     }
 
+    /// ★★★★★ R1989 — **every mounted screen's externals at once**, paired with
+    /// the destination that holds them.
+    ///
+    /// [`externals`](Self::externals) answers for the screen a journey is
+    /// standing on, which is what a frame needs and what a *census* cannot use:
+    /// a property asserted only where the walk happens to be standing is
+    /// asserted about one screen and reported as if it were about the
+    /// application. R1989 measured what that costs — four schema defects live
+    /// across three mounted screens, of which the only one anything had ever
+    /// caught was on the screen a walk stood on.
+    ///
+    /// This is the roster's own population, so a screen mounted later is
+    /// covered by an assertion written today without anybody adding a row to
+    /// it.
+    ///
+    /// It does not enter the chrome scope [`with_current`](Self::with_current)
+    /// establishes, because it is not painting: a screen's externals are its
+    /// own to hand over and the host's placement is not part of the answer.
+    #[must_use]
+    pub fn externals_everywhere(&self) -> Vec<(&str, Vec<ExtraExternal>)> {
+        self.mounted_keys()
+            .filter_map(|key| {
+                let screen = self.screens.get(key)?;
+                Some((key, screen.externals()))
+            })
+            .collect()
+    }
+
     /// The paint-root tag of the screen mounted at `key`, if one is.
     ///
     /// ★ R1729 — the asymmetry this closes: the roster could name the tag of

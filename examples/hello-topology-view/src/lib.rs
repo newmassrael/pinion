@@ -2163,9 +2163,21 @@ impl ExternalIntrospect for ViewOracle {
                         const { &[SchemaArg::open("x", "int"), SchemaArg::open("y", "int")] },
                     ),
                     SchemaField::action("select", "string"),
-                    SchemaField::action("layout", "string"),
+                    // ★ R1989 — `choose_layout` / `zoom_by`, not `layout` /
+                    // `zoom`, which are the two READS four lines above.
+                    // `field_for` is a first-match, so those reads shadowed
+                    // these verbs and this surface published two actions no
+                    // client could reach through the declaration.
+                    //
+                    // Each new word is the name of the function the arm calls,
+                    // which is the reason to prefer it over an invented one:
+                    // the published verb and the code's verb cannot drift while
+                    // they are the same word. `selected`/`select` beside them is
+                    // the same shape, and `zoom_by` is also the node lab's word
+                    // for this pair, so the two analyzer canvases agree.
+                    SchemaField::action("choose_layout", "string"),
                     SchemaField::action("toggle", "string"),
-                    SchemaField::action("zoom", "string"),
+                    SchemaField::action("zoom_by", "string"),
                     SchemaField::action("point", "string"),
                     SchemaField::action("press", "string"),
                     SchemaField::action("send", "string"),
@@ -2299,7 +2311,7 @@ impl ExternalIntrospect for ViewOracle {
                     .ok_or_else(|| InterveneError::out_of_range(format!("{id} is not a node")))?;
                 select_node(&state, nth);
             }
-            "layout" => {
+            "choose_layout" => {
                 let name = word(&args)?;
                 let nth = spec::LAYOUTS
                     .iter()
@@ -2319,7 +2331,7 @@ impl ExternalIntrospect for ViewOracle {
                     })?;
                 flip_toggle(&state, nth);
             }
-            "zoom" => match word(&args)?.as_str() {
+            "zoom_by" => match word(&args)?.as_str() {
                 "in" => zoom_by(&state, true),
                 "out" => zoom_by(&state, false),
                 "fit" => fit(&state),

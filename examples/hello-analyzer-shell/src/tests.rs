@@ -7276,3 +7276,74 @@ fn r1954_the_sort_this_screen_announces_is_the_sort_it_draws() {
         });
     }
 }
+
+/// ★★★★★ R1989 — **no screen this application mounts declares a path it then
+/// shadows**, asked of the whole assembly rather than of the screen a walk
+/// happens to be standing on.
+///
+/// # What it is asserting
+///
+/// `IntrospectSchema::field_for` is a linear first-match, so two fields
+/// spelling one path do not both exist: the second is unreachable and nothing
+/// ever said so. When the two sit on different channels the damage is precise
+/// and silent — the transport judges the channel from the shadowing field, so a
+/// verb declared under a state's noun is published to no client, and everything
+/// that declaration carries (its argument grammar, the words it will take, its
+/// conditional cases) reaches nobody. The action still *fires*, because invoke
+/// reaches the impl and the impl knows the word, which is exactly why this can
+/// ship: every walk that drives the verb keeps passing.
+///
+/// # Why the population is the roster and not a list
+///
+/// Measured at R1989, four such declarations were live on **three** mounted
+/// screens, and each was a state read sharing a noun with its own verb. The one
+/// that was ever caught was caught by a walk standing on that screen, and the
+/// walk over this shell had passed all along because it probes this shell's own
+/// external and a mounted screen's schema is not reachable from there.
+///
+/// So the population is `ScreenRoster::externals_everywhere` — every screen
+/// this application mounts, whether or not a walk visits it, and a screen
+/// mounted after this was written is covered without a row being added here.
+#[test]
+fn r1989_no_mounted_screen_shadows_a_path_it_declares() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let roster = super::screen_roster();
+        let mut asked = 0_usize;
+        let mut surfaces = 0_usize;
+        for (key, mut externals) in roster.externals_everywhere() {
+            asked += 1;
+            for external in &mut externals {
+                let Some(surface) = external.handle.introspect_mut() else {
+                    continue;
+                };
+                surfaces += 1;
+                let schema = surface.schema();
+                assert_eq!(
+                    schema.shadowed(),
+                    None,
+                    "the screen at {key} declares `{}` on its external `{}` and \
+                     then answers that path with a DIFFERENT field's \
+                     declaration, so what this one says is published to nobody \
+                     — a path is a read or an action, never both",
+                    schema.shadowed().unwrap_or_default(),
+                    external.tag,
+                );
+            }
+        }
+        // The denominator, asserted rather than reported: a roster that handed
+        // back nothing would satisfy every assertion above without checking a
+        // single schema, and this test's whole claim is about coverage.
+        assert!(
+            asked >= 6,
+            "the analyzer mounts six screens and this census reached {asked}",
+        );
+        assert!(
+            surfaces >= asked,
+            "{surfaces} introspectable surface(s) across {asked} mounted \
+             screen(s) — a mounted screen that publishes no schema at all is \
+             not something this application has, so reaching fewer surfaces \
+             than screens means the population was not built",
+        );
+    });
+}
