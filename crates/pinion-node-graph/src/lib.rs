@@ -215,6 +215,7 @@ mod admitted;
 mod appearance;
 mod archive;
 mod arrange;
+mod autowire;
 mod beacon;
 mod bypass;
 mod debug;
@@ -259,6 +260,7 @@ pub use archive::{Archive, Condition, Dropped, Opening, REVISION, Unreadable, Un
 pub use arrange::{
     Align, ArrangePass, ArrangeTail, Axis, Distribute, Edge, Stack, Straighten, Straightened,
 };
+pub use autowire::{Arrival, AutowireError, Autowired, Declined, Uptake};
 pub use beacon::{BeaconError, Gathered, Spread};
 pub use bypass::{Bridge, Passthrough, Rewired, Route};
 pub use debug::{

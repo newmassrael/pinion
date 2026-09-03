@@ -75,6 +75,17 @@
       ]
     },
     {
+      "name": "debt-a-card-that-does-not-exist-yet-is-asked-about-by-copying-the-whole-document",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links analyzer-debt-repayment-loop"
+      ]
+    },
+    {
       "name": "debt-a-census-row-is-addressed-by-two-different-numbering-rules",
       "substituted": false,
       "blocked_by": "buildable",

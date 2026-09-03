@@ -655,7 +655,7 @@
       "verdict": "instance"
     },
     "insert_offset": {
-      "covered_by": "drop a node onto a link and push the rest along",
+      "covered_by": "LAYOUT ONLY, reason corrected R1987. Its own description is `automatically offset nodes on insertion`, and at its implementation it holds a prev, an insert and a next, compares the gaps either side against a margin and animates the neighbours apart. It wires NOTHING and runs AFTER the splice another operator performed. The old reason here said `drop a node onto a link and push the rest along`, and the engine's autowire row was pinned as the same capability. Measured R1987, that equation was decoration: the autowire hook is handed the pin a drag LEFT FROM and wires a node created in empty space by a menu, which is neither a drop onto a link nor a shove. That row is now closed on its own terms. What stays absent here is the SHOVE -- neighbours moving apart to make room for what was inserted -- and, as its own remainder, a general verb for splicing an arbitrary node onto a standing link: the tree splices only reroute bodies (`Document::insert_reroutes`).",
       "mechanism": "cpp",
       "proven_by": "",
       "verdict": "absent"
@@ -2697,10 +2697,10 @@
       "verdict": "have"
     },
     "node::AutowireNewNode": {
-      "covered_by": "dropping a node onto a wire and having it wire itself - the DCC's insert_offset",
+      "covered_by": "R1987 -- a wire let go over empty canvas waits, and the node created for it arrives ALREADY WIRED to the port that best takes it. `Document::autowire` places the link; `may_autowire` answers which port would take it without moving anything, and `autowire_uptakes` ranks every port that would. Three things the reference cannot do, its hook being `void`: the answer is a VALUE naming the port, its address, whether the value arrives unchanged, and which standing link would give way; a refusal names EVERY candidate with its own authoring error, and distinguishes `NoPorts` (this kind never listens) from `NoneTakes` (these pins all refused), which its empty base body cannot; and the preference is ONE derivation with two axes -- direct before converted, and among equals destroying nothing before displacing -- where the reference's 31 overriders partition as 8 that ask the schema's `CanCreateConnection`, 19 that never ask and only call `TryCreateConnection` until one sticks, and 4 that do neither.",
       "mechanism": "graph-node",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_node_autowire_new_node",
+      "verdict": "have"
     },
     "node::BeginDestroy": {
       "covered_by": "the engine's UObject lifecycle, not its node system",

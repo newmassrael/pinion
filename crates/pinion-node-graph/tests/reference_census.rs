@@ -44,15 +44,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use pinion_node_graph::{
-    Act, Admits, Admitted, Align, Appearance, Axis, Berth, Carrying, Command, ConnectError,
-    Container, Conversion, Crossings, Definitions, Described, Direction, Distribute, Document,
-    Drawn, Edge, EditError, EditPath, Extent, Faces, Fragment, Grow, Hidden, Inspectable, Instance,
-    InterfacePort, InterfaceSide, Item, ItemError, LandError, Landfall, LinkId, Machine, Matched,
-    Multiplicity, Node, NodeBody, NodeId, NodeKind, NodeSite, NotRecombinable, NotSplittable,
-    Objection, Passing, Port, PortName, PortPath, PortRef, PortSite, PortValueError, PutAway, ROOT,
-    Reach, RelinkError, RetypeError, SectionId, Session, Sharing, Side, Socket, Stack, Straighten,
-    Stride, SwapError, SwitchRefusal, Tint, TreeId, Variadic, Violation, WatchError, Watches,
-    palette_of, type_palette,
+    Act, Admits, Admitted, Align, Appearance, Arrival, AutowireError, Axis, Berth, Carrying,
+    Command, ConnectError, Container, Conversion, Crossings, Definitions, Described, Direction,
+    Distribute, Document, Drawn, Edge, EditError, EditPath, Extent, Faces, Fragment, Grow, Hidden,
+    Inspectable, Instance, InterfacePort, InterfaceSide, Item, ItemError, LandError, Landfall,
+    LinkId, Machine, Matched, Multiplicity, Node, NodeBody, NodeId, NodeKind, NodeSite,
+    NotRecombinable, NotSplittable, Objection, Passing, Port, PortName, PortPath, PortRef,
+    PortSite, PortValueError, PutAway, ROOT, Reach, RelinkError, RetypeError, SectionId, Session,
+    Sharing, Side, Socket, Stack, Straighten, Stride, SwapError, SwitchRefusal, Tint, TreeId,
+    Variadic, Violation, WatchError, Watches, palette_of, type_palette,
 };
 use pinion_node_graph::{
     Copying, DefinitionAct, DefinitionError, InZone, InsertError, PairError, Renamed, Tree, Used,
@@ -837,7 +837,17 @@ fn proofs() -> Vec<Proof> {
     all.extend(r1934_reroute_proofs());
     all.extend(r1935_named_reroute_proofs());
     all.extend(r1980_berth_proofs());
+    all.extend(r1987_autowire_proofs());
     all
+}
+
+/// R1987 — the wire the arriving node was created by.
+fn r1987_autowire_proofs() -> Vec<Proof> {
+    vec![proof(
+        "engine",
+        "node::AutowireNewNode",
+        engine_node_autowire_new_node,
+    )]
 }
 
 /// R1980 — the kind's say in **where** an arriving end berths.
@@ -11688,4 +11698,307 @@ fn engine_script_editor_open_blueprint_debugger() {
     let back: Session = serde_json::from_str(&json).expect("and comes back");
     assert_eq!(back, session);
     assert_eq!(back.at(), 2);
+}
+
+// ============================================ R1987 — the arriving node's wire
+
+/// R1987 — the graph node's `autowire a newly created node`.
+///
+/// # What the reference is, measured at its own header
+///
+/// One hook on the base graph node, whose parameter is documented *the source
+/// pin that caused the new node to be created (typically a drag-release context
+/// menu creation)*. Its return is `void` and its supplied body is empty.
+///
+/// Counted over the whole tree this round, by definitions and by `override`
+/// declarations, which agree: **31 overriders**, 17 in the editor source and 14
+/// in plugin modules; **25 call sites**, two of which sit inside the base
+/// schema's own node-from-menu action. Of the 31, only **8** ask the schema's
+/// `CanCreateConnection` — **26 call `TryCreateConnection`**, which attempts the
+/// wire and answers a bool. So the common shape is not choose-then-wire; it is
+/// try-until-one-sticks, and what it "preferred" is observable only afterwards
+/// by looking at the graph.
+///
+/// # What is asserted, and why each is a claim about the *reference*
+///
+/// Each sub-assertion below is something a caller there cannot do. The hook
+/// returns nothing, so 1 and 2 have no answer to read; the empty base body is
+/// indistinguishable from a scan that found nothing, so 3 has no distinction to
+/// draw; 26 of the 31 never form a preference, so 4 has no rule to state; and a
+/// bool cannot name what it broke, so 6 has nothing to report.
+#[test]
+fn engine_node_autowire_new_node() {
+    a_node_that_arrives_comes_in_already_wired();
+    every_port_that_refused_says_why();
+    no_port_at_all_is_not_the_same_answer_as_every_port_refusing();
+    the_preference_outranks_declaration_order();
+    asking_and_doing_are_one_decision();
+    the_link_that_gives_way_is_reported();
+    a_drag_off_a_consuming_pin_is_offered_the_outputs();
+}
+
+/// A wire the hand dragged off a producing pin and has not landed yet.
+fn dangling() -> (Document<Op>, NodeId) {
+    let mut document = Document::new("root");
+    let two = num(&mut document, 2);
+    (document, two)
+}
+
+/// 1. The node arrives already wired, and the answer **names the port**.
+fn a_node_that_arrives_comes_in_already_wired() {
+    let (mut document, two) = dangling();
+    let sink = node(&mut document, Op::Sink);
+    assert!(
+        document.tree(ROOT).expect("root").links().is_empty(),
+        "the wire is still in the hand"
+    );
+
+    let done = document
+        .autowire(ROOT, Socket::new(two, 0), Side::Output, sink)
+        .expect("Sink takes a number");
+    assert_eq!(done.took.port, 0);
+    assert_eq!(done.took.arrival, Arrival::Unchanged);
+    assert_eq!(done.displaced, None);
+
+    let links = document.tree(ROOT).expect("root").links().to_vec();
+    assert_eq!(links.len(), 1, "one wire, and it is the one that was held");
+    assert_eq!(
+        (links[0].from, links[0].to),
+        (Socket::new(two, 0), Socket::new(sink, 0))
+    );
+    assert_eq!(links[0].id, done.link, "and the answer names it");
+    assert!(document.validate().is_empty());
+}
+
+/// 2. When nothing takes it, **every** candidate is named with its own reason.
+///
+/// `Carry` presents four inputs of four different flavours and a TEXT wire is
+/// refused by all of them — a control port, two types that do not cross, and a
+/// number port text does not read back into. The reference's answer to this
+/// whole situation is to do nothing and say nothing.
+fn every_port_that_refused_says_why() {
+    let mut document = Document::new("root");
+    let word = node(&mut document, Op::Word("hi".to_owned()));
+    let carry = node(&mut document, Op::Carry);
+
+    let why = document
+        .autowire(ROOT, Socket::new(word, 0), Side::Output, carry)
+        .expect_err("no pin of Carry takes text");
+    let AutowireError::NoneTakes { declined } = why else {
+        panic!("Carry HAS pins, so this is not NoPorts: {why:?}");
+    };
+    assert_eq!(
+        declined.len(),
+        4,
+        "one entry per port that was offered the wire, in declaration order"
+    );
+    assert_eq!(
+        declined.iter().map(|one| one.port).collect::<Vec<_>>(),
+        [0, 1, 2, 3],
+        "declaration order, so a person can match them to the node they see"
+    );
+    for one in &declined {
+        assert!(
+            !one.why.to_string().is_empty(),
+            "port {} declined without saying why",
+            one.port
+        );
+    }
+
+    // ★ And the refusals are DIFFERENT refusals, which is the whole point of
+    // carrying the authoring error rather than a bit: a wire refused for a
+    // control port and one refused for a type are repaired by different acts.
+    let reasons: BTreeSet<String> = declined.iter().map(|one| one.why.to_string()).collect();
+    assert!(
+        reasons.len() > 1,
+        "four ports of four flavours collapsed to one sentence: {reasons:?}"
+    );
+    assert!(
+        document.tree(ROOT).expect("root").links().is_empty(),
+        "and a refused autowire leaves the document alone"
+    );
+}
+
+/// 3. *This kind never listens* and *these pins all refused* are two facts.
+///
+/// The reference cannot tell them apart: both are its empty hook body.
+fn no_port_at_all_is_not_the_same_answer_as_every_port_refusing() {
+    let mut document = Document::new("root");
+    let word = node(&mut document, Op::Word("hi".to_owned()));
+    let source = num(&mut document, 7);
+    let carry = node(&mut document, Op::Carry);
+
+    // A source has no inputs at all, so there is nothing to offer the wire.
+    let none = document
+        .autowire(ROOT, Socket::new(word, 0), Side::Output, source)
+        .expect_err("Num presents no input");
+    assert!(
+        matches!(none, AutowireError::NoPorts { node, side } if node == source && side == Side::Input),
+        "the arm names the node and the side it has none on: {none:?}"
+    );
+    assert!(
+        none.to_string().contains(Side::Input.noun()),
+        "and says so to a person, in the prose word rather than the wire \
+         token: {none}"
+    );
+
+    // Same wire, same gesture, a node that HAS pins — a different arm.
+    let refused = document
+        .autowire(ROOT, Socket::new(word, 0), Side::Output, carry)
+        .expect_err("Carry's pins all refuse text");
+    assert!(matches!(refused, AutowireError::NoneTakes { .. }));
+    assert_ne!(
+        std::mem::discriminant(&none),
+        std::mem::discriminant(&refused),
+        "★ the two facts must not be one arm"
+    );
+}
+
+/// 4. The preference is one derivation, and it **outranks declaration order**.
+///
+/// A definition exposing a TEXT input first and a NUMBER input second, so the
+/// better candidate is the *later* one: a number crosses into the number port
+/// unchanged and into the text port only through the taxonomy's declared
+/// conversion. Ordering by declaration — which is what the reference's
+/// try-until-one-sticks shape effectively does — would take the text port.
+fn the_preference_outranks_declaration_order() {
+    let mut document = Document::new("root");
+    let two = num(&mut document, 2);
+    let definition = document.add_definition("Two ways in");
+    document
+        .expose(
+            definition,
+            InterfaceSide::Input,
+            Port::new("word", Ty::Text),
+        )
+        .expect("a text way in");
+    document
+        .expose(
+            definition,
+            InterfaceSide::Input,
+            Port::new("count", Ty::Number),
+        )
+        .expect("and a number one");
+    let arriving = document
+        .instantiate(ROOT, definition, 300, 0)
+        .expect("an instance of it");
+
+    let offered = document
+        .autowire_uptakes(ROOT, Socket::new(two, 0), Side::Output, arriving)
+        .expect("both ways in take a number, one of them by conversion");
+    assert_eq!(
+        offered.len(),
+        2,
+        "every port that would take it, not just one"
+    );
+    assert_eq!(
+        (offered[0].port, offered[0].arrival),
+        (1, Arrival::Unchanged),
+        "★ the number port is SECOND in declaration order and FIRST in preference"
+    );
+    assert_eq!(
+        (offered[1].port, offered[1].arrival),
+        (0, Arrival::Converted),
+        "and the text port takes it through the declared conversion"
+    );
+    assert!(offered[0].preference() < offered[1].preference());
+
+    // The verb agrees with the ranking rather than with the declaration.
+    let done = document
+        .autowire(ROOT, Socket::new(two, 0), Side::Output, arriving)
+        .expect("it wires");
+    assert_eq!(done.took.port, 1);
+}
+
+/// 5. Asking and doing are **one** decision, not two that have to agree.
+fn asking_and_doing_are_one_decision() {
+    let (mut document, two) = dangling();
+    let sink = node(&mut document, Op::Sink);
+    let socket = Socket::new(two, 0);
+
+    let asked = document
+        .may_autowire(ROOT, socket, Side::Output, sink)
+        .expect("a port would take it");
+    assert!(
+        document.tree(ROOT).expect("root").links().is_empty(),
+        "★ asking changed nothing"
+    );
+    let done = document
+        .autowire(ROOT, socket, Side::Output, sink)
+        .expect("and doing it works");
+    assert_eq!(asked, done.took, "★ the question and the verb are one call");
+
+    // The refusing direction too: what `may_autowire` refuses, `autowire`
+    // refuses with the same words. Two implementations would be free to drift.
+    let mut other = Document::new("root");
+    let word = node(&mut other, Op::Word("hi".to_owned()));
+    let carry = node(&mut other, Op::Carry);
+    let from = Socket::new(word, 0);
+    let asked = other
+        .may_autowire(ROOT, from, Side::Output, carry)
+        .expect_err("nothing takes text");
+    let done = other
+        .autowire(ROOT, from, Side::Output, carry)
+        .expect_err("and the verb refuses too");
+    assert_eq!(asked.to_string(), done.to_string());
+}
+
+/// 6. The link that **gives way** is named, which is what makes it undoable.
+///
+/// A value input holds one link, so wiring a second displaces the first. The
+/// reference's connection attempt answers a bare bool, so what it broke is
+/// simply gone.
+fn the_link_that_gives_way_is_reported() {
+    let mut document = Document::new("root");
+    let two = num(&mut document, 2);
+    let three = num(&mut document, 3);
+    let sink = node(&mut document, Op::Sink);
+    wire(&mut document, two, 0, sink, 0);
+    let standing = document
+        .tree(ROOT)
+        .and_then(|tree| tree.links().last().copied())
+        .expect("the standing wire");
+
+    // Asked BEFORE anything moves, which is the point: a screen can warn.
+    let asked = document
+        .may_autowire(ROOT, Socket::new(three, 0), Side::Output, sink)
+        .expect("Sink's only input takes it");
+    assert_eq!(
+        asked.displaces,
+        Some(standing),
+        "★ and says which wire would go, before it goes"
+    );
+
+    let done = document
+        .autowire(ROOT, Socket::new(three, 0), Side::Output, sink)
+        .expect("it wires");
+    assert_eq!(done.displaced, Some(standing));
+    let links = document.tree(ROOT).expect("root").links().to_vec();
+    assert_eq!(links.len(), 1, "the input still holds exactly one");
+    assert_eq!(links[0].from, Socket::new(three, 0));
+    assert!(document.validate().is_empty());
+}
+
+/// 7. The gesture works in **both** directions.
+///
+/// A wire dragged off a *consuming* pin is offered the arriving node's outputs.
+/// The reference reads the direction off the one pin pointer it is handed; here
+/// the caller says which list the index belongs to, so the two ends cannot be
+/// confused for one another.
+fn a_drag_off_a_consuming_pin_is_offered_the_outputs() {
+    let mut document = Document::new("root");
+    let sink = node(&mut document, Op::Sink);
+    let add = node(&mut document, Op::Add);
+
+    let done = document
+        .autowire(ROOT, Socket::new(sink, 0), Side::Input, add)
+        .expect("Add's output takes it");
+    assert_eq!(done.took.port, 0, "Add's Out");
+    let links = document.tree(ROOT).expect("root").links().to_vec();
+    assert_eq!(
+        (links[0].from, links[0].to),
+        (Socket::new(add, 0), Socket::new(sink, 0)),
+        "★ and the wire is oriented producer-to-consumer, not mirrored"
+    );
+    assert!(document.validate().is_empty());
 }

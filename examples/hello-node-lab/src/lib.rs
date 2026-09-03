@@ -102,8 +102,8 @@ use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::widgets::wheel::WheelDirection;
 use pinion_core::{CellKind, Frame, Modifiers, Scene, WidgetCore, edit_field_keymap};
 use pinion_node_graph::{
-    Act, Camera, Crossings, Definitions, Document, Drawn, EditPath, Extent, Faces, Fault, Fit,
-    Found, Fragment, InZone, Instance, Item, Judged, LandError, Landfall, LinkId, LinkLayer,
+    Act, Arrival, Camera, Crossings, Definitions, Document, Drawn, EditPath, Extent, Faces, Fault,
+    Fit, Found, Fragment, InZone, Instance, Item, Judged, LandError, Landfall, LinkId, LinkLayer,
     Margin, NameSource, Node, NodeBody, NodeId, NodeKind, Objection, PortPath, PortRef, PortSite,
     ROOT, Relinked, Sharing, Side, Socket, Tint, TreeId, Violation, WatchError, Watches, Weight,
     ZoomRange, palette_of, type_palette,
@@ -1378,6 +1378,31 @@ enum Drag {
     PanelWidth { panel: SidePanel },
 }
 
+/// ★★★★★ R1987 — **a wire let go over empty canvas, waiting for the card that
+/// will take it.**
+///
+/// Not a [`Drag`] arm, and the distinction is the point: a drag ends when the
+/// pointer comes up, and this begins there. It is the *held* half of the
+/// reference's drag-release-context-menu creation — which is a modal menu
+/// owning the dragged pin there, and here a signal the palette reads, because
+/// the behaviour canon draws no context menu on this canvas and borrowing one
+/// would be inventing a surface rather than reproducing it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+struct PendingWire {
+    /// The card the wire is leaving.
+    from: NodeId,
+    /// Which of its dial pins, as a RESOLVED index — the drag's own reading,
+    /// carried across for [`Drag::Wire`]'s reason: it is the pin the hand
+    /// started from, and nothing can split a pin between a release and the next
+    /// press either.
+    port: u32,
+    /// Where on the canvas the wire was let go, in **design units**, which is
+    /// where the card will be put. The reference places its node at the release
+    /// point too, and then pushes it clear of the pin it came off; here that
+    /// second half is `free_spot`, which the palette's own add already runs.
+    at: (i32, i32),
+}
+
 /// Which link the canvas has picked out (R1681).
 ///
 /// Two arms because there are two kinds of link on this canvas and only one of
@@ -1684,6 +1709,20 @@ struct LabState {
     /// ★ R1924 — the card the verdict was last said about, so a drag says it
     /// once on arrival rather than on every pixel of travel across the card.
     rewire_over: Cell<Option<NodeId>>,
+    /// ★★★★★ R1987 — **a wire let go over empty canvas, waiting for the card
+    /// that will take it.**
+    ///
+    /// The reference opens a node menu at the release point and hands the pin
+    /// to whatever is chosen, which then wires itself. This screen's menu is
+    /// the palette it already has — the canon draws no context menu on this
+    /// canvas, so borrowing one would be inventing a surface rather than
+    /// reproducing it — and this is the half of that gesture which has to
+    /// survive between the release and the press.
+    ///
+    /// A [`Signal`] and not a [`Cell`], because the canvas reads it: while a
+    /// wire is pending the palette is what a person is being asked to look at,
+    /// and the toast says so.
+    pending_wire: Signal<Option<PendingWire>>,
     pressed: RefCell<Option<Hit>>,
     /// ★★★★★ R1719 — the last thing this screen SAID, and what kind of thing
     /// it was.
@@ -2083,6 +2122,8 @@ impl LabState {
             drag: Signal::new(None),
             rewire_targets: RefCell::new(BTreeSet::new()),
             rewire_over: Cell::new(None),
+            // ★ R1987 — nothing is waiting for a card on the opening frame.
+            pending_wire: Signal::new(None),
             pressed: RefCell::new(None),
             // ★ R1778 — silent at open, which every screen of this tool now
             // spells the same way: a holder with nothing said yet.
@@ -11306,6 +11347,15 @@ const FIELDS: &[SchemaField] = &{
         // BEFORE the hand lets go, which is the whole difference from finding
         // out by dropping.
         SchemaField::new("rewire", "json"),
+        // ★★★★★ R1987 — **the wire let go over empty canvas, waiting for a
+        // card**, and — for each role the palette offers — whether a card of
+        // that role would take it.
+        //
+        // Published because §2 #2 makes the agent's path the primary one, and a
+        // state a person can enter by pointing while an agent cannot see it is
+        // a screen an agent cannot drive. The reference's equivalent is a modal
+        // menu: nothing outside it can ask what it is holding.
+        SchemaField::new("waiting", "json"),
         // ★★★★★ R1928 — what each card calls its own ports, and WHO chose each
         // name: the kind's declaration, the item's authored label, or the
         // node's own answer. Published so the sentence a reader hears on a pin
@@ -12194,6 +12244,7 @@ impl ExternalIntrospect for LabOracle {
             // ★★★★★ R1924 — where the picked wire's end may be re-aimed, and
             // why each card that refuses it does.
             "rewire" => Ok(IntrospectValue::Json(rewire_wire(state))),
+            "waiting" => Ok(IntrospectValue::Json(waiting_wire(state))),
             "sections" => Ok(IntrospectValue::Json(sections_wire(state))),
             "inks" => Ok(IntrospectValue::Json(inks_wire(state))),
             "wrong" => Ok(IntrospectValue::Json(wrong_wire(state))),
@@ -16640,6 +16691,11 @@ fn press(state: &Rc<LabState>) {
             }));
         }
         Hit::Canvas => {
+            // ★ R1987 — pressing the canvas lets a waiting wire go, which is
+            // what the reference's node menu does when a person clicks away
+            // from it. The pan still starts: dismissing a menu and beginning
+            // the next gesture are one press there too.
+            drop_pending_wire(state);
             state.drag.set(Some(Drag::Pan {
                 from: (px, py),
                 start: state.pan.get(),
@@ -16717,8 +16773,28 @@ fn finish_drag(state: &Rc<LabState>, drag: Drag, now: &Hit) {
                     connect_at(state, from, &out, node, &onto).ok();
                 }
                 (Some(_), _) => {}
+                // ★★★★★ R1987 — **let go over nothing, the wire WAITS for a
+                // card** instead of being thrown away.
+                //
+                // This arm said `a link needs an accept pin` and dropped the
+                // gesture, which is the one thing the reference does better
+                // here: there, releasing a wire over empty graph opens the node
+                // menu and whatever is chosen arrives already wired. The menu
+                // this screen has is its palette, so the wire is held until a
+                // role is pressed — and `Escape` or a press on the canvas lets
+                // it go, so the held state is never a trap.
                 (None, _) => {
-                    state.say(Utterance::new(Tone::Refused, "a link needs an accept pin"));
+                    let (px, py) = state.cursor.get();
+                    let (cx, cy) = to_canvas(state, px, py);
+                    state.pending_wire.set(Some(PendingWire {
+                        from,
+                        port,
+                        at: (cx, cy),
+                    }));
+                    state.say(Utterance::done(format!(
+                        "the wire from {} is waiting \u{2014} pick a card from the palette",
+                        state.name_of(from)
+                    )));
                 }
             }
         }
@@ -17827,7 +17903,15 @@ fn spec_revisions(stack: Stack) -> Revisions {
 
 fn add_node(state: &Rc<LabState>, role: Role) {
     let canvas = canvas_rect();
-    let want = to_canvas(state, canvas.x + canvas.w / 2, canvas.y + canvas.h / 2);
+    // ★★★★★ R1987 — a card called for by a **waiting wire** is put where the
+    // wire was let go, not in the middle of the canvas. The reference does the
+    // same and then pushes the node clear of the pin it came off; here that
+    // second half is `free_spot` below, which this function already ran.
+    let waiting = state.pending_wire.get();
+    let want = waiting.map_or_else(
+        || to_canvas(state, canvas.x + canvas.w / 2, canvas.y + canvas.h / 2),
+        |one| one.at,
+    );
     // ★★★★★ R1774 — the card is BUILT first, at the spot it would like, and
     // only then moved to one that is clear. A card's size follows its label and
     // its form, so nothing can measure it until both exist, and the previous
@@ -17910,6 +17994,84 @@ fn add_node(state: &Rc<LabState>, role: Role) {
     );
     select_card(state, Some(id));
     state.say(Utterance::done(format!("added {name}")));
+    if let Some(waiting) = waiting {
+        take_pending_wire(state, waiting, id);
+    }
+}
+
+/// ★★★★★ R1987 — **the card that has just arrived takes the waiting wire.**
+///
+/// Which of its pins takes it is [`Document::may_autowire`]'s answer, and the
+/// wire is then made through [`connect_at`] — the same verb the drag-onto-a-pin
+/// gesture uses, so a link authored this way is shaped like every other link on
+/// this canvas: the accept run opens a slot, the slot carries the address it
+/// accepts, and `settle_transports` teaches the dialling card what it speaks.
+///
+/// ⚠ Asking and doing are two calls here where the crate offers one
+/// ([`Document::autowire`]), and that is deliberate rather than an oversight.
+/// The crate's verb lands on the pin it named; this screen's accept pin is a
+/// **variadic run**, so landing on it means *opening a slot* — bookkeeping the
+/// model cannot do because the address a slot accepts is the application's.
+/// The two cannot disagree about legality, because both go through the same
+/// vet; what the question decides alone is *which pin*.
+///
+/// The pending wire is cleared whatever happens. A refusal that left it waiting
+/// would put a person in a state where every palette press is answered by the
+/// same complaint, and the only sentence they have to go on is about a card
+/// they have already placed.
+fn take_pending_wire(state: &Rc<LabState>, waiting: PendingWire, arriving: NodeId) {
+    state.pending_wire.set(None);
+    let here = state.here();
+    let leaving = Socket::new(waiting.from, waiting.port);
+    let asked = state
+        .doc
+        .borrow()
+        .may_autowire(here, leaving, Side::Output, arriving);
+    let took = match asked {
+        Ok(took) => took,
+        // ★★★ R1719's shape — one sentence, said to the person and carried by
+        // the refusal. The crate's own `Display` is what it says, so a pin that
+        // declined for a type and one that declined because the kind never
+        // listens read differently, which is what a person needs to know which
+        // card to reach for next.
+        Err(why) => {
+            state.say(Utterance::refused(&format!(
+                "{} cannot take the wire: {why}",
+                state.name_of(arriving)
+            )));
+            return;
+        }
+    };
+    let out = state
+        .doc
+        .borrow()
+        .path_of(here, waiting.from, Side::Output, waiting.port);
+    let Some(out) = out else {
+        state.say(Utterance::refused(&format!(
+            "the pin the wire left {} is no longer there",
+            state.name_of(waiting.from)
+        )));
+        return;
+    };
+    let _ = connect_at(state, waiting.from, &out, arriving, &took.at);
+}
+
+/// ★★★★★ R1987 — let the waiting wire go, answering whether one was waiting.
+///
+/// One place, because three things end the gesture — `Escape`, a press on the
+/// canvas, and the wire verb — and a state a person can enter by pointing and
+/// cannot leave by pointing is a trap. The reference's menu closes on the same
+/// two gestures.
+fn drop_pending_wire(state: &Rc<LabState>) -> bool {
+    let Some(waiting) = state.pending_wire.get() else {
+        return false;
+    };
+    state.pending_wire.set(None);
+    state.say(Utterance::done(format!(
+        "the wire from {} was let go",
+        state.name_of(waiting.from)
+    )));
+    true
 }
 
 /// ★★★★★ R1732 — **the keyboard half of the collapsed roster**, and the one
@@ -17953,6 +18115,10 @@ fn key(state: &Rc<LabState>, chord: &str) -> bool {
     }
     match chord {
         "Escape" => {
+            // ★ R1987 — a waiting wire goes first and says so, because it is
+            // the only one of the three that a person entered on purpose and
+            // could otherwise not leave.
+            drop_pending_wire(state);
             state.drag.set(None);
             state.selected_link.set(None);
             true
@@ -20055,6 +20221,89 @@ fn rewire_wire(state: &Rc<LabState>) -> serde_json::Value {
         "picked": link.0,
         "carried": matches!(state.drag.get(), Some(Drag::Rewire { .. })),
         "cards": rows,
+    })
+}
+
+/// ★★★★★ R1987 — **the wire waiting for a card, and what each role would do
+/// with it.**
+///
+/// # Why the roles are answered by TRYING, and why that is not a shortcut
+///
+/// [`Document::may_autowire`] is asked of a node that exists, and a palette
+/// row's card does not exist yet. Rather than inventing a second, weaker rule
+/// for the hypothetical case — which is the drift this tree refuses everywhere
+/// else — the question is asked **on a copy of the document with the card
+/// actually in it**. That is §2 #3, this project's `dry_run` primitive, used
+/// for what it is for: a scenario explored on a document nobody is looking at,
+/// thrown away, and the real one untouched.
+///
+/// So the answer is exact rather than approximate: it is the same call the
+/// press will make, on the same graph, with the same card. The reference cannot
+/// ask this at all — its hook is a `void` on a node that has already been
+/// created inside a modal menu, so a person there finds out by choosing.
+///
+/// `null` when nothing is waiting, which is a different statement from an empty
+/// roster.
+fn waiting_wire(state: &Rc<LabState>) -> serde_json::Value {
+    let Some(waiting) = state.pending_wire.get() else {
+        return serde_json::Value::Null;
+    };
+    let here = state.here();
+    let leaving = Socket::new(waiting.from, waiting.port);
+    let rows: Vec<serde_json::Value> = Role::ALL
+        .iter()
+        .map(|role| {
+            // A copy, so the graph a person is looking at is not touched by the
+            // question. The card is added the way `add_node` adds one, because
+            // an answer about a differently-built card is an answer about
+            // something else.
+            let mut trial = state.doc.borrow().clone();
+            let built = trial.add_node(
+                here,
+                NodeBody::Kind(LabNode {
+                    role: *role,
+                    listens_over: None,
+                    dials_over: None,
+                    listening: false,
+                    implementation: Implementation::default(),
+                }),
+                waiting.at.0,
+                waiting.at.1,
+            );
+            let asked = built.map_err(|why| why.to_string()).and_then(|card| {
+                trial
+                    .may_autowire(here, leaving, Side::Output, card)
+                    .map_err(|why| why.to_string())
+            });
+            match asked {
+                Ok(took) => serde_json::json!({
+                    "role": role.name(),
+                    "takes": true,
+                    "pin": took.port,
+                    // ★ Whether the value would arrive as it is or through the
+                    // taxonomy's own map, which is what ranks one pin over
+                    // another and is therefore worth a client being able to see.
+                    "arrival": match took.arrival {
+                        Arrival::Unchanged => "unchanged",
+                        Arrival::Converted => "converted",
+                    },
+                    // ★ And what it would EVICT, which is the fact the
+                    // reference's connection attempt answers a bare boolean to.
+                    "displaces": took.displaces.map(|gone| gone.id.0),
+                }),
+                Err(why) => serde_json::json!({
+                    "role": role.name(),
+                    "takes": false,
+                    "because": why,
+                }),
+            }
+        })
+        .collect();
+    serde_json::json!({
+        "from": state.name_of(waiting.from),
+        "pin": waiting.port,
+        "at": [waiting.at.0, waiting.at.1],
+        "roles": rows,
     })
 }
 

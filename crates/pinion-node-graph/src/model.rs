@@ -2097,6 +2097,31 @@ impl Side {
         Self::ALL.into_iter().find(|s| s.name() == name)
     }
 
+    /// ★★★★★ R1987 — the side as an **English noun**, for a sentence a person
+    /// reads.
+    ///
+    /// Not [`name`](Self::name), and the difference is a category rather than a
+    /// preference. `name` is the **wire form**: it has a parser inverse
+    /// ([`from_wire`](Self::from_wire)), it is what a client sends and what a
+    /// schema publishes, and it is therefore frozen by every consumer that
+    /// parses it. Rendering it into prose produced *"node 1 has no in pin to
+    /// take the wire"* — which is how this method came to exist, caught by
+    /// [`AutowireError`](crate::AutowireError)'s own census proof rather than by
+    /// review.
+    ///
+    /// So the two must be able to move apart: a wire token cannot be improved
+    /// for a reader without breaking a parser, and a sentence cannot be fixed
+    /// by editing a protocol. One caller today — R1987's refusal — and that is
+    /// the right time to separate them, because the conflation has already
+    /// produced one wrong sentence.
+    #[must_use]
+    pub const fn noun(self) -> &'static str {
+        match self {
+            Self::Input => "input",
+            Self::Output => "output",
+        }
+    }
+
     /// The closed vocabulary, projected from [`ALL`](Self::ALL) — see
     /// [`ArrangePass::WIRE_NAMES`](crate::ArrangePass::WIRE_NAMES).
     pub const WIRE_NAMES: [&'static str; 2] = {
@@ -4042,9 +4067,37 @@ impl<K: NodeKind> Document<K> {
     ) -> Result<Connected, ConnectError<K::Type>> {
         let crowded = self.vet(tree, from, to)?;
         // The tree exists: `vet` resolved a signature through it twice.
-        let Some(host) = self.tree_mut(tree) else {
-            return Err(ConnectError::NoSuchNode(from));
-        };
+        self.wire(tree, from, to, crowded)
+            .ok_or(ConnectError::NoSuchNode(from))
+    }
+
+    /// ★★★★★ R1987 — the **placement** half of [`connect`](Self::connect),
+    /// after the vet has already answered.
+    ///
+    /// Extracted so that [`autowire`](Self::autowire) can act on the decision
+    /// it already made instead of asking a second time. Two calls to
+    /// [`vet`](Self::vet) around one gesture is not merely wasted work: the
+    /// second one is asked of a document the first has not changed, so the only
+    /// thing the pair can produce that one call cannot is a **disagreement** —
+    /// and the caller would then have to invent a refusal for a case it has
+    /// already ruled out, which is an arm no test can reach. This is the split
+    /// `plan_relink` made for R1924, reached from the other verb.
+    ///
+    /// `crowded` is [`vet`](Self::vet)'s own answer and is not re-derived here:
+    /// which end has to give way is a property of the two ports, and deciding
+    /// it twice is what this extraction exists to stop.
+    ///
+    /// `None` only when the tree is gone, which a vetted pair cannot reach —
+    /// the caller maps it onto whichever "not there" its own vocabulary has,
+    /// which is what [`connect`](Self::connect) did inline before this split.
+    pub(crate) fn wire(
+        &mut self,
+        tree: TreeId,
+        from: Socket,
+        to: Socket,
+        crowded: Option<Side>,
+    ) -> Option<Connected> {
+        let host = self.tree_mut(tree)?;
         let id = LinkId(host.next_link);
         host.next_link += 1;
         let displaced = self.place(
@@ -4058,7 +4111,7 @@ impl<K: NodeKind> Document<K> {
             crowded,
             None,
         );
-        Ok(Connected {
+        Some(Connected {
             link: id,
             displaced,
         })

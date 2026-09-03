@@ -4202,7 +4202,9 @@ pub(crate) fn open_whatever_arrived_folded(state: &std::rc::Rc<super::ShellState
     }
 }
 
-fn walk_the_application(state: &std::rc::Rc<super::ShellState>) -> pinion_screen::TourReport {
+pub(crate) fn walk_the_application(
+    state: &std::rc::Rc<super::ShellState>,
+) -> pinion_screen::TourReport {
     let tour = pinion_screen::Tour::of(&state.screens).also_recording(super::VIEW_TAG);
     let surfaces = tour.surfaces();
     tour.walk(

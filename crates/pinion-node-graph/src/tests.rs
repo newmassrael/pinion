@@ -9,13 +9,13 @@ use pinion_graph::Sugiyama;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Act, Admission, Admits, AdoptError, Align, Appearance, Archive, Axis, BeaconError, BreakError,
-    Breakpoints, Bringup, Camera, Carried, Carrying, Command, Composition, Condition, ConnectError,
-    Container, Control, Conversion, Copying, Crossings, Definitions, Direction, Discovery,
-    Distribute, Document, Drawn, Dropped, DuplicateError, Edge, EditError, EditPath, Extent,
-    ExtractError, Fit, Flow, ForceError, Fragment, GroupError, Grow, Halt, InsertError,
-    Inspectable, Instance, InterfaceSide, Item, ItemError, Layered, LinkId, LinkLayer, Machine,
-    Margin, Multiplicity, Naming, NestError, Node, NodeBody, NodeId, NodeKind, NodeSite,
+    Act, Admission, Admits, AdoptError, Align, Appearance, Archive, Arrival, AutowireError, Axis,
+    BeaconError, BreakError, Breakpoints, Bringup, Camera, Carried, Carrying, Command, Composition,
+    Condition, ConnectError, Container, Control, Conversion, Copying, Crossings, Definitions,
+    Direction, Discovery, Distribute, Document, Drawn, Dropped, DuplicateError, Edge, EditError,
+    EditPath, Extent, ExtractError, Fit, Flow, ForceError, Fragment, GroupError, Grow, Halt,
+    InsertError, Inspectable, Instance, InterfaceSide, Item, ItemError, Layered, LinkId, LinkLayer,
+    Machine, Margin, Multiplicity, Naming, NestError, Node, NodeBody, NodeId, NodeKind, NodeSite,
     ObserveError, Occurrence, Organic, Orphaned, ParentError, Passing, PathError, Port, PortPath,
     PortRef, PortSite, PortValueError, ROOT, Reach, Relabelled, RelinkError, Renamed,
     RepartitionError, RetypeError, Route, RunError, SectionId, SelectError, Session, Severed,
@@ -18217,4 +18217,481 @@ fn r1980_occupants_answers_both_layers_and_the_right_end() {
     // ★ A tree that is not here answers "nothing is standing there", which is
     // true, rather than an error arm no caller could act on.
     assert!(document.occupants(TreeId(77), taken, Side::Input).is_free());
+}
+
+// ── R1987 — a node that has just arrived wires itself ───────────────────────
+
+/// A document with a `Level` (scalar out) and a `Swatch` (vector out) already
+/// on it, for the autowire cases below.
+///
+/// Built as a helper because every case here starts the same way — a wire is
+/// dangling off one of these two — and what differs is the node that arrives.
+fn autowire_bench() -> (Document<LOp>, NodeId, NodeId) {
+    let mut document = Document::new("root");
+    let level = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Level(4)), 0, 0)
+        .unwrap();
+    let swatch = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Swatch([1, 2, 3])), 0, 120)
+        .unwrap();
+    (document, level, swatch)
+}
+
+/// ★★★★★ R1987 — **a direct crossing is preferred to a converted one, which is
+/// the reference's own axis of preference.**
+///
+/// `Cross` takes `Amount: Scalar` then `Colour: Vector`, and the lattice
+/// broadcasts a scalar into a vector — so a scalar wire dragged at it is taken
+/// by BOTH pins and the two answers differ only in how the value gets across.
+/// The reference reaches the same order by keeping the conversion candidate as
+/// a *backup* and using it only if the scan finds nothing better; here it is
+/// one comparison on [`Uptake::preference`] rather than a rule written into
+/// every node class.
+#[test]
+fn r1987_a_direct_crossing_is_taken_before_a_converted_one() {
+    let (mut document, level, _) = autowire_bench();
+    let cross = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Cross), 300, 0)
+        .unwrap();
+
+    let offered = document
+        .autowire_uptakes(ROOT, Socket::new(level, 0), Side::Output, cross)
+        .expect("both of Cross's pins take a scalar, one of them by conversion");
+    assert_eq!(
+        offered.len(),
+        2,
+        "★ the answer is every port that takes it, not only the winner"
+    );
+    assert_eq!(
+        (offered[0].port, offered[0].arrival),
+        (0, Arrival::Unchanged),
+        "the scalar pin arrives unchanged and is therefore first"
+    );
+    assert_eq!(
+        (offered[1].port, offered[1].arrival),
+        (1, Arrival::Converted),
+        "the vector pin takes it through the broadcast, and ranks after"
+    );
+    assert!(
+        offered[0].preference() < offered[1].preference(),
+        "★ the order is the preference, not the declaration"
+    );
+
+    // ★★★★★ The question and the verb are one decision. The reference splits
+    // these — its hook returns `void`, so nothing there can be asked before it
+    // acts and nothing can be compared afterwards.
+    let asked = document
+        .may_autowire(ROOT, Socket::new(level, 0), Side::Output, cross)
+        .expect("the same answer");
+    assert_eq!(asked, offered[0]);
+    let done = document
+        .autowire(ROOT, Socket::new(level, 0), Side::Output, cross)
+        .expect("and it wires");
+    assert_eq!(done.took, asked, "★ what was asked is what was done");
+    assert_eq!(done.displaced, None, "nothing was there to displace");
+
+    let link = document.tree(ROOT).unwrap().link(done.link).unwrap();
+    assert_eq!(link.from, Socket::new(level, 0));
+    assert_eq!(link.to, Socket::new(cross, 0));
+}
+
+/// ★★★★★ R1987 — **among equally good crossings, the pin that destroys nothing
+/// wins — which the reference cannot express.**
+///
+/// `Sum` takes two vector pins. Feed the first, then drag a second vector wire
+/// at the node: both pins take it directly, and the difference is that landing
+/// on the first would displace the link already there. The reference's response
+/// vocabulary puts *make* and *make, breaking the others* in the same immediate
+/// class, so its scan takes the first pin in declaration order and the person
+/// finds out afterwards that a wire is gone.
+#[test]
+fn r1987_a_pin_that_displaces_nothing_wins_a_tie() {
+    let (mut document, _, swatch) = autowire_bench();
+    let other = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Swatch([9, 9, 9])), 0, 240)
+        .unwrap();
+    let sum = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Sum), 300, 0)
+        .unwrap();
+    let held = document
+        .connect(ROOT, Socket::new(other, 0), Socket::new(sum, 0))
+        .expect("A is fed")
+        .link;
+
+    let offered = document
+        .autowire_uptakes(ROOT, Socket::new(swatch, 0), Side::Output, sum)
+        .expect("both pins take a vector");
+    assert_eq!(
+        offered.iter().map(|one| one.arrival).collect::<Vec<_>>(),
+        vec![Arrival::Unchanged, Arrival::Unchanged],
+        "★ the two are equal on the reference's only axis"
+    );
+    assert_eq!(
+        (offered[0].port, offered[0].displaces),
+        (1, None),
+        "★ so the free pin comes first, though it is declared second"
+    );
+    assert_eq!(
+        offered[1].port, 0,
+        "and the one that would evict a link ranks behind"
+    );
+    assert_eq!(
+        offered[1].displaces.map(|gone| gone.id),
+        Some(held),
+        "★★★★★ naming the link that would go, which the reference's connection \
+         attempt answers a bare boolean to and therefore cannot"
+    );
+
+    // 🟥🟥🟥 ★★★★★ And the pin that is FREE says so, though its capacity is
+    // the same one link. `vet` answers `Some(Input)` for both — it reports
+    // which end takes one link, not that one is taken — and reading that as
+    // "would displace" is the first draft this test caught.
+    assert!(
+        offered[0].displaces.is_none() && offered[1].displaces.is_some(),
+        "★ occupancy separates them where capacity does not"
+    );
+
+    let done = document
+        .autowire(ROOT, Socket::new(swatch, 0), Side::Output, sum)
+        .expect("it wires");
+    assert_eq!(done.took.port, 1);
+    assert_eq!(done.displaced, None, "★ nothing was evicted");
+    assert!(
+        document.tree(ROOT).unwrap().link(held).is_some(),
+        "★★★★★ and the link that was already there is still there — which is \
+         the whole difference from the reference's first-match scan"
+    );
+}
+
+/// ★★★★★ R1987 — **when nothing takes the wire, every pin says why.**
+///
+/// The reference's hook is an empty body and its overriders fall out of their
+/// scan silently, so a person is left looking at a node that arrived unwired
+/// with nothing to read. Here each pin that declined carries the authoring
+/// refusal whole — the two types, or the arity, or the path that would close —
+/// because those are repaired by different actions.
+#[test]
+fn r1987_every_pin_that_declined_says_why() {
+    let (mut document, _, swatch) = autowire_bench();
+    let wash = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Wash), 300, 0)
+        .unwrap();
+
+    let refused = document
+        .autowire_uptakes(ROOT, Socket::new(swatch, 0), Side::Output, wash)
+        .expect_err("a vector may not narrow into Wash's scalar pin");
+    let AutowireError::NoneTakes { declined } = refused else {
+        panic!("Wash HAS a pin, so this is not the no-pins answer");
+    };
+    assert_eq!(declined.len(), 1, "one entry per pin that was offered it");
+    assert_eq!(declined[0].port, 0);
+    assert_eq!(declined[0].at, PortPath::root(0));
+    assert!(
+        matches!(
+            declined[0].why,
+            ConnectError::TypeMismatch {
+                from_type: LTy::Vector,
+                to_type: LTy::Scalar,
+                ..
+            }
+        ),
+        "★ and the reason is the refusal itself, not a bit: {:?}",
+        declined[0].why
+    );
+}
+
+/// ★★★★★ R1987 — **a kind with no pin on that side is a different answer from
+/// a kind whose pins all refused**, and the reference cannot tell them apart.
+///
+/// Both are its empty hook body. Here one is [`AutowireError::NoPorts`] and the
+/// other [`AutowireError::NoneTakes`], because a person repairs them
+/// differently: *this kind never listens* is a choice about the kind, and
+/// *these pins refused* is a question about the types.
+#[test]
+fn r1987_no_pin_at_all_is_not_the_same_answer_as_every_pin_refusing() {
+    let (mut document, level, _) = autowire_bench();
+    let source = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Level(9)), 300, 0)
+        .unwrap();
+
+    assert_eq!(
+        document.autowire_uptakes(ROOT, Socket::new(level, 0), Side::Output, source),
+        Err(AutowireError::NoPorts {
+            node: source,
+            side: Side::Input,
+        }),
+        "★ Level produces and never consumes, so there is no pin to offer"
+    );
+
+    // ★ And the sentence a person reads says which, rather than `NoneTakes`
+    // with an empty list — R1699's rule, applied to a refusal built this round.
+    let said = document
+        .autowire_uptakes(ROOT, Socket::new(level, 0), Side::Output, source)
+        .expect_err("as above")
+        .to_string();
+    // ★ Asserted against the vocabulary rather than a remembered string. The
+    // first draft of this line read `contains("no in pin")` — which is the
+    // WIRE token, and it locked in the sentence the census proof then rejected.
+    assert!(
+        said.contains(Side::Input.noun()),
+        "reads the prose word: {said}"
+    );
+}
+
+/// ★★★★★ R1987 — **the gesture runs in both directions**, because the wire may
+/// be dragged off a consuming pin as easily as off a producing one.
+///
+/// `leaving` is what says which of the dangling node's two port lists the index
+/// belongs to. The reference reads the same fact off its pin pointer, and one
+/// of its node classes branches on it by hand — child pin for a drag off an
+/// input, parent pin otherwise — which is this rule computed for a node with
+/// two pins.
+#[test]
+fn r1987_a_wire_dragged_off_a_consuming_pin_is_offered_the_outputs() {
+    let (mut document, _, _) = autowire_bench();
+    let sink = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Sink), 300, 0)
+        .unwrap();
+    let arriving = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Swatch([4, 5, 6])), 0, 300)
+        .unwrap();
+
+    let done = document
+        .autowire(ROOT, Socket::new(sink, 0), Side::Input, arriving)
+        .expect("Swatch produces the vector Sink's pin consumes");
+    assert_eq!(done.took.port, 0);
+    let link = document.tree(ROOT).unwrap().link(done.link).unwrap();
+    assert_eq!(
+        (link.from, link.to),
+        (Socket::new(arriving, 0), Socket::new(sink, 0)),
+        "★ the ends are the way round the GRAPH needs, not the way the hand \
+         drew them"
+    );
+}
+
+/// ★★★★★ R1987 — **the graph's own rules reach the answer**, so a wire that
+/// would close a cycle or feed a node from itself is declined here for the
+/// reason `connect` would decline it for.
+///
+/// One vet, asked by the question and acted on by the verb. The reference's
+/// hook asks its schema a *connection response* per pin and so reaches the type
+/// rules; the acyclicity of the graph is not among them there.
+#[test]
+fn r1987_a_wire_that_would_close_a_cycle_is_declined_with_its_path() {
+    let mut document = Document::new("root");
+    let meter = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Meter), 0, 0)
+        .unwrap();
+    let wash = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Wash), 200, 0)
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(meter, 0), Socket::new(wash, 0))
+        .expect("Meter's scalar feeds Wash's scalar pin");
+
+    let refused = document
+        .autowire_uptakes(ROOT, Socket::new(wash, 0), Side::Output, meter)
+        .expect_err("Wash's vector output back into Meter would close the ring");
+    let AutowireError::NoneTakes { declined } = refused else {
+        panic!("Meter has a vector pin, so it is offered the wire and declines");
+    };
+    assert!(
+        matches!(declined[0].why, ConnectError::WouldCycle { .. }),
+        "★ and the path that would close it comes with the refusal: {:?}",
+        declined[0].why
+    );
+
+    // ★ A node offered a wire from ITSELF declines every pin, and the two
+    // declinings are different facts: one pin's types do not cross, the other's
+    // do and the ends are one node.
+    let cross = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Cross), 400, 0)
+        .unwrap();
+    let AutowireError::NoneTakes { declined } = document
+        .autowire_uptakes(ROOT, Socket::new(cross, 0), Side::Output, cross)
+        .expect_err("a node cannot feed itself")
+    else {
+        panic!("Cross has two pins");
+    };
+    assert!(matches!(
+        (&declined[0].why, &declined[1].why),
+        (ConnectError::TypeMismatch { .. }, ConnectError::SelfLink(_))
+    ));
+}
+
+/// ★★★★★ R1987 — **the wire must be leaving a pin that is there**, and the
+/// refusal says how many that end has.
+///
+/// Its own arm rather than a `NoneTakes` with nothing in it: the fault is at
+/// the *dangling* end and no pin of the arriving node was ever offered
+/// anything, so a list of their refusals would be a lie about what was tried.
+#[test]
+fn r1987_a_wire_from_a_pin_that_is_not_there_is_refused_at_that_end() {
+    let (mut document, level, _) = autowire_bench();
+    let sink = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Sink), 300, 0)
+        .unwrap();
+
+    assert_eq!(
+        document.autowire_uptakes(ROOT, Socket::new(level, 7), Side::Output, sink),
+        Err(AutowireError::NoSuchPort {
+            socket: Socket::new(level, 7),
+            arity: 1,
+        })
+    );
+    assert_eq!(
+        document.autowire_uptakes(ROOT, Socket::new(NodeId(99), 0), Side::Output, sink),
+        Err(AutowireError::NoSuchNode(NodeId(99)))
+    );
+    assert_eq!(
+        document.autowire_uptakes(ROOT, Socket::new(level, 0), Side::Output, NodeId(99)),
+        Err(AutowireError::NoSuchNode(NodeId(99)))
+    );
+    assert_eq!(
+        document.autowire_uptakes(TreeId(77), Socket::new(level, 0), Side::Output, sink),
+        Err(AutowireError::NoSuchNode(level)),
+        "★ a tree that is not there answers about the node it could not find, \
+         which is the same sentence `signature` gives"
+    );
+}
+
+/// ★★★★★ R1987 — **the published list is never empty**, which is what lets the
+/// two "nothing takes it" facts stay apart.
+///
+/// A list that could be empty would collapse [`AutowireError::NoPorts`] and
+/// [`AutowireError::NoneTakes`] into an `Ok(vec![])` that says neither. Held
+/// over every ordered pair of the fixture's kinds rather than over the one the
+/// cases above happen to use — the population, not a sample.
+#[test]
+fn r1987_an_answered_list_always_has_something_in_it() {
+    let kinds = [
+        LOp::Level(1),
+        LOp::Swatch([1, 1, 1]),
+        LOp::Sum,
+        LOp::Cross,
+        LOp::Meter,
+        LOp::Wash,
+        LOp::Sink,
+    ];
+    let mut offered = 0_u32;
+    let mut refused = 0_u32;
+    for from in &kinds {
+        for to in &kinds {
+            let mut document = Document::new("root");
+            let source = document
+                .add_node(ROOT, NodeBody::Kind(from.clone()), 0, 0)
+                .unwrap();
+            let arriving = document
+                .add_node(ROOT, NodeBody::Kind(to.clone()), 300, 0)
+                .unwrap();
+            if document.signature(ROOT, source).unwrap().outputs.is_empty() {
+                continue;
+            }
+            let leaves = Socket::new(source, 0);
+            match document.autowire_uptakes(ROOT, leaves, Side::Output, arriving) {
+                Ok(uptakes) => {
+                    assert!(!uptakes.is_empty(), "★ {from:?} -> {to:?} answered nothing");
+                    // ★ And the list is in preference order, which is the
+                    // property the verb below leans on when it takes the first.
+                    assert!(
+                        uptakes
+                            .windows(2)
+                            .all(|two| two[0].preference() <= two[1].preference()),
+                        "★ {from:?} -> {to:?} is out of order"
+                    );
+                    let asked = document
+                        .may_autowire(ROOT, leaves, Side::Output, arriving)
+                        .expect("the same call");
+                    assert_eq!(asked, uptakes[0]);
+                    let done = document
+                        .autowire(ROOT, leaves, Side::Output, arriving)
+                        .expect("★ asking yes and doing cannot disagree");
+                    assert_eq!(done.took, asked);
+                    offered += 1;
+                }
+                Err(AutowireError::NoneTakes { declined }) => {
+                    assert!(!declined.is_empty(), "★ {from:?} -> {to:?} refused nothing");
+                    refused += 1;
+                }
+                Err(AutowireError::NoPorts { .. }) => refused += 1,
+                Err(other) => panic!("{from:?} -> {to:?}: {other:?}"),
+            }
+        }
+    }
+    // ★★★★★ R1985's rule — a counterfactual that PASSES is a population
+    // problem, so the population says out loud that BOTH outcomes are in it. A
+    // sweep in which nothing was ever refused would hold this property
+    // vacuously.
+    assert!(
+        offered > 0 && refused > 0,
+        "the sweep must reach both outcomes: offered {offered}, refused {refused}"
+    );
+}
+
+/// ★★★★★ R1987 — **a refusal a person reads must not be spelled in the wire
+/// form a client parses.**
+///
+/// `Side::name` is the wire token (`"in"` / `"out"`) and has a parser inverse;
+/// `Side::noun` is the English word. The first draft of
+/// [`AutowireError::NoPorts`]'s sentence used `name`, and it read *"node 1 has
+/// no in pin to take the wire"*. Nothing caught that — the arm was covered, the
+/// sentence was non-empty, and a test asserting `!is_empty()` passes on either
+/// spelling. So the property is asserted **against the two vocabularies**
+/// rather than against a remembered string: whichever noun the sentence
+/// carries, it must be the prose one and must not be the wire one.
+///
+/// ⚠ The two must also be *distinguishable* for that assertion to be able to
+/// fail at all — `"in"` is a substring of `"input"`, so a naive `contains` on
+/// the wire form would hold for the correct sentence too. The check is on whole
+/// words.
+#[test]
+fn r1987_a_refusal_a_person_reads_uses_the_prose_word_not_the_wire_token() {
+    let mut document: Document<LOp> = Document::new("root");
+    let level = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Level(4)), 0, 0)
+        .unwrap();
+    // A source: it has outputs and no inputs at all, so it is the arm's case.
+    let source = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Level(9)), 300, 0)
+        .unwrap();
+
+    let why = document
+        .autowire(ROOT, Socket::new(level, 0), Side::Output, source)
+        .expect_err("a source presents no input");
+    assert!(matches!(why, AutowireError::NoPorts { .. }));
+    let sentence = why.to_string();
+
+    let words: Vec<&str> = sentence.split_whitespace().collect();
+    assert!(
+        words.contains(&Side::Input.noun()),
+        "the sentence must carry the prose word {:?}: {sentence}",
+        Side::Input.noun()
+    );
+    assert!(
+        !words.contains(&Side::Input.name()),
+        "★ the wire token {:?} leaked into a sentence a person reads: {sentence}",
+        Side::Input.name()
+    );
+
+    // ★ And the two vocabularies really are two, so the assertion above has a
+    // way to fail. If they were ever collapsed into one method, both checks
+    // would be about the same string and this test would be decoration.
+    for side in Side::ALL {
+        assert_ne!(
+            side.name(),
+            side.noun(),
+            "the wire form and the prose word must stay distinguishable"
+        );
+        assert_eq!(
+            Side::from_wire(side.name()),
+            Some(side),
+            "the wire form keeps its parser inverse"
+        );
+        assert_eq!(
+            Side::from_wire(side.noun()),
+            None,
+            "★ and the prose word is NOT wire vocabulary — a parser must not \
+             start accepting it because a sentence was improved"
+        );
+    }
 }

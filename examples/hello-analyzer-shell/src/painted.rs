@@ -8159,6 +8159,279 @@ fn r1958_a_press_reaches_a_mounted_screens_control() {
     });
 }
 
+/// A read slot of the mounted lab, asked through the door a press goes through.
+///
+/// Rule (7): the claim is about the assembled application, so the guest is
+/// reached the way the shell reaches it — `ScreenRoster::externals` — and never
+/// by touching `hello_node_lab`'s own state, which would pass on a build that
+/// never mounted the section.
+fn lab_slot(state: &std::rc::Rc<ShellState>, slot: &str) -> serde_json::Value {
+    let mut externals = state.screens.externals(&state.journey.get());
+    let lab = externals
+        .iter_mut()
+        .filter_map(|e| e.handle.introspect_mut())
+        .find(|it| it.query("waiting").is_ok())
+        .expect("the lab section publishes `waiting`, which is how it is found");
+    let read = lab
+        .query(slot)
+        .unwrap_or_else(|why| panic!("the lab refused `{slot}`: {why:?}"));
+    match read {
+        pinion_core::external::IntrospectValue::Json(j) => j,
+        pinion_core::external::IntrospectValue::Text(t) => {
+            serde_json::from_str(&t).unwrap_or(serde_json::Value::String(t))
+        }
+        other => panic!("expected json or text from `{slot}`, got {other:?}"),
+    }
+}
+
+/// ★★★★★ R1987 — **a wire let go over empty canvas waits, and the card chosen
+/// for it arrives already wired** — driven on the assembled tool, over one walk.
+///
+/// # What this reproduces, and what the census row was wrong about
+///
+/// The engine's graph node publishes one hook whose header says *autowire a
+/// newly created node*, taking *the source pin that caused the new node to be
+/// created (typically a drag-release context menu creation)*. The census
+/// recorded it as *dropping a node onto a wire … the DCC's `insert_offset`*,
+/// and re-measuring disproved both halves: the parameter is the pin the drag
+/// LEFT FROM, and `insert_offset`'s own description is *automatically offset
+/// nodes on insertion* — a layout animation that wires nothing. So this round
+/// closes one row and corrects the reason on the other, which stays absent.
+///
+/// # Why the palette is the menu
+///
+/// The behaviour canon draws **no context menu on this canvas** — its gestures
+/// are pan, zoom, place and wire — so opening one would be inventing a surface
+/// rather than reproducing the reference's. The palette is the list of cards
+/// this screen already offers, and a press on it is already how a card is
+/// added; what R1987 adds is that the press *takes the waiting wire*.
+///
+/// # What the walk drives
+///
+/// A press on a card's dial pin, a move to empty canvas, a release — where this
+/// screen used to say *a link needs an accept pin* and throw the gesture away —
+/// then a press on a palette role. Every step goes through the router against
+/// the shell's real surface set (see [`RouterDrag::over`] for the three things
+/// that had to be true before a press could reach a mounted screen at all).
+#[test]
+fn r1987_a_wire_let_go_over_the_canvas_is_taken_by_the_card_chosen_for_it() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        // The walk first: rule (7)'s claim is about a section of an
+        // application, not about a screen standing on its own.
+        let report = crate::tests::walk_the_application(&state);
+        assert!(
+            report.conforms(),
+            "the application did not reproduce its specification over the walk: {}",
+            report.why().unwrap_or_default()
+        );
+        assert!(
+            report.itinerary().iter().any(|key| key == "lab"),
+            "the walk must stand in the node lab: {:?}",
+            report.itinerary()
+        );
+
+        state.go("lab").expect("the node lab section is open");
+
+        let held = a_wire_is_let_go_over_empty_canvas(&state);
+        let taker = the_waiting_wire_says_which_roles_would_take_it(&state, &held);
+        a_press_on_that_role_brings_a_card_in_already_wired(&state, &held, &taker);
+    });
+}
+
+/// What the canvas held before the palette was pressed, so the phase that
+/// presses can say what CHANGED rather than what merely is.
+struct Waiting {
+    /// The card the wire was dragged off, read off the paint.
+    source: String,
+    /// The cards on the canvas before the press.
+    opening: Vec<String>,
+    /// How many links there were before it.
+    links_before: usize,
+}
+
+/// The lab's card list, which is published as one comma-separated string.
+fn lab_cards(state: &std::rc::Rc<ShellState>) -> Vec<String> {
+    lab_slot(state, "nodes")
+        .as_str()
+        .expect("`nodes` is a comma-separated list")
+        .split(',')
+        .map(str::to_owned)
+        .collect()
+}
+
+/// A patch of canvas with no card on it — **computed, not picked**.
+///
+/// Inside the lab's own canvas rectangle and outside every card the frame drew,
+/// so a graph that grows a card over the chosen spot moves the spot instead of
+/// turning this red.
+fn a_clear_patch_of_canvas(shot: &Painted) -> (u32, u32) {
+    let canvas = shot
+        .rect("lab.canvas")
+        .expect("the mounted lab paints its canvas");
+    let cards: Vec<Rect> = shot
+        .tags
+        .iter()
+        .filter(|(tag, _)| {
+            tag.strip_prefix("lab.node.")
+                .is_some_and(|rest| !rest.contains('.'))
+        })
+        .map(|(_, rect)| *rect)
+        .collect();
+    (canvas.x + 24..canvas.x + canvas.w - 24)
+        .step_by(17)
+        .flat_map(|x| {
+            (canvas.y + 24..canvas.y + canvas.h - 24)
+                .step_by(19)
+                .map(move |y| (x, y))
+        })
+        .find(|(x, y)| {
+            cards.iter().all(|card| {
+                *x < card.x || *x >= card.x + card.w || *y < card.y || *y >= card.y + card.h
+            })
+        })
+        .expect("this canvas has somewhere with no card on it")
+}
+
+/// Phase 1 — the hand drags off a pin and lets go over empty canvas.
+///
+/// ★★★★★ The wire is then HELD, and the wire surface says so — which is what
+/// makes this a state an agent can drive and not only a person. The reference's
+/// equivalent is a modal menu: nothing outside it can ask what it is holding.
+fn a_wire_is_let_go_over_empty_canvas(state: &std::rc::Rc<ShellState>) -> Waiting {
+    let (shot, scene) = painted_at((WIN_W, WIN_H));
+
+    // The card the wire will leave, READ off the paint rather than written
+    // down: naming one here would make this a claim about the opening graph as
+    // well as about the gesture.
+    let (pin_tag, source) = shot
+        .tags
+        .keys()
+        .filter_map(|tag| {
+            let name = tag.strip_prefix("lab.pin.")?.strip_suffix(".dial")?;
+            (!name.contains('.')).then(|| (tag.clone(), name.to_owned()))
+        })
+        .min()
+        .expect("the opening graph draws at least one dial pin");
+    let opening = lab_cards(state);
+    let links_before = lab_slot(state, "links")
+        .as_array()
+        .expect("`links` is an array")
+        .len();
+    let clear = a_clear_patch_of_canvas(&shot);
+
+    let mut drag = RouterDrag::over(state, scene);
+    drag.cursor(aim(&shot, &pin_tag));
+    drag.press();
+    drag.cursor(clear);
+    drag.release();
+
+    let waiting = lab_slot(state, "waiting");
+    assert_eq!(
+        waiting["from"].as_str(),
+        Some(source.as_str()),
+        "the release over empty canvas left the wire waiting: {waiting}",
+    );
+    Waiting {
+        source,
+        opening,
+        links_before,
+    }
+}
+
+/// Phase 2 — the held wire says, **per role**, whether a card of that role
+/// would take it.
+///
+/// Asked on a COPY of the document (§2 #3's dry run), so the answer is the same
+/// call the press is about to make rather than a second, weaker rule. The
+/// reference cannot ask this at all: its hook is a `void` on a node its menu
+/// has already created.
+fn the_waiting_wire_says_which_roles_would_take_it(
+    state: &std::rc::Rc<ShellState>,
+    held: &Waiting,
+) -> String {
+    let waiting = lab_slot(state, "waiting");
+    let roles = waiting["roles"].as_array().expect("a roster of roles");
+    assert!(
+        !roles.is_empty(),
+        "the waiting wire names no roles at all: {waiting}",
+    );
+    assert_eq!(
+        waiting["from"].as_str(),
+        Some(held.source.as_str()),
+        "the roster is about the wire that is actually held: {waiting}",
+    );
+    let taker = roles
+        .iter()
+        .find(|row| row["takes"] == serde_json::Value::Bool(true))
+        .unwrap_or_else(|| panic!("no role would take the wire: {waiting}"))["role"]
+        .as_str()
+        .expect("a role's name")
+        .to_owned();
+    // ★ Both answers must be reachable on this graph, or the roster's refusing
+    // half is unreachable and a `takes: true` everywhere says nothing.
+    assert!(
+        roles
+            .iter()
+            .any(|row| row["takes"] == serde_json::Value::Bool(false)),
+        "★ every role takes it, so the refusal half of this roster is \
+         unreachable and the answer says nothing: {waiting}",
+    );
+    taker
+}
+
+/// Phase 3 — one press on that role, and the card arrives **already wired**.
+///
+/// Before this round the wire had already been thrown away by then, and the
+/// person had to draw it again.
+fn a_press_on_that_role_brings_a_card_in_already_wired(
+    state: &std::rc::Rc<ShellState>,
+    held: &Waiting,
+    taker: &str,
+) {
+    let (shot, scene) = painted_at((WIN_W, WIN_H));
+    let row = format!("lab.palette.role.{taker}");
+    let mut press = RouterDrag::over(state, scene);
+    press.cursor(aim(&shot, &row));
+    press.press();
+    press.release();
+
+    let now = lab_cards(state);
+    let arrived: Vec<&String> = now.iter().filter(|n| !held.opening.contains(n)).collect();
+    assert_eq!(
+        arrived.len(),
+        1,
+        "one press on the palette adds one card: was {:?}, now {now:?}",
+        held.opening,
+    );
+    let links = lab_slot(state, "links");
+    let links = links.as_array().expect("`links` is an array");
+    assert_eq!(
+        links.len(),
+        held.links_before + 1,
+        "★ and the waiting wire became a link: {links:?}",
+    );
+    let made = links
+        .iter()
+        .find(|l| l["to"].as_str() == Some(arrived[0].as_str()))
+        .unwrap_or_else(|| panic!("nothing arrives at the new card: {links:?}"));
+    assert_eq!(
+        made["from"].as_str(),
+        Some(held.source.as_str()),
+        "★ and it runs from the card the wire was dragged off",
+    );
+
+    // ★★★★★ And nothing is waiting any more, whichever way it ended. A held
+    // state a person can enter by pointing and cannot leave is a trap, and this
+    // is the half of that a gate can hold.
+    assert_eq!(
+        lab_slot(state, "waiting"),
+        serde_json::Value::Null,
+        "the wire is still waiting after it was taken",
+    );
+}
+
 /// The warning's own budget, ASKED OF the crate that spends it.
 ///
 /// ⚠ R1871's closing audit — this was a local `10`, which is a second
