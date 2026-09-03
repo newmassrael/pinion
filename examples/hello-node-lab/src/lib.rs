@@ -19855,11 +19855,16 @@ fn tints_wire(state: &Rc<LabState>) -> serde_json::Value {
 /// will actually do. That is the point of it: an agent can plan a destructive
 /// edit without performing one to find out whether it was allowed.
 ///
-/// ⚠ Every card on THIS screen is deletable today, and the walk asserts that
-/// rather than hiding it: the lab builds no subgraphs, so the one refusal that
-/// exists (a tree's own interface end) has nothing here to refuse. That is
-/// `debt-the-assembled-tool-cannot-open-a-subgraph`, and the assertion is a
-/// tripwire that goes red the day it is repaid.
+/// ★★★★★ R1981 — **the row is no longer a constant.** Until this round every
+/// card on this screen was deletable, because the crate's one per-node refusal
+/// (a tree's own interface end) needs a subgraph and the lab built none. It
+/// builds them now, and `r1920_an_agent_asks_before_it_edits.py` (F) folds one
+/// and drives the refusal rather than asserting the absence.
+///
+/// ⚠ That walk's assertion did NOT go red on its own when the capability
+/// landed, which the debt had promised it would: a walk asserts a property of
+/// the graph THAT WALK builds, so a tripwire in a fixture nobody deepens is a
+/// comment and not a gate. It was rewritten rather than waited on.
 fn editable_wire(state: &Rc<LabState>) -> serde_json::Value {
     let doc = state.doc.borrow();
     let mut rows: Vec<serde_json::Value> = Vec::new();

@@ -32,14 +32,39 @@ fi
 # duplicate becomes knowable from git the moment the second commit is written,
 # and that is here.
 round_token="$(round_token_of "$(head -1 "$1")")"
-if [[ -n $round_token ]] \
-   && round_token_taken "$round_token" "$(git log --format=%s 2>/dev/null || true)"; then
+subjects="$(git log --format=%s 2>/dev/null || true)"
+if [[ -n $round_token ]] && round_token_taken "$round_token" "$subjects"; then
     echo "commit-msg: round $round_token is already carried by a commit:" >&2
-    git log --oneline --grep="$round_token" -3 >&2 || true
+    # ★★★★★ R1981.2 — the DECLARING commit, not one that merely mentions the
+    # token. `--grep` searches the whole message, so it answers with whatever
+    # names the round in passing — which is exactly the confusion R1981 fixed
+    # one function over, where a subject reading "R1979.1 two remainders of
+    # R1980's first measurement" made R1980 look taken. A refusal whose
+    # evidence line points at the wrong commit sends the reader to argue with
+    # a commit that claimed nothing.
+    git log --format='%h %s' -200 2>/dev/null \
+        | while IFS= read -r line; do
+            subject="${line#* }"
+            [[ "$(round_token_of "$subject")" == "$round_token" ]] && echo "$line"
+        done >&2 || true
+    # ★★★★★ R1981.2 — the first FREE continuation, not always `.1`.
+    #
+    # R1939.3 recorded the rule this obeys: a suggestion this gate's own parser
+    # would refuse is worse than none, because it sends the reader in a circle.
+    # It said `.1` unconditionally, so a round whose `.1` was already committed
+    # — which is this repository's ordinary shape, one chore per round — was
+    # answered with a token the very next commit attempt would refuse.
+    free="$round_token.1"
+    for n in 1 2 3 4 5 6 7 8 9; do
+        if ! round_token_taken "$round_token.$n" "$subjects"; then
+            free="$round_token.$n"
+            break
+        fi
+    done
     echo "" >&2
     echo "Two sessions can derive the same next round because \`git log\` cannot" >&2
     echo "see one that has not committed. Pick the next free number, or make" >&2
-    echo "this a continuation ($round_token.1), which is a different token." >&2
+    echo "this a continuation ($free), which is a different token." >&2
     echo "\`tools/worktree.sh list\` shows what other worktrees have claimed." >&2
     exit 1
 fi

@@ -1826,6 +1826,30 @@ ok "and the round that subject DECLARES is taken" "$(taken R1770.1)" "taken"
 # the repair did not turn the backstop off: R1757 is mentioned nowhere and
 # declared on line one.
 ok "the backstop still refuses a genuine duplicate" "$(taken R1757)" "taken"
+
+# ★★★★★ R1981.2 — THE REFUSAL'S ADVICE HAS TO BE A TOKEN THIS GATE WOULD TAKE.
+#
+# R1939.3 recorded the rule: a suggestion this gate's own parser refuses is
+# worse than none, because it sends the reader in a circle. The message said
+# `.1` unconditionally, and one chore per round is this repository's ordinary
+# shape — so a round whose `.1` was already committed was answered with a token
+# the very next attempt would refuse. `R1753.1` is taken in `HIST` above, which
+# makes this a case with a wrong answer available.
+first_free() {
+    local parent="$1" n
+    for n in 1 2 3 4 5 6 7 8 9; do
+        if ! round_token_taken "$parent.$n" "$HIST"; then
+            echo "$parent.$n"
+            return
+        fi
+    done
+    echo "$parent.1"
+}
+ok "the advice skips a continuation already committed" "$(first_free R1753)" "R1753.2"
+ok "and is .1 when nothing is in the way" "$(first_free R1757)" "R1757.1"
+# ★ And whatever it names, this gate would accept it — the property the round
+# before it broke by naming a token unconditionally.
+ok "the advice is a token this gate would take" "$(taken "$(first_free R1753)")" "free"
 ok "an empty token is never taken" "$(taken '')" "free"
 
 # ---------------------------------------------------------------------------

@@ -14,11 +14,17 @@ mounted in the shell.
 # ★★★★★ Why the refusal is REAL here and not a tripwire
 
 R1920's walk had to assert an ABSENCE — every card deletable, because the one
-refusal it built needs a subgraph and this tool builds none. This round's
+refusal it built needs a subgraph and this tool built none. This round's
 refusals do not need one: the lab's canvas IS the root tree, and the root is
 the tree nothing instantiates, so an interface end placed there would
 materialise a contract with no outside. That is refused on this screen, by this
 screen's own graph, and (C) drives it.
+
+⚠ R1981 UPDATE: the second clause above is history now. The assembled tool
+folds and enters subgraphs, and r1920's (F) drives the interface-end refusal
+itself instead of asserting its absence. What this walk says is unchanged and
+was never contingent on that — the refusal here is about a body the ROOT will
+not admit, which is a different question from a node it will not delete.
 
 # What this walk holds
 
