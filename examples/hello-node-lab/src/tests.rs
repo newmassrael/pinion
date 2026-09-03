@@ -2341,6 +2341,119 @@ fn r1687_nothing_is_produced_until_somebody_asks_for_it() {
 /// failure a reader would actually see: the two halves share the toolbar, and a
 /// right cluster that grew past its declaration would paint over the launch-gate
 /// chip rather than off the pane.
+/// ★★★★★ R1990 — **every group states what it does when the room runs out,
+/// and the row's order is the one those statements produce.**
+///
+/// The in-process peer of the `gives_up` half of `r1791_a_row_says_what_it_moved`.
+/// It reads at two widths on purpose: a concession order is a property of the
+/// ROW, so it must be the same where nothing has moved as where two groups
+/// have. That is what makes a claim about it checkable before the window is
+/// ever narrowed — and it is exactly the check that did not exist.
+///
+/// # What it would have caught
+///
+/// R1988 added the focus chip and wrote that it is *"the first thing a narrow
+/// toolbar gives up"*. Measured, it is the last: ordinary groups are given up
+/// from the END of the row and it is leftmost. Nothing performed that sentence,
+/// so it stood for two rounds, and the one gate that touched this row went red
+/// for an unrelated reason — a population written out by hand, one group stale.
+#[test]
+fn r1990_the_row_states_the_order_it_gives_groups_up_in() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let owner = Owner::current().expect("this test runs inside a scope");
+        let movable: Vec<&str> = super::ToolGroup::IN_ROW
+            .iter()
+            .filter(|g| g.when_tight() != pinion_core::widgets::overflow::WhenTight::Keep)
+            .map(|g| g.word())
+            .collect();
+        assert_eq!(
+            movable.len(),
+            super::ToolGroup::IN_ROW.len() - 1,
+            "exactly one group may never move, and the rest may"
+        );
+
+        // Wide enough that nothing has moved, and narrow enough that some have.
+        // ★★★★★ R1990 — and the loop PROVES that of itself below, rather than
+        // asserting it in this comment. Two iterations that happened to reach
+        // the same arrangement would turn the whole test into "the order equals
+        // itself", and nothing here would say so: `MIN_W` is derived, so a later
+        // round widening the floor could make both widths fit everything and
+        // quietly empty the claim this test exists for.
+        let mut moved_at: Vec<(u32, usize)> = Vec::new();
+        for width in [4000, MIN_W] {
+            pinion_core::reactive::VIEWPORT_SIZE
+                .resolve(&owner)
+                .set((width, super::MIN_H));
+            let laid = super::right_cluster();
+            let order: Vec<&str> = laid.concession_order().map(|g| g.word()).collect();
+
+            // ★★★★★ The population first, as a SET, and the ordering claim
+            // separately as its two ends. An earlier draft of this compared the
+            // order against `movable` directly — which is this round's own
+            // defect, committed in the round that names it: `movable` is built
+            // in ROW order and the concession order is row-reverse, so that
+            // comparison silently re-spelled `lay`'s give-up rule a second time
+            // and disagreed with its own failure message. Measured on the
+            // running screen, `gives_up` is `[file, export, zoom, focus]`.
+            let mut in_the_order = order.clone();
+            let mut population = movable.clone();
+            in_the_order.sort_unstable();
+            population.sort_unstable();
+            assert_eq!(
+                in_the_order, population,
+                "at {width}: the order holds exactly the movable groups — the \
+                 launch seat is not in it, and nothing that may move is left out"
+            );
+            assert_eq!(
+                order.last(),
+                Some(&"focus"),
+                "★★★★★ at {width}: the focus chip is the LAST group given up. \
+                 R1988's doc said it was the first"
+            );
+            assert_eq!(
+                order.first(),
+                Some(&"file"),
+                "at {width}: and the rightmost movable group is the first"
+            );
+
+            // What moved is a PREFIX of that order, at either width.
+            let mut moved: Vec<&str> = laid.moved().map(|g| g.word()).collect();
+            let (taken, left) = order.split_at(laid.moved_len());
+            let mut taken = taken.to_vec();
+            taken.sort_unstable();
+            moved.sort_unstable();
+            assert_eq!(taken, moved, "at {width}: what moved is the first N");
+            assert_eq!(
+                laid.next_to_move().map(|g| g.word()),
+                left.first().copied(),
+                "at {width}: and what goes next is the first it has not taken"
+            );
+            moved_at.push((width, laid.moved_len()));
+        }
+
+        // ★★★★★ R1990 — the two widths reached two DIFFERENT arrangements, so
+        // "the order is a property of the row and not of the width" was
+        // actually put to the test. The wide one must have moved nothing at
+        // all: that is the case a two-list row could not be asked about, since
+        // `moved` is empty there and says nothing about policy.
+        assert_eq!(moved_at.len(), 2, "both widths were read: {moved_at:?}");
+        assert_eq!(
+            moved_at[0].1, 0,
+            "at {}: nothing has moved yet, which is the width where a row that \
+             can only report what it gave up has no answer — {moved_at:?}",
+            moved_at[0].0
+        );
+        assert!(
+            moved_at[1].1 > 0,
+            "at {}: some group has moved, so the two readings are of different \
+             arrangements rather than one repeated — {moved_at:?}",
+            moved_at[1].0
+        );
+    });
+}
+
 #[test]
 fn r1791_the_toolbar_fits_at_the_floor_it_declares() {
     let owner = Owner::new();
@@ -2360,8 +2473,8 @@ fn r1791_the_toolbar_fits_at_the_floor_it_declares() {
             0,
             "at its own floor the toolbar still does not fit — {:?} on the row, \
              {:?} behind the control",
-            super::right_cluster().shown(),
-            super::right_cluster().moved()
+            super::right_cluster().shown().collect::<Vec<_>>(),
+            super::right_cluster().moved().collect::<Vec<_>>()
         );
         assert_eq!(
             MIN_W,
@@ -2378,12 +2491,9 @@ fn r1791_the_toolbar_fits_at_the_floor_it_declares() {
         // that may not move — a floor that hid it would be the wrong trade
         // dressed as a fix.
         assert!(
-            super::right_cluster()
-                .shown()
-                .iter()
-                .any(|g| g.word() == "run"),
+            super::right_cluster().shown().any(|g| g.word() == "run"),
             "the launch seat moved at the floor: {:?}",
-            super::right_cluster().shown()
+            super::right_cluster().shown().collect::<Vec<_>>()
         );
     });
 }
@@ -2435,7 +2545,6 @@ fn r1687_the_toolbars_declared_width_covers_what_it_paints() {
         // counted, because a seat that moved is still a seat.
         let held: usize = super::right_cluster()
             .moved()
-            .iter()
             .map(|g| g.seats().len())
             .sum();
         assert!(
@@ -2959,7 +3068,7 @@ fn r1688_the_toolbar_roster_is_pressable_and_named() {
         // any size this screen runs at". That was measured at one width and
         // stated about all of them, and driving it found 1696.
         let seats = super::toolbar_seats(&state);
-        let held = super::right_cluster().moved().len();
+        let held = super::right_cluster().moved_len();
         assert!(
             seats.len() + held >= 8,
             "{} seats on the row and {held} group(s) behind the control",

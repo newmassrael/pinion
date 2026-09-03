@@ -37,11 +37,35 @@ The third is the one this inverts: a reader asking *what can this toolbar do
 right now* is told there about controls a person cannot see.
 
   (A) nothing is painted past the window's edge, at the size that was reported.
-  (B) the toolbar says what is on the row, what it moved, and that it fits.
+  (B) the toolbar says what it HOLDS, what is on the row, what it moved, and
+      that it fits.
+  (B2) and the ORDER it gives groups up in, before it has had to.
   (C) the control names what it holds — the answer the floor has no member for.
   (D) a moved control is REACHABLE: open the overflow and it is there, keeping
       its own tag, and pressing it does the thing it always did.
   (E) closing puts it back, and the row is unchanged.
+
+# ★★★★★ R1990 — what this walk got wrong, and the second defect it uncovered
+
+(B) used to compare the union of the two lists against **four words written in
+this file**. R1988 added a fifth toolbar group and CI went red saying *"nothing
+fell between them"* — when nothing had fallen; a group had **arrived**, and this
+gate was holding a stale copy of an answer the screen can derive. A gate that
+re-spells the rule is a second copy of it, free to disagree. The screen
+publishes the population now (`groups`), and this compares against that.
+
+Repairing it exposed the second defect. R1988's doc said the focus chip is
+*"Leftmost, so it is the first thing a narrow toolbar gives up"*. Measured at
+the shipped 1440: it **stays**, while `export` and `file` go — ordinary groups
+are given up from the **end** of the row, so leftmost is the last. The sentence
+was false on the day it was written, and nothing could have said so, because the
+row published *what moved* and never *the order it moves things in*. That order
+is a property of the row rather than of this width, so (B2) reads it at a width
+where nothing has moved as well as at one where two have.
+
+Underneath both: `right_cluster` chose each group's concession policy with
+`if group == Run { kept() } else { item }`, so a group joining later got one
+**by default**. It is an exhaustive match on the type now, and the compiler asks.
 
 Run from the workspace root:
     cargo build -p hello-analyzer-shell --release
@@ -110,31 +134,116 @@ def body() -> None:
             "lab.toolbar.more" in painted,
         )
 
+        # ★★★★★ R1990 — the toolbar's account read from the ASSEMBLED TOOL, at
+        # the size a reader opened, and not only from the standalone binary in
+        # (B). The mounted screen's external lives under its destination
+        # (`/node_lab/external`, R1989); the shell's own `/external` refuses
+        # this path, which is the point — this is the lab's answer, given while
+        # it is a section of an application rather than a program of its own.
+        # The page the shell grants is narrower than the window, so the row here
+        # is decided for a different width than (B)'s: the ORDER holding across
+        # both is what says it is a property of the row and not of a width.
+        mounted: Any = app.query("/node_lab/external/toolbar_overflow")
+        assert_eq(
+            sorted(mounted["on_the_row"] + mounted["moved"]),
+            sorted(mounted["groups"]),
+            "★★★★★ in the assembled tool too, the two lists partition every "
+            "group the toolbar holds",
+        )
+        assert_eq(
+            mounted["gives_up"][-1],
+            "focus",
+            "★★ and the give-up order is the same one the standalone row "
+            "states — a property of the row, not of the width it was read at",
+        )
+        assert_eq(
+            mounted["short_by"], 0, "★★ and it fits in the page the shell grants"
+        )
+
     # ── (B)-(E) the toolbar's own account, on the lab itself ────────
     with RpcSubprocess(LAB, boot_grace=1.5) as lab:
-        banner("B — the toolbar says what is on the row and what it moved")
+        banner("B — the toolbar says what it holds and what it moved")
         state: Any = lab.query(f"{EXT}/toolbar_overflow")
         assert_eq(
             sorted(state),
-            ["control", "moved", "moved_seats", "on_the_row", "open", "short_by"],
-            "six facts: what stayed, what moved, the seats those groups hold, "
-            "whether the control is drawn, whether it is open -- and `short_by`, "
-            "which is what makes 'never cut' checkable",
+            [
+                "control",
+                "gives_up",
+                "gives_up_next",
+                "groups",
+                "moved",
+                "moved_seats",
+                "on_the_row",
+                "open",
+                "short_by",
+            ],
+            "nine facts: what the toolbar HOLDS, what stayed, what moved, the "
+            "seats those groups hold, the order it gives groups up in and what "
+            "goes next, whether the control is drawn, whether it is open -- and "
+            "`short_by`, which is what makes 'never cut' checkable",
         )
-        assert_eq(state["short_by"], 0, "★★★★★ it fits — that is the round")
+        assert_eq(state["short_by"], 0, "★★★★★ it fits — that is R1791")
         ok("something had to move", len(state["moved"]) > 0)
         ok("and something stayed", len(state["on_the_row"]) > 0)
         ok("the control is drawn, because something moved", state["control"] is True)
-        both = sorted(state["on_the_row"] + state["moved"])
+
+        # ★★★★★ R1990 — against the POPULATION THE SCREEN PUBLISHES, not a list
+        # written here. This assertion used to compare the union with four words
+        # spelled in this file; R1988 added a fifth group and it went red saying
+        # "nothing fell between them" while nothing had fallen — a group had
+        # merely arrived and the gate held a stale copy of the answer. A gate
+        # that re-spells the rule is a second copy of it.
         assert_eq(
-            both,
-            ["export", "file", "run", "zoom"],
-            "★ the two lists are disjoint and their union is every group — "
-            "nothing fell between them",
+            sorted(state["on_the_row"] + state["moved"]),
+            sorted(state["groups"]),
+            "★★★★★ the two lists partition every group the toolbar holds — "
+            "nothing fell between them, and nothing joined without being placed",
+        )
+        assert_eq(
+            sorted(set(state["on_the_row"]) & set(state["moved"])),
+            [],
+            "★★ and they are disjoint — the floor's hidden action answers "
+            "'visible' true, so being in one list has to mean not being in the "
+            "other",
         )
         ok(
             "★★ the launch seat never moves, whatever the width",
             "run" in state["on_the_row"],
+        )
+
+        banner("B2 — and the order it would give them up in, before it has to")
+        gives_up: list[str] = state["gives_up"]
+        ok(
+            "the launch seat may never move, so it is not in the order at all",
+            "run" not in gives_up,
+        )
+        assert_eq(
+            sorted(gives_up),
+            sorted(g for g in state["groups"] if g != "run"),
+            "★★ and every other group is — 'may move' is readable, not only "
+            "'did move'",
+        )
+        assert_eq(
+            sorted(gives_up[: len(state["moved"])]),
+            sorted(state["moved"]),
+            "★★★★★ what moved is the FIRST N of that order — a row cannot "
+            "report giving up a later group while keeping an earlier one",
+        )
+        still_here = gives_up[len(state["moved"]) :]
+        assert_eq(
+            state["gives_up_next"],
+            still_here[0] if still_here else None,
+            "★★ and what goes next is the first it has not taken yet",
+        )
+        assert_eq(
+            gives_up[-1],
+            "focus",
+            "★★★★★ R1990 — the focus chip is the LAST group this row gives up, "
+            "not the first. R1988's doc said 'Leftmost, so it is the first "
+            "thing a narrow toolbar gives up'; measured, it stays while `export` "
+            "and `file` go, because ordinary groups are given up from the END. "
+            "The sentence stood for two rounds because nothing performed it — "
+            "this is that sentence, performed",
         )
 
         banner("C — the control names what it is holding")
@@ -146,7 +255,15 @@ def body() -> None:
         ok(f"and its name lists them: {name!r}", all(g in name for g in state["moved"]))
 
         banner("D — a moved control is reachable, and does what it always did")
-        moved_seat = "lab.toolbar.config" if "export" in state["moved"] else None
+        # ★ R1990 — an assertion, where this was `if "export" in moved` and the
+        # whole of D was skipped when it was not. A conditional that stops
+        # running reports nothing, and the seat this presses is the one the
+        # screen says it moved: `moved_seats` is on the wire for exactly that.
+        moved_seat = "lab.toolbar.config"
+        ok(
+            f"the screen says it moved {moved_seat}, so D has something to press",
+            moved_seat in state["moved_seats"],
+        )
         if moved_seat:
             ok("the moved seat is not on the row", moved_seat not in painted)
             before = json.loads(lab.query(f"{EXT}/produced"))

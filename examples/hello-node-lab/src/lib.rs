@@ -5235,7 +5235,6 @@ impl Hit {
                 "more:{}",
                 right_cluster()
                     .moved()
-                    .iter()
                     .map(|g| g.word())
                     .collect::<Vec<_>>()
                     .join(",")
@@ -5731,9 +5730,34 @@ enum ToolGroup {
     /// Its own group and not part of [`Self::Zoom`], though both are canvas
     /// controls: the zoom group is one drawn pill and this is a chip whose
     /// caption changes, so folding it in would put a widening word inside a
-    /// pill of steppers. Leftmost, so it is the first thing a narrow toolbar
-    /// gives up — the graph still reads whole without it, which is not true of
-    /// the zoom read-out or the launch seat.
+    /// pill of steppers. Leftmost, because that is where a reader meets a
+    /// canvas control.
+    ///
+    /// ⚠⚠ **R1990 — the sentence that stood here was false, and measured
+    /// false in the direction that reads worst.** It said *"Leftmost, so it is
+    /// the first thing a narrow toolbar gives up"*. Measured at the shipped
+    /// 1440: this group **stays**, and `export` and `file` go. The inference
+    /// was the error, not the placement — [`overflow::lay`] gives ordinary
+    /// items up **from the end**, exactly as [`Self::IN_ROW`] says three lines
+    /// below, so leftmost is the LAST to go and not the first. The word "so"
+    /// is where it went wrong: the position was the decision and the
+    /// give-up order was read off it.
+    ///
+    /// It keeps [`overflow::WhenTight::Move`], and that is a choice this round
+    /// made rather than inherited. [`overflow::WhenTight::MoveFirst`] would
+    /// have performed the sentence, and measured it costs a group: giving this
+    /// up first frees 82 and the row still has to give up `file` and `export`
+    /// on top, so three sit behind the control where two did and 102px of row
+    /// go unused. A chip a person reaches for while navigating a graph is not
+    /// worth hiding to hide `save` a moment later.
+    ///
+    /// ⚠ The residue, stated rather than hidden: R1988's narrower argument —
+    /// that the graph reads whole without this and **not** without the zoom
+    /// read-out — is still unserved, because the order is `file, export, zoom,
+    /// focus` and `zoom` therefore goes first. [`overflow::WhenTight`]'s three words
+    /// cannot say *"before zoom but after file"*; only row position orders two
+    /// `Move` items. That divergence is now **published** rather than argued —
+    /// see `gives_up` on the `toolbar_overflow` wire.
     Focus,
     /// The zoom steppers, the read-out and the fit seat — the canvas controls.
     Zoom,
@@ -5754,6 +5778,39 @@ impl ToolGroup {
     /// Left to right, which is the order a reader meets them in and therefore
     /// the order [`overflow::lay`] gives them up from the end of.
     const IN_ROW: [Self; 5] = [Self::Focus, Self::Zoom, Self::Export, Self::File, Self::Run];
+
+    /// ★★★★★ R1990 — **what this group does when the row runs out of room**,
+    /// stated per group, exhaustively, on the type.
+    ///
+    /// # The defect this is the repair of
+    ///
+    /// `right_cluster` used to decide this at the call site, as
+    /// `if group == Run { item.kept() } else { item }` — so every group that
+    /// was not the launch seat got [`overflow::WhenTight::Move`] **by
+    /// default**, and a group added later got a concession policy nobody
+    /// chose. R1988 added [`Self::Focus`] and wrote down that it should be the
+    /// first thing given up; measured at R1990 it was the last. The word it
+    /// needed, [`overflow::WhenTight::MoveFirst`], was in the substrate and
+    /// tested and had no consumer anywhere in the tree, because the call site
+    /// offered two of the three.
+    ///
+    /// Here the compiler asks. A sixth group cannot join this row without its
+    /// author saying what it does when the room runs out, which is the whole
+    /// of the repair — every sibling property ([`Self::width`],
+    /// [`Self::seats`], [`Self::word`]) was already an exhaustive match and
+    /// this was the one fact that had an escape hatch.
+    const fn when_tight(self) -> overflow::WhenTight {
+        match self {
+            // A person opens this screen to run the graph. A toolbar that hid
+            // the run button to make room for the zoom read-out would have got
+            // the trade exactly backwards.
+            Self::Run => overflow::WhenTight::Keep,
+            // Given up from the end of the row, later ones first — see
+            // [`Self::Focus`] for why the leftmost of these is the last to go
+            // and not, as its doc used to say, the first.
+            Self::Focus | Self::Zoom | Self::Export | Self::File => overflow::WhenTight::Move,
+        }
+    }
 
     /// What this group needs, its own seats and their inner gaps.
     fn width(self) -> u32 {
@@ -5848,23 +5905,33 @@ fn right_cluster() -> overflow::Row<ToolGroup> {
     let room = toolbar_rect()
         .w
         .saturating_sub(TOOLBAR_LEFT_CLUSTER + RUN_INSET);
+    // ★★★★★ R1990 — the policy is stated per group, never defaulted:
+    // `overflow::Item::new` takes it as an argument and `when_tight` is an
+    // exhaustive match, so the two places a group could have slipped through
+    // without one both ask. See [`ToolGroup::when_tight`] for the `if/else`
+    // this replaced and the group that joined through it without choosing.
     let items: Vec<overflow::Item<ToolGroup>> = ToolGroup::IN_ROW
         .iter()
-        .map(|group| {
-            let item = overflow::Item::new(group.width() + CLUSTER_GAP, *group);
-            if *group == ToolGroup::Run {
-                item.kept()
-            } else {
-                item
-            }
-        })
+        .map(|group| overflow::Item::new(group.width() + CLUSTER_GAP, group.when_tight(), *group))
         .collect();
     overflow::lay(room, OVERFLOW_W + CLUSTER_GAP, items).unwrap_or_else(|_| {
         // The control is wider than the whole cluster: there is no arrangement,
         // and a screen this narrow has already been refused by its own
         // `ShrinkPolicy`. Laying the run seat alone keeps the paint total.
-        overflow::lay(u32::MAX, 0, vec![overflow::Item::new(0, ToolGroup::Run)])
-            .expect("an unbounded row always fits")
+        // ★ R1990 — the launch seat keeps its own policy here too. Nothing can
+        // move in an unbounded row, so this changes no arrangement; it keeps
+        // `concession_order` from reporting the one seat that may never go as
+        // movable, on the one path where a caller cannot check.
+        overflow::lay(
+            u32::MAX,
+            0,
+            vec![overflow::Item::new(
+                0,
+                ToolGroup::Run.when_tight(),
+                ToolGroup::Run,
+            )],
+        )
+        .expect("an unbounded row always fits")
     })
 }
 
@@ -5877,7 +5944,7 @@ fn right_cluster() -> overflow::Row<ToolGroup> {
 fn group_right(group: ToolGroup) -> Option<u32> {
     let laid = right_cluster();
     let mut inset = RUN_INSET;
-    for shown in laid.shown().iter().rev() {
+    for shown in laid.shown().rev() {
         if *shown == group {
             return Some(inset);
         }
@@ -6325,7 +6392,7 @@ fn toolbar_seats(state: &LabState) -> Vec<ToolbarSeat> {
 fn toggle_overflow(state: &LabState) {
     let open = !state.toolbar_open.get();
     state.toolbar_open.set(open);
-    let held: Vec<&str> = right_cluster().moved().iter().map(|g| g.word()).collect();
+    let held: Vec<&str> = right_cluster().moved().map(|g| g.word()).collect();
     state.say(Utterance::done(if open {
         format!("showing {}", held.join(", "))
     } else {
@@ -6335,7 +6402,7 @@ fn toggle_overflow(state: &LabState) {
 
 fn overflow_control_seat(state: &LabState) -> Option<ToolbarSeat> {
     let rect = overflow_rect()?;
-    let held: Vec<&str> = right_cluster().moved().iter().map(|g| g.word()).collect();
+    let held: Vec<&str> = right_cluster().moved().map(|g| g.word()).collect();
     Some(ToolbarSeat {
         tag: "lab.toolbar.more",
         rect,
@@ -6377,7 +6444,6 @@ pub fn in_toolbar_overflow(tag: &str) -> bool {
     // answers to "what moved" disagreed by exactly that caption.
     right_cluster()
         .moved()
-        .iter()
         .flat_map(|group| group.tags())
         .any(|moved| moved == tag)
 }
@@ -6446,7 +6512,7 @@ pub(crate) fn in_folded_pane(tag: &str) -> bool {
 /// visible, so nothing can tell where it went.
 fn relocate_if_moved(state: &LabState, seat: ToolbarSeat) -> Option<ToolbarSeat> {
     match seat_group(seat.tag) {
-        Some(group) if right_cluster().moved().contains(&group) => {
+        Some(group) if right_cluster().moved().any(|gone| *gone == group) => {
             if !state.toolbar_open.get() {
                 return None;
             }
@@ -8765,7 +8831,7 @@ fn toolbar_controls(state: &LabState, ink: Ink) -> Vec<Scene> {
     // edge on top of the run seat, which is the clip this round exists to end
     // wearing a different coat.
     let laid = right_cluster();
-    let showing = |group: ToolGroup| laid.shown().contains(&group);
+    let showing = |group: ToolGroup| laid.shown().any(|kept| *kept == group);
     children.extend(toolbar_overflow(state, bar, ink));
     if showing(ToolGroup::Focus) {
         children.push(focus_chip(state, ink, local(focus_rect())));
@@ -13150,8 +13216,32 @@ impl ExternalIntrospect for LabOracle {
             "toolbar_overflow" => {
                 let laid = right_cluster();
                 Ok(IntrospectValue::Json(serde_json::json!({
-                    "on_the_row": laid.shown().iter().map(|g| g.word()).collect::<Vec<_>>(),
-                    "moved": laid.moved().iter().map(|g| g.word()).collect::<Vec<_>>(),
+                    // ★★★★★ R1990 — **the population**: every group this
+                    // toolbar holds, in row order, whatever this width did to
+                    // them. Without it `on_the_row` and `moved` are two halves
+                    // with no whole, so "nothing fell between them" is only
+                    // checkable by a reader who already knows the answer — and
+                    // the walk that checked it had the answer written down as a
+                    // list of four, went red the round a fifth group joined,
+                    // and said "nothing fell between them" when something had
+                    // merely arrived. A gate that re-spells the rule is a
+                    // second copy of it; this is the derivation's own output.
+                    "groups": ToolGroup::IN_ROW.iter().map(|g| g.word()).collect::<Vec<_>>(),
+                    "on_the_row": laid.shown().map(|g| g.word()).collect::<Vec<_>>(),
+                    "moved": laid.moved().map(|g| g.word()).collect::<Vec<_>>(),
+                    // ★★★★★ R1990 — **the order they are given up in**, and
+                    // what goes next. `moved` is a fact about this width;
+                    // this is a fact about the row, so a reader can check a
+                    // claim of the form "that one goes first" at a width where
+                    // nothing has moved at all.
+                    //
+                    // This is what the floor has no member for: its toolbar
+                    // gives up from the end with no way to say otherwise and
+                    // reports neither the order nor the next. It is also what
+                    // would have caught R1988 — the group whose doc said it
+                    // went first is last in this list.
+                    "gives_up": laid.concession_order().map(|g| g.word()).collect::<Vec<_>>(),
+                    "gives_up_next": laid.next_to_move().map(|g| g.word()),
                     // ★★★★★ R1791 — the moved groups' SEATS, by the tag a reader
                     // aims at. `moved` names the groups, which is what a person
                     // reads; this is the same fact in the vocabulary a gate and
@@ -13160,7 +13250,6 @@ impl ExternalIntrospect for LabOracle {
                     // publishes neither.
                     "moved_seats": laid
                         .moved()
-                        .iter()
                         .flat_map(|g| g.tags())
                         .collect::<Vec<_>>(),
                     "open": state.toolbar_open.get(),

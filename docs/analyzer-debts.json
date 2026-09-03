@@ -331,6 +331,17 @@
       ]
     },
     {
+      "name": "debt-a-row-cannot-say-give-this-up-before-that-one",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links debt-the-canon-is-one-app-and-we-are-many-binaries"
+      ]
+    },
+    {
       "name": "debt-a-schema-outside-the-assembled-app-can-shadow-its-own-path",
       "substituted": false,
       "blocked_by": "buildable",
