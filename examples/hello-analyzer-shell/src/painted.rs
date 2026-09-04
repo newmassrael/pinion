@@ -10671,6 +10671,171 @@ fn lab_card_boxes(shot: &Painted) -> std::collections::BTreeMap<String, Rect> {
         .collect()
 }
 
+/// ★★★★★ R1998 — **the assembled tool offers a replacement for what the graph
+/// will not take, and says it did** — driven on the shell, over one walk.
+///
+/// # What this reproduces
+///
+/// The engine's schema publishes a hook handing back a node to use *in place
+/// of* one being pasted. Its base body answers `nullptr`; one class overrides
+/// it, turning a pasted **event** node into a **custom event**. Its call site
+/// is the paste: for every object it asks *may you be pasted here*, and where
+/// the answer is no it asks the schema for a substitute, destroys the original
+/// when the two differ, and spawns what is left.
+///
+/// The mechanism is proven against the reference in `pinion-node-graph`'s own
+/// census test. **What is proven here is that a person on this screen can reach
+/// it**: they copy a card, they paste, and the card that comes back is a
+/// different kind of thing — with the reason given, in this screen's own
+/// vocabulary rather than the crate's.
+///
+/// # The taxonomy's answer, and why it is this one
+///
+/// A router's name is the address everything else dials. A copy of `R-01`
+/// silently renamed to `R-01-01` would be a node no client's configuration
+/// reaches, so this taxonomy declares a router uncopyable under another name —
+/// and then offers the stand-in the domain actually has: `router` and `peer`
+/// are two modes of one program, and a peer still listens and still routes
+/// between what dials it. It just does not claim the name the configurations
+/// point at.
+///
+/// ★★★★★ **Where this passes the reference**: there, a node stood in for, a
+/// node dropped because nothing was offered, and a node dropped because that
+/// kind may not live here at all leave the *same* trace, which is none. A
+/// person who pasted five cards and got four is told nothing about the fifth.
+/// Phase 2 is that sentence, and phase 3 is the counterfactual that keeps it
+/// from being vacuous.
+///
+/// # Which screen this lands on
+///
+/// Screen A, the node lab, as it is assembled in this shell.
+#[test]
+fn r1998_a_paste_offers_a_replacement_for_what_the_graph_will_not_take() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let report = crate::tests::walk_the_application(&state);
+        assert!(
+            report.conforms(),
+            "the application did not reproduce its specification over the walk: {}",
+            report.why().unwrap_or_default()
+        );
+        assert!(
+            report.itinerary().iter().any(|key| key == "lab"),
+            "the walk must stand in the node lab: {:?}",
+            report.itinerary()
+        );
+
+        state.go("lab").expect("the node lab section is open");
+        nothing_has_landed_until_something_does(&state);
+        a_pasted_router_comes_back_as_a_peer(&state);
+        a_card_the_taxonomy_will_copy_is_simply_copied(&state);
+    });
+}
+
+/// Phase 1 — **`null` and *it did nothing* are different answers**, which is
+/// what makes the reading below worth anything.
+fn nothing_has_landed_until_something_does(state: &std::rc::Rc<ShellState>) {
+    assert_eq!(
+        lab_slot(state, "landed"),
+        serde_json::Value::Null,
+        "★ nothing has been pasted on this screen yet, and that is not the same \
+         as a paste that landed nothing"
+    );
+}
+
+/// Phase 2 — **a router comes back as a peer, and the screen says so.**
+fn a_pasted_router_comes_back_as_a_peer(state: &std::rc::Rc<ShellState>) {
+    let cards = lab_cards(state);
+    let router = cards
+        .iter()
+        .find(|name| name.as_str() == "R-01")
+        .expect("the opening graph draws the router the specification declares");
+
+    lab_invoke(state, "select", router).expect("a card the wire can choose");
+    lab_invoke(state, "copy", "").expect("and copy it");
+    let said = lab_invoke(state, "paste", "").expect(
+        "★★★★★ the paste HAPPENS. Without a stand-in this is where it would \
+         refuse — the router's name is taken by the router itself",
+    );
+    assert!(
+        said.contains("stands in as a Peer"),
+        "★ and the sentence a person reads says what came back instead: {said}"
+    );
+
+    let landed = lab_slot(state, "landed");
+    let stood = landed["substituted"]
+        .as_array()
+        .expect("`substituted` is a list")
+        .clone();
+    assert_eq!(stood.len(), 1, "one card was stood in for: {landed}");
+    assert_eq!(
+        stood[0]["role"], "Peer",
+        "★★★★★ what a person copied was a router and what they got is a peer — \
+         the whole capability, on the screen: {landed}"
+    );
+    assert!(
+        stood[0]["why"]
+            .as_str()
+            .is_some_and(|why| why.contains("R-01")),
+        "★ and the REASON names the name that was taken, which is the half the \
+         reference cannot give — its hook answers one null for *nothing was \
+         offered* and for *this may not live here*: {landed}"
+    );
+
+    // ⚠ The stand-in is really in the document, not merely reported: the card
+    // it became answers to a name of its own and carries the peer's role.
+    let became = stood[0]["became"].as_str().expect("the card has a name");
+    assert!(
+        lab_cards(state).iter().any(|name| name == became),
+        "the canvas draws it: {became} not among {:?}",
+        lab_cards(state)
+    );
+    assert_ne!(
+        became, "R-01",
+        "and it is not the router that was already here"
+    );
+}
+
+/// Phase 3 — **the counterfactual, on the same screen**: a card this taxonomy
+/// WILL copy is copied, and nothing stands in.
+///
+/// Without this, phase 2 would pass for a screen that substituted everything,
+/// and *the taxonomy chooses* is the claim being made. It also proves the
+/// ordinary paste still reports its rename, which is R1985's surface unbroken.
+fn a_card_the_taxonomy_will_copy_is_simply_copied(state: &std::rc::Rc<ShellState>) {
+    let peer = lab_cards(state)
+        .into_iter()
+        .find(|name| name == "P-02")
+        .expect("the opening graph draws the peer the specification declares");
+
+    lab_invoke(state, "select", &peer).expect("a card the wire can choose");
+    lab_invoke(state, "copy", "").expect("and copy it");
+    let said = lab_invoke(state, "paste", "").expect("a peer may be copied");
+
+    let landed = lab_slot(state, "landed");
+    assert_eq!(
+        landed["substituted"],
+        serde_json::json!([]),
+        "★★★★★ nothing stood in for a peer — the rule is the ROUTER's, not the \
+         paste's, and a screen that substituted whatever it pasted would pass \
+         phase 2 just as well: {landed}"
+    );
+    assert!(
+        !said.contains("stands in"),
+        "and the sentence says nothing about a stand-in either: {said}"
+    );
+    assert_eq!(
+        landed["renamed"]
+            .as_array()
+            .map(Vec::len)
+            .unwrap_or_default(),
+        1,
+        "★ the copy still takes a name of its own and still SAYS so (R1985), \
+         which the DCC does in silence: {landed}"
+    );
+}
+
 /// ★★★★★ R1997 — **the assembled tool tells a born-with from a holding, for the
 /// graph a person is standing in** — driven on the shell, over one walk.
 ///

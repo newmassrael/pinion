@@ -251,6 +251,7 @@ mod section;
 mod select;
 mod sighted;
 mod split;
+mod substitute;
 mod swap;
 #[cfg(test)]
 mod tests;
@@ -321,6 +322,7 @@ pub use split::{
     AddressedPort, Composition, NoSuchMember, NotRecombinable, NotSplittable, PortPath, Recombined,
     RoundTrip, SplitChange, Splittable, round_trips,
 };
+pub use substitute::{Substitution, Unlandable};
 pub use swap::{Carried, RetypeError, SwapError, Swapped};
 pub use view::{Camera, Fit, Fitted, Margin, Unframed, ZoomRange};
 pub use warning::{Objection, Surroundings, Warning};

@@ -492,7 +492,7 @@ impl<K: NodeKind> Document<K> {
                 continue;
             };
             if let Some(slot) = self.tree_mut(to).and_then(|t| t.node_mut(fresh)) {
-                slot.adopt_from(&node);
+                slot.adopt_from(&node, crate::model::Adopting::Everything);
             }
             mapping.insert(id, fresh);
         }

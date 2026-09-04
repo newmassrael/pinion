@@ -71,11 +71,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::frame::{Orphaned, parents_of};
 use crate::model::{
-    Document, InterfaceSide, Link, LinkId, Node, NodeBody, NodeId, NodeKind, ROOT, Sink, Socket,
-    Tree, TreeId, centroid, crossing,
+    Adopting, Document, InterfaceSide, Link, LinkId, Node, NodeBody, NodeId, NodeKind, ROOT, Side,
+    Sink, Socket, Tree, TreeId, centroid, crossing,
 };
 use crate::naming_scope::Copying;
 use crate::numbering::Numbering;
+use crate::substitute::{Substitution, Unlandable};
 
 /// One value that used to cross a fragment's boundary.
 ///
@@ -310,6 +311,14 @@ pub struct Inserted {
     /// — and it is the difference between a person seeing `Total-01` and
     /// wondering what happened to their paste, and being told.
     pub renamed: Vec<Renamed>,
+    /// ★★★★★ R1998 — carried nodes the destination would not have taken as they
+    /// came, and what the taxonomy put in their place.
+    ///
+    /// Empty is the ordinary answer, and it is also the answer whenever the
+    /// taxonomy declines to stand anything in — that case is a refusal, not a
+    /// quiet paste. The engine's paste has no report of this at all: a
+    /// substituted node and a dropped one leave the same trace, which is none.
+    pub substituted: Vec<Substitution>,
 }
 
 /// ★★★★★ R1985 — one copy that had to take a name of its own.
@@ -407,6 +416,34 @@ pub enum InsertError {
         /// scope may be the whole document.
         held_by: (TreeId, NodeId),
     },
+    /// ★★★★★ R1998 — the taxonomy offered a stand-in for a body the destination
+    /// would not take, and the stand-in cannot land either.
+    ///
+    /// The third of the three outcomes the engine's hook cannot distinguish —
+    /// see [`crate::Unlandable`]. Asked once and not again: a taxonomy that
+    /// answers a refusal with another refused body is describing a hole in
+    /// itself, and looping would only find it later.
+    SubstituteUnlandable {
+        /// The carried node, addressed in the fragment.
+        node: NodeId,
+        /// What is wrong with the stand-in.
+        why: Unlandable,
+    },
+    /// ★★★★★ R1998 — the taxonomy's stand-in has no port a wire the fragment
+    /// carried would need, so placing it would leave that link dangling.
+    ///
+    /// Refused before the first mutation, which is what keeps
+    /// [`Document::insert`]'s guarantee true across a substitution. The engine
+    /// re-matches its pins by name afterwards and silently loses the ones that
+    /// find no partner.
+    SubstituteCannotCarry {
+        /// The carried node, addressed in the fragment.
+        node: NodeId,
+        /// The port the wiring needs.
+        port: u32,
+        /// Which side of the stand-in that port would be on.
+        side: Side,
+    },
 }
 
 impl fmt::Display for InsertError {
@@ -437,6 +474,21 @@ impl fmt::Display for InsertError {
                 "node {} is called {label:?} and its kind refuses to be copied under \
                  another name, but node {} in tree {} already answers to it",
                 node.0, held_by.1.0, held_by.0.0
+            ),
+            Self::SubstituteUnlandable { node, why } => write!(
+                f,
+                "nothing this graph will take stands in for node {}: {why}",
+                node.0
+            ),
+            Self::SubstituteCannotCarry { node, port, side } => write!(
+                f,
+                "what stands in for node {} has no {} {port}, so a wire it carried \
+                 would have nowhere to land",
+                node.0,
+                match side {
+                    Side::Input => "input",
+                    Side::Output => "output",
+                }
             ),
         }
     }
@@ -584,11 +636,6 @@ impl<K: NodeKind> Document<K> {
         if self.tree(tree).is_none() {
             return Err(InsertError::NoSuchTree(tree));
         }
-        for node in fragment.nodes() {
-            if matches!(node.body, NodeBody::Interface(_)) {
-                return Err(InsertError::InterfaceNodeInFragment(node.id));
-            }
-        }
         let plan = self.plan_insert(tree, fragment, crossings, definitions)?;
         Ok(self.perform_insert(tree, fragment, at, &plan))
     }
@@ -680,7 +727,14 @@ impl<K: NodeKind> Document<K> {
         fragment: &Fragment<K>,
         crossings: Crossings,
         policy: Definitions,
-    ) -> Result<InsertPlan, InsertError> {
+    ) -> Result<InsertPlan<K>, InsertError> {
+        // ★★★★★ R1998 — the first of the two per-node refusals, and the first
+        // place the taxonomy is offered the chance to stand something in. It
+        // runs before the definitions are resolved because an interface end
+        // carries none, and before the names because a stand-in is what the
+        // naming question is then asked about.
+        let mut substituted = self.plan_interface_ends(tree, fragment)?;
+
         let carried: Vec<TreeId> = fragment
             .content
             .definition_closure(&fragment.instanced_definitions());
@@ -744,6 +798,18 @@ impl<K: NodeKind> Document<K> {
             }
         }
 
+        // ★★★★★ R1985 — the names, before the crossings since R1998 but still
+        // last of the two DECISIONS, because a name is decided against the
+        // destination as it stands AND against the copies this same insertion
+        // is about to place. Neither is in the document while this runs, which
+        // is why `avoid` exists: asking the document about a name the previous
+        // copy has claimed would answer "free" and mint it twice.
+        //
+        // ⚠ It moved ahead of the crossings because it is where the second
+        // substitution is decided, and a crossing has to be judged against the
+        // body that will actually be there.
+        let names = self.plan_names(tree, fragment, &resolved, &mut substituted)?;
+
         // Which severed values can come back, judged against the destination as
         // it stands now — see this function's own doc for why not later.
         let mut reattach = Vec::new();
@@ -758,7 +824,13 @@ impl<K: NodeKind> Document<K> {
                     if !fed.insert(consumer) {
                         continue;
                     }
-                    if self.value_can_cross(tree, severed.producer, fragment, consumer) {
+                    if self.value_can_cross(
+                        tree,
+                        severed.producer,
+                        fragment,
+                        consumer,
+                        &substituted,
+                    ) {
                         landed.push(Sink {
                             socket: consumer,
                             muted: severed.is_muted(consumer),
@@ -773,17 +845,11 @@ impl<K: NodeKind> Document<K> {
             }
         }
 
-        // ★★★★★ R1985 — the names, last, because a name is decided against the
-        // destination as it stands AND against the copies this same insertion
-        // is about to place. Neither is in the document while this runs, which
-        // is why `avoid` exists: asking the document about a name the previous
-        // copy has claimed would answer "free" and mint it twice.
-        let names = self.plan_names(tree, fragment, &resolved)?;
-
         Ok(InsertPlan {
             resolved,
             added,
             reused,
+            substituted,
             names,
             reattach,
             unattached,
@@ -814,6 +880,7 @@ impl<K: NodeKind> Document<K> {
         tree: TreeId,
         fragment: &Fragment<K>,
         resolved: &BTreeMap<TreeId, TreeId>,
+        substituted: &mut BTreeMap<NodeId, Substituted<K>>,
     ) -> Result<BTreeMap<NodeId, String>, InsertError> {
         let mut names: BTreeMap<NodeId, String> = BTreeMap::new();
         let mut claimed: BTreeSet<String> = BTreeSet::new();
@@ -821,29 +888,149 @@ impl<K: NodeKind> Document<K> {
             let Some(was) = node.label.as_deref() else {
                 continue;
             };
-            let body = remapped_body(&node.body, resolved);
-            let Some(fresh) = self.copy_label(tree, &body, was, &claimed) else {
-                // It keeps the name it came with, and no later copy in this
-                // batch may take it.
-                claimed.insert(was.to_owned());
-                continue;
+            // A body an earlier pass already stood something in for is named as
+            // the STAND-IN, not as what arrived: the scope a name is judged in
+            // is the body's own.
+            let body = substituted.get(&node.id).map_or_else(
+                || remapped_body(&node.body, resolved),
+                |stood| stood.body.clone(),
+            );
+            let why = match self.name_a_copy_takes(tree, &body, was, &claimed, node.id) {
+                Ok(taken) => {
+                    Self::claim(&mut names, &mut claimed, node.id, was, taken);
+                    continue;
+                }
+                Err(why) => why,
             };
-            if self.copying_of(&body) == Copying::Refused {
-                let held_by = self
-                    .holders_of(tree, &body, was)
-                    .into_iter()
-                    .next()
-                    .unwrap_or((tree, node.id));
+            // ★★★★★ R1998 — the second of the two per-node refusals, and the
+            // engine's own: its overriders reach this by gathering every name
+            // the destination already uses.
+            let Some(offered) = K::substitute(&body, &why) else {
+                let Unlandable::NameTaken { label, held_by } = why else {
+                    unreachable!("naming answers only with a naming refusal");
+                };
                 return Err(InsertError::NameTaken {
                     node: node.id,
-                    label: was.to_owned(),
+                    label,
                     held_by,
                 });
+            };
+            if let Err((port, side)) = self.substitute_carries(tree, fragment, node.id, &offered) {
+                return Err(InsertError::SubstituteCannotCarry {
+                    node: node.id,
+                    port,
+                    side,
+                });
             }
-            claimed.insert(fresh.clone());
-            names.insert(node.id, fresh);
+            match self.name_a_copy_takes(tree, &offered, was, &claimed, node.id) {
+                Ok(taken) => Self::claim(&mut names, &mut claimed, node.id, was, taken),
+                Err(why) => return Err(InsertError::SubstituteUnlandable { node: node.id, why }),
+            }
+            substituted.insert(node.id, Substituted { body: offered, why });
         }
         Ok(names)
+    }
+
+    /// ★★★★★ R1998 — **the carried interface ends, and what stands in for them**,
+    /// or the refusal one of them could not get past.
+    ///
+    /// The first of [`Document::insert`]'s two per-node refusals. Nothing
+    /// [`Document::extract`] builds carries an interface end; a fragment that
+    /// arrived from elsewhere — off a wire, out of a file — can, and it
+    /// materialises the interface of a tree that is not this one.
+    ///
+    /// Its own function because the second refusal is decided in
+    /// [`Self::plan_names`], and a reader who has to hold both in one body
+    /// cannot see that they are the same question asked twice.
+    fn plan_interface_ends(
+        &self,
+        tree: TreeId,
+        fragment: &Fragment<K>,
+    ) -> Result<BTreeMap<NodeId, Substituted<K>>, InsertError> {
+        let mut substituted: BTreeMap<NodeId, Substituted<K>> = BTreeMap::new();
+        for node in fragment.nodes() {
+            let NodeBody::Interface(side) = node.body else {
+                continue;
+            };
+            let why = Unlandable::InterfaceEnd(side);
+            let Some(offered) = K::substitute(&node.body, &why) else {
+                return Err(InsertError::InterfaceNodeInFragment(node.id));
+            };
+            // Asked once and not again: a taxonomy answering a refusal with
+            // another refused body is describing a hole in itself, and looping
+            // would only find it later.
+            if let NodeBody::Interface(offered) = offered {
+                return Err(InsertError::SubstituteUnlandable {
+                    node: node.id,
+                    why: Unlandable::InterfaceEnd(offered),
+                });
+            }
+            if let Err((port, side)) = self.substitute_carries(tree, fragment, node.id, &offered) {
+                return Err(InsertError::SubstituteCannotCarry {
+                    node: node.id,
+                    port,
+                    side,
+                });
+            }
+            substituted.insert(node.id, Substituted { body: offered, why });
+        }
+        Ok(substituted)
+    }
+
+    /// The name a copy of `body` takes here, or why it cannot land under one.
+    ///
+    /// `Ok(None)` is a copy keeping the name it arrived with; `Ok(Some(fresh))`
+    /// is one taking a name of its own; `Err` is a kind that declares
+    /// [`Copying::Refused`] meeting a destination that already answers to the
+    /// name. Its own function since R1998 because the paste asks it **twice** —
+    /// once of what arrived and once of whatever stands in for it — and two
+    /// spellings of one rule is how two readers come to disagree (R1990).
+    fn name_a_copy_takes(
+        &self,
+        tree: TreeId,
+        body: &NodeBody<K>,
+        was: &str,
+        claimed: &BTreeSet<String>,
+        // Who holds the name when the document does not: a copy this same paste
+        // is about to place, which is not anywhere to be pointed at yet.
+        instead: NodeId,
+    ) -> Result<Option<String>, Unlandable> {
+        let Some(fresh) = self.copy_label(tree, body, was, claimed) else {
+            return Ok(None);
+        };
+        if self.copying_of(body) == Copying::Refused {
+            return Err(Unlandable::NameTaken {
+                label: was.to_owned(),
+                held_by: self
+                    .holders_of(tree, body, was)
+                    .into_iter()
+                    .next()
+                    .unwrap_or((tree, instead)),
+            });
+        }
+        Ok(Some(fresh))
+    }
+
+    /// Record what a copy will be called and stop any later copy in the same
+    /// batch from taking that name.
+    fn claim(
+        names: &mut BTreeMap<NodeId, String>,
+        claimed: &mut BTreeSet<String>,
+        node: NodeId,
+        was: &str,
+        taken: Option<String>,
+    ) {
+        match taken {
+            // It keeps the name it came with, and no later copy in this batch
+            // may take it.
+            None => {
+                claimed.insert(was.to_owned());
+            }
+            Some(fresh) => {
+                claimed.insert(fresh.clone());
+                names.insert(node, fresh);
+            }
+        }
     }
 
     /// Whether a value can still travel from the producer that sits in `tree`
@@ -862,20 +1049,98 @@ impl<K: NodeKind> Document<K> {
         producer: Socket,
         fragment: &Fragment<K>,
         consumer: Socket,
+        substituted: &BTreeMap<NodeId, Substituted<K>>,
     ) -> bool {
-        let (Some(source), Some(sink)) = (
-            self.signature(tree, producer.node),
-            fragment.content.signature(ROOT, consumer.node),
-        ) else {
+        let Some(source) = self.signature(tree, producer.node) else {
             return false;
         };
-        let (Some(out), Some(input)) = (
-            source.outputs.get(producer.port as usize),
-            sink.inputs.get(consumer.port as usize),
-        ) else {
+        let Some(out) = source.outputs.get(producer.port as usize) else {
+            return false;
+        };
+        // ★★★★★ R1998 — a consumer the paste is standing something in for is
+        // asked about the STAND-IN. Judging it against the body that is not
+        // going to be there is how a crossing gets restored onto a port that
+        // no longer exists.
+        if let Some(stood) = substituted.get(&consumer.node) {
+            return match self.prospect(tree, &stood.body) {
+                None => false,
+                Some(prospect) => prospect.takes(consumer.port, out),
+            };
+        }
+        let Some(sink) = fragment.content.signature(ROOT, consumer.node) else {
+            return false;
+        };
+        let Some(input) = sink.inputs.get(consumer.port as usize) else {
             return false;
         };
         crossing::<K>(out, input).is_allowed()
+    }
+
+    /// Place one copy of every node the fragment carries, at the body the plan
+    /// decided for it — which is not always the body that arrived.
+    ///
+    /// Its own function since R1998, because a stand-in makes three of the four
+    /// answers here conditional on the same fact and reading them together is
+    /// what shows they agree: the BODY placed, how much of the original it
+    /// adopts, and whether the landing reports it.
+    fn place_copies(
+        &mut self,
+        tree: TreeId,
+        fragment: &Fragment<K>,
+        at: (i32, i32),
+        plan: &InsertPlan<K>,
+    ) -> Placed {
+        let mut placed = Placed::default();
+        for node in fragment.nodes() {
+            let stood = plan.substituted.get(&node.id);
+            let body = stood.map_or_else(
+                || remapped_body(&node.body, &plan.resolved),
+                |stood| stood.body.clone(),
+            );
+            let Ok(fresh) = self.add_node(
+                tree,
+                body,
+                at.0.saturating_add(node.x),
+                at.1.saturating_add(node.y),
+            ) else {
+                continue;
+            };
+            if let Some(stood) = stood {
+                placed.stood_in_for.push(Substitution {
+                    node: node.id,
+                    became: fresh,
+                    why: stood.why.clone(),
+                });
+            }
+            if let Some(slot) = self.tree_mut(tree).and_then(|t| t.node_mut(fresh)) {
+                // ★★★★★ R1998 — a stand-in is a copy of a node whose body it
+                // does not share, so what the KIND holds stays behind.
+                slot.adopt_from(
+                    node,
+                    if stood.is_some() {
+                        Adopting::WhatAPersonWrote
+                    } else {
+                        Adopting::Everything
+                    },
+                );
+                // ★★★★★ R1985 — `adopt_from` brings the label across verbatim,
+                // which is what left two nodes answering to one name in a scope
+                // `may(Act::Rename)` refuses to create that state in. The plan
+                // decided this before anything was written.
+                if let Some(taken) = plan.names.get(&node.id) {
+                    let was = slot.label.clone().unwrap_or_default();
+                    slot.label = Some(taken.clone());
+                    placed.took_a_name.push(Renamed {
+                        node: fresh,
+                        from: was,
+                        to: taken.clone(),
+                    });
+                }
+            }
+            placed.at.insert(node.id, fresh);
+            placed.nodes.push(fresh);
+        }
+        placed
     }
 
     /// Apply a validated plan. Nothing here can fail.
@@ -884,7 +1149,7 @@ impl<K: NodeKind> Document<K> {
         tree: TreeId,
         fragment: &Fragment<K>,
         at: (i32, i32),
-        plan: &InsertPlan,
+        plan: &InsertPlan<K>,
     ) -> Inserted {
         let mut definitions_added = Vec::new();
         for &frag in &plan.added {
@@ -904,38 +1169,12 @@ impl<K: NodeKind> Document<K> {
             definitions_added.push(fresh);
         }
 
-        let mut renamed: BTreeMap<NodeId, NodeId> = BTreeMap::new();
-        let mut took_a_name = Vec::new();
-        let mut nodes = Vec::new();
-        for node in fragment.nodes() {
-            let body = remapped_body(&node.body, &plan.resolved);
-            let Ok(fresh) = self.add_node(
-                tree,
-                body,
-                at.0.saturating_add(node.x),
-                at.1.saturating_add(node.y),
-            ) else {
-                continue;
-            };
-            if let Some(slot) = self.tree_mut(tree).and_then(|t| t.node_mut(fresh)) {
-                slot.adopt_from(node);
-                // ★★★★★ R1985 — `adopt_from` brings the label across verbatim,
-                // which is what left two nodes answering to one name in a scope
-                // `may(Act::Rename)` refuses to create that state in. The plan
-                // decided this before anything was written.
-                if let Some(taken) = plan.names.get(&node.id) {
-                    let was = slot.label.clone().unwrap_or_default();
-                    slot.label = Some(taken.clone());
-                    took_a_name.push(Renamed {
-                        node: fresh,
-                        from: was,
-                        to: taken.clone(),
-                    });
-                }
-            }
-            renamed.insert(node.id, fresh);
-            nodes.push(fresh);
-        }
+        let Placed {
+            at: renamed,
+            nodes,
+            took_a_name,
+            stood_in_for,
+        } = self.place_copies(tree, fragment, at, plan);
 
         let mut links = Vec::new();
         for link in fragment.links() {
@@ -994,6 +1233,7 @@ impl<K: NodeKind> Document<K> {
             reframed,
             unframed,
             renamed: took_a_name,
+            substituted: stood_in_for,
         }
     }
 
@@ -1104,10 +1344,14 @@ impl fmt::Display for DuplicateError {
 impl std::error::Error for DuplicateError {}
 
 /// Everything an insertion needs, decided before the first mutation.
-struct InsertPlan {
+struct InsertPlan<K: NodeKind> {
     resolved: BTreeMap<TreeId, TreeId>,
     added: Vec<TreeId>,
     reused: Vec<TreeId>,
+    /// ★★★★★ R1998 — the carried nodes the destination would not take as they
+    /// came, and what the taxonomy offered instead. Decided here for the same
+    /// reason the names are: a refusal must leave the document untouched.
+    substituted: BTreeMap<NodeId, Substituted<K>>,
     /// ★★★★★ R1985 — the fragment nodes whose copy may not keep its name, and
     /// what it is called instead. Decided here rather than during the
     /// insertion for the same reason the crossings are (§2 #3): a refusal must
@@ -1118,6 +1362,29 @@ struct InsertPlan {
     /// the crossings that survived the check.
     reattach: Vec<(Socket, Vec<Sink>)>,
     unattached: Vec<Severed>,
+}
+
+/// What the taxonomy stands in for one carried body, and why it was asked.
+struct Substituted<K: NodeKind> {
+    body: NodeBody<K>,
+    why: Unlandable,
+}
+
+/// ★★★★★ R1998 — what placing the fragment's copies produced.
+///
+/// A named record rather than a tuple, because three of these four are the
+/// *reports* an insertion owes and only one is the mapping the rest of the
+/// insertion works from — an ordering nobody can keep straight positionally.
+#[derive(Default)]
+struct Placed {
+    /// Where each carried node's copy landed, addressed in the destination.
+    at: BTreeMap<NodeId, NodeId>,
+    /// The copies, in the order they were placed.
+    nodes: Vec<NodeId>,
+    /// The copies that had to take a name of their own (R1985).
+    took_a_name: Vec<Renamed>,
+    /// The copies whose body is not the one that arrived (R1998).
+    stood_in_for: Vec<Substitution>,
 }
 
 /// Put the selected nodes into a fragment's root, answering the ones whose

@@ -630,7 +630,7 @@ impl<K: NodeKind> Document<K> {
                 continue;
             };
             if let Some(slot) = self.tree_mut(tree).and_then(|t| t.node_mut(fresh)) {
-                slot.adopt_from(&old);
+                slot.adopt_from(&old, crate::model::Adopting::Everything);
             }
             renamed.insert(old.id, fresh);
             nodes.push(fresh);

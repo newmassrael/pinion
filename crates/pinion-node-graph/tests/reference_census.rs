@@ -55,7 +55,8 @@ use pinion_node_graph::{
     Tie, Tint, TreeId, Variadic, Violation, WatchError, Watches, palette_of, type_palette,
 };
 use pinion_node_graph::{
-    Copying, DefinitionAct, DefinitionError, InZone, InsertError, PairError, Renamed, Tree, Used,
+    Copying, DefinitionAct, DefinitionError, InZone, InsertError, PairError, Renamed, Substitution,
+    Tree, Unlandable, Used,
 };
 use pinion_node_graph::{Fit, Margin, Unframed, ZoomRange};
 use pinion_node_graph::{
@@ -875,6 +876,12 @@ fn r1994_home_proofs() -> Vec<Proof> {
             "engine",
             "schema::CreateDefaultNodesForGraph",
             engine_schema_create_default_nodes_for_graph,
+        ),
+        // R1998 — the schema hook a paste asks for a replacement.
+        proof(
+            "engine",
+            "schema::CreateSubstituteNode",
+            engine_schema_create_substitute_node,
         ),
     ]
 }
@@ -7538,6 +7545,518 @@ fn engine_node_can_duplicate_node() {
             "every card holds a name it is ALLOWED to hold: {name}"
         );
     }
+}
+
+/// ★★★★★ R1998 — **what this taxonomy puts in place of a body the destination
+/// will not take.**
+///
+/// The engine's schema publishes a hook handing back a node to use *in place
+/// of* one being pasted; its base body answers `nullptr` and exactly one class
+/// overrides it, turning a pasted **event** node into a **custom event** — it
+/// declines unless the destination is the graph type that may hold events at
+/// all, gathers the names already in use, and builds the replacement holding
+/// the name the original arrived with. Its call site is the paste: for every
+/// object it asks *may you be pasted here*, and where the answer is no it asks
+/// the schema for a substitute, destroys the original when the two differ, and
+/// spawns what is left.
+///
+/// # What this proves, and where it passes the reference
+///
+/// ★★★★★ **One value there is two facts.** `nullptr` is *this schema offers
+/// nothing* and it is also *this node may not live in this graph at all*, and
+/// the call site cannot tell them apart: both destroy the node and spawn
+/// nothing. A person who pasted five nodes and got four is told nothing about
+/// the fifth. Here they are three outcomes and all three are said — the
+/// refusal the destination gave, [`InsertError::SubstituteUnlandable`], or a
+/// paste whose [`Inserted::substituted`] names what arrived as one thing and
+/// was placed as another.
+///
+/// ★★★★★ **And the hook is TOLD why.** The engine's is not: it re-decides for
+/// itself whether the destination could have held the node, which is the
+/// destination's answer computed a second time in a second place. Phase 2
+/// turns on that — one kind answers one way for a name clash and another for
+/// an interface end — so a hook that were not told could not pass it.
+///
+/// ★★★★★ **A stand-in owes the wires.** It is a different body with different
+/// ports, and the fragment's wires were drawn against the old ones; the engine
+/// re-matches its pins by name afterwards and quietly loses the ones that find
+/// no partner. [`Document::insert`] documents a guarantee that would break, so
+/// a stand-in that cannot carry what the original carried is refused with
+/// [`InsertError::SubstituteCannotCarry`] before anything is written.
+#[test]
+fn engine_schema_create_substitute_node() {
+    nothing_offered_keeps_the_refusal_the_destination_gave();
+    a_stand_in_that_lands_is_named_in_the_landing();
+    a_stand_in_that_cannot_land_is_a_third_outcome();
+    a_stand_in_must_carry_the_wires_the_original_carried();
+    the_other_per_node_refusal_reaches_the_hook_too();
+    a_severed_value_is_judged_against_the_body_that_will_be_there();
+}
+
+/// A taxonomy of declarations, each member here because one arm of the
+/// question needs its shape.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+enum Decl {
+    /// The graph's own declaration: there is one of these, under that
+    /// name, so a copy is refused rather than renamed. The engine's event.
+    Event,
+    /// The one a person owns — same ports, named freely. What stands in
+    /// for `Event`, as the engine's custom event stands in for its event.
+    Custom,
+    /// A declaration this taxonomy has nothing to offer for.
+    Lone,
+    /// A declaration whose stand-in is itself refused here.
+    Stubborn,
+    /// A declaration with two inputs.
+    Wide,
+    /// The stand-in offered for `Wide`, with one — so a wire into the
+    /// second has nowhere to land.
+    Narrow,
+    /// A declaration whose input takes a number.
+    Typed,
+    /// The stand-in offered for `Typed`, whose input takes a word — so the
+    /// port is there and what the wire carries cannot cross into it.
+    Worded,
+    /// A source of numbers, so a fragment can carry a wire at all.
+    Feed,
+    /// A declaration whose stand-in is a **point on a wire** — the crate's own
+    /// [`NodeBody::Reroute`], not one of this taxonomy's kinds.
+    ///
+    /// The member that makes the *undecided* answer reachable at all: a
+    /// reroute's ports carry whatever the chain hands them, so a body that
+    /// declares its types could never reach that arm.
+    Cabled,
+    /// What stands in for an **input** interface end that arrived from
+    /// elsewhere: the tree it materialised is not this one, so what is left
+    /// is the value it passed on.
+    Adrift,
+}
+
+impl NodeKind for Decl {
+    type Type = Ty;
+    type Value = Val;
+
+    fn name(&self) -> String {
+        format!("{self:?}")
+    }
+
+    /// What each takes, which is the half a stand-in's ports are judged on.
+    fn inputs(&self) -> Vec<Port<Ty, Val>> {
+        match self {
+            Self::Event | Self::Custom | Self::Lone | Self::Stubborn => {
+                vec![Port::new("In", Ty::Number)]
+            }
+            Self::Wide => vec![Port::new("A", Ty::Number), Port::new("B", Ty::Number)],
+            Self::Narrow | Self::Typed | Self::Cabled => vec![Port::new("A", Ty::Number)],
+            Self::Worded => vec![Port::new("A", Ty::Text)],
+            Self::Feed | Self::Adrift => Vec::new(),
+        }
+    }
+
+    /// Every member hands on one number, so a fragment can always be wired.
+    fn outputs(&self) -> Vec<Port<Ty, Val>> {
+        vec![Port::new("Out", Ty::Number)]
+    }
+
+    fn evaluate(&self, _: &[Option<Val>]) -> Vec<Option<Val>> {
+        vec![Some(Val::Number(0))]
+    }
+
+    /// The ones whose name is the thing they ARE.
+    fn copying(&self) -> Copying {
+        match self {
+            Self::Event | Self::Lone | Self::Stubborn | Self::Wide | Self::Typed | Self::Cabled => {
+                Copying::Refused
+            }
+            Self::Custom | Self::Narrow | Self::Worded | Self::Feed | Self::Adrift => {
+                Copying::Renamed
+            }
+        }
+    }
+
+    /// ★★★★★ Matched EXHAUSTIVELY on the reason, which is the declaration
+    /// this round exists for. A hook that were handed no reason could not
+    /// answer `Event` two different ways, and a `why` that were
+    /// `non_exhaustive` would let a taxonomy answer a refusal it has never
+    /// considered from a wildcard arm.
+    fn substitute(body: &NodeBody<Self>, why: &Unlandable) -> Option<NodeBody<Self>> {
+        let kind = match (body, why) {
+            (NodeBody::Kind(Self::Event), Unlandable::NameTaken { .. }) => Self::Custom,
+            (NodeBody::Kind(Self::Stubborn), Unlandable::NameTaken { .. }) => Self::Event,
+            (NodeBody::Kind(Self::Wide), Unlandable::NameTaken { .. }) => Self::Narrow,
+            (NodeBody::Kind(Self::Typed), Unlandable::NameTaken { .. }) => Self::Worded,
+            (NodeBody::Interface(_), Unlandable::InterfaceEnd(InterfaceSide::Input)) => {
+                Self::Adrift
+            }
+            // ★ A stand-in need not be one of this taxonomy's kinds: the bodies
+            // the crate itself owns are offerable too, and a point on a wire is
+            // the one whose ports have no type of their own.
+            (NodeBody::Kind(Self::Cabled), Unlandable::NameTaken { .. }) => {
+                return Some(NodeBody::Reroute);
+            }
+            // `Lone` has no stand-in, and neither has anything else — the
+            // honest answer, and the base implementation's.
+            _ => return None,
+        };
+        Some(NodeBody::Kind(kind))
+    }
+}
+
+/// A document holding one `kind` named `held`, and a fragment carrying a
+/// second one of the same name — the state a paste of a declaration into a
+/// graph that already has it produces.
+fn clash(kind: &Decl, held: &str) -> (Document<Decl>, Fragment<Decl>) {
+    let mut document: Document<Decl> = Document::new("root");
+    let there = document
+        .add_node(ROOT, NodeBody::Kind(kind.clone()), 0, 0)
+        .unwrap();
+    document.relabel(ROOT, there, Some(held)).unwrap();
+    // What a person wrote about this node, and what its KIND holds — the
+    // two sides of the line a stand-in is copied across.
+    document
+        .set_port_value(ROOT, there, PortRef::input(0), Val::Number(7))
+        .unwrap();
+    if let Some(slot) = document
+        .tree_mut(ROOT)
+        .and_then(|host| host.node_mut(there))
+    {
+        slot.description = Some("the one everything dials".to_owned());
+        slot.appearance.tint = Some(Tint::rgb(220, 40, 60));
+    }
+    let cut = document.extract(ROOT, &[there]).unwrap();
+    (document, cut)
+}
+
+/// Phase 1 — **the taxonomy offers nothing: the refusal the destination gave.**
+///
+/// `Lone` reaches the hook and the hook declines, so the paste keeps the
+/// `NameTaken` it already had and the document is untouched. This is the arm
+/// the engine's `nullptr` shares with phase 3, and telling them apart is the
+/// whole of this round.
+fn nothing_offered_keeps_the_refusal_the_destination_gave() {
+    let (mut document, cut) = clash(&Decl::Lone, "Only");
+    let before = document.clone();
+    let why = document
+        .insert(ROOT, &cut, (0, 200), Crossings::Drop, Definitions::Share)
+        .unwrap_err();
+    assert!(
+        matches!(&why, InsertError::NameTaken { label, .. } if label == "Only"),
+        "nothing stood in, so the refusal is the one the destination gave: {why}"
+    );
+    assert_eq!(document, before, "and a refusal leaves the document alone");
+}
+
+/// Phase 2 — **the taxonomy offers a body that lands**, and the landing names
+/// what arrived as one thing and was placed as another.
+fn a_stand_in_that_lands_is_named_in_the_landing() {
+    let (mut document, cut) = clash(&Decl::Event, "Begin");
+    let landed = document
+        .insert(ROOT, &cut, (0, 200), Crossings::Drop, Definitions::Share)
+        .unwrap();
+    assert_eq!(landed.nodes.len(), 1, "the paste happened");
+    let arrived = cut.nodes().next().unwrap().id;
+    assert_eq!(
+        landed.substituted,
+        vec![Substitution {
+            node: arrived,
+            became: landed.nodes[0],
+            why: Unlandable::NameTaken {
+                label: "Begin".to_owned(),
+                held_by: (ROOT, NodeId(0)),
+            },
+        }],
+        "★★★★★ and it SAYS what arrived as one thing was placed as another — \
+         the engine reports this nowhere, so a substituted node and a dropped \
+         one leave the same trace there, which is none"
+    );
+    let placed = document.tree(ROOT).unwrap().node(landed.nodes[0]).unwrap();
+    assert_eq!(
+        placed.body,
+        NodeBody::Kind(Decl::Custom),
+        "the stand-in is what is in the document, not what was copied"
+    );
+    // ⚠ The incumbent keeps its name and the stand-in takes one of its own.
+    // The engine's overrider renames the CLASHING OBJECT out of the way
+    // instead — a paste that edits what was already there, which is not what
+    // somebody who pressed paste asked for.
+    assert_eq!(document.node_labelled(ROOT, "Begin"), Some(NodeId(0)));
+    assert_eq!(
+        document.node_labelled(ROOT, "Begin-01"),
+        Some(landed.nodes[0])
+    );
+
+    // ★★★★★ What a stand-in inherits: **what a person wrote, and nothing the
+    // kind holds.** A note means the same thing whatever body sits under it; a
+    // tint and a held port value describe the body that arrived, and this is
+    // not that body. The engine's one overrider draws the same line — it builds
+    // a fresh node and carries only the name across.
+    let stood = landed.nodes[0];
+    let note = document
+        .description(ROOT, stood)
+        .expect("a person's sentence about the card travels with it");
+    assert_eq!(note.sentence, "the one everything dials");
+    assert_eq!(
+        note.source,
+        Described::Authored,
+        "and it arrives still marked as a PERSON's, not as the stand-in kind's \
+         own sentence about itself"
+    );
+    let held = document.tree(ROOT).unwrap().node(stood).unwrap();
+    assert_eq!(
+        held.appearance.tint, None,
+        "★ but the colour does not: it described a declaration that is not here \
+         any more"
+    );
+    assert_eq!(
+        document.port_value(ROOT, stood, PortRef::input(0)),
+        None,
+        "★ nor does a value held on a port, which is addressed into the \
+         signature of the body that arrived"
+    );
+    assert_eq!(
+        document
+            .tree(ROOT)
+            .unwrap()
+            .node(NodeId(0))
+            .unwrap()
+            .appearance
+            .tint,
+        Some(Tint::rgb(220, 40, 60)),
+        "and the ORIGINAL still has both — this is about the stand-in, not \
+         about losing them"
+    );
+}
+
+/// Phase 3 — **the taxonomy offers a body that cannot land either.**
+///
+/// `Stubborn` stands `Event` in, and `Event` is refused here for the very same
+/// reason. Asked once and not again: a taxonomy answering a refusal with
+/// another refused body is describing a hole in itself, and looping would only
+/// find it later.
+fn a_stand_in_that_cannot_land_is_a_third_outcome() {
+    let (mut document, cut) = clash(&Decl::Stubborn, "Again");
+    let before = document.clone();
+    let why = document
+        .insert(ROOT, &cut, (0, 200), Crossings::Drop, Definitions::Share)
+        .unwrap_err();
+    assert!(
+        matches!(
+            &why,
+            InsertError::SubstituteUnlandable {
+                why: Unlandable::NameTaken { label, .. },
+                ..
+            } if label == "Again"
+        ),
+        "★★★★★ a THIRD outcome, which the engine's one null cannot express: {why}"
+    );
+    assert!(
+        why.to_string().contains("Again"),
+        "and the sentence names what could not land: {why}"
+    );
+    assert_eq!(document, before);
+}
+
+/// Phase 4 — **a stand-in that cannot carry the wires the original carried.**
+///
+/// Two shapes of *cannot carry*, proven apart: a port that is not there, and a
+/// port that is there and will not take what the wire carries.
+fn a_stand_in_must_carry_the_wires_the_original_carried() {
+    for (kind, held, port, side) in [
+        (Decl::Wide, "Fan", 1, Side::Input),
+        (Decl::Typed, "Count", 0, Side::Input),
+    ] {
+        let mut document: Document<Decl> = Document::new("root");
+        let there = document
+            .add_node(ROOT, NodeBody::Kind(kind.clone()), 0, 0)
+            .unwrap();
+        document.relabel(ROOT, there, Some(held)).unwrap();
+        let feed = document
+            .add_node(ROOT, NodeBody::Kind(Decl::Feed), -100, 0)
+            .unwrap();
+        document
+            .connect(ROOT, Socket::new(feed, 0), Socket::new(there, port))
+            .unwrap();
+        // BOTH ends travel, so the wire is inside the fragment and is what the
+        // stand-in is asked to carry.
+        let cut = document.extract(ROOT, &[there, feed]).unwrap();
+        let before = document.clone();
+        let refused = document
+            .insert(ROOT, &cut, (0, 200), Crossings::Drop, Definitions::Share)
+            .unwrap_err();
+        assert!(
+            matches!(
+                refused,
+                InsertError::SubstituteCannotCarry { port: p, side: s, .. }
+                    if p == port && s == side
+            ),
+            "★★★★★ refused BEFORE the first mutation, naming the port the \
+             wiring needs — the engine loses such a wire silently: {refused}"
+        );
+        assert_eq!(document, before, "so the document is untouched: {held}");
+    }
+}
+
+/// Phase 5 — **the other per-node refusal: an interface end.**
+///
+/// [`Document::extract`] refuses to build one, so this is a fragment that
+/// ARRIVED FROM ELSEWHERE — off a wire or out of a file, which is what a
+/// fragment is for. The hook is asked here too, which is what makes the
+/// substitution reach the WHOLE population of per-node refusals rather than
+/// whichever one was convenient.
+fn the_other_per_node_refusal_reaches_the_hook_too() {
+    let mut document: Document<Decl> = Document::new("root");
+    let lone = document
+        .add_node(ROOT, NodeBody::Kind(Decl::Lone), 0, 0)
+        .unwrap();
+    let cut = document.extract(ROOT, &[lone]).unwrap();
+    let elsewhere = serde_json::to_string(&cut)
+        .unwrap()
+        .replace(r#"{"Kind":"Lone"}"#, r#"{"Interface":"Input"}"#);
+    let arrived: Fragment<Decl> = serde_json::from_str(&elsewhere).unwrap();
+    assert!(
+        arrived
+            .nodes()
+            .any(|node| matches!(node.body, NodeBody::Interface(_))),
+        "the fragment really does carry an interface end"
+    );
+    let landed = document
+        .insert(
+            ROOT,
+            &arrived,
+            (0, 200),
+            Crossings::Drop,
+            Definitions::Share,
+        )
+        .unwrap();
+    assert_eq!(
+        landed.substituted.first().map(|it| &it.why),
+        Some(&Unlandable::InterfaceEnd(InterfaceSide::Input)),
+        "★ and the hook was told WHICH refusal this was"
+    );
+    assert_eq!(
+        document
+            .tree(ROOT)
+            .unwrap()
+            .node(landed.nodes[0])
+            .unwrap()
+            .body,
+        NodeBody::Kind(Decl::Adrift)
+    );
+
+    // ---- 6. and the same fragment, into a taxonomy that offers nothing -----
+    //
+    // ⚠ The counterfactual for phase 5: `Op` declares no substitute at all, so
+    // it takes the supplied `None` — and an interface end that arrived from
+    // elsewhere is refused exactly as it was before this hook existed. Without
+    // this, phase 5 could be passing because interface ends are simply allowed.
+    let mut plain: Document<Op> = Document::new("root");
+    let adder = plain.add_node(ROOT, NodeBody::Kind(Op::Add), 0, 0).unwrap();
+    let cut = plain.extract(ROOT, &[adder]).unwrap();
+    let elsewhere = serde_json::to_string(&cut)
+        .unwrap()
+        .replace(r#"{"Kind":"Add"}"#, r#"{"Interface":"Input"}"#);
+    let arrived: Fragment<Op> = serde_json::from_str(&elsewhere).unwrap();
+    assert!(
+        matches!(
+            plain.insert(ROOT, &arrived, (0, 0), Crossings::Drop, Definitions::Share),
+            Err(InsertError::InterfaceNodeInFragment(_))
+        ),
+        "a taxonomy that offers nothing keeps the refusal it always had"
+    );
+}
+
+/// Phase 6 — **a severed value is judged against the body that WILL be there,
+/// not the one that arrived.**
+///
+/// A paste re-feeds a copy from the socket that fed its original where that
+/// socket is still here ([`Crossings::KeepInbound`]), and the port it would
+/// land on belongs to the stand-in. Judging it against the body that is not
+/// going to be there is how a crossing gets restored onto a port that no longer
+/// exists — which is why R1998 moved the naming decision, where the second
+/// substitution is made, **ahead** of the crossings.
+///
+/// ⚠ This phase exists because a counterfactual PASSED: breaking *a port whose
+/// type is undecided accepts what reaches it* caught nothing, since every
+/// stand-in the other phases offer is a body that DECLARES its types. The
+/// repair is the population, not the assertion — the eighth time this campaign
+/// has been caught by that.
+fn a_severed_value_is_judged_against_the_body_that_will_be_there() {
+    // (a) A stand-in that is a point on a wire declares no type of its own, so
+    //     the severed value reaches it.
+    let (mut document, cut) = severed_into(&Decl::Cabled, "Line");
+    let landed = document
+        .insert(
+            ROOT,
+            &cut,
+            (0, 200),
+            Crossings::KeepInbound,
+            Definitions::Share,
+        )
+        .unwrap();
+    assert_eq!(landed.substituted.len(), 1, "the stand-in was made");
+    assert_eq!(
+        document
+            .tree(ROOT)
+            .unwrap()
+            .node(landed.nodes[0])
+            .unwrap()
+            .body,
+        NodeBody::Reroute,
+        "★ and it is one of the crate's own bodies, not one of this taxonomy's \
+         kinds — a stand-in is a BODY, so the whole vocabulary is offerable"
+    );
+    assert!(
+        landed.unattached.is_empty(),
+        "★★★★★ the severed value REACHED it: a point on a wire takes the type \
+         of whatever feeds it, so a crossing into one is allowed by \
+         construction rather than being a hole the paste has to report"
+    );
+
+    // (b) And a stand-in that DOES declare its ports is judged on them: this
+    //     one takes a word where the severed value is a number, so the paste
+    //     lands and says the input could not be re-fed.
+    let (mut document, cut) = severed_into(&Decl::Typed, "Count");
+    let landed = document
+        .insert(
+            ROOT,
+            &cut,
+            (0, 200),
+            Crossings::KeepInbound,
+            Definitions::Share,
+        )
+        .unwrap();
+    assert_eq!(landed.substituted.len(), 1);
+    assert_eq!(
+        landed.unattached.len(),
+        1,
+        "★★★★★ judged against the STAND-IN's port and not the arrived one — \
+         re-feeding a number onto the word this body actually has would be a \
+         wire the document's own rules refuse"
+    );
+}
+
+/// A document whose `kind` is fed from a source, and a fragment carrying only
+/// the consumer — so what arrives is a copy with one input cut, which is the
+/// state [`Crossings::KeepInbound`] is about.
+fn severed_into(kind: &Decl, held: &str) -> (Document<Decl>, Fragment<Decl>) {
+    let mut document: Document<Decl> = Document::new("root");
+    let feed = document
+        .add_node(ROOT, NodeBody::Kind(Decl::Feed), -100, 0)
+        .unwrap();
+    let there = document
+        .add_node(ROOT, NodeBody::Kind(kind.clone()), 0, 0)
+        .unwrap();
+    document.relabel(ROOT, there, Some(held)).unwrap();
+    document
+        .connect(ROOT, Socket::new(feed, 0), Socket::new(there, 0))
+        .unwrap();
+    let cut = document.extract(ROOT, &[there]).unwrap();
+    assert_eq!(
+        cut.inbound().len(),
+        1,
+        "the copy arrives with its input cut"
+    );
+    (document, cut)
 }
 
 /// ★★★★★ R1924 — **may this wire's end be picked up at all**, asked before the

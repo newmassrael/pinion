@@ -19,8 +19,8 @@
 
 use crate::spec::TrafficParameter;
 use pinion_node_graph::{
-    Admission, Admits, Composition, Conversion, Drawn, NodeKind, Objection, Port, PortName,
-    PortRef, Refusal, Side, Tint, Variadic,
+    Admission, Admits, Composition, Conversion, Copying, Drawn, NodeBody, NodeKind, Objection,
+    Port, PortName, PortRef, Refusal, Side, Tint, Unlandable, Variadic,
 };
 use serde::{Deserialize, Serialize};
 
@@ -1492,6 +1492,69 @@ impl NodeKind for LabNode {
                 into.speaks.word(),
             ),
         })
+    }
+
+    /// ★★★★★ R1998 — **a router's name is the address everything else dials**,
+    /// so a second one under a made-up name is not what anybody asked for.
+    ///
+    /// [`Copying::Renamed`] — the supplied answer, and the DCC's — would give a
+    /// copy of `Edge` the name `Edge-01`, and every client that names `Edge` in
+    /// its configuration would still reach the first one. The paste would look
+    /// as though it had worked and the topology it drew would be wrong, which
+    /// is the case [`Copying::Refused`] exists for: *a node whose name is the
+    /// thing it IS*.
+    ///
+    /// ⚠ Only the router. A peer joins the mesh as an equal and a subscriber is
+    /// named for the reader's benefit, so a second one under a fresh name is
+    /// exactly what a person duplicating one meant — refusing there would be
+    /// this rule applied where it is not true.
+    fn copying(&self) -> Copying {
+        match self.role {
+            Role::Router => Copying::Refused,
+            Role::Peer
+            | Role::Client
+            | Role::Store
+            | Role::Publisher
+            | Role::Subscriber
+            | Role::Querier
+            | Role::Responder => Copying::Renamed,
+        }
+    }
+
+    /// ★★★★★ R1998 — **and what this taxonomy puts there instead: the same box,
+    /// running as a peer.**
+    ///
+    /// The refusal above would otherwise be the end of it — a person copies a
+    /// topology containing a router into a document that already has one and
+    /// nothing lands. But this domain knows the answer: `router` and `peer` are
+    /// two modes of one program ([`RoleSpec::mode`]), and a peer *still listens
+    /// and still routes between what dials it*. What it does not do is claim
+    /// the name the configurations point at. So the stand-in is a peer, the
+    /// paste happens, and the person is told what was placed instead of what
+    /// they copied.
+    ///
+    /// This is the engine's pair in this taxonomy's vocabulary — there a pasted
+    /// **event** becomes a **custom event** — and it is asked the same question
+    /// at the same moment. The difference is that this hook is TOLD why, so it
+    /// can answer one way for a name that is taken and decline for a reason it
+    /// has nothing to say about, where the engine's re-decides the
+    /// destination's answer for itself and then cannot distinguish its own two
+    /// nulls.
+    ///
+    /// ⚠ An interface end is declined. This screen's sub-graphs are made by
+    /// grouping a selection, so the ends belong to the tree that made them and
+    /// there is no node here that means *the input side of some other graph*.
+    /// Answering anything would be inventing a node a person never drew.
+    fn substitute(body: &NodeBody<Self>, why: &Unlandable) -> Option<NodeBody<Self>> {
+        match (body, why) {
+            (NodeBody::Kind(node), Unlandable::NameTaken { .. }) if node.role == Role::Router => {
+                Some(NodeBody::Kind(Self {
+                    role: Role::Peer,
+                    ..node.clone()
+                }))
+            }
+            _ => None,
+        }
     }
 }
 

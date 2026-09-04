@@ -1603,6 +1603,20 @@ struct LabState {
     /// ⚠ It is NOT cleared by navigating, because that is what a person copying
     /// in one subgraph to paste in another is doing.
     clipboard: RefCell<Option<Fragment<LabNode>>>,
+    /// ★★★★★ R1998 — **what the last insertion actually did**, kept whole.
+    ///
+    /// The sentence a person reads and the reading an agent parses are both
+    /// derived from this one value rather than each being built where it is
+    /// needed — the standing rule about a fact with two authors, which this
+    /// screen has been caught by before (R1961, R1990). A paste that renamed
+    /// two cards, stood a third in and could not re-feed a fourth is one event,
+    /// and a status line and a schema slot that disagreed about it would be a
+    /// defect nobody could see from either one.
+    ///
+    /// `None` until something has been pasted or duplicated, which is what the
+    /// slot publishes: *nothing has landed here yet* is a different answer from
+    /// *the last landing did nothing*.
+    landed: RefCell<Option<pinion_node_graph::Inserted>>,
     /// ★★★★★ R1919 — **what a reader is looking for**, and nothing more.
     ///
     /// The HITS are not kept beside it: they are derived from this and the
@@ -2115,6 +2129,7 @@ impl LabState {
             // Nothing has been copied yet, which is a real state and not a
             // placeholder: `paste` refuses with that as its reason.
             clipboard: RefCell::new(None),
+            landed: RefCell::new(None),
             searching: Signal::new(String::new()),
             zoom: Signal::new(spec::OPENING_ZOOM),
             pan: Signal::new((0, 0)),
@@ -5560,6 +5575,65 @@ fn opening_report(state: &Rc<LabState>) -> serde_json::Value {
         // the walk that first compared it against the card list found the two
         // differing by exactly the frames.
         "nodes": doc.tree(here).map_or(0, |tree| tree.nodes().count()),
+    })
+}
+
+/// ★★★★★ R1998 — **what the last paste or duplicate actually did**, published.
+///
+/// `null` until something has landed, which is a different answer from a
+/// landing that did nothing.
+///
+/// # Why this exists at all
+///
+/// The reference reports **none** of it. Its paste asks each object *may you be
+/// pasted here*, and where the answer is no it asks its schema for a substitute
+/// — and then a node it stood in for, a node it dropped because nothing was
+/// offered, and a node it dropped because that kind may not live here at all
+/// leave the same trace, which is none. A person who pasted five cards and got
+/// four is told nothing about the fifth.
+///
+/// Here every one of those is a separate outcome and each is said out loud:
+/// what could not land at all is a REFUSAL carrying its reason, and what landed
+/// as something else is named here beside what it was called and what stood in.
+///
+/// ⚠ Derived from the one recorded [`pinion_node_graph::Inserted`] that also
+/// built the sentence a person read, rather than from a second walk of the
+/// document. Two derivations of one event is how a status line and a slot come
+/// to disagree about a paste nobody can re-run.
+fn landed_report(state: &Rc<LabState>) -> serde_json::Value {
+    let held = state.landed.borrow();
+    let Some(landed) = held.as_ref() else {
+        return serde_json::Value::Null;
+    };
+    serde_json::json!({
+        "cards": landed
+            .nodes
+            .iter()
+            .map(|&node| state.name_of(node))
+            .collect::<Vec<_>>(),
+        // What a copy had to be called instead, which the DCC does in silence.
+        "renamed": landed
+            .renamed
+            .iter()
+            .map(|it| serde_json::json!({ "from": it.from, "to": it.to }))
+            .collect::<Vec<_>>(),
+        // ★★★★★ And what came back as a different KIND of thing.
+        "substituted": landed
+            .substituted
+            .iter()
+            .map(|it| serde_json::json!({
+                "became": state.name_of(it.became),
+                "role": state.role_of(it.became).map(Role::name),
+                // The refusal the destination gave, in the crate's own words —
+                // the half a person needs to understand why their router is
+                // now a peer.
+                "why": it.why.to_string(),
+            }))
+            .collect::<Vec<_>>(),
+        // An input the paste could not re-feed from what still produces its
+        // value here. Reported rather than dropped, which is the half neither
+        // reference has.
+        "not_re_fed": landed.unattached.len(),
     })
 }
 
@@ -12537,6 +12611,11 @@ const FIELDS: &[SchemaField] = &{
         // readers: a blueprint editor asks it to decide what to TELL a person
         // about an untouched graph.
         SchemaField::new("opening", "json"),
+        // ★★★★★ R1998 — what the last paste or duplicate did, including the
+        // cards that came back as a different KIND of thing because the
+        // taxonomy stood one in. The reference publishes none of this: a
+        // substituted node and a dropped one leave the same trace there.
+        SchemaField::new("landed", "json"),
         SchemaField::action("frame_selection", "string"),
         SchemaField::action("go_to_problem", "string"),
         SchemaField::action("run", "bool"),
@@ -13318,6 +13397,8 @@ impl ExternalIntrospect for LabOracle {
             // ★★★★★ R1997 — what this graph was born with, and whether anyone
             // has touched it since.
             "opening" => Ok(IntrospectValue::Json(opening_report(state))),
+            // ★★★★★ R1998 — what the last paste or duplicate actually did.
+            "landed" => Ok(IntrospectValue::Json(landed_report(state))),
             "zoom" => Ok(IntrospectValue::Int(i64::from(state.zoom.get()))),
             "pan" => {
                 let (x, y) = state.pan.get();
@@ -16066,7 +16147,8 @@ fn paste_clipboard(state: &Rc<LabState>) -> Result<String, InvokeError> {
         })?;
     state.selection.set(Selection::empty());
     state.selected_link.set(None);
-    let said = describe_landing("pasted", &landed);
+    let said = describe_landing(state, "pasted", &landed);
+    *state.landed.borrow_mut() = Some(landed);
     state.say(Utterance::done(&said));
     Ok(said)
 }
@@ -16098,7 +16180,8 @@ fn duplicate_selection(state: &Rc<LabState>) -> Result<String, InvokeError> {
         })?;
     state.selection.set(Selection::empty());
     state.selected_link.set(None);
-    let said = describe_landing("duplicated", &made);
+    let said = describe_landing(state, "duplicated", &made);
+    *state.landed.borrow_mut() = Some(made);
     state.say(Utterance::done(&said));
     Ok(said)
 }
@@ -16107,10 +16190,32 @@ fn duplicate_selection(state: &Rc<LabState>) -> Result<String, InvokeError> {
 ///
 /// One function because `paste` and `duplicate` land the same value and a
 /// second sentence would be a second vocabulary for one fact.
-fn describe_landing(verb: &str, landed: &pinion_node_graph::Inserted) -> String {
+fn describe_landing(
+    state: &Rc<LabState>,
+    verb: &str,
+    landed: &pinion_node_graph::Inserted,
+) -> String {
     use std::fmt::Write as _;
 
     let mut said = format!("{verb}: {} card(s)", landed.nodes.len());
+    // ★★★★★ R1998 — said FIRST, ahead of the renames, because a card that came
+    // back as a different kind of thing is the largest surprise a paste can
+    // hand somebody. The engine says nothing here at all: a node it stood in
+    // for and a node it dropped leave the same trace, which is none.
+    if !landed.substituted.is_empty() {
+        let stood: Vec<String> = landed
+            .substituted
+            .iter()
+            .map(|it| {
+                let became = state.name_of(it.became);
+                state.role_of(it.became).map_or_else(
+                    || became.clone(),
+                    |role| format!("{became} stands in as a {}", role.name()),
+                )
+            })
+            .collect();
+        let _ = write!(said, ", {}", stood.join(", "));
+    }
     if !landed.renamed.is_empty() {
         let renames: Vec<String> = landed
             .renamed

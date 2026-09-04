@@ -904,6 +904,48 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
         Vec::new()
     }
 
+    /// ★★★★★ R1998 — **what this taxonomy will put in place of a body a paste
+    /// cannot land**, or `None` when it has nothing to offer.
+    ///
+    /// Asked only after the destination has already refused, and told *why* it
+    /// refused. The engine's own hook is asked the same question and is not
+    /// told the reason: it re-decides for itself whether the destination is the
+    /// sort of graph that could have held the node, which is the destination's
+    /// answer being computed a second time in a second place.
+    ///
+    /// An associated function, like [`opening`](NodeKind::opening) and for the
+    /// same reason: the node being replaced is not in the document — it is a
+    /// body in a fragment — so there is no node to ask. The engine asks its
+    /// *schema* here too, never the node.
+    ///
+    /// # What a stand-in inherits
+    ///
+    /// What a person wrote — the label, the note — and nothing the kind holds.
+    /// Values and items belong to the body that arrived, and a different kind
+    /// has no use for them. The engine's one overrider takes the same line: it
+    /// builds a fresh node and carries only the name across.
+    ///
+    /// # What a stand-in owes
+    ///
+    /// It has to be able to carry the wires the original carried, or the paste
+    /// is refused with
+    /// [`InsertError::SubstituteCannotCarry`](crate::InsertError::SubstituteCannotCarry)
+    /// — see [`crate::Unlandable`] for why that refusal exists rather than the
+    /// engine's silent loss of the wires that find no partner.
+    ///
+    /// The default is `None`: nothing is offered and the paste keeps the
+    /// refusal it already had. That is the base implementation's answer too,
+    /// and it is the honest one — a taxonomy that has no stand-in for a body
+    /// should not be made to invent one.
+    #[must_use]
+    fn substitute(body: &NodeBody<Self>, why: &crate::Unlandable) -> Option<NodeBody<Self>>
+    where
+        Self: Sized,
+    {
+        let (_, _) = (body, why);
+        None
+    }
+
     /// ★★★★★ R1923 — **the sentence this kind says about itself**, or `None`
     /// when it has nothing to add to its name.
     ///
@@ -2622,7 +2664,13 @@ impl<K: NodeKind> Node<K> {
     /// is an index into this node's own signature, which the copy has too, so
     /// unlike `parent` it needs no remapping — and a duplicated `Swatch` that
     /// came out grey would be the defect the field exists to prevent.
-    pub(crate) fn adopt_from(&mut self, source: &Self) {
+    ///
+    /// ★★★★★ R1998 added `adopting`, because a **stand-in** is a copy of a node
+    /// whose body it does not share: the paste's substitution hook answers with
+    /// another kind entirely, and the three fields that belong to the *kind* —
+    /// its appearance, its port values, its items — describe a body this node
+    /// no longer has. See [`Adopting`].
+    pub(crate) fn adopt_from(&mut self, source: &Self, adopting: Adopting) {
         let Self {
             id: _,
             body: _,
@@ -2651,14 +2699,35 @@ impl<K: NodeKind> Node<K> {
         // run. Being switched off travels with the node, exactly like being
         // bypassed does.
         self.disabled = *disabled;
-        self.appearance.clone_from(appearance);
-        self.values.clone_from(values);
-        // R1632 added `items`, and the answer for it is **yes**, for the same
-        // reason as `values` and not `parent`: an item names nothing outside
-        // this node, and a duplicated four-branch sequencer that came back with
-        // two branches would lose the wiring the copy was made to keep.
-        self.items.clone_from(items);
+        if adopting == Adopting::Everything {
+            self.appearance.clone_from(appearance);
+            self.values.clone_from(values);
+            // R1632 added `items`, and the answer for it is **yes**, for the same
+            // reason as `values` and not `parent`: an item names nothing outside
+            // this node, and a duplicated four-branch sequencer that came back with
+            // two branches would lose the wiring the copy was made to keep.
+            self.items.clone_from(items);
+        }
     }
+}
+
+/// ★★★★★ R1998 — how much of the node it came from a copy takes.
+///
+/// A copy of a node takes everything; a **stand-in** takes only what a person
+/// wrote. The split is *who authored it*: a label and a note are a person's
+/// sentences about this node and mean the same thing whatever body sits under
+/// them, while an appearance, a port's held value and an authored item all
+/// describe the body itself and mean nothing under another one.
+///
+/// Bypassed and disabled are on the person's side of the line for the same
+/// reason [`Node::adopt_from`] gives for copying them at all: switching a node
+/// off is something somebody did to it, not something its kind knows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Adopting {
+    /// A copy of the same body: everything travels.
+    Everything,
+    /// A stand-in for a body that could not land: only what a person wrote.
+    WhatAPersonWrote,
 }
 
 /// What a tree exposes when it is instanced as a group.
