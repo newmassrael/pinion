@@ -874,6 +874,36 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
     /// multiplies.
     fn name(&self) -> String;
 
+    /// ★★★★★ R1997 — **what a tree of this taxonomy is born holding.**
+    ///
+    /// A new graph in a professional editor is rarely empty: a material comes
+    /// with its result node, a state comes with its output, a sound cue comes
+    /// with its root. The reference spells this as a schema hook,
+    /// `CreateDefaultNodesForGraph(Graph)`, whose base is an empty body and
+    /// which seven schemas override — each creating one node (a transition
+    /// creates three), positioning it, and marking it so the graph can say
+    /// afterwards whether anyone has touched it.
+    ///
+    /// An associated function and not a `&self` method, because there is no
+    /// node yet when a tree is born — the question is asked of the TAXONOMY,
+    /// which is what the reference asks it of too.
+    ///
+    /// The default is empty, which is the reference's base body: a tree born
+    /// with nothing is a legitimate answer and most taxonomies want it.
+    ///
+    /// ⚠ Only [`Document::open_definition`] consults this. `add_definition`
+    /// deliberately does not, and neither do `group`, `insert` or the fragment
+    /// verbs — a definition that is about to be filled from a selection must
+    /// not also be seeded, and the reference draws the same line: it calls the
+    /// hook at chosen sites and not on every graph it makes.
+    #[must_use]
+    fn opening() -> Vec<Seed<Self>>
+    where
+        Self: Sized,
+    {
+        Vec::new()
+    }
+
     /// ★★★★★ R1923 — **the sentence this kind says about itself**, or `None`
     /// when it has nothing to add to its name.
     ///
@@ -2713,6 +2743,49 @@ impl<K: NodeKind> Interface<K> {
     }
 }
 
+/// ★★★★★ R1997 — one node a tree of some taxonomy is born holding, and where
+/// it sits.
+///
+/// The position travels with the body because the reference's own overriders
+/// place theirs — a sound cue's root at `y = -58`, a custom transition's pose
+/// evaluators at `x = ±300` — and a seed that arrived at the origin would put
+/// every opening node of a three-node tree on top of the others.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Seed<K: NodeKind> {
+    /// What to make.
+    pub body: NodeBody<K>,
+    /// Where to put it, in canvas units.
+    pub at: (i32, i32),
+}
+
+impl<K: NodeKind> Seed<K> {
+    /// One opening node at the canvas origin.
+    #[must_use]
+    pub const fn new(body: NodeBody<K>) -> Self {
+        Self { body, at: (0, 0) }
+    }
+
+    /// The same, placed.
+    #[must_use]
+    pub const fn at(mut self, x: i32, y: i32) -> Self {
+        self.at = (x, y);
+        self
+    }
+}
+
+/// ★★★★★ R1997 — what [`Document::open_definition`] made.
+///
+/// The reference's hook answers `void`, so every overrider that needs the node
+/// afterwards writes it down a second time on its own graph type. This is that
+/// answer, given once.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Born {
+    /// The definition that was made.
+    pub tree: TreeId,
+    /// The nodes it was born holding, in the order the taxonomy declared them.
+    pub nodes: Vec<NodeId>,
+}
+
 /// One tree: the root document graph, or a re-usable group definition.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(bound(
@@ -2734,6 +2807,20 @@ pub struct Tree<K: NodeKind> {
     /// before this field existed reads back as the unrestricted tree it was.
     #[serde(default = "crate::Admitted::default")]
     pub(crate) admitted: crate::Admitted<K::Type>,
+    /// ★★★★★ R1997 — the nodes this tree was BORN holding, in the order
+    /// [`NodeKind::opening`] declared them.
+    ///
+    /// Recorded rather than re-derived, because *what a tree was born with* is
+    /// a fact about its history and nothing in its present shape carries it: a
+    /// node the taxonomy seeded and a node a person placed a moment later are
+    /// indistinguishable by inspection. The reference records the same fact as
+    /// per-node metadata; a list on the tree is the same information in the
+    /// place that is asked about it.
+    ///
+    /// `serde` default empty, so every document written before this field
+    /// existed reads back as a tree nobody claims to have seeded.
+    #[serde(default)]
+    born: Vec<NodeId>,
     /// ★★★★★ R1943 — which node CLOSES the zone each opening node opens.
     ///
     /// ⚠ ONE map, from the opener to the closer, and the reverse look-up is
@@ -2935,6 +3022,11 @@ impl<K: NodeKind> Document<K> {
                 interface: Interface::default(),
                 admitted: crate::Admitted::Anything,
                 zones: BTreeMap::new(),
+                // ⚠ The ROOT is born empty and stays that way. A taxonomy's
+                // opening is consulted by `open_definition`, which makes a
+                // DEFINITION — the reference likewise seeds the graphs its
+                // editors create and not the document they live in.
+                born: Vec::new(),
                 next_node: 0,
                 next_link: 0,
             }],
@@ -3054,10 +3146,102 @@ impl<K: NodeKind> Document<K> {
         Some(id)
     }
 
+    /// ★★★★★ R1997 — **a new definition, born holding what its taxonomy says a
+    /// tree holds** — and it says what it made.
+    ///
+    /// [`NodeKind::opening`] is the declaration; this is the one place that
+    /// consults it. Compare [`add_definition`](Self::add_definition), which
+    /// makes an EMPTY tree and is what every verb that fills one from a
+    /// selection uses.
+    ///
+    /// # The three measured ways this passes the reference
+    ///
+    /// Its `CreateDefaultNodesForGraph(Graph)` returns **void**. So:
+    ///
+    /// 1. ★★★★★ **Nothing says what it made.** Every overrider that needs the
+    ///    node afterwards writes it down a SECOND time on its own graph type
+    ///    (`TypedGraph->MyResultNode`) — one fact in two places, and the two are
+    ///    maintained by different lines of the same function. [`Born::nodes`] is
+    ///    the answer, so no caller has to keep its own copy.
+    /// 2. ★★★★★ **The tree remembers, so the question survives the call.** The
+    ///    reference marks each node in the package's global metadata map and
+    ///    then walks every node in the graph asking, twice, in two functions
+    ///    with two different rules — one requires the node to be enabled and
+    ///    the other does not. Here it is [`Document::opening_nodes`] and
+    ///    [`Document::untouched`], derived from one recorded list.
+    /// 3. **A tree born with nothing is legitimate**, which is the reference's
+    ///    own base body, and is what a taxonomy that declares no opening gets.
+    pub fn open_definition(&mut self, name: impl Into<String>) -> Born {
+        let tree = self.add_definition(name);
+        let mut nodes = Vec::new();
+        for seed in K::opening() {
+            // ⚠ A refused seed is SKIPPED rather than aborting the birth, and
+            // that is stated rather than implied: `add_node` refuses only a
+            // tree that is not there or a body the tree does not admit, and the
+            // tree was made a line above — so a taxonomy whose opening is
+            // refused has declared something its own document will not hold,
+            // which is its defect and not a reason to hand back no tree.
+            if let Ok(id) = self.add_node(tree, seed.body, seed.at.0, seed.at.1) {
+                nodes.push(id);
+            }
+        }
+        if let Some(host) = self.tree_mut(tree) {
+            host.born.clone_from(&nodes);
+        }
+        Born { tree, nodes }
+    }
+
+    /// ★★★★★ R1997 — the nodes a tree was **born** holding that are still in
+    /// it, ascending.
+    ///
+    /// Empty for a tree that was born empty *and* for one whose opening nodes
+    /// have all been taken out — [`untouched`](Self::untouched) is the question
+    /// that tells those apart from a tree somebody has added to.
+    #[must_use]
+    pub fn opening_nodes(&self, tree: TreeId) -> Vec<NodeId> {
+        let Some(host) = self.tree(tree) else {
+            return Vec::new();
+        };
+        let mut still: Vec<NodeId> = host
+            .born
+            .iter()
+            .copied()
+            .filter(|node| host.node(*node).is_some())
+            .collect();
+        still.sort_unstable();
+        still
+    }
+
+    /// ★★★★★ R1997 — **has anyone done anything to this tree yet?**
+    ///
+    /// True while it holds exactly what it was born with and nothing has been
+    /// wired. This is what the reference's marker is FOR, measured at its
+    /// readers: a blueprint editor asks it to decide what to TELL a person —
+    /// an untouched graph is offered *drag off pins to create nodes* and a
+    /// touched one is not, and the hint fades on the first placement.
+    ///
+    /// ⚠ Links count. The reference's `GraphHasUserPlacedNodes` asks only about
+    /// nodes, so a graph whose two born nodes someone had wired together still
+    /// answers *untouched* there — which is the wrong answer to the question it
+    /// is being asked on behalf of.
+    #[must_use]
+    pub fn untouched(&self, tree: TreeId) -> bool {
+        let Some(host) = self.tree(tree) else {
+            return false;
+        };
+        host.links().is_empty() && host.nodes().count() == self.opening_nodes(tree).len()
+    }
+
     /// Add an empty group definition and answer its id.
     ///
     /// A definition created this way has no interface and no instances; it
     /// becomes reachable when something instantiates it.
+    ///
+    /// ⚠ It is **empty**: [`open_definition`](Self::open_definition) is the one
+    /// that consults [`NodeKind::opening`]. Every verb that fills a definition
+    /// from a selection — `group`, `insert`, the fragment verbs — uses this
+    /// one, because a tree that is about to receive nodes must not also be
+    /// seeded with them.
     pub fn add_definition(&mut self, name: impl Into<String>) -> TreeId {
         let id = self.mint_tree_id();
         self.trees.push(Tree {
@@ -3068,6 +3252,7 @@ impl<K: NodeKind> Document<K> {
             interface: Interface::default(),
             admitted: crate::Admitted::Anything,
             zones: BTreeMap::new(),
+            born: Vec::new(),
             next_node: 0,
             next_link: 0,
         });

@@ -10671,6 +10671,137 @@ fn lab_card_boxes(shot: &Painted) -> std::collections::BTreeMap<String, Rect> {
         .collect()
 }
 
+/// ★★★★★ R1997 — **the assembled tool tells a born-with from a holding, for the
+/// graph a person is standing in** — driven on the shell, over one walk.
+///
+/// # What this reproduces
+///
+/// The engine's schema hook `CreateDefaultNodesForGraph(Graph)` has an empty
+/// base body and seven overriders, each seeding the graph's result or root
+/// node, positioning it, and marking it `FNodeMetadata::DefaultGraphNode`. ★ The
+/// marker is READ, by two blueprint-editor functions that decide what a person
+/// is TOLD: an untouched graph is offered *Drag Off Pins to Create/Connect New
+/// Nodes* and a touched one *Right-Click to Create New Nodes*.
+///
+/// The seeding half is proven against the reference in `pinion-node-graph`'s
+/// own census test, with a taxonomy that declares an opening. **What is proven
+/// here is the half a screen actually asks**: that the graph a person is
+/// standing in can say what it was born holding and whether anyone has done
+/// anything to it — and that those are two questions, not one.
+///
+/// ⚠ **`born` is empty everywhere on this screen, and that is the correct
+/// answer rather than a missing one.** This taxonomy declares no opening,
+/// because a sub-graph here is made by GROUPING a selection and so receives its
+/// content from what a person chose. The reference's own base body is empty for
+/// the same reason. That is exactly why the reading publishes both numbers: a
+/// graph born with nothing and holding four cards is a different thing from one
+/// born with nothing and holding none, and only this can tell them apart.
+///
+/// # Which screen this lands on
+///
+/// Screen A, the node lab, as it is assembled in this shell.
+#[test]
+fn r1997_a_graph_says_what_it_was_born_with_and_whether_anyone_has_touched_it() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let report = crate::tests::walk_the_application(&state);
+        assert!(
+            report.conforms(),
+            "the application did not reproduce its specification over the walk: {}",
+            report.why().unwrap_or_default()
+        );
+        assert!(
+            report.itinerary().iter().any(|key| key == "lab"),
+            "the walk must stand in the node lab: {:?}",
+            report.itinerary()
+        );
+
+        state.go("lab").expect("the node lab section is open");
+        the_opening_graph_was_born_with_nothing_and_holds_plenty(&state);
+        a_sub_graph_receives_its_content_rather_than_being_born_with_it(&state);
+    });
+}
+
+/// Phase 1 — **born with nothing, holding plenty**: the two questions come
+/// apart on the very first screen.
+fn the_opening_graph_was_born_with_nothing_and_holds_plenty(state: &std::rc::Rc<ShellState>) {
+    let opening = lab_slot(state, "opening");
+    assert_eq!(
+        opening["born"],
+        serde_json::json!([]),
+        "★ this taxonomy declares no opening, so nothing here was SEEDED — the \
+         reference's own base body is empty too: {opening}"
+    );
+    let nodes = report_count(&opening, "nodes");
+    assert!(nodes > 0, "and yet the graph holds nodes: {opening}");
+    assert_eq!(
+        opening["untouched"],
+        serde_json::Value::Bool(false),
+        "★★★★★ so it is NOT untouched — *born with nothing* and *holding \
+         nothing* are different facts, and a reading that answered only the \
+         first would call this opening graph pristine: {opening}"
+    );
+    // ⚠ The count the verdict was reached from is NODES, and a tree's nodes
+    // include the host frames this canvas draws as regions — measured here at
+    // exactly the two the specification declares. That is the right population
+    // for *untouched*: a region somebody drew is a thing somebody did.
+    assert!(
+        nodes > lab_cards(state).len(),
+        "★ the verdict counts the host frames too, so it is above the card \
+         count: {nodes} nodes against {:?} cards",
+        lab_cards(state).len()
+    );
+}
+
+/// Phase 2 — **a sub-graph made by grouping receives its content**, so it is
+/// born with nothing and is touched from the moment it exists.
+///
+/// ★ This is the line the reference draws too: it calls its seeding hook at the
+/// sites that CREATE a graph and not at the ones that fill one, and grouping
+/// fills one.
+fn a_sub_graph_receives_its_content_rather_than_being_born_with_it(
+    state: &std::rc::Rc<ShellState>,
+) {
+    let outside = lab_slot(state, "opening");
+    // ★ Two cards, because this screen refuses a part of one — a real rule of
+    // the assembled tool, found by asking it for a part of one card.
+    let cards = lab_cards(state);
+    let (first, second) = (
+        cards.first().expect("the opening graph draws cards"),
+        cards.get(1).expect("and more than one"),
+    );
+    lab_invoke(state, "select", first).expect("a card the wire can choose");
+    lab_invoke(state, "select_also", second).expect("and a second beside it");
+    lab_invoke(state, "group", "Part").expect("a selection may become a part");
+    lab_invoke(state, "enter", "Part").expect("and a person may step inside it");
+
+    let inside = lab_slot(state, "opening");
+    assert_ne!(
+        inside, outside,
+        "★ the reading is about the graph a person is STANDING IN, and they \
+         have moved: {inside}"
+    );
+    assert_eq!(
+        inside["born"],
+        serde_json::json!([]),
+        "★★ a grouped part was not seeded — it received what was chosen, which \
+         is why the reference does not call its hook here either: {inside}"
+    );
+    assert!(
+        report_count(&inside, "nodes") > 0,
+        "and yet it holds what came in with it: {inside}"
+    );
+    assert_eq!(
+        inside["untouched"],
+        serde_json::Value::Bool(false),
+        "★★★★★ so it is touched from the moment it exists — which is the answer \
+         a screen needs before it offers somebody an empty-canvas instruction: \
+         {inside}"
+    );
+    lab_invoke(state, "exit", "").expect("and back out");
+}
+
 /// ★★★★★ R1996 — **the assembled tool says whether the host under a carried
 /// card will take it, before the hand lets go** — driven on the shell, over one
 /// walk.

@@ -546,7 +546,7 @@ const STORAGE_KEY: &str = "node_graph.state";
 // saved graph. The default means an old blob READS correctly; the version is
 // what tells a person their file predates the field rather than leaving them to
 // find out from a value that was never written.
-const PERSISTED_SCHEMA_VERSION: u32 = 19;
+const PERSISTED_SCHEMA_VERSION: u32 = 20;
 
 /// R1599 — the append-only `(version, digest)` ledger the persistence gate
 /// reads. See `pinion_core::test_fixtures::assert_persisted_shape` for why it
@@ -571,6 +571,13 @@ const PERSISTED_SHAPE_HISTORY: &[(u32, u64)] = &[
     // definition's id is never handed out again. A field, so the persisted
     // shape moved.
     (19, 0x5f59_30e3_4fd8_5f32),
+    // R1997 — a tree remembers the nodes it was BORN holding
+    // (`Tree::born`), so a graph can say whether anyone has touched it. A
+    // field, so the persisted shape moved. `serde(default)` empty means an old
+    // blob READS correctly; the version is what tells a person their file
+    // predates the field rather than leaving them to infer it from a tree that
+    // claims to have been born with nothing.
+    (20, 0x166f_6e56_bcd9_62c8),
 ];
 
 /// R849 — where a newly added node first lands, and the per-add cascade step

@@ -3339,10 +3339,10 @@
       "verdict": "app-content"
     },
     "schema::CreateDefaultNodesForGraph": {
-      "covered_by": "a schema supplying a graph's starter nodes",
+      "covered_by": "NodeKind::opening + Document::open_definition / opening_nodes / untouched. The old reason -- `a schema supplying a graph's starter nodes` -- named the first half and missed the half that has READERS. Measured: the base body is empty and seven schemas override it, each creating the graph's result or root node, POSITIONING it (a sound cue's at y=-58, a custom transition's pose evaluators at x=±300, and that one seeds THREE nodes) and marking it `FNodeMetadata::DefaultGraphNode`. ★That marker is read, by two functions in the blueprint editor that decide what a person is TOLD: `GraphHasDefaultNode` picks `Drag Off Pins to Create/Connect New Nodes` over `Right-Click to Create New Nodes`, and `GraphHasUserPlacedNodes` fades an onboarding hint on the first placement. So the capability is not `seed a graph` but `a graph is born with something AND can say afterwards whether anyone has touched it`. Three ways past it: ★the hook returns VOID, so every overrider that needs the node afterwards writes it down a SECOND time on its own graph type (`TypedGraph->MyResultNode`) -- one fact in two places maintained by two lines of one function -- where `Born::nodes` is that answer given once; ★the tree REMEMBERS, where the reference marks each node in the package's global metadata map and then walks every node asking, twice, in two functions with two different rules (one requires `IsNodeEnabled()` and the other does not); and ⚠`untouched` counts LINKS, where `GraphHasUserPlacedNodes` walks nodes only and so answers `untouched` for a graph whose born nodes somebody has already wired together -- the wrong answer to the question it is asked on behalf of. ⚠Only `open_definition` consults the declaration: `add_definition`, `group`, `insert` and the fragment verbs do not, because a definition about to be filled from a selection must not also be seeded -- and the reference draws the same line, calling its hook at chosen sites rather than on every graph it makes.",
       "mechanism": "graph-schema",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_schema_create_default_nodes_for_graph",
+      "verdict": "have"
     },
     "schema::CreatePromotedConnection": {
       "covered_by": "the engine's visual script/asset subject matter",

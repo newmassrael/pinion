@@ -5522,6 +5522,47 @@ fn insert_target_for(state: &LabState, node: NodeId) -> Option<InsertTarget> {
     })
 }
 
+/// ★★★★★ R1997 — **what the graph a person is standing in was born holding, and
+/// whether anyone has done anything to it since.**
+///
+/// The reading the reference's default-node marker exists to serve: its
+/// blueprint editor asks the same two questions to decide what to TELL a person
+/// — an untouched graph is offered *drag off pins to create nodes* and a
+/// touched one is not.
+///
+/// ⚠ **`born` is empty for every graph on this screen, and that is correct
+/// rather than missing.** `NodeKind::opening` is the taxonomy's declaration,
+/// and this taxonomy declares none: a sub-graph here is made by GROUPING a
+/// selection, so it receives its content from what a person chose rather than
+/// from what a schema seeds. The reference's own base body is empty for the
+/// same reason, and the schemas that do seed are the ones whose graphs are
+/// created rather than filled. Published anyway, because *born with nothing*
+/// and *holding nothing* are different facts and only this reading tells them
+/// apart.
+fn opening_report(state: &Rc<LabState>) -> serde_json::Value {
+    let here = state.here();
+    let doc = state.doc.borrow();
+    serde_json::json!({
+        "born": doc
+            .opening_nodes(here)
+            .into_iter()
+            .map(|node| state.name_of(node))
+            .collect::<Vec<_>>(),
+        "untouched": doc.untouched(here),
+        // The count beside it, because *untouched* is a verdict and this is
+        // what it was reached from.
+        //
+        // ⚠ NODES, not cards: a tree's nodes include the host FRAMES this
+        // canvas draws as regions, so this is larger than the `nodes` slot's
+        // card list by however many frames are drawn. That is the right
+        // population for *untouched* — a region somebody drew is a thing
+        // somebody did — and it is named `nodes` rather than `cards` because
+        // the walk that first compared it against the card list found the two
+        // differing by exactly the frames.
+        "nodes": doc.tree(here).map_or(0, |tree| tree.nodes().count()),
+    })
+}
+
 /// ★★★★★ R1996 — **what the frame under a carried card would do**, published.
 ///
 /// Null while nothing is carried, or while what is carried is over no frame it
@@ -12490,6 +12531,12 @@ const FIELDS: &[SchemaField] = &{
         // be taken there. The same reading the frame's own edge is drawn from,
         // so what an agent is told and what a person is shown cannot differ.
         SchemaField::new("holding", "json"),
+        // ★★★★★ R1997 — what the graph a person is STANDING IN was born
+        // holding, and whether anyone has done anything to it since. This is
+        // what the reference's default-node marker is for, measured at its
+        // readers: a blueprint editor asks it to decide what to TELL a person
+        // about an untouched graph.
+        SchemaField::new("opening", "json"),
         SchemaField::action("frame_selection", "string"),
         SchemaField::action("go_to_problem", "string"),
         SchemaField::action("run", "bool"),
@@ -13268,6 +13315,9 @@ impl ExternalIntrospect for LabOracle {
             "homing" => Ok(IntrospectValue::Json(homing_report(state))),
             // ★★★★★ R1996 — what the frame under a carried card would do.
             "holding" => Ok(IntrospectValue::Json(holding_report(state))),
+            // ★★★★★ R1997 — what this graph was born with, and whether anyone
+            // has touched it since.
+            "opening" => Ok(IntrospectValue::Json(opening_report(state))),
             "zoom" => Ok(IntrospectValue::Int(i64::from(state.zoom.get()))),
             "pan" => {
                 let (x, y) = state.pan.get();

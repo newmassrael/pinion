@@ -293,11 +293,11 @@ pub use landing::{Berth, LandError, Landed, Landfall};
 pub use layout::{Extent, Layered, Organic, Placement, Quality};
 pub use machine::{Committed, ForceError, Machine, Tick};
 pub use model::{
-    Act, Admission, Admits, ConnectError, Connected, Container, Control, Conversion, Described,
-    Description, Document, DroppedLink, EditError, Flow, Found, InZone, Instance, Interface,
-    InterfaceSide, Judged, KindPort, Link, LinkId, Matched, Multiplicity, Node, NodeBody, NodeId,
-    NodeKind, PairError, Port, PortRef, PortValueError, PortValueResult, ROOT, Refusal, Relabelled,
-    Removed, Side, Signature, Socket, Tree, TreeId, crossing,
+    Act, Admission, Admits, Born, ConnectError, Connected, Container, Control, Conversion,
+    Described, Description, Document, DroppedLink, EditError, Flow, Found, InZone, Instance,
+    Interface, InterfaceSide, Judged, KindPort, Link, LinkId, Matched, Multiplicity, Node,
+    NodeBody, NodeId, NodeKind, PairError, Port, PortRef, PortValueError, PortValueResult, ROOT,
+    Refusal, Relabelled, Removed, Seed, Side, Signature, Socket, Tree, TreeId, crossing,
 };
 pub use naming::{Labelled, NameSource, PortName};
 pub use naming_scope::{Copying, Naming};

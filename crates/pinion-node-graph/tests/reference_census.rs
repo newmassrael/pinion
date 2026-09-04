@@ -58,7 +58,9 @@ use pinion_node_graph::{
     Copying, DefinitionAct, DefinitionError, InZone, InsertError, PairError, Renamed, Tree, Used,
 };
 use pinion_node_graph::{Fit, Margin, Unframed, ZoomRange};
-use pinion_node_graph::{NoHome, NotPrunable, ParentError, Reception, RelocateError, Relocation};
+use pinion_node_graph::{
+    NoHome, NotPrunable, ParentError, Reception, RelocateError, Relocation, Seed,
+};
 use pinion_node_graph::{RoomError, SpliceError, Verdict, Widening};
 
 // ---------------------------------------------------------------- taxonomy
@@ -868,7 +870,243 @@ fn r1994_home_proofs() -> Vec<Proof> {
             "schema::CanMergeNodes",
             engine_schema_can_merge_nodes,
         ),
+        // R1997 — the schema hook a new graph is born through.
+        proof(
+            "engine",
+            "schema::CreateDefaultNodesForGraph",
+            engine_schema_create_default_nodes_for_graph,
+        ),
     ]
+}
+
+/// A taxonomy that declares an opening, so the seeded case is reachable at all.
+///
+/// Two nodes and a placement, which is the reference's own shape: its
+/// custom-transition schema seeds a result at the origin and pose evaluators at
+/// `x = ±300`, and a sound cue's root at `y = -58`. One node at the origin
+/// would have made the position half of this untestable.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+enum Opened {
+    Result,
+    Source,
+}
+
+impl NodeKind for Opened {
+    type Type = Ty;
+    type Value = Val;
+
+    fn name(&self) -> String {
+        match self {
+            Self::Result => "Result".into(),
+            Self::Source => "Source".into(),
+        }
+    }
+
+    fn opening() -> Vec<Seed<Self>> {
+        vec![
+            Seed::new(NodeBody::Kind(Self::Result)),
+            Seed::new(NodeBody::Kind(Self::Source)).at(-300, 40),
+        ]
+    }
+
+    fn inputs(&self) -> Vec<Port<Ty, Val>> {
+        match self {
+            Self::Result => vec![Port::new("In", Ty::Number)],
+            Self::Source => Vec::new(),
+        }
+    }
+
+    fn outputs(&self) -> Vec<Port<Ty, Val>> {
+        match self {
+            Self::Result => Vec::new(),
+            Self::Source => vec![Port::new("Out", Ty::Number)],
+        }
+    }
+
+    fn evaluate(&self, inputs: &[Option<Val>]) -> Vec<Option<Val>> {
+        match self {
+            Self::Result => Vec::new(),
+            Self::Source => vec![inputs.first().cloned().flatten()],
+        }
+    }
+}
+
+/// ★★★★★ R1997 — the schema's `CreateDefaultNodesForGraph`: **a new graph is
+/// born holding what its taxonomy says a graph holds**, and can say afterwards
+/// whether anyone has touched it.
+///
+/// Measured at the reference: the base body is empty and seven schemas override
+/// it, each creating the graph's result or root node, positioning it (a sound
+/// cue's at `y = -58`, a custom transition's pose evaluators at `x = ±300`),
+/// and marking it `FNodeMetadata::DefaultGraphNode`. The hook returns **void**,
+/// so every overrider that needs the node afterwards writes it down a second
+/// time on its own graph type. ★ The marker is READ, by two functions that
+/// decide what a person is TOLD — an untouched graph is offered *Drag Off Pins
+/// to Create/Connect New Nodes* and a touched one *Right-Click to Create New
+/// Nodes*, and a hint fades on the first placement.
+///
+/// The assertions that would fail if the capability were missing:
+///
+/// 1. a definition opened through the taxonomy holds what it declared, in
+///    order, **where it declared**;
+/// 2. ★ the verb SAYS what it made, which the reference's `void` cannot;
+/// 3. ★ the tree can answer *has anyone touched this yet* afterwards — and
+///    ⚠ a wire between two born nodes counts, where the reference's own reader
+///    asks only about nodes and would answer *untouched*;
+/// 4. a taxonomy that declares no opening gets an empty tree, which is the
+///    reference's base body, and the verbs that FILL a definition do not seed.
+#[test]
+fn engine_schema_create_default_nodes_for_graph() {
+    let mut document: Document<Opened> = Document::new("root");
+    let born = document.open_definition("Sub");
+
+    // ★ (2) It says what it made.
+    assert_eq!(born.nodes.len(), 2, "both declared nodes: {born:?}");
+    let placed: Vec<(String, i32, i32)> = born
+        .nodes
+        .iter()
+        .map(|id| {
+            let held = document
+                .tree(born.tree)
+                .expect("the definition")
+                .node(*id)
+                .expect("a node it was born with");
+            let name = match &held.body {
+                NodeBody::Kind(kind) => kind.name(),
+                other => panic!("a seeded node is a kind: {other:?}"),
+            };
+            (name, held.x, held.y)
+        })
+        .collect();
+    // ★ (1) In order, and WHERE declared.
+    assert_eq!(
+        placed,
+        vec![("Result".to_owned(), 0, 0), ("Source".to_owned(), -300, 40),],
+        "★ the taxonomy's own order and its own placement — a seed that arrived \
+         at the origin would stack a three-node opening on one spot"
+    );
+
+    // ★ (3) And the tree remembers.
+    assert_eq!(
+        document.opening_nodes(born.tree),
+        {
+            let mut ids = born.nodes.clone();
+            ids.sort_unstable();
+            ids
+        },
+        "the nodes it was born with are still the nodes it was born with"
+    );
+    assert!(
+        document.untouched(born.tree),
+        "★ nobody has done anything to it yet"
+    );
+
+    // ★ A NODE somebody added counts, with nothing wired at all. Asserted
+    // apart from the wire below because they are two different ways of touching
+    // a graph and a verdict that noticed only one of them would pass the other.
+    {
+        let mut filled = document.clone();
+        let placed = filled
+            .add_node(born.tree, NodeBody::Kind(Opened::Source), 40, 40)
+            .expect("a card a person may place");
+        assert!(
+            !filled.untouched(born.tree),
+            "★ somebody put {placed:?} here, and no wire was made"
+        );
+        assert_eq!(
+            filled.opening_nodes(born.tree).len(),
+            2,
+            "★ while what it was BORN with is unchanged"
+        );
+    }
+
+    // ★★★★★ A WIRE counts. The reference's `GraphHasUserPlacedNodes` walks
+    // nodes only, so a graph whose born nodes somebody had wired together still
+    // answers `untouched` there — the wrong answer to the question it is asked
+    // on behalf of.
+    let (result, source) = (born.nodes[0], born.nodes[1]);
+    document
+        .connect(born.tree, Socket::new(source, 0), Socket::new(result, 0))
+        .expect("the opening wires up");
+    assert!(
+        !document.untouched(born.tree),
+        "★★★★★ somebody has wired it, so it is not untouched — and no node was \
+         added or removed to say so"
+    );
+    assert_eq!(
+        document.opening_nodes(born.tree).len(),
+        2,
+        "★ while what it was BORN with is unchanged: the two questions are \
+         different and both are answerable"
+    );
+
+    // And a born node taken out drops out of the list rather than dangling.
+    document
+        .remove_node(born.tree, source)
+        .expect("a node a person may delete");
+    assert_eq!(
+        document.opening_nodes(born.tree),
+        vec![result],
+        "★ what it was born with, that is still there"
+    );
+
+    a_taxonomy_with_no_opening_gets_an_empty_tree();
+}
+
+/// ★ (4) The reference's base body is empty, and the verbs that FILL a
+/// definition do not seed one.
+fn a_taxonomy_with_no_opening_gets_an_empty_tree() {
+    // `Op` declares no opening, which is the default.
+    let mut document: Document<Op> = Document::new("root");
+    let born = document.open_definition("Empty");
+    assert!(
+        born.nodes.is_empty() && document.opening_nodes(born.tree).is_empty(),
+        "a taxonomy that declares nothing gets a tree born with nothing: {born:?}"
+    );
+    assert!(
+        document.untouched(born.tree),
+        "★ and an empty tree nobody has touched is untouched — `born with \
+         nothing` and `emptied` are told apart by `opening_nodes`, not here"
+    );
+
+    // ★★★★★ And `group`, which FILLS a definition from a selection, does not
+    // seed: a tree about to receive nodes must not also be given them.
+    //
+    // ⚠ Asserted on a taxonomy that HAS an opening, which is the whole point.
+    // The first draft asserted it on `Op` — which declares none — so seeding
+    // the grouped definition would have added nothing and the assertion was
+    // vacuous. A counterfactual that swapped `group`'s `add_definition` for
+    // `open_definition` was caught by nothing until this moved.
+    let mut seeded: Document<Opened> = Document::new("root");
+    let source = seeded
+        .add_node(ROOT, NodeBody::Kind(Opened::Source), 0, 0)
+        .expect("a source");
+    let result = seeded
+        .add_node(ROOT, NodeBody::Kind(Opened::Result), 200, 0)
+        .expect("and what it feeds");
+    seeded
+        .connect(ROOT, Socket::new(source, 0), Socket::new(result, 0))
+        .expect("a wire between them");
+    let made = seeded
+        .group(ROOT, &[result], "Part")
+        .expect("a definition from a selection");
+    assert!(
+        seeded.opening_nodes(made.definition).is_empty(),
+        "★★★★★ the grouped definition was NOT seeded, though this taxonomy \
+         declares two opening nodes — the reference draws the same line, \
+         calling its hook at the sites that CREATE a graph rather than at the \
+         ones that fill one"
+    );
+    assert_eq!(
+        seeded
+            .tree(made.definition)
+            .expect("the definition")
+            .nodes()
+            .count(),
+        3,
+        "★ it holds the card that was chosen and its two interface nodes, and \
+         nothing the taxonomy would have added"
+    );
 }
 
 /// ★★★★★ R1996 — the schema's `CanMergeNodes`: **would this node be taken
