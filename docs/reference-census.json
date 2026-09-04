@@ -3321,10 +3321,10 @@
       "verdict": "have"
     },
     "schema::CopyPinLinks": {
-      "covered_by": "copying one port's links onto another port",
+      "covered_by": "Document::may_copy_links / copy_links, the sibling of the move row above and built with it because neither is usable alone. The reference walks the from-pin's links calling MakeLinkTo on the target for each one it admits, returning one response the loop overwrites. ★ The measured point this passes it on: on a single-producer input MakeLinkTo BREAKS what was there and nothing in the response says so -- and a value input here takes one producer too, so a whole-port copy necessarily replaces on every consumer. Reception::Taken therefore carries `displaced` beside the new link's id, which is what Connected and Relinked already answer for one link; an aggregate that dropped it would have been blinder than the single-link verbs it is built from. Also per-link rather than one response, and askable without doing it.",
       "mechanism": "graph-schema",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_schema_copy_pin_links",
+      "verdict": "have"
     },
     "schema::CreateAutomaticConversionNodeAndConnections": {
       "covered_by": "NodeKind::conversion - and showing an implicit conversion costs NO node, where this materialises one into the graph",
@@ -3669,10 +3669,10 @@
       "verdict": "app-content"
     },
     "schema::MovePinLinks": {
-      "covered_by": "moving one port's links onto another port",
+      "covered_by": "Document::may_move_links / move_links. Measured at the reference's own body rather than at its name: it snapshots the from-pin's link list, BREAKS EVERY ONE OF THEM, and only then asks CanCreateConnection for each against the target -- so a link the target refuses is already gone and the graph silently loses an edge, while the single response it returns is overwritten by each failure and names only the last. Four ways past it: a refused link is simply not moved and STAYS on the port it was on (the same argument `relink` makes for one link, held at the scale of a whole port); a moved link keeps its LinkId and its mute, where break-and-remake mints a new one and dangles anything keyed by the old; the report is one verdict per link, ascending by id, each refusal carrying the crate's own typed reason; and asking is separable from doing, run on a copy so the question and the verb cannot answer differently. The reference's default-value clause is deliberately absent and is not a gap: a default here is declared on the port by the node's kind rather than held per-socket on an instance, so there is no per-pin literal to carry.",
       "mechanism": "graph-schema",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_schema_move_pin_links",
+      "verdict": "have"
     },
     "schema::OnDoubleClick": {
       "covered_by": "a pointer gesture over painted geometry, which the binding owns",

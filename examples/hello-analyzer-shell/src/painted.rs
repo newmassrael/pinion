@@ -8203,6 +8203,24 @@ fn lab_invoke(
     verb: &str,
     arg: &str,
 ) -> Result<String, pinion_core::external::InvokeError> {
+    lab_invoke_value(state, verb, arg).map(|answered| match answered {
+        IntrospectValue::Text(t) => t,
+        other => format!("{other:?}"),
+    })
+}
+
+/// ★★★★★ R1993 — the same call, before it is flattened to a sentence.
+///
+/// [`lab_invoke`] answers what a person reads. A verb that answers a REPORT —
+/// the whole point of asking a whole-port operation before performing it — has
+/// to be reachable as the report, and `format!("{other:?}")` is not one.
+/// Extracted rather than written beside it, so both reach the mounted lab the
+/// one way.
+fn lab_invoke_value(
+    state: &std::rc::Rc<ShellState>,
+    verb: &str,
+    arg: &str,
+) -> Result<IntrospectValue, pinion_core::external::InvokeError> {
     let mut externals = state.screens.externals(&state.journey.get());
     let lab = externals
         .iter_mut()
@@ -8210,10 +8228,26 @@ fn lab_invoke(
         .find(|it| it.query("waiting").is_ok())
         .expect("the lab section publishes `waiting`, which is how it is found");
     lab.invoke(verb, IntrospectValue::Text(arg.to_owned()))
-        .map(|answered| match answered {
-            IntrospectValue::Text(t) => t,
-            other => format!("{other:?}"),
-        })
+}
+
+/// A count out of a report, as a count.
+///
+/// One conversion rather than a cast at each reader: the wire carries JSON
+/// numbers and the assertions compare them against `len()`, and a report whose
+/// count will not fit a `usize` is a broken report rather than a big one.
+fn report_count(report: &serde_json::Value, key: &str) -> usize {
+    report[key]
+        .as_u64()
+        .and_then(|n| usize::try_from(n).ok())
+        .unwrap_or_else(|| panic!("`{key}` is a count: {report}"))
+}
+
+/// The JSON a `may_…` verb answered, or a panic naming what came back instead.
+fn lab_report(state: &std::rc::Rc<ShellState>, verb: &str, arg: &str) -> serde_json::Value {
+    match lab_invoke_value(state, verb, arg) {
+        Ok(IntrospectValue::Json(json)) => json,
+        other => panic!("expected a report from `{verb} {arg}`, got {other:?}"),
+    }
 }
 
 /// ★★★★★ R1987 — **a wire let go over empty canvas waits, and the card chosen
@@ -10635,6 +10669,276 @@ fn lab_card_boxes(shot: &Painted) -> std::collections::BTreeMap<String, Rect> {
             (!name.contains('.')).then(|| (name.to_owned(), *rect))
         })
         .collect()
+}
+
+/// ★★★★★ R1993 — **the assembled tool takes every wire on one pin to another
+/// pin, and a wire it cannot take is still there afterwards** — driven on the
+/// shell, over one walk.
+///
+/// # What this reproduces, and what the engine's own version costs
+///
+/// The engine's schema publishes `MovePinLinks` and `CopyPinLinks`. Measured at
+/// the implementation: the move **breaks every one of the from-pin's links**
+/// and only then asks whether the target will take each one, so a link the
+/// target refuses is already gone — the graph silently loses an edge. Both
+/// return one connection response that their own loop overwrites, so what comes
+/// back names the last failure and never which link.
+///
+/// The crate's half is proven against the engine in `pinion-node-graph`'s own
+/// census test. **What is proven here is what only an assembled application can
+/// answer**: that the operation is reachable on the real graph a person is
+/// looking at, that asking first is a thing this tool can actually be asked,
+/// and that a refused wire is still on the pin it was on when the dust settles.
+///
+/// # Which screen this lands on
+///
+/// Screen A, the node lab, as it is assembled in this shell. Second-pass work:
+/// the behaviour canon has no whole-pin operation at all, and this comes from
+/// the floor.
+#[test]
+fn r1993_a_pins_wires_are_taken_to_another_pin_and_a_refused_one_stays() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let report = crate::tests::walk_the_application(&state);
+        assert!(
+            report.conforms(),
+            "the application did not reproduce its specification over the walk: {}",
+            report.why().unwrap_or_default()
+        );
+        assert!(
+            report.itinerary().iter().any(|key| key == "lab"),
+            "the walk must stand in the node lab: {:?}",
+            report.itinerary()
+        );
+
+        state.go("lab").expect("the node lab section is open");
+        let busiest = the_pin_that_carries_the_most_wires(&state);
+        let plan = asking_first_says_which_wires_would_be_taken(&state, &busiest);
+        moving_them_leaves_the_refused_one_where_it_was(&state, &busiest, &plan);
+        a_copy_says_what_each_of_its_wires_replaced(&state);
+        the_ask_itself_is_refused_by_name(&state, &busiest);
+    });
+}
+
+/// The producing pin with the most wires on it, **read off the graph** rather
+/// than written down: a whole-pin operation needs a pin carrying more than one
+/// wire, and naming one here would make this a claim about the opening graph
+/// as well as about the operation.
+fn the_pin_that_carries_the_most_wires(state: &std::rc::Rc<ShellState>) -> String {
+    let links = lab_links(state);
+    let mut count: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    for (from, _) in &links {
+        *count.entry(from.clone()).or_default() += 1;
+    }
+    let (card, held) = count
+        .into_iter()
+        .max_by_key(|(card, n)| (*n, std::cmp::Reverse(card.clone())))
+        .expect("the opening graph draws wires");
+    assert!(
+        held > 1,
+        "★ a whole-pin operation needs a pin with more than one wire on it, and \
+         the busiest here carries {held}: {links:?}"
+    );
+    card
+}
+
+/// Phase 1 — **asked before anything moves**, and the answer is per wire.
+///
+/// ★ The target is chosen so the answer is MIXED: a card that the busiest pin
+/// already feeds. Aiming that pin's wires at that card's own output would make
+/// one of them leave and arrive at the same node, which closes a loop — so one
+/// wire is refused and the rest are not. That is the exact shape the engine
+/// destroys: it would have broken all of them before finding out.
+fn asking_first_says_which_wires_would_be_taken(
+    state: &std::rc::Rc<ShellState>,
+    busiest: &str,
+) -> (String, serde_json::Value) {
+    let links = lab_links(state);
+    let fed = links
+        .iter()
+        .find(|(from, _)| from == busiest)
+        .map(|(_, to)| to.clone())
+        .expect("the busiest pin feeds somebody");
+    let words = format!("{busiest}.dial,{fed}.dial");
+
+    let before = lab_links(state);
+    let plan = lab_report(state, "may_move_links", &words);
+    assert_eq!(
+        lab_links(state),
+        before,
+        "★★ asking changed nothing — this is the half the engine has no form of"
+    );
+    assert_eq!(
+        plan["complete"],
+        serde_json::Value::Bool(false),
+        "★ aiming {busiest}'s wires at {fed} closes a loop for one of them, so \
+         the answer must not be `everything moves`: {plan}"
+    );
+    assert_eq!(
+        plan["refused"].as_u64(),
+        Some(1),
+        "★ exactly the one that would arrive where it left: {plan}"
+    );
+    assert!(
+        plan["taken"].as_u64().is_some_and(|n| n >= 1),
+        "★ and the others would be taken, or the case says nothing: {plan}"
+    );
+    let wires = plan["wires"].as_array().expect("a row per wire");
+    assert_eq!(
+        wires.len(),
+        report_count(&plan, "taken") + 1,
+        "★★★★★ one row PER WIRE — the engine returns a single response its own \
+         loop overwrites, so it can name only the last failure: {plan}"
+    );
+    let refused = wires
+        .iter()
+        .find(|row| row["taken"] == serde_json::Value::Bool(false))
+        .expect("the refused row is in the report");
+    assert!(
+        refused["why"].as_str().is_some_and(|why| !why.is_empty()),
+        "★ and the refusal carries the crate's own reason: {refused}"
+    );
+    (words, plan)
+}
+
+/// Phase 2 — **doing it agrees with the asking, and the refused wire is still
+/// there.**
+fn moving_them_leaves_the_refused_one_where_it_was(
+    state: &std::rc::Rc<ShellState>,
+    busiest: &str,
+    plan: &(String, serde_json::Value),
+) {
+    let (words, asked) = plan;
+    let before = lab_links(state);
+    let held = before.iter().filter(|(from, _)| from == busiest).count();
+
+    let said = lab_invoke(state, "move_links", words).expect("both pins exist and differ");
+    let taken = report_count(asked, "taken");
+    assert!(
+        said.contains(&taken.to_string()),
+        "★ the sentence says how many were taken: {said:?}"
+    );
+    assert!(
+        said.contains("stayed put"),
+        "★★★★★ AND how many stayed — a person is told that a wire did not move, \
+         where the engine's answer is one response and the wire is gone: {said:?}"
+    );
+
+    let now = lab_links(state);
+    assert_eq!(
+        now.len(),
+        before.len(),
+        "★★★★★ NOT ONE WIRE WAS LOST. The engine breaks every one of them before \
+         it asks, so the ones the target refuses are gone: was {before:?}, now \
+         {now:?}"
+    );
+    let left = now.iter().filter(|(from, _)| from == busiest).count();
+    assert_eq!(
+        left, 1,
+        "★★★★★ exactly the refused wire is still on {busiest} — everything the \
+         target took went, and the one it would not take STAYED: {now:?}"
+    );
+    assert_eq!(
+        held - left,
+        taken,
+        "★ and what left the pin is exactly what the report said would: {now:?}"
+    );
+}
+
+/// Phase 3 — **a copy names what each of its wires replaced.**
+///
+/// ★ It has to. A card's accepting side takes one producer per seat, so giving
+/// another pin a copy of these wires REPLACES on the consuming side — and an
+/// answer that only said *copied* would be describing an edit that quietly
+/// deleted an edge per wire. The engine's `MakeLinkTo` does the same
+/// replacement and its response has no member for it.
+fn a_copy_says_what_each_of_its_wires_replaced(state: &std::rc::Rc<ShellState>) {
+    let links = lab_links(state);
+    // A producing pin with a wire, and a card that is not on it — read off the
+    // graph as it now stands, which the phase above changed.
+    let (source, fed) = links.first().cloned().expect("the graph still has wires");
+    let other = lab_cards(state)
+        .into_iter()
+        .find(|card| *card != source && *card != fed)
+        .expect("the graph draws more than two cards");
+    let words = format!("{source}.dial,{other}.dial");
+
+    let plan = lab_report(state, "may_copy_links", &words);
+    let before = lab_links(state);
+    let said = lab_invoke(state, "copy_links", &words).expect("both pins exist and differ");
+    assert!(
+        said.contains("copied"),
+        "the sentence says what it did: {said:?}"
+    );
+
+    let rows = plan["wires"].as_array().expect("a row per wire").clone();
+    let taken: Vec<&serde_json::Value> = rows
+        .iter()
+        .filter(|row| row["taken"] == serde_json::Value::Bool(true))
+        .collect();
+    assert!(
+        !taken.is_empty(),
+        "★ the case says nothing unless at least one wire is copied: {plan}"
+    );
+    let now = lab_links(state);
+    // ★★★★★ Every wire that was there is either STILL there, or the report
+    // named the copy that displaced it. Stated this way rather than as "the
+    // source keeps everything" because replacement on a single-producer seat is
+    // ordinary here — what must never happen is that one goes UNSAID.
+    for (from, to) in &before {
+        if now.iter().any(|wire| wire == &(from.clone(), to.clone())) {
+            continue;
+        }
+        assert!(
+            taken.iter().any(|row| row["displaced"].is_number()),
+            "★★★★★ {from} -> {to} is gone and no copy said it displaced \
+             anything: {plan}"
+        );
+    }
+    assert!(
+        now.iter().any(|(from, _)| from == &other),
+        "★ and the pin that was copied TO now carries wires: {now:?}"
+    );
+}
+
+/// Phase 4 — **the ask itself is refused by name**, separately from any wire.
+///
+/// Two errors that belong to the caller rather than to a wire: a pin asked to
+/// take its own wires, and two pins that are different ends of a link. Each is
+/// its own sentence, because *this request makes no sense* and *this wire will
+/// not go there* are different facts and the engine reports both as one
+/// response.
+fn the_ask_itself_is_refused_by_name(state: &std::rc::Rc<ShellState>, busiest: &str) {
+    let before = lab_links(state);
+    let itself = lab_invoke(
+        state,
+        "move_links",
+        &format!("{busiest}.dial,{busiest}.dial"),
+    );
+    assert!(
+        itself.is_err(),
+        "★ a pin cannot take its own wires: {itself:?}"
+    );
+    let crossed = lab_invoke(
+        state,
+        "move_links",
+        &format!("{busiest}.dial,{busiest}.accept"),
+    );
+    assert!(
+        crossed.is_err(),
+        "★ a producing pin's wires cannot land on an accepting one: {crossed:?}"
+    );
+    let missing = lab_invoke(state, "move_links", &format!("{busiest}.dial,nowhere.dial"));
+    assert!(
+        missing.is_err(),
+        "★ and a card that is not there: {missing:?}"
+    );
+    assert_eq!(
+        lab_links(state),
+        before,
+        "★★ and not one of those three refusals touched a wire"
+    );
 }
 
 /// ★★★★★ R1992 — **the assembled tool takes a card dropped onto a standing wire

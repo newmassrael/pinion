@@ -58,6 +58,7 @@ use pinion_node_graph::{
     Copying, DefinitionAct, DefinitionError, InZone, InsertError, PairError, Renamed, Tree, Used,
 };
 use pinion_node_graph::{Fit, Margin, Unframed, ZoomRange};
+use pinion_node_graph::{Reception, RelocateError, Relocation};
 use pinion_node_graph::{RoomError, SpliceError, Verdict, Widening};
 
 // ---------------------------------------------------------------- taxonomy
@@ -842,7 +843,24 @@ fn proofs() -> Vec<Proof> {
     all.extend(r1987_autowire_proofs());
     all.extend(r1988_focus_proofs());
     all.extend(r1991_frame_proofs());
+    all.extend(r1993_relocate_proofs());
     all
+}
+
+/// R1993 — the schema's two whole-port link operations, *move* and *copy*.
+fn r1993_relocate_proofs() -> Vec<Proof> {
+    vec![
+        proof(
+            "engine",
+            "schema::MovePinLinks",
+            engine_schema_move_pin_links,
+        ),
+        proof(
+            "engine",
+            "schema::CopyPinLinks",
+            engine_schema_copy_pin_links,
+        ),
+    ]
 }
 
 /// R1991 — the script editor's two view operations, *zoom to window* and *zoom
@@ -4403,6 +4421,311 @@ const CLEARANCE: i32 = 50;
 ///    reference has no member for, which is why the census row could not be
 ///    closed by pointing at a bool.
 ///
+/// A source feeding two consumers, so one output port holds **two** links —
+/// which is what a whole-port operation needs and what a chain cannot give.
+///
+/// `two -> add.0`, `two -> mul.0`, `three -> add.1`. `add` is downstream of
+/// `two`, which is what makes the mixed case below reachable: aiming `two`'s
+/// links at `add`'s own output closes a loop for one of them and not the other.
+struct FanOut {
+    document: Document<Op>,
+    two: NodeId,
+    three: NodeId,
+    add: NodeId,
+    mul: NodeId,
+}
+
+fn fan_out() -> FanOut {
+    let mut document = Document::new("root");
+    let two = num(&mut document, 2);
+    let three = num(&mut document, 3);
+    let add = node(&mut document, Op::Add);
+    let mul = node(&mut document, Op::Mul);
+    wire(&mut document, two, 0, add, 0);
+    wire(&mut document, two, 0, mul, 0);
+    wire(&mut document, three, 0, add, 1);
+    FanOut {
+        document,
+        two,
+        three,
+        add,
+        mul,
+    }
+}
+
+/// Which links each report says were taken, and which refused — read back as
+/// ids so an assertion names links rather than counts alone.
+fn split_report<E>(report: &Relocation<E>) -> (Vec<LinkId>, Vec<LinkId>) {
+    let mut taken = Vec::new();
+    let mut refused = Vec::new();
+    for (id, how) in &report.links {
+        if how.taken() {
+            taken.push(*id);
+        } else {
+            refused.push(*id);
+        }
+    }
+    (taken, refused)
+}
+
+/// ★★★★★ R1993 — a **moved** wire says what it replaced on arrival.
+///
+/// ⚠ **This exists because a counterfactual PASSED.** Blanking the move
+/// report's `displaced` left every gate green, and the reason is the
+/// population, not the assertion: a *producing* port holds many wires, so
+/// moving onto one displaces nothing and the field is always `None` on that
+/// side. An *accepting* port holds one. So the case was unreachable rather than
+/// unasserted, and the repair is a fixture that reaches it — R1845's rule.
+///
+/// The engine's `MakeLinkTo` performs the same replacement and its single
+/// response has no member that could name it.
+fn a_moved_wire_names_what_it_displaced() {
+    let FanOut {
+        mut document,
+        three,
+        add,
+        ..
+    } = fan_out();
+    // `add.0` is fed by `two` and `add.1` by `three`. Moving the accepting end
+    // of `add.0`'s wire onto `add.1` therefore lands on a seat that is taken.
+    let done = document
+        .move_links(ROOT, Side::Input, Socket::new(add, 0), Socket::new(add, 1))
+        .expect("both ports exist and differ");
+    assert_eq!(done.taken(), 1, "one wire arrived at add.0: {done:?}");
+    let Reception::Taken { displaced, .. } = &done.links[0].1 else {
+        panic!("the seat takes it: {done:?}");
+    };
+    let gone = displaced.expect(
+        "★★★★★ the accepting seat already held three's wire, and the report must \
+         SAY the arriving wire replaced it -- an aggregate that dropped this \
+         would be blinder than the single-wire verb it is built from",
+    );
+    assert_eq!(
+        gone.from,
+        Socket::new(three, 0),
+        "and it names WHICH wire went: {done:?}"
+    );
+    assert_eq!(
+        arrives(&document, Socket::new(add, 1)),
+        Some(Val::Number(2)),
+        "★ the graph agrees — add.1 is fed by two now"
+    );
+}
+
+/// ★★★★★ R1993 — the engine's `MovePinLinks`: **every link on one port taken
+/// to another**, and a refusal that does not cost a link.
+///
+/// Measured at the engine's implementation: it snapshots the from-pin's links,
+/// **breaks every one of them**, and only then asks `CanCreateConnection` for
+/// each against the target. Whatever the target refuses is therefore *already
+/// gone*, and the single response it returns is overwritten by each failure so
+/// it names only the last.
+///
+/// The assertions that would fail if the capability were missing:
+///
+/// 1. a port's links move as a set, and each moved link is **the same link** —
+///    same id, so nothing keyed by it dangles;
+/// 2. a link the target refuses **stays where it was**, which is the engine's
+///    defect stated as a property;
+/// 3. the report is **per link**, so a mixed outcome names which of them;
+/// 4. asking is separable from doing, and answers the same thing.
+#[test]
+fn engine_schema_move_pin_links() {
+    a_moved_wire_names_what_it_displaced();
+    let FanOut {
+        mut document,
+        two,
+        three,
+        add,
+        mul,
+    } = fan_out();
+    let out = |node: NodeId| Socket::new(node, 0);
+    let held: Vec<LinkId> = document
+        .tree(ROOT)
+        .unwrap()
+        .links()
+        .iter()
+        .filter(|link| link.from == out(two))
+        .map(|link| link.id)
+        .collect();
+    assert_eq!(held.len(), 2, "the fixture puts two links on one port");
+
+    // ★ (4) Asked first, and it is the same answer.
+    let asked = document
+        .may_move_links(ROOT, Side::Output, out(two), out(add))
+        .expect("both ports exist and differ");
+    // ★ (3) MIXED, and mixed on purpose: `add` is downstream of `two`, so
+    // aiming `two -> add.0` at `add`'s own output would close a loop, while
+    // `two -> mul.0` becomes `add -> mul.0` and is fine.
+    let (taken, refused) = split_report(&asked);
+    assert_eq!(
+        (taken.len(), refused.len()),
+        (1, 1),
+        "one of the two would be refused: {asked:?}"
+    );
+    assert!(!asked.complete(), "so the move is not complete");
+    let doomed = refused[0];
+    let survivor = taken[0];
+
+    let before = document.clone();
+    let done = document
+        .move_links(ROOT, Side::Output, out(two), out(add))
+        .expect("both ports exist and differ");
+    assert_eq!(done, asked, "the verb did what the question said");
+    assert_ne!(document, before, "and it did something");
+
+    let links = document.tree(ROOT).unwrap().links().to_vec();
+    let of = |id: LinkId| *links.iter().find(|l| l.id == id).expect("still a link");
+    // ★ (1) The one that moved is the SAME link, on the new port.
+    assert_eq!(
+        of(survivor).from,
+        out(add),
+        "the moved link left the old port"
+    );
+    assert_eq!(
+        of(survivor).to,
+        Socket::new(mul, 0),
+        "★ and it is the same link, under the id it always had -- the engine \
+         breaks and re-makes, so its consumer would be holding a new one"
+    );
+    // ★★★★★ (2) THE ONE THE TARGET REFUSED IS STILL THERE, STILL ON `two`.
+    assert_eq!(
+        of(doomed).from,
+        out(two),
+        "★★★★★ a link the target would not take STAYS on the port it was on -- \
+         the engine has already broken it by the time it finds out, and the \
+         graph loses the edge"
+    );
+    assert_eq!(
+        arrives(&document, Socket::new(add, 0)),
+        Some(Val::Number(2)),
+        "★ so the graph still computes through it"
+    );
+
+    // The caller's own errors, each reachable and each named.
+    assert!(matches!(
+        document.may_move_links(ROOT, Side::Output, out(two), out(two)),
+        Err(RelocateError::SamePort(_))
+    ));
+    assert!(matches!(
+        document.may_move_links(ROOT, Side::Output, out(two), Socket::new(three, 7)),
+        Err(RelocateError::NoSuchPort { port: 7, .. })
+    ));
+    // ★ The counterfactual for the three refusals above: the SAME call shape,
+    // on ports that are fine. Without it, "each is refused" would hold for a
+    // vet that refused everything.
+    assert!(
+        document
+            .may_move_links(ROOT, Side::Output, out(two), Socket::new(add, 0))
+            .is_ok(),
+        "an ordinary pair of ports is admitted"
+    );
+    // A port with nothing on it is an ANSWER, not a refusal -- and `complete`
+    // is true for it, which is why `links` is published beside that flag.
+    let empty = document
+        .may_move_links(ROOT, Side::Output, Socket::new(mul, 0), out(three))
+        .expect("mul has an output port");
+    assert!(
+        empty.links.is_empty() && empty.complete(),
+        "nothing to move is complete and empty: {empty:?}"
+    );
+}
+
+/// ★★★★★ R1993 — the engine's `CopyPinLinks`: **another port given a copy of
+/// every link on this one**, with what each copy replaced named.
+///
+/// The engine walks the from-pin's links and calls `MakeLinkTo` on the target
+/// for each the target admits, returning one response that the loop overwrites.
+/// On a single-producer input `MakeLinkTo` breaks what was there, and nothing
+/// in the response says so.
+///
+/// The assertions that would fail if the capability were missing:
+///
+/// 1. the source keeps every link it had — a copy is not a move;
+/// 2. each copy is a **new** link, and the report names it;
+/// 3. ★ each copy **names what it displaced**, which it must, because a value
+///    input takes one producer and so a whole-port copy replaces on every
+///    consumer.
+#[test]
+fn engine_schema_copy_pin_links() {
+    let FanOut {
+        mut document,
+        two,
+        three,
+        add,
+        mul,
+    } = fan_out();
+    let out = |node: NodeId| Socket::new(node, 0);
+    let was: Vec<LinkId> = document
+        .tree(ROOT)
+        .unwrap()
+        .links()
+        .iter()
+        .filter(|link| link.from == out(two))
+        .map(|link| link.id)
+        .collect();
+
+    let asked = document
+        .may_copy_links(ROOT, Side::Output, out(two), out(three))
+        .expect("both ports exist and differ");
+    let untouched = document.clone();
+    let done = document
+        .copy_links(ROOT, Side::Output, out(two), out(three))
+        .expect("both ports exist and differ");
+    assert_eq!(done, asked, "the verb did what the question said");
+    assert_ne!(document, untouched, "and it did something");
+    assert!(
+        done.complete(),
+        "a number source feeds both consumers: {done:?}"
+    );
+
+    let (taken, _) = split_report(&done);
+    assert_eq!(
+        taken, was,
+        "the report is keyed by the links that were there"
+    );
+    let made: Vec<LinkId> = done
+        .links
+        .iter()
+        .map(|(_, how)| match how {
+            // ★ (2)(3) The new link, and what it replaced.
+            Reception::Taken { link, displaced } => {
+                assert!(
+                    displaced.is_some(),
+                    "★★★★★ a value input takes ONE producer, so every copy \
+                     REPLACED the original -- a report that did not say so \
+                     would be describing an edit that silently deleted an edge"
+                );
+                *link
+            }
+            Reception::Refused(why) => panic!("nothing should refuse here: {why:?}"),
+        })
+        .collect();
+    assert!(
+        made.iter().all(|id| !was.contains(id)),
+        "★ each copy is a NEW link: was {was:?}, made {made:?}"
+    );
+
+    // ★ (1) A copy is not a move, so what the source still feeds is the honest
+    // question -- and here the answer is that the DISPLACEMENT took its links,
+    // which is a property of the consuming side rather than of `copy_links`.
+    let now = document.tree(ROOT).unwrap().links().to_vec();
+    assert!(
+        was.iter().all(|id| !now.iter().any(|l| l.id == *id)),
+        "★ each original was displaced by its own copy, and the report SAID so \
+         -- the engine's `MakeLinkTo` does the same and its response cannot"
+    );
+    assert_eq!(
+        arrives(&document, Socket::new(add, 0)),
+        Some(Val::Number(3)),
+        "so both consumers are now fed by the port that was copied to"
+    );
+    assert_eq!(
+        arrives(&document, Socket::new(mul, 0)),
+        Some(Val::Number(3))
+    );
+}
+
 /// The two halves are separate functions because they share no state — one
 /// works on a computing chain, the other on a row of placed cards — and because
 /// the pair together is over this workspace's hundred-line bound for one body.

@@ -12776,6 +12776,57 @@ const FIELDS: &[SchemaField] = &{
                 ]
             },
         ),
+        // ★★★★★ R1993 — take every wire on one pin to another pin, and the
+        // half that reads what it WOULD do. Four paths and not two because
+        // *would this lose me a wire* is a question the floor's own surface
+        // cannot be asked: its operation is the only way to find out.
+        //
+        // `<card>.<pin>,<card>.<pin>` for all four — one grammar, because a pin
+        // is a pin whichever verb reaches for it.
+        SchemaField::action_with(
+            "move_links",
+            "string",
+            ArgForm::Delimited(','),
+            const {
+                &[
+                    SchemaArg::key("from", "string", "nodes"),
+                    SchemaArg::key("to", "string", "nodes"),
+                ]
+            },
+        ),
+        SchemaField::action_with(
+            "copy_links",
+            "string",
+            ArgForm::Delimited(','),
+            const {
+                &[
+                    SchemaArg::key("from", "string", "nodes"),
+                    SchemaArg::key("to", "string", "nodes"),
+                ]
+            },
+        ),
+        SchemaField::action_with(
+            "may_move_links",
+            "json",
+            ArgForm::Delimited(','),
+            const {
+                &[
+                    SchemaArg::key("from", "string", "nodes"),
+                    SchemaArg::key("to", "string", "nodes"),
+                ]
+            },
+        ),
+        SchemaField::action_with(
+            "may_copy_links",
+            "json",
+            ArgForm::Delimited(','),
+            const {
+                &[
+                    SchemaArg::key("from", "string", "nodes"),
+                    SchemaArg::key("to", "string", "nodes"),
+                ]
+            },
+        ),
         // ★★★★★ R1992 — the wire a carried card is aimed at, and whether it
         // will be taken, read WHILE the hand still holds the card. The floor
         // marks this on the wire and nothing outside its drawing can ask; here
@@ -14318,6 +14369,22 @@ impl ExternalIntrospect for LabOracle {
                     InvokeError::rejected(format!("{:?} is not a node on the canvas", onto.trim()))
                 })?;
                 insert_on_link(&state, id, node).map(IntrospectValue::Text)
+            }
+            // ★★★★★ R1993 — a whole pin's wires taken to another pin. The two
+            // doing verbs answer the sentence a person reads; the two asking
+            // ones answer the report, which is the half the floor has no form
+            // of.
+            "move_links" => {
+                relocate_links(&state, &Self::text(&args)?, false).map(IntrospectValue::Text)
+            }
+            "copy_links" => {
+                relocate_links(&state, &Self::text(&args)?, true).map(IntrospectValue::Text)
+            }
+            "may_move_links" => {
+                relocation_report(&state, &Self::text(&args)?, false).map(IntrospectValue::Json)
+            }
+            "may_copy_links" => {
+                relocation_report(&state, &Self::text(&args)?, true).map(IntrospectValue::Json)
             }
             // A number, because the seats a person can press are a numbered row
             // and an agent addressing them by locator would be addressing a
@@ -16937,6 +17004,187 @@ fn land_on_wire(state: &Rc<LabState>, between: (NodeId, NodeId), node: NodeId) {
 /// and runs after. Keeping them apart here means a refused splice never moves
 /// anything, and a row that had nothing to do still reports the splice.
 ///
+/// ★★★★★ R1993 — one end of a whole-port operation: `<card>.<pin>`, resolved to
+/// the socket and the side it names.
+///
+/// The pin vocabulary is [`pin_address`]'s, because a pin is a pin whichever
+/// verb reaches for it, and the card's name is split at the FIRST dot — a card
+/// name cannot contain one and a pin address can, which is the same rule the
+/// press path follows for `lab.pin.` tags.
+fn pin_socket(state: &LabState, word: &str) -> Result<(Side, Socket), InvokeError> {
+    let (card, address) = word
+        .trim()
+        .split_once('.')
+        .ok_or_else(|| InvokeError::rejected(format!("{word:?} is not <card>.<pin>")))?;
+    let node = state
+        .node_of(card)
+        .ok_or_else(|| InvokeError::rejected(format!("{card:?} is not a card on the canvas")))?;
+    let (side, path) = pin_address(address)?;
+    let port = state
+        .doc
+        .borrow()
+        .index_of(state.here(), node, side, &path)
+        .ok_or_else(|| InvokeError::rejected(format!("{card} has no pin at {address:?}")))?;
+    Ok((side, Socket::new(node, port)))
+}
+
+/// ★★★★★ R1993 — **take every wire on one pin to another pin**, moved or
+/// copied, and say what happened to each.
+///
+/// One function for both because they are one question asked two ways, and
+/// because the SENTENCE is the interesting part either way: the floor answers a
+/// whole-port operation with a single response its own loop overwrites, so a
+/// person is told that something went wrong and never which wire. Here the
+/// count of what was taken and the count of what stayed are both said, and a
+/// wire that stayed is still on the pin it was on.
+fn relocate_links(state: &Rc<LabState>, words: &str, copying: bool) -> Result<String, InvokeError> {
+    let (from_word, to_word) = words.split_once(',').ok_or_else(|| {
+        InvokeError::rejected(format!("{words:?} is not <card>.<pin>,<card>.<pin>"))
+    })?;
+    let (from_side, from) = pin_socket(state, from_word)?;
+    let (to_side, to) = pin_socket(state, to_word)?;
+    if from_side != to_side {
+        // A producing pin's wires cannot land on an accepting one: they are
+        // different ends of a link. Refused by name rather than left to fail
+        // per wire, because it is the ASK that is wrong, not any one wire.
+        let said = Utterance::refused(&format!(
+            "{} and {} are different kinds of pin",
+            from_word.trim(),
+            to_word.trim()
+        ));
+        state.say(said.clone());
+        return Err(InvokeError::rejected(said.into_clause()));
+    }
+    let here = state.here();
+    let sentence = |taken: usize, stayed: usize| {
+        let verb = if copying { "copied" } else { "moved" };
+        if stayed == 0 {
+            format!(
+                "{verb} {taken} wire(s) from {} to {}",
+                from_word.trim(),
+                to_word.trim()
+            )
+        } else {
+            // ★ The half the floor cannot say. `stayed` is only meaningful for
+            // a move -- a copy leaves everything anyway -- so the word differs.
+            let rest = if copying {
+                "were refused"
+            } else {
+                "stayed put"
+            };
+            format!(
+                "{verb} {taken} wire(s) from {} to {}, {stayed} {rest}",
+                from_word.trim(),
+                to_word.trim()
+            )
+        }
+    };
+    let said = if copying {
+        let done = state
+            .doc
+            .borrow_mut()
+            .copy_links(here, from_side, from, to)
+            .map_err(|why| {
+                let said = Utterance::refused(&why.to_string());
+                state.say(said.clone());
+                InvokeError::rejected(said.into_clause())
+            })?;
+        sentence(done.taken(), done.refused())
+    } else {
+        let done = state
+            .doc
+            .borrow_mut()
+            .move_links(here, from_side, from, to)
+            .map_err(|why| {
+                let said = Utterance::refused(&why.to_string());
+                state.say(said.clone());
+                InvokeError::rejected(said.into_clause())
+            })?;
+        sentence(done.taken(), done.refused())
+    };
+    // A wire that changed pins may now speak a transport it did not before,
+    // exactly as `adopt`, `relink` and the drop leave it to this to work out.
+    settle_transports(state);
+    state.say(Utterance::done(said.clone()));
+    Ok(said)
+}
+
+/// ★★★★★ R1993 — **what taking one pin's wires to another would do**, read
+/// without doing it.
+///
+/// The half the floor has no form of: its operation is the only way to find
+/// out, so *would this lose me a wire* can be asked only by asking it to.
+fn relocation_report(
+    state: &Rc<LabState>,
+    words: &str,
+    copying: bool,
+) -> Result<serde_json::Value, InvokeError> {
+    let (from_word, to_word) = words.split_once(',').ok_or_else(|| {
+        InvokeError::rejected(format!("{words:?} is not <card>.<pin>,<card>.<pin>"))
+    })?;
+    let (from_side, from) = pin_socket(state, from_word)?;
+    let (to_side, to) = pin_socket(state, to_word)?;
+    if from_side != to_side {
+        return Err(InvokeError::rejected(format!(
+            "{} and {} are different kinds of pin",
+            from_word.trim(),
+            to_word.trim()
+        )));
+    }
+    let here = state.here();
+    let doc = state.doc.borrow();
+    // ★ One shape for both answers, so a reader of the copy report and a reader
+    // of the move report are not learning two vocabularies for one question.
+    let (taken, refused, rows) = if copying {
+        let asked = doc
+            .may_copy_links(here, from_side, from, to)
+            .map_err(|why| InvokeError::rejected(why.to_string()))?;
+        let rows = relocation_rows(&asked.links, |why| format!("{why:?}"));
+        (asked.taken(), asked.refused(), rows)
+    } else {
+        let asked = doc
+            .may_move_links(here, from_side, from, to)
+            .map_err(|why| InvokeError::rejected(why.to_string()))?;
+        let rows = relocation_rows(&asked.links, |why| format!("{why:?}"));
+        (asked.taken(), asked.refused(), rows)
+    };
+    Ok(serde_json::json!({
+        "from": from_word.trim(),
+        "to": to_word.trim(),
+        "taken": taken,
+        // ★ For a move this is how many wires would STAY where they are, which
+        // is the number the floor's break-then-ask makes unanswerable: there,
+        // they would simply be gone.
+        "refused": refused,
+        "complete": refused == 0,
+        "wires": rows,
+    }))
+}
+
+/// One row per wire, in the order the verb would try them.
+fn relocation_rows<E>(
+    links: &[(LinkId, pinion_node_graph::Reception<E>)],
+    why: impl Fn(&E) -> String,
+) -> Vec<serde_json::Value> {
+    links
+        .iter()
+        .map(|(id, how)| match how {
+            pinion_node_graph::Reception::Taken { displaced, .. } => serde_json::json!({
+                "wire": id.0,
+                "taken": true,
+                // What arriving would replace, which a value input makes
+                // ordinary rather than exceptional.
+                "displaced": displaced.map(|gone| gone.id.0),
+            }),
+            pinion_node_graph::Reception::Refused(reason) => serde_json::json!({
+                "wire": id.0,
+                "taken": false,
+                "why": why(reason),
+            }),
+        })
+        .collect()
+}
+
 /// The sentence says both halves, because they are two facts a person can see
 /// separately — the wire now goes through the card, and its neighbours slid
 /// over. A single "done" would make the second invisible.
