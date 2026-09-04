@@ -150,6 +150,36 @@ impl fmt::Display for NoHome {
 impl std::error::Error for NoHome {}
 
 impl<K: NodeKind> Document<K> {
+    /// ★★★★★ R1994 — the nodes of a tree that are **steps in a graph**, rather
+    /// than regions on a canvas, ascending.
+    ///
+    /// A [`NodeBody::Frame`](crate::NodeBody)'s signature is empty by
+    /// construction, so no link can ever reach or leave one. Every question of
+    /// the form *what is this graph's shape* has to leave those out, and asking
+    /// the SIGNATURE rather than naming the body means a body added later with
+    /// the same emptiness is covered without another edit.
+    ///
+    /// ★ R1995 — lifted to `pub(crate)` when [`Document::unused`] became the
+    /// second caller. It was found by the assembled screen once already
+    /// (frames answered as ends); a second spelling of it would have been a
+    /// second chance to make the same mistake, and there the cost would have
+    /// been *deleting the host frames*.
+    pub(crate) fn steps(&self, tree: TreeId) -> Vec<NodeId> {
+        let Some(host) = self.tree(tree) else {
+            return Vec::new();
+        };
+        let mut steps: Vec<NodeId> = host
+            .nodes()
+            .map(|node| node.id)
+            .filter(|node| {
+                self.signature(tree, *node)
+                    .is_some_and(|face| !face.inputs.is_empty() || !face.outputs.is_empty())
+            })
+            .collect();
+        steps.sort_unstable();
+        steps
+    }
+
     /// ★★★★★ R1994 — **where this graph ends up**, asked of the graph rather
     /// than of a camera.
     ///
@@ -164,26 +194,16 @@ impl<K: NodeKind> Document<K> {
     ///
     /// # Errors
     ///
-    /// [`NoHome`] — the tree is not there, it has no nodes, or every node feeds
-    /// another.
+    /// [`NoHome`] — the tree is not there, nothing in it is a step, or every
+    /// step feeds another.
     pub fn home(&self, tree: TreeId) -> Result<Home, NoHome> {
         let host = self.tree(tree).ok_or(NoHome::NoSuchTree(tree))?;
-        let mut nodes: Vec<NodeId> = host.nodes().map(|node| node.id).collect();
-        nodes.sort_unstable();
         // ★★★★★ A node that CANNOT be linked is not a place the graph ends — it
         // is a region on the canvas. Measured on the assembled screen: without
         // this the two host frames were reported as ends, because a frame's
         // signature is empty BY CONSTRUCTION so no link can ever leave one and
-        // it qualified forever. Asked of the signature rather than by naming
-        // `NodeBody::Frame`, so a body added later with the same emptiness is
-        // handled on the same commit.
-        let steps: Vec<NodeId> = nodes
-            .into_iter()
-            .filter(|node| {
-                self.signature(tree, *node)
-                    .is_some_and(|face| !face.inputs.is_empty() || !face.outputs.is_empty())
-            })
-            .collect();
+        // it qualified forever. See [`Document::steps`].
+        let steps = self.steps(tree);
         if steps.is_empty() {
             return Err(NoHome::Empty);
         }

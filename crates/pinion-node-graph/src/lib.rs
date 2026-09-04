@@ -241,6 +241,7 @@ mod observed;
 mod occupancy;
 mod palette;
 mod partition;
+mod prune;
 mod relink;
 mod relocate;
 mod reroute;
@@ -307,6 +308,7 @@ pub use observed::{
 pub use occupancy::Occupants;
 pub use palette::{Palette, palette_of, type_palette};
 pub use partition::{PortChange, RepartitionError, Repartitioned, Sharing};
+pub use prune::{Doomed, NotPrunable, Pruned, Unused};
 pub use relink::{RelinkError, Relinked};
 pub use relocate::{Reception, RelocateError, Relocation};
 pub use reroute::{Passing, RerouteError, Rerouted};

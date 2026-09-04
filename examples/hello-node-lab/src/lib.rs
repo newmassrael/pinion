@@ -12375,6 +12375,13 @@ const FIELDS: &[SchemaField] = &{
         SchemaField::action("fit", "string"),
         // ★★★★★ R1994 — go to where the graph ends up.
         SchemaField::action("home", "string"),
+        // ★★★★★ R1995 — take out what nothing among the named outputs reaches,
+        // and the half that reads what it WOULD take. Two paths under two
+        // names, because R1989's rule is that one path is a read or an action
+        // and never both — and the asking half has to take an argument, so it
+        // is an action that answers rather than a read.
+        SchemaField::action("prune", "string"),
+        SchemaField::action("may_prune", "json"),
         // ★ And the reading, under a DIFFERENT name. R1989's rule: one path is
         // a read or an action, never both, and a `home` declared twice would
         // leave whichever came second unreachable and undescribed.
@@ -14367,6 +14374,9 @@ impl ExternalIntrospect for LabOracle {
             "fit" => Ok(IntrospectValue::Text(fit_view(&state))),
             // ★★★★★ R1994 — the same function the toolbar seat presses.
             "home" => Ok(IntrospectValue::Text(home_view(&state))),
+            // ★★★★★ R1995 — what nothing among the named outputs reaches.
+            "prune" => prune_graph(&state, &Self::text(&args)?).map(IntrospectValue::Text),
+            "may_prune" => prune_report(&state, &Self::text(&args)?).map(IntrospectValue::Json),
             // ★★★★★ R1991 — and the third, which REFUSES: an empty or stale
             // selection is an `InvokeError` carrying the crate's own sentence,
             // where the floor's equivalent silently does nothing and leaves a
@@ -18767,6 +18777,94 @@ fn fit_view(state: &LabState) -> String {
     });
     state.say(said.clone());
     said.sentence()
+}
+
+/// ★★★★★ R1995 — the outputs a caller named, as cards on this canvas.
+///
+/// A comma-separated list, because a graph may be for more than one thing and
+/// the crate takes them all. An empty list reaches the crate as an empty list
+/// and is refused THERE, by name, rather than being turned into a default here:
+/// what a graph is for is not something this screen may decide on a person's
+/// behalf, and the refusal is the whole point of the operation's first
+/// improvement over the reference.
+fn named_outputs(state: &LabState, words: &str) -> Result<Vec<NodeId>, InvokeError> {
+    words
+        .split(',')
+        .map(str::trim)
+        .filter(|word| !word.is_empty())
+        .map(|name| {
+            state.node_of(name).ok_or_else(|| {
+                InvokeError::rejected(format!("{name:?} is not a card on the canvas"))
+            })
+        })
+        .collect()
+}
+
+/// ★★★★★ R1995 — **what nothing among these outputs reaches**, read without
+/// taking anything out.
+///
+/// The half the reference has no form of: `GetUnusedExpressions` is a helper on
+/// the graph and the editor exposes only the destructive command, so a person
+/// cannot ask *what would this take* except by taking it.
+fn prune_report(state: &Rc<LabState>, words: &str) -> Result<serde_json::Value, InvokeError> {
+    let outputs = named_outputs(state, words)?;
+    let asked = state
+        .doc
+        .borrow()
+        .unused(state.here(), &outputs)
+        .map_err(|why| InvokeError::rejected(why.to_string()))?;
+    Ok(serde_json::json!({
+        // The premise, published beside the answer.
+        "from": asked.from.iter().map(|node| state.name_of(*node)).collect::<Vec<_>>(),
+        "clean": asked.clean(),
+        "cards": asked
+            .nodes
+            .iter()
+            .map(|doomed| serde_json::json!({
+                "card": state.name_of(doomed.node),
+                // ★ The reference's yes/no dialog, as a fact per card.
+                "structural": doomed.structural,
+            }))
+            .collect::<Vec<_>>(),
+    }))
+}
+
+/// ★★★★★ R1995 — **take out what nothing among these outputs reaches.**
+///
+/// Says what went, what would not go and why, and — when there was nothing to
+/// do — that there was nothing to do. The reference returns `void` either way.
+fn prune_graph(state: &Rc<LabState>, words: &str) -> Result<String, InvokeError> {
+    let outputs = named_outputs(state, words)?;
+    let done = state
+        .doc
+        .borrow_mut()
+        .prune(state.here(), &outputs)
+        .map_err(|why| {
+            let said = Utterance::refused(&why.to_string());
+            state.say(said.clone());
+            InvokeError::rejected(said.into_clause())
+        })?;
+    let said = if done.gone.is_empty() && done.kept.is_empty() {
+        "nothing here is unused".to_owned()
+    } else {
+        // ★ The second clause is the half the reference cannot say: it has no
+        // per-node gate, so nothing can refuse and nothing has to be reported.
+        let refused = if done.kept.is_empty() {
+            String::new()
+        } else {
+            format!(", {} would not go", done.kept.len())
+        };
+        format!(
+            "took out {} card(s) and {} wire(s){refused}",
+            done.gone.len(),
+            done.links
+        )
+    };
+    // A card that went may have been the one the inspector was showing, and a
+    // wire that went may have been the one whose transport another card read.
+    settle_transports(state);
+    state.say(Utterance::done(said.clone()));
+    Ok(said)
 }
 
 /// ★★★★★ R1994 — **where the graph ends up**, read without going there.

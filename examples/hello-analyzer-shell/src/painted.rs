@@ -10671,6 +10671,182 @@ fn lab_card_boxes(shot: &Painted) -> std::collections::BTreeMap<String, Rect> {
         .collect()
 }
 
+/// ★★★★★ R1995 — **the assembled tool says what nothing reaches before it takes
+/// anything out, and refuses to guess what the graph is for** — driven on the
+/// shell, over one walk.
+///
+/// # What this reproduces
+///
+/// The reference's material editor has a *Clean Unused Expressions* menu entry.
+/// Measured at its body: it asks `GetUnusedExpressions` for a flat list — a
+/// walk upstream from the material's root node or a function's outputs — and
+/// deletes it, having first asked yes/no about the function inputs and outputs
+/// among the doomed and said nothing about the rest.
+///
+/// The crate's half is proven against the reference in `pinion-node-graph`'s
+/// own census test. **What is proven here is what only an assembled application
+/// can answer**: that a person can ask what would go before anything goes, that
+/// the answer names what it was measured against, that naming nothing is
+/// refused rather than taken as *everything*, and that what actually leaves the
+/// canvas is what the answer said.
+///
+/// # Which screen this lands on
+///
+/// Screen A, the node lab, as it is assembled in this shell. Second-pass work:
+/// the behaviour canon has no such operation, and this comes from the floor.
+#[test]
+fn r1995_the_assembled_tool_says_what_nothing_reaches_before_taking_it_out() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let report = crate::tests::walk_the_application(&state);
+        assert!(
+            report.conforms(),
+            "the application did not reproduce its specification over the walk: {}",
+            report.why().unwrap_or_default()
+        );
+        assert!(
+            report.itinerary().iter().any(|key| key == "lab"),
+            "the walk must stand in the node lab: {:?}",
+            report.itinerary()
+        );
+
+        state.go("lab").expect("the node lab section is open");
+        naming_no_output_is_refused_rather_than_taken_as_everything(&state);
+        let doomed = asking_names_what_would_go_and_what_it_was_measured_against(&state);
+        taking_them_out_removes_exactly_what_was_named(&state, &doomed);
+    });
+}
+
+/// Phase 1 — **naming nothing is refused.**
+///
+/// ★ The reference's walk starts from an empty stack when a graph has no root,
+/// marks nothing, and returns EVERY node — which its command then deletes. This
+/// is the one place where answering the question at all is the defect.
+fn naming_no_output_is_refused_rather_than_taken_as_everything(state: &std::rc::Rc<ShellState>) {
+    let before = lab_cards(state);
+    let refused = lab_invoke(state, "may_prune", "");
+    assert!(
+        refused.is_err(),
+        "★★★★★ naming no output is refused — the reference computes `all of it` \
+         here and hands that to a command that empties the canvas: {refused:?}"
+    );
+    assert!(
+        lab_invoke(state, "prune", "").is_err(),
+        "★ and the verb refuses on the same terms as the question"
+    );
+    assert_eq!(
+        lab_cards(state),
+        before,
+        "★★ and not one card left the canvas over either refusal"
+    );
+    // A card that is not there is refused too, rather than skipped — skipping
+    // would quietly ask about a SMALLER set of outputs, and a smaller set
+    // condemns more cards.
+    assert!(
+        lab_invoke(state, "may_prune", "nowhere").is_err(),
+        "★ a card that is not on the canvas is not an output"
+    );
+}
+
+/// Phase 2 — **asking names what would go, and what it was measured against.**
+fn asking_names_what_would_go_and_what_it_was_measured_against(
+    state: &std::rc::Rc<ShellState>,
+) -> Vec<String> {
+    // The graph's own end is the output a person would name — read off the
+    // screen rather than written down here.
+    let output = lab_slot(state, "homing")["at"]
+        .as_str()
+        .expect("the opening graph ends somewhere")
+        .to_owned();
+    let before = lab_cards(state);
+    let plan = lab_report(state, "may_prune", &output);
+    assert_eq!(
+        lab_cards(state),
+        before,
+        "★★ asking took nothing out — the half the reference has no form of"
+    );
+    assert_eq!(
+        plan["from"],
+        serde_json::json!([output]),
+        "★★ the answer names WHAT IT WAS MEASURED AGAINST. A person told which \
+         cards are unused has not been told that only one card counted as an \
+         output, which is the sentence that would make them look again: {plan}"
+    );
+    let doomed: Vec<String> = plan["cards"]
+        .as_array()
+        .expect("a row per card")
+        .iter()
+        .map(|row| {
+            assert!(
+                row["structural"].is_boolean(),
+                "★ each card says whether taking it out is felt outside this \
+                 tree — the reference's yes/no dialog, as a fact per card: {row}"
+            );
+            row["card"].as_str().expect("a card's name").to_owned()
+        })
+        .collect();
+    assert!(
+        !doomed.is_empty() && plan["clean"] == serde_json::Value::Bool(false),
+        "★ the opening graph fans out, so measuring against ONE of its ends \
+         leaves the other branches unreached — the case this phase needs: {plan}"
+    );
+    assert!(
+        !doomed.contains(&output),
+        "★ and the output itself is never among them: {plan}"
+    );
+    doomed
+}
+
+/// Phase 3 — **and taking them out removes exactly what was named.**
+fn taking_them_out_removes_exactly_what_was_named(
+    state: &std::rc::Rc<ShellState>,
+    doomed: &[String],
+) {
+    let output = lab_slot(state, "homing")["at"]
+        .as_str()
+        .expect("the opening graph ends somewhere")
+        .to_owned();
+    let before = lab_cards(state);
+    let said = lab_invoke(state, "prune", &output).expect("an output was named");
+    assert!(
+        said.contains(&doomed.len().to_string()),
+        "★ the sentence counts what went: {said:?}"
+    );
+
+    let now = lab_cards(state);
+    let left: Vec<&String> = before.iter().filter(|card| !now.contains(card)).collect();
+    let mut went: Vec<String> = left.into_iter().cloned().collect();
+    went.sort();
+    let mut named: Vec<String> = doomed.to_vec();
+    named.sort();
+    assert_eq!(
+        went, named,
+        "★★★★★ exactly what the question named is what left the canvas — no \
+         more, which is the assertion a verb that deleted the whole graph would \
+         fail, and no fewer"
+    );
+    assert!(
+        now.contains(&output),
+        "★ and what the graph was measured against is still here"
+    );
+
+    // ★★ Asked again, there is nothing left to take out — and that is an ANSWER,
+    // not a silent no-op. The reference returns void either way.
+    let again = lab_report(state, "may_prune", &output);
+    assert_eq!(
+        again["clean"],
+        serde_json::Value::Bool(true),
+        "★★ pruning twice has nothing left to do: {again}"
+    );
+    let said = lab_invoke(state, "prune", &output).expect("still an output");
+    assert!(
+        said.contains("nothing"),
+        "★★ and the person is TOLD there was nothing to do, rather than left to \
+         wonder whether the press worked: {said:?}"
+    );
+}
+
 /// ★★★★★ R1994 — **the assembled tool goes to where the graph ends up, and
 /// says where that is before going** — driven on the shell, over one walk.
 ///

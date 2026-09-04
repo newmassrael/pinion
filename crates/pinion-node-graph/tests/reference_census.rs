@@ -58,7 +58,7 @@ use pinion_node_graph::{
     Copying, DefinitionAct, DefinitionError, InZone, InsertError, PairError, Renamed, Tree, Used,
 };
 use pinion_node_graph::{Fit, Margin, Unframed, ZoomRange};
-use pinion_node_graph::{NoHome, Reception, RelocateError, Relocation};
+use pinion_node_graph::{NoHome, NotPrunable, Reception, RelocateError, Relocation};
 use pinion_node_graph::{RoomError, SpliceError, Verdict, Widening};
 
 // ---------------------------------------------------------------- taxonomy
@@ -850,11 +850,272 @@ fn proofs() -> Vec<Proof> {
 
 /// R1994 — the material editor's *Home* button.
 fn r1994_home_proofs() -> Vec<Proof> {
-    vec![proof(
-        "engine",
-        "MaterialEditor::CameraHome",
-        engine_material_editor_camera_home,
-    )]
+    vec![
+        proof(
+            "engine",
+            "MaterialEditor::CameraHome",
+            engine_material_editor_camera_home,
+        ),
+        // R1995 — and its *Clean Unused Expressions* menu entry.
+        proof(
+            "engine",
+            "MaterialEditor::CleanUnusedExpressions",
+            engine_material_editor_clean_unused_expressions,
+        ),
+    ]
+}
+
+/// ★★★★★ R1995 — the material editor's *Clean Unused Expressions*: **which
+/// nodes no output reaches**, and taking them out.
+///
+/// Measured at the reference's own body: `CleanUnusedExpressions` asks
+/// `GetUnusedExpressions` for a flat list and deletes it. That list is a
+/// depth-first walk UPSTREAM from the graph's outputs — the material's root
+/// node, or a function's output nodes — following input pins, skipping exec
+/// pins, taking `LinkedTo[0]` on each; everything unmarked is unused. Before
+/// deleting it asks yes/no about the FUNCTION INPUTS AND OUTPUTS among the
+/// doomed, because consumers of the function lose their connections, and says
+/// nothing about the rest.
+///
+/// The assertions that would fail if the capability were missing:
+///
+/// 1. a branch nothing downstream reaches is named, and a stray card with it,
+///    while everything the output depends on is left alone;
+/// 2. asking changes nothing, and doing it does exactly what asking said;
+/// 3. ★ a graph with **nothing to anchor it** is REFUSED — the reference marks
+///    every node unused there and hands that to a command that deletes them;
+/// 4. ★ the doomed that are **structural** are named apart, which is the
+///    reference's dialog turned into a fact per node;
+/// 5. a frame is not rubbish, though no output can ever reach one.
+#[test]
+fn engine_material_editor_clean_unused_expressions() {
+    // `two -> add.0`, `three -> add.1`, `add -> sink.0`, plus a dead branch and
+    // a card nobody wired.
+    let mut chain = chain();
+    let stray = node(&mut chain.document, Op::Double);
+    let dead_source = num(&mut chain.document, 9);
+    let dead_step = node(&mut chain.document, Op::Double);
+    wire(&mut chain.document, dead_source, 0, dead_step, 0);
+
+    // ★★★★★ The outputs are NAMED, not derived, and this fixture is why. The
+    // first draft derived them as *a step with something arriving and nothing
+    // leaving* — and `dead_step` is exactly that shape, so the dead branch
+    // anchored ITSELF and the operation found nothing. The reference gets to
+    // derive because a material HAS a root; nothing here declares one.
+    let asked = chain
+        .document
+        .unused(ROOT, &[chain.sink])
+        .expect("the sink is the output");
+    assert_eq!(
+        asked.from,
+        vec![chain.sink],
+        "★ the premise is published — a person told which nodes are unused has \
+         not been told what they were measured against: {asked:?}"
+    );
+    let doomed: Vec<NodeId> = asked.nodes.iter().map(|d| d.node).collect();
+    let mut want = vec![stray, dead_source, dead_step];
+    want.sort_unstable();
+    assert_eq!(
+        doomed, want,
+        "★ (1) the dead branch AND the card nobody wired: {asked:?}"
+    );
+    for kept in [chain.two, chain.three, chain.add, chain.sink] {
+        assert!(
+            !doomed.contains(&kept),
+            "everything the output depends on is left alone: {asked:?}"
+        );
+    }
+    assert!(!asked.clean(), "there is something to take out");
+    assert!(
+        asked.structural().is_empty(),
+        "★ (4) and none of these is felt outside this tree: {asked:?}"
+    );
+
+    // ★ (2) Asking changed nothing, and doing it does what asking said.
+    let before = chain.document.clone();
+    assert_eq!(
+        chain.document.unused(ROOT, &[chain.sink]).ok(),
+        Some(asked.clone()),
+        "asking twice answers the same"
+    );
+    assert_eq!(chain.document, before, "and asking moved nothing");
+    let done = chain
+        .document
+        .prune(ROOT, &[chain.sink])
+        .expect("the sink is still the output");
+    assert_eq!(
+        done.unused, asked,
+        "the verb acted on what the question said"
+    );
+    assert_eq!(done.gone, want, "and every one of them went");
+    assert!(done.kept.is_empty(), "none refused: {done:?}");
+    assert_eq!(done.links, 1, "the dead branch's one wire went with it");
+    assert_eq!(
+        arrives(&chain.document, Socket::new(chain.sink, 0)),
+        Some(Val::Number(5)),
+        "★ and the graph still computes exactly what it did"
+    );
+    let again = chain
+        .document
+        .unused(ROOT, &[chain.sink])
+        .expect("still the output");
+    assert!(
+        again.clean(),
+        "★ pruning twice has nothing left to do: {again:?}"
+    );
+
+    a_graph_nothing_anchors_is_refused_rather_than_emptied();
+    a_frame_is_not_rubbish();
+    a_doomed_interface_is_named_as_structural();
+}
+
+/// ★★★★★ (4) The doomed whose removal is felt OUTSIDE this tree.
+///
+/// ⚠ **This exists because a counterfactual PASSED.** Making `is_structural`
+/// name the wrong body left every gate green: the fixtures above are all one
+/// flat tree, where no node is half of a signature, so the flag was `false`
+/// everywhere and a lie about it changed nothing. Unreachable rather than
+/// unasserted — the repair is a fixture that reaches it (R1845), and reaching
+/// it means a definition tree, which is the only place an interface node lives.
+///
+/// It is also exactly the case the reference's dialog is about: *any materials
+/// which use this function will lose their connections to these once deleted*.
+fn a_doomed_interface_is_named_as_structural() {
+    let mut chain = chain();
+    let made = chain
+        .document
+        .group(ROOT, &[chain.add], "Sum")
+        .expect("a definition with an interface either side");
+    let inside = made.definition;
+    let faces = |document: &Document<Op>, want: InterfaceSide| -> Vec<NodeId> {
+        document
+            .tree(inside)
+            .expect("the definition")
+            .nodes()
+            .filter(|node| node.body == NodeBody::Interface(want))
+            .map(|node| node.id)
+            .collect()
+    };
+    let output = *faces(&chain.document, InterfaceSide::Output)
+        .first()
+        .expect("what the definition is for");
+    let asked = chain
+        .document
+        .unused(inside, &[output])
+        .expect("the output interface anchors the definition");
+    assert!(
+        asked.clean(),
+        "a freshly derived definition wastes nothing: {asked:?}"
+    );
+
+    // Cut the input interface loose from everything it fed, so it reaches
+    // nothing. ⚠ EVERY wire: measured here, a definition has ONE input
+    // interface node carrying a port per crossing — `in=0 out=2` for this
+    // group — not one node per port, so cutting a single wire leaves it still
+    // feeding through the other and still used.
+    let inputs = faces(&chain.document, InterfaceSide::Input);
+    let loose = *inputs.first().expect("the definition takes something in");
+    let wires: Vec<LinkId> = chain
+        .document
+        .tree(inside)
+        .expect("the definition")
+        .links()
+        .iter()
+        .filter(|link| link.from.node == loose)
+        .map(|link| link.id)
+        .collect();
+    assert!(!wires.is_empty(), "the interface feeds the grouped node");
+    for wire in wires {
+        chain
+            .document
+            .disconnect(inside, wire)
+            .expect("a wire a person may take out");
+    }
+
+    let asked = chain
+        .document
+        .unused(inside, &[output])
+        .expect("still anchored");
+    assert_eq!(
+        asked.nodes.iter().map(|d| d.node).collect::<Vec<_>>(),
+        vec![loose],
+        "the input nothing uses any more: {asked:?}"
+    );
+    assert_eq!(
+        asked.structural(),
+        vec![loose],
+        "★★★★★ and it is named STRUCTURAL, because taking it out takes a port \
+         off every instance of this definition — a consequence that does not \
+         fit on this canvas. The reference asks yes/no about exactly this and \
+         says nothing about the rest of its list: {asked:?}"
+    );
+}
+
+/// ★★★★★ (3) A graph with no output at all.
+///
+/// The reference's walk starts from an empty stack, marks nothing, and returns
+/// EVERY node — which its command then deletes. *Nobody has finished wiring
+/// this* and *all of this is rubbish* are different facts.
+fn a_graph_nothing_anchors_is_refused_rather_than_emptied() {
+    let mut document: Document<Op> = Document::new("root");
+    let one = num(&mut document, 1);
+    let two = num(&mut document, 2);
+    assert_eq!(
+        document.unused(ROOT, &[]),
+        Err(NotPrunable::Nothing),
+        "★★★★★ nobody said what the graph is for: refused by name rather than \
+         answered `all of it`, which is what the reference computes"
+    );
+    let untouched = document.clone();
+    assert!(
+        document.prune(ROOT, &[]).is_err(),
+        "and the verb refuses too"
+    );
+    assert_eq!(document, untouched, "★ having changed nothing");
+    // ★ A stale id is refused rather than skipped: skipping would quietly make
+    // this a question about a SMALLER set of outputs, and a smaller set
+    // condemns more nodes.
+    let gone = NodeId(9_999);
+    assert_eq!(
+        document.unused(ROOT, &[one, gone]),
+        Err(NotPrunable::NoSuchNode {
+            tree: ROOT,
+            node: gone
+        })
+    );
+    // ★ The counterfactual for both refusals: the same graph with a real output
+    // named answers, so they are about the naming and not about small graphs.
+    let sink = node(&mut document, Op::Sink);
+    wire(&mut document, one, 0, sink, 0);
+    let asked = document.unused(ROOT, &[sink]).expect("now it is anchored");
+    assert_eq!(
+        asked.nodes.iter().map(|d| d.node).collect::<Vec<_>>(),
+        vec![two],
+        "and the source that feeds nothing is the unused one: {asked:?}"
+    );
+}
+
+/// ★★★★★ (5) A frame is a region, not rubbish.
+///
+/// No output can ever reach one — a frame's signature is empty by construction
+/// — so under the reference's own rule every frame on a canvas is unused. This
+/// is the second consumer of `Document::steps`, and the first (R1994's `home`)
+/// found the same class as a defect on the assembled screen.
+fn a_frame_is_not_rubbish() {
+    let mut chain = chain();
+    let frame = chain
+        .document
+        .add_node(ROOT, NodeBody::Frame, 0, 0)
+        .expect("a region on the canvas");
+    let asked = chain
+        .document
+        .unused(ROOT, &[chain.sink])
+        .expect("the sink is the output");
+    assert!(
+        !asked.nodes.iter().any(|doomed| doomed.node == frame),
+        "★★★★★ the frame is not among the doomed: {asked:?}"
+    );
+    assert!(asked.clean(), "and nothing else is either: {asked:?}");
 }
 
 /// R1993 — the schema's two whole-port link operations, *move* and *copy*.
