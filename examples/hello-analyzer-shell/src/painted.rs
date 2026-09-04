@@ -10671,6 +10671,245 @@ fn lab_card_boxes(shot: &Painted) -> std::collections::BTreeMap<String, Rect> {
         .collect()
 }
 
+/// ★★★★★ R1996 — **the assembled tool says whether the host under a carried
+/// card will take it, before the hand lets go** — driven on the shell, over one
+/// walk.
+///
+/// # What this reproduces
+///
+/// The engine's schema declares `CanMergeNodes(A, B)` and calls it from exactly
+/// one place: `FDragNode::HoverTargetChanged`, on every hover while nodes are
+/// dragged. ⚠ Its name says *merge*; measured at its one real overrider it is a
+/// behaviour tree deciding whether a **decorator or a service may be ATTACHED**
+/// to the node under the cursor — a containment question asked mid-drag. Its
+/// answer picks an icon and carries a sentence, and its commonest refusal
+/// carries an EMPTY one though its own declaration doc says empty means legal.
+///
+/// The crate's half is proven against the reference in `pinion-node-graph`'s
+/// own census test. **What is proven here is what only an assembled application
+/// can answer**: that carrying a card over a host actually produces the reading,
+/// that the reading is what the release then does, and that a person is told
+/// *where else* — which the reference has no member for.
+///
+/// # Which screen this lands on
+///
+/// Screen A, the node lab, as it is assembled in this shell. Second-pass work:
+/// the behaviour canon has no drag-time permit at all.
+#[test]
+fn r1996_a_host_says_whether_it_will_take_the_card_before_the_hand_lets_go() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let report = crate::tests::walk_the_application(&state);
+        assert!(
+            report.conforms(),
+            "the application did not reproduce its specification over the walk: {}",
+            report.why().unwrap_or_default()
+        );
+        assert!(
+            report.itinerary().iter().any(|key| key == "lab"),
+            "the walk must stand in the node lab: {:?}",
+            report.itinerary()
+        );
+
+        state.go("lab").expect("the node lab section is open");
+        nothing_is_carried_so_nothing_is_offered(&state);
+        carrying_a_card_over_a_host_says_it_would_be_taken(&state);
+        a_card_sitting_over_a_host_it_is_not_in_is_still_not_offered(&state);
+    });
+}
+
+/// Phase 3 — **a card merely SITTING over a host it is not inside is not
+/// offered it either.** The reading is about a hand, not about a position.
+///
+/// ⚠ **This exists because a counterfactual PASSED.** Phase 1 asserts the
+/// reading is null when nothing is carried — and could not tell that apart from
+/// a version falling back to the chosen card, because every card the lab opens
+/// with sits inside the very host it is drawn over, so the fallback answered
+/// null too. Unreachable rather than unasserted (R1845, the fifth time this
+/// session), and the repair is a state that reaches it.
+///
+/// ★ Reached with the wire's own verbs, and that is the measurement: splicing a
+/// card onto a wire MOVES it there and does **not** re-parent it — only a drag
+/// release does — so a card can come to rest over a host it does not belong to.
+/// Selecting it through the wire rather than by pressing matters for the same
+/// reason: a press would end in a release, and the release re-parents.
+fn a_card_sitting_over_a_host_it_is_not_in_is_still_not_offered(state: &std::rc::Rc<ShellState>) {
+    let (shot, scene) = painted_at((WIN_W, WIN_H));
+    let opening = lab_cards(state);
+    let mut press = RouterDrag::over(state, scene);
+    press.cursor(aim(&shot, "lab.palette.role.Router"));
+    press.press();
+    press.release();
+    let arrived = lab_cards(state)
+        .into_iter()
+        .find(|card| !opening.contains(card))
+        .expect("one press on the palette adds one card");
+
+    // Splice it onto a wire whose ends sit inside a host — the card is moved
+    // onto the wire and stays parented to nothing.
+    let wire = lab_links(state)
+        .into_iter()
+        .find(|(from, to)| {
+            lab_invoke(state, "insert_on_link", &format!("{from}>{to},{arrived}")).is_ok()
+        })
+        .expect("some wire takes a router");
+    let placed = lab_slot(state, "holding");
+    assert_eq!(
+        placed,
+        serde_json::Value::Null,
+        "★ nothing is carried, so nothing is offered — even now that {arrived} \
+         sits where the wire {wire:?} runs"
+    );
+
+    lab_invoke(state, "select", &arrived).expect("a card the wire can choose");
+    assert_eq!(
+        lab_slot(state, "selection"),
+        serde_json::json!([arrived]),
+        "the card is chosen, without a press that would have re-parented it"
+    );
+    assert_eq!(
+        lab_slot(state, "holding"),
+        serde_json::Value::Null,
+        "★★★★★ and it is STILL not offered a host — the reading is about a hand \
+         carrying something, not about a card that happens to lie over a frame"
+    );
+}
+
+/// Phase 1 — **the reading is about a hand that is carrying something.**
+///
+/// ★ Without this, a reading that always answered would pass every assertion
+/// below: *over a host* has to be distinguishable from *not dragging at all*.
+fn nothing_is_carried_so_nothing_is_offered(state: &std::rc::Rc<ShellState>) {
+    assert_eq!(
+        lab_slot(state, "holding"),
+        serde_json::Value::Null,
+        "★ nothing is being carried, so no host is being offered one"
+    );
+}
+
+/// Phase 2 — **carried over a host, the host says it would take the card — and
+/// the release does exactly that.**
+///
+/// ★ The host is found by carrying the card across the frames the canvas drew
+/// rather than by naming one: a coordinate written here would be this test's
+/// own copy of where a host is, and it would go on passing after the screen
+/// moved them.
+fn carrying_a_card_over_a_host_says_it_would_be_taken(state: &std::rc::Rc<ShellState>) {
+    let (shot, scene) = painted_at((WIN_W, WIN_H));
+    let hosts: Vec<(String, Rect)> = shot
+        .tags
+        .iter()
+        .filter_map(|(tag, rect)| {
+            let name = tag.strip_prefix("lab.frame.")?;
+            (!name.contains('.')).then(|| (name.to_owned(), *rect))
+        })
+        .collect();
+    assert!(
+        !hosts.is_empty(),
+        "the opening graph draws at least one host frame"
+    );
+    // A card, read off the paint.
+    let card = shot
+        .tags
+        .keys()
+        .filter_map(|tag| tag.strip_prefix("lab.node."))
+        .find(|rest| !rest.contains('.'))
+        .expect("the opening graph paints a card")
+        .to_owned();
+
+    let mut drag = RouterDrag::over(state, scene);
+    drag.cursor(aim(&shot, &format!("lab.node.{card}")));
+    drag.press();
+
+    let mut offered = serde_json::Value::Null;
+    for (_, rect) in &hosts {
+        // Across the host, a few places in, so a card whose own box is wide
+        // still gets its middle over the frame.
+        for step in 1..5u32 {
+            let at = (rect.x + rect.w * step / 5, rect.y + rect.h * step / 5);
+            drag.cursor(at);
+            let said = lab_slot(state, "holding");
+            if !said.is_null() {
+                offered = said;
+                break;
+            }
+        }
+        if !offered.is_null() {
+            break;
+        }
+    }
+    assert!(
+        !offered.is_null(),
+        "★★★★★ carrying {card} over every host the canvas drew never produced a \
+         reading — the question the reference asks on EVERY hover is \
+         unreachable here"
+    );
+    assert_eq!(
+        offered["card"].as_str(),
+        Some(card.as_str()),
+        "the reading is about the card in the hand: {offered}"
+    );
+    let over = offered["over"]
+        .as_str()
+        .expect("and names the host it is over")
+        .to_owned();
+    assert_eq!(
+        offered["admitted"],
+        serde_json::Value::Bool(true),
+        "★ a card carried over a host would be taken: {offered}"
+    );
+    assert!(
+        offered["why"].is_null(),
+        "★ and an admitted reading carries no refusal: {offered}"
+    );
+    // ★★ WHERE ELSE — the answer the reference has no member for at all. Its
+    // hook is asked one pair at a time and only about what is under the cursor.
+    let elsewhere = offered["elsewhere"]
+        .as_array()
+        .expect("the hosts that would take it");
+    assert!(
+        elsewhere
+            .iter()
+            .any(|name| name.as_str() == Some(over.as_str())),
+        "★★ the host it is over is among the hosts that would take it: {offered}"
+    );
+
+    let would_take: Vec<String> = elsewhere
+        .iter()
+        .filter_map(|name| name.as_str().map(str::to_owned))
+        .collect();
+
+    // ★★★★★ And letting go lands the card in a host the reading had already
+    // admitted — the hover and the drop are one rule, not a hook beside a drop
+    // that nothing makes agree.
+    //
+    // ⚠ Not necessarily the host it was OVER, and that is correct rather than a
+    // disagreement: R1992 made a release splice the card onto a wire it was
+    // dropped over BEFORE re-parenting, and that splice moves the card onto the
+    // wire — so where it comes to rest can be a different host. What must hold
+    // is that it is one the permit admitted, which is the claim this reading is
+    // for.
+    drag.release();
+    let said = lab_slot(state, "toast");
+    let line = said.as_str().unwrap_or_default().to_owned();
+    assert!(
+        line.contains(&card),
+        "★ the sentence names the card that was carried: {said}"
+    );
+    assert!(
+        would_take.iter().any(|host| line.contains(host)),
+        "★★★★★ it came to rest in a host the permit had ALREADY admitted — it \
+         was over {over}, and {would_take:?} were the hosts that would take it: \
+         {said}"
+    );
+    assert_eq!(
+        lab_slot(state, "holding"),
+        serde_json::Value::Null,
+        "★ and nothing is being carried any more"
+    );
+}
+
 /// ★★★★★ R1995 — **the assembled tool says what nothing reaches before it takes
 /// anything out, and refuses to guess what the graph is for** — driven on the
 /// shell, over one walk.

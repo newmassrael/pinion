@@ -3285,10 +3285,10 @@
       "verdict": "app-content"
     },
     "schema::CanMergeNodes": {
-      "covered_by": "merging two nodes into one",
+      "covered_by": "Document::may_hold / holders. ⚠ THE PIN WAS A RESTATEMENT OF THE SYMBOL'S NAME AND THE NAME IS NOT WHAT IT DOES. It read `merging two nodes into one`. Measured: the base schema returns DISALLOW with `Not implemented by this schema`, so the hook is opt-in; it is called from exactly ONE place, `FDragNode::HoverTargetChanged`, on every hover while nodes are dragged; and the only schema that implements it is a behaviour tree's, deciding whether a DECORATOR OR A SERVICE MAY BE ATTACHED to the node under the cursor -- a containment question asked mid-drag, not a merge. Its answer is a connection response whose verdict picks an icon and whose text is shown to the person, and the whole permit is additionally gated on `IsPIENotSimulating()`, which is a fact about the session rather than about the two nodes. Three ways past it: ★its COMMONEST REFUSAL SAYS NOTHING -- the declaration's own doc reads `an empty string if the merge is legal, otherwise a message describing why the merge would fail` and the overrider's fall-through returns DISALLOW with TEXT(\"\"), so contract and code disagree and a person dragging a task onto a task gets a red icon and no words, where every arm of `ParentError` carries its reason and the cycle arm carries the chain it would have closed; ★every graph here can ANSWER it, where the reference's base shows a person a sentence about the codebase in every editor but one; and the hover and the drop are ONE RULE, `set_parent` asking `may_hold` rather than a separate hook nothing makes agree. ★★And `holders` answers WHERE ELSE this node could go, which the reference has no member for at all: its hook answers one pair at a time and only for whatever is under the cursor.",
       "mechanism": "graph-schema",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_schema_can_merge_nodes",
+      "verdict": "have"
     },
     "schema::CanRelinkConnectionToPin": {
       "covered_by": "Document::may_relink asks the vet WITHOUT moving anything, and answers the refusal itself — the two types, or the port and its arity, or the path that would close — where the reference hands back a response object carrying one sentence. It is not a prediction of the verb: Document::relink calls it, so the two cannot disagree. R1924",

@@ -58,7 +58,7 @@ use pinion_node_graph::{
     Copying, DefinitionAct, DefinitionError, InZone, InsertError, PairError, Renamed, Tree, Used,
 };
 use pinion_node_graph::{Fit, Margin, Unframed, ZoomRange};
-use pinion_node_graph::{NoHome, NotPrunable, Reception, RelocateError, Relocation};
+use pinion_node_graph::{NoHome, NotPrunable, ParentError, Reception, RelocateError, Relocation};
 use pinion_node_graph::{RoomError, SpliceError, Verdict, Widening};
 
 // ---------------------------------------------------------------- taxonomy
@@ -862,7 +862,136 @@ fn r1994_home_proofs() -> Vec<Proof> {
             "MaterialEditor::CleanUnusedExpressions",
             engine_material_editor_clean_unused_expressions,
         ),
+        // R1996 — the schema hook a drag asks on every hover.
+        proof(
+            "engine",
+            "schema::CanMergeNodes",
+            engine_schema_can_merge_nodes,
+        ),
     ]
+}
+
+/// ★★★★★ R1996 — the schema's `CanMergeNodes`: **would this node be taken
+/// there?**, asked while a hand is still carrying it.
+///
+/// ⚠ **Its name is not what it does, measured at its one real overrider.** The
+/// base schema returns `DISALLOW` with *Not implemented by this schema*, so it
+/// is opt-in; it is called from exactly one place, `FDragNode::HoverTargetChanged`,
+/// on every hover while nodes are dragged; and the only schema that implements
+/// it is a behaviour tree's, deciding whether a **decorator or a service may be
+/// ATTACHED to the node under the cursor** — a containment question, not a
+/// merge. Its answer carries a verdict that picks an icon and a sentence shown
+/// to the person.
+///
+/// The assertions that would fail if the capability were missing:
+///
+/// 1. the question is answerable without moving anything, and answers what the
+///    verb would;
+/// 2. ★ every refusal carries its reason — where the overrider's fall-through
+///    returns `DISALLOW` with an EMPTY string, though its own declaration doc
+///    says an empty string means legal;
+/// 3. ★ a hand can be told *where else*, which the reference has no member for:
+///    its hook answers one pair at a time and only for the node under the
+///    cursor.
+#[test]
+fn engine_schema_can_merge_nodes() {
+    let mut document: Document<Op> = Document::new("root");
+    let outer = document
+        .add_node(ROOT, NodeBody::Frame, 0, 0)
+        .expect("a region");
+    let inner = document
+        .add_node(ROOT, NodeBody::Frame, 10, 10)
+        .expect("another");
+    let card = node(&mut document, Op::Double);
+    document
+        .set_parent(ROOT, inner, Some(outer))
+        .expect("a frame may be inside a frame");
+
+    // ★ (1) Asked, and it moved nothing — then the verb agrees.
+    let before = document.clone();
+    assert_eq!(document.may_hold(ROOT, card, Some(outer)), Ok(()));
+    assert_eq!(document, before, "asking is not doing");
+    assert_eq!(
+        document
+            .set_parent(ROOT, card, Some(outer))
+            .expect("what the question admitted"),
+        None,
+        "and it was not inside anything before"
+    );
+
+    // ★★★★★ (2) Every refusal by name, and each one still refused by the verb.
+    let loose = node(&mut document, Op::Double);
+    for (why, node, parent) in [
+        (ParentError::NotAFrame { node: loose }, card, Some(loose)),
+        (ParentError::SelfParent(outer), outer, Some(outer)),
+        (
+            ParentError::NoSuchNode {
+                tree: ROOT,
+                node: NodeId(9_999),
+            },
+            card,
+            Some(NodeId(9_999)),
+        ),
+    ] {
+        assert_eq!(
+            document.may_hold(ROOT, node, parent),
+            Err(why.clone()),
+            "★ the reason is NAMED — the reference's commonest refusal is an \
+             empty string, though its own doc says empty means legal"
+        );
+        let mut trying = document.clone();
+        assert_eq!(trying.set_parent(ROOT, node, parent), Err(why));
+        assert_eq!(trying, document, "★ and a refusal changed nothing");
+        assert!(
+            !why_is_silent(&document, node, parent),
+            "every refusal this pair reaches says something"
+        );
+    }
+
+    // ★ The cycle, which carries the chain it would have closed rather than a
+    // bare no.
+    let cycle = document.may_hold(ROOT, outer, Some(inner));
+    assert!(
+        matches!(&cycle, Err(ParentError::Cycle { chain }) if chain.len() >= 2),
+        "★★ putting a frame inside its own descendant names the chain: {cycle:?}"
+    );
+
+    // ★★★★★ (3) WHERE ELSE — the answer the reference has no member for.
+    let where_else = document
+        .holders(ROOT, card)
+        .expect("the card is on the canvas");
+    assert_eq!(
+        where_else,
+        vec![inner],
+        "★★ every frame that would take it, minus the one it is already in: \
+         {where_else:?}"
+    );
+    // ★ And it is DERIVED from the same vet: a frame the vet refuses is absent
+    // from the list rather than listed and refused later.
+    assert!(
+        !document
+            .holders(ROOT, outer)
+            .expect("a frame too")
+            .contains(&inner),
+        "a frame cannot be offered its own descendant"
+    );
+    assert!(
+        document
+            .holders(ROOT, card)
+            .expect("still there")
+            .iter()
+            .all(|frame| document.may_hold(ROOT, card, Some(*frame)).is_ok()),
+        "★ the list and the rule are one derivation"
+    );
+}
+
+/// Whether a refusal for this pair would reach a person with no words — the
+/// reference's own failure, asserted against here rather than described.
+fn why_is_silent(document: &Document<Op>, node: NodeId, parent: Option<NodeId>) -> bool {
+    document
+        .may_hold(ROOT, node, parent)
+        .err()
+        .is_none_or(|why| why.to_string().trim().is_empty())
 }
 
 /// ★★★★★ R1995 — the material editor's *Clean Unused Expressions*: **which

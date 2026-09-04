@@ -143,22 +143,53 @@ impl fmt::Display for ParentError {
 impl std::error::Error for ParentError {}
 
 impl<K: NodeKind> Document<K> {
-    /// Put `node` inside `parent`, or take it out of everything (`None`),
-    /// answering where it was.
+    /// ★★★★★ R1996 — **would this node be taken there?**, asked before it is
+    /// dropped.
     ///
-    /// The one mutator of the forest. The DCC's `parent_set` and the
-    /// model half of its `attach`.
+    /// The question a hand asks while it is still carrying something: a canvas
+    /// that shows, per frame passed over, whether letting go would work — and
+    /// when it would not, *why*. `None` for `parent` asks about taking the node
+    /// out of everything, which is always allowed for a node that is there.
+    ///
+    /// This is not a prediction of [`set_parent`](Self::set_parent): it is the
+    /// same call [`set_parent`](Self::set_parent) makes, so the two cannot
+    /// answer differently. Asking changes nothing about the document.
+    ///
+    /// # What the reference does, measured at its implementation
+    ///
+    /// The engine's schema declares `CanMergeNodes(A, B)` for exactly this —
+    /// asked from `FDragNode::HoverTargetChanged` on every hover while nodes
+    /// are dragged, answering a response whose verdict picks an icon and whose
+    /// text is shown to the person. ⚠ Its name says *merge*; its one real
+    /// overrider is a **behaviour-tree schema deciding whether a decorator or a
+    /// service may be ATTACHED to the node under the cursor**, which is a
+    /// containment question and not a merge. Three measured differences:
+    ///
+    /// 1. ★★★★★ **Its commonest refusal says nothing.** The declaration's own
+    ///    doc reads *an empty string if the merge is legal, otherwise a message
+    ///    describing why the merge would fail* — and the overrider's
+    ///    fall-through returns `DISALLOW` with `TEXT("")`. Contract and code
+    ///    disagree, so a person dragging a task onto a task gets a red icon and
+    ///    no words. Every arm of [`ParentError`] carries its reason, and the
+    ///    cycle arm carries the chain it would have closed.
+    /// 2. ★★★★★ **Every graph here can answer it.** The base schema returns
+    ///    `DISALLOW` with *Not implemented by this schema*, so in every editor
+    ///    but one this hook shows a person a sentence about the codebase.
+    ///    Containment is a property of this model, so the answer is always
+    ///    about the graph.
+    /// 3. **The hover and the drop are one rule.** There, the hook is a
+    ///    different function from whatever performs the attach, and nothing
+    ///    makes them agree.
     ///
     /// # Errors
     ///
-    /// See [`ParentError`]. A refusal changes nothing, and a cycle names the
-    /// chain it would have closed rather than reporting a bare `false`.
-    pub fn set_parent(
-        &mut self,
+    /// [`ParentError`] — exactly what [`set_parent`](Self::set_parent) answers.
+    pub fn may_hold(
+        &self,
         tree: TreeId,
         node: NodeId,
         parent: Option<NodeId>,
-    ) -> Result<Option<NodeId>, ParentError> {
+    ) -> Result<(), ParentError> {
         let host = self.tree(tree).ok_or(ParentError::NoSuchTree(tree))?;
         if host.node(node).is_none() {
             return Err(ParentError::NoSuchNode { tree, node });
@@ -183,6 +214,61 @@ impl<K: NodeKind> Document<K> {
                 return Err(ParentError::Cycle { chain });
             }
         }
+        Ok(())
+    }
+
+    /// ★★★★★ R1996 — **which frames would take this node**, in ascending order.
+    ///
+    /// Every frame in the tree that [`may_hold`](Self::may_hold) admits, minus
+    /// the one the node is already inside: the question a hand asks is *where
+    /// else*, and a list that always contained the current parent could never
+    /// be empty, so it could never say the one thing worth saying.
+    ///
+    /// Empty means there is nowhere else to put it. Derived by asking the one
+    /// rule rather than by re-stating it, so a rule added to the vet reaches
+    /// this list on the same commit — the same construction
+    /// [`relink_targets`](Self::relink_targets) has, and for the same reason.
+    ///
+    /// # Errors
+    ///
+    /// [`ParentError::NoSuchTree`] or [`ParentError::NoSuchNode`]. A frame that
+    /// is merely refused is left out of the list, which is what the list means.
+    pub fn holders(&self, tree: TreeId, node: NodeId) -> Result<Vec<NodeId>, ParentError> {
+        let host = self.tree(tree).ok_or(ParentError::NoSuchTree(tree))?;
+        let held = host
+            .node(node)
+            .ok_or(ParentError::NoSuchNode { tree, node })?
+            .parent;
+        let mut frames: Vec<NodeId> = host.nodes().map(|held| held.id).collect();
+        frames.sort_unstable();
+        Ok(frames
+            .into_iter()
+            .filter(|frame| Some(*frame) != held)
+            .filter(|frame| self.may_hold(tree, node, Some(*frame)).is_ok())
+            .collect())
+    }
+
+    /// Put `node` inside `parent`, or take it out of everything (`None`),
+    /// answering where it was.
+    ///
+    /// The one mutator of the forest. The DCC's `parent_set` and the
+    /// model half of its `attach`.
+    ///
+    /// # Errors
+    ///
+    /// See [`ParentError`]. A refusal changes nothing, and a cycle names the
+    /// chain it would have closed rather than reporting a bare `false`.
+    pub fn set_parent(
+        &mut self,
+        tree: TreeId,
+        node: NodeId,
+        parent: Option<NodeId>,
+    ) -> Result<Option<NodeId>, ParentError> {
+        // ★★★★★ R1996 — the same call `may_hold` makes, so a hand that asked
+        // first and a hand that just dropped cannot be told different things.
+        // Nothing has been touched when this refuses, which is why the arms
+        // below have no undo in them.
+        self.may_hold(tree, node, parent)?;
         let slot = self
             .tree_mut(tree)
             .and_then(|t| t.node_mut(node))

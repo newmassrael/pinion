@@ -104,9 +104,10 @@ use pinion_core::{CellKind, Frame, Modifiers, Scene, WidgetCore, edit_field_keym
 use pinion_node_graph::{
     Act, Arrival, Camera, Crossings, Definitions, Document, Drawn, EditPath, Extent, Faces, Fault,
     Fit, Focus, Focused, Found, Fragment, InZone, Instance, Item, Judged, LandError, Landfall,
-    LinkId, LinkLayer, Margin, NameSource, Node, NodeBody, NodeId, NodeKind, Objection, PortPath,
-    PortRef, PortSite, ROOT, Relinked, Room, RoomError, Sharing, Side, Socket, Tint, TreeId,
-    Violation, WatchError, Watches, Weight, Widening, ZoomRange, palette_of, type_palette,
+    LinkId, LinkLayer, Margin, NameSource, Node, NodeBody, NodeId, NodeKind, Objection,
+    ParentError, PortPath, PortRef, PortSite, ROOT, Relinked, Room, RoomError, Sharing, Side,
+    Socket, Tint, TreeId, Violation, WatchError, Watches, Weight, Widening, ZoomRange, palette_of,
+    type_palette,
 };
 use pinion_platform_storage::AppStorage;
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
@@ -5521,6 +5522,89 @@ fn insert_target_for(state: &LabState, node: NodeId) -> Option<InsertTarget> {
     })
 }
 
+/// ★★★★★ R1996 — **what the frame under a carried card would do**, published.
+///
+/// Null while nothing is carried, or while what is carried is over no frame it
+/// is not already in. `admitted` is a field beside the frame rather than the
+/// frame's presence, because *over nothing* and *over something that will not
+/// have me* are different facts — and `why` carries the crate's own sentence,
+/// which is precisely what the reference's commonest refusal does not.
+///
+/// `elsewhere` is the answer the reference has no member for at all: its hook
+/// is asked one pair at a time, and only about whatever is under the cursor.
+fn holding_report(state: &Rc<LabState>) -> serde_json::Value {
+    let Some((card, over, verdict)) = hover_holder(state) else {
+        return serde_json::Value::Null;
+    };
+    // ★★★★★ A frame is named the way the SENTENCE names it, not the way a card
+    // is. Measured: `name_of` answers a frame's display name with its gist
+    // appended (`host-b · load`) while `apply_frame`'s sentence uses the
+    // registered name (`host-b`) — so publishing `name_of` here would show an
+    // agent one name for the frame and a person another, for the same frame in
+    // the same gesture. The walk caught it.
+    let named = |frame: NodeId| {
+        state
+            .frames
+            .borrow()
+            .get(&frame)
+            .cloned()
+            .unwrap_or_else(|| state.name_of(frame))
+    };
+    serde_json::json!({
+        "card": state.name_of(card),
+        "over": named(over),
+        "admitted": verdict.is_ok(),
+        "why": verdict.err().map(|why| why.to_string()),
+        "elsewhere": state
+            .doc
+            .borrow()
+            .holders(state.here(), card)
+            .unwrap_or_default()
+            .into_iter()
+            .map(named)
+            .collect::<Vec<_>>(),
+    })
+}
+
+/// ★★★★★ R1996 — **the frame a carried card is over, and whether it would be
+/// taken there.**
+///
+/// The screen half of `Document::may_hold`: the crate answers *would this be
+/// admitted*, and this answers *which frame is the hand over*. Both are asked
+/// BEFORE the hand lets go, which is what the reference's own hook is for —
+/// `CanMergeNodes` is called on every hover while nodes are dragged — and it is
+/// the same call the release makes, so a person cannot be shown one answer and
+/// given another.
+///
+/// `None` when nothing is carried, or when what is carried is over no frame.
+/// A frame that would REFUSE is still reported, with its reason: a highlight
+/// that vanished on the frames that say no would leave a person unable to tell
+/// *over nothing* from *over something that will not have me* — the same
+/// argument R1992 made for the aimed wire.
+fn hover_holder(state: &LabState) -> Option<(NodeId, NodeId, Result<(), ParentError>)> {
+    let Some(Drag::Node { node, .. }) = state.drag.get() else {
+        return None;
+    };
+    let rect = card_rect(state, node)?;
+    let over = frame_at(
+        state,
+        i64::from(rect.x + rect.w / 2),
+        i64::from(rect.y + rect.h / 2),
+    )?;
+    // Already inside it: a hand told *this would be taken* about the frame the
+    // card is already in has been told nothing.
+    let held = state
+        .doc
+        .borrow()
+        .tree(state.here())
+        .and_then(|tree| tree.node(node).and_then(|card| card.parent));
+    if held == Some(over) {
+        return None;
+    }
+    let verdict = state.doc.borrow().may_hold(state.here(), node, Some(over));
+    Some((node, over, verdict))
+}
+
 /// The same reading for the card the hand is **currently** carrying, which is
 /// what the paint and the published slot want.
 ///
@@ -9389,6 +9473,10 @@ fn canvas_world(state: &LabState, ink: Ink) -> Vec<Scene> {
         Some(Drag::Frame { frame, .. }) => Some(frame),
         _ => None,
     };
+    // ★★★★★ R1996 — the frame a carried card is over, and whether it would be
+    // taken there. Read once, outside the loop, because it is a fact about the
+    // hand rather than about each frame.
+    let holder = hover_holder(state);
     // ★★★★★ R1988 — a frame goes back with what it holds, from the same one
     // derivation the cards read. The crate answers this by MEMBERSHIP, so a
     // frame whose cards are all out of play fades whether or not any of them
@@ -9427,10 +9515,22 @@ fn canvas_world(state: &LabState, ink: Ink) -> Vec<Scene> {
             .as_ref()
             .is_some_and(|answer| answer.relatedness(id).is_unrelated());
         let fill = Color::rgba(0x16, 0x18, 0x1D, 0x6b);
-        let edge = if dragged_frame == Some(id) {
-            ink.accent
-        } else {
-            ink.outline_2
+        // ★★★★★ R1996 — **the frame says, before the hand lets go, whether it
+        // will take the card being carried.** Two colours and not one, for the
+        // reason R1992's aimed wire has two: a frame that would refuse is still
+        // marked, because a highlight that disappeared on the ones that say no
+        // leaves a person unable to tell *over nothing* from *over something
+        // that will not have me*. The reference asks the same question on every
+        // hover and its commonest refusal reaches the person with no words at
+        // all.
+        //
+        // Ahead of the drag-handle accent because a drop in progress is what
+        // the person is doing now.
+        let edge = match &holder {
+            Some((_, over, Ok(()))) if *over == id => ink.ok,
+            Some((_, over, Err(_))) if *over == id => ink.err,
+            _ if dragged_frame == Some(id) => ink.accent,
+            _ => ink.outline_2,
         };
         children.push(box_holding(
             &format!("lab.frame.{name}"),
@@ -12386,6 +12486,10 @@ const FIELDS: &[SchemaField] = &{
         // a read or an action, never both, and a `home` declared twice would
         // leave whichever came second unreachable and undescribed.
         SchemaField::new("homing", "json"),
+        // ★★★★★ R1996 — the frame a carried card is over, and whether it would
+        // be taken there. The same reading the frame's own edge is drawn from,
+        // so what an agent is told and what a person is shown cannot differ.
+        SchemaField::new("holding", "json"),
         SchemaField::action("frame_selection", "string"),
         SchemaField::action("go_to_problem", "string"),
         SchemaField::action("run", "bool"),
@@ -13162,6 +13266,8 @@ impl ExternalIntrospect for LabOracle {
             "insert_target" => Ok(IntrospectValue::Json(insert_target_report(state))),
             // ★★★★★ R1994 — where the graph ends up, read without going there.
             "homing" => Ok(IntrospectValue::Json(homing_report(state))),
+            // ★★★★★ R1996 — what the frame under a carried card would do.
+            "holding" => Ok(IntrospectValue::Json(holding_report(state))),
             "zoom" => Ok(IntrospectValue::Int(i64::from(state.zoom.get()))),
             "pan" => {
                 let (x, y) = state.pan.get();
