@@ -171,6 +171,7 @@ impl Val {
 impl NodeKind for Op {
     type Type = Ty;
     type Value = Val;
+    type Graph = ();
 
     fn name(&self) -> String {
         match self {
@@ -883,6 +884,12 @@ fn r1994_home_proofs() -> Vec<Proof> {
             "schema::CreateSubstituteNode",
             engine_schema_create_substitute_node,
         ),
+        // R1999 — the schema hook that says what kind of graph a graph is.
+        proof(
+            "engine",
+            "schema::GetGraphType",
+            engine_schema_get_graph_type,
+        ),
     ]
 }
 
@@ -901,6 +908,7 @@ enum Opened {
 impl NodeKind for Opened {
     type Type = Ty;
     type Value = Val;
+    type Graph = ();
 
     fn name(&self) -> String {
         match self {
@@ -7449,6 +7457,7 @@ fn engine_node_can_duplicate_node() {
     impl NodeKind for Entry {
         type Type = ();
         type Value = ();
+        type Graph = ();
         fn name(&self) -> String {
             "entry".to_owned()
         }
@@ -7635,6 +7644,7 @@ enum Decl {
 impl NodeKind for Decl {
     type Type = Ty;
     type Value = Val;
+    type Graph = ();
 
     fn name(&self) -> String {
         format!("{self:?}")
@@ -14125,4 +14135,260 @@ fn a_drag_off_a_consuming_pin_is_offered_the_outputs() {
         "★ and the wire is oriented producer-to-consumer, not mirrored"
     );
     assert!(document.validate().is_empty());
+}
+
+/// ★★★★★ R1999 — a taxonomy whose graphs come in **kinds**, and whose node
+/// kinds declare where they are at home.
+///
+/// Three answers and not two, because [`Admitted`] is wider than the graph-kind
+/// vocabulary: naming graph kinds produces `Anything` and a non-empty `These`,
+/// and the third shape — a kind at home in **no** graph — cannot be reached by
+/// naming any of them. That is R1998's carry (R1845's eighth) applied before
+/// the fixture is written rather than after a counterfactual passes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+enum Plane {
+    /// The ordinary graph, and the one an unclassified tree is.
+    #[default]
+    Data,
+    /// A graph that is instantiated, so anything holding a unique name is wrong
+    /// in it.
+    Template,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+enum Placed {
+    /// At home anywhere: the supplied answer, and what a kind that has not
+    /// thought about it says.
+    Anywhere,
+    /// At home in one kind of graph only.
+    DataOnly,
+    /// At home in none — declarable, and unreachable by naming graph kinds.
+    Nowhere,
+}
+
+impl NodeKind for Placed {
+    type Type = Ty;
+    type Value = Val;
+    type Graph = Plane;
+
+    fn at_home(&self) -> Admitted<Plane> {
+        match self {
+            Self::Anywhere => Admitted::Anything,
+            Self::DataOnly => Admitted::These(vec![Plane::Data]),
+            Self::Nowhere => Admitted::These(Vec::new()),
+        }
+    }
+
+    fn name(&self) -> String {
+        match self {
+            Self::Anywhere => "Anywhere".into(),
+            Self::DataOnly => "DataOnly".into(),
+            Self::Nowhere => "Nowhere".into(),
+        }
+    }
+
+    fn inputs(&self) -> Vec<Port<Ty, Val>> {
+        vec![Port::new("In", Ty::Number)]
+    }
+
+    fn outputs(&self) -> Vec<Port<Ty, Val>> {
+        vec![Port::new("Out", Ty::Number)]
+    }
+
+    fn evaluate(&self, inputs: &[Option<Val>]) -> Vec<Option<Val>> {
+        vec![inputs.first().cloned().flatten()]
+    }
+}
+
+/// ★★★★★ R1999 — the schema's `GetGraphType`: **a tree says what kind of graph
+/// it is**, in the taxonomy's own vocabulary, and one declaration per node kind
+/// says which of those kinds it is at home in.
+///
+/// Measured at the reference, three things that each changed what is built:
+/// its vocabulary is a **fixed five-member enumeration** written for one editor
+/// and the comment directly above the hook says so in its own words; the
+/// supplied body **ignores the graph it is handed** and answers the first
+/// member, so *this is a function graph* and *I could not classify this* — and
+/// *there is no graph* — are one value; and the largest group of its 53
+/// consumers is the per-node-type *are you compatible with this graph* test —
+/// sixteen calls in fifteen node classes, four times the next largest group,
+/// each re-writing the same comparison.
+///
+/// The assertions that would fail if the capability were missing:
+///
+/// 1. a tree answers its kind, and a tree that is not there answers **nothing**
+///    rather than a kind;
+/// 2. ★ a definition is born of a stated kind, and the unstated one is the
+///    TAXONOMY's default rather than this crate's;
+/// 3. ★ the placement is refused, by the kind's own declaration, and the
+///    refusal names both the kind and the graph;
+/// 4. ★ the offer is the SAME predicate as the refusal, so a chooser cannot
+///    offer what an edit would refuse;
+/// 5. ★ a re-classification says what it left behind, and `validate` reports
+///    it — a pass the reference does not make at all;
+/// 6. the kind survives a save and a re-open, and a document written before the
+///    field existed reads back as the taxonomy's default.
+#[test]
+fn engine_schema_get_graph_type() {
+    let mut document: Document<Placed> = Document::new("root");
+
+    // ★ (1) The root says what it is, and nothing is not a kind.
+    assert_eq!(
+        document.graph_kind(ROOT),
+        Some(&Plane::Data),
+        "the root is the taxonomy's unchosen kind"
+    );
+    assert_eq!(
+        document.graph_kind(TreeId(77)),
+        None,
+        "★ and a tree that is not there answers NOTHING — the reference's own \
+         hook ignores its argument and answers the first member of its \
+         enumeration for a graph that does not exist"
+    );
+
+    // ★ (2) Born of a stated kind; the unstated one is the taxonomy's.
+    let template = document.add_definition_of("Pattern", Plane::Template);
+    let plain = document.add_definition("Plain");
+    assert_eq!(document.graph_kind(template), Some(&Plane::Template));
+    assert_eq!(
+        document.graph_kind(plain),
+        Some(&Plane::Data),
+        "★ the TAXONOMY's unchosen kind and not a member this crate picked"
+    );
+
+    // ★ (3) The refusal, and it names both halves.
+    let refused = document
+        .add_node(template, NodeBody::Kind(Placed::DataOnly), 0, 0)
+        .expect_err("a data-only kind is not at home in a template");
+    assert_eq!(
+        refused,
+        EditError::KindNotAdmitted {
+            tree: template,
+            kind: "DataOnly".to_owned(),
+            graph: "Template".to_owned(),
+        },
+        "★ which kind, and which graph — the reference's per-node hook answers \
+         one bool and names neither"
+    );
+    let said = refused.to_string();
+    assert!(
+        said.contains("DataOnly") && said.contains("Template"),
+        "and the sentence carries both: {said}"
+    );
+
+    // The same kind, in the graph it IS at home in.
+    let welcome = document
+        .add_node(plain, NodeBody::Kind(Placed::DataOnly), 0, 0)
+        .expect("★ the rule is the TEMPLATE's, not a blanket refusal");
+    assert!(document.tree(plain).expect("plain").node(welcome).is_some());
+
+    // A kind that declares nothing is at home in both.
+    for tree in [template, plain] {
+        document
+            .add_node(tree, NodeBody::Kind(Placed::Anywhere), 40, 0)
+            .expect("the supplied answer lets a kind through everywhere");
+    }
+    // And the third shape: at home in none, which naming graph kinds cannot
+    // produce and so nothing else in this test would have reached.
+    for tree in [ROOT, template, plain] {
+        assert!(
+            document
+                .add_node(tree, NodeBody::Kind(Placed::Nowhere), 80, 0)
+                .is_err(),
+            "★ an empty declaration is a real answer and not the same as \
+             `Anything` — tree {tree} took a kind at home nowhere"
+        );
+    }
+
+    // ★ (4) The offer is the refusal, asked as a question.
+    for (tree, kind, want) in [
+        (template, Placed::DataOnly, false),
+        (plain, Placed::DataOnly, true),
+        (template, Placed::Anywhere, true),
+        (template, Placed::Nowhere, false),
+        (TreeId(77), Placed::Nowhere, true),
+    ] {
+        assert_eq!(
+            document.at_home(tree, &kind),
+            want,
+            "★ what a palette filters with is what `add_node` refuses on: \
+             {kind:?} in tree {tree}"
+        );
+    }
+
+    a_re_classification_says_what_it_left_behind(&mut document, plain, welcome);
+    the_kind_survives_the_file(&document, template, plain);
+}
+
+/// Claim (5) — **a re-classification says what it left behind**, and the
+/// document reports it.
+///
+/// `add_node` cannot produce this state; `set_graph_kind` can, and deleting the
+/// person's work instead is what it deliberately does not do. The reference
+/// has no in-place re-classification AT ALL — measured at R1999 over every site
+/// that mutates one of the three lists a type is read off: the one place that
+/// picks a list from a type is choosing for a freshly DUPLICATED graph, one
+/// removes the graph from every list at once (deletion), and the rest reorder
+/// inside a single list. So *what did that leave behind* is not a question
+/// answered badly there; it is a question that cannot be asked.
+fn a_re_classification_says_what_it_left_behind(
+    document: &mut Document<Placed>,
+    plain: TreeId,
+    welcome: NodeId,
+) {
+    assert!(
+        document.not_at_home(plain).is_empty(),
+        "nothing is out of place yet"
+    );
+    assert!(document.validate().is_empty(), "and the document is clean");
+    document
+        .set_graph_kind(plain, Plane::Template)
+        .expect("a tree that is there");
+    assert_eq!(
+        document.not_at_home(plain),
+        vec![welcome],
+        "★ the card the new kind does not admit, still there"
+    );
+    assert!(
+        document.tree(plain).expect("plain").node(welcome).is_some(),
+        "★ and nothing was deleted, which would have taken its links with it"
+    );
+    assert!(
+        document.validate().contains(&Violation::NotAtHome {
+            tree: plain,
+            node: welcome,
+        }),
+        "★ one predicate, asked of an edit and of a whole document: {:?}",
+        document.validate()
+    );
+    assert_eq!(
+        document.set_graph_kind(TreeId(77), Plane::Data),
+        Err(EditError::NoSuchTree(TreeId(77))),
+    );
+}
+
+/// Claim (6) — **the kind survives the file**, and a document written before
+/// the field existed reads back as the taxonomy's default rather than failing
+/// to load.
+fn the_kind_survives_the_file(document: &Document<Placed>, template: TreeId, plain: TreeId) {
+    let text = serde_json::to_string(document).expect("a document is writable");
+    let read: Document<Placed> = serde_json::from_str(&text).expect("and readable");
+    assert_eq!(read.graph_kind(template), Some(&Plane::Template));
+    assert_eq!(
+        read.graph_kind(plain),
+        Some(&Plane::Template),
+        "the re-classification above, round-tripped"
+    );
+
+    let mut older = serde_json::from_str::<serde_json::Value>(&text).expect("json");
+    for tree in older["trees"].as_array_mut().expect("trees") {
+        tree.as_object_mut().expect("a tree").remove("kind");
+    }
+    let older: Document<Placed> =
+        serde_json::from_value(older).expect("★ a document written before the field still loads");
+    assert_eq!(
+        older.graph_kind(template),
+        Some(&Plane::Data),
+        "★ as the taxonomy's unchosen kind"
+    );
 }

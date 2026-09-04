@@ -146,8 +146,9 @@ impl fmt::Display for Severed {
 /// [`Document`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(bound(
-    serialize = "K: Serialize, K::Type: Serialize, K::Value: Serialize",
-    deserialize = "K: Deserialize<'de>, K::Type: Deserialize<'de>, K::Value: Deserialize<'de>"
+    serialize = "K: Serialize, K::Type: Serialize, K::Value: Serialize, K::Graph: Serialize",
+    deserialize = "K: Deserialize<'de>, K::Type: Deserialize<'de>, K::Value: Deserialize<'de>, \
+                   K::Graph: Deserialize<'de>"
 ))]
 pub struct Fragment<K: NodeKind> {
     content: Document<K>,

@@ -146,10 +146,59 @@ fn port_value_fault(
     port: PortRef,
     because: &str,
 ) -> fmt::Result {
-    write!(
+    node_fault(
         f,
-        "node {node} in tree {tree} has a value on port {port}, {because}"
+        tree,
+        node,
+        format_args!("has a value on port {port}, {because}"),
     )
+}
+
+/// A sentence about ONE node in one tree, which is the opening **ten** of
+/// [`Violation`]'s eighteen arms share — five of them here, two through
+/// [`parent_fault`] and three through [`port_value_fault`].
+///
+/// Named at R1999 for the reason [`side_word`] was named at R1935 and
+/// [`port_value_fault`] above it before that: the length lint fires when a
+/// fragment several arms repeat has no name, and it is asking for the right
+/// thing. `impl Display` rather than `&str` so the predicate half can
+/// interpolate: a plain literal where it does not, `format_args!` where it
+/// does, and neither allocates.
+fn node_fault(
+    f: &mut fmt::Formatter<'_>,
+    tree: TreeId,
+    node: NodeId,
+    said: impl fmt::Display,
+) -> fmt::Result {
+    write!(f, "node {node} in tree {tree} {said}")
+}
+
+/// A node that says it is inside another one and the containment relation
+/// cannot honour it — the fragment the two arms about a stated parent share.
+fn parent_fault(
+    f: &mut fmt::Formatter<'_>,
+    tree: TreeId,
+    node: NodeId,
+    parent: NodeId,
+    because: &str,
+) -> fmt::Result {
+    node_fault(
+        f,
+        tree,
+        node,
+        format_args!("says it is inside {parent}, {because}"),
+    )
+}
+
+/// A sentence about ONE link in one tree, which is what three of the arms are
+/// about: [`node_fault`]'s rule, for the other subject this enum has.
+fn link_fault(
+    f: &mut fmt::Formatter<'_>,
+    tree: TreeId,
+    link: LinkId,
+    said: impl fmt::Display,
+) -> fmt::Result {
+    write!(f, "link {link} in tree {tree} {said}")
 }
 
 /// Why a group instance could not be inlined.
@@ -913,6 +962,25 @@ pub enum Violation {
         /// The link.
         link: LinkId,
     },
+    /// ★★★★★ R1999 — a node whose kind is **not at home** in the kind of graph
+    /// holding it ([`crate::NodeKind::at_home`]).
+    ///
+    /// Not reachable through [`Document::add_node`], which refuses it. The two
+    /// ways to be holding one are the two this crate always names: a document
+    /// arriving from a file written against another rule, and
+    /// [`Document::set_graph_kind`] re-classifying a tree that already holds
+    /// nodes — which is deliberately allowed to leave this behind rather than
+    /// deleting work, exactly as narrowing an admitted set is (R1933).
+    ///
+    /// ★ The reference has no equivalent. A graph's type changes there by the
+    /// document moving it to another list, and nothing walks what is in it
+    /// afterwards.
+    NotAtHome {
+        /// The tree.
+        tree: TreeId,
+        /// The node whose kind the tree's graph kind does not admit.
+        node: NodeId,
+    },
     /// ★★★★★ R1935 — a far end of a name whose named endpoint is **gone**.
     ///
     /// A [`NodeBody::Echo`] holds the id of the [`NodeBody::Beacon`] it shows,
@@ -1172,36 +1240,45 @@ const fn side_word(side: Side) -> &'static str {
     }
 }
 
+/// The same word for a side of a TREE's interface, which is a different type
+/// carrying the same two answers.
+///
+/// Beside [`side_word`] rather than inline in the arm that reads it: a match
+/// spelled inside a `write!` argument is a rule with nowhere to be cited from.
+const fn interface_word(side: InterfaceSide) -> &'static str {
+    match side {
+        InterfaceSide::Input => "input",
+        InterfaceSide::Output => "output",
+    }
+}
+
 impl fmt::Display for Violation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::DanglingLink { tree, link } => {
-                write!(
-                    f,
-                    "link {link} in tree {tree} names a socket that is not there"
-                )
+                link_fault(f, *tree, *link, "names a socket that is not there")
             }
             // R1935 — says which node and what a repair would be, because the
             // two repairs are opposite and a reader who cannot tell them apart
             // may delete work. R1924's rule: the sentence a person reads is the
             // one that has to be right.
-            Self::DanglingEcho { tree, node } => write!(
-                f,
-                "node {node} in tree {tree} shows a name whose endpoint is not there"
-            ),
-            Self::Overlinked {
-                tree,
-                socket,
-                side: which,
-            } => write!(
+            Self::DanglingEcho { tree, node } => {
+                node_fault(f, *tree, *node, "shows a name whose endpoint is not there")
+            }
+            // R1999 — names the node and the tree and stops there: what KIND of
+            // graph this is, and what that kind is called, are the taxonomy's
+            // words and a screen renders them from `Document::graph_kind`.
+            Self::NotAtHome { tree, node } => {
+                node_fault(f, *tree, *node, "is of a kind this tree does not admit")
+            }
+            Self::Overlinked { tree, socket, side } => write!(
                 f,
                 "{} socket {socket} in tree {tree} holds more links than it may",
-                side_word(*which)
+                side_word(*side)
             ),
-            Self::TypeMismatch { tree, link } => write!(
-                f,
-                "link {link} in tree {tree} joins two ports whose types cannot cross"
-            ),
+            Self::TypeMismatch { tree, link } => {
+                link_fault(f, *tree, *link, "joins two ports whose types cannot cross")
+            }
             // R1885 — the application's sentence, verbatim, for the reason
             // `Refusal` carries one: only the application knows what makes two
             // of its nodes incompatible, so a paraphrase here would be this
@@ -1210,12 +1287,15 @@ impl fmt::Display for Violation {
                 tree,
                 link,
                 refusal,
-            } => write!(
+            } => link_fault(
                 f,
-                "link {link} in tree {tree} joins two nodes that may not be wired: {} \
-                 (change its {})",
-                refusal.because,
-                side_word(refusal.end)
+                *tree,
+                *link,
+                format_args!(
+                    "joins two nodes that may not be wired: {} (change its {})",
+                    refusal.because,
+                    side_word(refusal.end)
+                ),
             ),
             Self::Cycle { tree, nodes } => write!(
                 f,
@@ -1235,32 +1315,27 @@ impl fmt::Display for Violation {
                 tree,
                 node,
                 definition,
-            } => write!(
+            } => node_fault(
                 f,
-                "node {node} in tree {tree} instances definition {definition}, which is not in the document"
+                *tree,
+                *node,
+                format_args!("instances definition {definition}, which is not in the document"),
             ),
             Self::Recursion { definition } => {
                 write!(f, "definition {definition} contains itself")
             }
-            Self::DuplicateInterfaceNode { tree, side: which } => write!(
+            Self::DuplicateInterfaceNode { tree, side } => write!(
                 f,
                 "tree {tree} has more than one node for its {} interface",
-                match which {
-                    InterfaceSide::Input => "input",
-                    InterfaceSide::Output => "output",
-                }
+                interface_word(*side)
             ),
-            Self::DanglingParent { tree, node, parent } => write!(
-                f,
-                "node {node} in tree {tree} says it is inside {parent}, which is not there"
-            ),
-            Self::ParentNotAFrame { tree, node, parent } => write!(
-                f,
-                "node {node} in tree {tree} says it is inside {parent}, which is not a frame"
-            ),
-            Self::ContainmentCycle { tree, node } => {
-                write!(f, "node {node} in tree {tree} contains itself")
+            Self::DanglingParent { tree, node, parent } => {
+                parent_fault(f, *tree, *node, *parent, "which is not there")
             }
+            Self::ParentNotAFrame { tree, node, parent } => {
+                parent_fault(f, *tree, *node, *parent, "which is not a frame")
+            }
+            Self::ContainmentCycle { tree, node } => node_fault(f, *tree, *node, "contains itself"),
             Self::StrayPortValue { tree, node, port } => {
                 port_value_fault(f, *tree, *node, *port, "which it does not have")
             }
@@ -1270,14 +1345,11 @@ impl fmt::Display for Violation {
             Self::InadmissiblePortValue { tree, node, port } => {
                 port_value_fault(f, *tree, *node, *port, "which that port will not admit")
             }
-            Self::TooManyItems {
-                tree,
-                node,
-                side: which,
-            } => write!(
+            Self::TooManyItems { tree, node, side } => node_fault(
                 f,
-                "node {node} in tree {tree} has more {} items than its kind allows",
-                side_word(*which)
+                *tree,
+                *node,
+                format_args!("has more {} items than its kind allows", side_word(*side)),
             ),
         }
     }
@@ -1460,6 +1532,79 @@ impl<K: NodeKind> Document<K> {
             .collect()
     }
 
+    /// Every way one tree's LINKS break their own rules — each link on its own,
+    /// then what the set of them puts on a socket.
+    ///
+    /// Lifted out of [`validate`](Self::validate) at R1999, when the graph-kind
+    /// pass tipped that function past the length lint. This is the cohesive
+    /// piece to take: the two loops are one derivation, because the second
+    /// reads a tally the first builds, and nothing else in the pass needs it.
+    #[must_use]
+    fn wiring_violations(&self, tree: &Tree<K>) -> Vec<Violation> {
+        let mut found = Vec::new();
+        let mut fed: BTreeMap<(Socket, Side), usize> = BTreeMap::new();
+        for link in tree.links() {
+            let (Some(source), Some(sink)) = (
+                self.signature(tree.id, link.from.node),
+                self.signature(tree.id, link.to.node),
+            ) else {
+                found.push(Violation::DanglingLink {
+                    tree: tree.id,
+                    link: link.id,
+                });
+                continue;
+            };
+            let (Some(out), Some(inp)) = (
+                source.outputs.get(link.from.port as usize),
+                sink.inputs.get(link.to.port as usize),
+            ) else {
+                found.push(Violation::DanglingLink {
+                    tree: tree.id,
+                    link: link.id,
+                });
+                continue;
+            };
+            // R1599 — one question covers the type relation AND the flow: a
+            // value never crosses into control and control never into a value,
+            // and between two values it is the taxonomy's own directed
+            // relation.
+            if crossing::<K>(out, inp).is_refused() {
+                found.push(Violation::TypeMismatch {
+                    tree: tree.id,
+                    link: link.id,
+                });
+            }
+            found.extend(self.inadmissible(tree.id, link));
+            *fed.entry((link.to, Side::Input)).or_default() += 1;
+            *fed.entry((link.from, Side::Output)).or_default() += 1;
+        }
+        for ((socket, side), count) in fed {
+            // R1599 — the limit is the port's own, and it inverts with what the
+            // port carries: one producer for a value, one successor for
+            // control. A socket whose limit is `Many` is never in breach.
+            let limit = self
+                .signature(tree.id, socket.node)
+                .and_then(|s| {
+                    let ports = match side {
+                        Side::Input => s.inputs,
+                        Side::Output => s.outputs,
+                    };
+                    ports
+                        .get(socket.port as usize)
+                        .map(|p| p.multiplicity(side))
+                })
+                .unwrap_or(Multiplicity::Many);
+            if limit == Multiplicity::One && count > 1 {
+                found.push(Violation::Overlinked {
+                    tree: tree.id,
+                    socket,
+                    side,
+                });
+            }
+        }
+        found
+    }
+
     /// Every way this document breaks its own rules, in tree order.
     ///
     /// Empty for any document built through this crate's API.
@@ -1469,66 +1614,20 @@ impl<K: NodeKind> Document<K> {
         for tree in self.trees() {
             // ★ R1935 — before the links, because this defect has none.
             found.extend(self.naming_breaches(tree.id));
-            let mut fed: BTreeMap<(Socket, Side), usize> = BTreeMap::new();
-            for link in tree.links() {
-                let (Some(source), Some(sink)) = (
-                    self.signature(tree.id, link.from.node),
-                    self.signature(tree.id, link.to.node),
-                ) else {
-                    found.push(Violation::DanglingLink {
+            // ★★★★★ R1999 — and the nodes this tree's graph kind does not
+            // admit, read from `not_at_home` rather than re-walked here: the
+            // predicate that refuses the edit and the one that reports the
+            // document are one derivation, so a re-classification cannot be
+            // judged two ways (R1884).
+            found.extend(
+                self.not_at_home(tree.id)
+                    .into_iter()
+                    .map(|node| Violation::NotAtHome {
                         tree: tree.id,
-                        link: link.id,
-                    });
-                    continue;
-                };
-                let (Some(out), Some(inp)) = (
-                    source.outputs.get(link.from.port as usize),
-                    sink.inputs.get(link.to.port as usize),
-                ) else {
-                    found.push(Violation::DanglingLink {
-                        tree: tree.id,
-                        link: link.id,
-                    });
-                    continue;
-                };
-                // R1599 — one question covers the type relation AND the flow:
-                // a value never crosses into control and control never into a
-                // value, and between two values it is the taxonomy's own
-                // directed relation.
-                if crossing::<K>(out, inp).is_refused() {
-                    found.push(Violation::TypeMismatch {
-                        tree: tree.id,
-                        link: link.id,
-                    });
-                }
-                found.extend(self.inadmissible(tree.id, link));
-                *fed.entry((link.to, Side::Input)).or_default() += 1;
-                *fed.entry((link.from, Side::Output)).or_default() += 1;
-            }
-            for ((socket, side), count) in fed {
-                // R1599 — the limit is the port's own, and it inverts with what
-                // the port carries: one producer for a value, one successor for
-                // control. A socket whose limit is `Many` is never in breach.
-                let limit = self
-                    .signature(tree.id, socket.node)
-                    .and_then(|s| {
-                        let ports = match side {
-                            Side::Input => s.inputs,
-                            Side::Output => s.outputs,
-                        };
-                        ports
-                            .get(socket.port as usize)
-                            .map(|p| p.multiplicity(side))
-                    })
-                    .unwrap_or(Multiplicity::Many);
-                if limit == Multiplicity::One && count > 1 {
-                    found.push(Violation::Overlinked {
-                        tree: tree.id,
-                        socket,
-                        side,
-                    });
-                }
-            }
+                        node,
+                    }),
+            );
+            found.extend(self.wiring_violations(tree));
             for side in [InterfaceSide::Input, InterfaceSide::Output] {
                 let count = tree
                     .nodes()

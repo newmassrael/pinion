@@ -8287,3 +8287,152 @@ fn r1957_a_surface_that_opens_is_not_painted_over() {
         );
     });
 }
+
+/// ★★★★★ R1999 — **the palette row for a role this graph will not take is
+/// drawn as one that cannot be pressed, and says why.**
+///
+/// The wire half of the capability is proven in `pinion-node-graph`'s census
+/// test and driven on the assembled shell. This is the half neither of those
+/// reaches: the PIXELS. R1986 registered the defect this closes for one control
+/// — a permission published with no pixel greyed by it — and a screen that
+/// refuses a press it drew as available is that defect with a person in front
+/// of it.
+///
+/// Three claims, and the third is what keeps the first two from being vacuous:
+///
+/// 1. in the deployment a person opens on, every role's row reads its own gist
+///    and announces itself pressable;
+/// 2. inside a folded pattern the router's row reads **why** instead, and the
+///    accessibility tree says disabled — the same two branches in the drawing
+///    and in the announcement, which is R1887.1's rule;
+/// 3. ★ inside that same pattern the OTHER seven rows are unchanged, so the
+///    greying is the router's rule and not a pane that goes flat on descent.
+#[test]
+fn r1999_a_role_this_graph_will_not_take_is_drawn_as_one_that_cannot_be_pressed() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+
+        // (1) The deployment: every row reads its own gist and is pressable.
+        let outside = painted(&state);
+        for role in spec::ROLES {
+            assert_eq!(
+                palette_row_second_line(&outside, role.name),
+                Some(role.gist.to_owned()),
+                "★ out here every role reads its own blurb, so the change \
+                 below is a change and not the only thing this ever said",
+            );
+        }
+        assert!(
+            palette_row_disabled(&role_named("Router")).is_some_and(|it| !it),
+            "★ and the router is announced pressable in a deployment",
+        );
+
+        // Fold two cards into a pattern and go inside, through the same verbs
+        // the wire calls.
+        let cards = state.cards();
+        state.selection.set(Selection::group([cards[0], cards[1]]));
+        super::group_selection(&state, "part").expect("two cards make a subgraph");
+        let part = state.node_of("part").expect("the instance is a card here");
+        super::enter_card(&state, part).expect("and it can be entered");
+
+        // (2) The router's row now says why, and announces itself disabled.
+        let inside = painted(&state);
+        assert_eq!(
+            palette_row_second_line(&inside, "Router"),
+            Some("not in a pattern".to_owned()),
+            "★★★★★ the row a person may not press says WHY, in this screen's \
+             own words — a greyed row that still described the role would leave \
+             the cause to be guessed at",
+        );
+        assert_eq!(
+            palette_row_disabled(&role_named("Router")),
+            Some(true),
+            "★ and a reader who never sees the drawing is told the same thing",
+        );
+
+        // ★★★★★ And the press is REFUSED, in this screen's own words. The row
+        // is greyed, and a person can still put a cursor on it — a screen whose
+        // greying were only a colour would take the card anyway. Driven through
+        // the same press path a pointer takes.
+        let held = state.cards().len();
+        press_tag(&state, &inside, &role_named("Router"));
+        assert_eq!(
+            state.cards().len(),
+            held,
+            "★ the card was not added, whatever the row looked like",
+        );
+        let said = state.toast.showing().expect(
+            "★ and the refusal is SAID — a press that did nothing and \
+                    reported nothing is what this replaced",
+        );
+        assert!(
+            said.clause().contains("Router") && said.clause().contains("pattern"),
+            "★ naming the role and the kind of graph, in this screen's words \
+             rather than the crate's identity tokens: {:?}",
+            said.clause(),
+        );
+
+        // (3) The counterfactual, on the same screen and in the same state.
+        for role in spec::ROLES.iter().filter(|r| r.name != "Router") {
+            assert_eq!(
+                palette_row_second_line(&inside, role.name),
+                Some(role.gist.to_owned()),
+                "★★★★★ {} is still offered inside a pattern — the rule is the \
+                 ROUTER's, and a pane that went flat on descent would pass the \
+                 check above just as well",
+                role.name,
+            );
+            assert_eq!(
+                palette_row_disabled(&role_named(role.name)),
+                Some(false),
+                "and it is announced pressable",
+            );
+        }
+    });
+}
+
+/// The `lab.palette.role.<name>` node the screen publishes right now.
+fn role_named(name: &str) -> String {
+    format!("lab.palette.role.{name}")
+}
+
+/// Whether that row announces itself disabled, or `None` when the tree has no
+/// such row at all — which is a different answer from *not disabled* and is why
+/// this is an `Option` rather than a `bool` with a default.
+fn palette_row_disabled(tag: &str) -> Option<bool> {
+    use pinion_a11y::WidgetA11y;
+
+    super::NodeLabView::access_node(&(TextFieldState::Idle, 0), None)
+        .iter()
+        .find(|node| node.tag == tag)
+        .map(|node| node.state.disabled)
+}
+
+/// The second line painted inside one palette row — the role's blurb, or the
+/// reason this graph will not take it.
+///
+/// Read out of the runs the paint actually produced rather than recomputed, so
+/// a row whose subtitle stopped being drawn answers `None` instead of the
+/// string this screen would have liked to draw.
+fn palette_row_second_line(shot: &Painted, role: &str) -> Option<String> {
+    // ⚠ By RECTANGLE and not by the run's owner tag. The row's box and its two
+    // lines are siblings in this pane — the labels are pushed beside the box
+    // rather than into it — so `runs`' "nearest tagged ancestor" column names
+    // the pane and not the row. Measured, not assumed: the first draft filtered
+    // on the owner and found nothing at all.
+    let row = *shot.tags.get(&format!("lab.palette.role.{role}"))?;
+    let mut lines: Vec<(u32, String)> = shot
+        .runs
+        .iter()
+        .filter(|(_, rect, _)| {
+            rect.y >= row.y
+                && rect.y + rect.h <= row.y + row.h
+                && rect.x >= row.x
+                && rect.x + rect.w <= row.x + row.w
+        })
+        .map(|(text, rect, _)| (rect.y, text.clone()))
+        .collect();
+    lines.sort_by_key(|(y, _)| *y);
+    lines.pop().map(|(_, text)| text)
+}

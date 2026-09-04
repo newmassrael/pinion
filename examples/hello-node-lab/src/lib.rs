@@ -125,7 +125,7 @@ use pinion_widget_paint::text_field as tf_paint;
 use serde::{Deserialize, Serialize};
 
 use deploy::Produced;
-use graph::{Endpoint, Implementation, LabNode, Revisions, Role, Stack, Transport};
+use graph::{Endpoint, Implementation, LabGraph, LabNode, Revisions, Role, Stack, Transport};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 
@@ -6497,6 +6497,22 @@ const FOCUS_WORDS: [&str; Focus::ALL.len() + 1] = {
     words
 };
 
+/// ★★★★★ R1999 — the closed set of words the `set_graph_kind` verb accepts.
+///
+/// **Built from [`LabGraph::ALL`]**, not spelled here, for [`FOCUS_WORDS`]'s
+/// reason: a kind added to the vocabulary joins the verb without this list
+/// being edited, so what an agent is offered cannot drift from what the verb
+/// takes.
+const GRAPH_KIND_WORDS: [&str; LabGraph::ALL.len()] = {
+    let mut words = [""; LabGraph::ALL.len()];
+    let mut at = 0;
+    while at < LabGraph::ALL.len() {
+        words[at] = LabGraph::ALL[at].word();
+        at += 1;
+    }
+    words
+};
+
 /// Where the focus chip sits, in from the toolbar's right edge.
 fn focus_rect() -> Rect {
     let bar = toolbar_rect();
@@ -8668,11 +8684,16 @@ fn palette_body(state: &LabState, ink: Ink, rect: Rect) -> Scene {
     }
     for (n, role) in Role::ALL.into_iter().enumerate() {
         let row = local(palette_row(n));
+        // ★★★★★ R1999 — **a row this graph will not take is drawn as one that
+        // cannot be pressed.** Asked of the document, so the greying and the
+        // refusal are one answer; R1986's open defect is a permission published
+        // with no pixel reading it, and this is that axis closed for this one.
+        let welcome = role_at_home(state, role);
         children.push(box_at(
             &format!("lab.palette.role.{}", role.name()),
             row,
-            ink.raised,
-            Some(ink.outline),
+            if welcome { ink.raised } else { ink.surface },
+            Some(if welcome { ink.outline } else { ink.outline_2 }),
             8,
         ));
         // ★ R1874 — the card's inside, which is what the swatch and the words
@@ -8711,8 +8732,25 @@ fn palette_body(state: &LabState, ink: Ink, rect: Rect) -> Scene {
             inside.w.saturating_sub(20 + PAL_ROW_INSET),
             [FONT_SMALL + 1, 10],
         );
-        children.push(label(role.name(), name_band, FONT_SMALL + 1, ink.text));
-        children.push(label(role.gist(), gist_band, 10, ink.text_3));
+        // ★ R1999 — and the words go quiet with the box. A row whose border
+        // dimmed while its name stayed at full contrast reads as decoration
+        // rather than as *this is not available here*.
+        children.push(label(
+            role.name(),
+            name_band,
+            FONT_SMALL + 1,
+            if welcome { ink.text } else { ink.text_2 },
+        ));
+        // ⚠ And the second line says WHY rather than repeating what the role is
+        // for. A greyed row whose subtitle still described the role would leave
+        // a reader to guess at the cause — which is the half R1986's open defect
+        // is about, one axis over.
+        let gist = if welcome {
+            role.gist().to_owned()
+        } else {
+            format!("not in a {}", here_kind(state).word())
+        };
+        children.push(label(&gist, gist_band, 10, ink.text_3));
     }
 
     children.extend(palette_legend(ink));
@@ -12831,6 +12869,22 @@ const FIELDS: &[SchemaField] = &{
         // saying "these cards" and what a person has actually got hold of;
         // `paste` acts on the clipboard and lands where the person is standing.
         // A card name here would be a second way to mean the same thing.
+        // ★★★★★ R1999 — what kind of graph the person is standing in, what it
+        // takes and what it refuses. One slot for all three because they are
+        // one derivation: a client that read the kind and worked out the rest
+        // for itself would be the second oracle.
+        SchemaField::new("graph_kind", "json"),
+        // ★★★★★ R1999 — and re-classify the graph a person is standing in. The
+        // reference reaches the same place by moving a graph between the
+        // document's lists and never looks at what is already in it; this
+        // answers what the change left out of place, so a person can see the
+        // cost before it is a surprise.
+        SchemaField::action_with(
+            "set_graph_kind",
+            "string",
+            ArgForm::Scalar,
+            const { &[SchemaArg::one_of("kind", "string", &GRAPH_KIND_WORDS)] },
+        ),
         SchemaField::action("copy", "string"),
         SchemaField::action("paste", "string"),
         SchemaField::action("duplicate", "string"),
@@ -13337,6 +13391,27 @@ impl ExternalIntrospect for LabOracle {
                 NodeLabView,
             >())),
             "graph" => text(spec::GRAPH_NAME.to_owned()),
+            // ★★★★★ R1999 — **what KIND of graph the person is standing in**,
+            // and what it would take. The reference's own hook answers the
+            // first half and nothing there answers the second in one place:
+            // its palette filters and its per-node-type virtuals refuse, and
+            // the two are unrelated. Both halves here come from
+            // `Document::at_home`, so `takes` cannot promise what a press
+            // would be refused.
+            "graph_kind" => Ok(IntrospectValue::Json(serde_json::json!({
+                "kind": here_kind(state).word(),
+                "gist": here_kind(state).gist(),
+                "takes": Role::ALL
+                    .into_iter()
+                    .filter(|role| role_at_home(state, *role))
+                    .map(graph::Role::name)
+                    .collect::<Vec<_>>(),
+                "refuses": Role::ALL
+                    .into_iter()
+                    .filter(|role| !role_at_home(state, *role))
+                    .map(graph::Role::name)
+                    .collect::<Vec<_>>(),
+            }))),
             "selected" => text(state.active_card().map(|n| state.name_of(n)).unwrap_or_default()),
             // ★★★★★ R1981 — every chosen card, in the model's own order, and
             // `selected` above is its leader.
@@ -14054,6 +14129,22 @@ impl ExternalIntrospect for LabOracle {
                 Ok(IntrospectValue::Text(
                     want.map_or(FOCUS_OFF_WORD, Focus::word).to_owned(),
                 ))
+            }
+            // ★★★★★ R1999 — re-classify the graph a person is standing in, and
+            // say what the change left out of place. The refusal names the
+            // words this screen offers, because a rejection that does not say
+            // what WAS acceptable makes the caller guess (R1885's rule, and the
+            // words come from `LabGraph::ALL` so they cannot drift).
+            "set_graph_kind" => {
+                let word = Self::text(&args)?;
+                let word = word.trim();
+                let kind = LabGraph::from_word(word).ok_or_else(|| {
+                    InvokeError::rejected(format!(
+                        "{word:?} is not a graph kind this screen offers — {}",
+                        GRAPH_KIND_WORDS.join(", ")
+                    ))
+                })?;
+                reclassify_here(&state, kind).map(IntrospectValue::Text)
             }
             "copy" => copy_selection(&state).map(IntrospectValue::Text),
             "paste" => paste_clipboard(&state).map(IntrospectValue::Text),
@@ -15962,6 +16053,16 @@ fn group_selection(state: &Rc<LabState>, name: &str) -> Result<String, InvokeErr
             state.say(said.clone());
             InvokeError::rejected(said.into_clause())
         })?;
+    // ★★★★★ R1999 — **a folded part is a PATTERN**, and it says so from the
+    // moment it exists. A definition is instantiated as often as somebody drops
+    // it, which is a different thing from the deployment it came out of and is
+    // what decides who may live in one. Set here rather than left to the
+    // crate's unchosen kind, because a kind chosen at birth is a kind no card
+    // was ever placed under the wrong answer to.
+    let _ = state
+        .doc
+        .borrow_mut()
+        .set_graph_kind(made.definition, LabGraph::Pattern);
     // The instance is a card of this tree like any other, so it gets a name a
     // person can address it by — the same rule every card here follows.
     if let Some(slot) = state
@@ -16292,6 +16393,32 @@ fn leave_subgraph(state: &Rc<LabState>) -> Result<String, InvokeError> {
 /// `NodeId` and a `LinkId` are minted PER TREE, so a selection, a picked wire,
 /// a stacking order or a hover carried across a descent would not be wrong in a
 /// way anybody could see — it would name a different card with the same number.
+/// ★★★★★ R1999 — **put the person back on a path that still exists.**
+///
+/// [`EditPath::prune`] is the crate's own verb for this — cut the descent back
+/// to the deepest step still reachable through the instance that opened it —
+/// and until now this screen never called it, though `hello-node-groups` has
+/// since R1981.
+///
+/// ⚠ **Measured in R1999's closing audit, not reasoned.** Standing inside a
+/// definition and dropping that definition left `here()` naming
+/// a tree that was gone, at depth 1, with the breadcrumb printing `tree 1` and
+/// [`here_kind`] answering the taxonomy's DEFAULT for a graph that does not
+/// exist — which is precisely the reference defect this round is written
+/// against, arriving on our side of it. Opening a file was measured in the same
+/// probe and is NOT an instance: the archive carries the definitions, so the
+/// path it lands on is still there.
+///
+/// Through [`stand_in`], because leaving a tree is what happened: a selection or
+/// a picked wire carried across would name a different card with the same
+/// number.
+fn settle_path(state: &Rc<LabState>) {
+    let mut path = state.path.borrow().clone();
+    if path.prune(&state.doc.borrow()) > 0 {
+        stand_in(state, path);
+    }
+}
+
 fn stand_in(state: &Rc<LabState>, path: EditPath) {
     state.selection.set(Selection::empty());
     state.selected_link.set(None);
@@ -19873,6 +20000,101 @@ fn spec_revisions(stack: Stack) -> Revisions {
     }
 }
 
+/// ★★★★★ R1999 — **what kind of graph the person is standing in.**
+///
+/// `Document::graph_kind` answers `None` for a tree that is not there, and the
+/// deployment stands for that rather than a second sentence about it.
+///
+/// 🟥 **The first draft justified the fallback by saying the state was
+/// unreachable, and driving it disproved that in one test.** Dropping the
+/// definition a person was standing in left `here()` naming a removed tree —
+/// depth 1, breadcrumb `tree 1`, and this function answering the taxonomy's
+/// default for a graph that does not exist, which is the reference defect this
+/// round is written against. [`settle_path`] is the repair, and it is what makes
+/// the premise true; this line no longer asserts it, because a claim of
+/// unreachability that nothing performs is what went wrong here.
+fn here_kind(state: &LabState) -> LabGraph {
+    state
+        .doc
+        .borrow()
+        .graph_kind(state.here())
+        .copied()
+        .unwrap_or_default()
+}
+
+/// ★★★★★ R1999 — **whether the palette's row for `role` may be pressed here.**
+///
+/// The SAME predicate `add_node` is refused by, asked as a question: this is
+/// `Document::at_home`, so the row a person can press and the placement the
+/// document will take are one answer. A screen that greyed its own list from a
+/// rule written beside it would be the second oracle R1884 measured the cost of
+/// — and the reference has exactly that arrangement, a palette filter on one
+/// side and a per-node-type compatibility virtual on the other.
+fn role_at_home(state: &LabState, role: Role) -> bool {
+    let doc = state.doc.borrow();
+    doc.at_home(state.here(), &LabNode::of(role))
+}
+
+/// The sentence a person reads when this graph will not take the card they
+/// pressed for.
+///
+/// ⚠ Written from the screen's own vocabulary and not from the crate's refusal,
+/// which carries identity tokens (`Router`, `Pattern`) rather than words a
+/// reader of this screen uses. The crate's own sentence is appended so nothing
+/// is hidden, which is the shape R1998's stand-in reason took.
+fn graph_kind_refusal(state: &LabState, role: Role, why: &pinion_node_graph::EditError) -> String {
+    let kind = here_kind(state);
+    format!(
+        "a {} may not be added to a {} — {} — {why}",
+        role.name(),
+        kind.word(),
+        kind.gist(),
+    )
+}
+
+/// ★★★★★ R1999 — **re-classify the graph the person is standing in**, and say
+/// what that left out of place.
+///
+/// The crate deliberately does not delete the cards a narrowing no longer
+/// admits — an edit that removed them would take their wires with them — so the
+/// person is TOLD instead, by name, from `Document::not_at_home`.
+///
+/// ⚠ Measured at R1999: the reference offers no re-classification at all — a
+/// graph's type is a CONSEQUENCE of which of the owning document's three lists
+/// holds it, nothing moves a populated graph between them, so this verb is a
+/// capability past that reference rather than a better version of one.
+fn reclassify_here(state: &Rc<LabState>, kind: LabGraph) -> Result<String, InvokeError> {
+    let here = state.here();
+    state
+        .doc
+        .borrow_mut()
+        .set_graph_kind(here, kind)
+        .map_err(|why| {
+            let said = Utterance::refused(&why.to_string());
+            state.say(said.clone());
+            InvokeError::rejected(said.into_clause())
+        })?;
+    let stranded: Vec<String> = state
+        .doc
+        .borrow()
+        .not_at_home(here)
+        .into_iter()
+        .map(|node| state.name_of(node))
+        .collect();
+    let said = if stranded.is_empty() {
+        format!("this graph is a {} — {}", kind.word(), kind.gist())
+    } else {
+        format!(
+            "this graph is a {} — {} no longer belong{} here",
+            kind.word(),
+            stranded.join(", "),
+            if stranded.len() == 1 { "s" } else { "" }
+        )
+    };
+    state.say(Utterance::done(&said));
+    Ok(said)
+}
+
 fn add_node(state: &Rc<LabState>, role: Role) {
     let canvas = canvas_rect();
     // ★★★★★ R1987 — a card called for by a **waiting wire** is put where the
@@ -19900,30 +20122,24 @@ fn add_node(state: &Rc<LabState>, role: Role) {
         // own in a wrapped call.
         let here = state.here();
         let mut doc = state.doc.borrow_mut();
-        doc.add_node(
-            here,
-            NodeBody::Kind(LabNode {
-                role,
-                // ★★★★★ R1961 — a card just taken from the palette listens
-                // nowhere and dials nothing, so nothing says what it speaks and
-                // it says so. `Transport::Tcp` stood here, and it was not a
-                // neutral choice: the type rule is *the transports must agree*,
-                // so a fresh card could be wired to a TCP peer and silently to
-                // no other. It speaks whatever the first wire drawn from it
-                // dials, which is what `settle_transports` works out.
-                listens_over: None,
-                dials_over: None,
-                listening: false,
-                // R1885 — a node the palette adds runs the reference build, so
-                // adding one never introduces an incompatibility a person did
-                // not ask for. Choosing another build is an edit, not a default.
-                implementation: Implementation::default(),
-            }),
-            want.0,
-            want.1,
-        )
+        // ★★★★★ R1999 — `LabNode::of` and not a body spelled here, because the
+        // palette now asks the document about a fresh card BEFORE drawing its
+        // row as pressable, and two spellings of *a fresh card* could differ in
+        // the field the answer turns on.
+        doc.add_node(here, NodeBody::Kind(LabNode::of(role)), want.0, want.1)
     };
-    let Ok(id) = id else { return };
+    // ★★★★★ R1999 — **a refused placement is SAID.** This was `let Ok(id) = id
+    // else { return }` — a press that did nothing and reported nothing, which
+    // was harmless only while nothing could refuse. A graph kind can, so the
+    // sentence is this screen's own: the crate's refusal names the kind and the
+    // graph as identity tokens and leaves the phrasing to whoever has readers.
+    let id = match id {
+        Ok(id) => id,
+        Err(why) => {
+            state.say(Utterance::refused(&graph_kind_refusal(state, role, &why)));
+            return;
+        }
+    };
     let name = format!("{}-{:02}", role.badge(), id.0);
     if let Some(slot) = state
         .doc
@@ -20636,10 +20852,44 @@ fn palette_access(state: &LabState) -> Vec<AccessNode> {
             .with_name(run.label),
         );
     }
-    for role in spec::ROLES {
+    // ★★★★★ R1999 — over `Role::ALL`, which is what `palette_body` PAINTS.
+    //
+    // ⚠ The first draft walked `spec::ROLES` and looked the role up by name to
+    // get something the predicate could take. Measured in this round's own
+    // closing audit: `spec::ROLES` IS `Role::specs()`, which is
+    // `Role::ALL[n].spec()` index for index, and `Role::name()` IS
+    // `self.spec().name` — so the lookup could not fail, and the `is_some_and`
+    // standing behind it answered the WRONG direction (announced disabled,
+    // reading *not in a deployment*) on a branch nothing could reach. Walking
+    // the same value the predicate takes removes the lookup rather than
+    // defaulting it, and makes the announcement's population the paint's by
+    // construction (R1887.1) instead of by a name match.
+    for role in Role::ALL {
+        // ★ A reader who never sees the drawing is told the same thing the
+        // greying says, and by the same derivation: the row is announced
+        // disabled, and its name carries the reason rather than the role's
+        // blurb. An announcement is a claim about the paint, so the two
+        // branches here are the paint's two branches.
+        let welcome = role_at_home(state, role);
         nodes.push(
-            AccessNode::new(format!("lab.palette.role.{}", role.name), AriaRole::Button)
-                .with_name(format!("add a {} — {}", role.name, role.gist)),
+            AccessNode::new(
+                format!("lab.palette.role.{}", role.name()),
+                AriaRole::Button,
+            )
+            .with_name(if welcome {
+                format!("add a {} — {}", role.name(), role.gist())
+            } else {
+                format!(
+                    "add a {} — not in a {}, {}",
+                    role.name(),
+                    here_kind(state).word(),
+                    here_kind(state).gist()
+                )
+            })
+            .with_state(AccessState {
+                disabled: !welcome,
+                ..AccessState::default()
+            }),
         );
     }
     nodes.push(AccessNode::new("lab.palette.legend", AriaRole::Heading).with_name("pins"));
@@ -22476,6 +22726,13 @@ fn definitions_wire(state: &Rc<LabState>) -> serde_json::Value {
             serde_json::json!({
                 "definition": held.name.clone(),
                 "id": held.id.0,
+                // ★★★★★ R1999 — and what KIND of graph it is. A folded part is
+                // a pattern; the root is a deployment and is not in this list.
+                "kind": doc
+                    .graph_kind(held.id)
+                    .copied()
+                    .unwrap_or_default()
+                    .word(),
                 "used_by": used,
                 "may": {
                     "remove": refusal(DefinitionAct::Remove(pinion_node_graph::Used::Refuse)),
@@ -22556,6 +22813,11 @@ fn drop_definition(state: &Rc<LabState>, raw: &str) -> Result<String, InvokeErro
                 went.definitions.len()
             );
             drop(doc);
+            // ★★★★★ R1999 — and the person comes OUT of anything that just
+            // went. This is the site the closing audit measured: without it a
+            // person standing inside the definition they dropped is left in a
+            // tree that is not there.
+            settle_path(state);
             state.say(Utterance::done(said.clone()));
             Ok(said)
         }

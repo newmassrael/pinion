@@ -136,6 +136,7 @@ impl Op {
 impl NodeKind for Op {
     type Type = Ty;
     type Value = Val;
+    type Graph = ();
 
     fn name(&self) -> String {
         self.title()

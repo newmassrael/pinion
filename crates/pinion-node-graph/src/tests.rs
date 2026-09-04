@@ -283,6 +283,7 @@ impl Val {
 impl NodeKind for Op {
     type Type = Ty;
     type Value = Val;
+    type Graph = ();
 
     fn name(&self) -> String {
         match self {
@@ -1376,6 +1377,7 @@ where
     K: NodeKind + Serialize + serde::de::DeserializeOwned,
     K::Type: Serialize + serde::de::DeserializeOwned,
     K::Value: Serialize + serde::de::DeserializeOwned,
+    K::Graph: Serialize + serde::de::DeserializeOwned,
 {
     let mut wire = serde_json::to_value(document).unwrap();
     let next = wire["trees"][0]["next_link"].as_u64().unwrap();
@@ -2344,6 +2346,7 @@ fn a_kind_may_refuse_a_copy_rather_than_take_a_name_of_its_own() {
     impl NodeKind for OnlyOne {
         type Type = ();
         type Value = ();
+        type Graph = ();
         fn name(&self) -> String {
             "only-one".to_owned()
         }
@@ -2425,6 +2428,7 @@ fn a_document_wide_name_is_taken_by_a_node_in_another_tree() {
     impl NodeKind for Everywhere {
         type Type = ();
         type Value = ();
+        type Graph = ();
         fn name(&self) -> String {
             "everywhere".to_owned()
         }
@@ -5522,6 +5526,7 @@ struct Shaped {
 impl NodeKind for Shaped {
     type Type = Ty;
     type Value = Val;
+    type Graph = ();
     fn name(&self) -> String {
         "Shaped".to_owned()
     }
@@ -7192,6 +7197,7 @@ enum LOp {
 impl NodeKind for LOp {
     type Type = LTy;
     type Value = LVal;
+    type Graph = ();
 
     fn name(&self) -> String {
         match self {
@@ -7762,6 +7768,7 @@ enum POp {
 impl NodeKind for POp {
     type Type = PTy;
     type Value = PVal;
+    type Graph = ();
 
     fn name(&self) -> String {
         match self {
@@ -9487,6 +9494,7 @@ enum Flo {
 impl NodeKind for Flo {
     type Type = Ty;
     type Value = Val;
+    type Graph = ();
 
     fn name(&self) -> String {
         match self {
@@ -10323,6 +10331,7 @@ fn r1599_a_kind_that_names_a_value_port_is_reported_not_obeyed() {
     impl NodeKind for Confused {
         type Type = Ty;
         type Value = Val;
+        type Graph = ();
         fn name(&self) -> String {
             "Confused".into()
         }
@@ -16383,6 +16392,7 @@ struct Peer(u32);
 impl NodeKind for Peer {
     type Type = ();
     type Value = u32;
+    type Graph = ();
 
     fn name(&self) -> String {
         format!("peer{}", self.0)
@@ -18032,6 +18042,7 @@ enum Judged {
 impl NodeKind for Judged {
     type Type = LTy;
     type Value = LVal;
+    type Graph = ();
 
     fn name(&self) -> String {
         match self {

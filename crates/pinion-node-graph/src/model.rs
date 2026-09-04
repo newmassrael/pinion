@@ -868,6 +868,55 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
     /// carries is a float.
     type Value: Clone + PartialEq + fmt::Debug;
 
+    /// ★★★★★ R1999 — **the kinds of graph this taxonomy has.**
+    ///
+    /// A [`Tree`] carries one of these and [`Document::graph_kind`] answers it,
+    /// which is what lets any rule vary by *what a graph is* rather than only
+    /// by what a node is.
+    ///
+    /// # Why the vocabulary is the taxonomy's and not this crate's
+    ///
+    /// Measured at the reference: its answer is a **fixed five-member
+    /// enumeration** declared beside the schema base class, and the comment
+    /// directly above the hook that answers it says, in its own words, that
+    /// this is too specific to one editor to belong there and should be
+    /// refactored. Every application in that engine — a material graph, a sound
+    /// cue, a behaviour tree — is answered out of one visual-scripting
+    /// vocabulary it has no use for. An associated type puts the words where
+    /// the subject matter is, exactly as [`Type`](NodeKind::Type) and
+    /// [`Value`](NodeKind::Value) already do.
+    ///
+    /// `Default` is the kind a tree gets when nobody chose one — the reference
+    /// hard-codes *function* for that, for every application at once. Here the
+    /// taxonomy says. A taxonomy that does not distinguish its graphs writes
+    /// `type Graph = ();`, which is the honest statement that it has one kind,
+    /// and not an escape hatch: with a one-member vocabulary there is no other
+    /// answer to leave unchosen.
+    type Graph: Clone + PartialEq + fmt::Debug + Default;
+
+    /// ★★★★★ R1999 — **which kinds of graph this node kind is at home in.**
+    ///
+    /// The reference asks the same question of a node — *are you compatible
+    /// with this graph* — and every implementation of it reads the graph's kind
+    /// and compares. Measured across the reference's engine source, **53** call
+    /// expressions read that kind, and **sixteen** of them, in **fifteen** node
+    /// classes, are this exact test written out by hand — the largest group by
+    /// a factor of four; a node kind added afterwards is compatible with
+    /// everything until somebody remembers to edit one more of them.
+    ///
+    /// Here it is one declaration, read by the refusal
+    /// ([`Document::admits`], and so every verb that goes through it) and by
+    /// the offer ([`Document::at_home`], which a palette filters with) — so a
+    /// chooser that offered a kind the edit would refuse is unrepresentable,
+    /// which is the shape [`Admitted`](crate::Admitted) was built for at R1933.
+    ///
+    /// The default is [`Anything`](crate::Admitted::Anything): a kind that has not thought about
+    /// it belongs everywhere, which is the reference's supplied answer too.
+    #[must_use]
+    fn at_home(&self) -> crate::Admitted<Self::Graph> {
+        crate::Admitted::Anything
+    }
+
     /// A stable identity token — the answer to "what does this node do".
     ///
     /// Never derived from a user-facing label: a node renamed "Foo" still
@@ -2858,14 +2907,29 @@ pub struct Born {
 /// One tree: the root document graph, or a re-usable group definition.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(bound(
-    serialize = "K: Serialize, K::Type: Serialize, K::Value: Serialize",
-    deserialize = "K: Deserialize<'de>, K::Type: Deserialize<'de>, K::Value: Deserialize<'de>"
+    serialize = "K: Serialize, K::Type: Serialize, K::Value: Serialize, K::Graph: Serialize",
+    deserialize = "K: Deserialize<'de>, K::Type: Deserialize<'de>, K::Value: Deserialize<'de>, \
+                   K::Graph: Deserialize<'de>"
 ))]
 pub struct Tree<K: NodeKind> {
     /// Which tree this is.
     pub id: TreeId,
     /// A human-facing name. For a definition this is what the palette shows.
     pub name: String,
+    /// ★★★★★ R1999 — **what kind of graph this is**, in the taxonomy's own
+    /// vocabulary ([`NodeKind::Graph`]).
+    ///
+    /// Stored rather than derived from where the document keeps the tree, which
+    /// is how the reference's own answer is computed: it walks up the graph's
+    /// owner chain and reports which of three lists holds it. That derivation
+    /// has no answer for a graph in none of them and returns *function* — so
+    /// there, *this is a function graph* and *I could not classify this* are one
+    /// value. Stored, they are not.
+    ///
+    /// `serde` default, so every document written before this field existed
+    /// reads back as the taxonomy's unchosen kind rather than failing to load.
+    #[serde(default)]
+    pub(crate) kind: K::Graph,
     #[serde(with = "node_map")]
     nodes: BTreeMap<NodeId, Node<K>>,
     links: Vec<Link>,
@@ -2999,8 +3063,9 @@ impl<K: NodeKind> Tree<K> {
 /// The whole document: every tree, with tree `0` the root.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(bound(
-    serialize = "K: Serialize, K::Type: Serialize, K::Value: Serialize",
-    deserialize = "K: Deserialize<'de>, K::Type: Deserialize<'de>, K::Value: Deserialize<'de>"
+    serialize = "K: Serialize, K::Type: Serialize, K::Value: Serialize, K::Graph: Serialize",
+    deserialize = "K: Deserialize<'de>, K::Type: Deserialize<'de>, K::Value: Deserialize<'de>, \
+                   K::Graph: Deserialize<'de>"
 ))]
 pub struct Document<K: NodeKind> {
     trees: Vec<Tree<K>>,
@@ -3086,6 +3151,10 @@ impl<K: NodeKind> Document<K> {
             trees: vec![Tree {
                 id: ROOT,
                 name: root_name.into(),
+                // ⚠ R1999 — the root is of the taxonomy's unchosen kind, which
+                // is the taxonomy's own word for "the ordinary graph here" and
+                // not this crate's. `set_graph_kind` re-classifies it.
+                kind: K::Graph::default(),
                 nodes: BTreeMap::new(),
                 links: Vec::new(),
                 interface: Interface::default(),
@@ -3311,11 +3380,25 @@ impl<K: NodeKind> Document<K> {
     /// from a selection — `group`, `insert`, the fragment verbs — uses this
     /// one, because a tree that is about to receive nodes must not also be
     /// seeded with them.
+    ///
+    /// ⚠ R1999 — the definition is of the taxonomy's **unchosen** graph kind.
+    /// [`add_definition_of`](Self::add_definition_of) is the one that says.
     pub fn add_definition(&mut self, name: impl Into<String>) -> TreeId {
+        self.add_definition_of(name, K::Graph::default())
+    }
+
+    /// ★★★★★ R1999 — add an empty group definition **of a stated graph kind**.
+    ///
+    /// [`add_definition`](Self::add_definition) is this with the taxonomy's
+    /// unchosen kind, so there is one construction and not two — and a kind
+    /// given at birth is a kind no node was ever placed under the wrong answer
+    /// to, which is what setting it afterwards cannot promise.
+    pub fn add_definition_of(&mut self, name: impl Into<String>, kind: K::Graph) -> TreeId {
         let id = self.mint_tree_id();
         self.trees.push(Tree {
             id,
             name: name.into(),
+            kind,
             nodes: BTreeMap::new(),
             links: Vec::new(),
             interface: Interface::default(),
@@ -3636,9 +3719,27 @@ impl<K: NodeKind> Document<K> {
     /// [`EditError::RootHasNoOutside`] when an interface end is placed in a
     /// tree nothing instantiates; [`EditError::InterfaceEndTaken`] when that
     /// side already has one; [`EditError::WouldContainItself`] when a group
-    /// instance names a tree that already contains it.
+    /// instance names a tree that already contains it;
+    /// [`EditError::KindNotAdmitted`] when the kind does not declare itself at
+    /// home in this graph's kind (R1999).
     pub fn admits(&self, tree: TreeId, body: &NodeBody<K>) -> Result<(), EditError> {
         match body {
+            // ★★★★★ R1999 — the arm that can vary by WHAT THIS GRAPH IS. The
+            // other three read a tree's *role* (the root is the tree nothing
+            // instantiates) or the containment relation; none of them could ask
+            // the question the reference's own compatibility hook is sixteen
+            // hand-written copies of.
+            NodeBody::Kind(kind) => {
+                if self.at_home(tree, kind) {
+                    Ok(())
+                } else {
+                    Err(EditError::KindNotAdmitted {
+                        tree,
+                        kind: kind.name(),
+                        graph: self.graph_kind_token(tree),
+                    })
+                }
+            }
             NodeBody::Interface(side) => {
                 // ★ ROOT is the one tree nothing instantiates, so an interface
                 // end there materialises a contract with no outside — nobody
@@ -5615,6 +5716,23 @@ pub enum EditError {
         /// The node already holding it.
         held_by: NodeId,
     },
+    /// ★★★★★ R1999 — the node kind does not declare itself at home in **this
+    /// kind of graph** ([`NodeKind::at_home`]).
+    ///
+    /// Both members are identity tokens and not sentences: `kind` is
+    /// [`NodeKind::name`], and `graph` is the taxonomy's graph kind rendered by
+    /// its own `Debug`. The crate has no way to phrase an application's
+    /// vocabulary and does not try — what it guarantees is that a refusal names
+    /// *which* kind and *which* graph, which is what lets a screen write the
+    /// sentence its own readers use.
+    KindNotAdmitted {
+        /// The tree the node would have gone in.
+        tree: TreeId,
+        /// The node kind that was refused.
+        kind: String,
+        /// The kind of graph that refused it.
+        graph: String,
+    },
     /// ★★★★★ R1922 — a group instance would put a tree **inside itself**.
     ///
     /// Directly, or through any nesting that already reaches back. `validate`
@@ -5745,6 +5863,11 @@ impl fmt::Display for EditError {
                  interface end there would have no outside to be wired from",
                 tree.0,
                 side.wire_word()
+            ),
+            Self::KindNotAdmitted { tree, kind, graph } => write!(
+                f,
+                "tree {} is a {graph} graph, which is not one a {kind} is at home in",
+                tree.0
             ),
             Self::InterfaceEndTaken {
                 tree,

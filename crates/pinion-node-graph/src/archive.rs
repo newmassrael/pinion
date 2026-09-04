@@ -80,6 +80,7 @@
 //! # impl NodeKind for Op {
 //! #     type Type = ();
 //! #     type Value = i64;
+//! #     type Graph = ();
 //! #     fn name(&self) -> String { "Op".into() }
 //! #     fn inputs(&self) -> Vec<Port<(), i64>> { vec![Port::new("In", ())] }
 //! #     fn outputs(&self) -> Vec<Port<(), i64>> { vec![Port::new("Out", ())] }
@@ -215,6 +216,7 @@ where
     K: NodeKind + Serialize,
     K::Type: Serialize,
     K::Value: Serialize,
+    K::Graph: Serialize,
     C: Serialize,
 {
     /// The archive as text, with [`REVISION`] stamped on it.
@@ -247,6 +249,7 @@ where
     K: NodeKind + DeserializeOwned,
     K::Type: DeserializeOwned,
     K::Value: DeserializeOwned,
+    K::Graph: DeserializeOwned,
     C: DeserializeOwned,
 {
     /// Read `text` **without installing anything**: the plan.

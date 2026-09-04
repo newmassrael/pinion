@@ -6689,3 +6689,78 @@ fn a_cards_announcement_carries_its_tie_and_says_nothing_about_a_stranger() {
         }
     });
 }
+
+/// ★★★★★ R1999 — **dropping the definition a person is standing in brings them
+/// out of it**, so nothing on this screen ever reads a tree that is gone.
+///
+/// 🟥 This is R1999's closing audit made permanent. The round wrote, in
+/// `here_kind`, that a missing tree "is a state this screen cannot be in" — and
+/// driving it took four lines and disproved it: `here()` named a removed tree at
+/// depth 1, the breadcrumb printed `tree 1`, `here_kind` answered the taxonomy's
+/// DEFAULT for a graph that does not exist, and the palette offered every role
+/// including the one a pattern refuses. Answering the first member of an
+/// enumeration for a graph that is not there is precisely the reference defect
+/// this whole round is written against, so having it here was the round
+/// reproducing what it set out to pass.
+///
+/// The repair is `settle_path`, which calls `EditPath::prune` — the crate's own
+/// verb, which this screen had never called. The three readings below are the
+/// three the probe measured wrong.
+///
+/// ⚠ Opening a file was measured in the same probe and is **not** an instance:
+/// the archive carries the definitions, so the path it lands on is still there.
+#[test]
+fn r1999_dropping_the_definition_you_stand_in_brings_you_out() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+        let pair: Vec<_> = state.cards().into_iter().take(2).collect();
+        state
+            .selection
+            .set(pinion_core::selection::Selection::group(pair));
+        super::group_selection(&state, "part").expect("two cards make a subgraph");
+        let made = state.node_of("part").expect("the instance");
+        super::enter_card(&state, made).expect("go inside");
+        let inside = state.here();
+        assert_eq!(state.path.borrow().depth(), 1, "one descent down");
+        assert_eq!(
+            super::here_kind(&state),
+            crate::graph::LabGraph::Pattern,
+            "★ and it is the pattern the fold made"
+        );
+
+        super::drop_definition(&state, "part,take").expect("the definition may go");
+
+        assert!(
+            state.doc.borrow().tree(inside).is_none(),
+            "the tree really went"
+        );
+        assert_eq!(
+            state.path.borrow().depth(),
+            0,
+            "★★★★★ and the person is back at the top rather than standing in it"
+        );
+        assert_ne!(
+            state.here(),
+            inside,
+            "★ `here` names a tree that exists, which is what every reading on \
+             this screen assumes"
+        );
+        assert_eq!(
+            state.breadcrumb(),
+            vec![super::spec::GRAPH_NAME.to_owned()],
+            "★ and the trail says where they are instead of naming a dead tree"
+        );
+        assert_eq!(
+            super::here_kind(&state),
+            crate::graph::LabGraph::Deployment,
+            "★★★★★ the deployment because that is what this tree IS, not because \
+             a fallback answered the first member for a graph that is gone"
+        );
+        assert!(
+            super::role_at_home(&state, crate::graph::Role::Router),
+            "★ and the palette's offer is the surviving graph's answer"
+        );
+    });
+}

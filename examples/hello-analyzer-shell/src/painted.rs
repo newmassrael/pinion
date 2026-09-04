@@ -10671,6 +10671,211 @@ fn lab_card_boxes(shot: &Painted) -> std::collections::BTreeMap<String, Rect> {
         .collect()
 }
 
+/// ★★★★★ R1999 — **the assembled tool says what kind of graph a person is
+/// standing in, and what that kind will take** — driven on the shell, over one
+/// walk.
+///
+/// # What this reproduces
+///
+/// The engine's schema publishes a hook answering *what type of graph is this*.
+/// Measured at its own header: the vocabulary is a fixed five-member
+/// enumeration written for one editor, and the comment above the hook says in
+/// its own words that it does not belong there; the supplied body ignores the
+/// graph it is handed and answers the first member, so *this is a function
+/// graph* and *I could not classify this* are one value; and the largest group
+/// of its 53 consumers is the per-node-type *are you compatible with this
+/// graph* test — sixteen calls in fifteen node classes, four times the next
+/// largest group, each re-writing the same comparison.
+///
+/// The mechanism is proven against the reference in `pinion-node-graph`'s own
+/// census test, and the PIXELS are proven in the lab's own paint test.
+/// **What is proven here is that a person on this screen can reach it**: they
+/// fold part of a deployment into a pattern, step inside, and the screen tells
+/// them what they are standing in and what it will not take — before they press
+/// anything.
+///
+/// # The taxonomy's answer, and why it is this one
+///
+/// A router's name is the address every other card's configuration dials, which
+/// is why R1998 declared a router uncopyable under another name. A pattern is a
+/// definition, and a definition is instantiated as often as somebody drops it —
+/// so a router inside one is a second and third holder of one address, one per
+/// instance, with nothing at the moment of dropping to say so. That state is a
+/// registered defect of this screen; this is the half of it made
+/// **unrepresentable** rather than reported.
+///
+/// ★★★★★ **Where this passes the reference**: there, the palette filters on one
+/// side and a per-node-type virtual refuses on the other, and nothing relates
+/// them — a chooser may offer what the edit will refuse. Here `takes` and
+/// `refuses` are the palette filter and the refusal computed from ONE predicate,
+/// so they cannot disagree.
+///
+/// ⚠ **This is second-phase**, like R1988's relatedness: the behaviour canon
+/// has no graph-kind vocabulary at all. The standing order is explicit that the
+/// canon is what to reproduce and not a ceiling.
+///
+/// # Which screen this lands on
+///
+/// Screen A, the node lab, as it is assembled in this shell.
+#[test]
+fn r1999_a_graph_says_what_kind_it_is_and_what_it_will_take() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let report = crate::tests::walk_the_application(&state);
+        assert!(
+            report.conforms(),
+            "the application did not reproduce its specification over the walk: {}",
+            report.why().unwrap_or_default()
+        );
+        assert!(
+            report.itinerary().iter().any(|key| key == "lab"),
+            "the walk must stand in the node lab: {:?}",
+            report.itinerary()
+        );
+
+        state.go("lab").expect("the node lab section is open");
+        the_graph_a_person_opens_on_is_a_deployment(&state);
+        a_folded_part_is_a_pattern_and_says_what_it_refuses(&state);
+        a_pattern_still_takes_what_it_has_no_rule_against(&state);
+        a_person_may_re_classify_the_graph_they_are_in(&state);
+    });
+}
+
+/// Phase 1 — **the graph a person opens on says what it is**, and it takes
+/// every role this screen has.
+///
+/// Without this the refusal below would be indistinguishable from a screen that
+/// refuses routers everywhere.
+fn the_graph_a_person_opens_on_is_a_deployment(state: &std::rc::Rc<ShellState>) {
+    let here = lab_slot(state, "graph_kind");
+    assert_eq!(
+        here["kind"], "deployment",
+        "★ the graph a person opens on is the one this tool is for: {here}"
+    );
+    assert_eq!(
+        here["refuses"],
+        serde_json::json!([]),
+        "★★★★★ and it refuses NOTHING — the rule below is the pattern's, and a \
+         screen that refused a router everywhere would pass the next phase just \
+         as well: {here}"
+    );
+    assert!(
+        here["takes"]
+            .as_array()
+            .expect("`takes` is a list")
+            .iter()
+            .any(|role| role == "Router"),
+        "the router among them: {here}"
+    );
+}
+
+/// Phase 2 — **a folded part is a pattern**, it says which role it will not
+/// take, and the placement is actually refused with that reason.
+fn a_folded_part_is_a_pattern_and_says_what_it_refuses(state: &std::rc::Rc<ShellState>) {
+    let cards = lab_cards(state);
+    let (first, second) = (
+        cards.first().expect("the opening graph draws cards"),
+        cards.get(1).expect("and more than one"),
+    );
+    lab_invoke(state, "select", first).expect("a card the wire can choose");
+    lab_invoke(state, "select_also", second).expect("and a second beside it");
+    lab_invoke(state, "group", "Part").expect("a selection may become a part");
+
+    // The definition says what it is from OUT HERE too, before anybody steps in.
+    let definitions = lab_slot(state, "definitions");
+    let part = definitions["definitions"]
+        .as_array()
+        .expect("`definitions` holds a list under that key")
+        .iter()
+        .find(|row| row["definition"] == "Part")
+        .expect("the part a person just folded");
+    assert_eq!(
+        part["kind"], "pattern",
+        "★ a folded part is a pattern from the moment it exists, which is a \
+         kind chosen at birth rather than set afterwards: {part}"
+    );
+
+    lab_invoke(state, "enter", "Part").expect("and a person may step inside it");
+    let here = lab_slot(state, "graph_kind");
+    assert_eq!(
+        here["kind"], "pattern",
+        "★ and the screen says what the person is standing in: {here}"
+    );
+    assert_eq!(
+        here["refuses"],
+        serde_json::json!(["Router"]),
+        "★★★★★ named BEFORE anybody presses anything — the reference's palette \
+         filter and its per-node refusal are two unrelated pieces of code, and \
+         a person there finds out by being refused: {here}"
+    );
+    // ⚠ The PRESS that this list greys is a coordinate on the palette row, not
+    // a verb, so what it says when refused is asserted in the lab's own paint
+    // test (`r1999_a_role_this_graph_will_not_take_is_drawn_as_one_that_cannot
+    // _be_pressed`) where the row's rectangle is in hand. Stated rather than
+    // left implied: the two halves of this capability are proven in two
+    // binaries and both are driven.
+}
+
+/// Phase 3 — **the counterfactual, in the same graph**: a pattern still takes
+/// every role it has no rule against.
+fn a_pattern_still_takes_what_it_has_no_rule_against(state: &std::rc::Rc<ShellState>) {
+    let here = lab_slot(state, "graph_kind");
+    let takes = here["takes"].as_array().expect("`takes` is a list");
+    assert_eq!(
+        takes.len(),
+        7,
+        "★★★★★ seven of the eight roles are still offered inside a pattern — a \
+         screen that shut its palette on descent would satisfy phase 2 just as \
+         well: {here}"
+    );
+    assert!(
+        takes.iter().any(|role| role == "Peer"),
+        "a peer among them, which is the router's own family: {here}"
+    );
+}
+
+/// Phase 4 — **a person may re-classify the graph they are in**, and is told
+/// what that leaves out of place.
+///
+/// ★ The reference reaches the same place by moving a graph between the owning
+/// document's lists and makes **no pass over what is already in it**. Here the
+/// cards the new kind no longer admits are named, and nothing is deleted — an
+/// edit that removed them would take their wires with it.
+fn a_person_may_re_classify_the_graph_they_are_in(state: &std::rc::Rc<ShellState>) {
+    let before = lab_cards(state);
+    let said = lab_invoke(state, "set_graph_kind", "deployment")
+        .expect("a pattern may be re-classified as a deployment");
+    assert!(
+        said.contains("deployment"),
+        "the sentence says what it is now: {said}"
+    );
+    assert_eq!(
+        lab_slot(state, "graph_kind")["refuses"],
+        serde_json::json!([]),
+        "★ and it now refuses nothing, so the greying follows the kind rather \
+         than the tree"
+    );
+    assert_eq!(
+        lab_cards(state),
+        before,
+        "★★★★★ and re-classifying deleted nothing — the crate reports what a \
+         narrowing left behind rather than removing it, because removing a card \
+         takes its wires with it"
+    );
+
+    let refused = lab_invoke(state, "set_graph_kind", "ubergraph")
+        .expect_err("a word this screen does not have");
+    let why = format!("{refused:?}");
+    assert!(
+        why.contains("deployment") && why.contains("pattern"),
+        "★ and the refusal names the words that WOULD work, which come from the \
+         vocabulary itself rather than a list written beside the verb: {why}"
+    );
+
+    lab_invoke(state, "exit", "").expect("and back out");
+}
+
 /// ★★★★★ R1998 — **the assembled tool offers a replacement for what the graph
 /// will not take, and says it did** — driven on the shell, over one walk.
 ///

@@ -363,6 +363,10 @@ impl<K: NodeKind> Document<K> {
             | Violation::MistypedPortValue { node, .. }
             | Violation::InadmissiblePortValue { node, .. }
             | Violation::TooManyItems { node, .. }
+            // R1999 — the card whose kind this graph does not admit. One card,
+            // and it is the one to act on: the repairs are moving it out or
+            // re-classifying the tree, and both start from looking at it.
+            | Violation::NotAtHome { node, .. }
             // The container it names is not there, so there is one card.
             | Violation::DanglingParent { node, .. } => vec![*node],
             // Both are there and both are the fault: the contained node is
@@ -482,7 +486,8 @@ const fn violation_tree(violation: &Violation) -> TreeId {
         | Violation::StrayPortValue { tree, .. }
         | Violation::MistypedPortValue { tree, .. }
         | Violation::InadmissiblePortValue { tree, .. }
-        | Violation::TooManyItems { tree, .. } => *tree,
+        | Violation::TooManyItems { tree, .. }
+        | Violation::NotAtHome { tree, .. } => *tree,
         Violation::Recursion { definition } => *definition,
     }
 }

@@ -3489,10 +3489,10 @@
       "verdict": "have"
     },
     "schema::GetGraphType": {
-      "covered_by": "a tree has no KIND, which is a different absence from the one R1922 closed: measured from the reference's signature this is asked of a graph and answers what that graph IS, where the four hooks R1922 covered are asked of a NODE and answer whether it fits. A Document's trees differ by role (the root, which nothing instantiates, versus a definition) and `admits` reads that role, but nothing names a graph's kind, so nothing can vary BY kind. R1922",
+      "covered_by": "Document::graph_kind(tree) — a Tree carries a kind from the taxonomy's own vocabulary (NodeKind::Graph) and answers it, and NodeKind::at_home declares which kinds a node kind lives in, read by the refusal (Document::admits) and by the offer (Document::at_home) so a chooser cannot offer what an edit refuses. Three measured betterments: the reference's vocabulary is a fixed five-member enumeration whose own comment says it does not belong there; its supplied body ignores its argument and answers the first member, so `a function graph`, `I could not classify this` and `there is no graph` are one value; and its compatibility test is written by hand at sixteen of its 53 call expressions, in fifteen node classes, which is the largest group by a factor of four. R1999",
       "mechanism": "graph-schema",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_schema_get_graph_type",
+      "verdict": "have"
     },
     "schema::GetLocalVariables": {
       "covered_by": "the engine's visual script/asset subject matter",

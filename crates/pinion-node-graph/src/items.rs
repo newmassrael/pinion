@@ -554,7 +554,8 @@ impl From<EditError> for ItemError {
                 | EditError::BypassWouldCycle { tree, .. }
                 | EditError::LabelTaken { tree, .. }
                 | EditError::LabelEmpty { tree, .. }
-                | EditError::TypeNotAdmitted { tree, .. } => tree,
+                | EditError::TypeNotAdmitted { tree, .. }
+                | EditError::KindNotAdmitted { tree, .. } => tree,
             }),
         }
     }

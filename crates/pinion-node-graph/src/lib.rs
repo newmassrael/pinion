@@ -154,6 +154,7 @@
 //! impl NodeKind for Op {
 //!     type Type = ();
 //!     type Value = i64;
+//!     type Graph = ();
 //!     fn name(&self) -> String {
 //!         match self {
 //!             Op::Constant(_) => "Constant".into(),
@@ -226,6 +227,7 @@ mod eval;
 mod focus;
 mod fragment;
 mod frame;
+mod graph_kind;
 mod group;
 mod home;
 mod insert;

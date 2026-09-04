@@ -546,7 +546,12 @@ const STORAGE_KEY: &str = "node_graph.state";
 // saved graph. The default means an old blob READS correctly; the version is
 // what tells a person their file predates the field rather than leaving them to
 // find out from a value that was never written.
-const PERSISTED_SCHEMA_VERSION: u32 = 20;
+// ★★★★★ R1999 — 20 -> 21. A tree now carries the KIND of graph it is
+// (`NodeKind::Graph`, defaulting to the taxonomy's unchosen member), and that
+// is a field in every saved graph. The default means an old blob READS
+// correctly; the version is what tells a person their file predates the field
+// rather than leaving them to infer a kind that was never written.
+const PERSISTED_SCHEMA_VERSION: u32 = 21;
 
 /// R1599 — the append-only `(version, digest)` ledger the persistence gate
 /// reads. See `pinion_core::test_fixtures::assert_persisted_shape` for why it
@@ -578,6 +583,12 @@ const PERSISTED_SHAPE_HISTORY: &[(u32, u64)] = &[
     // predates the field rather than leaving them to infer it from a tree that
     // claims to have been born with nothing.
     (20, 0x166f_6e56_bcd9_62c8),
+    // R1999 — a tree says what KIND of graph it is (`Tree::kind`), and one
+    // declaration per node kind says which graph kinds it is at home in. A
+    // field, so the persisted shape moved. `serde(default)` means an old blob
+    // READS correctly as the taxonomy's unchosen kind; the version is what
+    // tells a person their file predates the field.
+    (21, 0x747c_0f30_a39a_f481),
 ];
 
 /// R849 — where a newly added node first lands, and the per-add cascade step
@@ -888,6 +899,7 @@ enum MaterialOp {
 impl NodeKind for MaterialOp {
     type Type = PortType;
     type Value = CellValue;
+    type Graph = ();
 
     /// R1256 — the op's canonical, rename-stable identity token (the `Add`/
     /// `Multiply`/... a `query node.<id>.op` reports). This is the AI-legible

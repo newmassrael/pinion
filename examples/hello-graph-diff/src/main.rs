@@ -209,6 +209,7 @@ struct Named(String);
 impl NodeKind for Named {
     type Type = ();
     type Value = ();
+    type Graph = ();
 
     fn name(&self) -> String {
         self.0.clone()

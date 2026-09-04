@@ -19,8 +19,8 @@
 
 use crate::spec::TrafficParameter;
 use pinion_node_graph::{
-    Admission, Admits, Composition, Conversion, Copying, Drawn, NodeBody, NodeKind, Objection,
-    Port, PortName, PortRef, Refusal, Side, Tint, Unlandable, Variadic,
+    Admission, Admits, Admitted, Composition, Conversion, Copying, Drawn, NodeBody, NodeKind,
+    Objection, Port, PortName, PortRef, Refusal, Side, Tint, Unlandable, Variadic,
 };
 use serde::{Deserialize, Serialize};
 
@@ -241,6 +241,73 @@ pub enum Wording {
     /// gives a node, and the standing order for this reproduction neutralises
     /// those while keeping structure and behaviour identical.
     Neutralised,
+}
+
+/// ★★★★★ R1999 — **what a graph on this screen is for.**
+///
+/// The screen's own vocabulary for [`NodeKind::Graph`], and the reason that is
+/// an associated type: the reference answers this out of a fixed five-member
+/// enumeration written for one editor — *function, ubergraph, macro, animation,
+/// state machine* — of which nothing on this screen is any.
+///
+/// ⚠ **This is not the tree's ROLE.** Whether a tree is the root or a
+/// definition is already answerable and already read (an interface end may only
+/// be placed where something instantiates it). A kind is a separate axis, and
+/// this taxonomy uses it separately: a definition made by folding part of a
+/// deployment is a [`Pattern`](LabGraph::Pattern), and a person may
+/// re-classify one back to a [`Deployment`](LabGraph::Deployment) — a topology
+/// kept beside the live one and never instantiated — without it becoming the
+/// root or ceasing to be a definition.
+///
+/// ⚠ **The canon has no graph kinds at all** (measured: its lab logic carries
+/// no such vocabulary). This is second-phase, like R1988's relatedness, and
+/// the standing order is explicit that the canon is what to reproduce and not
+/// a ceiling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum LabGraph {
+    /// A topology that gets launched: its cards are processes that will run,
+    /// and their names are the addresses the configurations dial.
+    ///
+    /// The default, so a document written before this existed — and the root of
+    /// every document made since — reads back as the thing this screen is for.
+    #[default]
+    Deployment,
+    /// A re-usable part, made by folding a selection. Instantiated as often as
+    /// somebody drops it, which is what decides who may live in one.
+    Pattern,
+}
+
+impl LabGraph {
+    /// Every kind, for a reader that has to offer them.
+    pub const ALL: [Self; 2] = [Self::Deployment, Self::Pattern];
+
+    /// The word this screen calls it by, in the wire and in the drawing.
+    #[must_use]
+    pub const fn word(self) -> &'static str {
+        match self {
+            Self::Deployment => "deployment",
+            Self::Pattern => "pattern",
+        }
+    }
+
+    /// The one line a person reads about what this kind of graph is for.
+    #[must_use]
+    pub const fn gist(self) -> &'static str {
+        match self {
+            Self::Deployment => "a topology that gets launched",
+            Self::Pattern => "a re-usable part, dropped in as often as you like",
+        }
+    }
+
+    /// The kind that word names, or `None`.
+    ///
+    /// Derived from [`ALL`](Self::ALL) rather than spelled a second time, so a
+    /// kind added here is one a caller can name without another edit (R1912's
+    /// rule, and R1637's: a declaration is a precondition of dispatch).
+    #[must_use]
+    pub fn from_word(word: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.word() == word)
+    }
 }
 
 /// What a node is for.
@@ -918,6 +985,29 @@ fn service_of(value: &str) -> Option<String> {
 }
 
 impl LabNode {
+    /// ★★★★★ R1999 — **a card fresh from the palette**, and the one place that
+    /// says what one is.
+    ///
+    /// Lifted rather than left inline because there are now two readers and not
+    /// one: the palette that PLACES a card, and the palette that asks whether
+    /// this graph would take it before drawing the row as pressable. Two
+    /// spellings of *a fresh card* could differ in exactly the field the
+    /// question turns on, which is the class of defect this crate's own census
+    /// was built to stop being possible (one name, two spellings — R1587.1).
+    #[must_use]
+    pub fn of(role: Role) -> Self {
+        Self {
+            role,
+            // ★ R1961 — a card just taken from the palette listens nowhere and
+            // dials nothing, so nothing says what it speaks and it says so.
+            listens_over: None,
+            dials_over: None,
+            listening: false,
+            // R1885 — it runs the reference build; choosing another is an edit.
+            implementation: Implementation::default(),
+        }
+    }
+
     /// ★★★★★ R1961 — **the socket type this node's own pins carry.**
     ///
     /// Three sites wrote `Endpoint::Locator(self.transport)` — the dial pin,
@@ -968,6 +1058,31 @@ impl NodeKind for LabNode {
     type Type = Endpoint;
     /// A locator: what a pin hands the pin it is wired to.
     type Value = String;
+    /// ★★★★★ R1999 — this screen's two kinds of graph.
+    type Graph = LabGraph;
+
+    /// ★★★★★ R1999 — **a router belongs in a deployment and nowhere else.**
+    ///
+    /// A router's name is the address every other card's configuration dials —
+    /// which is exactly why R1998 declared a router uncopyable under another
+    /// name. A [`LabGraph::Pattern`] is a definition, and a definition is
+    /// instantiated as often as somebody drops it: a router inside one would be
+    /// a second, third and fourth holder of one address, one per instance, with
+    /// nothing at the moment of dropping to say so. That state is already a
+    /// registered defect of this screen — two holders of one name are refused
+    /// by every verb and reported by nothing — and this is the half of it that
+    /// can be made *unrepresentable* rather than reported.
+    ///
+    /// ⚠ Everything else answers [`Admitted::Anything`]. Publishers, stores and
+    /// the rest are ordinary participants whose names are local, so a pattern
+    /// holding two of them after two drops is two participants, which is what
+    /// the person asked for.
+    fn at_home(&self) -> Admitted<LabGraph> {
+        match self.role {
+            Role::Router => Admitted::These(vec![LabGraph::Deployment]),
+            _ => Admitted::Anything,
+        }
+    }
 
     fn name(&self) -> String {
         self.role.name().to_owned()
