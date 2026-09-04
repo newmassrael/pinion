@@ -102,12 +102,12 @@ use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::widgets::wheel::WheelDirection;
 use pinion_core::{CellKind, Frame, Modifiers, Scene, WidgetCore, edit_field_keymap};
 use pinion_node_graph::{
-    Act, Arrival, Camera, Crossings, Definitions, Document, Drawn, EditPath, Extent, Faces, Fault,
-    Fit, Focus, Focused, Found, Fragment, InZone, Instance, Item, Judged, LandError, Landfall,
-    LinkId, LinkLayer, Margin, NameSource, Node, NodeBody, NodeId, NodeKind, Objection,
-    ParentError, PortPath, PortRef, PortSite, ROOT, Relinked, Room, RoomError, Sharing, Side,
-    Socket, Tint, TreeId, Violation, WatchError, Watches, Weight, Widening, ZoomRange, palette_of,
-    type_palette,
+    Act, AdvancedView, Arrival, Camera, ClassSource, Classify, Crossings, Definitions, Document,
+    Drawn, EditPath, Extent, Faces, Fault, Fit, Focus, Focused, Found, Fragment, InZone, Instance,
+    Item, Judged, LandError, Landfall, LinkId, LinkLayer, Margin, NameSource, Node, NodeBody,
+    NodeId, NodeKind, Objection, ParentError, PortPath, PortRef, PortSite, ROOT, Relinked, Room,
+    RoomError, Sharing, Side, Socket, Tint, TreeId, Violation, WatchError, Watches, Weight,
+    Widening, ZoomRange, palette_of, type_palette,
 };
 use pinion_platform_storage::AppStorage;
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
@@ -4149,6 +4149,20 @@ struct CardShape {
     /// screen's paint sweep asserts that nothing a card draws leaves the card,
     /// which conditional geometry is the usual way to break.
     issue: Rect,
+    /// ★★★★★ R2001 — the ADVANCED FOLD control's seat, relative to `rect`, or
+    /// `None` when nothing on this card is in the advanced class.
+    ///
+    /// Under the rows, which is the reference's own placement — its node widget
+    /// adds the arrow as the last slot of the node's main box — and **not**
+    /// reserved the way `issue` is. The two differ because their absences do:
+    /// an issue dot appears and disappears while a person watches one card, so
+    /// a seat that came and went would move the identity label under their eye;
+    /// the advanced class is a thing a person puts a pin INTO, so the card
+    /// growing a row at that moment is the answer rather than a surprise.
+    ///
+    /// `rect.h` is the union of the parts, so a card that grows this is taller
+    /// by derivation and the paint sweep's containment still holds.
+    advanced: Option<Rect>,
     /// The face the identity label is drawn at — scaled, so it shrinks with
     /// the diagram it belongs to.
     id_font: u32,
@@ -4301,6 +4315,26 @@ fn card_shape_at(state: &LabState, node: NodeId, zoom: u32) -> Option<CardShape>
         .map(|(_, value)| value.y + value.h)
         .max()
         .unwrap_or(hdr);
+    // ★★★★★ R2001 — the fold control, present only when this card HAS an
+    // advanced pin. Asked of the model, so the seat and the pins the painter
+    // hides cannot answer differently; `detailed` gates it as well, because a
+    // card a person collapsed is showing its identity band alone and a control
+    // for pins it is not drawing would be a control over nothing.
+    let advanced = (detailed
+        && state
+            .doc
+            .borrow()
+            .advanced_view(state.here(), node)
+            .is_some_and(AdvancedView::has_control))
+    .then(|| {
+        Rect::new(
+            pad,
+            content_bottom + gap,
+            w.saturating_sub(pad * 2).max(8),
+            row_line,
+        )
+    });
+    let content_bottom = advanced.map_or(content_bottom, |seat| seat.y + seat.h);
     let badge_w = scaled(38).max(10);
     let badge_font = canvas_font_by(8, zoom);
     let badge_line = line_box(badge_font);
@@ -4333,6 +4367,7 @@ fn card_shape_at(state: &LabState, node: NodeId, zoom: u32) -> Option<CardShape>
             badge_w.saturating_sub(gap * 2).max(4),
             badge_line,
         ),
+        advanced,
         id_font,
         row_font,
         badge_font,
@@ -4616,6 +4651,15 @@ enum Hit {
     More,
     Run,
     Node(NodeId),
+    /// ★★★★★ R2001 — **a card's advanced-fold control**, pressed to put its
+    /// advanced pins on the frame or take them off it again.
+    ///
+    /// Its own hit rather than a part of [`Self::Node`], because it is a
+    /// different act on the same card: pressing the card selects and picks it
+    /// up, and pressing this changes what the card DRAWS. Folding it into the
+    /// card would make the control undraggable-or-unpressable, whichever the
+    /// router decided first.
+    AdvancedFold(NodeId),
     /// ★★★★★ R1915 — a pin, **by the address that names it**.
     ///
     /// It carried a `bool` until this round, which said *dial or accept* and
@@ -5053,6 +5097,12 @@ impl Hit {
                 tag.starts_with("lab.node.")
                     || tag.starts_with("lab.pin.")
                     || tag.starts_with("lab.link.")
+                    // ★★★★★ R2001 — the advanced-fold chip's own family. A
+                    // filter that drops a family HIDES it from every press,
+                    // and the mark goes on being drawn: R1982 recorded exactly
+                    // that shape, where a pattern with a discarded path made a
+                    // gate blind to a defect it was watching for.
+                    || tag.starts_with("lab.advanced.")
             })
             .map(|(tag, _)| Self::of_tag(state, tag))
             .find(|hit| !matches!(hit, Self::Nothing))
@@ -5131,6 +5181,16 @@ impl Hit {
         }
         if tag == "lab.palette.discovery" {
             return Self::DiscoveryToggle;
+        }
+        // ★★★★★ R2001 — a prefix of its own rather than `lab.node.<name>.…`,
+        // and that is the router's own rule speaking: the `lab.node.` arm below
+        // would swallow `<name>.advanced`, look for a card called that, find
+        // none and answer `Nothing` — the shape R1885 recorded for
+        // `lab.node.build.` and R1915 for a member pin.
+        if let Some(name) = tag.strip_prefix("lab.advanced.")
+            && let Some(id) = state.node_of(name)
+        {
+            return Self::AdvancedFold(id);
         }
         if let Some(name) = tag.strip_prefix("lab.node.")
             && let Some(id) = state.node_of(name)
@@ -5283,6 +5343,20 @@ impl Hit {
             ),
             Self::Run => "run".into(),
             Self::Node(id) => format!("node:{}", state.name_of(*id)),
+            // ★★★★★ R2001 — the word carries what the press WOULD LEAVE the
+            // card in, the way the focus chip's and `home`'s do: `advanced`
+            // alone answers the same on a card about to fold and one about to
+            // unfold, which is the half a driver needs.
+            Self::AdvancedFold(id) => format!(
+                "advanced:{}:{}",
+                state.name_of(*id),
+                match state.doc.borrow().advanced_view(state.here(), *id) {
+                    Some(AdvancedView::Unfolded) => AdvancedView::Folded,
+                    Some(AdvancedView::Folded) => AdvancedView::Unfolded,
+                    _ => AdvancedView::Nothing,
+                }
+                .wire_word()
+            ),
             // ★ R1915 — the member is in the word, so a driver reading what it
             // is standing on can tell `pin:P-02:dial` from `pin:P-02:dial.host`.
             Self::Pin { node, side, at } => {
@@ -10626,18 +10700,15 @@ fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
                 Silence::part_of(format!("lab.node.{name}")),
             ));
         }
-        for ((key, value), (key_rect, value_rect)) in rows.iter().zip(shape.rows.iter()) {
-            parts.push(label(key.clone(), *key_rect, shape.row_font, ink.text_3));
-            // The value column holds user data — an endpoint, a key
-            // expression — and its TAIL is what distinguishes one from another,
-            // so the middle gives way rather than the end.
-            parts.push(value_label(
-                value.clone(),
-                *value_rect,
-                shape.row_font,
-                ink.text_2,
-            ));
+        // ★★★★★ R2001 — **the advanced class's one control**, under the rows,
+        // which is where the reference puts its own. Drawn only on a card that
+        // has an advanced pin, and that is DERIVED from the pins rather than
+        // stored — the defect the reference pays for storing it is a control
+        // that goes on being drawn after the last advanced pin is gone.
+        if let Some(seat) = shape.advanced {
+            parts.push(advanced_chip(state, node, seat, ink));
         }
+        parts.extend(card_digest_parts(&rows, &shape, ink));
         // ★★★★★ R1919 — a search hit is drawn WIDER, and the edge COLOUR stays
         // the selection axis's. Two channels of one edge, one per axis, because
         // a card can be *found and selected*, *found and not*, *selected and
@@ -10692,6 +10763,92 @@ fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
         children.extend(canvas_pins(state, node, shape.rect, role, ink));
     }
     children
+}
+
+/// One card's digest rows: the key column and the value column, in the seats
+/// the shape already placed them in.
+///
+/// ⚠ Lifted out of `canvas_cards` because R2001's fold control took that
+/// function past `clippy::pedantic`'s line bound, and the bound was paid with
+/// STRUCTURE rather than an `#[allow]` — R1999's rule. The rows are the part
+/// that comes out cleanly: they are the only block in that loop reading nothing
+/// but `rows` and `shape`, which is what makes them a function rather than a
+/// fragment with six captured names.
+fn card_digest_parts(rows: &[(String, String)], shape: &CardShape, ink: Ink) -> Vec<Scene> {
+    let mut parts = Vec::new();
+    for ((key, value), (key_rect, value_rect)) in rows.iter().zip(shape.rows.iter()) {
+        parts.push(label(key.clone(), *key_rect, shape.row_font, ink.text_3));
+        // The value column holds user data — an endpoint, a key expression —
+        // and its TAIL is what distinguishes one from another, so the middle
+        // gives way rather than the end.
+        parts.push(value_label(
+            value.clone(),
+            *value_rect,
+            shape.row_font,
+            ink.text_2,
+        ));
+    }
+    parts
+}
+
+/// ★★★★★ R2001 — **the card's advanced-fold control**, drawn as a chip on the
+/// card rather than as a box beside a word.
+///
+/// The caption carries the state a reader has to have: folded, it says how many
+/// pins are OFF the frame right now, which is not the size of the class — a
+/// wired advanced pin stays drawn — so the number a person reads is the number
+/// unfolding would bring back. Unfolded it says only the word, because the
+/// pins are in front of them.
+///
+/// ★ Through [`caption::captioned`] and not a box beside a label, for the
+/// reason R1988's chip records: this application's `r1812` ratchet counts a
+/// caption paired with its box by nothing but where the two landed, and it has
+/// caught a first draft written the other way twice.
+fn advanced_chip(state: &LabState, node: NodeId, seat: Rect, ink: Ink) -> Scene {
+    let name = state.name_of(node);
+    let folded = state
+        .doc
+        .borrow()
+        .advanced_view(state.here(), node)
+        .is_some_and(|view| view == AdvancedView::Folded);
+    let away = state
+        .doc
+        .borrow()
+        .visible_ports(state.here(), node)
+        .map_or(0, |seen| {
+            seen.advanced_inputs.len() + seen.advanced_outputs.len()
+        });
+    let word = if folded && away > 0 {
+        format!("advanced +{away}")
+    } else {
+        "advanced".to_owned()
+    };
+    let (chip, _) = captioned(
+        &format!("lab.advanced.{name}"),
+        seat,
+        BoxStyle::filled(if folded { ink.raised } else { ink.accent_soft })
+            .with_corner_radius(4)
+            .with_border(Border::new(
+                if folded { ink.outline } else { ink.accent },
+                1,
+            )),
+        &caption::Caption::new(
+            word,
+            run_style(
+                canvas_font(state, FONT_TINY),
+                if folded { ink.text_2 } else { ink.text },
+            ),
+        )
+        .centred()
+        // The chip's own name already carries the word and the count, so a
+        // stop on the run would read the state out twice.
+        .silent(Silence::name_of(format!("lab.advanced.{name}"))),
+        // ⚠ TRANSPARENT, for the reason every control on this canvas is: a hit
+        // here is resolved from COORDINATES, and a tagged node that takes the
+        // pointer is resolved as the target and forwards nothing.
+        caption::Pointer::Transparent,
+    );
+    chip
 }
 
 /// ★★★★★ R1928 — **what a reader who cannot see the canvas is told about one
@@ -12707,6 +12864,33 @@ const FIELDS: &[SchemaField] = &{
         // client that read the ways and worked out the permission for itself
         // would be the second oracle, which is R1884's cost.
         SchemaField::new("link_reverse", "json"),
+        // ★★★★★ R2001 — **which of every card's pins are advanced, who said
+        // so, and what the card's one control is doing.** One slot for all
+        // three because they are one derivation: a client that read the classes
+        // and worked out the control's state for itself would be the second
+        // oracle R1884 measured the cost of.
+        SchemaField::new("advanced_pins", "json"),
+        // Put a card's advanced pins on the frame, or take them off again. No
+        // argument but the card: the state is the model's to answer, and a verb
+        // taking `on`/`off` would let a caller assert a state the card is not
+        // in — which is how a screen and its driver drift apart.
+        SchemaField::action("fold_advanced", "string"),
+        // ★★★★★ R2001 — say which class a pin is in. The class vocabulary is
+        // CLOSED and built from `PIN_CLASSES`, so the words an agent is offered
+        // cannot drift from the ones the verb accepts (R1637: a declaration is
+        // a precondition of dispatch).
+        SchemaField::action_with(
+            "classify_pin",
+            "string",
+            ArgForm::Delimited(','),
+            const {
+                &[
+                    SchemaArg::key("node", "string", "nodes"),
+                    SchemaArg::one_of("pin", "string", &["dial", "accept"]),
+                    SchemaArg::one_of("class", "string", PIN_CLASSES),
+                ]
+            },
+        ),
         SchemaField::action("select", "string"),
         SchemaField::action("select_link", "string"),
         // ★★★★★ R2000 — turn a wire round, by the same address `select_link`
@@ -13544,6 +13728,7 @@ impl ExternalIntrospect for LabOracle {
             // the one the greying reads — so this cannot promise what
             // `reverse_link` would refuse.
             "link_reverse" => Ok(IntrospectValue::Json(link_reverse_wire(state))),
+            "advanced_pins" => Ok(IntrospectValue::Json(advanced_pins_wire(state))),
             // ★★★★★ R1918 — what the marks on this frame say about themselves.
             "described" => Ok(IntrospectValue::Json(described_wire(state))),
             // ★★★★★ R1919 — what a reader is looking for, and what answers.
@@ -14577,6 +14762,26 @@ impl ExternalIntrospect for LabOracle {
                 })?;
                 let node = Self::card(&state, name.trim())?;
                 put_away_pins(&state, node, which.trim()).map(IntrospectValue::Text)
+            }
+            // ★★★★★ R2001 — the card's own fold control, as a verb. The press
+            // and this are one function, so the two cannot come apart.
+            "fold_advanced" => {
+                let node = Self::card(&state, Self::text(&args)?.trim())?;
+                Ok(IntrospectValue::Text(fold_advanced(&state, node)))
+            }
+            // ★★★★★ R2001 — `<card>,<pin>,<class>`.
+            "classify_pin" => {
+                let raw = Self::text(&args)?;
+                let mut parts = raw.splitn(3, ',');
+                let (Some(name), Some(pin), Some(class)) =
+                    (parts.next(), parts.next(), parts.next())
+                else {
+                    return Err(InvokeError::rejected(format!(
+                        "{raw:?} is not <card>,<pin>,<class>"
+                    )));
+                };
+                let node = Self::card(&state, name.trim())?;
+                classify_pin(&state, node, pin.trim(), class.trim()).map(IntrospectValue::Text)
             }
             // ★★★★★ R1914 — `<card>,<address>`, the same two-part shape, with
             // a leading `-` on the address to fold rather than split. The
@@ -17402,6 +17607,84 @@ fn put_away_pins(state: &Rc<LabState>, node: NodeId, which: &str) -> Result<Stri
     Ok(said)
 }
 
+/// ★★★★★ R2001 — **put a card's advanced pins on the frame, or take them off
+/// again**, and say what state that left the card in.
+///
+/// The press and the verb are one function, so the chip a person clicks and the
+/// verb an agent calls cannot come apart — the rule this screen follows
+/// everywhere and the reason `Hit::AdvancedFold` carries only a node.
+///
+/// ★ It answers the model's own word for the state
+/// ([`AdvancedView::wire_word`]), including `nothing` — a card with no advanced
+/// pin is TOLD it has none rather than left watching a picture that does not
+/// change, which is what the reference's own handler does.
+fn fold_advanced(state: &Rc<LabState>, node: NodeId) -> String {
+    let name = state.name_of(node);
+    let said = {
+        let mut doc = state.doc.borrow_mut();
+        let here = state.here();
+        let open = doc
+            .advanced_view(here, node)
+            .is_some_and(|view| view == AdvancedView::Unfolded);
+        doc.show_advanced_ports(here, node, !open)
+            .map_or_else(|| "nothing".to_owned(), |view| view.wire_word().to_owned())
+    };
+    let said = format!("{name}: {said}");
+    state.say(Utterance::done(said.clone()));
+    said
+}
+
+/// ★★★★★ R2001 — **say which class one of a card's pins is in**, as a person.
+///
+/// `<card>,<pin>,<class>` — the pin words this card draws, and the model's own
+/// three answers: `advanced`, `plain`, and `declared`, which is *say nothing
+/// and let the kind answer again*. The third is the one the reference cannot
+/// make at all, because there a person's choice overwrites the declaration.
+///
+/// The class vocabulary is [`Classify`]'s own, read back through
+/// [`Classify::from_wire_word`], so the words an agent is offered and the words
+/// the verb accepts are the same list — R1637's rule, and the reason a fourth
+/// answer would arrive here without an edit.
+fn classify_pin(
+    state: &Rc<LabState>,
+    node: NodeId,
+    pin: &str,
+    class: &str,
+) -> Result<String, InvokeError> {
+    let name = state.name_of(node);
+    let at = match pin {
+        "dial" => PortRef::output(0),
+        "accept" => PortRef::input(0),
+        other => {
+            return Err(InvokeError::rejected(format!(
+                "{other:?} is not a pin of this card; it draws `dial` and `accept`"
+            )));
+        }
+    };
+    let how = Classify::from_wire_word(class).ok_or_else(|| {
+        InvokeError::rejected(format!(
+            "{class:?} is not a class; this screen takes {}",
+            PIN_CLASSES.join(", ")
+        ))
+    })?;
+    let after = state
+        .doc
+        .borrow_mut()
+        .classify_port(state.here(), node, at, how)
+        .map_err(|why| InvokeError::rejected(why.to_string()))?;
+    let said = format!("{name} {pin}: {}", after.class.wire_word());
+    state.say(Utterance::done(said.clone()));
+    Ok(said)
+}
+
+/// ★★★★★ R2001 — the closed set of class words `classify_pin` accepts, derived
+/// from [`Classify`] rather than spelled beside it.
+const PIN_CLASSES: &[&str] = &[
+    Classify::Advanced.wire_word(),
+    Classify::Plain.wire_word(),
+    Classify::Declared.wire_word(),
+];
+
 /// ★★★★★ R1914 — the pin address a client wrote, as the model's own
 /// [`PortPath`].
 ///
@@ -18664,6 +18947,12 @@ fn press(state: &Rc<LabState>) {
     let (px, py) = state.cursor.get();
     let hit = Hit::at(state, px, py);
     match &hit {
+        // ★★★★★ R2001 — read BEFORE the card, because the chip is ON the card:
+        // a press that reached `Hit::Node` first would pick the card up and the
+        // control would never fire.
+        Hit::AdvancedFold(node) => {
+            fold_advanced(state, *node);
+        }
         Hit::Node(node) => {
             select_card(state, Some(*node));
             // ★★★★★ R1726 — picking a card up puts it in front, and it STAYS
@@ -21287,6 +21576,42 @@ fn canvas_access(state: &LabState) -> Vec<AccessNode> {
             // has been.
             focus_aside(state, node),
         ))));
+        // ★★★★★ R2001 — **the advanced-fold control reaches a reader who never
+        // sees the card**, with the state and the count and not only the word.
+        //
+        // ⚠ The population is `card_shape`'s, asked rather than restated: the
+        // chip is painted only where that answers a seat, and R1887's ghost
+        // lesson is that an announcement is a CLAIM ABOUT THE PAINT — twelve
+        // regions announced by a folded palette and painted by nothing was the
+        // measurement that produced the rule. A card a person has collapsed
+        // paints no chip, so it announces none either, and neither branch is
+        // spelled twice.
+        if card_shape(state, node).is_some_and(|shape| shape.advanced.is_some()) {
+            let view = state
+                .doc
+                .borrow()
+                .advanced_view(state.here(), node)
+                .unwrap_or(AdvancedView::Nothing);
+            let away = state
+                .doc
+                .borrow()
+                .visible_ports(state.here(), node)
+                .map_or(0, |seen| {
+                    seen.advanced_inputs.len() + seen.advanced_outputs.len()
+                });
+            nodes.push(
+                AccessNode::new(format!("lab.advanced.{name}"), AriaRole::Button)
+                    .with_name(match view {
+                        AdvancedView::Unfolded => {
+                            format!("{name} advanced pins shown — press to fold them away")
+                        }
+                        _ => format!(
+                            "{name} advanced pins folded, {away} off the frame — press to show them"
+                        ),
+                    })
+                    .with_expanded(view == AdvancedView::Unfolded),
+            );
+        }
     }
     for (frame, name) in frames_of(state) {
         let gist = spec::FRAMES
@@ -23469,6 +23794,62 @@ fn link_reverse_wire(state: &Rc<LabState>) -> serde_json::Value {
             "berths": [],
         }),
     }
+}
+
+/// ★★★★★ R2001 — **every card that has an advanced pin, what its one control
+/// is doing, and which pins are in the class and who put them there.**
+///
+/// Cards with nothing advanced are absent rather than listed with an empty
+/// entry: `AdvancedView::Nothing` is derived from the ports, so a card that has
+/// never been touched has nothing to say, and listing it would put the reader
+/// back in the position of scanning for the one that does.
+///
+/// The `source` is the half a bare class cannot carry — an editor offering
+/// *put it back the way the kind declares it* has to know whether there is
+/// anything to put back — and on this screen every one of them is `person`,
+/// because [`LabNode`] declares no advanced port. That
+/// is the taxonomy speaking, and a reader is told it rather than left to infer
+/// it from an absence.
+fn advanced_pins_wire(state: &Rc<LabState>) -> serde_json::Value {
+    let doc = state.doc.borrow();
+    let here = state.here();
+    let cards: Vec<serde_json::Value> = doc
+        .tree(here)
+        .into_iter()
+        .flat_map(|tree| tree.nodes().map(|held| held.id).collect::<Vec<_>>())
+        .filter_map(|node| {
+            let view = doc.advanced_view(here, node)?;
+            if !view.has_control() {
+                return None;
+            }
+            let seen = doc.visible_ports(here, node)?;
+            Some(serde_json::json!({
+                "card": state.name_of(node),
+                "view": view.wire_word(),
+                // How many are OFF the frame right now, which is not the size
+                // of the class: a wired advanced pin stays drawn, so this is
+                // the number unfolding would bring back.
+                "away": seen.advanced_inputs.len() + seen.advanced_outputs.len(),
+                "pins": doc
+                    .advanced_ports(here, node)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|at| {
+                        let held = doc.classified(here, node, at)?;
+                        Some(serde_json::json!({
+                            "pin": pin_word(at.side, &PortPath::root(at.index)),
+                            "class": held.class.wire_word(),
+                            "source": match held.source {
+                                ClassSource::Kind => "kind",
+                                ClassSource::Person => "person",
+                            },
+                        }))
+                    })
+                    .collect::<Vec<_>>(),
+            }))
+        })
+        .collect();
+    serde_json::json!({ "cards": cards })
 }
 
 fn found_wire(state: &Rc<LabState>) -> serde_json::Value {

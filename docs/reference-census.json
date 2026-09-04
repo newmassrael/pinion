@@ -2745,10 +2745,10 @@
       "verdict": "have"
     },
     "node::CanUserEditPinAdvancedViewFlag": {
-      "covered_by": "an ADVANCED-view class of port, hidden by default and revealed per node",
+      "covered_by": "ADVANCED PORTS (R2001): `Port::advanced` declares a port into a class folded away behind one control; `Document::visible_ports` folds it unless a wire ends on it (the reference's own not-connected guard); `Appearance::advanced_shown` is the fold and `Document::advanced_view` DERIVES the three states from the ports, so the `no advanced pins` one cannot go stale — measured at the reference, twenty assignments across twenty-one files promote its stored member by hand after making an advanced pin and five ever write it back. The row's own name is the permission: `NodeKind::advanced_ports_are_authored` gates `Document::classify_port`, whose refusal `Document::may_classify_port` answers BEFORE the act. There the hook has a second job this one cannot need — deciding whether a rebuilt pin copies the old advanced bit forward — because a declaration and a person's choice are one slot; here they are `Port::advanced` and `Appearance::reclassified`, so `Classify::Declared` is a third answer the reference cannot make.",
       "mechanism": "graph-node",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_node_can_user_edit_pin_advanced_view_flag",
+      "verdict": "have"
     },
     "node::CreateNodeImage": {
       "covered_by": "drawing; this crate deliberately holds no renderer",

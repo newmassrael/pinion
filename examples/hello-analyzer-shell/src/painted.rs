@@ -11094,6 +11094,206 @@ fn a_wire_into_a_card_that_never_listens_says_so_before_it_is_pressed(
     );
 }
 
+/// ★★★★★ R2001 — **the assembled tool folds a card's advanced pins behind one
+/// control, leaves the one a wire ends on alone, and can be told to stop
+/// saying anything about a pin at all** — driven on the shell, over one walk.
+///
+/// # What this reproduces
+///
+/// The graph node's advanced-pin class. Measured at the reference: a bit on
+/// each pin, a stored tri-state on the node that its chevron writes, and a
+/// virtual asking the node class whether a PERSON may edit the bit — whose base
+/// answers no and which two classes in the whole tree override, because there a
+/// declaration and a person's choice are the same storage and something has to
+/// say which one a rebuild keeps.
+///
+/// The mechanism is proven against the reference in `pinion-node-graph`'s own
+/// census test, and the chip's PIXELS in the lab's own paint test. **What is
+/// proven here is that a person on this screen can reach it**: they put a pin
+/// in the class, the card publishes what it is doing, the fold takes the pin
+/// off the frame, a pin with a wire on it is left alone, and *say nothing
+/// again* gives the class back to the taxonomy.
+///
+/// ★★★★★ **Where this passes the reference**: there *this node has no advanced
+/// pins* is a stored member of that tri-state, promoted by hand at twenty sites
+/// across twenty-one files and written back at five, so a node that stops
+/// having advanced pins goes on drawing the control that folds them. Here it is
+/// derived from the pins on every read — which this walk asserts by taking the
+/// last pin out of the class and finding the card gone from the published list.
+///
+/// # Which screen this lands on
+///
+/// Screen A, the node lab, as it is assembled in this shell.
+#[test]
+fn r2001_a_card_on_the_assembled_canvas_folds_its_advanced_pins() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let report = crate::tests::walk_the_application(&state);
+        assert!(
+            report.conforms(),
+            "the application did not reproduce its specification over the walk: {}",
+            report.why().unwrap_or_default()
+        );
+        assert!(
+            report.itinerary().iter().any(|key| key == "lab"),
+            "the walk must stand in the node lab: {:?}",
+            report.itinerary()
+        );
+
+        state.go("lab").expect("the node lab section is open");
+        no_card_opens_with_an_advanced_pin_and_the_screen_says_so(&state);
+        a_pin_a_person_classifies_folds_away_and_the_card_says_who_said_so(&state);
+        a_pin_with_a_wire_on_it_is_left_on_the_frame(&state);
+        giving_the_class_back_to_the_taxonomy_removes_the_control(&state);
+    });
+}
+
+/// Phase 1 — **the opening graph has nothing advanced, and that is an answer.**
+///
+/// Without this, every later phase would be satisfied by a screen that had
+/// always folded something: the point of the class is that a person puts a pin
+/// INTO it, and this taxonomy declares no advanced port at all because its two
+/// pins are a dial and an accept run and there is no third, occasional one.
+fn no_card_opens_with_an_advanced_pin_and_the_screen_says_so(state: &std::rc::Rc<ShellState>) {
+    let answered = lab_slot(state, "advanced_pins");
+    assert_eq!(
+        answered["cards"],
+        serde_json::json!([]),
+        "★ no card on the opening graph has an advanced pin, so none has a fold \
+         control — which is `nothing` being DERIVED from the ports rather than \
+         a state somebody forgot to write: {answered}"
+    );
+}
+
+/// Phase 2 — **a pin a person puts in the class folds away**, and the card says
+/// what its control is doing and who classified the pin.
+fn a_pin_a_person_classifies_folds_away_and_the_card_says_who_said_so(
+    state: &std::rc::Rc<ShellState>,
+) {
+    // A store on this canvas: it dials the router it registers with, and in
+    // this arrangement nothing dials it — the case the reference's own two
+    // overriders exist for, where the class records what the person is doing.
+    let said = lab_invoke(state, "classify_pin", "S-01,accept,advanced")
+        .expect("this taxonomy hands its port classes to a person");
+    assert_eq!(
+        said, "S-01 accept: advanced",
+        "the answer names the pin and the class it is in NOW: {said:?}"
+    );
+
+    let card = advanced_card(state, "S-01").expect("★ and the card now has a control to draw");
+    assert_eq!(
+        card["view"],
+        serde_json::json!("folded"),
+        "★ folded is the resting state — a class hidden by default is why it is \
+         declared at all: {card}"
+    );
+    assert_eq!(
+        card["away"],
+        serde_json::json!(1),
+        "★ and the number a person reads is what unfolding would BRING BACK, \
+         not the size of the class: {card}"
+    );
+    assert_eq!(
+        card["pins"][0]["source"],
+        serde_json::json!("person"),
+        "★★★★★ who said so, which is the half a bare class cannot carry: an \
+         editor offering *put it back the way your kind declares it* has to \
+         know whether there is anything to put back: {card}"
+    );
+
+    let said = lab_invoke(state, "fold_advanced", "S-01").expect("the card's own control");
+    assert_eq!(
+        said, "S-01: unfolded",
+        "★ the verb ANSWERS the state it produced; the reference's handler \
+         returns nothing and a person watches the picture: {said:?}"
+    );
+    assert_eq!(
+        advanced_card(state, "S-01").expect("still has the class")["away"],
+        serde_json::json!(0),
+        "unfolded, nothing is off the frame"
+    );
+    lab_invoke(state, "fold_advanced", "S-01").expect("and back");
+}
+
+/// Phase 3 — ★★★★★ **the reference's own rule, on the assembled screen: a
+/// folded class does not hide a socket a wire ends on.**
+///
+/// The specification draws a wire into `R-01`'s accept pin. Folding that pin's
+/// class must leave it drawn, or the wire ends in mid-air — which is why the
+/// reference guards its own with *not connected*, and the one rule here that is
+/// a reproduction rather than an improvement.
+fn a_pin_with_a_wire_on_it_is_left_on_the_frame(state: &std::rc::Rc<ShellState>) {
+    lab_invoke(state, "classify_pin", "R-01,accept,advanced").expect("a person may");
+    let card = advanced_card(state, "R-01").expect("R-01 now has the class too");
+    assert_eq!(
+        card["view"],
+        serde_json::json!("folded"),
+        "the class is folded: {card}"
+    );
+    assert_eq!(
+        card["away"],
+        serde_json::json!(0),
+        "★★★★★ and NOTHING is off the frame, because the specification's own \
+         wire ends on that pin: {card}"
+    );
+    assert_eq!(
+        card["pins"].as_array().map(Vec::len),
+        Some(1),
+        "★ the pin is still IN the class — what a wire changes is one pin's \
+         fate, not the group's state, and conflating the two is how a screen \
+         ends up drawing the wrong control: {card}"
+    );
+}
+
+/// Phase 4 — **`declared` gives the class back to the taxonomy**, and the
+/// control goes with the last pin.
+///
+/// The third answer the reference cannot make: there a person's choice
+/// overwrites the declaration, so there is nothing to return to. And the
+/// control disappearing is the derived state doing its job — the reference
+/// stores that one and leaves twenty sites to maintain it.
+fn giving_the_class_back_to_the_taxonomy_removes_the_control(state: &std::rc::Rc<ShellState>) {
+    for card in ["S-01", "R-01"] {
+        let said = lab_invoke(state, "classify_pin", &format!("{card},accept,declared"))
+            .expect("saying nothing again is a request this screen takes");
+        assert_eq!(
+            said,
+            format!("{card} accept: plain"),
+            "★ and the answer is the KIND's, which declares no advanced port \
+             here: {said:?}"
+        );
+    }
+    assert_eq!(
+        lab_slot(state, "advanced_pins")["cards"],
+        serde_json::json!([]),
+        "★★★★★ every control is gone because the PINS say so. The reference \
+         stores this state and a node that stops having advanced pins keeps \
+         drawing the control"
+    );
+    let refused = lab_invoke(state, "classify_pin", "S-01,accept,hidden")
+        .expect_err("`hidden` is not one of this vocabulary's three answers");
+    assert!(
+        format!("{refused:?}").contains("declared"),
+        "★ and the refusal LISTS what it will take, built from the model's own \
+         arms rather than spelled beside them: {refused:?}"
+    );
+}
+
+/// The published entry for one card, or `None` when that card has nothing in
+/// the advanced class.
+///
+/// ★ Through the published read rather than by reaching into the lab's own
+/// state, for the reason this module states throughout: a test that asked the
+/// guest directly would pass on an application that never mounted it.
+fn advanced_card(state: &std::rc::Rc<ShellState>, name: &str) -> Option<serde_json::Value> {
+    lab_slot(state, "advanced_pins")["cards"]
+        .as_array()?
+        .iter()
+        .find(|card| card["card"] == serde_json::json!(name))
+        .cloned()
+}
+
 /// ★★★★★ R1998 — **the assembled tool offers a replacement for what the graph
 /// will not take, and says it did** — driven on the shell, over one walk.
 ///

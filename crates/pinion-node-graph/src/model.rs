@@ -437,6 +437,40 @@ pub struct Port<T, V> {
     /// [`Document::port_tooltip`] is the one place the composition happens.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// ★★★★★ R2001 — whether this port belongs to the **advanced** class:
+    /// folded away behind one control on the node rather than always on the
+    /// frame. `false` for an ordinary port.
+    ///
+    /// A DECLARATION, on the kind's port, and that placement is the whole of
+    /// what separates this from [`Appearance::put_away_inputs`] one layer up.
+    /// Putting a port away is a person's statement about ONE node; the
+    /// advanced class is the kind's statement about what its port is FOR, so
+    /// every node of the kind starts alike and a person's disagreement is
+    /// recorded separately ([`Appearance::reclassified`]) instead of
+    /// overwriting it.
+    ///
+    /// # What forced the separation, measured at the reference
+    ///
+    /// The reference carries the same fact as a bit on the **pin instance**,
+    /// which each node class writes while it allocates its pins — so a
+    /// person's choice and the class's declaration share one slot. That is why
+    /// it then needs [`NodeKind::advanced_ports_are_authored`]: on every
+    /// rebuild of a node's pins it has to decide whether to copy the old bit
+    /// forward or let the freshly declared one stand, and its own comment on
+    /// that branch says the wrong answer means "ignoring new metadata that
+    /// tries to hide old pins". Here the two live in different places, so a
+    /// rebuild re-reads the declaration and re-applies the override, and
+    /// neither can erase the other.
+    ///
+    /// [`Appearance::put_away_inputs`]: crate::Appearance::put_away_inputs
+    /// [`Appearance::reclassified`]: crate::Appearance::reclassified
+    /// ⚠ The skip predicate is the **standard library's** negation rather than
+    /// a helper written here. `serde` hands it a reference, so a hand-rolled
+    /// one has to take `&bool` and `clippy::pedantic` is right to say a
+    /// one-byte value should not be — a predicate this crate cannot write
+    /// without an `#[allow]` is a predicate it should not be writing.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub advanced: bool,
 }
 
 /// `serde` needs a function to default a `bool` to `true`.
@@ -452,6 +486,7 @@ impl<T, V> Port<T, V> {
             flow: Flow::Value { ty, default: None },
             passthrough: true,
             description: None,
+            advanced: false,
         }
     }
 
@@ -468,6 +503,7 @@ impl<T, V> Port<T, V> {
             flow,
             passthrough: true,
             description: None,
+            advanced: false,
         }
     }
 
@@ -490,6 +526,7 @@ impl<T, V> Port<T, V> {
             flow: Flow::Control,
             passthrough: true,
             description: None,
+            advanced: false,
         }
     }
 
@@ -528,6 +565,15 @@ impl<T, V> Port<T, V> {
         if let Flow::Value { default, .. } = &mut self.flow {
             *default = Some(value);
         }
+        self
+    }
+
+    /// ★★★★★ R2001 — the same port, declared into the **advanced** class:
+    /// folded away behind the node's one advanced control unless something is
+    /// wired to it — see [`Self::advanced`].
+    #[must_use]
+    pub fn advanced(mut self) -> Self {
+        self.advanced = true;
         self
     }
 
@@ -1081,6 +1127,40 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
     /// and a derivation would refuse those too while silently admitting a
     /// pass-through node that happened to grow a third port.
     fn ports_are_the_node(&self) -> bool {
+        false
+    }
+
+    /// ★★★★★ R2001 — whether a PERSON, rather than this kind, may say which of
+    /// a node's ports belong to the **advanced** class
+    /// ([`Document::classify_port`](crate::Document::classify_port)).
+    ///
+    /// The default is `false`: a kind that declares
+    /// [`Port::advanced`](crate::Port::advanced) has said what its port is for,
+    /// and an editor offering to overrule that on one node would be offering to
+    /// disagree with the taxonomy.
+    ///
+    /// # What it is, measured at the reference rather than summarised
+    ///
+    /// The reference asks its node class the same question and **two** classes
+    /// in its whole tree answer yes — a switch over an enumeration, and an
+    /// input-action node. Read at those two, the reason is the same in both:
+    /// their advanced set is not a property of the class at all. The switch's
+    /// *remove pin* does not delete a case, because the cases are the
+    /// enumeration's; it moves that pin into the advanced class and breaks its
+    /// links, and *add pin* takes the first hidden one back — so the set is
+    /// exactly what the person has been doing, and the class re-deriving it
+    /// would undo their work on the next rebuild.
+    ///
+    /// ⚠ **Here it is a permission and ONLY a permission**, which is a smaller
+    /// job than the reference's hook has. There the flag also decides, at the
+    /// one place that reads it, whether a rebuilt pin copies the old pin's bit
+    /// forward — because there a declaration and a person's choice are the same
+    /// storage. This crate keeps them apart
+    /// ([`Port::advanced`](crate::Port::advanced) against
+    /// [`Appearance::reclassified`](crate::Appearance::reclassified)), so
+    /// nothing has to choose which one survives: that half is unrepresentable
+    /// rather than answered.
+    fn advanced_ports_are_authored(&self) -> bool {
         false
     }
 
@@ -2315,6 +2395,13 @@ impl PortRef {
             side: Side::Output,
             index,
         }
+    }
+
+    /// The port at `index` on `side`, for a caller that already holds the side
+    /// as a value rather than as a choice between two calls.
+    #[must_use]
+    pub const fn new(side: Side, index: u32) -> Self {
+        Self { side, index }
     }
 }
 

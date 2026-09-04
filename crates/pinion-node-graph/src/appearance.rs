@@ -14,8 +14,11 @@
 //!
 //! [`Node::bypassed`]: crate::Node::bypassed
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
+use crate::advanced::PortClass;
 use crate::model::{Document, NodeId, NodeKind, Side, TreeId, yes};
 
 /// ★★★★★ R1921 — a colour a person authored, in sRGB.
@@ -319,6 +322,71 @@ pub struct Appearance {
     /// [`split_inputs`](Appearance::split_inputs).
     #[serde(default)]
     pub split_outputs: Vec<crate::PortPath>,
+    /// ★★★★★ R2001 — whether this node's **advanced** ports are on the frame.
+    ///
+    /// One control per node, over the whole class, which is what makes the
+    /// advanced class a *group* rather than a second spelling of
+    /// [`put_away_inputs`](Appearance::put_away_inputs). `false` — folded — is
+    /// the resting state, because a class hidden by default is the entire point
+    /// of declaring it.
+    ///
+    /// ★ **Whether there is anything to fold is DERIVED and never stored.** The
+    /// reference keeps one tri-state here whose third member means *this node
+    /// has no advanced pins* — a fact its own pins already answer — and pays
+    /// for it: measured across its tree, twenty assignments in twenty-one files
+    /// promote that member to *hidden* by hand after creating an advanced pin,
+    /// and only five ever write it back, so a node that stops having advanced
+    /// pins goes on drawing the control that folds them. Here
+    /// [`Document::advanced_view`] answers the same three states from the ports
+    /// themselves, so the stale one cannot be written down.
+    #[serde(default)]
+    pub advanced_shown: bool,
+    /// ★★★★★ R2001 — the ports a hand moved between the plain and the advanced
+    /// class, and the class it chose.
+    ///
+    /// Sparse and keyed by [`PortRef`], so a port cannot be in two classes at
+    /// once and a port nobody has touched is not mentioned. The kind's
+    /// [`Port::advanced`](crate::Port::advanced) answers for every port absent
+    /// here, which is why this is an OVERRIDE table rather than a copy of the
+    /// declaration: a rebuild of the node's ports re-reads the declaration and
+    /// this still says what the person said.
+    ///
+    /// Written only through [`Document::classify_port`], which refuses on a
+    /// kind that does not declare
+    /// [`NodeKind::advanced_ports_are_authored`].
+    ///
+    /// [`PortRef`]: crate::PortRef
+    #[serde(default, with = "reclassified")]
+    pub reclassified: BTreeMap<crate::PortRef, PortClass>,
+}
+
+/// `serde` for [`Appearance::reclassified`]: JSON has no map key but a string,
+/// and [`PortRef`](crate::PortRef) is a struct, so the map travels as a
+/// sequence of pairs — the same shape [`Node::values`](crate::Node::values)
+/// travels in, and for the same reason.
+mod reclassified {
+    use std::collections::BTreeMap;
+
+    use serde::de::{Deserialize, Deserializer};
+    use serde::ser::{Serialize, Serializer};
+
+    use super::PortClass;
+    use crate::model::PortRef;
+
+    pub(super) fn serialize<S: Serializer>(
+        classes: &BTreeMap<PortRef, PortClass>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        classes.iter().collect::<Vec<_>>().serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<BTreeMap<PortRef, PortClass>, D::Error> {
+        Ok(Vec::<(PortRef, PortClass)>::deserialize(deserializer)?
+            .into_iter()
+            .collect())
+    }
 }
 
 impl Default for Appearance {
@@ -337,6 +405,8 @@ impl Default for Appearance {
             put_away_outputs: Vec::new(),
             split_inputs: Vec::new(),
             split_outputs: Vec::new(),
+            advanced_shown: false,
+            reclassified: BTreeMap::new(),
         }
     }
 }
@@ -385,6 +455,14 @@ pub struct VisiblePorts {
     /// Of [`hidden_outputs`](VisiblePorts::hidden_outputs), the ones hidden
     /// because they are split.
     pub split_outputs: Vec<u32>,
+    /// ★★★★★ R2001 — of [`hidden_inputs`](VisiblePorts::hidden_inputs), the
+    /// ones hidden because they are in the **advanced** class and this node's
+    /// advanced group is folded.
+    pub advanced_inputs: Vec<u32>,
+    /// Of [`hidden_outputs`](VisiblePorts::hidden_outputs), the ones hidden
+    /// because they are advanced and folded. See
+    /// [`advanced_inputs`](VisiblePorts::advanced_inputs).
+    pub advanced_outputs: Vec<u32>,
 }
 
 impl VisiblePorts {
@@ -406,16 +484,18 @@ impl VisiblePorts {
     /// by wiring the port or by turning the node's rule off.
     #[must_use]
     pub fn why_hidden(&self, side: Side, index: u32) -> Option<Hidden> {
-        let (hidden, put_away, split) = match side {
+        let (hidden, put_away, split, advanced) = match side {
             Side::Input => (
                 &self.hidden_inputs,
                 &self.put_away_inputs,
                 &self.split_inputs,
+                &self.advanced_inputs,
             ),
             Side::Output => (
                 &self.hidden_outputs,
                 &self.put_away_outputs,
                 &self.split_outputs,
+                &self.advanced_outputs,
             ),
         };
         if !hidden.contains(&index) {
@@ -427,10 +507,19 @@ impl VisiblePorts {
         // members are on the frame. Restoring it would put a port back that is
         // already there twice over, so the repair a caller must be told about
         // is the recombine.
+        // ★ R2001 — advanced is asked AFTER a hand's own put-away and BEFORE
+        // the node's unwired rule, and the order is the same decision as the
+        // one above: the arms are ordered from the most specific statement
+        // about THIS port to the most general rule over the node, because that
+        // is the order a person's repair goes in. A port a hand put away by
+        // name is not brought back by unfolding a class; a folded advanced port
+        // is not brought back by turning the unwired rule off.
         Some(if split.contains(&index) {
             Hidden::Split
         } else if put_away.contains(&index) {
             Hidden::PutAway
+        } else if advanced.contains(&index) {
+            Hidden::Advanced
         } else {
             Hidden::Unused
         })
@@ -460,11 +549,18 @@ impl VisiblePorts {
 
 /// ★★★★★ R1912 — why a port is not drawn.
 ///
-/// Two arms because the crate has two independent reasons, and an editor's
-/// repair is different for each: a port a hand put away comes back with
-/// [`Document::restore_ports`], while a port the node's own rule hid comes back
-/// by being wired or by the rule being turned off. A single "hidden" boolean
-/// would send a reader to the wrong one half the time.
+/// One arm per independent reason the crate has, because an editor's repair is
+/// different for each: a port a hand put away comes back with
+/// [`Document::restore_ports`], a port the node's own rule hid comes back by
+/// being wired or by the rule being turned off, a split one comes back with
+/// [`Document::recombine_port`], and a folded advanced one comes back with
+/// [`Document::show_advanced_ports`]. A single "hidden" boolean would send a
+/// reader to the wrong one three times in four.
+///
+/// ⚠ The arms are not a fixed number and this sentence deliberately does not
+/// say one: R1912 opened with two, R1914 added the third and R2001 the fourth,
+/// and each time the prose that counted them went stale in the same commit that
+/// added the arm.
 ///
 /// ⚠ The DCC has a **third** — a socket its node kind declares does not apply
 /// at all, which no gesture restores. This crate has no such declaration, so
@@ -486,6 +582,13 @@ pub enum Hidden {
     /// the top of its split) and has no way to report it: its pin is hidden,
     /// and *why* is recoverable only by noticing the pin has sub-pins.
     Split,
+    /// ★★★★★ R2001 — this port is in the **advanced** class and the node's
+    /// advanced group is folded. Restored by
+    /// [`Document::show_advanced_ports`], or by wiring it — an advanced port
+    /// with a link on it stays on the frame however the group is folded, which
+    /// is the reference's rule and the one that keeps a fold from hiding a wire
+    /// that has nowhere to end.
+    Advanced,
 }
 
 impl Hidden {
@@ -496,6 +599,7 @@ impl Hidden {
             Self::PutAway => "put_away",
             Self::Unused => "unused",
             Self::Split => "split",
+            Self::Advanced => "advanced",
         }
     }
 }
@@ -588,10 +692,16 @@ impl<K: NodeKind> Document<K> {
     /// muted link still counts as wired: mutedness is about the value, and the
     /// wire is still on screen.
     ///
-    /// ★★★★★ The two reasons are **independent**, and that is R1912's finding:
-    /// a put-away port stays away when it is later wired, which the rule alone
+    /// ★★★★★ R2001 — and when the port is in the **advanced** class
+    /// ([`Document::port_class`]) while this node's advanced group is folded
+    /// ([`Appearance::advanced_shown`]) **and** nothing is wired to it. The
+    /// wired escape is the reference's own rule: folding a class must not hide
+    /// a socket a wire ends on.
+    ///
+    /// ★★★★★ The reasons are **independent**, and that is R1912's finding: a
+    /// put-away port stays away when it is later wired, which the rule alone
     /// could never express because the rule re-decides on every read. Which of
-    /// the two hid a given port is [`VisiblePorts::why_hidden`].
+    /// them hid a given port is [`VisiblePorts::why_hidden`].
     ///
     /// `None` when the node is not there.
     #[must_use]
@@ -607,6 +717,10 @@ impl<K: NodeKind> Document<K> {
         // hidden index and a drawn index from being two different answers.
         let split_in = self.split_parents(tree, node, Side::Input);
         let split_out = self.split_parents(tree, node, Side::Output);
+        // ★ R2001 — the advanced class is folded away only while the node's own
+        // control says so. Read once, because it is a fact about the node, and
+        // the per-port half below is the class the port is in.
+        let fold_advanced = !appearance.advanced_shown;
 
         let mut visible = VisiblePorts::default();
         for index in 0..signature.inputs.len() {
@@ -614,13 +728,29 @@ impl<K: NodeKind> Document<K> {
             let wired = host.link_into(crate::Socket::new(node, port)).is_some();
             let put_away = appearance.put_away_inputs.contains(&port);
             let split = split_in.contains(&port);
+            // ★★★★★ R2001 — `!wired` is the reference's own rule and not a
+            // convenience: an advanced port with a link on it stays on the
+            // frame however the group is folded, because folding it would leave
+            // a wire ending nowhere.
+            let advanced = fold_advanced
+                && !wired
+                && crate::advanced::classified_in(
+                    appearance,
+                    signature.inputs[index].advanced,
+                    crate::PortRef::new(Side::Input, port),
+                )
+                .class
+                    == PortClass::Advanced;
             if put_away {
                 visible.put_away_inputs.push(port);
             }
             if split {
                 visible.split_inputs.push(port);
             }
-            if split || put_away || (hide && !wired) {
+            if advanced {
+                visible.advanced_inputs.push(port);
+            }
+            if split || put_away || advanced || (hide && !wired) {
                 visible.hidden_inputs.push(port);
             } else {
                 visible.inputs.push(port);
@@ -634,13 +764,25 @@ impl<K: NodeKind> Document<K> {
                 .any(|l| l.from == crate::Socket::new(node, port));
             let put_away = appearance.put_away_outputs.contains(&port);
             let split = split_out.contains(&port);
+            let advanced = fold_advanced
+                && !wired
+                && crate::advanced::classified_in(
+                    appearance,
+                    signature.outputs[index].advanced,
+                    crate::PortRef::new(Side::Output, port),
+                )
+                .class
+                    == PortClass::Advanced;
             if put_away {
                 visible.put_away_outputs.push(port);
             }
             if split {
                 visible.split_outputs.push(port);
             }
-            if split || put_away || (hide && !wired) {
+            if advanced {
+                visible.advanced_outputs.push(port);
+            }
+            if split || put_away || advanced || (hide && !wired) {
                 visible.hidden_outputs.push(port);
             } else {
                 visible.outputs.push(port);

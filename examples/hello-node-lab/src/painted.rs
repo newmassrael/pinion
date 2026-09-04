@@ -1418,6 +1418,117 @@ fn r1656_cards_added_from_the_palette_do_not_cover_each_other() {
     });
 }
 
+/// ★★★★★ R2001 — **the advanced class's one control is ON the card it folds,
+/// the card grew to hold it, and a folded pin leaves the frame while a wired
+/// one does not.**
+///
+/// # What this holds that a crate test cannot
+///
+/// The crate proves the fold. What is proven here is the half that is geometry:
+/// the chip is inside its card (so the paint sweep's containment holds without
+/// the card having been given a taller box by hand), the card is TALLER than it
+/// was before the class had a member, and the pin the fold hides is gone from
+/// the frame while the one a wire ends on is still drawn.
+///
+/// ★ The last pair is what a bare "does it hide" assertion would miss. A fold
+/// that hid every advanced pin would satisfy the first half of this test and
+/// leave a wire ending in mid-air, which is why the reference guards its own
+/// with *not connected* and why both cases are driven here.
+#[test]
+fn r2001_the_advanced_chip_sits_on_the_card_it_folds_and_a_wired_pin_stays() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        // A card straight from the palette: nothing is wired to it, so its
+        // dial is the unwired case without anything having to be unplugged.
+        super::add_node(&state, Role::Responder);
+        let fresh = *state.cards().last().expect("the palette added one");
+        let name = state.name_of(fresh);
+
+        // Before: nothing on this card is advanced, so no chip is painted —
+        // and that is derived from the pins rather than stored.
+        //
+        // ⚠ Read from the PAINT and not from `card_rect`: that answers in the
+        // layout's frame and the paint is window-absolute, so the two differ
+        // by the pan and comparing them is R1862's mistake — a rectangle from
+        // one frame held against one from another.
+        let shot = painted(&state);
+        let before = shot.tags[&format!("lab.node.{name}")];
+        assert!(
+            !shot.tags.contains_key(&format!("lab.advanced.{name}")),
+            "★ a card with nothing in the class draws no control for it"
+        );
+
+        // A person puts the dial pin in the advanced class.
+        super::classify_pin(&state, fresh, "dial", "advanced").expect("this taxonomy lets them");
+        let shot = painted(&state);
+        let after = shot.tags[&format!("lab.node.{name}")];
+        let chip = *shot
+            .tags
+            .get(&format!("lab.advanced.{name}"))
+            .expect("★ and the control arrives with the first pin in the class");
+        assert!(
+            inside(after, chip),
+            "★★★★★ the chip is INSIDE its card {after:?}, not merely near it: \
+             {chip:?}"
+        );
+        assert!(
+            after.h > before.h,
+            "★ and the card grew to hold it — the height IS the content, so \
+             this follows from the seat rather than from a second rule: \
+             {} -> {}",
+            before.h,
+            after.h
+        );
+        assert!(
+            !shot.tags.contains_key(&format!("lab.pin.{name}.dial")),
+            "★★★★★ the folded pin is off the frame, which is the whole point \
+             of the class"
+        );
+
+        // ★★★★★ Pressing the chip WHERE IT IS DRAWN puts the pin back. Driven
+        // by coordinates and not through the verb, because that is the half a
+        // verb cannot prove: the canvas resolves a press from the published
+        // paint through a filter of tag families, and a family missing from
+        // that filter leaves a mark that is drawn, announced and unpressable —
+        // R1982's finding, and the reason the filter is a gate rather than a
+        // list somebody keeps.
+        let (px, py) = centre(chip);
+        super::move_cursor(&state, px, py);
+        super::press(&state);
+        super::release(&state);
+        let shot = painted(&state);
+        assert!(
+            shot.tags.contains_key(&format!("lab.pin.{name}.dial")),
+            "★ unfolded, the pin is drawn again — and it was a PRESS on the \
+             chip that did it"
+        );
+        assert_eq!(
+            state.doc.borrow().advanced_view(state.here(), fresh),
+            Some(pinion_node_graph::AdvancedView::Unfolded),
+            "★ and the card knows it, so the chip a person presses next says \
+             the other thing"
+        );
+
+        // ★★★★★ THE REFERENCE'S OWN RULE. A wired advanced pin stays on the
+        // frame however the group is folded: R-01's accept pin has the
+        // specification's own wire ending on it.
+        let router = state.node_of("R-01").expect("the canvas holds R-01");
+        super::classify_pin(&state, router, "accept", "advanced").expect("a person may");
+        let shot = painted(&state);
+        assert!(
+            shot.tags.contains_key("lab.pin.R-01.accept"),
+            "★★★★★ folding a class must not hide a socket a wire ends on — a \
+             fold that did would leave the wire ending in mid-air"
+        );
+        assert!(
+            shot.tags.contains_key("lab.advanced.R-01"),
+            "★ and the control is still drawn, because the class HAS a member \
+             whether or not that member is currently off the frame"
+        );
+    });
+}
+
 /// ★ R1656 — the containment check can FAIL, proven against a scene built to
 /// fail it.
 ///

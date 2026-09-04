@@ -551,7 +551,7 @@ const STORAGE_KEY: &str = "node_graph.state";
 // is a field in every saved graph. The default means an old blob READS
 // correctly; the version is what tells a person their file predates the field
 // rather than leaving them to infer a kind that was never written.
-const PERSISTED_SCHEMA_VERSION: u32 = 21;
+const PERSISTED_SCHEMA_VERSION: u32 = 22;
 
 /// R1599 — the append-only `(version, digest)` ledger the persistence gate
 /// reads. See `pinion_core::test_fixtures::assert_persisted_shape` for why it
@@ -589,6 +589,16 @@ const PERSISTED_SHAPE_HISTORY: &[(u32, u64)] = &[
     // READS correctly as the taxonomy's unchosen kind; the version is what
     // tells a person their file predates the field.
     (21, 0x747c_0f30_a39a_f481),
+    // R2001 — a port declares itself into an ADVANCED class (`Port::advanced`)
+    // and a node records the ports a PERSON moved between the classes plus
+    // whether its advanced group is on the frame (`Appearance::reclassified`,
+    // `Appearance::advanced_shown`). Two fields on the appearance and one on
+    // every port a tree's interface holds, so the persisted shape moved.
+    // `serde(default)` and a skip on the declaration mean an old blob READS
+    // correctly — every port plain, every group folded, nothing reclassified —
+    // and the version is what tells a person their file predates the class
+    // rather than leaving them to infer it from a card that folds nothing.
+    (22, 0xd21e_9a89_fe6d_7e37),
 ];
 
 /// R849 — where a newly added node first lands, and the per-add cascade step

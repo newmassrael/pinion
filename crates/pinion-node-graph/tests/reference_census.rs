@@ -44,15 +44,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use pinion_node_graph::{
-    Act, Admits, Admitted, Align, Appearance, Arrival, AutowireError, Axis, Berth, Carrying,
-    Command, ConnectError, Container, Conversion, Crossings, Definitions, Described, Direction,
-    Distribute, Document, Drawn, Edge, EditError, EditPath, Extent, Faces, Focus, Fragment, Grow,
-    Hidden, Inspectable, Instance, InterfacePort, InterfaceSide, Item, ItemError, LandError,
-    Landfall, LinkId, Machine, Matched, Multiplicity, Node, NodeBody, NodeId, NodeKind, NodeSite,
-    NotRecombinable, NotSplittable, Objection, Passing, Port, PortName, PortPath, PortRef,
-    PortSite, PortValueError, PutAway, ROOT, Reach, Relatedness, RelinkError, RetypeError,
-    SectionId, Session, Sharing, Side, Socket, Stack, Straighten, Stride, SwapError, SwitchRefusal,
-    Tie, Tint, TreeId, Variadic, Violation, WatchError, Watches, palette_of, type_palette,
+    Act, Admits, Admitted, AdvancedView, Align, Appearance, Arrival, AutowireError, Axis, Berth,
+    Carrying, ClassSource, Classified, Classify, ClassifyError, Command, ConnectError, Container,
+    Conversion, Crossings, Definitions, Described, Direction, Distribute, Document, Drawn, Edge,
+    EditError, EditPath, Extent, Faces, Focus, Fragment, Grow, Hidden, Inspectable, Instance,
+    InterfacePort, InterfaceSide, Item, ItemError, LandError, Landfall, LinkId, Machine, Matched,
+    Multiplicity, Node, NodeBody, NodeId, NodeKind, NodeSite, NotRecombinable, NotSplittable,
+    Objection, Passing, Port, PortClass, PortName, PortPath, PortRef, PortSite, PortValueError,
+    PutAway, ROOT, Reach, Relatedness, RelinkError, RetypeError, SectionId, Session, Sharing, Side,
+    Socket, Stack, Straighten, Stride, SwapError, SwitchRefusal, Tie, Tint, TreeId, Variadic,
+    Violation, WatchError, Watches, palette_of, type_palette,
 };
 use pinion_node_graph::{
     Copying, DefinitionAct, DefinitionError, InZone, InsertError, PairError, Renamed, Substitution,
@@ -151,6 +152,18 @@ enum Op {
     /// `Double` and for the same reason: an assertion that passes for one and
     /// not the other cannot be reading anything else about them.
     Roster,
+    /// R2001 — `(Value: Number, Trim: Number [advanced]) -> Out: Number`. A
+    /// kind that declares one of its ports into the **advanced** class and
+    /// keeps that classification to itself
+    /// ([`NodeKind::advanced_ports_are_authored`] unanswered, which is the
+    /// reference's own default and what all but two of its node classes do).
+    Tuned,
+    /// R2001 — the same ports as `Tuned`, differing in exactly the declaration
+    /// under test: here a PERSON may move a port between the classes. The
+    /// `Relay`/`Double` pairing again, and for the third time its reason — an
+    /// assertion that holds for one and not the other cannot be reading
+    /// anything else about them.
+    Rig,
 }
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
@@ -190,8 +203,20 @@ impl NodeKind for Op {
             Self::Stage(_) => "Stage",
             Self::Carry => "Carry",
             Self::Roster => "Roster",
+            Self::Tuned => "Tuned",
+            Self::Rig => "Rig",
         }
         .to_owned()
+    }
+
+    /// ★★★★★ R2001 — only `Rig` hands its port classes to a person.
+    ///
+    /// `Tuned` declares the same advanced port and answers the SUPPLIED `false`
+    /// — R1926's rule, that a fixture overriding everywhere leaves the default
+    /// with no check on it — and the reference's own proportion, where two node
+    /// classes in the whole tree answer yes.
+    fn advanced_ports_are_authored(&self) -> bool {
+        matches!(self, Self::Rig)
     }
 
     /// R1912 — one composite type and one container of it, so the three arms
@@ -504,6 +529,17 @@ impl NodeKind for Op {
                 Port::new("Factor", Ty::Number),
             ],
             Self::Double => vec![Port::new("Value", Ty::Number)],
+            // ★★★★★ R2001 — one ordinary port and one declared into the
+            // advanced class, so a fold has something to hide AND something to
+            // leave alone. A kind whose every port were advanced could not tell
+            // "folded" from "drew nothing".
+            Self::Tuned | Self::Rig => vec![
+                Port::new("Value", Ty::Number),
+                Port::new("Trim", Ty::Number)
+                    .with_default(Val::Number(0))
+                    .describing("a correction most graphs leave alone")
+                    .advanced(),
+            ],
             Self::Relay => vec![Port::new("In", Ty::Number)],
             Self::Shout => vec![Port::new("Phrase", Ty::Text)],
             Self::Sink => vec![Port::new("Result", Ty::Number)],
@@ -589,7 +625,13 @@ impl NodeKind for Op {
 
     fn outputs(&self) -> Vec<Port<Ty, Val>> {
         match self {
-            Self::Num(_) | Self::Add | Self::Mul | Self::Double | Self::Relay => {
+            Self::Num(_)
+            | Self::Add
+            | Self::Mul
+            | Self::Double
+            | Self::Relay
+            | Self::Tuned
+            | Self::Rig => {
                 vec![Port::new("Out", Ty::Number)]
             }
             Self::Word(_) | Self::Shout | Self::Bundle | Self::Roster => {
@@ -642,6 +684,14 @@ impl NodeKind for Op {
             Self::Add => vec![number(0).zip(number(1)).map(|(a, b)| Val::Number(a + b))],
             Self::Mul => vec![number(0).zip(number(1)).map(|(a, b)| Val::Number(a * b))],
             Self::Double => vec![number(0).map(|v| Val::Number(v * 2))],
+            // ★ R2001 — the advanced port is READ, so the class is a fact about
+            // how a port is drawn and never about whether it is used: a fixture
+            // whose advanced port fed nothing could not tell the two apart.
+            Self::Tuned | Self::Rig => {
+                vec![Some(Val::Number(
+                    number(0).unwrap_or(0) + number(1).unwrap_or(0),
+                ))]
+            }
             // A kind that declares itself a point on a wire still has to say
             // what it computes, and what it computes is the identity.
             Self::Relay => vec![inputs.first().and_then(Clone::clone)],
@@ -895,6 +945,12 @@ fn r1994_home_proofs() -> Vec<Proof> {
             "engine",
             "AnimGraph::ReverseTransition",
             engine_anim_graph_reverse_transition,
+        ),
+        // R2001 — the node hook that says whose the advanced port class is.
+        proof(
+            "engine",
+            "node::CanUserEditPinAdvancedViewFlag",
+            engine_node_can_user_edit_pin_advanced_view_flag,
         ),
     ]
 }
@@ -14601,5 +14657,144 @@ fn the_kind_survives_the_file(document: &Document<Placed>, template: TreeId, pla
         older.graph_kind(template),
         Some(&Plane::Data),
         "★ as the taxonomy's unchosen kind"
+    );
+}
+
+/// ★★★★★ R2001 — the graph node's `CanUserEditPinAdvancedViewFlag`: **a class
+/// of port folded away behind one control, and who may say which ports are in
+/// it.**
+///
+/// # What the reference does, measured at its own source
+///
+/// Three things carry it there and the census row names the third: a bit on
+/// each pin; a stored tri-state on the node — *no advanced pins* / *shown* /
+/// *hidden* — that the chevron writes; and this virtual on the node class,
+/// whose base answers no and which **two** classes in the whole tree override.
+///
+/// Read at its one consumer, that virtual is not about a menu. It sits in the
+/// routine that carries a pin's persistent data across a rebuild of the node's
+/// pins and decides whether the old pin's advanced bit is copied forward, with
+/// the comment *"Otherwise we don't want to copy this, or we'd be ignoring new
+/// metadata that tries to hide old pins."* The flag exists because there a
+/// declaration and a person's choice are **the same storage**.
+///
+/// # What would differ if the capability were missing
+///
+/// Four things, and each is asserted below:
+///
+/// * a declared advanced port would be on the frame like any other, so
+///   declaring one would mean nothing;
+/// * a folded class would hide a socket a wire ends on — the reference's own
+///   *not connected* guard, and the one rule here that is a reproduction
+///   rather than an improvement;
+/// * a person's classification and the kind's declaration would share one slot,
+///   so *put it back the way the kind declares it* would have nothing to put
+///   back;
+/// * a kind that keeps its classes would find out it had been overruled only
+///   afterwards.
+#[test]
+fn engine_node_can_user_edit_pin_advanced_view_flag() {
+    let mut document: Document<Op> = Document::new("root");
+    let rig = document
+        .add_node(ROOT, NodeBody::Kind(Op::Rig), 0, 0)
+        .unwrap();
+    let tuned = document
+        .add_node(ROOT, NodeBody::Kind(Op::Tuned), 0, 100)
+        .unwrap();
+    let feed = document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(7)), 0, 200)
+        .unwrap();
+
+    // 1. The declaration folds a port away, and the node says it has a control.
+    let folded = document.visible_ports(ROOT, rig).unwrap();
+    assert_eq!(folded.inputs, vec![0], "`Value` is on the frame");
+    assert_eq!(folded.advanced_inputs, vec![1], "`Trim` is folded away");
+    assert_eq!(
+        folded.why_hidden(Side::Input, 1),
+        Some(Hidden::Advanced),
+        "★ and it says WHICH reason, which the reference publishes for none of \
+         its three: its pin widget answers one conjunction",
+    );
+    assert_eq!(
+        document.advanced_view(ROOT, rig),
+        Some(AdvancedView::Folded)
+    );
+    assert_eq!(
+        document.advanced_ports(ROOT, rig),
+        Some(vec![PortRef::input(1)]),
+    );
+
+    // 2. ★★★★★ THE REFERENCE'S OWN RULE, reproduced: a wire ending on an
+    //    advanced port keeps it on the frame however the group is folded.
+    document
+        .connect(ROOT, Socket::new(feed, 0), Socket::new(rig, 1))
+        .expect("Out: Number reaches Trim: Number");
+    assert_eq!(
+        document.visible_ports(ROOT, rig).unwrap().inputs,
+        vec![0, 1],
+        "★★★★★ folding a class must not hide a socket a wire ends on",
+    );
+    let link = document.tree(ROOT).unwrap().links()[0].id;
+    document.disconnect(ROOT, link).expect("the only link");
+
+    // 3. ★★★★★ WHAT THE REFERENCE CANNOT DO. A person's classification lives
+    //    apart from the kind's declaration, so *say nothing again* is a real
+    //    third answer and the declaration is still there to go back to.
+    assert_eq!(
+        document.classified(ROOT, rig, PortRef::input(1)),
+        Some(Classified {
+            class: PortClass::Advanced,
+            source: ClassSource::Kind,
+        }),
+        "★ the answer says WHO, so an editor knows whether there is anything \
+         to put back",
+    );
+    assert_eq!(
+        document
+            .classify_port(ROOT, rig, PortRef::input(1), Classify::Plain)
+            .expect("`Rig` hands its classes to a person"),
+        Classified {
+            class: PortClass::Plain,
+            source: ClassSource::Person,
+        },
+    );
+    assert_eq!(
+        document.advanced_view(ROOT, rig),
+        Some(AdvancedView::Nothing),
+        "★★★★★ and *this node has nothing advanced* is DERIVED: the reference \
+         stores it, twenty sites promote it by hand and five demote it, so a \
+         node that stops having advanced pins keeps drawing the control",
+    );
+    document
+        .classify_port(ROOT, rig, PortRef::input(1), Classify::Declared)
+        .expect("and back");
+    assert_eq!(
+        document.classified(ROOT, rig, PortRef::input(1)),
+        Some(Classified {
+            class: PortClass::Advanced,
+            source: ClassSource::Kind,
+        }),
+        "★★★★★ the kind's declaration survived a person disagreeing with it, \
+         because the two were never one slot",
+    );
+
+    // 4. A kind that keeps its classes refuses, and says so before the act —
+    //    the same call a screen greys the gesture with.
+    let refusal = ClassifyError::KindDecides {
+        kind: "Tuned".to_owned(),
+    };
+    assert_eq!(
+        document.may_classify_port(ROOT, tuned, PortRef::input(1), Classify::Plain),
+        Err(refusal.clone()),
+    );
+    assert_eq!(
+        document.classify_port(ROOT, tuned, PortRef::input(1), Classify::Plain),
+        Err(refusal),
+        "★ the edit is a call site of the question, not a second copy of it",
+    );
+    assert_eq!(
+        document.advanced_view(ROOT, tuned),
+        Some(AdvancedView::Folded),
+        "★ what is refused is a person's disagreement, not the class itself",
     );
 }

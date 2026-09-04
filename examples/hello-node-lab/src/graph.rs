@@ -1266,6 +1266,37 @@ impl NodeKind for LabNode {
         }
     }
 
+    /// ★★★★★ R2001 — **which of a card's pins are ADVANCED is a person's to
+    /// say here, and no role declares one.**
+    ///
+    /// Both halves of that are measured rather than chosen, and they pull
+    /// opposite ways on purpose.
+    ///
+    /// *No role declares one*: this taxonomy's two pins are a dial and an
+    /// accept run, and [`Role::accepts`] already says which roles have the
+    /// second at all. There is no third, occasional pin for a kind to fold
+    /// away, so declaring [`Port::advanced`] anywhere here would be inventing
+    /// a class to have one.
+    ///
+    /// *A person may say*: which pins matter on a topology is a property of the
+    /// **deployment** and not of the role. A store that never dials in one
+    /// arrangement dials the router it registers with in the next, and the card
+    /// is the same kind in both — so the class is exactly the fact a kind
+    /// cannot hold and a person can. The reference hands this to two of its
+    /// node classes and for the same reason: their advanced set records what
+    /// the person has been doing rather than what the class is.
+    ///
+    /// ⚠ So a fresh graph here draws no fold control anywhere, which is
+    /// [`AdvancedView::Nothing`] answering honestly rather than a control
+    /// missing — and it is derived from the ports on every read, so the first
+    /// pin a person puts in the class brings the control with it.
+    ///
+    /// [`Port::advanced`]: pinion_node_graph::Port::advanced
+    /// [`AdvancedView::Nothing`]: pinion_node_graph::AdvancedView::Nothing
+    fn advanced_ports_are_authored(&self) -> bool {
+        true
+    }
+
     /// ★★★★★ R1914 — **a locator is made of a host and a service.**
     ///
     /// The model already said so — [`Transport::of_locator`] takes a locator

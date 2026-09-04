@@ -213,6 +213,7 @@
 //! ```
 
 mod admitted;
+mod advanced;
 mod appearance;
 mod archive;
 mod arrange;
@@ -261,6 +262,7 @@ mod view;
 mod warning;
 
 pub use admitted::Admitted;
+pub use advanced::{AdvancedView, ClassSource, Classified, Classify, ClassifyError, PortClass};
 pub use appearance::{
     Appearance, Drawn, Faces, Hidden, PutAway, PutAwayRefusal, Tint, VisiblePorts,
 };

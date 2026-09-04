@@ -23,6 +23,7 @@ use crate::{
     Tick, Tie, Timeline, Tint, TreeId, Unframed, UngroupError, Unreadable, Violation, WatchError,
     Watches, ZoomRange, crossing,
 };
+use crate::{AdvancedView, ClassSource, Classified, Classify, ClassifyError, Hidden, PortClass};
 use crate::{DefinitionAct, DefinitionError, PairError, RemovedTree, Used};
 use crate::{Fault, Finding, Fitness, Objection, Surroundings, Weight};
 
@@ -3918,6 +3919,16 @@ fn what_a_node_looks_like_cannot_change_what_the_graph_computes() {
             // `None` is this field's default, so a fixture carrying it would
             // serialise identically whether or not the field survived.
             tint: Some(Tint::rgb(3, 5, 7)),
+            // ★ R2001 — `true` and a NON-empty map, for the same reason again:
+            // both fields default to the empty answer, so a fixture holding
+            // that would round-trip identically whether or not they survived.
+            advanced_shown: true,
+            reclassified: [
+                (PortRef::input(1), PortClass::Advanced),
+                (PortRef::output(0), PortClass::Plain),
+            ]
+            .into_iter()
+            .collect(),
         },
     ];
     for look in looks {
@@ -4292,6 +4303,374 @@ fn r1912_a_node_may_end_up_with_nothing_drawn_and_says_so() {
             .visible_ports(ROOT, untouched)
             .unwrap()
             .nothing_drawn()
+    );
+}
+
+/// R2001 — a taxonomy with an **advanced** port, kept local to these tests.
+///
+/// Two kinds with the same ports differing in exactly the declaration under
+/// test — `Rig` hands its classes to a person, `Fixed` keeps them — which is
+/// the `Relay`/`Double` pairing the census fixture already uses, and for the
+/// same reason: an assertion that holds for one and not the other cannot be
+/// reading anything else about them.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Tuner {
+    /// A person may move this kind's ports between the classes.
+    Rig,
+    /// The kind declares its port classes and keeps them.
+    Fixed,
+}
+
+impl NodeKind for Tuner {
+    type Type = Ty;
+    type Value = Val;
+    type Graph = ();
+
+    fn name(&self) -> String {
+        match self {
+            Self::Rig => "Rig",
+            Self::Fixed => "Fixed",
+        }
+        .to_owned()
+    }
+
+    /// One plain port and one advanced, so a fold has something to hide AND
+    /// something to leave alone: a kind whose every port were advanced could
+    /// not tell *folded* from *drew nothing*.
+    fn inputs(&self) -> Vec<Port<Ty, Val>> {
+        vec![
+            Port::new("Value", Ty::Number),
+            Port::new("Trim", Ty::Number)
+                .with_default(Val::Number(0))
+                .advanced(),
+        ]
+    }
+
+    fn outputs(&self) -> Vec<Port<Ty, Val>> {
+        vec![Port::new("Out", Ty::Number)]
+    }
+
+    fn advanced_ports_are_authored(&self) -> bool {
+        matches!(self, Self::Rig)
+    }
+
+    fn evaluate(&self, inputs: &[Option<Val>]) -> Vec<Option<Val>> {
+        vec![inputs.first().cloned().flatten()]
+    }
+}
+
+/// ★★★★★ R2001 — **a declared advanced port is folded away, says so, and
+/// stays on the frame while a wire ends on it.**
+///
+/// The three facts a bare "hidden" boolean cannot carry, and the last is the
+/// reference's own rule rather than an invention here: its pin widget asks
+/// `bCanBeHidden = !IsConnected()`, because folding a class must not hide a
+/// socket a wire ends on.
+#[test]
+fn r2001_a_folded_advanced_port_says_so_and_a_wired_one_stays_drawn() {
+    let mut doc: Document<Tuner> = Document::new("root");
+    let rig = doc
+        .add_node(ROOT, NodeBody::Kind(Tuner::Rig), 0, 0)
+        .unwrap();
+    let feed = doc
+        .add_node(ROOT, NodeBody::Kind(Tuner::Rig), 0, 100)
+        .unwrap();
+
+    // Folded is the resting state: a class hidden by default is why it is
+    // declared at all.
+    let folded = doc.visible_ports(ROOT, rig).unwrap();
+    assert_eq!(folded.inputs, vec![0], "the plain port is on the frame");
+    assert_eq!(folded.hidden_inputs, vec![1]);
+    assert_eq!(folded.advanced_inputs, vec![1]);
+    assert_eq!(
+        folded.why_hidden(Side::Input, 1),
+        Some(Hidden::Advanced),
+        "★★★★★ and it says WHICH of the reasons -- the repair is unfolding \
+         the class, not wiring the port or turning a rule off",
+    );
+    assert_eq!(
+        doc.advanced_view(ROOT, rig),
+        Some(AdvancedView::Folded),
+        "the node's own control has something to fold",
+    );
+    assert!(doc.advanced_view(ROOT, rig).unwrap().has_control());
+
+    // ★★★★★ THE REFERENCE'S RULE. A wire ending on an advanced port keeps it
+    // on the frame however the group is folded.
+    doc.connect(ROOT, Socket::new(feed, 0), Socket::new(rig, 1))
+        .expect("Out: Number reaches Trim: Number");
+    let wired = doc.visible_ports(ROOT, rig).unwrap();
+    assert_eq!(
+        wired.inputs,
+        vec![0, 1],
+        "★★★★★ a folded class does not hide a socket a wire ends on",
+    );
+    assert_eq!(wired.advanced_inputs, Vec::<u32>::new());
+    assert_eq!(
+        doc.advanced_view(ROOT, rig),
+        Some(AdvancedView::Folded),
+        "★ the node is still folded -- what changed is one port's fate, not \
+         the group's state, and conflating the two is how a screen ends up \
+         drawing the wrong chevron",
+    );
+
+    // Unfolding puts it back for everyone.
+    doc.disconnect(ROOT, doc.tree(ROOT).unwrap().links()[0].id)
+        .expect("the only link");
+    assert_eq!(
+        doc.show_advanced_ports(ROOT, rig, true),
+        Some(AdvancedView::Unfolded),
+        "★ the verb ANSWERS the state it produced -- the reference's handler \
+         returns nothing and a caller watches the picture",
+    );
+    let open = doc.visible_ports(ROOT, rig).unwrap();
+    assert_eq!(open.inputs, vec![0, 1]);
+    assert_eq!(open.hidden_count(), 0);
+}
+
+/// ★★★★★ R2001 — **"this node has nothing advanced" is derived, so it cannot
+/// go stale.**
+///
+/// The defect this passes: the reference stores that state as the third member
+/// of a tri-state on the node, twenty assignments across its tree promote it by
+/// hand after creating an advanced pin, and five ever write it back — so a node
+/// that stops having advanced pins goes on drawing the control that folds them,
+/// because the control's visibility asks the stored member and not the pins.
+#[test]
+fn r2001_a_node_with_nothing_advanced_draws_no_control_and_cannot_be_told_otherwise() {
+    let mut doc: Document<Tuner> = Document::new("root");
+    let rig = doc
+        .add_node(ROOT, NodeBody::Kind(Tuner::Rig), 0, 0)
+        .unwrap();
+    assert_eq!(doc.advanced_view(ROOT, rig), Some(AdvancedView::Folded));
+
+    // A person takes the one advanced port out of the class. Nothing is
+    // advanced any more -- and the state that says so is re-derived rather
+    // than left to whoever remembered to write it.
+    doc.classify_port(ROOT, rig, PortRef::input(1), Classify::Plain)
+        .expect("`Rig` hands its classes to a person");
+    assert_eq!(
+        doc.advanced_view(ROOT, rig),
+        Some(AdvancedView::Nothing),
+        "★★★★★ the control is gone because the PORTS say so",
+    );
+    assert!(!doc.advanced_view(ROOT, rig).unwrap().has_control());
+
+    // ★ And the stored half cannot make it lie: asking for the group to be
+    // shown on a node with nothing in it still answers `Nothing`, which is the
+    // caller being told it asked about nothing rather than watching a picture
+    // that does not change.
+    assert_eq!(
+        doc.show_advanced_ports(ROOT, rig, true),
+        Some(AdvancedView::Nothing),
+    );
+    assert_eq!(
+        doc.visible_ports(ROOT, rig).unwrap().hidden_count(),
+        0,
+        "and every port is on the frame",
+    );
+}
+
+/// ★★★★★ R2001 — **going back to the declaration is a third answer, and the
+/// reference cannot make it.**
+///
+/// With one bit per pin there, a person touching a pin's class overwrites what
+/// the kind said and there is nothing left to return to. Here the declaration
+/// and the override live in different places, so [`Classify::Declared`] removes
+/// the override rather than writing the kind's current answer into it — and the
+/// difference shows the moment the two disagree.
+#[test]
+fn r2001_going_back_to_the_declaration_restores_the_kinds_own_answer() {
+    let mut doc: Document<Tuner> = Document::new("root");
+    let rig = doc
+        .add_node(ROOT, NodeBody::Kind(Tuner::Rig), 0, 0)
+        .unwrap();
+
+    assert_eq!(
+        doc.classified(ROOT, rig, PortRef::input(1)),
+        Some(Classified {
+            class: PortClass::Advanced,
+            source: ClassSource::Kind,
+        }),
+        "the kind declared it, and the answer says WHO -- so an editor knows \
+         there is nothing to put back",
+    );
+
+    let after = doc
+        .classify_port(ROOT, rig, PortRef::input(1), Classify::Plain)
+        .expect("a person may");
+    assert_eq!(
+        after,
+        Classified {
+            class: PortClass::Plain,
+            source: ClassSource::Person,
+        },
+    );
+    assert_eq!(doc.advanced_ports(ROOT, rig), Some(Vec::new()));
+
+    // And a person may go the other way too, on a port the kind never
+    // declared: the override is not a flip of the declaration.
+    doc.classify_port(ROOT, rig, PortRef::input(0), Classify::Advanced)
+        .expect("a person may");
+    assert_eq!(
+        doc.advanced_ports(ROOT, rig),
+        Some(vec![PortRef::input(0)]),
+        "★ the class is now exactly the opposite of what the kind declared, \
+         which is a state the reference reaches too -- and loses on rebuild",
+    );
+
+    // ★★★★★ Going back is not "write what the kind says today": it is
+    // removing the override, so the kind answers again.
+    doc.classify_port(ROOT, rig, PortRef::input(0), Classify::Declared)
+        .expect("a person may");
+    doc.classify_port(ROOT, rig, PortRef::input(1), Classify::Declared)
+        .expect("a person may");
+    assert_eq!(
+        doc.classified(ROOT, rig, PortRef::input(1)),
+        Some(Classified {
+            class: PortClass::Advanced,
+            source: ClassSource::Kind,
+        }),
+        "★★★★★ the kind's declaration is intact, because a person's answer \
+         never overwrote it",
+    );
+    assert!(
+        doc.tree(ROOT)
+            .unwrap()
+            .node(rig)
+            .unwrap()
+            .appearance
+            .reclassified
+            .is_empty(),
+        "and nothing is left behind to disagree with the kind later",
+    );
+}
+
+/// ★★★★★ R2001 — **a kind that keeps its port classes refuses, and says so
+/// before anything moves.**
+///
+/// R1920's shape: the question and the edit are one rule, so a screen greying
+/// the gesture and the edit refusing it cannot drift apart. The reference's own
+/// permission is read by the code doing the copying, so a person there finds
+/// out what it said by watching a pin lose its class.
+#[test]
+fn r2001_a_kind_that_keeps_its_classes_refuses_before_anything_moves() {
+    let mut doc: Document<Tuner> = Document::new("root");
+    let fixed = doc
+        .add_node(ROOT, NodeBody::Kind(Tuner::Fixed), 0, 0)
+        .unwrap();
+
+    let refusal = ClassifyError::KindDecides {
+        kind: "Fixed".to_owned(),
+    };
+    assert_eq!(
+        doc.may_classify_port(ROOT, fixed, PortRef::input(1), Classify::Plain),
+        Err(refusal.clone()),
+        "asked before the act",
+    );
+    assert_eq!(
+        doc.classify_port(ROOT, fixed, PortRef::input(1), Classify::Plain),
+        Err(refusal),
+        "★ and the edit is a CALL SITE of that question, not a second copy",
+    );
+    assert!(
+        doc.tree(ROOT)
+            .unwrap()
+            .node(fixed)
+            .unwrap()
+            .appearance
+            .reclassified
+            .is_empty(),
+        "nothing moved",
+    );
+    assert_eq!(
+        doc.advanced_view(ROOT, fixed),
+        Some(AdvancedView::Folded),
+        "★ the class the KIND declared is untouched by the refusal -- what is \
+         refused is a person's disagreement, not the class itself",
+    );
+
+    // The other refusals name what to repair rather than answering one word.
+    assert_eq!(
+        doc.may_classify_port(ROOT, NodeId(97), PortRef::input(0), Classify::Plain),
+        Err(ClassifyError::NoSuchNode {
+            tree: ROOT,
+            node: NodeId(97),
+        }),
+    );
+    let rig = doc
+        .add_node(ROOT, NodeBody::Kind(Tuner::Rig), 0, 100)
+        .unwrap();
+    assert_eq!(
+        doc.may_classify_port(ROOT, rig, PortRef::input(9), Classify::Plain),
+        Err(ClassifyError::NoSuchPort {
+            side: Side::Input,
+            index: 9,
+            of: 2,
+        }),
+        "★ it says how many there ARE, so a caller states the range instead \
+         of guessing it",
+    );
+}
+
+/// ★★★★★ R2001 — **the reasons a port is not drawn are ordered from the most
+/// specific statement about that port to the most general rule over the node.**
+///
+/// Not bookkeeping: the order IS which repair a person is sent to. A port a
+/// hand put away by name is not brought back by unfolding a class, and a folded
+/// advanced port is not brought back by turning the unwired rule off — so a
+/// reader that got the wrong reason would act and see nothing happen.
+#[test]
+fn r2001_a_port_hidden_three_ways_over_reports_the_most_specific_reason() {
+    let mut doc: Document<Tuner> = Document::new("root");
+    let rig = doc
+        .add_node(ROOT, NodeBody::Kind(Tuner::Rig), 0, 0)
+        .unwrap();
+
+    // All three apply to input 1 at once: it is advanced and folded, nothing
+    // is wired to it, and the node's unwired rule is on.
+    doc.tree_mut(ROOT)
+        .unwrap()
+        .node_mut(rig)
+        .unwrap()
+        .appearance
+        .hide_unused_ports = true;
+    assert_eq!(
+        doc.visible_ports(ROOT, rig)
+            .unwrap()
+            .why_hidden(Side::Input, 1),
+        Some(Hidden::Advanced),
+        "★ the class beats the rule: unfolding brings it back, turning the \
+         rule off does not",
+    );
+
+    // And a hand's own put-away beats the class, for the same reason one step
+    // further in.
+    doc.put_away_ports(ROOT, rig, crate::PutAway::Port(Side::Input, 1))
+        .expect("an ordinary kind");
+    assert_eq!(
+        doc.visible_ports(ROOT, rig)
+            .unwrap()
+            .why_hidden(Side::Input, 1),
+        Some(Hidden::PutAway),
+        "★★★★★ unfolding the class would NOT bring this one back, so saying \
+         `advanced` would send the person to a control that does nothing",
+    );
+
+    // ★ Every reason has a word on the wire, so a client reading the answer
+    // gets the same four a caller in Rust does.
+    assert_eq!(Hidden::Advanced.wire_word(), "advanced");
+    assert_eq!(PortClass::Advanced.wire_word(), "advanced");
+    assert_eq!(AdvancedView::Nothing.wire_word(), "nothing");
+    assert_eq!(
+        Classify::from_wire_word("declared"),
+        Some(Classify::Declared),
+    );
+    assert_eq!(
+        Classify::from_wire_word("hidden"),
+        None,
+        "★ a word this vocabulary does not have is refused rather than \
+         guessed at",
     );
 }
 
