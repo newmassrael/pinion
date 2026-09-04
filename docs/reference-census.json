@@ -2217,10 +2217,10 @@
       "verdict": "have"
     },
     "MaterialEditor::CameraHome": {
-      "covered_by": "framing the canvas view at its home position; the crate carries positions and no viewport",
+      "covered_by": "Document::home. ⚠ THE OLD REASON WAS STALE IN ITS SECOND CLAUSE AND WRONG ABOUT THE CAPABILITY IN ITS FIRST. It read `framing the canvas view at its home position; the crate carries positions and no viewport` -- but R1688's `view` module has carried a `Camera`, a validated `ZoomRange` and a viewport-taking `Fit` since 2026-08-14, six days after this pin was written at R1605 (`git merge-base --is-ancestor` says the pin PREDATES it, so ordinary staleness rather than false-at-birth). And the operation is not a framing at all: measured at `FMaterialEditor::RecenterEditor`, Home takes the material graph's designated ROOT NODE -- or, for a material function, walks the expressions backwards for output nodes, preferring the one flagged last-previewed and otherwise the first found -- and jumps the view to it, keeping zoom. So what was absent was never the viewport; it was the question WHICH NODE IS THIS GRAPH'S FACE, and nothing here answered it. Four ways past it: it says where home is without moving anything (the reference returns void, so `where would Home take me` can only be answered by pressing it); it REFUSES BY NAME in the three cases the reference answers with a silent jump to the world origin (no such tree, no nodes, and every node feeding another -- reachable here because a cycle may close through a delay); it reports EVERY end rather than picking one by iteration order and staying quiet about the rest; and `End::fed` keeps the distinction a filtered list would destroy, between the place the flow ends up and a card nobody wired. Derived from the graph's shape rather than declared, because this crate's NodeKind is a consumer's own type and the reference's own root node is the node nothing leaves.",
       "mechanism": "MaterialEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_material_editor_camera_home",
+      "verdict": "have"
     },
     "MaterialEditor::CleanUnusedExpressions": {
       "covered_by": "deleting every node that reaches no output. `Reach` answers which nodes those are and no edit consumes it",

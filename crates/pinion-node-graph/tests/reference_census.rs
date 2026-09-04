@@ -58,7 +58,7 @@ use pinion_node_graph::{
     Copying, DefinitionAct, DefinitionError, InZone, InsertError, PairError, Renamed, Tree, Used,
 };
 use pinion_node_graph::{Fit, Margin, Unframed, ZoomRange};
-use pinion_node_graph::{Reception, RelocateError, Relocation};
+use pinion_node_graph::{NoHome, Reception, RelocateError, Relocation};
 use pinion_node_graph::{RoomError, SpliceError, Verdict, Widening};
 
 // ---------------------------------------------------------------- taxonomy
@@ -844,7 +844,17 @@ fn proofs() -> Vec<Proof> {
     all.extend(r1988_focus_proofs());
     all.extend(r1991_frame_proofs());
     all.extend(r1993_relocate_proofs());
+    all.extend(r1994_home_proofs());
     all
+}
+
+/// R1994 — the material editor's *Home* button.
+fn r1994_home_proofs() -> Vec<Proof> {
+    vec![proof(
+        "engine",
+        "MaterialEditor::CameraHome",
+        engine_material_editor_camera_home,
+    )]
 }
 
 /// R1993 — the schema's two whole-port link operations, *move* and *copy*.
@@ -4466,6 +4476,130 @@ fn split_report<E>(report: &Relocation<E>) -> (Vec<LinkId>, Vec<LinkId>) {
         }
     }
     (taken, refused)
+}
+
+/// ★★★★★ R1994 — the material editor's *Home*: **where the graph ends up**,
+/// answered without moving a camera.
+///
+/// Measured at the reference's own body: the Home button calls `RecenterEditor`,
+/// which takes the material graph's designated root node — or, for a material
+/// function, walks its expressions backwards for output nodes, preferring the
+/// one flagged last-previewed and otherwise the first found — and jumps the view
+/// to it. ⚠ **With no such node it sets the view to the world origin** at the
+/// current zoom, and it returns `void`.
+///
+/// The assertions that would fail if the capability were missing:
+///
+/// 1. the graph says where it ends up, and it is the node the flow arrives at;
+/// 2. a graph that ends in more than one place **says so** rather than picking
+///    silently — and says which the others are;
+/// 3. a card nobody wired is an end in the trivial sense only, and the report
+///    keeps that distinction instead of destroying it by filtering;
+/// 4. each of the three ways there is no home is refused **by name**, where the
+///    reference scrolls to the world origin and says nothing.
+#[test]
+fn engine_material_editor_camera_home() {
+    // ── the ordinary graph ───────────────────────────────────────────
+    let chain = chain();
+    let home = chain.document.home(ROOT).expect("the chain ends somewhere");
+    // ★ (1) `sink` is the one nothing leaves — the reference's root node is
+    // exactly the node its material comes out of.
+    assert_eq!(home.at, chain.sink, "the chain ends at its sink: {home:?}");
+    assert!(home.sole(), "and it ends in exactly one place: {home:?}");
+    assert!(
+        home.others().is_empty(),
+        "so there is nothing else to offer"
+    );
+    assert!(home.ends[0].fed, "the flow arrives there");
+
+    // ── two ends, and a stray card ───────────────────────────────────
+    let FanOut {
+        mut document,
+        add,
+        mul,
+        ..
+    } = fan_out();
+    let home = document.home(ROOT).expect("the fan-out ends somewhere");
+    // ★ (2) TWO ends. The reference picks one by iteration order plus a preview
+    // flag and never mentions the other.
+    assert_eq!(
+        home.ends.iter().map(|end| end.node).collect::<Vec<_>>(),
+        vec![add.min(mul), add.max(mul)],
+        "both consumers are ends, ascending: {home:?}"
+    );
+    assert!(!home.sole(), "so `at` was a CHOICE and the report says so");
+    assert_eq!(
+        home.others(),
+        vec![add.max(mul)],
+        "★ and the one it did not choose is offerable rather than lost: {home:?}"
+    );
+
+    // ★ (3) A card nobody wired. It IS an end — nothing leaves it — and saying
+    // so is the point: a filtered list would hide the rule it was filtered by.
+    let stray = node(&mut document, Op::Double);
+    let home = document.home(ROOT).expect("still ends somewhere");
+    let strayed = home
+        .ends
+        .iter()
+        .find(|end| end.node == stray)
+        .expect("the stray card is an end, trivially: {home:?}");
+    assert!(!strayed.fed, "with nothing arriving at it");
+    assert_ne!(
+        home.at, stray,
+        "★★★★★ and Home does NOT go there — a fed end is where the graph ends \
+         UP, and a card someone dropped is not: {home:?}"
+    );
+    assert!(
+        home.ends.iter().any(|end| end.fed),
+        "the distinction is only worth keeping because both kinds are here"
+    );
+
+    // ── the three refusals ───────────────────────────────────────────
+    // ★ (4a) A tree that is not here.
+    assert!(matches!(
+        document.home(TreeId(9_999)),
+        Err(NoHome::NoSuchTree(_))
+    ));
+    // ★ (4b) Nothing to go to at all.
+    let empty: Document<Op> = Document::new("root");
+    assert!(matches!(empty.home(ROOT), Err(NoHome::Empty)));
+    // ★★★★★ (4c) EVERY node feeds another, so nothing is an end. Reachable
+    // only because this crate lets a cycle close through a delay — and it is
+    // exactly where the reference scrolls a person to the world origin, which
+    // is a place with nothing at it rather than an answer.
+    let mut looped: Document<Op> = Document::new("root");
+    let add = node(&mut looped, Op::Add);
+    let delay = looped
+        .add_node(ROOT, NodeBody::Delay(Ty::Number), 0, 0)
+        .expect("a delay");
+    wire(&mut looped, add, 0, delay, 0);
+    looped
+        .connect(ROOT, Socket::new(delay, 0), Socket::new(add, 0))
+        .expect("a cycle broken by a delay is legal");
+    assert_eq!(
+        looped.home(ROOT),
+        Err(NoHome::Endless { nodes: 2 }),
+        "★★★★★ a graph that is all cycle has no end, and it is REFUSED by name \
+         with the count — the reference goes to the origin and returns void"
+    );
+    // ★ The counterfactual for that refusal: the SAME graph with the closing
+    // wire gone answers a home, so `Endless` is about the cycle and not about
+    // delays or about two-node graphs.
+    let mut cut = looped.clone();
+    let closing = cut
+        .tree(ROOT)
+        .unwrap()
+        .links()
+        .iter()
+        .find(|link| link.from.node == delay)
+        .expect("the closing wire")
+        .id;
+    cut.disconnect(ROOT, closing).expect("take it out");
+    assert_eq!(
+        cut.home(ROOT).map(|home| home.at),
+        Ok(delay),
+        "with the loop open the delay is the end"
+    );
 }
 
 /// ★★★★★ R1993 — a **moved** wire says what it replaced on arrival.

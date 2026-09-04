@@ -10671,6 +10671,323 @@ fn lab_card_boxes(shot: &Painted) -> std::collections::BTreeMap<String, Rect> {
         .collect()
 }
 
+/// ★★★★★ R1994 — **the assembled tool goes to where the graph ends up, and
+/// says where that is before going** — driven on the shell, over one walk.
+///
+/// # What this reproduces
+///
+/// The floor's material editor has a *Home* button. Measured at its own body:
+/// it takes the material graph's designated root node — or, for a function, the
+/// output node flagged last-previewed and otherwise the first found — and jumps
+/// the view to it keeping zoom. ⚠ With no such node it sets the view to the
+/// world origin and returns `void`.
+///
+/// The crate's half is proven against the floor in `pinion-node-graph`'s own
+/// census test. **What is proven here is what only an assembled application can
+/// answer**: that a person has a seat to press, that pressing it moves the
+/// canvas to the graph's end and says which, that asking first moves nothing,
+/// and that it is a different answer from framing the whole graph.
+///
+/// # Which screen this lands on
+///
+/// Screen A, the node lab, as it is assembled in this shell. Second-pass work:
+/// the behaviour canon has no Home, and this comes from the floor.
+#[test]
+fn r1994_the_assembled_tool_goes_to_where_the_graph_ends_up() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let report = crate::tests::walk_the_application(&state);
+        assert!(
+            report.conforms(),
+            "the application did not reproduce its specification over the walk: {}",
+            report.why().unwrap_or_default()
+        );
+        assert!(
+            report.itinerary().iter().any(|key| key == "lab"),
+            "the walk must stand in the node lab: {:?}",
+            report.itinerary()
+        );
+
+        state.go("lab").expect("the node lab section is open");
+        let home = asking_where_home_is_moves_nothing(&state);
+        a_press_on_the_seat_goes_there_and_says_so(&state, &home);
+        going_home_is_not_framing_the_whole_graph(&state, &home);
+        a_card_nobody_wired_is_an_end_but_not_home(&state);
+        a_graph_with_one_end_says_so_without_offering_others(&state);
+    });
+}
+
+/// Phase 5 — **a graph that ends in exactly one place says so, and its sentence
+/// offers nothing else.**
+///
+/// ★ This is the floor's ORDINARY case — a material graph has one root — and it
+/// is the unusual one here, because the opening graph fans out into three ends.
+/// It went ungated until a counterfactual blanked the sole-end sentence and
+/// nothing caught it: the branch was unreachable from this fixture, so the
+/// repair is the population rather than the assertion (R1845).
+///
+/// The graph is reduced by deleting the other ends, which is a thing a person
+/// does, so the state under test is one the application can actually be in.
+fn a_graph_with_one_end_says_so_without_offering_others(state: &std::rc::Rc<ShellState>) {
+    let homing = lab_slot(state, "homing");
+    let others: Vec<String> = homing["ends"]
+        .as_array()
+        .expect("a row per end")
+        .iter()
+        .filter_map(|end| end["card"].as_str())
+        .filter(|card| Some(*card) != homing["at"].as_str())
+        .map(str::to_owned)
+        .collect();
+    assert!(
+        !others.is_empty(),
+        "the graph must end in more than one place for this phase to reduce it: {homing}"
+    );
+    for card in &others {
+        lab_invoke(state, "delete_node", card)
+            .unwrap_or_else(|why| panic!("{card} is a card a person may delete: {why:?}"));
+    }
+
+    let homing = lab_slot(state, "homing");
+    assert_eq!(
+        homing["sole"],
+        serde_json::Value::Bool(true),
+        "★ with the other ends gone the graph ends in exactly one place: {homing}"
+    );
+    let at = homing["at"].as_str().expect("it still ends somewhere");
+    let said = lab_invoke(state, "home", "").expect("the graph ends somewhere");
+    assert!(
+        said.contains(at),
+        "★★ the sentence names where it went: {said:?}"
+    );
+    assert!(
+        !said.contains("also ends"),
+        "★★★★★ and offers NOTHING else, because there is nothing else — the \
+         clause that lists the other ends must not appear when there are \
+         none: {said:?}"
+    );
+}
+
+/// Phase 1 — **the graph says where it ends up, and saying it moves nothing.**
+///
+/// The floor's Home returns `void`, so *where would this take me* can be
+/// answered only by pressing it and looking at the canvas afterwards.
+fn asking_where_home_is_moves_nothing(state: &std::rc::Rc<ShellState>) -> String {
+    let before = camera_of(state);
+    let homing = lab_slot(state, "homing");
+    assert_eq!(
+        camera_of(state),
+        before,
+        "★★ asking where home is did not move the canvas"
+    );
+    let at = homing["at"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the opening graph ends somewhere: {homing}"))
+        .to_owned();
+
+    // ★ Every end, each saying whether the graph actually arrives there. The
+    // floor picks one by iteration order and never mentions the others.
+    let ends = homing["ends"].as_array().expect("a row per end");
+    assert!(
+        !ends.is_empty(),
+        "a graph that ends somewhere has at least one end: {homing}"
+    );
+    assert!(
+        ends.iter()
+            .any(|end| end["card"].as_str() == Some(at.as_str())),
+        "★ the one it would go to is one of the ends it lists: {homing}"
+    );
+    assert_eq!(
+        ends.iter()
+            .find(|end| end["card"].as_str() == Some(at.as_str()))
+            .map(|end| end["fed"].clone()),
+        Some(serde_json::Value::Bool(true)),
+        "★★ and it is one the graph ARRIVES at — home is where the flow ends \
+         up, not merely a card nothing leaves: {homing}"
+    );
+    at
+}
+
+/// Phase 2 — **a person presses a seat and the canvas goes there.**
+///
+/// ★ Through the paint, not the wire: the floor's Home is a toolbar button and
+/// what this round owes screen A is a control a hand can reach.
+///
+/// ⚠ **Where that seat is, is measured rather than assumed.** This application
+/// mounts the lab in a region narrower than the lab's own design width, so its
+/// toolbar overflows and three groups sit behind the `…` control — Home among
+/// them, BY DESIGN: it is placed one step right of the zoom group precisely so
+/// that a live read-out of the canvas keeps the row ahead of a convenience.
+/// The walk therefore presses it wherever it is, which is also the assertion
+/// that the new group's overflow path works at all.
+///
+/// The sentence is asserted too, because it names WHERE it went — the floor's
+/// returns nothing, so a person who was already near the end cannot tell a
+/// press that worked from one that did nothing.
+fn a_press_on_the_seat_goes_there_and_says_so(state: &std::rc::Rc<ShellState>, home: &str) {
+    // Put the canvas somewhere else first, so "it went home" is a MOVE and not
+    // a state it was already in. Framing the whole graph is the verb this
+    // screen has for that, and it is a camera Home must differ from anyway.
+    lab_invoke(state, "fit", "").expect("framing the whole graph is answerable");
+    // ★★ Through the wire alone first: going home twice must answer the same
+    // camera. Asserted before any press so that if it ever fails, the finding
+    // is about the operation rather than about how it was reached.
+    lab_invoke(state, "home", "").expect("the graph ends somewhere");
+    let settled = camera_of(state);
+    lab_invoke(state, "home", "").expect("the graph still ends somewhere");
+    assert_eq!(
+        camera_of(state),
+        settled,
+        "★★★★★ going home twice answers the same camera — homing says {}",
+        lab_slot(state, "homing")
+    );
+
+    lab_invoke(state, "fit", "").expect("framing the whole graph is answerable");
+    let adrift = camera_of(state);
+
+    press_the_home_seat(state);
+    assert_ne!(
+        camera_of(state),
+        adrift,
+        "★★★★★ pressing Home MOVED the canvas — the assertion a silent no-op \
+         passes and this one does not"
+    );
+    let said = lab_slot(state, "toast");
+    assert!(
+        said.as_str().is_some_and(|line| line.contains(home)),
+        "★★ and the sentence names where it went: {said}"
+    );
+
+    // ★★ The seat is idempotent too — pressed from where the last press left
+    // it, the canvas does not drift.
+    let pressed = camera_of(state);
+    lab_invoke(state, "fit", "").expect("framing the whole graph is answerable");
+    press_the_home_seat(state);
+    assert_eq!(
+        camera_of(state),
+        pressed,
+        "★★★★★ the seat answers one camera whatever the canvas was doing — \
+         homing says {}",
+        lab_slot(state, "homing")
+    );
+
+    // ⚠⚠ **Why this is NOT compared against `settled`, measured rather than
+    // assumed.** The two cameras differ by exactly (26, 40), which is half of
+    // (52, 80) — the difference between this shell's viewport (1440x900) and
+    // the region the lab is PLACED in (1388x820). `external::layout_size` reads
+    // an enclosing `with_surface_extent` grant first and an owner scope's
+    // `painting_extent()` second, and only a press goes through the grant: a
+    // wire call made straight from a test sees the host's viewport as the lab's
+    // window. So the same operation centres on the same node against two
+    // different window sizes, and an equality here would be asserting the
+    // harness rather than the application. Each door is idempotent, which is
+    // the property that belongs to the operation — and that is what is
+    // asserted, on both.
+}
+
+/// Press the lab's Home seat, wherever it currently is.
+///
+/// ⚠ **Where it is, is measured rather than assumed.** This application mounts
+/// the lab in a region narrower than the lab's own design width, so its toolbar
+/// overflows and Home sits behind the `…` control — BY DESIGN: it is placed one
+/// step right of the zoom group so that a live read-out of the canvas keeps the
+/// row ahead of a convenience. Pressing it wherever it is also asserts that the
+/// new group's overflow path works at all.
+fn press_the_home_seat(state: &std::rc::Rc<ShellState>) {
+    let (shot, scene) = painted_at((WIN_W, WIN_H));
+    // Room on the row: press it where it is drawn. Otherwise it is behind the
+    // `…` control — open that, and the seat is painted inside.
+    let seat = if shot.rect("lab.toolbar.home").is_some() {
+        aim(&shot, "lab.toolbar.home")
+    } else {
+        let mut open = RouterDrag::over(state, scene);
+        open.cursor(aim(&shot, "lab.toolbar.more"));
+        open.press();
+        open.release();
+        let (opened, _) = painted_at((WIN_W, WIN_H));
+        assert!(
+            opened.rect("lab.toolbar.home").is_some(),
+            "★★★★★ Home moved off the row, so the overflow must hold it — a \
+             group that is neither drawn nor in the menu is a control a person \
+             cannot reach at all"
+        );
+        aim(&opened, "lab.toolbar.home")
+    };
+    let (_, scene) = painted_at((WIN_W, WIN_H));
+    let mut press = RouterDrag::over(state, scene);
+    press.cursor(seat);
+    press.press();
+    press.release();
+}
+
+/// Phase 3 — **and it is a different answer from framing the whole graph**,
+/// which is the operation Home has to be distinguished from.
+fn going_home_is_not_framing_the_whole_graph(state: &std::rc::Rc<ShellState>, home: &str) {
+    // ⚠ One door throughout — see the note in the phase above on why a camera
+    // reached by a press and one reached by a wire call are measured against
+    // different window sizes, and so are not comparable to each other.
+    let said = lab_invoke(state, "home", "").expect("the graph ends somewhere");
+    assert!(said.contains(home), "the same end as ever: {said:?}");
+    let at_home = camera_of(state);
+
+    lab_invoke(state, "fit", "").expect("framing the whole graph is answerable");
+    assert_ne!(
+        at_home,
+        camera_of(state),
+        "★★★★★ one node and the whole graph are different cameras — an \
+         implementation that framed the graph either way passes every phase \
+         above and fails here"
+    );
+    // And back, so the difference belongs to the two operations rather than to
+    // the order they ran in.
+    lab_invoke(state, "home", "").expect("the graph still ends somewhere");
+    assert_eq!(
+        camera_of(state),
+        at_home,
+        "★★ and going home after framing answers the camera home always \
+         answers, so neither operation depends on where the canvas already \
+         was — homing says {}",
+        lab_slot(state, "homing")
+    );
+}
+
+/// Phase 4 — **a card nobody wired is an end, and Home does not go there.**
+///
+/// ★ The distinction a filtered list would have destroyed. A node with nothing
+/// on either side is an end in the trivial sense; the report says so rather
+/// than leaving it out, and `at` still picks the one the graph arrives at.
+fn a_card_nobody_wired_is_an_end_but_not_home(state: &std::rc::Rc<ShellState>) {
+    let (shot, scene) = painted_at((WIN_W, WIN_H));
+    let opening = lab_cards(state);
+    let mut press = RouterDrag::over(state, scene);
+    press.cursor(aim(&shot, "lab.palette.role.Router"));
+    press.press();
+    press.release();
+    let stray = lab_cards(state)
+        .into_iter()
+        .find(|card| !opening.contains(card))
+        .expect("one press on the palette adds one card");
+
+    let homing = lab_slot(state, "homing");
+    let ends = homing["ends"].as_array().expect("a row per end");
+    let listed = ends
+        .iter()
+        .find(|end| end["card"].as_str() == Some(stray.as_str()))
+        .unwrap_or_else(|| panic!("{stray} is an end, trivially: {homing}"));
+    assert_eq!(
+        listed["fed"],
+        serde_json::Value::Bool(false),
+        "★ with nothing arriving at it: {homing}"
+    );
+    assert_ne!(
+        homing["at"].as_str(),
+        Some(stray.as_str()),
+        "★★★★★ and Home does NOT go to it — a card someone dropped is not where \
+         the graph ends up, and the report keeps both facts rather than \
+         filtering one away: {homing}"
+    );
+}
+
 /// ★★★★★ R1993 — **the assembled tool takes every wire on one pin to another
 /// pin, and a wire it cannot take is still there afterwards** — driven on the
 /// shell, over one walk.

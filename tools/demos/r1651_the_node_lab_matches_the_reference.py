@@ -618,7 +618,16 @@ def body() -> None:
             # this walk before it ever reached the roster. One unrun walk hid
             # two defects, and the second became visible only once the first was
             # repaired. A round that edits an example runs that example's walk.
-            "lab.toolbar": 18,
+            # ★★★★★ R1994 — 18 -> 19: `lab.toolbar.home`, the seat that goes to
+            # where the graph ends up. Gained one and lost none, so a pin moving
+            # by exactly one is again what says the seat ARRIVED rather than one
+            # arriving as another left. ⚠ And this walk is once more the only
+            # thing that said so: the crate suite, the lab's own tests and the
+            # shell's walk were all green with the pin stale. It is also what
+            # measured that Home sits ON THE ROW at the lab's own design width,
+            # where the assembled shell mounts the lab narrower and puts it
+            # behind the `…` control.
+            "lab.toolbar": 19,
             "lab.gate": 7,
             "lab.hint": 2,
             # ★★★★★ R1984 — the breadcrumb, ONE at the opening frame.

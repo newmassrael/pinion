@@ -4533,6 +4533,12 @@ enum Hit {
     Zoom(bool),
     /// ★★ R1688 — point the canvas at the whole graph.
     Fit,
+    /// ★★★★★ R1994 — point the canvas at where the graph ENDS UP.
+    ///
+    /// A different question from [`Self::Fit`] and from [`Self::Focus`]: not
+    /// *show me all of it* and not *show me what I chose*, but *take me to the
+    /// thing this graph is for*, which the graph itself answers.
+    Home,
     /// ★★★★★ R1988 — **widen what the selection is focused through, or turn the
     /// focus off.**
     ///
@@ -5191,6 +5197,17 @@ impl Hit {
             Self::DiscoveryToggle => "discovery".into(),
             Self::Zoom(up) => format!("zoom:{}", if *up { "in" } else { "out" }),
             Self::Fit => "fit".into(),
+            // ★★★★★ R1994 — the word carries WHERE the press would take you,
+            // for the same reason the focus chip's does: `home` alone answers
+            // the same on a graph with one end and on a graph with four, and on
+            // one that has nowhere to go at all.
+            Self::Home => format!(
+                "home:{}",
+                match state.doc.borrow().home(state.here()) {
+                    Ok(home) => state.name_of(home.at),
+                    Err(_) => "nowhere".to_owned(),
+                }
+            ),
             // ★ R1988 — the word carries what the press WOULD DO, not the state
             // it is in: one seat with three states, so `focus` alone would
             // answer the same for a press that widens the closure and one that
@@ -5828,6 +5845,15 @@ fn fit_w() -> u32 {
     seat_w("fit")
 }
 
+/// ★★★★★ R1994 — the pill's last seat: go to where the graph ends up.
+///
+/// Beside `fit` because they are the two view seats a person reaches for after
+/// panning away, and they answer different questions — *show me all of it* and
+/// *take me to the end of it*. The floor puts its own Home on the toolbar too.
+fn home_w() -> u32 {
+    seat_w("home")
+}
+
 /// One of the three file seats the reference groups into a pill of its own.
 ///
 /// ★★★ R1689 — **the reference's own grouping, in the reference's own place**:
@@ -5935,6 +5961,22 @@ enum ToolGroup {
     Focus,
     /// The zoom steppers, the read-out and the fit seat — the canvas controls.
     Zoom,
+    /// ★★★★★ R1994 — the seat that goes to where the graph ends up.
+    ///
+    /// Its own group for the same reason [`Self::Focus`] is, and then for one
+    /// more that was MEASURED rather than argued. Folding it into
+    /// [`Self::Zoom`] widened that group, and at the shipped 1440 the row then
+    /// gave up the whole zoom cluster — read-out included — because `zoom` was
+    /// already next in the give-up order. Four tests said so at once.
+    ///
+    /// Placed one step to the RIGHT of `Zoom`, so it is given up BEFORE it.
+    /// That ordering is the decision: a live read-out of the canvas earns the
+    /// row ahead of a convenience that keeps a wire verb and an overflow entry
+    /// when it moves. ⚠ And it is stated as a position because that is the only
+    /// thing that can state it — [`overflow::WhenTight`]'s three words cannot
+    /// say *before zoom but after export*, which is the divergence R1990
+    /// registered.
+    Home,
     /// The pair that takes the plan off the screen.
     Export,
     /// Save, open and clear.
@@ -5951,7 +5993,14 @@ enum ToolGroup {
 impl ToolGroup {
     /// Left to right, which is the order a reader meets them in and therefore
     /// the order [`overflow::lay`] gives them up from the end of.
-    const IN_ROW: [Self; 5] = [Self::Focus, Self::Zoom, Self::Export, Self::File, Self::Run];
+    const IN_ROW: [Self; 6] = [
+        Self::Focus,
+        Self::Zoom,
+        Self::Home,
+        Self::Export,
+        Self::File,
+        Self::Run,
+    ];
 
     /// ★★★★★ R1990 — **what this group does when the row runs out of room**,
     /// stated per group, exhaustively, on the type.
@@ -5982,7 +6031,9 @@ impl ToolGroup {
             // Given up from the end of the row, later ones first — see
             // [`Self::Focus`] for why the leftmost of these is the last to go
             // and not, as its doc used to say, the first.
-            Self::Focus | Self::Zoom | Self::Export | Self::File => overflow::WhenTight::Move,
+            Self::Focus | Self::Zoom | Self::Home | Self::Export | Self::File => {
+                overflow::WhenTight::Move
+            }
         }
     }
 
@@ -5993,6 +6044,7 @@ impl ToolGroup {
             Self::Zoom => {
                 ZOOM_BTN + PILL_GAP + view_read_w() + PILL_GAP + ZOOM_BTN + PILL_GAP + fit_w()
             }
+            Self::Home => home_w(),
             Self::Export => ACTION_W + CLUSTER_GAP + ACTION_W,
             Self::File => file_pill_w(),
             Self::Run => RUN_W,
@@ -6010,6 +6062,7 @@ impl ToolGroup {
                 "lab.toolbar.zoom.in",
                 "lab.toolbar.fit",
             ],
+            Self::Home => &["lab.toolbar.home"],
             Self::Export => &["lab.toolbar.config", "lab.toolbar.script"],
             Self::File => &["lab.toolbar.save", "lab.toolbar.open", "lab.toolbar.clear"],
             Self::Run => &["lab.toolbar.run"],
@@ -6034,7 +6087,10 @@ impl ToolGroup {
             // ★ R1988 — the chip's caption is `caption::captioned`'s own tag,
             // painted inside it, so a moved group takes its word along.
             Self::Focus => &["lab.toolbar.focus.caption"],
-            Self::Export | Self::File | Self::Run => &[],
+            // ★ R1994 — `home`'s caption is drawn by `label`, which is the
+            // seat's own text rather than a separately tagged region, so this
+            // group is responsible for no tag beyond its seat.
+            Self::Home | Self::Export | Self::File | Self::Run => &[],
         }
     }
 
@@ -6052,6 +6108,7 @@ impl ToolGroup {
         match self {
             Self::Focus => "focus",
             Self::Zoom => "zoom",
+            Self::Home => "home",
             Self::Export => "export",
             Self::File => "file",
             Self::Run => "run",
@@ -6371,6 +6428,23 @@ fn fit_rect() -> Rect {
     )
 }
 
+/// ★★★★★ R1994 — the seat that goes to where the graph ends up.
+///
+/// Its own group, and placed to the RIGHT of the zoom pill, which is a decision
+/// about the give-up order rather than about looks. Folded into
+/// [`ToolGroup::Zoom`] it made that group wider — and measured at the shipped
+/// 1440 that cost the WHOLE zoom cluster, steppers and read-out and all, because
+/// [`overflow::lay`] gives ordinary items up from the END and `zoom` was already
+/// the next to go. Its own group one place further right means Home is given up
+/// first instead, which is the right trade: the read-out is a live reading of
+/// the canvas and this is a convenience that still has a wire verb and a menu
+/// entry when it moves.
+fn home_rect() -> Rect {
+    let bar = toolbar_rect();
+    let inset = group_right(ToolGroup::Home).unwrap_or(0);
+    Rect::new(bar.x + bar.w - inset - home_w(), bar.y + 11, home_w(), 28)
+}
+
 fn config_rect() -> Rect {
     let bar = toolbar_rect();
     Rect::new(
@@ -6461,34 +6535,6 @@ fn toolbar_seats(state: &LabState) -> Vec<ToolbarSeat> {
             focus_name(state),
         ),
         seat(
-            "lab.toolbar.zoom.out",
-            zoom_rect(false),
-            Hit::Zoom(false),
-            "zoom out".to_owned(),
-        ),
-        // ★★ The accessible name CONTAINS the visible one, because the read-out
-        // is this control's own caption: a button labelled `84%` whose name was
-        // only "reset the view" is the label-in-name failure, and this seat is
-        // exactly the case that rule is about.
-        seat(
-            "lab.reset.view",
-            view_reset_rect(),
-            Hit::Reset(ResetScope::View),
-            format!("zoom {}%, reset the view", state.zoom.get()),
-        ),
-        seat(
-            "lab.toolbar.zoom.in",
-            zoom_rect(true),
-            Hit::Zoom(true),
-            "zoom in".to_owned(),
-        ),
-        seat(
-            "lab.toolbar.fit",
-            fit_rect(),
-            Hit::Fit,
-            "fit the graph to the view".to_owned(),
-        ),
-        seat(
             "lab.toolbar.config",
             config_rect(),
             Hit::Config,
@@ -6539,6 +6585,12 @@ fn toolbar_seats(state: &LabState) -> Vec<ToolbarSeat> {
         ),
     ]
     .into_iter()
+    // ★★★★★ R1994 — the CANVAS controls, in their own list. They are a cohesive
+    // set — everything that answers *where am I looking* — and lifting them
+    // keeps this function inside the workspace's line bound now that Home has
+    // joined them. Spliced in rather than appended, so the row still reads left
+    // to right in one place.
+    .chain(view_seats(state))
     // ★★★★★ R1791 — a seat whose GROUP moved is not on the row: it is in the
     // menu, at the rect the menu gives it, keeping its own tag. This is the
     // floor's third answer inverted — measured at 6.11, a hidden action's own
@@ -6550,6 +6602,79 @@ fn toolbar_seats(state: &LabState) -> Vec<ToolbarSeat> {
     // member for at all.
     .chain(overflow_control_seat(state))
     .collect()
+}
+
+/// ★★★★★ R1994 — the Home seat as it is drawn, at a rect already in the
+/// toolbar's own frame.
+///
+/// Its own function for the reason [`view_seats`] is: adding it took
+/// `toolbar_controls` past this workspace's hundred-line bound. Drawn like
+/// `fit` because they are two answers to one need — *put me back somewhere
+/// useful* — and a person reads the pair before the words.
+fn home_seat(ink: Ink, at: Rect) -> Vec<Scene> {
+    vec![
+        box_at("lab.toolbar.home", at, ink.raised, Some(ink.outline), 6),
+        label("home", seat_caption(at), FONT_SMALL, ink.text_2),
+    ]
+}
+
+/// ★★★★★ R1994 — the canvas controls: the zoom pill's four seats, and Home.
+///
+/// Their own list because they are one thing a person reaches for — *change
+/// what I am looking at* — and because [`toolbar_seats`] passed this
+/// workspace's hundred-line bound when Home joined them. The order is the order
+/// they are drawn in.
+fn view_seats(state: &LabState) -> Vec<ToolbarSeat> {
+    let seat = |tag, rect, hit, name: String| ToolbarSeat {
+        tag,
+        rect,
+        hit,
+        name,
+    };
+    vec![
+        seat(
+            "lab.toolbar.zoom.out",
+            zoom_rect(false),
+            Hit::Zoom(false),
+            "zoom out".to_owned(),
+        ),
+        // ★★ The accessible name CONTAINS the visible one, because the read-out
+        // is this control's own caption: a button labelled `84%` whose name was
+        // only "reset the view" is the label-in-name failure, and this seat is
+        // exactly the case that rule is about.
+        seat(
+            "lab.reset.view",
+            view_reset_rect(),
+            Hit::Reset(ResetScope::View),
+            format!("zoom {}%, reset the view", state.zoom.get()),
+        ),
+        seat(
+            "lab.toolbar.zoom.in",
+            zoom_rect(true),
+            Hit::Zoom(true),
+            "zoom in".to_owned(),
+        ),
+        seat(
+            "lab.toolbar.fit",
+            fit_rect(),
+            Hit::Fit,
+            "fit the graph to the view".to_owned(),
+        ),
+        // ★★★★★ R1994 — go to where the graph ends up. Its name says WHERE it
+        // would take you, because a person who cannot see the end of the graph
+        // cannot tell this from `fit` by its caption alone — and when there is
+        // nowhere to go it says that instead, rather than offering a press that
+        // scrolls into empty canvas.
+        seat(
+            "lab.toolbar.home",
+            home_rect(),
+            Hit::Home,
+            match state.doc.borrow().home(state.here()) {
+                Ok(home) => format!("home, go to {}", state.name_of(home.at)),
+                Err(why) => format!("home, nowhere to go: {why}"),
+            },
+        ),
+    ]
 }
 
 /// ★★★★★ R1791 — the overflow control as a seat, **named for what it holds**.
@@ -6707,6 +6832,7 @@ fn seat_group(tag: &str) -> Option<ToolGroup> {
         "lab.toolbar.zoom.out" | "lab.toolbar.zoom.in" | "lab.reset.view" | "lab.toolbar.fit" => {
             Some(ToolGroup::Zoom)
         }
+        "lab.toolbar.home" => Some(ToolGroup::Home),
         "lab.toolbar.focus" => Some(ToolGroup::Focus),
         "lab.toolbar.config" | "lab.toolbar.script" => Some(ToolGroup::Export),
         "lab.toolbar.save" | "lab.toolbar.open" | "lab.toolbar.clear" => Some(ToolGroup::File),
@@ -9076,6 +9202,12 @@ fn toolbar_controls(state: &LabState, ink: Ink) -> Vec<Scene> {
             6,
         ));
         children.push(label("fit", seat_caption(fit), FONT_SMALL, ink.text_2));
+    }
+    // ★★★★★ R1994 — the seat that goes to where the graph ends up. Its OWN
+    // group, so it is drawn only while its own group is on the row — and drawn
+    // outside the pill above, because it is not one of the pill's seats.
+    if showing(ToolGroup::Home) {
+        children.extend(home_seat(ink, local(home_rect())));
     }
 
     // ★★ R1687 — the pair the reference puts side by side, because they are one
@@ -12241,6 +12373,12 @@ const FIELDS: &[SchemaField] = &{
         // the subset is not named by the caller, it is the one the person made,
         // which is the same shape and not the exception it would have been.
         SchemaField::action("fit", "string"),
+        // ★★★★★ R1994 — go to where the graph ends up.
+        SchemaField::action("home", "string"),
+        // ★ And the reading, under a DIFFERENT name. R1989's rule: one path is
+        // a read or an action, never both, and a `home` declared twice would
+        // leave whichever came second unreachable and undescribed.
+        SchemaField::new("homing", "json"),
         SchemaField::action("frame_selection", "string"),
         SchemaField::action("go_to_problem", "string"),
         SchemaField::action("run", "bool"),
@@ -13015,6 +13153,8 @@ impl ExternalIntrospect for LabOracle {
             "room" => Ok(IntrospectValue::Json(room_report(state))),
             // ★★★★★ R1992 — and what the card in the hand is aimed at.
             "insert_target" => Ok(IntrospectValue::Json(insert_target_report(state))),
+            // ★★★★★ R1994 — where the graph ends up, read without going there.
+            "homing" => Ok(IntrospectValue::Json(homing_report(state))),
             "zoom" => Ok(IntrospectValue::Int(i64::from(state.zoom.get()))),
             "pan" => {
                 let (x, y) = state.pan.get();
@@ -14225,6 +14365,8 @@ impl ExternalIntrospect for LabOracle {
             // the one the reference cannot say: that the graph is larger than
             // the zoom range can shrink it to.
             "fit" => Ok(IntrospectValue::Text(fit_view(&state))),
+            // ★★★★★ R1994 — the same function the toolbar seat presses.
+            "home" => Ok(IntrospectValue::Text(home_view(&state))),
             // ★★★★★ R1991 — and the third, which REFUSES: an empty or stale
             // selection is an `InvokeError` carrying the crate's own sentence,
             // where the floor's equivalent silently does nothing and leaves a
@@ -18248,6 +18390,11 @@ fn release(state: &Rc<LabState>) {
         Hit::Fit => {
             fit_view(state);
         }
+        // ★★★★★ R1994 — go to where the graph ends up, through the same one
+        // function the wire verb calls.
+        Hit::Home => {
+            home_view(state);
+        }
         // ★★★★★ R1988 — widen the focus, or turn it off, through the same one
         // function the wire verb calls.
         Hit::Focus => {
@@ -18616,6 +18763,97 @@ fn fit_view(state: &LabState) -> String {
         format!(
             "as much as {}% shows — the graph is wider than the view can hold",
             state.zoom.get()
+        )
+    });
+    state.say(said.clone());
+    said.sentence()
+}
+
+/// ★★★★★ R1994 — **where the graph ends up**, read without going there.
+///
+/// The half the floor has no form of: its Home returns `void`, so *where would
+/// this take me* can be answered only by pressing it and looking at the canvas.
+fn homing_report(state: &Rc<LabState>) -> serde_json::Value {
+    match state.doc.borrow().home(state.here()) {
+        Ok(home) => serde_json::json!({
+            "at": state.name_of(home.at),
+            "sole": home.sole(),
+            // ★ Every end, each saying whether the graph actually arrives
+            // there — a card nobody wired is an end only in the trivial sense.
+            "ends": home
+                .ends
+                .iter()
+                .map(|end| serde_json::json!({
+                    "card": state.name_of(end.node),
+                    "fed": end.fed,
+                }))
+                .collect::<Vec<_>>(),
+        }),
+        Err(why) => serde_json::json!({
+            "at": serde_json::Value::Null,
+            "why": why.to_string(),
+        }),
+    }
+}
+
+/// ★★★★★ R1994 — **take the canvas to where the graph ends up**, and say when
+/// there is nowhere to go.
+///
+/// The third of this screen's view acts, and each answers a different question:
+/// [`fit_view`] shows the whole graph, `frame_selection` shows what a person
+/// chose, and this goes to what the GRAPH says it is for. Only this one asks
+/// the document.
+///
+/// ★ **The zoom is untouched.** Going home is a pan — the floor's own Home
+/// keeps the current zoom level too, and a press that also rescaled would undo
+/// a decision the person made with the steppers.
+///
+/// ★★ **A graph with nowhere to call home is REFUSED, in the crate's own
+/// sentence.** The floor scrolls to the world origin, which is a place with
+/// nothing at it: the person sees the canvas jump somewhere empty and reads it
+/// as a broken button.
+fn home_view(state: &LabState) -> String {
+    let home = match state.doc.borrow().home(state.here()) {
+        Ok(home) => home,
+        Err(why) => {
+            let said = Utterance::refused(&why.to_string());
+            state.say(said.clone());
+            return said.into_clause();
+        }
+    };
+    let Some(((x, y), size)) = drawn_box_of(state, home.at) else {
+        // A home this canvas does not draw. Stated rather than dressed up as a
+        // move that did nothing.
+        let said = Utterance::refused(&"home has no box on this canvas");
+        state.say(said.clone());
+        return said.into_clause();
+    };
+    let middle = (
+        f64::from(x + size.width / 2),
+        f64::from(y + size.height / 2),
+    );
+    let percent = state.zoom.get();
+    let anchor = canvas_middle();
+    point_canvas_at(
+        state,
+        percent,
+        Camera::pinned(f64::from(percent) / 100.0, middle, anchor),
+        anchor,
+    );
+    let name = state.name_of(home.at);
+    let said = Utterance::done(if home.sole() {
+        format!("home: {name}")
+    } else {
+        // ★★ The half the floor cannot say. It picks one end by iteration order
+        // and a preview flag and never mentions that there were others, so a
+        // person who expected the other one has no way to learn it exists.
+        format!(
+            "home: {name} — the graph also ends at {}",
+            home.others()
+                .into_iter()
+                .map(|node| state.name_of(node))
+                .collect::<Vec<_>>()
+                .join(", ")
         )
     });
     state.say(said.clone());
