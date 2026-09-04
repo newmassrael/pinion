@@ -974,6 +974,14 @@ fn must_answer(tag: &str) -> Option<String> {
         "lab.inspector.rename" => Some("card:rename".into()),
         "lab.inspector.addkey" => Some("card:addkey".into()),
         "lab.link.act" => Some("link:act".into()),
+        // ★★★★★ R2000 — the turn seat, declared for the reason R1681.3 wrote
+        // beside its neighbour: the card sweeps excuse whatever the picked
+        // wire's chrome covers, so a seat painted inside that chrome and not
+        // demanded back here is one this whole module passes over while nobody
+        // can press it. Adding it is what this gate found missing before a
+        // person could: eighteen card corners answered `link:turn` while the
+        // gate could not see that the seat is painted exactly there.
+        "lab.link.turn" => Some("link:turn".into()),
         "lab.toolbar.zoom.in" => Some("zoom:in".into()),
         "lab.toolbar.zoom.out" => Some("zoom:out".into()),
         // ★★ R1688 — the read-out is the view reset now, so it is a control and

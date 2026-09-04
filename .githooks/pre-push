@@ -373,6 +373,27 @@ if ! python3 "$repo_root/tools/tick_units.py" --check >&2; then
     exit 1
 fi
 
+# R2000 — a `Type::member` this tree's prose CITES must be a name this tree HAS.
+#
+# Found by that round auditing its own new prose: three citations named a verb's
+# DRAFT names (`Document::may_reverse`, `::reverse_targets`, `::reverse`) after
+# it shipped as `turn` / `may_turn` / `retarget`, and a fourth had stood in
+# `model.rs` since R1934. Neither reader catches the class: rustdoc resolves
+# `[`X::y`]` and only inside a doc comment — a plain `//` comment it does not
+# open at all, which is where one of the three was — and a backticked `` `X::y` ``
+# is formatting, which nothing resolves anywhere. Rustdoc is also CI-only here.
+#
+# A bijection with `docs/prose-api-names.json`, not a high-water mark: repairing
+# one refuses until the pin is re-written, so the list shrinks.
+step "prose api names"
+if ! python3 "$repo_root/tools/prose_api_names.py" --selftest >&2; then
+    echo "pre-push: the prose-citation gate failed its own tests" >&2
+    exit 1
+fi
+if ! python3 "$repo_root/tools/prose_api_names.py" --check >&2; then
+    exit 1
+fi
+
 step "round ledger"
 if ! python3 "$repo_root/tools/changelog_rounds.py" --selftest >&2; then
     echo "pre-push: the round-ledger gate failed its own tests" >&2

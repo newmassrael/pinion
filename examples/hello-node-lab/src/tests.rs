@@ -1724,6 +1724,212 @@ fn r1681_a_target_that_listens_twice_offers_a_seat_per_address() {
     });
 }
 
+/// ★★★★★ R2000 — **a wire runs the other way without being redrawn**, and the
+/// seat that will not act says why.
+///
+/// # What this holds that a crate test cannot
+///
+/// The crate proves the reversal. This proves it is *reachable on this canvas
+/// and correctly refused on it* — which is a different claim, because the two
+/// cases a person meets here are decided by the taxonomy: every card dials from
+/// one pin and listens on a run, so a wire between two listening cards has
+/// exactly one way round, and a wire into a card that never listens has none.
+///
+/// ★ **Measured, not assumed** (R2000, and the standing rule that a premise is
+/// re-taken at the command): the first draft of this test read the card ids as
+/// role initials and had the screen *opening* on the refused case. It does not.
+/// `P-01` is a **peer**, which listens, so the wire the screen opens with turns
+/// round; the publisher on this canvas is `T-01`, one selection away. Both
+/// states are asserted here, and which one is the opening one is the
+/// specification's answer rather than this test's guess.
+#[test]
+fn r2000_a_picked_wire_turns_round_or_says_why_it_will_not() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = std::rc::Rc::new(state());
+        let peer = state.node_of("P-01").expect("the canvas holds P-01");
+        let router = state.node_of("R-01").expect("the canvas holds R-01");
+        let publisher = state.node_of("T-01").expect("the canvas holds T-01");
+
+        // ── the wire the screen opens with: two listening cards ───────────
+        let chrome = super::link_chrome(&state).expect("the screen opens with a wire picked");
+        assert!(
+            chrome.turn.is_some(),
+            "a drawn wire carries the seat — the refusal is what the seat SAYS, \
+             not a reason to leave it out"
+        );
+        assert_eq!(
+            chrome.turn_refusal, None,
+            "a peer listens and a router listens, so this one turns round"
+        );
+
+        a_card_that_never_listens_greys_the_seat(&state, publisher, peer);
+        the_opening_wire_turns_and_keeps_its_name(&state, peer, router);
+        a_reported_wire_carries_no_seat(&state, peer);
+    });
+}
+
+/// One selection over from the opening state: a wire into a card that never
+/// listens.
+fn a_card_that_never_listens_greys_the_seat(
+    state: &std::rc::Rc<super::LabState>,
+    publisher: NodeId,
+    peer: NodeId,
+) {
+    {
+        let into_publisher = state
+            .doc
+            .borrow()
+            .tree(super::ROOT)
+            .and_then(|host| {
+                host.links()
+                    .iter()
+                    .find(|l| l.from.node == publisher && l.to.node == peer)
+                    .map(|l| l.id)
+            })
+            .expect("the specification draws T-01 -> P-01");
+        state
+            .selected_link
+            .set(Some(super::LinkPick::Authored(into_publisher)));
+        let refusal = super::link_chrome(state)
+            .and_then(|c| c.turn_refusal)
+            .expect("a publisher never listens, so there is no way round");
+        assert!(
+            refusal.contains("T-01") && refusal.contains("never listens"),
+            "and the sentence names the card and its role rather than a node \
+             number: {refusal:?}"
+        );
+        // ★ The press goes through the same verb the wire does, and it is
+        // refused. Asserted through the verb rather than through `may_reverse`
+        // a second time: the point is that the greying and the press are ONE
+        // answer, so the thing to check is that the press agrees with the
+        // pixel.
+        assert!(
+            super::turn_link(state, into_publisher).is_err(),
+            "the greyed seat's press is refused, not silently ignored"
+        );
+        assert_eq!(
+            state
+                .doc
+                .borrow()
+                .tree(super::ROOT)
+                .and_then(|host| host.link(into_publisher).copied())
+                .map(|l| (l.from.node, l.to.node)),
+            Some((publisher, peer)),
+            "and a refused turn moved nothing"
+        );
+    }
+}
+
+/// Back to the opening wire: it turns, and keeps the name the screen holds.
+fn the_opening_wire_turns_and_keeps_its_name(
+    state: &std::rc::Rc<super::LabState>,
+    peer: NodeId,
+    router: NodeId,
+) {
+    {
+        let wire = state
+            .doc
+            .borrow()
+            .tree(super::ROOT)
+            .and_then(|host| {
+                host.links()
+                    .iter()
+                    .find(|l| l.from.node == peer && l.to.node == router)
+                    .map(|l| l.id)
+            })
+            .expect("the specification draws P-01 -> R-01");
+        state
+            .selected_link
+            .set(Some(super::LinkPick::Authored(wire)));
+        super::turn_link(state, wire).expect("the wire turns round");
+        let after = state
+            .doc
+            .borrow()
+            .tree(super::ROOT)
+            .and_then(|host| host.link(wire).copied())
+            .expect("★★★★★ THE POINT: the SAME wire is still there, under its own name");
+        assert_eq!(
+            (after.from.node, after.to.node),
+            (router, peer),
+            "and it now runs the other way"
+        );
+        assert!(
+            state
+                .toast
+                .showing()
+                .is_some_and(|said| said.sentence().contains("turned round")),
+            "the screen says what happened: {:?}",
+            state.toast.showing().map(|said| said.sentence())
+        );
+
+        // ★ And the wire surface answers the same thing the pixel does. Read
+        // AFTER the reversal, so this is not the opening state answering by
+        // accident.
+        let answered = super::link_reverse_wire(state);
+        assert_eq!(
+            answered["picked"],
+            serde_json::json!(true),
+            "a wire is picked: {answered}"
+        );
+        assert_eq!(
+            answered["may"],
+            serde_json::json!(true),
+            "★★★★★ it turns BACK — a turn is its own inverse when both cards \
+             listen, which is what makes this repair safe to try. The first \
+             draft of the crate verb failed exactly here: it refused the second \
+             turn because the card now offered two free slots, and a repair \
+             that cannot be undone is not a repair: {answered}"
+        );
+        assert_eq!(
+            answered["berths"][0]["card"],
+            serde_json::json!("P-01"),
+            "named by the cards' own names, not by node numbers: {answered}"
+        );
+        // ★★★★★ Measured, and it is the more interesting answer: turning back
+        // would GROW a pin on R-01. This screen closes the slot a wire vacates,
+        // so the seat the wire came from is not waiting for it — and that is the
+        // `Landfall::Grows` arm reached from the assembled application rather
+        // than from a fixture built to produce it. A client can therefore tell a
+        // person *a pin will appear on R-01* before they press, which is the
+        // half the reference spells as a hard-coded string in an argument its
+        // own header documents as an error channel.
+        assert_eq!(
+            answered["berths"][1]["card"],
+            serde_json::json!("R-01"),
+            "the second berth is the destination-to-be: {answered}"
+        );
+        assert_eq!(
+            answered["berths"][1]["grows"],
+            serde_json::json!(true),
+            "★ and it says a pin will appear, because this screen closed the \
+             slot the wire vacated: {answered}"
+        );
+    }
+}
+
+/// A reported wire carries no seat: it is not in the drawing, so there is
+/// nothing whose ends could move.
+fn a_reported_wire_carries_no_seat(state: &std::rc::Rc<super::LabState>, peer: NodeId) {
+    let other_peer = state.node_of("P-02").expect("the canvas holds P-02");
+    state.selected_link.set(Some(super::LinkPick::Observed(
+        pinion_node_graph::Socket::new(peer, 0),
+        pinion_node_graph::Socket::new(other_peer, 0),
+    )));
+    assert_eq!(
+        super::link_chrome(state).and_then(|c| c.turn),
+        None,
+        "a reported wire is not in the drawing, so there is nothing whose ends \
+         could move — the rule the endpoint chips already follow"
+    );
+    assert_eq!(
+        super::link_reverse_wire(state)["picked"],
+        serde_json::json!(false),
+        "and the wire surface says so rather than answering about a wire that \
+         is not there"
+    );
+}
+
 /// R1681 — the accept run holds exactly one slot per thing landing on it, over
 /// every operation that opens or closes one.
 ///

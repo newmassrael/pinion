@@ -1944,6 +1944,20 @@ esac
 ok "and the push gate's rustdoc is SCOPED to the pushed crates" \
    "$hook_doc_scoped" "scoped"
 
+# ★★★★★ R2000 — the prose-citation gate is placed, and BOTH its halves are.
+#
+# It exists because rustdoc's reach stops where a `//` comment starts, so it is
+# the gate that covers what the rows above cannot — and a gate that covers
+# another gate's blind spot is exactly the one whose removal nobody would
+# notice. Its `--selftest` is asserted separately from its `--check`: the
+# selftest is what holds the population (a survey that read nothing would let
+# `--check` pass on an empty denominator), and dropping just that line would
+# leave a step that still prints and still exits 0.
+hook_prose_check="$(grep -c 'prose_api_names.py" --check' "$repo_root/.githooks/pre-push")"
+hook_prose_self="$(grep -c 'prose_api_names.py" --selftest' "$repo_root/.githooks/pre-push")"
+ok "the push gate checks prose citations" "$hook_prose_check" "1"
+ok "and runs that gate's own selftest first" "$hook_prose_self" "1"
+
 # ★★★★★ R1945.2 — and rustdoc CANNOT be the only home, because the thing it
 # does not see is the reason the label form exists. A `[`x`][kebab-label]` whose
 # definition is missing renders as literal text and `cargo doc` exits 0 —

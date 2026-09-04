@@ -73,6 +73,22 @@
 //! where the search starts; a forward search never uses an edge into its own
 //! origin. Neither end's move is visible to that walk.
 //!
+//! ## ⚠⚠ R2000 — that proof was load-bearing on ONE END STAYING PUT, and it is
+//! a parameter now
+//!
+//! Read the paragraph above again and notice what carries it: *the other end
+//! never moved*. [`Document::retarget`] moves both, so there is no standing end
+//! and the argument is simply gone — measured rather than reasoned, on the first
+//! draft of [`Document::turn`]: every reversal of a value link came back
+//! `WouldCycle` naming **the link being reversed**, because the walk looking for
+//! a path from the far node back found that link still in the graph.
+//!
+//! So [`Document::vet_without`] takes the link to leave out, and every verb in
+//! this module passes it — including the one-ended move, where the proof says it
+//! changes nothing. That turns a correct argument a reader had to re-derive into
+//! a construction, and `r2000_leaving_the_moving_link_out_changes_no_one_ended_
+//! move` is what holds the proof's own claim.
+//!
 //! And the property the old order defended comes out stronger rather than
 //! weaker: a refused relink now mutates the document **not at all**, where
 //! before it mutated twice and leaned on the second to undo the first. That is
@@ -178,8 +194,6 @@ struct Plan {
     at: usize,
     /// The link as it stands, with its id, its mute and its two ends.
     held: Link,
-    /// Where the moving end is now.
-    was: Socket,
     /// The producing socket the move would leave it with.
     from: Socket,
     /// The consuming socket the move would leave it with.
@@ -202,26 +216,82 @@ impl<K: NodeKind> Document<K> {
         end: Side,
         socket: Socket,
     ) -> Result<Plan, RelinkError<K::Type>> {
+        let held = self.held_link(tree, link)?.1;
+        let (from, to) = match end {
+            Side::Input => (held.from, socket),
+            Side::Output => (socket, held.to),
+        };
+        self.plan_ends(tree, link, from, to)
+    }
+
+    /// ★★★★★ R2000 — the ONE decision behind every in-place move of a link:
+    /// one end ([`relink`](Self::relink)), both ends
+    /// ([`retarget`](Self::retarget)), or both ends swapped
+    /// ([`turn`](Self::turn)).
+    ///
+    /// The three verbs differ only in **where the pair comes from**. Deciding
+    /// each one separately would be three answers to one question, and the two
+    /// that a person can reach by different gestures would then be free to
+    /// disagree about the same graph — R1924's shape, one axis wider.
+    ///
+    /// The vet is asked **without the link being moved**, which is the half
+    /// R1924 could leave to a proof and this cannot: see
+    /// [`Document::data_path_without`].
+    fn plan_ends(
+        &self,
+        tree: TreeId,
+        link: LinkId,
+        from: Socket,
+        to: Socket,
+    ) -> Result<Plan, RelinkError<K::Type>> {
+        let (at, held) = self.held_link(tree, link)?;
+        let crowded = self
+            .vet_without(tree, from, to, Some(link))
+            .map_err(RelinkError::Refused)?;
+        Ok(Plan {
+            at,
+            held,
+            from,
+            to,
+            crowded,
+        })
+    }
+
+    /// Where `link` sits in `tree`'s order, and the link itself.
+    ///
+    /// The two "not there" refusals every verb in this module begins with,
+    /// written once.
+    fn held_link(&self, tree: TreeId, link: LinkId) -> Result<(usize, Link), RelinkError<K::Type>> {
         let host = self.tree(tree).ok_or(RelinkError::NoSuchTree(tree))?;
         let at = host
             .links()
             .iter()
             .position(|l| l.id == link)
             .ok_or(RelinkError::NoSuchLink { tree, link })?;
-        let held = host.links()[at];
-        let (was, from, to) = match end {
-            Side::Input => (held.to, held.from, socket),
-            Side::Output => (held.from, socket, held.to),
-        };
-        let crowded = self.vet(tree, from, to).map_err(RelinkError::Refused)?;
-        Ok(Plan {
-            at,
-            held,
-            was,
-            from,
-            to,
-            crowded,
-        })
+        Ok((at, host.links()[at]))
+    }
+
+    /// Carry out a [`Plan`], answering the link's id and whatever its arrival
+    /// displaced.
+    ///
+    /// Lifted out at R2000 so that the three verbs share the placement as well
+    /// as the decision. The link comes **out** first, so the placement does not
+    /// find it crowding a port it is itself about to leave and displace it with
+    /// itself — the defect this module's header names, and the reason a
+    /// one-ended move needed the lift before both-ended ones existed.
+    fn carry_out(&mut self, tree: TreeId, plan: &Plan) -> Option<Link> {
+        self.lift(tree, plan.at);
+        self.place(
+            tree,
+            Link {
+                id: plan.held.id,
+                from: plan.from,
+                to: plan.to,
+                muted: plan.held.muted,
+            },
+            plan.crowded,
+            Some(plan.at),
+        )
     }
 
     /// ★★★★★ R1924 — **would this end be taken there?**, asked before moving it.
@@ -343,35 +413,125 @@ impl<K: NodeKind> Document<K> {
         // first and a hand that just tried cannot be told different things.
         // Nothing has been touched yet when this refuses, which is why the
         // refusal arm below has no undo in it.
-        let Plan {
-            at,
-            held,
-            was,
-            from,
-            to,
-            crowded,
-        } = self.plan_relink(tree, link, end, socket)?;
-
-        // Out, so the PLACEMENT does not find the moving link crowding the port
-        // its other end never left and displace it with itself.
-        self.lift(tree, at);
-        let displaced = self.place(
-            tree,
-            Link {
-                id: held.id,
-                from,
-                to,
-                muted: held.muted,
-            },
-            crowded,
-            Some(at),
-        );
+        let plan = self.plan_relink(tree, link, end, socket)?;
+        let was = match end {
+            Side::Input => plan.held.to,
+            Side::Output => plan.held.from,
+        };
+        let displaced = self.carry_out(tree, &plan);
         Ok(Relinked {
-            link: held.id,
+            link: plan.held.id,
             end,
             was,
             now: socket,
             displaced,
         })
+    }
+
+    /// ★★★★★ R2000 — **would the link stand between these two sockets?**,
+    /// asked before moving either end.
+    ///
+    /// [`may_relink`](Self::may_relink)'s question with both ends free. The
+    /// same call [`retarget`](Self::retarget) makes, for that method's reason.
+    ///
+    /// # Errors
+    ///
+    /// [`RelinkError`] — exactly what [`retarget`](Self::retarget) would answer.
+    pub fn may_retarget(
+        &self,
+        tree: TreeId,
+        link: LinkId,
+        from: Socket,
+        to: Socket,
+    ) -> Result<(), RelinkError<K::Type>> {
+        self.plan_ends(tree, link, from, to).map(|_| ())
+    }
+
+    /// ★★★★★ R2000 — **move BOTH ends of a link at once**, under its own id.
+    ///
+    /// # Why this is not two relinks
+    ///
+    /// Because the two are a different edit with the same outcome on a good
+    /// day, and this crate already has the argument written down one verb
+    /// along: [`relink`](Self::relink) is not disconnect-then-connect for
+    /// identity and atomicity, and a pair of relinks fails on the same two
+    /// grounds one level up.
+    ///
+    /// * **The half-way state is a different graph, and it may be an illegal
+    ///   one.** Turning `A -> B` round by moving one end and then the other
+    ///   passes through `A -> A` or `B -> B`, and a self-link is refused — so
+    ///   the pair cannot even be attempted, in either order. Measured at R2000
+    ///   on a control chain: both orders answer *node N cannot feed itself*.
+    /// * **The half-way state can DISPLACE something.** A port that takes one
+    ///   link evicts what it holds when a second arrives, and the eviction is
+    ///   not undone by moving the end on again. So a pair of relinks can lose a
+    ///   third link that neither call was about, while this places once.
+    /// * **A refusal must move nothing.** The second relink refusing after the
+    ///   first succeeded leaves the link somewhere the caller never asked for.
+    ///
+    /// The link keeps its [`LinkId`], its mute and its place in the tree's
+    /// order, and a refusal leaves the document untouched — both for
+    /// [`relink`](Self::relink)'s reasons, through the same code.
+    ///
+    /// # Errors
+    ///
+    /// [`RelinkError`].
+    pub fn retarget(
+        &mut self,
+        tree: TreeId,
+        link: LinkId,
+        from: Socket,
+        to: Socket,
+    ) -> Result<Retargeted, RelinkError<K::Type>> {
+        let plan = self.plan_ends(tree, link, from, to)?;
+        let was = (plan.held.from, plan.held.to);
+        let displaced = self.carry_out(tree, &plan);
+        Ok(Retargeted {
+            link: plan.held.id,
+            was,
+            now: (from, to),
+            displaced,
+        })
+    }
+}
+
+/// What a retarget did (R2000).
+///
+/// [`Relinked`]'s answer with no `end`: both ends are the subject, so a field
+/// saying which one moved would have nothing true to hold.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Retargeted {
+    /// The link, under the id it had before — the point of the verb.
+    pub link: LinkId,
+    /// Where the two ends were, producing first.
+    pub was: (Socket, Socket),
+    /// Where they are now. Equal to [`was`](Self::was) when the move was asked
+    /// for and was already true, which is a success and not a refusal.
+    pub now: (Socket, Socket),
+    /// The link this one displaced on arrival, if the port it landed on takes
+    /// one link and already had one.
+    ///
+    /// One and not two: a port's limit falls on opposite ends of the two flows
+    /// — a value input takes one producer, a control output one successor — so
+    /// the vet names at most one crowded side however many ends moved.
+    pub displaced: Option<Link>,
+}
+
+impl Retargeted {
+    /// Whether either end actually went anywhere.
+    #[must_use]
+    pub fn moved(&self) -> bool {
+        self.was != self.now
+    }
+
+    /// Whether the two ends came out swapped — the link now running between
+    /// the same two nodes the other way.
+    ///
+    /// The question a caller asks after [`Document::turn`], and a fact about
+    /// the NODES rather than the sockets: which port of the far card the wire
+    /// landed on is the reversal's business, not the reader's.
+    #[must_use]
+    pub fn reversed(&self) -> bool {
+        self.was.0.node == self.now.1.node && self.was.1.node == self.now.0.node
     }
 }

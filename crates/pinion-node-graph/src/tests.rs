@@ -14183,6 +14183,158 @@ fn r1924_may_relink_answers_exactly_what_relink_would_over_every_socket() {
     );
 }
 
+/// A chain deep enough that a walk has somewhere to go, for R2000's two sweeps.
+///
+/// The fixture's diamond has one two-hop path in it; the exclusion is about
+/// *which* paths a walk finds, so a graph where every link is a link away from
+/// another is what makes both claims worth asserting.
+fn chain() -> Document<Op> {
+    wired(6, &[(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)]).0
+}
+
+/// ★★★★★ R2000 — **R1924's safety proof, performed instead of read.**
+///
+/// That round argued that a one-ended move may be vetted with the link still in
+/// the graph, because the acyclicity walk is a forward search and the end that
+/// stays put is either where the search starts or what it is looking for. The
+/// argument is correct and it is load-bearing on *one end staying put* — which
+/// is why [`Document::retarget`] broke it and the exclusion became a parameter.
+///
+/// So the proof's own claim is now a test: over every link, every end and every
+/// socket, leaving the moving link out of the walk must answer **exactly** what
+/// leaving it in answered. A disagreement here would mean R1924's reasoning was
+/// wrong all along, or that this round's parameter reaches further than the
+/// paragraph says.
+#[test]
+fn r2000_leaving_the_moving_link_out_changes_no_one_ended_move() {
+    let mut asked = 0_usize;
+    let mut refused = 0_usize;
+    // ★ Two graphs, and the second is a CHAIN: the fixture's diamond is three
+    // links deep and a walk needs somewhere to go before "the exclusion changed
+    // nothing" is worth asserting.
+    for document in [fixture().document, chain()] {
+        let links: Vec<LinkId> = document
+            .tree(ROOT)
+            .unwrap()
+            .links()
+            .iter()
+            .map(|l| l.id)
+            .collect();
+        let nodes: Vec<NodeId> = document.tree(ROOT).unwrap().nodes().map(|n| n.id).collect();
+        for link in &links {
+            let held = *document
+                .tree(ROOT)
+                .unwrap()
+                .links()
+                .iter()
+                .find(|l| l.id == *link)
+                .unwrap();
+            for end in [Side::Input, Side::Output] {
+                for node in &nodes {
+                    let signature = document.signature(ROOT, *node).unwrap();
+                    let arity = match end {
+                        Side::Input => signature.inputs.len(),
+                        Side::Output => signature.outputs.len(),
+                    };
+                    for port in 0..=u32::try_from(arity).unwrap() {
+                        let socket = Socket::new(*node, port);
+                        let (from, to) = match end {
+                            Side::Input => (held.from, socket),
+                            Side::Output => (socket, held.to),
+                        };
+                        let with = document.vet(ROOT, from, to);
+                        let without = document.vet_without(ROOT, from, to, Some(*link));
+                        asked += 1;
+                        if with.is_err() {
+                            refused += 1;
+                        }
+                        assert_eq!(
+                            with, without,
+                            "{link:?} {end:?} -> {socket:?}: the exclusion changed a \
+                             ONE-ended move, which R1924's proof says it cannot"
+                        );
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        asked > 100,
+        "the sweep is a population, not a sample: {asked}"
+    );
+    assert!(
+        refused > 0 && refused < asked,
+        "★ and it reaches BOTH answers — {refused} refused of {asked}; a sweep \
+         that only ever refused would hold the agreement vacuously"
+    );
+}
+
+/// ★★★★★ R2000 — **the exclusion reaches the acyclicity rule and nothing
+/// else.**
+///
+/// [`Document::vet_without`]'s doc says so in a sentence, and a sentence is not
+/// a gate: the claim is that only one of the four rules reads links at all, so
+/// leaving a link out cannot move a type refusal, a flow refusal, a missing
+/// port or an admission. Asked over a **pair** this time — the case R1924's
+/// proof does not cover — so any answer the exclusion changes must be a cycle
+/// on one side of it.
+#[test]
+fn r2000_the_exclusion_reaches_the_acyclicity_rule_and_nothing_else() {
+    let mut moved = 0_usize;
+    let mut asked = 0_usize;
+    for document in [fixture().document, chain()] {
+        let links: Vec<LinkId> = document
+            .tree(ROOT)
+            .unwrap()
+            .links()
+            .iter()
+            .map(|l| l.id)
+            .collect();
+        let nodes: Vec<NodeId> = document.tree(ROOT).unwrap().nodes().map(|n| n.id).collect();
+        for link in &links {
+            for source in &nodes {
+                for sink in &nodes {
+                    let signature = document.signature(ROOT, *source).unwrap();
+                    let sink_signature = document.signature(ROOT, *sink).unwrap();
+                    for out in 0..u32::try_from(signature.outputs.len()).unwrap() {
+                        for into in 0..u32::try_from(sink_signature.inputs.len()).unwrap() {
+                            let from = Socket::new(*source, out);
+                            let to = Socket::new(*sink, into);
+                            let with = document.vet(ROOT, from, to);
+                            let without = document.vet_without(ROOT, from, to, Some(*link));
+                            asked += 1;
+                            if with == without {
+                                continue;
+                            }
+                            moved += 1;
+                            assert!(
+                                matches!(&with, Err(ConnectError::WouldCycle { .. })),
+                                "{from:?} -> {to:?} without {link:?}: the answer changed \
+                                 from {with:?}, which is not a cycle — so the exclusion \
+                                 reached a rule that does not read links"
+                            );
+                            assert!(
+                                !matches!(&without, Err(ConnectError::WouldCycle { .. })),
+                                "{from:?} -> {to:?}: leaving a link out INTRODUCED a cycle"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        asked > 100,
+        "the sweep is a population, not a sample: {asked}"
+    );
+    assert!(
+        moved > 0,
+        "★ and the exclusion actually moves something — {moved} of {asked}. A \
+         fixture with no cycle to lift would hold the claim vacuously, which is \
+         the shape R1964 and R1970 both wrote down"
+    );
+}
+
 /// ★★★★★ R1924 — a refused move touches nothing, and that is now structural.
 ///
 /// Before this round the refusal path lifted the link out, found the graph

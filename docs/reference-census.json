@@ -1605,10 +1605,10 @@
       "verdict": "have"
     },
     "AnimGraph::ReverseTransition": {
-      "covered_by": "reversing an edge in place. `disconnect` then `connect` is a different edit — it loses the link's identity and anything keyed by it",
+      "covered_by": "REVERSAL (R2000): `Document::turn` turns a link round under its own `LinkId`, carrying its mute and its place in the order, and `Document::retarget` is the general in-place move of BOTH ends it is built on — neither reachable as disconnect-then-connect (a new id) nor as two relinks (the half-way state is a self-link, refused in either order, and can displace a third link). The reference's verb is a bare command because a state there has one inbound and one outbound pin; a node here has as many as its kind declares, so the reversal is a LANDING — `Berth`'s policy over a pair, so an existing pair beats growing a port — and `may_turn` answers a `Landfall` per end before anything moves.",
       "mechanism": "AnimGraph",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_anim_graph_reverse_transition",
+      "verdict": "have"
     },
     "AnimGraph::SelectBone": {
       "covered_by": "picking a skeleton bone",

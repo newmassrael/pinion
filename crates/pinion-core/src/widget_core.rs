@@ -440,8 +440,11 @@ pub trait WidgetCore: 'static {
     /// `invoke("send", IntrospectValue::Text(<name>))` channel
     /// expects. SCXML-internal variants that never come from input
     /// should route through a wildcard with a sentinel name the
-    /// parser rejects (mirrors the `ButtonEvent::__internal__`
-    /// precedent).
+    /// parser rejects — the precedent being the `"__internal__"` string
+    /// the button fixture's wildcard arm answers with. ⚠ That is a
+    /// RETURNED VALUE, not a variant: R2000's citation gate found this
+    /// written as a member of the event type, which is a name a reader
+    /// would go looking for and not find.
     fn event_name(event: Self::Event) -> &'static str;
 
     /// Window / terminal title displayed by the OS. Static because

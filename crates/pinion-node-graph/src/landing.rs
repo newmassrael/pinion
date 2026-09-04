@@ -60,7 +60,7 @@ use core::fmt;
 
 use crate::items::Item;
 use crate::model::{Document, LinkId, Multiplicity, NodeId, NodeKind, Side, Socket, TreeId};
-use crate::relink::{RelinkError, Relinked};
+use crate::relink::{RelinkError, Relinked, Retargeted};
 
 /// What releasing a wire on a node's body would do.
 ///
@@ -233,6 +233,27 @@ pub struct Landed {
     pub fall: Landfall,
     /// The move itself, under the link's own id.
     pub relinked: Relinked,
+}
+
+/// What turning a link round did (R2000).
+///
+/// [`Landed`]'s answer with a [`Landfall`] per end — because both ends are the
+/// subject and either of them may have needed a port that was not there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Turned {
+    /// Where each end berthed: the producing end first.
+    pub falls: (Landfall, Landfall),
+    /// The move itself, under the link's own id.
+    pub retargeted: Retargeted,
+}
+
+impl Turned {
+    /// Whether the link came out running between the same two nodes the other
+    /// way — the question a caller asks after a turn.
+    #[must_use]
+    pub fn reversed(&self) -> bool {
+        self.retargeted.reversed()
+    }
 }
 
 impl<K: NodeKind> Document<K> {
@@ -433,6 +454,252 @@ impl<K: NodeKind> Document<K> {
             })
             .map(|(socket, _)| socket)
             .find(|socket| self.may_relink(tree, link, end, *socket).is_ok())
+    }
+
+    /// ★★★★★ R2000 — **would this link turn round, and where would each end
+    /// berth?** — asked before anything moves.
+    ///
+    /// The producing end goes to the node the link arrives at now, the
+    /// consuming end to the node it leaves; each is a [`Landfall`], so a screen
+    /// can say *these two pins take it* or *a pin will appear here* before a
+    /// person presses.
+    ///
+    /// The same planner [`turn`](Self::turn) acts on, so asking and doing
+    /// cannot answer differently — R1924's rule, which [`may_land`](Self::may_land)
+    /// already follows one gesture over.
+    ///
+    /// # Errors
+    ///
+    /// [`LandError`] — exactly what [`turn`](Self::turn) would answer.
+    pub fn may_turn(
+        &self,
+        tree: TreeId,
+        link: LinkId,
+    ) -> Result<(Landfall, Landfall), LandError<K::Type>> {
+        self.plan_turn(tree, link)
+    }
+
+    /// ★★★★★ R2000 — **turn the link round**: the same two nodes, the flow the
+    /// other way, under the same [`LinkId`].
+    ///
+    /// # What this is for
+    ///
+    /// A wire drawn the wrong way round is the most ordinary authoring mistake
+    /// a graph has, and the repair a person reaches for is *not* delete it and
+    /// draw it again. Everything holding the link's name — a selection, a
+    /// breakpoint, its mute, an undo entry, a renderer's cache — survives this
+    /// and does not survive that.
+    ///
+    /// The mute travels with the link, deliberately: a wiring being A/B-tested
+    /// is still being A/B-tested after somebody notices it points the wrong
+    /// way.
+    ///
+    /// # ★★★★★ Why this is a LANDING and not a pair of sockets
+    ///
+    /// Because *which ports* is a question the reference never has to answer
+    /// and this crate already had a decided answer for. There, a transition
+    /// runs between two states with one inbound and one outbound pin apiece, so
+    /// its verb can be a bare command. A node here has as many ports as its
+    /// kind declares, and the first draft of this verb answered that by
+    /// **refusing** whenever more than one pair would stand — which is a
+    /// refusal a caller cannot act on and which the node lab produced on its
+    /// second gesture: a card listening in two places offered two ways round
+    /// and the verb declined to turn a wire it had just turned.
+    ///
+    /// [`Berth`] is the rule that was already there. A drop on a card takes the
+    /// earliest port with room and grows one when none has room, and a person
+    /// on that canvas does not choose a slot — so a reversal choosing any other
+    /// way would be a second policy for one question. This is the same policy
+    /// over a **pair**, which is why the search is ordered rather than
+    /// exhaustive: the first pair the graph takes wins.
+    ///
+    /// # Errors
+    ///
+    /// [`LandError`]. [`LandError::NoRoom`] names the end that could not berth
+    /// — a far node that produces nothing, or a near node with no free port and
+    /// no run to grow — and is fixed by a different action from
+    /// [`LandError::Refused`], which is the wire itself being refused.
+    pub fn turn(
+        &mut self,
+        tree: TreeId,
+        link: LinkId,
+        item: Item<K::Type>,
+    ) -> Result<Turned, LandError<K::Type>> {
+        let (out_fall, in_fall) = self.plan_turn(tree, link)?;
+        // ★ The copy IS the atomicity, exactly as in `land`: everything happens
+        // to it and `self` is untouched until the last line, so a refusal on any
+        // step changed nothing by construction rather than by an unwind.
+        let mut trying = self.clone();
+        let producer = out_fall.socket().node;
+        let consumer = in_fall.socket().node;
+        if out_fall.is_new() {
+            let at = next_ordinal(&trying, tree, producer, Side::Output);
+            trying
+                .insert_item(tree, producer, Side::Output, at, item.clone())
+                .map_err(|_| LandError::NoRoom {
+                    node: producer,
+                    side: Side::Output,
+                })?;
+        }
+        if in_fall.is_new() {
+            let at = next_ordinal(&trying, tree, consumer, Side::Input);
+            trying
+                .insert_item(tree, consumer, Side::Input, at, item)
+                .map_err(|_| LandError::NoRoom {
+                    node: consumer,
+                    side: Side::Input,
+                })?;
+        }
+        let retargeted = trying
+            .retarget(tree, link, out_fall.socket(), in_fall.socket())
+            .map_err(LandError::Refused)?;
+        *self = trying;
+        Ok(Turned {
+            falls: (out_fall, in_fall),
+            retargeted,
+        })
+    }
+
+    /// The reversal, decided once and used by both halves.
+    ///
+    /// ★ Ordered rather than exhaustive, which is [`Berth::Earliest`]'s own
+    /// policy read over a pair: the candidates for each end are the ports with
+    /// room in port order, then the port a new item would contribute, and the
+    /// first pair [`may_retarget`](Self::may_retarget) admits is the answer. So
+    /// an existing pair always beats growing a port, and growing on one side
+    /// beats growing on both.
+    ///
+    /// ⚠ Each candidate that GROWS is asked on a copy, because the socket it
+    /// names does not exist yet and no vet can be asked about a port that is
+    /// not there — the same reason [`plan_landing`](Self::plan_landing) clones.
+    fn plan_turn(
+        &self,
+        tree: TreeId,
+        link: LinkId,
+    ) -> Result<(Landfall, Landfall), LandError<K::Type>> {
+        let host = self.tree(tree).ok_or(LandError::NoSuchTree(tree))?;
+        let held = *host
+            .links()
+            .iter()
+            .find(|standing| standing.id == link)
+            .ok_or(LandError::NoSuchLink { tree, link })?;
+        let producer = held.to.node;
+        let consumer = held.from.node;
+        let sources = self.berths(tree, link, Side::Output, producer);
+        let sinks = self.berths(tree, link, Side::Input, consumer);
+        if sources.is_empty() {
+            return Err(LandError::NoRoom {
+                node: producer,
+                side: Side::Output,
+            });
+        }
+        if sinks.is_empty() {
+            return Err(LandError::NoRoom {
+                node: consumer,
+                side: Side::Input,
+            });
+        }
+        let mut refusal = None;
+        for from in &sources {
+            for to in &sinks {
+                let mut trying = self.clone();
+                if from.is_new() {
+                    let at = next_ordinal(&trying, tree, producer, Side::Output);
+                    if trying
+                        .insert_item(tree, producer, Side::Output, at, Item::plain())
+                        .is_err()
+                    {
+                        continue;
+                    }
+                }
+                if to.is_new() {
+                    let at = next_ordinal(&trying, tree, consumer, Side::Input);
+                    if trying
+                        .insert_item(tree, consumer, Side::Input, at, Item::plain())
+                        .is_err()
+                    {
+                        continue;
+                    }
+                }
+                match trying.may_retarget(tree, link, from.socket(), to.socket()) {
+                    Ok(()) => return Ok((*from, *to)),
+                    // ★ The FIRST refusal is kept, not the last: the candidates
+                    // are in preference order, so the reason the preferred pair
+                    // was declined is the one a person needs. Keeping the last
+                    // would report whichever grown port happened to be tried
+                    // most recently, which is the least interesting of them.
+                    //
+                    // ⚠⚠ R2000 MEASURED THIS AND NOTHING OBSERVES IT. A
+                    // counterfactual replacing `refusal.or(Some(why))` with
+                    // `Some(why)` — keeping the LAST refusal — left every test
+                    // in three crates green. The cause is structural rather
+                    // than a thin fixture: two candidates can only differ in
+                    // their REASON when one is refused as a cycle and another
+                    // on type or flow, and the link that would make the cycle
+                    // is the same link that fills the port, which
+                    // `Multiplicity::One` then removes from the candidate list
+                    // before it is ever asked. Only a many-valued input, or a
+                    // reachable kind whose two outputs differ in type, lets
+                    // them come apart — the taxonomies here have exactly two
+                    // such kinds and neither can stand at the producing end.
+                    //
+                    // KEPT rather than simplified, because the day a taxonomy
+                    // grows one the last refusal becomes the wrong answer, and
+                    // a reader arriving then should find the decision already
+                    // made rather than have to re-derive it. Registered as
+                    // `debt-the-first-refusal-of-a-turn-has-no-observer`.
+                    Err(why) => refusal = refusal.or(Some(why)),
+                }
+            }
+        }
+        Err(refusal.map_or(
+            LandError::NoRoom {
+                node: consumer,
+                side: Side::Input,
+            },
+            LandError::Refused,
+        ))
+    }
+
+    /// Where an end could berth on `node`, in preference order: the ports with
+    /// room, earliest first, then the port a new item would contribute.
+    ///
+    /// One list rather than the `free_port_for`-else-`grown_socket` pair
+    /// [`plan_landing`](Self::plan_landing) uses, because a **pair** has to be
+    /// searched rather than decided one end at a time — and the order is what
+    /// carries [`Berth`]'s policy into that search.
+    ///
+    /// ⚠ The `may_relink` filter `free_port_for` ends with is deliberately NOT
+    /// here. That is a one-ended question, and asking it of a move that also
+    /// moves the other end would answer about a graph neither the caller nor
+    /// this planner ever proposed. The pair is vetted once, by
+    /// [`may_retarget`](Self::may_retarget), which is the whole reason that verb
+    /// exists.
+    fn berths(&self, tree: TreeId, link: LinkId, end: Side, node: NodeId) -> Vec<Landfall> {
+        let mut out = Vec::new();
+        if self.berth(tree, node, end) != Berth::Fresh
+            && let Some(signature) = self.signature(tree, node)
+        {
+            let ports = match end {
+                Side::Input => signature.inputs,
+                Side::Output => signature.outputs,
+            };
+            for (index, port) in ports.iter().enumerate() {
+                let socket = Socket::new(node, u32::try_from(index).unwrap_or(u32::MAX));
+                // ⚠ `without(link)` is load-bearing: the link being turned is
+                // still in the graph while this is asked, and its own ends would
+                // otherwise read as occupying the ports it is about to leave.
+                let room = match port.multiplicity(end) {
+                    Multiplicity::One => self.occupants(tree, socket, end).without(link).is_free(),
+                    Multiplicity::Many => true,
+                };
+                if room {
+                    out.push(Landfall::Takes(socket));
+                }
+            }
+        }
+        out.extend(self.grown_socket(tree, node, end).map(Landfall::Grows));
+        out
     }
 
     /// Where the port a new item contributes would sit.

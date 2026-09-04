@@ -413,6 +413,17 @@ the whole SCE chain by itself.
 | `cargo fmt --all --check` | ✓ | ✓ | ✓ |
 | `cargo clippy --workspace --all-targets --features pinion-runtime/vello` | — | **✓** | ✓ |
 | `cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items` | — | — | ✓ |
+| `cargo doc` **scoped to the pushed crates**, no `vello` feature | — | **✓** | — |
+
+⚠ **That fourth row is a correction, not a new gate** (R2000). R1916 put a
+rustdoc run into `pre-push` — scoped to the crates a push touches, without the
+feature, because cargo rejects a feature of a package the `-p` selection does
+not contain — and this table was not updated, so it said for 84 rounds that
+rustdoc had no home but CI. `tools/test_hooks.sh` had the true arrangement all
+along and asserts it (`rustdoc also runs at the push gate`), which is the
+difference between a gate and a sentence: the sentence went stale and the gate
+did not. **The workspace-wide run is still CI's alone**, so a broken link in a
+crate the push did not touch still surfaces only after publishing.
 
 R1779 moved clippy **and** rustdoc out of both hooks together, as one item,
 justified by one number: a fully warmed `pre-push` took 237.33s. That number

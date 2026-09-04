@@ -649,7 +649,15 @@ def body() -> None:
             # ★ R1681 — the picked link now carries its own affordances: the
             # endpoint caption (a panel and its run) and the act seat (ditto).
             # Still derived, still not a constant.
-            "lab.link": len(spec["links"]) + 4,
+            # ★★ R2000 — +6, not +4: the TURN seat and the word it carries
+            # (`lab.link.turn` and `lab.link.turn.text`). It gained two and lost
+            # none, so the pin moving by exactly two is what says the seat
+            # landed whole rather than one arriving while another quietly went.
+            # ⚠ The seat is drawn only for an AUTHORED wire — a reported one is
+            # not in the drawing, so there is nothing whose ends could move —
+            # and this screen opens on an authored one, which is why the count
+            # is unconditional here rather than a branch.
+            "lab.link": len(spec["links"]) + 6,
             # And what a source reported is its own family, because it is its
             # own layer.
             "lab.observed": len(spec["observed"]),

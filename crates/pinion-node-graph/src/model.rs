@@ -1887,7 +1887,7 @@ pub fn crossing<K: NodeKind>(from: &KindPort<K>, to: &KindPort<K>) -> Conversion
 /// bodies say the two different things (R1928's rule — a lint's refusal is a
 /// design question, not something to `allow`). Nothing crosses *here*; what
 /// happens is that the reroute's ports stop being undecided the moment this
-/// link exists, and `Document::reroute_flow` re-derives them.
+/// link exists, and [`Document::passing_flow`] re-derives them.
 const fn decided_by_the_link<V>() -> Conversion<V> {
     Conversion::Direct
 }
@@ -4487,6 +4487,25 @@ impl<K: NodeKind> Document<K> {
         from: Socket,
         to: Socket,
     ) -> Result<Option<Side>, ConnectError<K::Type>> {
+        self.vet_without(tree, from, to, None)
+    }
+
+    /// ★★★★★ R2000 — the same four rules, asked of the graph **without one
+    /// link in it**: what a *move* has to ask, because the link being moved is
+    /// not part of the graph the move would leave.
+    ///
+    /// See [`data_path_without`](Self::data_path_without) for the measurement
+    /// that forced the parameter. Only the acyclicity rule reads links at all,
+    /// which is why this is the only rule the exclusion reaches — and that is
+    /// asserted rather than asserted-in-prose by
+    /// `r2000_the_exclusion_reaches_the_acyclicity_rule_and_nothing_else`.
+    pub(crate) fn vet_without(
+        &self,
+        tree: TreeId,
+        from: Socket,
+        to: Socket,
+        moving: Option<LinkId>,
+    ) -> Result<Option<Side>, ConnectError<K::Type>> {
         let out_ports = self
             .signature(tree, from.node)
             .ok_or(ConnectError::NoSuchNode(from))?
@@ -4586,7 +4605,9 @@ impl<K: NodeKind> Document<K> {
         // the control one. Found by `r1934_a_ring_of_reroutes_answers_rather_
         // than_recursing`, which expected the refusal and got a link.
         let adds_a_dependency = !source.is_control() && !self.cuts_dependency(tree, from.node);
-        if adds_a_dependency && let Some(path) = self.data_path_between(tree, to.node, from.node) {
+        if adds_a_dependency
+            && let Some(path) = self.data_path_without(tree, to.node, from.node, moving)
+        {
             return Err(ConnectError::WouldCycle { path });
         }
 
@@ -4902,6 +4923,40 @@ impl<K: NodeKind> Document<K> {
         start: NodeId,
         goal: NodeId,
     ) -> Option<Vec<NodeId>> {
+        self.data_path_without(tree, start, goal, None)
+    }
+
+    /// ★★★★★ R2000 — the same walk, with one link **taken out of the graph for
+    /// the duration of the question**.
+    ///
+    /// # Why an edit has to be able to ask this
+    ///
+    /// Because a link that is being *moved* is not part of the graph the move
+    /// would leave behind, and the acyclicity rule is about that graph. Ask
+    /// without this and the link answers for itself: turning `A -> B` round is
+    /// refused as a cycle, because a walk looking for a path from `B` to `A`
+    /// finds `A -> B` — the very link the caller asked to remove from there.
+    ///
+    /// R1924 handled this for a **one-ended** move by proof rather than by
+    /// construction, and the proof is exactly as strong as its premise: a
+    /// forward search from the standing end cannot use the moving link, because
+    /// one end of it never moved. [`Document::retarget`] moves BOTH ends, so
+    /// there is no standing end and the premise is simply gone — measured, not
+    /// reasoned: the first draft of [`Document::turn`] asked
+    /// [`data_path_between`](Self::data_path_between) and every reversal of a
+    /// value link came back `WouldCycle` naming the link being reversed.
+    ///
+    /// So the exclusion is a parameter now instead of an argument in a comment.
+    /// One-ended moves pass it too — where R1924's proof says it changes
+    /// nothing, which is a claim a test can hold rather than a reader having to
+    /// re-derive.
+    fn data_path_without(
+        &self,
+        tree: TreeId,
+        start: NodeId,
+        goal: NodeId,
+        moving: Option<LinkId>,
+    ) -> Option<Vec<NodeId>> {
         let host = self.tree(tree)?;
         if start == goal {
             return Some(vec![start]);
@@ -4939,6 +4994,7 @@ impl<K: NodeKind> Document<K> {
             let steps = host
                 .links
                 .iter()
+                .filter(|l| Some(l.id) != moving)
                 .filter(|l| l.from.node == current && !self.link_is_control(tree, l))
                 .map(|l| l.to.node)
                 .chain(named);

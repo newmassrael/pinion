@@ -4639,6 +4639,8 @@ enum Hit {
     /// The picked link's one act: delete it, or — when it is a reported one —
     /// take it into the drawing.
     LinkAct,
+    /// ★★★★★ R2000 — make the picked wire run the other way, keeping it.
+    LinkTurn,
     /// One endpoint seat of the picked link's target.
     Endpoint(usize),
     /// A host frame's tab strip — its handle.
@@ -5160,6 +5162,13 @@ impl Hit {
         if tag == "lab.link.act" {
             return Self::LinkAct;
         }
+        // ★ R2000 — beside its neighbour rather than folded into it: `link:act`
+        // is one seat with two meanings because both answer *should this link
+        // be in the drawing*; this answers a different question about a link
+        // that already is, so it is a different seat.
+        if tag == "lab.link.turn" {
+            return Self::LinkTurn;
+        }
         if let Some(n) = tag
             .strip_prefix("lab.link.endpoint.")
             .and_then(|n| n.parse::<usize>().ok())
@@ -5286,6 +5295,7 @@ impl Hit {
                 state.name_of(to.node)
             ),
             Self::LinkAct => "link:act".into(),
+            Self::LinkTurn => "link:turn".into(),
             Self::Endpoint(n) => format!("link:endpoint:{n}"),
             Self::Frame(id) => format!(
                 "frame:{}",
@@ -9790,6 +9800,22 @@ struct LinkChrome {
     /// because the two are the same question — *should this link be in the
     /// drawing* — answered from opposite sides.
     adopt: bool,
+    /// ★★★★★ R2000 — the **turn it round** seat, below the act.
+    ///
+    /// `None` for a reported link, on the same rule the endpoint chips follow:
+    /// an affordance that could never do anything is one a person will press.
+    /// A reported link is a fact about the world and the only thing to do with
+    /// it is put it in the drawing; there is nothing there to turn.
+    turn: Option<Rect>,
+    /// Why that seat will not act, or `None` when it will.
+    ///
+    /// ★ The refusal is carried rather than a bare bit, because it is what the
+    /// seat SAYS — greyed and silent is the state R1986's open defect is
+    /// about — and it is [`Document::may_turn`]'s own answer, so the greying
+    /// and the press cannot disagree.
+    ///
+    /// [`Document::may_turn`]: pinion_node_graph::Document::may_turn
+    turn_refusal: Option<String>,
 }
 
 /// The chrome of whichever link is picked, or `None` when none is.
@@ -9871,6 +9897,7 @@ fn link_chrome(state: &LabState) -> Option<LinkChrome> {
         seat_w("delete"),
         seat_h,
     );
+    let (turn, turn_refusal) = turn_of(state, pick, act, gap, seat_w(TURN_WORD));
 
     // ★★★ R1681.3 — the column sits ON its wire, and is only moved to stay
     // inside what the canvas is showing.
@@ -9896,6 +9923,7 @@ fn link_chrome(state: &LabState) -> Option<LinkChrome> {
         .iter()
         .map(|(_, seat)| *seat)
         .chain([label, act])
+        .chain(turn)
         .collect();
     let shift = placement(state, &parts, line.max(2));
     for part in &mut parts {
@@ -9906,6 +9934,11 @@ fn link_chrome(state: &LabState) -> Option<LinkChrome> {
             part.h,
         );
     }
+    // ★ R2000 — popped in the order they were chained, which is why the turn
+    // seat comes off first. Written as a conditional pop rather than an
+    // unconditional one: for a reported link nothing was chained, and popping
+    // anyway would take the act seat and call it the turn.
+    let turn = turn.map(|fallback| parts.pop().unwrap_or(fallback));
     let act = parts.pop().unwrap_or(act);
     let label = parts.pop().unwrap_or(label);
 
@@ -9921,7 +9954,95 @@ fn link_chrome(state: &LabState) -> Option<LinkChrome> {
         current,
         act,
         adopt,
+        turn,
+        turn_refusal,
     })
+}
+
+/// ★★★★★ R2000 — **the turn seat, and why it will not act.**
+///
+/// Both at once because they are one answer: the seat exists for a wire that is
+/// in the drawing, and what it SAYS when it will not act is
+/// [`Document::may_turn`]'s own refusal — asked of the document rather than
+/// worked out here from the roles, so the offer and the press cannot disagree
+/// (R1999's arrangement, and R1884's cost when they are two).
+///
+/// ★ Placed from the **act seat** rather than from the wire's middle: the two
+/// sit in one column, and centring each on `mid` separately would be two copies
+/// of one arithmetic — the defect `seat_w` exists to stop one level down.
+///
+/// `(None, None)` for a reported wire, on the same rule the endpoint chips
+/// follow: it is not in the drawing, so there is nothing whose ends could move,
+/// and an affordance that could never do anything is one a person will press.
+///
+/// [`Document::may_turn`]: pinion_node_graph::Document::may_turn
+fn turn_of(
+    state: &LabState,
+    pick: LinkPick,
+    act: Rect,
+    gap: u32,
+    width: u32,
+) -> (Option<Rect>, Option<String>) {
+    let LinkPick::Authored(id) = pick else {
+        return (None, None);
+    };
+    let seat = Rect::new(
+        (act.x + act.w / 2).saturating_sub(width / 2),
+        act.y + act.h + gap,
+        width,
+        act.h,
+    );
+    let refusal = state
+        .doc
+        .borrow()
+        .may_turn(state.here(), id)
+        .err()
+        .map(|why| reverse_refusal(state, &why));
+    (Some(seat), refusal)
+}
+
+/// ★★★★★ R2000 — the word the turn seat carries, in one place.
+///
+/// The seat's width, its label, its announcement and the specification all read
+/// this, so the seat cannot be sized for one word and painted with another —
+/// which is exactly what `link_affordances`'s own `inner` helper exists to stop
+/// one level down.
+const TURN_WORD: &str = "turn";
+
+/// ★★★★★ R2000 — what to SAY when a wire will not turn round.
+///
+/// The crate names the nodes by number, because a taxonomy's own word for a
+/// node is the application's to supply — the line `graph_kind_token` draws. This
+/// is the application supplying it: a person on this canvas knows their cards by
+/// the names on them, and *node 4* is not one of them.
+fn reverse_refusal(state: &LabState, why: &LandError<Endpoint>) -> String {
+    match why {
+        // ★ WHICH side has no room is the crate's answer, and naming the card
+        // in this canvas's own words is the application's. A card that never
+        // listens has no accept run at all, so it is the *input* end that has
+        // nowhere to berth — and that end is on the card the wire currently
+        // leaves, which is the one a person is looking at.
+        //
+        // Asked of the taxonomy's own `accepts`: this is not a second
+        // derivation of the refusal, which the document already made; it is the
+        // wording of one, which is exactly the split `graph_kind_token` draws.
+        LandError::NoRoom { node, side } => match (state.role_of(*node), side) {
+            (Some(role), Side::Input) if !role.accepts() => format!(
+                "{} is a {} and never listens, so the wire cannot run the other way",
+                state.name_of(*node),
+                role.name()
+            ),
+            _ => format!(
+                "{} has no {} pin free and cannot grow one",
+                state.name_of(*node),
+                match side {
+                    Side::Input => "accept",
+                    Side::Output => "dial",
+                }
+            ),
+        },
+        other => other.to_string(),
+    }
 }
 
 /// What the picked link carries: its caption, its endpoint seats and its one
@@ -10020,6 +10141,35 @@ fn link_affordances(chrome: &LinkChrome, ink: Ink) -> Vec<Scene> {
             Silence::name_of("lab.link.act"),
         )],
     ));
+    // ★★★★★ R2000 — **the seat the graph will not honour is drawn as one that
+    // cannot be pressed**, and it is the document's own answer that decides
+    // (R1999's arrangement, one affordance over). A seat at full contrast whose
+    // press only ever produced a refusal is the state R1986's open defect
+    // names: a permission published with no pixel reading it.
+    if let Some(seat) = chrome.turn {
+        let refused = chrome.turn_refusal.is_some();
+        let (fill, line) = if refused {
+            (ink.surface, ink.outline_2)
+        } else {
+            (ink.surface, ink.accent_line)
+        };
+        out.push(panel(
+            "lab.link.turn",
+            seat,
+            fill,
+            Some(line),
+            vec![quiet(
+                placed_label(
+                    "lab.link.turn.text",
+                    TURN_WORD.to_owned(),
+                    inner(seat, TURN_WORD),
+                    chrome.font,
+                    if refused { ink.text_2 } else { ink.accent },
+                ),
+                Silence::name_of("lab.link.turn"),
+            )],
+        ));
+    }
     out
 }
 
@@ -10041,6 +10191,25 @@ fn link_chrome_access(state: &LabState) -> Vec<AccessNode> {
             "delete this link"
         }),
     ];
+    // ★★★★★ R2000 — and the turn seat SAYS WHY it will not act. A keyboard
+    // reader meeting a greyed control learns nothing from the greying, so the
+    // refusal is the name: `disabled` alone is the half R1986's defect is
+    // about, one axis over.
+    if chrome.turn.is_some() {
+        nodes.push(
+            AccessNode::new("lab.link.turn", AriaRole::Button)
+                .with_name(
+                    chrome
+                        .turn_refusal
+                        .clone()
+                        .unwrap_or_else(|| "make this wire run the other way".to_owned()),
+                )
+                .with_state(AccessState {
+                    disabled: chrome.turn_refusal.is_some(),
+                    ..AccessState::default()
+                }),
+        );
+    }
     for (n, (endpoint, _)) in chrome.chips.iter().enumerate() {
         nodes.push(
             AccessNode::new(format!("lab.link.endpoint.{n}"), AriaRole::RadioButton)
@@ -10070,6 +10239,11 @@ fn chrome_covers(state: &LabState, px: u32, py: u32) -> bool {
     let (cx, cy) = window_to_content(state, px, py);
     holds(chrome.act, cx, cy)
         || holds(chrome.label, cx, cy)
+        // ★ R2000 — the turn seat is part of the same summoned column, so the
+        // card sweeps' exception has to reach it too. Omitting it would have
+        // reported the new seat as an unexplained hole in whatever card it
+        // happens to sit over.
+        || chrome.turn.is_some_and(|seat| holds(seat, cx, cy))
         || chrome.chips.iter().any(|(_, seat)| holds(*seat, cx, cy))
 }
 
@@ -12528,8 +12702,19 @@ const FIELDS: &[SchemaField] = &{
         // Beside `reach` rather than folded into it, because they are answers
         // to different questions and one number would average them.
         SchemaField::new("surface", "string"),
+        // ★★★★★ R2000 — **whether the picked wire will turn round, and the ways
+        // it could.** One slot for both because they are one derivation: a
+        // client that read the ways and worked out the permission for itself
+        // would be the second oracle, which is R1884's cost.
+        SchemaField::new("link_reverse", "json"),
         SchemaField::action("select", "string"),
         SchemaField::action("select_link", "string"),
+        // ★★★★★ R2000 — turn a wire round, by the same address `select_link`
+        // takes. Not scoped to the picked wire: a script repairing a topology
+        // it just loaded has no reason to have picked anything, and a verb that
+        // demanded a selection first would make the wire surface poorer than
+        // the canvas rather than equal to it.
+        SchemaField::action("reverse_link", "string"),
         SchemaField::action_with(
             "set_field",
             "string",
@@ -13351,6 +13536,14 @@ impl ExternalIntrospect for LabOracle {
             // and answering the destination's question here would be answering
             // it before the destination is known.
             "clipboard" => Ok(IntrospectValue::Json(clipboard_wire(state))),
+            // ★★★★★ R2000 — whether the picked wire will run the other way, and
+            // the ways it could. Both halves out of ONE call, `Document::turn`'s
+            // own `may_turn`: it answers the berths when it admits the move and
+            // the reason when it does not, so `may` and `berths` cannot be two
+            // derivations that drift. It is also the call the press makes and
+            // the one the greying reads — so this cannot promise what
+            // `reverse_link` would refuse.
+            "link_reverse" => Ok(IntrospectValue::Json(link_reverse_wire(state))),
             // ★★★★★ R1918 — what the marks on this frame say about themselves.
             "described" => Ok(IntrospectValue::Json(described_wire(state))),
             // ★★★★★ R1919 — what a reader is looking for, and what answers.
@@ -14481,6 +14674,24 @@ impl ExternalIntrospect for LabOracle {
                 let pick = Self::link_pick(&state, raw.trim())?;
                 state.selected_link.set(Some(pick));
                 Ok(IntrospectValue::Text(raw.trim().to_owned()))
+            }
+            // ★★★★★ R2000 — turn a wire round. The SAME verb the press reaches,
+            // addressed the way `select_link` addresses a wire, so an agent and
+            // a person cannot be told different things about one graph.
+            //
+            // A reported link is refused here rather than silently ignored: it
+            // is not in the drawing, so there is nothing whose ends could move,
+            // and *nothing happened* is not an answer a caller can act on.
+            "reverse_link" => {
+                let raw = Self::text(&args)?;
+                match Self::link_pick(&state, raw.trim())? {
+                    LinkPick::Authored(id) => turn_link(&state, id).map(IntrospectValue::Text),
+                    LinkPick::Observed(from, to) => Err(InvokeError::rejected(format!(
+                        "{} -> {} is a reported link, not one in the drawing — adopt it first",
+                        state.name_of(from.node),
+                        state.name_of(to.node)
+                    ))),
+                }
             }
             "set_field" => {
                 let raw = Self::text(&args)?;
@@ -15983,6 +16194,88 @@ fn delete_link(state: &Rc<LabState>, link: LinkId) -> Result<String, InvokeError
         }
         Err(why) => {
             let said = Utterance::refused(&why);
+            state.say(said.clone());
+            Err(InvokeError::rejected(said.into_clause()))
+        }
+    }
+}
+
+/// ★★★★★ R2000 — **make the picked wire run the other way, without redrawing
+/// it.**
+///
+/// # Why this is a verb of its own and not delete-then-draw
+///
+/// Because a wire drawn the wrong way round is the most ordinary authoring
+/// mistake a topology has, and the two repairs are not the same edit. Deleting
+/// and drawing again mints a new [`LinkId`], so this screen's own picked wire —
+/// the thing whose chrome the person is standing in — becomes a dangling name
+/// the moment the repair lands, and they lose their place. `Document::turn`
+/// keeps the id, the mute and the wire's position in the order.
+///
+/// The endpoint the reversed wire lands on is the crate's answer, not this
+/// screen's. ⚠ **Not because there is only one** — measured at R2000 on the
+/// crate's own `two_ports_would_take_it_and_the_earliest_does`, a card
+/// listening in two places offers two ways round — but because *which one* is a
+/// policy this screen already delegates: a drop on a card takes the earliest
+/// port with room and grows one when none has room, and the reversal is that
+/// same policy read over a pair. A screen that chose for itself would be a
+/// second answer to a settled question.
+///
+/// # Errors
+///
+/// [`InvokeError::rejected`] carrying what the graph said, in this screen's own
+/// words — see [`reverse_refusal`].
+fn turn_link(state: &Rc<LabState>, link: LinkId) -> Result<String, InvokeError> {
+    // ★ R1914 — a slot the turn GROWS carries the address it accepts, as a
+    // label the canvas draws and an authored value the model can take apart.
+    // Which address that is depends on which card the reversed wire dials, so
+    // it is worked out here rather than left to the crate — the same split
+    // `move_end` makes for a re-aimed end.
+    let (from, to) = state
+        .doc
+        .borrow()
+        .tree(state.here())
+        .and_then(|host| host.link(link).map(|held| (held.from.node, held.to.node)))
+        .ok_or_else(|| InvokeError::rejected(format!("no link {} is drawn", link.0)))?;
+    let endpoint = landing_endpoint(
+        &state.doc.borrow(),
+        state.here(),
+        &state.forms.borrow(),
+        to,
+        from,
+    )
+    .ok()
+    .flatten();
+    let turned =
+        state
+            .doc
+            .borrow_mut()
+            .turn(state.here(), link, typed_slot_item(endpoint.as_deref()));
+    match turned {
+        Ok(turned) => {
+            if let Some(one) = &endpoint {
+                set_port_address(state, turned.retargeted.now.1, one);
+            }
+            // The old slot last, for `move_end`'s reason: closing it re-points
+            // what is past it, and the wire has already left it.
+            close_slot(
+                state,
+                turned.retargeted.was.1.node,
+                turned.retargeted.was.1.port,
+            );
+            // ★ R1961 — turning a wire round changes the address its source
+            // dials, so both cards may now speak something else.
+            settle_transports(state);
+            let word = format!(
+                "{} -> {}",
+                state.name_of(turned.retargeted.now.0.node),
+                state.name_of(turned.retargeted.now.1.node)
+            );
+            state.say(Utterance::done(format!("turned round: {word}")));
+            Ok(word)
+        }
+        Err(why) => {
+            let said = Utterance::new(Tone::Refused, reverse_refusal(state, &why));
             state.say(said.clone());
             Err(InvokeError::rejected(said.into_clause()))
         }
@@ -18850,6 +19143,15 @@ fn release(state: &Rc<LabState>) {
             }
             None => {}
         },
+        // ★★★★★ R2000 — one verb, reached by the press and by the wire, so a
+        // person and an agent cannot be told different things (the rule this
+        // screen's `hit_act` follows throughout). The refusal is spoken by the
+        // verb, which is why nothing is said here.
+        Hit::LinkTurn => {
+            if let Some(LinkPick::Authored(id)) = state.selected_link.get() {
+                turn_link(state, id).ok();
+            }
+        }
         Hit::Endpoint(n) => {
             choose_endpoint(state, n).ok();
         }
@@ -23123,6 +23425,50 @@ fn clipboard_wire(state: &Rc<LabState>) -> serde_json::Value {
         "cards": cards,
         "severed": cut.inbound().len(),
     })
+}
+
+/// ★★★★★ R2000 — what the picked wire says about running the other way.
+///
+/// Four facts, and the last is what the reference has nowhere to publish: **a
+/// pin will appear for it**. Its own verb turns a transition and can be a bare
+/// command because a state there has one pin per side; here each end BERTHS, so
+/// a client is told which pin takes the end and whether that pin is one the card
+/// already draws.
+///
+/// `picked: false` rather than an absent object, because *no wire is picked* and
+/// *the picked wire will not turn* are different facts and a reader must not
+/// have to tell them apart by which keys are missing.
+fn link_reverse_wire(state: &Rc<LabState>) -> serde_json::Value {
+    let Some(LinkPick::Authored(link)) = state.selected_link.get() else {
+        // ★ A reported link lands here too, and correctly: it is not in the
+        // graph, so there is nothing whose ends could move. That is the same
+        // reason its chrome carries no turn seat.
+        return serde_json::json!({ "picked": false, "may": false, "why": "", "berths": [] });
+    };
+    let planned = state.doc.borrow().may_turn(state.here(), link);
+    let berth = |fall: Landfall| {
+        serde_json::json!({
+            "card": state.name_of(fall.socket().node),
+            // ★ The ARM, not a sentence a client has to parse — the distinction
+            // the reference spells with hard-coded strings in an argument its
+            // own header documents as an error channel.
+            "grows": fall.is_new(),
+        })
+    };
+    match planned {
+        Ok((source, sink)) => serde_json::json!({
+            "picked": true,
+            "may": true,
+            "why": "",
+            "berths": [berth(source), berth(sink)],
+        }),
+        Err(why) => serde_json::json!({
+            "picked": true,
+            "may": false,
+            "why": reverse_refusal(state, &why),
+            "berths": [],
+        }),
+    }
 }
 
 fn found_wire(state: &Rc<LabState>) -> serde_json::Value {

@@ -890,6 +890,12 @@ fn r1994_home_proofs() -> Vec<Proof> {
             "schema::GetGraphType",
             engine_schema_get_graph_type,
         ),
+        // R2000 — the animation editor's verb for a wire drawn the wrong way.
+        proof(
+            "engine",
+            "AnimGraph::ReverseTransition",
+            engine_anim_graph_reverse_transition,
+        ),
     ]
 }
 
@@ -12682,6 +12688,211 @@ fn engine_anim_graph_add_blend_list_pin() {
             .link_into(Socket::new(blend, 5))
             .map(|link| link.from.node),
         Some(bias)
+    );
+}
+
+/// ★★★★★ R2000 — the animation editor's `ReverseTransition`: **a link runs the
+/// other way without being redrawn.**
+///
+/// # What the reference does, and where its verb is cheap
+///
+/// A transition there sits between two state nodes that have exactly one
+/// inbound and one outbound pin apiece, so *which ports* never comes up and the
+/// verb can be a bare command. A node here has as many ports as its kind
+/// declares, so the reversal is a **landing** — [`Berth`]'s policy over a pair,
+/// the same rule a drop on a card already follows — and this proves the three
+/// outcomes that policy has: an existing pair takes it, a port appears for it,
+/// or nothing can hold it.
+///
+/// # What would differ if the capability were missing
+///
+/// The link's [`LinkId`] and its mute. Delete-and-redraw reaches the same
+/// picture and mints a new id, so everything holding the old name — a picked
+/// wire, a breakpoint, an undo entry — is left pointing at nothing. Both are
+/// asserted, and the mute is asserted because a wiring being A/B-tested is
+/// still being A/B-tested after somebody notices it points the wrong way.
+#[test]
+fn engine_anim_graph_reverse_transition() {
+    a_transition_turns_round_under_its_own_name();
+    a_value_link_turns_round_and_the_walk_ignores_it();
+    two_ports_would_take_it_and_the_earliest_does();
+    a_port_appears_when_none_has_room();
+    a_far_node_that_produces_nothing_is_its_own_refusal();
+}
+
+/// The reference's own case: one pin per side, and the link keeps its name.
+fn a_transition_turns_round_under_its_own_name() {
+    let mut document: Document<Op> = Document::new("root");
+    let first = node(&mut document, Op::Stage(1));
+    let second = node(&mut document, Op::Stage(2));
+    let made = document
+        .connect(ROOT, Socket::new(first, 0), Socket::new(second, 0))
+        .expect("a control link between two stages");
+    document
+        .set_link_muted(ROOT, made.link, true)
+        .expect("the transition is being A/B-tested");
+
+    assert_eq!(
+        document.may_turn(ROOT, made.link),
+        Ok((
+            Landfall::Takes(Socket::new(second, 0)),
+            Landfall::Takes(Socket::new(first, 0)),
+        )),
+        "★ both pins are there, so nothing has to appear — and the question \
+         says WHICH pins rather than merely yes"
+    );
+    let turned = document
+        .turn(ROOT, made.link, Item::plain())
+        .expect("the transition turns round");
+    assert_eq!(
+        turned.retargeted.link, made.link,
+        "★★★★★ THE POINT: the same link, not a new one"
+    );
+    assert!(turned.reversed(), "and it runs between the same two stages");
+    assert_eq!(
+        turned.retargeted.was,
+        (Socket::new(first, 0), Socket::new(second, 0))
+    );
+    assert_eq!(
+        document
+            .tree(ROOT)
+            .and_then(|host| host.link(made.link))
+            .map(|link| (link.from, link.to, link.muted)),
+        Some((Socket::new(second, 0), Socket::new(first, 0), true)),
+        "★ and the mute travelled with it"
+    );
+    // ★ A stage's second output carries a NUMBER, so the search had to reject
+    // it and take the control pin. Asserted because port order is what makes
+    // that luck rather than a rule: `Then` happens to be first here.
+    assert_eq!(
+        port_names(&document, second, Side::Output),
+        ["Then", "Cost"],
+        "★ the pair the landing chose is the one the flows admit, not port 0 by \
+         position"
+    );
+}
+
+/// The data plane, where the acyclicity walk must not see the moving link.
+fn a_value_link_turns_round_and_the_walk_ignores_it() {
+    let mut document: Document<Op> = Document::new("root");
+    let doubling = node(&mut document, Op::Double);
+    let relay = node(&mut document, Op::Relay);
+    let made = document
+        .connect(ROOT, Socket::new(doubling, 0), Socket::new(relay, 0))
+        .expect("a value link");
+    assert!(
+        document
+            .turn(ROOT, made.link, Item::plain())
+            .is_ok_and(|turned| turned.reversed()),
+        "★★★★★ a VALUE link turns round too — and this is the assertion that \
+         fails when the acyclicity walk is allowed to see the link being \
+         moved, because the path it finds from the far node back is that link"
+    );
+}
+
+/// Two ports would take it: the EARLIEST does, and that is a policy.
+fn two_ports_would_take_it_and_the_earliest_does() {
+    let mut document: Document<Op> = Document::new("root");
+    let sum = node(&mut document, Op::Add);
+    let doubling = node(&mut document, Op::Double);
+    let made = document
+        .connect(ROOT, Socket::new(sum, 0), Socket::new(doubling, 0))
+        .expect("a value link");
+    assert_eq!(
+        document.may_turn(ROOT, made.link),
+        Ok((
+            Landfall::Takes(Socket::new(doubling, 0)),
+            Landfall::Takes(Socket::new(sum, 0)),
+        )),
+        "★ an augend AND an addend would take it; the earliest does, which is \
+         the rule a drop on this node already follows. The first draft of this \
+         verb refused here instead, and the node lab produced that refusal on \
+         its second gesture"
+    );
+    assert!(
+        document
+            .turn(ROOT, made.link, Item::plain())
+            .is_ok_and(|turned| turned.reversed()),
+    );
+}
+
+/// A port appears for it: every existing one is taken.
+fn a_port_appears_when_none_has_room() {
+    let mut document: Document<Op> = Document::new("root");
+    let blend = node(&mut document, Op::Blend);
+    let doubling = node(&mut document, Op::Double);
+    let made = document
+        .connect(ROOT, Socket::new(blend, 0), Socket::new(doubling, 0))
+        .expect("a value link");
+    for port in 0..4 {
+        let source = num(&mut document, i64::from(port));
+        wire(&mut document, source, 0, blend, port);
+    }
+    assert_eq!(
+        port_names(&document, blend, Side::Input),
+        ["Base", "Pose 0", "Weight 0", "Bias"],
+        "every input the blend has is now fed"
+    );
+    let turned = document
+        .turn(ROOT, made.link, Item::plain())
+        .expect("the run grows a seat for it");
+    assert!(
+        matches!(turned.falls.1, Landfall::Grows(_)),
+        "★ no existing port had room, so one appeared: {:?}",
+        turned.falls
+    );
+    assert_eq!(
+        port_names(&document, blend, Side::Input),
+        ["Base", "Pose 0", "Weight 0", "Pose 1", "Weight 1", "Bias"],
+        "★ ONE item and therefore TWO ports (R1632), and the fixed port past the \
+         run moved by two rather than by one"
+    );
+    assert_eq!(
+        document
+            .tree(ROOT)
+            .and_then(|host| host.link(made.link))
+            .map(|link| (link.from, link.to)),
+        Some((Socket::new(doubling, 0), Socket::new(blend, 3))),
+        "★ and the end is on the port that appeared, which is the first of the \
+         item's two"
+    );
+}
+
+/// Nothing can hold it: a far node that produces nothing, named apart from a
+/// wire the graph refuses.
+fn a_far_node_that_produces_nothing_is_its_own_refusal() {
+    let mut document: Document<Op> = Document::new("root");
+    let doubling = node(&mut document, Op::Double);
+    let sink = node(&mut document, Op::Sink);
+    let made = document
+        .connect(ROOT, Socket::new(doubling, 0), Socket::new(sink, 0))
+        .expect("a value link");
+    assert_eq!(
+        document.turn(ROOT, made.link, Item::plain()),
+        Err(LandError::NoRoom {
+            node: sink,
+            side: Side::Output,
+        }),
+        "★ a sink declares no output and no run to grow one — named apart from \
+         `Refused`, because this is fixed by giving the node a port and that by \
+         changing the wire"
+    );
+    assert_eq!(
+        document.may_turn(ROOT, made.link).map(|_| ()),
+        Err(LandError::NoRoom {
+            node: sink,
+            side: Side::Output,
+        }),
+        "★ and asking is the same call as doing, so a greyed control and a \
+         refused press cannot disagree"
+    );
+    assert_eq!(
+        document
+            .tree(ROOT)
+            .and_then(|host| host.link(made.link))
+            .map(|link| (link.from, link.to)),
+        Some((Socket::new(doubling, 0), Socket::new(sink, 0))),
+        "★ and a refused turn moved nothing"
     );
 }
 

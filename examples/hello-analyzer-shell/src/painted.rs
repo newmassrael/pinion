@@ -10876,6 +10876,224 @@ fn a_person_may_re_classify_the_graph_they_are_in(state: &std::rc::Rc<ShellState
     lab_invoke(state, "exit", "").expect("and back out");
 }
 
+/// ★★★★★ R2000 — **the assembled tool turns a wire round without redrawing
+/// it, and greys the seat that cannot** — driven on the shell, over one walk.
+///
+/// # What this reproduces
+///
+/// The animation editor's verb for a transition drawn the wrong way. Measured
+/// at its own source: a transition there runs between two state nodes with one
+/// inbound and one outbound pin apiece, so *which pins* never comes up and the
+/// command can be a bare one. A card on this canvas dials from one pin and
+/// listens on a **run** whose length is what has landed on it, so the reversal
+/// is a landing — and both halves of that are things a person meets here and
+/// nobody there ever does: a card that never listens, and a pin that has to
+/// appear.
+///
+/// The mechanism is proven against the reference in `pinion-node-graph`'s own
+/// census test, and the seat's PIXELS in the lab's own tests. **What is proven
+/// here is that a person on this screen can reach it**: they pick a wire, are
+/// told whether it will turn and why not, and the wire that turns keeps its
+/// name — so the chrome they are standing in does not vanish under them.
+///
+/// # Why keeping the name is the point
+///
+/// Delete-and-redraw reaches the same picture. It also mints a new `LinkId`,
+/// and on this screen the picked wire IS a `LinkId`: the label, the endpoint
+/// seats and the act seat are all drawn from it. So the repair that looks
+/// equivalent takes the person's place away at the moment they use it, and
+/// this walk asserts the wire's own name across the reversal for that reason
+/// rather than as bookkeeping.
+///
+/// ★★★★★ **Where this passes the reference**: there the verb either works or
+/// does nothing, and a person finds out by pressing. Here `may_turn` is the
+/// same call the press makes, so the greying, the announcement and the refusal
+/// are one answer — and it says which of the two problems it is, because a card
+/// that never listens and a card with no free pin are fixed by different
+/// actions.
+///
+/// # Which screen this lands on
+///
+/// Screen A, the node lab, as it is assembled in this shell.
+#[test]
+fn r2000_a_wire_on_the_assembled_canvas_turns_round_under_its_own_name() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let report = crate::tests::walk_the_application(&state);
+        assert!(
+            report.conforms(),
+            "the application did not reproduce its specification over the walk: {}",
+            report.why().unwrap_or_default()
+        );
+        assert!(
+            report.itinerary().iter().any(|key| key == "lab"),
+            "the walk must stand in the node lab: {:?}",
+            report.itinerary()
+        );
+
+        state.go("lab").expect("the node lab section is open");
+        the_picked_wire_says_it_will_turn_and_where_each_end_lands(&state);
+        a_wire_that_turns_keeps_the_name_the_screen_is_holding(&state);
+        a_wire_into_a_card_that_never_listens_says_so_before_it_is_pressed(&state);
+    });
+}
+
+/// Phase 1 — **the wire a person opens on says it will turn, and where each end
+/// would berth.**
+///
+/// Without this the refusal in phase 3 would be indistinguishable from a screen
+/// that never turns anything.
+fn the_picked_wire_says_it_will_turn_and_where_each_end_lands(state: &std::rc::Rc<ShellState>) {
+    let answered = lab_slot(state, "link_reverse");
+    assert_eq!(
+        answered["picked"],
+        serde_json::json!(true),
+        "★ the screen opens with a wire picked, which is what the reference is \
+         explicit about — a label belongs to the selected wire alone: {answered}"
+    );
+    assert_eq!(
+        answered["may"],
+        serde_json::json!(true),
+        "★★★★★ and it will turn: both cards on it listen. A screen that refused \
+         every reversal would satisfy phase 3 just as well: {answered}"
+    );
+    let berths = answered["berths"]
+        .as_array()
+        .expect("`berths` holds one entry per end");
+    assert_eq!(
+        berths.len(),
+        2,
+        "★ one per END, which is what makes this a landing rather than a bit — \
+         the reference's verb has nowhere to say either of them: {answered}"
+    );
+    assert!(
+        berths
+            .iter()
+            .all(|berth| berth["card"].is_string() && berth["grows"].is_boolean()),
+        "each says WHICH card and whether a pin has to appear: {answered}"
+    );
+}
+
+/// Phase 2 — **the wire that turns keeps its name**, and the screen says what
+/// happened.
+///
+/// ★ Driven through the wire verb rather than by pressing a coordinate, for the
+/// reason R1999's phase 2 states in its own words: the seat's rectangle is in
+/// hand in the lab's own paint test, and what belongs HERE is that the verb the
+/// press reaches is reachable on the assembled application at all.
+fn a_wire_that_turns_keeps_the_name_the_screen_is_holding(state: &std::rc::Rc<ShellState>) {
+    let name = lab_slot(state, "selected_link");
+    let wire = lab_wire(state, &name).expect("the wire the screen opens with is drawn");
+    assert_eq!(
+        (wire["from"].clone(), wire["to"].clone()),
+        (serde_json::json!("P-01"), serde_json::json!("R-01")),
+        "the specification's opening pick: {wire}"
+    );
+
+    let said =
+        lab_invoke(state, "reverse_link", &name.to_string()).expect("the picked wire turns round");
+    assert_eq!(
+        said, "R-01 -> P-01",
+        "the answer names the cards it runs between NOW: {said:?}"
+    );
+
+    assert_eq!(
+        lab_slot(state, "selected_link"),
+        name,
+        "★★★★★ THE POINT, asserted on the assembled screen: the wire the person \
+         is standing in still has the name it had. Delete-and-redraw reaches the \
+         same picture and would leave this holding a wire that is not there"
+    );
+    let after = lab_wire(state, &name).expect("★ and it is still a wire in the graph");
+    assert_eq!(
+        (after["from"].clone(), after["to"].clone()),
+        (serde_json::json!("R-01"), serde_json::json!("P-01")),
+        "★ running the other way, under that same name: {after}"
+    );
+    assert_eq!(
+        lab_slot(state, "toast"),
+        serde_json::json!("turned round: R-01 -> P-01"),
+        "★ and the screen says which way it runs now, not merely that something \
+         happened"
+    );
+}
+
+/// One row of the lab's `links` read, by the name `selected_link` reads back.
+///
+/// ★ Through the published reads rather than by reaching into the lab's own
+/// state, for the reason this module states throughout: a test that asked the
+/// guest directly would pass on an application that never mounted it.
+fn lab_wire(
+    state: &std::rc::Rc<ShellState>,
+    name: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    lab_slot(state, "links")
+        .as_array()?
+        .iter()
+        .find(|wire| wire["id"] == *name)
+        .cloned()
+}
+
+/// Phase 3 — **a wire into a card that never listens says so**, before anybody
+/// presses, and the press is refused with the same sentence.
+///
+/// ★ This is the half the reference cannot have: its states all have an inbound
+/// pin, so *the far end does not listen* is not a state that exists there. Here
+/// it is a role's own declaration, and a topology is mostly made of cards that
+/// only ever dial.
+fn a_wire_into_a_card_that_never_listens_says_so_before_it_is_pressed(
+    state: &std::rc::Rc<ShellState>,
+) {
+    // ⚠ A drawn wire is addressed by its NAME, not by its two cards: this
+    // screen's `from>to` spelling resolves a *reported* connection, which is
+    // the other layer. Measured on the first drive of this phase, which was
+    // refused `"T-01>P-01" ... nothing was reported from T-01 to P-01` — a
+    // correct refusal to a question this phase had not meant to ask.
+    let into_publisher = lab_slot(state, "links")
+        .as_array()
+        .expect("`links` holds a list")
+        .iter()
+        .find(|wire| wire["from"] == serde_json::json!("T-01"))
+        .map(|wire| wire["id"].to_string())
+        .expect("the specification draws a wire out of the card that only dials");
+
+    lab_invoke(state, "select_link", &into_publisher)
+        .expect("a wire out of a card that only dials");
+    let answered = lab_slot(state, "link_reverse");
+    assert_eq!(
+        answered["may"],
+        serde_json::json!(false),
+        "★ it will not turn: {answered}"
+    );
+    let why = answered["why"].as_str().unwrap_or_default();
+    assert!(
+        why.contains("T-01") && why.contains("never listens"),
+        "★★★★★ and it says WHICH card and WHY — named apart from a card that \
+         merely has no free pin, because the two are fixed by different \
+         actions: {why:?}"
+    );
+
+    let refused = lab_invoke(state, "reverse_link", &into_publisher)
+        .expect_err("and the press agrees with the pixel");
+    assert!(
+        format!("{refused:?}").contains("never listens"),
+        "★ one answer, not two oracles — the greying and the refusal are the \
+         same call: {refused:?}"
+    );
+    // ★ The toast carries the tone as a word — this screen projects a refusal
+    // as `refused: <sentence>` — so the assertion is that the SENTENCE is the
+    // same one, not that the two strings are equal. A person who pressed anyway
+    // is told exactly what the seat was already showing, plus the fact that it
+    // was a refusal.
+    let spoken = lab_slot(state, "toast");
+    let spoken = spoken.as_str().unwrap_or_default();
+    assert!(
+        spoken.ends_with(why) && spoken.starts_with("refused:"),
+        "★ and the screen SAYS it: {spoken:?} against {why:?}"
+    );
+}
+
 /// ★★★★★ R1998 — **the assembled tool offers a replacement for what the graph
 /// will not take, and says it did** — driven on the shell, over one walk.
 ///

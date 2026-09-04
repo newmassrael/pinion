@@ -292,7 +292,7 @@ pub use group::{
 pub use home::{End, Home, NoHome};
 pub use insert::{Room, RoomError, Splice, SpliceError, Spliced, Verdict, Widening};
 pub use items::{Item, ItemChange, ItemEdit, ItemEditTail, ItemError, Items, Variadic};
-pub use landing::{Berth, LandError, Landed, Landfall};
+pub use landing::{Berth, LandError, Landed, Landfall, Turned};
 pub use layout::{Extent, Layered, Organic, Placement, Quality};
 pub use machine::{Committed, ForceError, Machine, Tick};
 pub use model::{
@@ -312,7 +312,7 @@ pub use occupancy::Occupants;
 pub use palette::{Palette, palette_of, type_palette};
 pub use partition::{PortChange, RepartitionError, Repartitioned, Sharing};
 pub use prune::{Doomed, NotPrunable, Pruned, Unused};
-pub use relink::{RelinkError, Relinked};
+pub use relink::{RelinkError, Relinked, Retargeted};
 pub use relocate::{Reception, RelocateError, Relocation};
 pub use reroute::{Passing, RerouteError, Rerouted};
 pub use review::{Fault, Finding, Fitness, Review, Weight};
