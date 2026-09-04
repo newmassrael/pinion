@@ -655,10 +655,10 @@
       "verdict": "instance"
     },
     "insert_offset": {
-      "covered_by": "LAYOUT ONLY, reason corrected R1987. Its own description is `automatically offset nodes on insertion`, and at its implementation it holds a prev, an insert and a next, compares the gaps either side against a margin and animates the neighbours apart. It wires NOTHING and runs AFTER the splice another operator performed. The old reason here said `drop a node onto a link and push the rest along`, and the engine's autowire row was pinned as the same capability. Measured R1987, that equation was decoration: the autowire hook is handed the pin a drag LEFT FROM and wires a node created in empty space by a menu, which is neither a drop onto a link nor a shove. That row is now closed on its own terms. What stays absent here is the SHOVE -- neighbours moving apart to make room for what was inserted -- and, as its own remainder, a general verb for splicing an arbitrary node onto a standing link: the tree splices only reroute bodies (`Document::insert_reroutes`).",
+      "covered_by": "Document::room_for / make_room_for, on the remainder R1987 named -- the SHOVE, neighbours moving apart to make room for what was inserted -- built R1992 together with the splice that puts one there (Document::may_insert_on_link / insert_on_link), because the tree could previously splice only reroute bodies (`Document::insert_reroutes`) and a shove with nothing inserted is not the capability. Measured at the operator's own body rather than at its name: a prev, an insert and a next, the gap either side against one margin, the anchored side moving the insert and the growing side moving a whole topological cone. Four ways past it: the report NAMES what moved and by how much (the reference answers a bool and writes each distance into a runtime field no member reads back); it names WHY it did not move when it did not (one bool for a verdict with four cases); asking is separable from doing (Widening chooses the side, Verdict the case); and the splice is a published verb rather than something reached from a drag handler. The reference's animation is deliberately not here -- a screen eases along the distances this publishes.",
       "mechanism": "cpp",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::dcc_insert_offset",
+      "verdict": "have"
     },
     "interface_item_duplicate": {
       "covered_by": "Document::expose / unexpose",

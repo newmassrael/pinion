@@ -10608,6 +10608,453 @@ fn camera_of(state: &std::rc::Rc<ShellState>) -> (String, String) {
     )
 }
 
+/// The mounted lab's wires, as the pairs of card names they join.
+fn lab_links(state: &std::rc::Rc<ShellState>) -> Vec<(String, String)> {
+    lab_slot(state, "links")
+        .as_array()
+        .expect("`links` is an array")
+        .iter()
+        .map(|link| {
+            let end = |which| {
+                link[which]
+                    .as_str()
+                    .unwrap_or_else(|| panic!("a wire names its {which}: {link}"))
+                    .to_owned()
+            };
+            (end("from"), end("to"))
+        })
+        .collect()
+}
+
+/// Where each card the mounted lab drew sits, by name.
+fn lab_card_boxes(shot: &Painted) -> std::collections::BTreeMap<String, Rect> {
+    shot.tags
+        .iter()
+        .filter_map(|(tag, rect)| {
+            let name = tag.strip_prefix("lab.node.")?;
+            (!name.contains('.')).then(|| (name.to_owned(), *rect))
+        })
+        .collect()
+}
+
+/// ★★★★★ R1992 — **the assembled tool takes a card dropped onto a standing wire
+/// into that wire, and the row moves apart to make space for it** — driven on
+/// the shell, over one walk.
+///
+/// # What this reproduces
+///
+/// The floor's node editor calls its operator *automatically offset nodes on
+/// insertion*. R1987 corrected this project's census row for it after finding
+/// the covering sentence false in both clauses; what it left absent is the
+/// SHOVE — neighbours moving apart to make room for what arrived — and, beside
+/// it, a verb for splicing an arbitrary card onto a standing wire, because the
+/// tree could splice only reroute bodies and a shove with nothing inserted is
+/// not the capability.
+///
+/// `Document::room_for` / `make_room_for` and `may_insert_on_link` /
+/// `insert_on_link` are proven against the floor in `pinion-node-graph`'s own
+/// census test. **What is proven here is the half only an assembled application
+/// can answer**: that a person's own gesture reaches them, that the wire says
+/// what it will do BEFORE the hand lets go, and that the guard which keeps
+/// merely repositioning a card from silently rewiring the graph is on.
+///
+/// # Which screen this lands on
+///
+/// Screen A, the node lab, as it is assembled in this shell. It is a **second
+/// pass** improvement rather than a first-pass reproduction: the behaviour
+/// canon has no drop-onto-a-wire at all, and this comes from the floor.
+#[test]
+fn r1992_a_card_dropped_on_a_wire_is_taken_into_it_and_the_row_makes_room() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        // The walk first: the claim is about the assembled application.
+        let report = crate::tests::walk_the_application(&state);
+        assert!(
+            report.conforms(),
+            "the application did not reproduce its specification over the walk: {}",
+            report.why().unwrap_or_default()
+        );
+        assert!(
+            report.itinerary().iter().any(|key| key == "lab"),
+            "the walk must stand in the node lab: {:?}",
+            report.itinerary()
+        );
+
+        state.go("lab").expect("the node lab section is open");
+        let arrived = a_card_arrives_from_the_palette_with_no_wires(&state);
+        let (before, aimed) =
+            carrying_it_over_a_wire_says_which_one_and_that_it_would_be_taken(&state, &arrived);
+        letting_go_puts_the_card_into_that_wire(&state, &arrived, &aimed, &before);
+        a_card_that_cannot_listen_is_aimed_and_says_it_would_not_be_taken(&state);
+        an_already_wired_card_carried_over_a_wire_aims_at_nothing(&state);
+    });
+}
+
+/// Phase 1 — one press on the palette brings a card in, and it arrives with no
+/// wires on it.
+///
+/// ★ **Unwired is the premise the whole gesture rests on**, not an incidental
+/// fact: the floor refuses to aim a card that is already linked at any wire, so
+/// a round that made the palette's cards arrive pre-wired would make every
+/// phase below test nothing. It is asserted rather than assumed for that
+/// reason.
+///
+/// The role is named because a card can only go INTO a wire if it listens as
+/// well as dials — every role in this taxonomy dials, and only some accept —
+/// and `admitted` in the next phase is what would go red if that stopped being
+/// true of this one.
+fn a_card_arrives_from_the_palette_with_no_wires(state: &std::rc::Rc<ShellState>) -> String {
+    assert_eq!(
+        lab_slot(state, "insert_target"),
+        serde_json::Value::Null,
+        "★ nothing is being carried, so nothing is aimed at a wire"
+    );
+    let (shot, scene) = painted_at((WIN_W, WIN_H));
+    let opening = lab_cards(state);
+    let mut press = RouterDrag::over(state, scene);
+    press.cursor(aim(&shot, "lab.palette.role.Router"));
+    press.press();
+    press.release();
+
+    let now = lab_cards(state);
+    let arrived: Vec<&String> = now.iter().filter(|n| !opening.contains(n)).collect();
+    assert_eq!(
+        arrived.len(),
+        1,
+        "one press on the palette adds one card: was {opening:?}, now {now:?}"
+    );
+    let card = arrived[0].clone();
+    assert!(
+        lab_links(state)
+            .iter()
+            .all(|(from, to)| *from != card && *to != card),
+        "★ {card} arrived with no wires on it, which is what makes it aimable: {:?}",
+        lab_links(state)
+    );
+    card
+}
+
+/// Phase 2 — carried over a standing wire, **the wire says which one it is and
+/// that it would take the card, before the hand lets go**.
+///
+/// The floor marks the wire it would splice onto while the node is being moved,
+/// and marks it in a refusing colour when it would not take it — but nothing
+/// outside its drawing can ask which wire that is. Here the paint, the release
+/// and this reading are one derivation, so what an agent is told is what the
+/// person is shown.
+///
+/// ★ The aiming point is **searched for, not written down**: the walk steps
+/// along the line between each pair of connected cards until the screen itself
+/// says it is over a wire. A coordinate computed here would be this test's own
+/// copy of where a wire runs, and it would go on passing after the screen moved
+/// its wires somewhere else.
+fn carrying_it_over_a_wire_says_which_one_and_that_it_would_be_taken(
+    state: &std::rc::Rc<ShellState>,
+    card: &str,
+) -> (std::collections::BTreeMap<String, Rect>, serde_json::Value) {
+    let (shot, scene) = painted_at((WIN_W, WIN_H));
+    let boxes = lab_card_boxes(&shot);
+    let mut drag = RouterDrag::over(state, scene);
+    drag.cursor(aim(&shot, &format!("lab.node.{card}")));
+    drag.press();
+    // ★★ Picked up, and over nothing. This separates *a card is being carried*
+    // from *a card is over a wire*: without it, a reading that answered as soon
+    // as anything was in the hand would pass every assertion below.
+    assert_eq!(
+        lab_slot(state, "insert_target"),
+        serde_json::Value::Null,
+        "★ {card} is in the hand but still where it arrived, over no wire"
+    );
+
+    let mut tried = 0usize;
+    let mut aimed = serde_json::Value::Null;
+    'search: for (from, to) in lab_links(state) {
+        let (Some(a), Some(b)) = (boxes.get(&from), boxes.get(&to)) else {
+            continue;
+        };
+        let mid = |r: &Rect| (f64::from(r.x + r.w / 2), f64::from(r.y + r.h / 2));
+        let ((ax, ay), (bx, by)) = (mid(a), mid(b));
+        for step in 1..10u32 {
+            let t = f64::from(step) / 10.0;
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "a point between two painted cards is a pixel"
+            )]
+            let at = ((ax + (bx - ax) * t) as u32, (ay + (by - ay) * t) as u32);
+            drag.cursor(at);
+            tried += 1;
+            let said = lab_slot(state, "insert_target");
+            if !said.is_null() {
+                aimed = said;
+                break 'search;
+            }
+        }
+    }
+    assert!(
+        !aimed.is_null(),
+        "★ carrying {card} across {tried} point(s) between every pair of wired \
+         cards never put it over a wire — the gesture is unreachable"
+    );
+    assert_eq!(
+        aimed["admitted"],
+        serde_json::Value::Bool(true),
+        "★★ the wire says it would TAKE the card, which is the half the floor \
+         answers with a mark and no name: {aimed}"
+    );
+    let between = aimed["between"]
+        .as_array()
+        .unwrap_or_else(|| panic!("an aimed wire names the two cards it joins: {aimed}"));
+    assert_eq!(
+        between.len(),
+        2,
+        "a wire joins two cards, and the reading says which: {aimed}"
+    );
+    // Let go here, over the wire the screen said it was aimed at.
+    drag.release();
+    (boxes, aimed)
+}
+
+/// Phase 3 — letting go, and the two facts that follow: the card is **in** the
+/// wire, and the row **moved apart** to make space for it.
+fn letting_go_puts_the_card_into_that_wire(
+    state: &std::rc::Rc<ShellState>,
+    card: &str,
+    aimed: &serde_json::Value,
+    before: &std::collections::BTreeMap<String, Rect>,
+) {
+    let named = |n: usize| {
+        aimed["between"][n]
+            .as_str()
+            .expect("phase 2 asserted a named pair")
+            .to_owned()
+    };
+    let (from, to) = (named(0), named(1));
+    let links = lab_links(state);
+    assert!(
+        links.contains(&(from.clone(), card.to_owned())),
+        "★ the wire's producing end now runs into {card}: {links:?}"
+    );
+    assert!(
+        links.contains(&(card.to_owned(), to.clone())),
+        "★ and out of it to {to}: {links:?}"
+    );
+    assert!(
+        !links.contains(&(from.clone(), to.clone())),
+        "★★★★★ and NOT still straight from {from} to {to} — a card drawn on top \
+         of a wire it is not in is what this gesture exists to prevent: {links:?}"
+    );
+
+    // ★★★★★ The shove, read off the PIXELS rather than off the report. The
+    // report is the crate's own answer and is proven where the crate is; what
+    // an assembled application has to show is that the cards a person is
+    // looking at actually moved.
+    let (after, _) = painted_at((WIN_W, WIN_H));
+    let now = lab_card_boxes(&after);
+    let travelled: Vec<&String> = before
+        .keys()
+        .filter(|name| *name != card)
+        .filter(|name| now.get(*name).is_some_and(|r| r.x != before[*name].x))
+        .collect();
+    assert!(
+        !travelled.is_empty(),
+        "★★★★★ nothing moved over to make room for {card} — this is the \
+         assertion a splice that only rewired would pass"
+    );
+    let said = lab_slot(state, "toast");
+    assert!(
+        said.as_str().is_some_and(|line| line.contains(card)),
+        "the sentence a person reads names the card that arrived: {said}"
+    );
+
+    // ★★ And once the room is made there is nothing left to do — the same
+    // property the crate's own test asserts, here on the assembled screen and
+    // through the reading a person's own gesture left behind.
+    let room = lab_slot(state, "room");
+    assert_eq!(
+        room["asked"].as_str(),
+        Some(card),
+        "the drop left the card that arrived chosen, so the row is read about \
+         it: {room}"
+    );
+    assert_eq!(
+        room["verdict"].as_str(),
+        Some("clear"),
+        "★★ after the row made room, asking again has nothing to do: {room}"
+    );
+    assert_eq!(
+        room["between"],
+        serde_json::json!([from, to]),
+        "★ and the two it measures against are the two it was spliced between: \
+         {room}"
+    );
+}
+
+/// Phase 3b — **a card that cannot listen is still aimed at the wire, and says
+/// it would not be taken.**
+///
+/// ★★★★★ The half without which `admitted` says nothing. A reading that only
+/// ever answers *yes* is a reading whose refusing arm no walk has reached, and
+/// this project has twice found a roster whose "no" was unreachable and
+/// therefore meaningless. It is reachable here because a role that never
+/// listens has no pin for the incoming wire at all.
+///
+/// This is also where the floor's own behaviour is reproduced most exactly: it
+/// marks the wire as the target **anyway** and draws it in a refusing colour,
+/// rather than making the target disappear — so a person can tell *I am over
+/// nothing* from *I am over something that will not have me*. And letting go
+/// then says why in words, which the floor does not do at all.
+fn a_card_that_cannot_listen_is_aimed_and_says_it_would_not_be_taken(
+    state: &std::rc::Rc<ShellState>,
+) {
+    let (shot, scene) = painted_at((WIN_W, WIN_H));
+    let boxes = lab_card_boxes(&shot);
+    let opening = lab_cards(state);
+    let held = lab_links(state).len();
+
+    // A role that depends on a router rather than being dialled: it has a dial
+    // pin, like every role here, and no accept pin at all.
+    let mut press = RouterDrag::over(state, scene);
+    press.cursor(aim(&shot, "lab.palette.role.Client"));
+    press.press();
+    press.release();
+    let now = lab_cards(state);
+    let card = now
+        .iter()
+        .find(|name| !opening.contains(name))
+        .expect("one press on the palette adds one card")
+        .clone();
+
+    let (shot, scene) = painted_at((WIN_W, WIN_H));
+    let mut drag = RouterDrag::over(state, scene);
+    drag.cursor(aim(&shot, &format!("lab.node.{card}")));
+    drag.press();
+    let mut refused = serde_json::Value::Null;
+    'search: for (from, to) in lab_links(state) {
+        let (Some(a), Some(b)) = (boxes.get(&from), boxes.get(&to)) else {
+            continue;
+        };
+        let mid = |r: &Rect| (f64::from(r.x + r.w / 2), f64::from(r.y + r.h / 2));
+        let ((ax, ay), (bx, by)) = (mid(a), mid(b));
+        for step in 1..10u32 {
+            let t = f64::from(step) / 10.0;
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "a point between two painted cards is a pixel"
+            )]
+            let at = ((ax + (bx - ax) * t) as u32, (ay + (by - ay) * t) as u32);
+            drag.cursor(at);
+            let said = lab_slot(state, "insert_target");
+            if !said.is_null() {
+                refused = said;
+                break 'search;
+            }
+        }
+    }
+    assert!(
+        !refused.is_null(),
+        "★★★★★ {card} was never AIMED at a wire — a target that vanishes on the \
+         wires that would refuse leaves a person unable to tell 'over nothing' \
+         from 'over something that will not have me'"
+    );
+    assert_eq!(
+        refused["admitted"],
+        serde_json::Value::Bool(false),
+        "★★★★★ a card with nothing to take the incoming wire would NOT be \
+         taken, and this is what makes the `admitted` yes above mean \
+         something: {refused}"
+    );
+
+    drag.release();
+    assert_eq!(
+        lab_links(state).len(),
+        held,
+        "★ letting go over a wire that refuses changed no wire"
+    );
+    let said = lab_slot(state, "toast");
+    let line = said.as_str().unwrap_or_default();
+    assert!(
+        line.contains("takes the incoming wire"),
+        "★★ and the person is told WHY, in the crate's own sentence rather than \
+         a silence they would read as a broken gesture: {said}"
+    );
+    // ★★★★★ And the reason is not the ONLY thing left. Letting go also moved
+    // the card, which can change the host it starts on, and the two facts share
+    // one sentence — the re-parent used to overwrite the reason with its own.
+    assert!(
+        line.contains(&card) && (line.contains("starts on") || line.contains("not on any host")),
+        "★★★★★ the refusal and what letting go actually did are BOTH in the \
+         sentence: {said}"
+    );
+}
+
+/// Phase 4 — **a card that is already wired is aimed at nothing**, however it
+/// is carried.
+///
+/// The floor's own guard, measured at its implementation: it gathers every
+/// socket the moving node is linked through and gives up the moment that list
+/// is non-empty. It is what keeps *moving a card* from silently rewiring the
+/// graph, and without it every drag across a busy canvas would be a splice.
+///
+/// ★ Driven over the same search as phase 2, so this is the same question
+/// answered differently rather than a different question — and the point count
+/// is asserted, because a search that found nowhere to look would report
+/// *aimed at nothing* for the wrong reason.
+fn an_already_wired_card_carried_over_a_wire_aims_at_nothing(state: &std::rc::Rc<ShellState>) {
+    let (shot, scene) = painted_at((WIN_W, WIN_H));
+    let boxes = lab_card_boxes(&shot);
+    let links = lab_links(state);
+    let wired = boxes
+        .keys()
+        .find(|name| links.iter().any(|(from, to)| from == *name || to == *name))
+        .expect("the graph draws a card with a wire on it")
+        .clone();
+    let held = links.len();
+
+    let mut drag = RouterDrag::over(state, scene);
+    drag.cursor(aim(&shot, &format!("lab.node.{wired}")));
+    drag.press();
+    let mut tried = 0usize;
+    for (from, to) in &links {
+        let (Some(a), Some(b)) = (boxes.get(from), boxes.get(to)) else {
+            continue;
+        };
+        let mid = |r: &Rect| (f64::from(r.x + r.w / 2), f64::from(r.y + r.h / 2));
+        let ((ax, ay), (bx, by)) = (mid(a), mid(b));
+        for step in 1..10u32 {
+            let t = f64::from(step) / 10.0;
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "a point between two painted cards is a pixel"
+            )]
+            let at = ((ax + (bx - ax) * t) as u32, (ay + (by - ay) * t) as u32);
+            drag.cursor(at);
+            tried += 1;
+            assert_eq!(
+                lab_slot(state, "insert_target"),
+                serde_json::Value::Null,
+                "★★★★★ {wired} is already wired, so carrying it over a wire \
+                 must aim at nothing — otherwise repositioning a card rewires \
+                 the graph behind the person's back"
+            );
+        }
+    }
+    drag.release();
+    assert!(
+        tried >= 9,
+        "★ the search looked in {tried} place(s), which is too few for \
+         'aimed at nothing' to mean anything"
+    );
+    assert_eq!(
+        lab_links(state).len(),
+        held,
+        "★★ and letting it go changed no wire at all"
+    );
+}
+
 #[test]
 fn r1875_no_run_in_the_decode_tree_sits_in_a_box_too_short_for_its_face() {
     /// The pane whose content this gate judges, as it appears in a run's path.

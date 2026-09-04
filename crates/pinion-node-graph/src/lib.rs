@@ -227,6 +227,7 @@ mod focus;
 mod fragment;
 mod frame;
 mod group;
+mod insert;
 mod items;
 mod landing;
 mod layout;
@@ -282,6 +283,7 @@ pub use group::{
     EditPath, GroupError, Grouped, NestError, PathEntry, PathError, UngroupError, Ungrouped,
     Violation,
 };
+pub use insert::{Room, RoomError, Splice, SpliceError, Spliced, Verdict, Widening};
 pub use items::{Item, ItemChange, ItemEdit, ItemEditTail, ItemError, Items, Variadic};
 pub use landing::{Berth, LandError, Landed, Landfall};
 pub use layout::{Extent, Layered, Organic, Placement, Quality};

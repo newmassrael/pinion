@@ -58,6 +58,7 @@ use pinion_node_graph::{
     Copying, DefinitionAct, DefinitionError, InZone, InsertError, PairError, Renamed, Tree, Used,
 };
 use pinion_node_graph::{Fit, Margin, Unframed, ZoomRange};
+use pinion_node_graph::{RoomError, SpliceError, Verdict, Widening};
 
 // ---------------------------------------------------------------- taxonomy
 
@@ -1933,6 +1934,7 @@ fn dcc_r1933_proofs() -> Vec<Proof> {
 fn r1934_reroute_proofs() -> Vec<Proof> {
     vec![
         proof("dcc", "add_reroute", dcc_add_reroute),
+        proof("dcc", "insert_offset", dcc_insert_offset),
         proof(
             "engine",
             "node::ShouldDrawNodeAsControlPointOnly",
@@ -4343,6 +4345,261 @@ fn dcc_add_reroute() {
         chain.document.tree(ROOT).unwrap().node_count(),
         nodes_before
     );
+}
+
+/// A row on one line: `src -> mid -> far -> end`, every card `WIDE` across,
+/// with `mid` and `far` placed where the caller asks.
+///
+/// Positions are constructor arguments rather than a later mutation, so the
+/// fixture reaches nothing but the public API — and the two the gaps are
+/// measured from (`src`'s trailing edge, `far`'s leading edge) are the two that
+/// vary.
+fn row(mid_x: i32, far_x: i32) -> (Document<Op>, [NodeId; 4]) {
+    let mut document: Document<Op> = Document::new("root");
+    let src = document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(4)), 0, 0)
+        .expect("a source");
+    let mid = document
+        .add_node(ROOT, NodeBody::Kind(Op::Double), mid_x, 0)
+        .expect("the card that arrived");
+    let far = document
+        .add_node(ROOT, NodeBody::Kind(Op::Double), far_x, 0)
+        .expect("its consumer");
+    let end = document
+        .add_node(ROOT, NodeBody::Kind(Op::Sink), 900, 0)
+        .expect("and the end of the row");
+    wire(&mut document, src, 0, mid, 0);
+    wire(&mut document, mid, 0, far, 0);
+    wire(&mut document, far, 0, end, 0);
+    (document, [src, mid, far, end])
+}
+
+/// Every card in [`row`] is this wide, so a gap is a number a reader of the
+/// test can do in their head.
+const WIDE: i32 = 100;
+
+/// The clearance the rows below are judged against.
+const CLEARANCE: i32 = 50;
+
+/// ★★★★★ R1992 — the DCC's `insert_offset`: **the row moves apart to make room
+/// for a card that arrived**, plus the splice that puts one there.
+///
+/// R1987 corrected this row's covering sentence after finding it equated with
+/// the engine's autowire hook, which is a different gesture; what it left
+/// absent is measured at the operator's own body — a `prev`, an `insert` and a
+/// `next`, the gap either side against one margin, and a whole cone travelling
+/// when the growing side is tight. Both halves are exercised here, because the
+/// tree could previously splice only reroute bodies and a shove with nothing
+/// inserted is not the capability.
+///
+/// The four assertions that would fail if the capability were missing:
+///
+/// 1. an arbitrary node is spliced onto a standing wire and **the graph still
+///    computes**, through the node that arrived;
+/// 2. the four verdicts are each **reachable**, at gaps chosen to select them;
+/// 3. what moves on the growing side is the **whole cone**, not the one
+///    neighbour;
+/// 4. the report **names what moved and by how much** — the answer the
+///    reference has no member for, which is why the census row could not be
+///    closed by pointing at a bool.
+///
+/// The two halves are separate functions because they share no state — one
+/// works on a computing chain, the other on a row of placed cards — and because
+/// the pair together is over this workspace's hundred-line bound for one body.
+#[test]
+fn dcc_insert_offset() {
+    a_card_is_spliced_onto_a_standing_wire();
+    a_row_makes_room_for_what_arrived();
+}
+
+/// The first half: an arbitrary card goes onto a wire between two others, and
+/// the value that crosses the canvas goes through it.
+fn a_card_is_spliced_onto_a_standing_wire() {
+    let mut chain = chain();
+    assert_eq!(
+        arrives(&chain.document, Socket::new(chain.sink, 0)),
+        Some(Val::Number(5)),
+        "the fixture computes 2 + 3"
+    );
+    let standing = chain
+        .document
+        .tree(ROOT)
+        .unwrap()
+        .links()
+        .iter()
+        .find(|link| link.from.node == chain.add && link.to.node == chain.sink)
+        .expect("a wire from add to the sink")
+        .id;
+    let arriving = node(&mut chain.document, Op::Double);
+
+    // Asked before anything moves, and the verb acts on this same answer.
+    let asked = chain
+        .document
+        .may_insert_on_link(ROOT, standing, arriving)
+        .expect("a doubler fits on a number wire");
+    let done = chain
+        .document
+        .insert_on_link(ROOT, standing, arriving)
+        .expect("and so the splice happens");
+    assert_eq!(done.splice, asked, "the verb did what the question said");
+    assert_eq!(
+        done.kept, standing,
+        "the standing link keeps its identity -- an undo has one thing to put back"
+    );
+    assert_ne!(done.fed, standing, "and the feeding link is a new one");
+    assert_eq!(
+        done.splice.between,
+        (chain.add, chain.sink),
+        "it says which two it went between"
+    );
+    // ★ (1) The capability, not the call: the value now arrives through the
+    // card that was dropped on the wire.
+    assert_eq!(
+        arrives(&chain.document, Socket::new(chain.sink, 0)),
+        Some(Val::Number(10)),
+        "2 + 3, doubled by the node that was spliced in"
+    );
+
+    // Refusals, each reachable, and each leaving the document untouched.
+    assert!(matches!(
+        chain
+            .document
+            .may_insert_on_link(ROOT, done.kept, chain.sink),
+        Err(SpliceError::AlreadyAnEnd { .. })
+    ));
+    let source_only = node(&mut chain.document, Op::Num(1));
+    let sink_only = node(&mut chain.document, Op::Sink);
+    let spare = node(&mut chain.document, Op::Double);
+    let baseline = chain.document.clone();
+
+    let mut with_source = baseline.clone();
+    assert!(
+        matches!(
+            with_source.insert_on_link(ROOT, done.kept, source_only),
+            Err(SpliceError::NoIntake(_))
+        ),
+        "a node with no inputs has nothing to take the incoming wire"
+    );
+    assert_eq!(with_source, baseline, "a refused splice changed nothing");
+    let mut with_sink = baseline.clone();
+    assert!(
+        matches!(
+            with_sink.insert_on_link(ROOT, done.kept, sink_only),
+            Err(SpliceError::NoOuttake(_))
+        ),
+        "and one with no outputs has nothing to give the outgoing one"
+    );
+    assert_eq!(with_sink, baseline, "either way round");
+    // ★ The counterfactual for the two assertions above: the SAME comparison,
+    // against a splice that was admitted. Without it "changed nothing" would
+    // hold for a verb that did nothing at all.
+    let mut admitted = baseline.clone();
+    admitted
+        .insert_on_link(ROOT, done.kept, spare)
+        .expect("a doubler fits on a number wire");
+    assert_ne!(
+        admitted, baseline,
+        "the same comparison does see a splice that happened"
+    );
+}
+
+/// The second half: the row moves apart for a card that arrived in it, and the
+/// report names what moved and why it did not when it did not.
+fn a_row_makes_room_for_what_arrived() {
+    // ★ (2) Each of the four verdicts, selected by the gaps alone. `mid` is
+    // `WIDE` across, so `behind = mid_x - WIDE` and `ahead = far_x - mid_x -
+    // WIDE`.
+    // The canvas's own answer for where a card is drawn: here the model's own
+    // position, `WIDE` across. A screen substitutes its painted box.
+    let boxes = |node: &Node<Op>| Some(((node.x, node.y), Extent::new(WIDE, 40)));
+    for (mid_x, far_x, behind, ahead, want) in [
+        (160, 420, 60, 160, Verdict::Clear),
+        (120, 400, 20, 180, Verdict::Shifted),
+        (160, 290, 60, 30, Verdict::Shoved),
+        (120, 240, 20, 20, Verdict::ShiftedAndShoved),
+    ] {
+        let (document, [_, mid, _, _]) = row(mid_x, far_x);
+        let room = document
+            .room_for(ROOT, mid, Widening::Rightward, CLEARANCE, boxes)
+            .expect("the card is in a row");
+        assert_eq!(
+            (room.behind, room.ahead),
+            (behind, ahead),
+            "the gaps this case was chosen for"
+        );
+        assert_eq!(
+            room.verdict, want,
+            "gaps {behind}/{ahead} against {CLEARANCE}: {room:?}"
+        );
+        assert_eq!(
+            room.verdict.moved(),
+            room.shift != 0 || !room.shoved.is_empty(),
+            "the arm and the numbers are one answer"
+        );
+    }
+
+    // ★ (3)(4) The cone, and the report that names it. At 20/20 the inserted
+    // card shifts by `CLEARANCE - 20` and the growing side by that again plus
+    // its own shortfall.
+    let (mut document, [src, mid, far, end]) = row(120, 240);
+    let asked = document
+        .room_for(ROOT, mid, Widening::Rightward, CLEARANCE, boxes)
+        .expect("the card is in a row");
+    let made = document
+        .make_room_for(ROOT, mid, Widening::Rightward, CLEARANCE, boxes)
+        .expect("and so the row makes room");
+    assert_eq!(asked, made, "doing it reports what asking answered");
+    assert_eq!(made.between, (src, far), "it names the two it measured");
+    assert_eq!(made.shift, 30, "the card that arrived moves out of the gap");
+    assert_eq!(
+        made.shoved,
+        vec![(far, 60), (end, 60)],
+        "★ the WHOLE cone travels, not the one neighbour -- and the report \
+         says which nodes and how far, which the reference answers as a bool"
+    );
+    assert_eq!(
+        made.distance(mid),
+        Some(30),
+        "the inserted card is reachable through the same accessor"
+    );
+    assert_eq!(
+        made.distance(src),
+        None,
+        "and the anchored side did not move"
+    );
+    let placed = |id: NodeId| document.tree(ROOT).unwrap().node(id).unwrap().x;
+    assert_eq!(
+        [placed(src), placed(mid), placed(far), placed(end)],
+        [0, 150, 300, 960],
+        "and the canvas holds exactly what was reported"
+    );
+    let after = document
+        .room_for(ROOT, mid, Widening::Rightward, CLEARANCE, boxes)
+        .expect("the card is still in a row");
+    assert_eq!(
+        after.verdict,
+        Verdict::Clear,
+        "★ once the room is made there is nothing left to do: {after:?}"
+    );
+
+    // The mirror reading moves the other cone, the other way.
+    let (mut mirrored, [src, mid, _, _]) = row(120, 240);
+    let left = mirrored
+        .make_room_for(ROOT, mid, Widening::Leftward, CLEARANCE, boxes)
+        .expect("a row may widen either way");
+    assert_eq!(
+        left.shoved,
+        vec![(src, -60)],
+        "leftward, the producing cone gives ground"
+    );
+    assert_eq!(left.shift, -30, "and the card moves with it");
+
+    // A card with nothing on one side has no gap there to measure.
+    let (document, [src, _, _, _]) = row(120, 240);
+    assert!(matches!(
+        document.room_for(ROOT, src, Widening::Rightward, CLEARANCE, boxes),
+        Err(RoomError::NotInARow { producers: 0, .. })
+    ));
 }
 
 /// ★★★★★ R1935 — **from a far end to the named endpoint it shows**, and the

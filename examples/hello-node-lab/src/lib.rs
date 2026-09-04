@@ -105,8 +105,8 @@ use pinion_node_graph::{
     Act, Arrival, Camera, Crossings, Definitions, Document, Drawn, EditPath, Extent, Faces, Fault,
     Fit, Focus, Focused, Found, Fragment, InZone, Instance, Item, Judged, LandError, Landfall,
     LinkId, LinkLayer, Margin, NameSource, Node, NodeBody, NodeId, NodeKind, Objection, PortPath,
-    PortRef, PortSite, ROOT, Relinked, Sharing, Side, Socket, Tint, TreeId, Violation, WatchError,
-    Watches, Weight, ZoomRange, palette_of, type_palette,
+    PortRef, PortSite, ROOT, Relinked, Room, RoomError, Sharing, Side, Socket, Tint, TreeId,
+    Violation, WatchError, Watches, Weight, Widening, ZoomRange, palette_of, type_palette,
 };
 use pinion_platform_storage::AppStorage;
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
@@ -5274,20 +5274,40 @@ impl Hit {
     }
 }
 
+/// ★★★★★ R1992 — **where a wire between these two cards runs**: the two points
+/// its chord joins, in the world surface's own coordinates.
+///
+/// The one answer to *where is this wire*, which three readers ask and which
+/// each of them used to spell for itself — [`link_at`], [`observed_at`] and the
+/// painter all rebuilt `centre(pin_rect(.., true))` against
+/// `centre(pin_rect(.., false))` from their own `card_rect` pair. That is this
+/// repository's three-site duplication shape exactly: they agree today, and on
+/// the day a wire leaves from somewhere else the painter moves and the hit
+/// tests do not, so a person points at a wire and presses nothing.
+///
+/// ⚠ [`link_into_pin`] is deliberately **not** a fourth caller: it asks where
+/// one END is, not where the wire runs, and folding it in here would hand it a
+/// far point it has no use for.
+///
+/// `None` for a wire either end of which this canvas does not draw — there is
+/// no chord to have run anywhere.
+fn wire_run(state: &LabState, from: NodeId, to: NodeId) -> Option<((u32, u32), (u32, u32))> {
+    let (a, b) = (card_rect(state, from)?, card_rect(state, to)?);
+    Some((
+        centre(pin_rect(state, a, true)),
+        centre(pin_rect(state, b, false)),
+    ))
+}
+
 /// The link whose wire passes within a few pixels of the cursor, in the world
 /// surface's own coordinates.
 fn link_at(state: &LabState, px: i64, py: i64) -> Option<LinkId> {
     let doc = state.doc.borrow();
     let tree = doc.tree(state.here())?;
     for link in tree.links() {
-        let (Some(a), Some(b)) = (
-            card_rect(state, link.from.node),
-            card_rect(state, link.to.node),
-        ) else {
+        let Some(((ax, ay), (bx, by))) = wire_run(state, link.from.node, link.to.node) else {
             continue;
         };
-        let (ax, ay) = centre(pin_rect(state, a, true));
-        let (bx, by) = centre(pin_rect(state, b, false));
         // Sample the straight chord: the wire is drawn as a curve between the
         // same two points, and the chord is within the tolerance a finger has.
         for step in 0..=20u32 {
@@ -5317,14 +5337,9 @@ fn link_at(state: &LabState, px: i64, py: i64) -> Option<LinkId> {
 /// no id — and folding them together would mean inventing one.
 fn observed_at(state: &LabState, px: i64, py: i64) -> Option<(Socket, Socket)> {
     for seen in state.doc.borrow().observations(state.here()) {
-        let (Some(a), Some(b)) = (
-            card_rect(state, seen.from.node),
-            card_rect(state, seen.to.node),
-        ) else {
+        let Some(((ax, ay), (bx, by))) = wire_run(state, seen.from.node, seen.to.node) else {
             continue;
         };
-        let (ax, ay) = centre(pin_rect(state, a, true));
-        let (bx, by) = centre(pin_rect(state, b, false));
         for step in 0..=20u32 {
             let t = f64::from(step) / 20.0;
             #[allow(
@@ -5342,6 +5357,165 @@ fn observed_at(state: &LabState, px: i64, py: i64) -> Option<(Socket, Socket)> {
         }
     }
     None
+}
+
+/// ★★★★★ R1992 — **the wire a card being carried would be dropped onto**, and
+/// whether that wire would take it.
+///
+/// The screen half of `Document::may_insert_on_link`: the crate answers *would
+/// these ports accept*, and this answers *which wire is the person over*. Both
+/// are asked BEFORE the hand lets go, which is what makes the drop something a
+/// person can aim rather than discover.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct InsertTarget {
+    /// The wire the card is over.
+    link: LinkId,
+    /// Whether splicing the card onto it would be admitted. ★ A wire that
+    /// would refuse is still the target — the reference marks it and draws it
+    /// as refused rather than pretending the person is over nothing, and a
+    /// target that vanished on the ones that say no would be a gesture that
+    /// silently does nothing.
+    admitted: bool,
+}
+
+/// Whether the straight chord from `a` to `b` passes through `rect`.
+///
+/// A parametric clip against the rectangle's four slabs: the chord meets it
+/// exactly when the parameter it enters on is still behind the one it leaves
+/// on. Written this way rather than as four segment-against-edge tests because
+/// it also answers for a chord lying wholly INSIDE the card, which those miss
+/// and which is the ordinary case for a short wire under a wide card.
+fn chord_meets(rect: Rect, a: (u32, u32), b: (u32, u32)) -> bool {
+    let (ax, ay) = (f64::from(a.0), f64::from(a.1));
+    let (dx, dy) = (f64::from(b.0) - ax, f64::from(b.1) - ay);
+    let (lo_x, lo_y) = (f64::from(rect.x), f64::from(rect.y));
+    let (hi_x, hi_y) = (lo_x + f64::from(rect.w), lo_y + f64::from(rect.h));
+    let (mut enter, mut leave) = (0.0_f64, 1.0_f64);
+    for (p, q) in [
+        (-dx, ax - lo_x),
+        (dx, hi_x - ax),
+        (-dy, ay - lo_y),
+        (dy, hi_y - ay),
+    ] {
+        if p == 0.0 {
+            // Parallel to this pair of edges: outside it, and no parameter can
+            // bring it back in.
+            if q < 0.0 {
+                return false;
+            }
+            continue;
+        }
+        let t = q / p;
+        if p < 0.0 {
+            enter = enter.max(t);
+        } else {
+            leave = leave.min(t);
+        }
+    }
+    enter <= leave
+}
+
+/// How far a point lies from a chord, squared, so nothing takes a root to
+/// compare two of them.
+fn chord_reach(from: (u32, u32), a: (u32, u32), b: (u32, u32)) -> f64 {
+    let (px, py) = (f64::from(from.0), f64::from(from.1));
+    let (ax, ay) = (f64::from(a.0), f64::from(a.1));
+    let (dx, dy) = (f64::from(b.0) - ax, f64::from(b.1) - ay);
+    let span = dx.mul_add(dx, dy * dy);
+    // A chord of no length is a point, and the nearest point on it is itself.
+    let t = if span == 0.0 {
+        0.0
+    } else {
+        (((px - ax) * dx + (py - ay) * dy) / span).clamp(0.0, 1.0)
+    };
+    let (ex, ey) = (px - dx.mul_add(t, ax), py - dy.mul_add(t, ay));
+    ex.mul_add(ex, ey * ey)
+}
+
+/// ★★★★★ R1992 — **which standing wire this card is being carried over**, by
+/// the floor's own rule, measured at its implementation rather than guessed.
+///
+/// The rule, in the order the floor applies it:
+///
+/// 1. **A card that is already wired is not a candidate at all.** The floor
+///    gathers every socket its moving node is linked through and gives up the
+///    moment that list is non-empty, unless the node was created by the
+///    drag-search that is placing it. This screen has no such creation path, so
+///    the plain half is the whole rule here — and it is the guard that keeps
+///    *repositioning a card* from silently rewiring the graph, which is the
+///    hazard a cursor-only test would have walked straight into.
+/// 2. A wire the card is already an end of is skipped, because splicing a card
+///    onto its own wire is a self-loop asked for by accident. The crate refuses
+///    it by name too ([`pinion_node_graph::SpliceError::AlreadyAnEnd`]), so
+///    this is the gesture declining to aim at it rather than the only thing
+///    standing in the way.
+/// 3. Of what is left, the candidates are the wires whose chord **crosses the
+///    card's own rectangle** — not the ones under the cursor. The card is what
+///    is being dropped, so the card is what has to be over the wire, and a
+///    person dragging by a corner is not asked to keep a particular pixel on
+///    the line.
+/// 4. The nearest wins, by distance from the card's **top-left corner** — the
+///    floor's own tiebreak. Ties go to the lower id, which is this crate's
+///    tiebreak everywhere else.
+///
+/// ⚠ The floor also skips wires that are hidden or dimmed. This canvas draws
+/// every wire it has, so that clause has nothing to select here; `wire_run`
+/// answering `None` for a card with no box is the same idea at the only place
+/// this screen can reach it.
+fn insert_target_for(state: &LabState, node: NodeId) -> Option<InsertTarget> {
+    let card = card_rect(state, node)?;
+    let doc = state.doc.borrow();
+    let tree = doc.tree(state.here())?;
+    // (1) — the guard, and it is about the card rather than about any wire.
+    if tree
+        .links()
+        .iter()
+        .any(|link| link.from.node == node || link.to.node == node)
+    {
+        return None;
+    }
+    let corner = (card.x, card.y);
+    let mut reached: Vec<(f64, LinkId)> = Vec::new();
+    for link in tree.links() {
+        // (2) — unreachable while (1) holds, and kept because (1) is the half
+        // the floor lifts for a node its own drag-search just made. Whichever
+        // of the two guards a later round relaxes, a self-loop stays unaimable.
+        if link.from.node == node || link.to.node == node {
+            continue;
+        }
+        let Some((a, b)) = wire_run(state, link.from.node, link.to.node) else {
+            continue;
+        };
+        // (3)
+        if !chord_meets(card, a, b) {
+            continue;
+        }
+        reached.push((chord_reach(corner, a, b), link.id));
+    }
+    // (4) — `total_cmp` and not `<`, so the tiebreak never asks whether two
+    // distances are EQUAL. Two wires leaving the same pin reach a corner by the
+    // same number and a float equality is the wrong instrument for deciding it;
+    // ordering the pair and taking the first is the same rule without one.
+    reached.sort_by(|(a, one), (b, two)| a.total_cmp(b).then(one.0.cmp(&two.0)));
+    let (_, link) = *reached.first()?;
+    Some(InsertTarget {
+        link,
+        admitted: doc.may_insert_on_link(state.here(), link, node).is_ok(),
+    })
+}
+
+/// The same reading for the card the hand is **currently** carrying, which is
+/// what the paint and the published slot want.
+///
+/// Split from [`insert_target_for`] rather than folded into it because the
+/// release path has already cleared the drag by the time it commits — it holds
+/// the node itself, and asking through the drag there would answer `None` for
+/// every drop.
+fn dragged_insert_target(state: &LabState) -> Option<InsertTarget> {
+    match state.drag.get() {
+        Some(Drag::Node { node, .. }) => insert_target_for(state, node),
+        _ => None,
+    }
 }
 
 /// The drawn link landing on `node`'s accept pin that a cursor at `at` is
@@ -9609,6 +9783,9 @@ fn canvas_wires(state: &LabState, ink: Ink) -> Vec<Scene> {
         Some(Drag::Rewire { link, .. }) => Some(link),
         _ => None,
     };
+    // ★★★★★ R1992 — the wire a carried card would be dropped onto, read before
+    // the document is borrowed below because the reading borrows it too.
+    let target = dragged_insert_target(state);
     {
         let doc = state.doc.borrow();
         if let Some(tree) = doc.tree(state.here()) {
@@ -9616,21 +9793,33 @@ fn canvas_wires(state: &LabState, ink: Ink) -> Vec<Scene> {
                 if moving == Some(link.id) {
                     continue;
                 }
-                let (Some(a), Some(b)) = (
-                    card_rect(state, link.from.node),
-                    card_rect(state, link.to.node),
-                ) else {
+                let Some((from, to)) = wire_run(state, link.from.node, link.to.node) else {
                     continue;
                 };
                 let chosen = selected_link == Some(LinkPick::Authored(link.id));
-                let from = centre(pin_rect(state, a, true));
-                let to = centre(pin_rect(state, b, false));
+                // ★★★★★ R1992 — **the wire says, before the hand lets go,
+                // that this card is going onto it — and whether it will be
+                // taken.** Two colours and not one: the floor marks a target it
+                // cannot accept as a target ANYWAY, in its refusing colour,
+                // because a highlight that disappeared on the wires that say no
+                // would leave a person aiming at nothing and unable to tell
+                // *not over a wire* from *over one that refuses*.
+                //
+                // Ahead of `chosen` because a drop in progress is what the
+                // person is doing now, and the selected wire's own accent is
+                // still there when the drag ends.
+                let (stroke, weight) = match target {
+                    Some(aim) if aim.link == link.id && aim.admitted => (ink.ok, 3),
+                    Some(aim) if aim.link == link.id => (ink.err, 3),
+                    _ if chosen => (ink.accent, 2),
+                    _ => (ink.accent_line, 1),
+                };
                 children.push(wire(
                     &format!("lab.link.{}", link.id.0),
                     from,
                     to,
-                    if chosen { ink.accent } else { ink.accent_line },
-                    if chosen { 2 } else { 1 },
+                    stroke,
+                    weight,
                 ));
             }
         }
@@ -12570,6 +12759,36 @@ const FIELDS: &[SchemaField] = &{
             },
         ),
         SchemaField::action("set_endpoint", "string"),
+        // ★★★★★ R1992 — **drop a card onto a standing wire.** The fifth verb in
+        // a link's life, and the one that adds a node rather than moving an end:
+        // the wire's producing end goes onto the card, a new wire feeds it, and
+        // the row then moves apart so the card that arrived is not drawn on top
+        // of its neighbours. Two arguments for the same reason `relink` takes
+        // two — which wire, and what to put on it.
+        SchemaField::action_with(
+            "insert_on_link",
+            "string",
+            ArgForm::Delimited(','),
+            const {
+                &[
+                    SchemaArg::key("link", "string", "links"),
+                    SchemaArg::key("node", "string", "nodes"),
+                ]
+            },
+        ),
+        // ★★★★★ R1992 — the wire a carried card is aimed at, and whether it
+        // will be taken, read WHILE the hand still holds the card. The floor
+        // marks this on the wire and nothing outside its drawing can ask; here
+        // it is the same reading the paint and the release both act on, so what
+        // an agent is told and what the person is shown cannot differ.
+        SchemaField::new("insert_target", "json"),
+        // ★★★★★ R1992 — and what the row WOULD do for the card that is chosen,
+        // read without doing it. The reference's offset operator can only be
+        // asked by running it; this is the half that makes "would this move
+        // anything" a question. Json, because it is seven facts and a reader
+        // that had to parse them out of one sentence would be re-spelling the
+        // rule the crate already derived.
+        SchemaField::new("room", "json"),
         SchemaField::action_with(
             "adopt",
             "string",
@@ -12740,6 +12959,11 @@ impl ExternalIntrospect for LabOracle {
                     })
                     .unwrap_or_default(),
             ),
+            // ★★★★★ R1992 — what the row would have to do for the chosen card,
+            // asked without doing it.
+            "room" => Ok(IntrospectValue::Json(room_report(state))),
+            // ★★★★★ R1992 — and what the card in the hand is aimed at.
+            "insert_target" => Ok(IntrospectValue::Json(insert_target_report(state))),
             "zoom" => Ok(IntrospectValue::Int(i64::from(state.zoom.get()))),
             "pan" => {
                 let (x, y) = state.pan.get();
@@ -14079,6 +14303,21 @@ impl ExternalIntrospect for LabOracle {
                     InvokeError::rejected(format!("{:?} is not a node on the canvas", to.trim()))
                 })?;
                 relink_to(&state, id, node).map(IntrospectValue::Text)
+            }
+            // ★★★★★ R1992 — the drop of a card onto a wire, and the row moving
+            // apart afterwards. One verb because a person makes one gesture;
+            // two crate calls because the reference keeps them apart too — its
+            // offset operator wires nothing and runs after the splice.
+            "insert_on_link" => {
+                let raw = Self::text(&args)?;
+                let (link, onto) = raw.split_once(',').ok_or_else(|| {
+                    InvokeError::rejected(format!("{raw:?} is not <link>,<node>"))
+                })?;
+                let id = Self::link_id(&state, link)?;
+                let node = state.node_of(onto.trim()).ok_or_else(|| {
+                    InvokeError::rejected(format!("{:?} is not a node on the canvas", onto.trim()))
+                })?;
+                insert_on_link(&state, id, node).map(IntrospectValue::Text)
             }
             // A number, because the seats a person can press are a numbered row
             // and an agent addressing them by locator would be addressing a
@@ -16597,6 +16836,267 @@ fn relink_to(state: &Rc<LabState>, link: LinkId, to: NodeId) -> Result<String, I
     })
 }
 
+/// ★★★★★ R1992 — the clearance a card wants either side of it on this canvas.
+///
+/// **Derived from the specification's own drawing rather than chosen.** The
+/// opening graph is four columns — `spec::NODES` places them at x 10, 172, 344
+/// and 520, 146 to 152 wide — so the gaps the specification itself leaves
+/// between consecutive columns are 16, 22 and 24. This is the narrowest of the
+/// three, which makes the opening canvas exactly clear: nothing on it is
+/// crowded, and any card dropped between two columns is. A larger number would
+/// declare the specification's own layout too tight; a smaller one would let a
+/// card land on top of a wire's ends and call it room.
+///
+/// The reference reads its equivalent from a user preference. Whose it is
+/// belongs to an application, which is why the crate takes it as an argument
+/// and this is the one this screen passes.
+const ROW_CLEARANCE: i32 = 16;
+
+/// The canvas's answer for where every card is drawn, taken as **one snapshot**
+/// before the row is asked anything.
+///
+/// ⚠ [`drawn_box_of`] and not `(node.x, node.y)`, for the reason R1991 recorded
+/// at `frame_selection`: a card's box here is PAINTED — its height follows the
+/// rows it draws and its position is offset from [`WORLD_ORIGIN`] — so a pass
+/// handed only the stored position would measure gaps between rectangles nobody
+/// sees.
+///
+/// ★★★★★ **A snapshot and not a callback that reads the document, and that is a
+/// correctness fix rather than a style.** `Document::make_room_for` holds the
+/// document MUTABLY while it asks where each card is drawn, so a callback that
+/// borrowed it again panicked — `already mutably borrowed` — the moment the row
+/// actually had something to do. Nothing reading `room` could reach it, because
+/// that path only ever borrows the document to look; only a card genuinely
+/// arriving in a crowded row does, which is exactly the gesture. It is also the
+/// right answer on its own terms: a shove has to measure the layout **as it
+/// was**, not as it is being changed underneath the measurement.
+///
+/// ⚠ Not [`drawn_boxes`], which answers a different question for a different
+/// caller: that one is *everything the canvas draws* — host frames included,
+/// unkeyed — because a fit must not cut a frame's border. A row measures gaps
+/// between CARDS and has to be able to name which card, so folding the two
+/// would hand the row rectangles no card is at.
+fn card_boxes(state: &LabState) -> BTreeMap<NodeId, ((i32, i32), Extent)> {
+    let ids: Vec<NodeId> = state
+        .doc
+        .borrow()
+        .tree(state.here())
+        .map(|tree| tree.nodes().map(|card| card.id).collect())
+        .unwrap_or_default();
+    ids.into_iter()
+        .filter_map(|id| drawn_box_of(state, id).map(|shape| (id, shape)))
+        .collect()
+}
+
+/// Put a card where the wire it was dropped on runs (R1992).
+///
+/// Between the producer's trailing edge and the consumer's leading edge, and
+/// vertically between their middles — which is where the wire is drawn, so it
+/// is where a hand releasing over that wire would have left the card. Both are
+/// read from the PAINTED boxes and written back as stored positions, the same
+/// delta the palette's own `free_spot` applies.
+///
+/// A card either end of which is not drawn is left where it is: there is no
+/// wire on screen to have dropped it on, and moving it would be a guess.
+fn land_on_wire(state: &Rc<LabState>, between: (NodeId, NodeId), node: NodeId) {
+    let here = state.here();
+    let (
+        Some(((from_x, from_y), from_size)),
+        Some(((to_x, to_y), to_size)),
+        Some(((was_x, was_y), size)),
+    ) = (
+        drawn_box_of(state, between.0),
+        drawn_box_of(state, between.1),
+        drawn_box_of(state, node),
+    )
+    else {
+        return;
+    };
+    let middle_x = (from_x + from_size.width + to_x) / 2 - size.width / 2;
+    let middle_y =
+        (from_y + from_size.height / 2 + to_y + to_size.height / 2) / 2 - size.height / 2;
+    // A delta, because what is stored and what is drawn differ by this canvas's
+    // own origin — see `drawn_box_of`.
+    let (dx, dy) = (middle_x - was_x, middle_y - was_y);
+    if let Some(card) = state
+        .doc
+        .borrow_mut()
+        .tree_mut(here)
+        .and_then(|tree| tree.node_mut(node))
+    {
+        card.x += dx;
+        card.y += dy;
+    }
+}
+
+/// ★★★★★ R1992 — **drop a card onto a standing wire**: it is spliced in, and
+/// then the row moves apart to make space for it.
+///
+/// One gesture, two crate calls, in the order the reference keeps them: its
+/// splice is performed by a drag handler and its offset operator wires nothing
+/// and runs after. Keeping them apart here means a refused splice never moves
+/// anything, and a row that had nothing to do still reports the splice.
+///
+/// The sentence says both halves, because they are two facts a person can see
+/// separately — the wire now goes through the card, and its neighbours slid
+/// over. A single "done" would make the second invisible.
+fn insert_on_link(state: &Rc<LabState>, link: LinkId, node: NodeId) -> Result<String, InvokeError> {
+    let here = state.here();
+    let name = state.name_of(node);
+    // Asked before anything moves, so a refused drop leaves the card where the
+    // person had it — the same discipline `relink_to` keeps one function up.
+    let asked = state
+        .doc
+        .borrow()
+        .may_insert_on_link(here, link, node)
+        .map_err(|why| {
+            let said = Utterance::refused(&why.to_string());
+            state.say(said.clone());
+            InvokeError::rejected(said.into_clause())
+        })?;
+    // ★★★★★ The card is put ON the wire it was dropped on, and that is this
+    // SCREEN's decision rather than the crate's: a card dropped on a wire is at
+    // the wire, and without it the splice would draw a wire jumping across the
+    // canvas to a card that never moved. The crate stays geometry-free and
+    // takes a drawn box, which is what lets this screen answer with its own
+    // painted rectangles.
+    land_on_wire(state, asked.between, node);
+    let spliced = match state.doc.borrow_mut().insert_on_link(here, link, node) {
+        Ok(spliced) => spliced,
+        Err(why) => {
+            // The crate's own sentence, so the reason a person reads is the one
+            // every other wire verb gives them rather than a paraphrase.
+            let said = Utterance::refused(&why.to_string());
+            state.say(said.clone());
+            return Err(InvokeError::rejected(said.into_clause()));
+        }
+    };
+    // A card on a new wire may now speak a transport it did not before, exactly
+    // as `adopt` and `relink` leave it to this to work out.
+    settle_transports(state);
+    let (from, to) = spliced.splice.between;
+    let word = format!("{} -> {name} -> {}", state.name_of(from), state.name_of(to));
+    // ★ The row's half. `Widening::Rightward` because this canvas reads left to
+    // right — `spec::NODES`' four columns ascend in x and every wire in
+    // `spec::LINKS` runs from a lower column to a higher one — so the side that
+    // may give ground is the consuming one.
+    let boxes = card_boxes(state);
+    let moved = state.doc.borrow_mut().make_room_for(
+        here,
+        node,
+        Widening::Rightward,
+        ROW_CLEARANCE,
+        |card| boxes.get(&card.id).copied(),
+    );
+    let said = match moved {
+        Ok(room) if room.verdict.moved() => format!(
+            "{word}, and {} card(s) moved over",
+            room.shoved.len() + usize::from(room.shift != 0)
+        ),
+        // A row with nothing to do is not a failure, and neither is a card the
+        // canvas does not draw: the wire is spliced either way, and saying so
+        // is what stops a reader attributing the silence to the splice.
+        Ok(_) | Err(_) => format!("{word}, and the row already had space"),
+    };
+    state.say(Utterance::done(said.clone()));
+    Ok(said)
+}
+
+/// ★★★★★ R1992 — **what the card in the hand is aimed at**, said in names.
+///
+/// Null while nothing is carried, or while what is carried is over no wire it
+/// could go onto — which is a different fact from *over a wire that refuses*,
+/// and the reason `admitted` is a field beside the wire rather than the wire's
+/// presence. The floor collapses those two into one absent highlight.
+fn insert_target_report(state: &Rc<LabState>) -> serde_json::Value {
+    let Some(aim) = dragged_insert_target(state) else {
+        return serde_json::Value::Null;
+    };
+    let named = state
+        .doc
+        .borrow()
+        .tree(state.here())
+        .and_then(|tree| {
+            tree.links()
+                .iter()
+                .find(|link| link.id == aim.link)
+                .map(|link| (state.name_of(link.from.node), state.name_of(link.to.node)))
+        })
+        .map(|(from, to)| serde_json::json!([from, to]));
+    serde_json::json!({
+        "link": aim.link.0,
+        // The pair a person reads off the canvas, and the form `insert_on_link`
+        // itself takes a wire in — so what this publishes can be handed back.
+        "between": named,
+        "admitted": aim.admitted,
+    })
+}
+
+/// ★★★★★ R1992 — **what the row would have to do for the chosen card**, asked
+/// without doing it.
+///
+/// The half the reference cannot be asked: its offset operator answers a bool,
+/// after moving things. Seven facts here, and the two that matter most are the
+/// ones no member of the floor's has — which cards would move and how far, and
+/// why nothing would when nothing would.
+fn room_report(state: &Rc<LabState>) -> serde_json::Value {
+    let Some(card) = state.active_card() else {
+        return serde_json::json!({ "asked": serde_json::Value::Null, "why": "no card is chosen" });
+    };
+    let here = state.here();
+    // The same snapshot the verb measures against, so a reading and the move it
+    // predicts cannot be taken over two different layouts.
+    let boxes = card_boxes(state);
+    let asked =
+        state
+            .doc
+            .borrow()
+            .room_for(here, card, Widening::Rightward, ROW_CLEARANCE, |one| {
+                boxes.get(&one.id).copied()
+            });
+    let named = |room: &Room| -> Vec<serde_json::Value> {
+        room.shoved
+            .iter()
+            .map(|&(id, by)| serde_json::json!({ "card": state.name_of(id), "by": by }))
+            .collect()
+    };
+    match asked {
+        Ok(room) => serde_json::json!({
+            "asked": state.name_of(card),
+            // The two the gaps were taken against, which the reference is
+            // handed and never reports.
+            "between": [state.name_of(room.between.0), state.name_of(room.between.1)],
+            "behind": room.behind,
+            "ahead": room.ahead,
+            "margin": room.margin,
+            "shift": room.shift,
+            "shoved": named(&room),
+            "verdict": match room.verdict {
+                pinion_node_graph::Verdict::Clear => "clear",
+                pinion_node_graph::Verdict::Shifted => "shifted",
+                pinion_node_graph::Verdict::Shoved => "shoved",
+                pinion_node_graph::Verdict::ShiftedAndShoved => "shifted and shoved",
+            },
+        }),
+        // ★ A refusal is a reading too. `NotInARow` is the common one — a card
+        // at either end of the graph is not between anything — and it carries
+        // which side was empty, so a screen can say *nothing feeds it* rather
+        // than *it did not work*.
+        Err(why) => serde_json::json!({
+            "asked": state.name_of(card),
+            "why": why.to_string(),
+            "sides": match why {
+                RoomError::NotInARow {
+                    producers,
+                    consumers,
+                    ..
+                } => serde_json::json!({ "producers": producers, "consumers": consumers }),
+                _ => serde_json::Value::Null,
+            },
+        }),
+    }
+}
+
 /// Take a reported link into the drawing (R1681).
 ///
 /// `Document::adopt` runs the **authoring** rules on it, so a link the world
@@ -17189,7 +17689,32 @@ fn press(state: &Rc<LabState>) {
 /// Membership is what a frame's rectangle is derived from, so this is the whole
 /// group gesture: the box follows the drop, rather than the drop being checked
 /// against a box somebody typed into a table.
-fn apply_frame(state: &Rc<LabState>, node: NodeId) {
+/// ★★★★★ R1992 — whether a re-parent is **the gesture**, or a **consequence**
+/// of one.
+///
+/// Not a boolean, for the reason [`Widening`] is not one: a reader of the call
+/// site should not have to know which way `true` points.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reparent {
+    /// The drag was a placement, and where the card ended up is the whole of
+    /// what happened — so the host change is what the person is told about.
+    Announced,
+    /// The drag was a DROP onto a wire. The splice has already spoken, refusal
+    /// included, and the card changing host is a consequence of being moved
+    /// onto that wire rather than a second act.
+    ///
+    /// ⚠ **Measured, not anticipated.** Announced here, this overwrote the
+    /// reason: a card that cannot listen was dropped on a wire, was correctly
+    /// refused with *nothing takes the incoming wire*, and the person was then
+    /// told `CLI-11 now starts on host-a` — the sentence that explained the
+    /// refusal was gone, and what was left reads like the gesture worked.
+    Quiet,
+}
+
+/// Returns the clause a [`Reparent::Quiet`] re-parent did **not** say, so the
+/// caller can join it to what is already on screen. [`Reparent::Announced`]
+/// says its own and answers [`None`].
+fn apply_frame(state: &Rc<LabState>, node: NodeId, voice: Reparent) -> Option<String> {
     let landed = card_rect(state, node)
         .and_then(|r| frame_at(state, i64::from(r.x + r.w / 2), i64::from(r.y + r.h / 2)));
     let held = state
@@ -17198,19 +17723,29 @@ fn apply_frame(state: &Rc<LabState>, node: NodeId) {
         .tree(state.here())
         .and_then(|t| t.node(node).and_then(|n| n.parent));
     if landed == held {
-        return;
+        return None;
     }
     if state
         .doc
         .borrow_mut()
         .set_parent(state.here(), node, landed)
-        .is_ok()
+        .is_err()
     {
-        let name = state.name_of(node);
-        match landed.and_then(|f| state.frames.borrow().get(&f).cloned()) {
-            Some(frame) => state.say(Utterance::done(format!("{name} now starts on {frame}"))),
-            None => state.say(Utterance::done(format!("{name} is not on any host"))),
+        return None;
+    }
+    let name = state.name_of(node);
+    let clause = match landed.and_then(|f| state.frames.borrow().get(&f).cloned()) {
+        Some(frame) => format!("{name} now starts on {frame}"),
+        None => format!("{name} is not on any host"),
+    };
+    match voice {
+        Reparent::Announced => {
+            state.say(Utterance::done(clause));
+            None
         }
+        // Handed back rather than said, so the caller can join it to the
+        // sentence that is already there instead of replacing it.
+        Reparent::Quiet => Some(clause),
     }
 }
 
@@ -17305,7 +17840,51 @@ fn finish_drag(state: &Rc<LabState>, drag: Drag, now: &Hit) {
                 delete_link(state, link).ok();
             }
         },
-        Drag::Node { node, .. } => apply_frame(state, node),
+        // ★★★★★ R1992 — **a card let go over a standing wire is spliced into
+        // it**, and the row then moves apart to make space for what arrived.
+        //
+        // The floor's own gesture, and the one the census row is named for. The
+        // splice runs FIRST and the frame after it, because the splice moves
+        // the card onto the wire: deciding which host it starts on from where
+        // the hand released, and then moving it somewhere else, would name a
+        // frame the card is not drawn in.
+        //
+        // `insert_target_for` and not the release `Hit`: the carried card is
+        // painted under the cursor, so the hit test answers the card itself and
+        // could never see the wire beneath it.
+        Drag::Node { node, .. } => {
+            // A refusal is spoken by `insert_on_link`, in the crate's own
+            // sentence — which is why a target that says no is still aimed at
+            // and still dropped on. The person hears why.
+            let spliced =
+                insert_target_for(state, node).map(|aim| insert_on_link(state, aim.link, node));
+            let voice = if spliced.is_some() {
+                Reparent::Quiet
+            } else {
+                Reparent::Announced
+            };
+            let host = apply_frame(state, node, voice);
+            // ★★★★★ **Both facts when both happened, in one sentence.**
+            //
+            // ⚠ Measured, not anticipated. The re-parent used to speak LAST and
+            // unconditionally: a card that cannot listen was dropped on a wire,
+            // was correctly refused with *nothing takes the incoming wire*, and
+            // the person was then told `CLI-11 now starts on host-a` — the
+            // reason was gone and what was left reads as though it worked.
+            //
+            // Silencing the re-parent instead would have traded a lost REASON
+            // for a lost FACT, so the two are joined. The splice's own sentence
+            // comes first because it is what the person was doing.
+            if let (Some(said), Some(host)) = (spliced, host) {
+                state.say(match said {
+                    Ok(done) => Utterance::done(format!("{done}, and {host}")),
+                    Err(why) => Utterance::refused(&match why.reason() {
+                        Some(reason) => format!("{reason}, and {host}"),
+                        None => host,
+                    }),
+                });
+            }
+        }
         // ★ R1889 — a width drag commits on every move, so letting go commits
         // nothing extra. Named beside the other two that do the same rather
         // than added to their arm, because *this one has already committed* and
