@@ -1006,6 +1006,68 @@ impl Theme {
         Ok((theme, unknown))
     }
 
+    /// (R2018 §5.50) The four container tiers, lowest elevation first.
+    ///
+    /// The ladder proper. [`ColorRole::Surface`] is deliberately NOT in it —
+    /// see [`Self::elevation_inversions`].
+    pub const ELEVATION: [ColorRole; 4] = [
+        ColorRole::SurfaceContainerLow,
+        ColorRole::SurfaceContainer,
+        ColorRole::SurfaceContainerHigh,
+        ColorRole::SurfaceContainerHighest,
+    ];
+
+    /// (R2018 §5.50) Adjacent elevation tiers that step the wrong way, if any.
+    ///
+    /// A raised surface must read as raised: whichever way this palette's
+    /// ladder runs — lighter with elevation on a dark ground, darker on a light
+    /// one — every step has to run the same way, or two tiers a person is
+    /// meant to tell apart swap places. Empty means the ladder is a ladder.
+    ///
+    /// ★★★★★ THIS IS THE HALF OF THE ELEVATION RULE THAT GENERALISES, AND
+    /// SEPARATING IT OUT IS A MEASUREMENT RATHER THAN A TIDY-UP. R57.X pinned
+    /// the progression INCLUDING `surface`, on the grounds that it is the
+    /// lightest tone in a light palette and the darkest in a dark one — which
+    /// is Material 3's baseline and is true of [`Self::light`] and
+    /// [`Self::dark`], the only two palettes that pin ever ran on.
+    ///
+    /// Run against palettes real screens BIND, it fails: measured at R2018,
+    /// the analysis shell's light palette and an authored design system's
+    /// export — two sources that were written independently — BOTH put
+    /// `surface` between `surface_container_low` and `surface_container`,
+    /// because a grey page carrying white cards is a light theme people
+    /// actually design. Their containers are monotonic; it is only `surface`'s
+    /// place in the sequence that differs, and it differs the same way in both.
+    ///
+    /// ⇒ `surface`'s position is a design decision this framework does not get
+    /// to make, and the containers' order is a property every palette here
+    /// satisfies. The R57.X pins keep the stronger claim and keep it where it
+    /// is true — on the two canonical palettes, whose whole job is to be the
+    /// Material baseline.
+    ///
+    /// ⚠ Luminance is [`crate::contrast::relative_luminance`], the perceptual
+    /// one, and not the `r + g + b` the R57.X pins use. Those two can disagree
+    /// about a pair of near-equal tones; this reports what a reader's eye
+    /// orders, which is what "reads as raised" means.
+    #[must_use]
+    pub fn elevation_inversions(&self) -> Vec<(ColorRole, ColorRole)> {
+        let lum = |role: ColorRole| crate::contrast::relative_luminance(self.resolve(role));
+        let (first, last) = (lum(Self::ELEVATION[0]), lum(Self::ELEVATION[3]));
+        let rising = last >= first;
+        Self::ELEVATION
+            .windows(2)
+            .filter_map(|pair| {
+                let (a, b) = (pair[0], pair[1]);
+                let steps_right = if rising {
+                    lum(b) >= lum(a)
+                } else {
+                    lum(b) <= lum(a)
+                };
+                (!steps_right).then_some((a, b))
+            })
+            .collect()
+    }
+
     /// (R2017 §5.50) Where this palette and `other` disagree, role by role.
     ///
     /// ★★★★★ THIS EXISTS BECAUSE A COMPARISON NOBODY CAN RUN IS A COMPARISON
@@ -2250,6 +2312,59 @@ mod tests {
             .expect("a complete palette is taken whatever else it carries");
         assert_eq!(unknown, vec!["tertiary".to_owned()]);
         println!("[r2016] refusal reads: {said}");
+    }
+
+    /// ★★★★★ R2018 §5.50 — **the elevation ladder runs one way, and an
+    /// inverted step is named.**
+    ///
+    /// The R57.X pins two functions up assert the same thing about these two
+    /// palettes and assert it with `r + g + b` on a hand-written chain of
+    /// comparisons. This asserts the property that a palette a SCREEN binds can
+    /// also be held to — see `elevation_inversions` for why `surface` is not in
+    /// it — and it asserts the detector as well as the palettes, because a
+    /// function that returns nothing whatever it is given would satisfy the
+    /// first half on its own.
+    #[test]
+    fn r2018_the_elevation_ladder_runs_one_way() {
+        for (word, palette) in [("light", Theme::light()), ("dark", Theme::dark())] {
+            assert!(
+                palette.elevation_inversions().is_empty(),
+                "the {word} palette's containers must step one way: {:?}",
+                palette.elevation_inversions()
+            );
+        }
+        // The two directions are real and opposite, so the detector cannot be
+        // hard-coded to one of them.
+        let lum = |c: Color| crate::contrast::relative_luminance(c);
+        assert!(
+            lum(Theme::light().surface_container_highest)
+                < lum(Theme::light().surface_container_low),
+            "the light ladder darkens with elevation"
+        );
+        assert!(
+            lum(Theme::dark().surface_container_highest) > lum(Theme::dark().surface_container_low),
+            "and the dark one lightens, which is the case a one-sided check misses"
+        );
+
+        // The detector's own failing path: one middle tier moved past its
+        // neighbour, in each direction. Without this a `Vec::new()` body passes
+        // everything above.
+        for (word, mut palette) in [("light", Theme::light()), ("dark", Theme::dark())] {
+            let swapped = palette.resolve(ColorRole::SurfaceContainerHighest);
+            palette.bind(ColorRole::SurfaceContainer, swapped);
+            let found = palette.elevation_inversions();
+            assert!(
+                !found.is_empty(),
+                "{word}: a tier moved to the far end of the ladder is an inversion"
+            );
+            assert!(
+                found
+                    .iter()
+                    .any(|(a, b)| *a == ColorRole::SurfaceContainer
+                        || *b == ColorRole::SurfaceContainer),
+                "{word}: and the pair reported names the tier that moved: {found:?}"
+            );
+        }
     }
 
     /// ★★★★★ R2017 §5.50 — **a difference in ANY channel is a difference**,

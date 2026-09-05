@@ -7851,3 +7851,48 @@ fn r2017_the_screens_palette_departs_from_the_default_exactly_where_it_says() {
         "a palette agrees with itself on every role"
     );
 }
+
+/// ★★★★★ R2018 §5.50 — **the palette this screen BINDS is held to the
+/// elevation rule, which until now only the framework's own two were.**
+///
+/// R57.X pins the surface progression and pins it on `Theme::light` and
+/// `Theme::dark` — the palettes nothing ships. A screen that binds its own was
+/// checked by nothing, which is the same hole R2012 found in the legibility
+/// table one axis over: a rule stated for a declared set, and the shipped thing
+/// outside it.
+///
+/// ⚠⚠ AND RUNNING THE PINNED RULE HERE WOULD HAVE FAILED, WHICH IS THE ROUND'S
+/// FINDING RATHER THAN A BUG IN THIS PALETTE. That rule says `surface` is the
+/// lightest tone in a light palette; measured at R2018, this screen puts it
+/// BETWEEN `surface_container_low` and `surface_container` — and so does an
+/// authored design system's export, written independently, in the same place.
+/// A grey page carrying white cards is a light theme people design on purpose,
+/// so `surface`'s position is a decision the framework does not get to make.
+/// What both palettes DO satisfy, and what this asserts, is that the four
+/// container tiers step one way.
+#[test]
+fn r2018_the_bound_palettes_elevation_ladder_runs_one_way() {
+    use pinion_core::theme::Theme;
+
+    let (light, dark) = super::reference_palettes();
+    for (word, palette) in [("light", light), ("dark", dark)] {
+        let inversions = palette.elevation_inversions();
+        assert!(
+            inversions.is_empty(),
+            "the {word} palette this screen binds must step one way through its \
+             container tiers, and inverts at {inversions:?}",
+        );
+    }
+    // The denominator this gate depends on: four tiers make three steps, and a
+    // ladder shortened to one rung would satisfy the loop above by having
+    // nothing to compare.
+    assert_eq!(
+        Theme::ELEVATION.len(),
+        4,
+        "four container tiers is what the ladder is"
+    );
+    println!(
+        "[r2018] both bound palettes step one way through {} tiers",
+        Theme::ELEVATION.len()
+    );
+}
