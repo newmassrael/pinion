@@ -2232,16 +2232,16 @@ mod tests {
             .chain(Theme::ELEVATION)
             .collect();
         for (word, palette) in [("light", Theme::light()), ("dark", Theme::dark())] {
-            let mut by_sum = tiers.clone();
-            let mut by_lum = tiers.clone();
-            by_sum.sort_by_key(|role| sum(palette.resolve(*role)));
-            by_lum.sort_by(|a, b| {
+            let mut by_channel_sum = tiers.clone();
+            let mut by_eye = tiers.clone();
+            by_channel_sum.sort_by_key(|role| sum(palette.resolve(*role)));
+            by_eye.sort_by(|a, b| {
                 lum(palette.resolve(*a))
                     .partial_cmp(&lum(palette.resolve(*b)))
                     .expect("palette colours are ordinary numbers")
             });
             assert_eq!(
-                by_sum, by_lum,
+                by_channel_sum, by_eye,
                 "{word}: the two arithmetics order this palette's surface tiers differently"
             );
         }
