@@ -785,7 +785,12 @@ fn reference_palettes() -> (Theme, Theme) {
         on_surface: rgb(0x14_17_1C),
         on_surface_muted: rgb(0x5B_65_70),
         accent: rgb(0x9A_00_4F),
-        on_accent: rgb(0xFF_FF_FF),
+        // ★ R2017 — `on_accent` is NOT overridden here, and the absence is the
+        // finding rather than an omission. The line was present and wrote
+        // `#FFFFFF`, which is what `Theme::light` already answers: a line that
+        // reads as a decision and changes nothing. `r2017_*` compares this
+        // palette with the default and counts, which is what found it — the
+        // dark palette's twelve are all real, so this is the one.
         outline: rgb(0xE1_E5_EA),
         surface_container_low: rgb(0xFF_FF_FF),
         surface_container: rgb(0xEE_F0_F3),

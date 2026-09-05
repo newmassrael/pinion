@@ -7763,3 +7763,91 @@ fn r2012_the_status_bullet_is_findable_in_both_palettes() {
         println!("[r2012] {}", readings.join(" "));
     });
 }
+
+/// ★★★★★ R2017 §5.50 — **this screen's palette departs from the framework's
+/// on exactly the roles it says it does, and on no others.**
+///
+/// `reference_palettes` is a hand-authored palette: twelve overrides per mode
+/// over the framework defaults, written to match the design system this tool
+/// is drawn from. Twelve is a number in the source and nothing read it back —
+/// so an override that stopped differing (because a framework default moved to
+/// meet it) would leave a line that looks deliberate and does nothing, and an
+/// override added without intent would look like the others.
+///
+/// ⚠⚠ THE REASON THIS IS WORTH A GATE IS A MEASUREMENT TAKEN AT R2017 AND NOT
+/// BEFORE. The design system exports its palette in a shape this framework can
+/// read, and the two had never been compared: they disagree on **nine of
+/// nineteen** roles in the light palette and **fourteen of nineteen** in the
+/// dark, and some of that is systematic — this screen's dark elevation ladder
+/// sits one rung off, its `surface_container_low` being exactly the export's
+/// `surface`. That comparison is now `Theme::differences`, one call; this gate
+/// is the half of it that can live in the tree, because the export itself is
+/// not this repository's to carry.
+///
+/// ```text
+/// cargo test -p hello-analyzer-shell r2017 -- --nocapture
+/// ```
+#[test]
+fn r2017_the_screens_palette_departs_from_the_default_exactly_where_it_says() {
+    use pinion_core::theme::Theme;
+
+    let (light, dark) = super::reference_palettes();
+    let mut judged = 0_usize;
+    // ⚠ The counts differ by one and that asymmetry is a RESULT, not an
+    // accident of writing. On its first run this gate found the light palette
+    // writing twelve override lines and departing on eleven: `on_accent` said
+    // `#FFFFFF`, which is what the framework default already answers. The dead
+    // line is gone, so eleven is now what the source states as well as what it
+    // does — and the next dead line is a failure rather than a decoration.
+    for (word, mine, base, owed) in [
+        ("light", light, Theme::light(), 11),
+        ("dark", dark, Theme::dark(), 12),
+    ] {
+        let differences = base.differences(&mine);
+        assert_eq!(
+            differences.len(),
+            owed,
+            "the {word} palette declares {owed} departures and makes {}: {}",
+            differences.len(),
+            differences
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+        // And the relation is symmetric in the roles it names, which is what
+        // makes `differences` a comparison rather than a subtraction.
+        let back = mine.differences(&base);
+        assert_eq!(
+            differences.iter().map(|d| d.role).collect::<Vec<_>>(),
+            back.iter().map(|d| d.role).collect::<Vec<_>>(),
+            "{word}: which roles differ cannot depend on which way round it is asked",
+        );
+        for (there, here) in differences.iter().zip(&back) {
+            assert_eq!(
+                (there.mine, there.theirs),
+                (here.theirs, here.mine),
+                "{word}: and the two colours swap with the question",
+            );
+        }
+        println!(
+            "[r2017] {word} departs on {}: {}",
+            differences.len(),
+            differences
+                .iter()
+                .map(|d| d.role.name())
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        judged += 1;
+    }
+    assert_eq!(judged, 2, "both modes, or this says half of what it claims");
+
+    // The negative control: a palette compared with itself differs nowhere.
+    // Without it, a `differences` that always returned twelve rows of noise
+    // would satisfy everything above.
+    assert!(
+        Theme::light().differences(&Theme::light()).is_empty(),
+        "a palette agrees with itself on every role"
+    );
+}

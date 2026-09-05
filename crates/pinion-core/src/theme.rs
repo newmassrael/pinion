@@ -873,6 +873,33 @@ impl Theme {
     }
 }
 
+/// (R2017 §5.50) One role two palettes answer differently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RoleDifference {
+    /// The role they disagree about.
+    pub role: ColorRole,
+    /// What the palette asked answered.
+    pub mine: Color,
+    /// What the palette compared against answered.
+    pub theirs: Color,
+}
+
+impl fmt::Display for RoleDifference {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}: {:02X}{:02X}{:02X} vs {:02X}{:02X}{:02X}",
+            self.role.name(),
+            self.mine.r,
+            self.mine.g,
+            self.mine.b,
+            self.theirs.r,
+            self.theirs.g,
+            self.theirs.b
+        )
+    }
+}
+
 /// (R2016 §5.50) Why an authored palette could not be taken.
 ///
 /// ★★★★★ It names EVERY role the document is short of, and serde does not.
@@ -977,6 +1004,34 @@ impl Theme {
             theme.bind(*role, colour);
         }
         Ok((theme, unknown))
+    }
+
+    /// (R2017 §5.50) Where this palette and `other` disagree, role by role.
+    ///
+    /// ★★★★★ THIS EXISTS BECAUSE A COMPARISON NOBODY CAN RUN IS A COMPARISON
+    /// NOBODY HAS RUN. Two palettes for one product had been maintained side by
+    /// side for a long time — one hand-authored in a screen, one exported by
+    /// the design system that screen is drawn from — and the question *do they
+    /// agree* had never been asked, because asking it meant somebody writing
+    /// the loop. Measured the first time it was asked: they differ on **nine**
+    /// of nineteen roles in the light palette and **fourteen** of nineteen in
+    /// the dark, and part of that is systematic rather than noise — the
+    /// screen's dark elevation ladder sits one rung off, its
+    /// `surface_container_low` being exactly the other's `surface`.
+    ///
+    /// So the loop lives here, once, and the answer is a value a test or a tool
+    /// can assert on. In [`ColorRole::all`] order, so two runs are comparable.
+    #[must_use]
+    pub fn differences(&self, other: &Self) -> Vec<RoleDifference> {
+        ColorRole::all()
+            .iter()
+            .copied()
+            .filter_map(|role| {
+                let mine = self.resolve(role);
+                let theirs = other.resolve(role);
+                (mine != theirs).then_some(RoleDifference { role, mine, theirs })
+            })
+            .collect()
     }
 
     /// (R2016 §5.50) Set one role's colour.
@@ -2195,6 +2250,47 @@ mod tests {
             .expect("a complete palette is taken whatever else it carries");
         assert_eq!(unknown, vec!["tertiary".to_owned()]);
         println!("[r2016] refusal reads: {said}");
+    }
+
+    /// ★★★★★ R2017 §5.50 — **a difference in ANY channel is a difference**,
+    /// and this exists because the round's first gate could not say so.
+    ///
+    /// The consumer gate over in the analysis shell counts how many roles that
+    /// screen's palette departs on and got the right number — but its
+    /// counterfactual, comparing only the RED channel, PASSED: every role that
+    /// screen overrides happens to differ in red as well, so the count could
+    /// not tell a whole-colour comparison from a third of one. A gate whose
+    /// mutation survives is measuring something narrower than it claims.
+    ///
+    /// So the property is asserted where it lives, on data chosen to need it:
+    /// one role moved in a single channel, once per channel, each of which a
+    /// red-only comparison misses.
+    #[test]
+    fn r2017_a_difference_in_any_channel_is_reported() {
+        let base = Theme::light();
+        let role = ColorRole::Surface;
+        let from = base.resolve(role);
+        for (channel, moved) in [
+            ("red", Color::rgba(from.r ^ 1, from.g, from.b, from.a)),
+            ("green", Color::rgba(from.r, from.g ^ 1, from.b, from.a)),
+            ("blue", Color::rgba(from.r, from.g, from.b ^ 1, from.a)),
+            ("alpha", Color::rgba(from.r, from.g, from.b, from.a ^ 1)),
+        ] {
+            let mut other = base;
+            other.bind(role, moved);
+            let differences = base.differences(&other);
+            assert_eq!(
+                differences.len(),
+                1,
+                "a palette that moved only {channel} differs on exactly one role"
+            );
+            assert_eq!(differences[0].role, role, "and it is the one that moved");
+            assert_eq!(
+                (differences[0].mine, differences[0].theirs),
+                (from, moved),
+                "reported from the asking palette's side"
+            );
+        }
     }
 
     /// ★★★★★ R2016 §5.50 — **`bind` and `resolve` are inverses over every
