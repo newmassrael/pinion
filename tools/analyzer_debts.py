@@ -237,8 +237,36 @@ CLOSERS: dict[str, str] = {
 #: ★ Being a commit is what makes it a command: `--check` re-reads the pin out
 #: of git and refuses a committed cohort that has drifted from it. A hand-kept
 #: list would have the defect this round is repairing.
-COHORT_PIN = "7469fcac"
-COHORT_ROUND = "R1809"
+#: ★★★★★ R2009 — the pin MOVED, and which of its two effects was intended.
+#:
+#: Moving a pin does two things in one act, and the loop's standing rules
+#: require the mover to say which one they meant: it **re-opens the closing
+#: condition** (a spent cohort reads met, a fresh one does not), and it
+#: **exposes every debt opened since the old pin** to the goal.
+#:
+#: Measured immediately before the move: the R1809 cohort held 33 members, of
+#: which 28 were closed, 4 blocked and 1 a person's — `loop` was **0**, so the
+#: third condition was MET — while the live family held 61 open debts, 54 of
+#: them not blocked and **47 of them the loop's to close**. The condition was
+#: true about 33 names fixed 199 rounds earlier and said nothing about the work.
+#:
+#: **The intended effect is the second: exposure.** The first is accepted, not
+#: sought. The R1809 cohort was genuinely reached — its last open member closed
+#: at R2008, with the reference census at 76/76 and 210/210 — and that result
+#: stays true of the population it was about. What the move says is that the
+#: population is no longer the one the goal is about.
+#:
+#: The new pin is R2008's closing commit. Its `docs/analyzer-debts.json` is
+#: byte-identical to the one R2008's code commit wrote (`76a26b33`), so R1809's
+#: evidence rule — pin where a snapshot was actually recorded — holds at either
+#: address, and the round boundary is the more honest of the two.
+#:
+#: ⚠ What kept the staleness invisible for 199 rounds is repaired in the same
+#: round rather than left to recur: nothing could tell a cohort that was MET
+#: from one that was SPENT, because both print `0 ... are the loop's to close`.
+#: `check_cohort_live` refuses that state from now on.
+COHORT_PIN = "1ead8b4e"
+COHORT_ROUND = "R2008"
 
 
 def memory_dir() -> pathlib.Path | None:
@@ -701,6 +729,87 @@ def cohort_standing(label: str, index: dict[str, dict], family: set[str]) -> str
     return "loop"
 
 
+def outside_cohort(members: list[str], rows: list[dict]) -> list[str]:
+    """The loop-closable family debts the cohort does not name.
+
+    ★★★★★ R2009. The cohort can only shrink and the family grows, so this is
+    the gap between the condition and the population it is a sample OF. It is
+    reported on every run because without it *met* and *spent* are the same
+    sentence — both end `0 of N cohort debt(s) are the loop's to close` — and
+    the difference between them is the whole of whether work remains.
+
+    The same three predicates the cohort's own `loop` standing uses, so the two
+    numbers add up to one population: open, not blocked, not a person's to close.
+    """
+    held = set(members)
+    return sorted(
+        row["public_name"]
+        for row in rows
+        if row["public_name"] not in held
+        and row["blocked_by"] not in BLOCKED
+        and row.get("closed_by", "") not in CLOSERS
+    )
+
+
+def cohort_spent(members: list[str], index: dict[str, dict], family: set[str]) -> bool:
+    """Whether no member of the cohort is the loop's to close any more.
+
+    Deliberately NOT the same predicate as "the condition is met": an empty
+    cohort satisfies this one too, and an empty cohort is the vacuous shape
+    `check_cohort` refuses on its own. Callers here have been through it first.
+    """
+    return not any(cohort_standing(name, index, family) == "loop" for name in members)
+
+
+def check_cohort_live(
+    members: list[str], source: str, index: dict[str, dict], rows: list[dict]
+) -> list[str]:
+    """Whether the cohort is still a denominator the condition can be read off.
+
+    ★★★★★ R2009. A spent cohort is not a defect by itself — reaching it is the
+    point of the loop. It becomes one the moment loop-closable debts stand
+    OUTSIDE it, because from then on the condition reports *met* about a
+    population that has stopped moving while the work goes on, and nothing says
+    so. Measured: that state began at R2008, when the last open member closed,
+    over a pin fixed at R1809, with 47 loop-closable family debts standing.
+
+    A REFUSAL rather than a line of prose, because the repair is a person's
+    decision — move the pin, or rewrite the condition — and this repository has
+    measured what an unexecuted prescription is worth (R1791). The old report
+    stated its number correctly for 199 rounds and nobody acted on it.
+
+    Three states this deliberately does NOT refuse, each because it is not the
+    defect: an empty cohort (`check_cohort` owns the vacuous case), a live
+    cohort, and a spent cohort with nothing loop-closable outside it — the last
+    of those is the goal actually reached, and refusing it would make the tool
+    stop the line on success.
+
+    ⚠ `source` is REQUIRED and the message names it rather than `COHORT_PIN`,
+    for the reason this round's own counterfactual exposed: the constant is what
+    a future cohort will be read from, and the argument is what THIS verdict was
+    read from, and they are the same only while nobody drives the function with
+    anything else. A message that re-spells a fact it was handed reports the
+    wrong one the first time the two differ — the defect class `check_cohort`
+    already avoids by taking the same argument.
+    """
+    if not members:
+        return []
+    if not cohort_spent(members, index, {r["public_name"] for r in rows}):
+        return []
+    outside = outside_cohort(members, rows)
+    if not outside:
+        return []
+    return [
+        f"the cohort read from {source} ({len(members)} member(s)) is SPENT — "
+        f"no member is the loop's to close — while {len(outside)} loop-closable "
+        f"family debt(s) stand outside it. The third condition now reads met "
+        f"about {len(members)} names and not about the work. Move COHORT_PIN to "
+        "a commit whose snapshot records today's family, and say which of the "
+        "two effects was intended (re-opening the condition, or exposing the "
+        "debts opened since the old pin); or rewrite the condition."
+    ]
+
+
 def check_cohort(members: list[str], source: str, index: dict[str, dict]) -> list[str]:
     """Whether the cohort can be trusted as a denominator at all.
 
@@ -763,7 +872,17 @@ def cohort_report(
         out.append(f"  {word:<8} {len(here):>3}  — {legend[word]}")
         if word in ("loop", "person", "gone", "left"):
             out.extend(f"      {name}" for name in here)
+    # ★★★★★ R2009 — what the cohort COVERS, printed beside what it holds.
+    # Without this line a spent cohort and a met one read identically, which is
+    # how a pin fixed at R1809 went on answering the condition for 199 rounds
+    # while the family it was a sample of grew past it.
+    outside = outside_cohort(members, rows)
     out.append("")
+    out.append(
+        f"  the family holds {len(by_standing['loop']) + len(outside)} "
+        f"loop-closable debt(s) — {len(by_standing['loop'])} named by this "
+        f"cohort, {len(outside)} outside it"
+    )
     out.append(
         f"  {len(by_standing['loop'])} of {len(members)} cohort debt(s) are the "
         "loop's to close — the north star's third condition is that this is zero"
@@ -796,7 +915,14 @@ def snapshot_of(rows: list[dict], members: list[str]) -> dict:
                 "be met by honest work. This set is the family as the pinned "
                 "commit recorded it, so it can only shrink. A debt opened after "
                 "the pin is registered and reported like any other, and is "
-                "simply not in this denominator."
+                "simply not in this denominator. "
+                "★ R2009 — this pin has MOVED once, from R1809 to R2008, after "
+                "every member of the R1809 cohort stopped being the loop's to "
+                "close while 47 loop-closable debts stood outside it. Moving a "
+                "pin re-opens the closing condition AND exposes the debts "
+                "opened since; the intended effect was the second. A spent "
+                "cohort is refused from now on (`check_cohort_live`), so the "
+                "next move is demanded rather than remembered."
             ),
             "pin": COHORT_PIN,
             "round": COHORT_ROUND,
@@ -1203,6 +1329,78 @@ def selftest() -> int:
         all(name.startswith("debt-") for name in read or ["debt-"]),
     )
 
+    # ★★★★★ R2009 — the cohort's LIVENESS, which is a different question from
+    # its drift. `--check` already refused a cohort that disagrees with the
+    # folder; nothing asked whether the cohort still ranges over the work.
+    # Fixtures rather than the live folder, so these assertions keep their
+    # meaning after the next debt closes.
+    def standing(status: str, blocked: str = "", closer: str = "") -> dict:
+        return {"stem": "d", "status": status, "blocked_by": blocked, "closed_by": closer}
+
+    pair = [
+        {"public_name": "in", "blocked_by": "", "closed_by": ""},
+        {"public_name": "out", "blocked_by": "", "closed_by": ""},
+    ]
+    live = {"in": standing("open"), "out": standing("open")}
+    spent = {"in": standing("closed"), "out": standing("open")}
+    check(
+        "a cohort with an open member of its own is not spent",
+        cohort_spent(["in"], live, {"in", "out"}) is False,
+    )
+    check(
+        "and a live cohort is refused by nothing",
+        check_cohort_live(["in"], "a fixture", live, pair) == [],
+    )
+    check(
+        "a cohort whose every member has closed is spent",
+        cohort_spent(["in"], spent, {"out"}) is True,
+    )
+    check("the loop-closable debts outside it are named", outside_cohort(["in"], pair) == ["out"])
+    check(
+        "a spent cohort with work standing outside it is refused",
+        check_cohort_live(["in"], "a fixture", spent, pair) != [],
+    )
+    check(
+        "and the refusal counts what stands outside",
+        "1 loop-closable" in (check_cohort_live(["in"], "a fixture", spent, pair) or [""])[0],
+    )
+    # ★ The message must name the cohort it was HANDED, not the constant a
+    # future one will be read from. Caught by this round's counterfactual, which
+    # drove the function with the old pin's cohort and was told the new pin's
+    # name.
+    check(
+        "and it names where this verdict's cohort came from",
+        "a fixture" in (check_cohort_live(["in"], "a fixture", spent, pair) or [""])[0],
+    )
+    check(
+        "a spent cohort with nothing outside it is the goal, not a defect",
+        check_cohort_live(["in"], "a fixture", {"in": standing("closed")}, pair[:1]) == [],
+    )
+    check(
+        "a blocked debt outside the cohort is not work it is missing",
+        check_cohort_live(
+            ["in"],
+            "a fixture",
+            spent,
+            [pair[0], {"public_name": "out", "blocked_by": "phase-c", "closed_by": ""}],
+        )
+        == [],
+    )
+    check(
+        "nor is one only a person can close",
+        check_cohort_live(
+            ["in"],
+            "a fixture",
+            spent,
+            [pair[0], {"public_name": "out", "blocked_by": "", "closed_by": "person"}],
+        )
+        == [],
+    )
+    check(
+        "an empty cohort is check_cohort's to refuse, not this one",
+        check_cohort_live([], "a fixture", {}, pair) == [],
+    )
+
     print(f"selftest: {'PASS' if not failures else 'FAIL'} ({failures} failure(s))")
     return 1 if failures else 0
 
@@ -1243,6 +1441,7 @@ def main() -> int:
         )
         + check_public_names(folder)
         + check_cohort(members, source, index)
+        + check_cohort_live(members, source, index, rows)
     )
 
     if "--write" in sys.argv:
@@ -1288,7 +1487,8 @@ def main() -> int:
         print(
             f"analysis-tool debts: {len(rows)} in the family, all declared, "
             f"{len(loose)} not blocked; cohort {len(members)} pinned at "
-            f"{COHORT_ROUND}, {len(mine)} the loop's to close"
+            f"{COHORT_ROUND}, {len(mine)} the loop's to close, "
+            f"{len(outside_cohort(members, rows))} loop-closable outside it"
         )
         return 0
 
