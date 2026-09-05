@@ -55,6 +55,7 @@ use pinion_node_graph::{
     Socket, Stack, Straighten, Stride, SwapError, SwitchRefusal, Tie, Tint, TreeId, Variadic,
     Violation, WatchError, Watches, palette_of, type_palette,
 };
+use pinion_node_graph::{Alone, Represented, StandInError};
 use pinion_node_graph::{Carried, ZoneSwapError};
 use pinion_node_graph::{
     Copying, DefinitionAct, DefinitionError, InZone, InsertError, PairError, Renamed, Substitution,
@@ -2034,6 +2035,14 @@ fn hook_round_proofs() -> Vec<Proof> {
         proof("dcc", "add_zone", dcc_add_zone),
         // R2003 — and a zone's KIND changes without either end being replaced.
         proof("dcc", "swap_zone", dcc_swap_zone),
+        // R2004 — a node that stands in for several. The animation editor's
+        // self-transition command is its ONE-ELEMENT case, which is what this
+        // row's own sentence had wrong.
+        proof(
+            "engine",
+            "AnimGraph::CreateSelfTransition",
+            engine_anim_graph_create_self_transition,
+        ),
         // R1944 — a definition can be removed, and the removal says what went.
         proof(
             "engine",
@@ -15262,5 +15271,135 @@ fn engine_node_can_user_edit_pin_advanced_view_flag() {
         document.advanced_view(ROOT, tuned),
         Some(AdvancedView::Folded),
         "★ what is refused is a person's disagreement, not the class itself",
+    );
+}
+
+/// ★★★★★ R2004 — the animation editor's **self-transition** command, and the
+/// row's own sentence measured wrong.
+///
+/// The pin read *a link whose source and sink are the same node*, and named two
+/// obstacles: `connect` refuses a self-link, and the control plane has no
+/// self-edge constructor. Both are true. **Neither is what the reference's
+/// operator does.** Read from `FAnimationBlueprintEditor::OnCreateSelfTransition`,
+/// it never makes a self-edge: it creates an **alias node**, runs a name
+/// validator to make `Self` unique, places it at `+200, -100` from the state,
+/// puts that state into the alias's aliased-state **set**, and links alias to
+/// state. The self-loop is what that link *expands to*.
+///
+/// So the capability the row names is a node that stands in for a SET, and this
+/// command is its one-element case. Its own baker says the mechanism in a
+/// comment — *"Alias's are simply decompiled into multiple connections."*
+///
+/// ★★★★★ And the aliased states are a `TSet`, with a *global* flag beside it
+/// and a `GetAliasedState()` documented *Returns null if aliasing more than one
+/// state* — so the general mechanism was there all along and the command is a
+/// canned use of it. Building the command alone would have reproduced the
+/// canned case and missed the capability.
+#[test]
+fn engine_anim_graph_create_self_transition() {
+    let mut document: Document<Op> = Document::new("root");
+    let stage = document
+        .add_node(ROOT, NodeBody::Kind(Op::Stage(3)), 30, 70)
+        .expect("root tree");
+
+    // (A) The obstacle the row named is REAL and stays. A node feeding itself
+    // with nothing declaring that it was meant is a mistake.
+    assert_eq!(
+        document
+            .connect(ROOT, Socket::new(stage, 0), Socket::new(stage, 0))
+            .unwrap_err(),
+        ConnectError::SelfLink(stage),
+    );
+
+    // (B) The reference's four steps, in one verb.
+    let stood = document
+        .stand_in_for(ROOT, stage)
+        .expect("a stage has a control port each side");
+    let card = document.tree(ROOT).unwrap().node(stood.stand_in).unwrap();
+    assert_eq!(
+        (card.x, card.y),
+        (230, -30),
+        "★ placed at the reference's own offset from the card it stands for"
+    );
+    assert_eq!(
+        document.stands_alone(ROOT, stood.stand_in),
+        Some(Alone::Yes(stage)),
+        "★ standing for exactly the one node — the command's one-element case"
+    );
+
+    // (C) ★★★★★ And the link MEANS the self-loop, which is the row.
+    let expanded = document.expanded_links(ROOT);
+    assert_eq!(expanded.len(), 1);
+    assert_eq!(
+        (expanded[0].from.node, expanded[0].to.node),
+        (stage, stage),
+        "★★★★★ the loop `connect` refuses to author is what the stand-in \
+         declares was meant"
+    );
+    assert_eq!(
+        document.control_loops(ROOT),
+        vec![stage],
+        "★ and the cycle derivation walks the EXPANSION, so the loop is visible \
+         to every reader without any of them knowing about stand-ins"
+    );
+    assert!(document.validate().is_empty(), "★ and it is not a fault");
+
+    // (D) ★ The command's alias is a transition SOURCE, and widening it stays
+    // legal — measured rather than assumed, and the first draft of this proof
+    // asserted the opposite: the expansion piles onto a control INPUT, which
+    // R1599 derives as holding many predecessors. So the very command this row
+    // names lands on the half its own validator permits, and building only the
+    // command would never have reached the other half.
+    let second = document
+        .add_node(ROOT, NodeBody::Kind(Op::Stage(5)), 30, 200)
+        .expect("root tree");
+    document
+        .represent(ROOT, stood.stand_in, second)
+        .expect("★ a control input takes many predecessors");
+    assert_eq!(
+        document
+            .expanded_links(ROOT)
+            .into_iter()
+            .filter(|held| held.to.node == stage)
+            .count(),
+        2,
+        "★★★★★ one wire drawn, two meant — the reference's own sentence for its \
+         alias, as a reading rather than as a step inside a compile"
+    );
+    assert_eq!(
+        document.stands_alone(ROOT, stood.stand_in),
+        Some(Alone::Several(2)),
+        "★ and *there is no single one* is an answer with a reason, where the \
+         reference returns the same null it returns for a deleted state"
+    );
+
+    // (E) ★★★★★ The other half, which IS the reference's hand-written
+    // validator: *an alias used as a transition's TARGET must alias a single
+    // state*. Nothing here says that. The links pile onto the socket at the far
+    // end, and there that socket is a control OUTPUT, which holds one
+    // successor — so `Flow::multiplicity` refuses the edit, and the rule is a
+    // theorem rather than a message discovered at compile time.
+    let target = document
+        .add_node(
+            ROOT,
+            NodeBody::StandIn(Represented::Named(BTreeSet::from([stage]))),
+            400,
+            0,
+        )
+        .expect("root tree");
+    document
+        .connect(ROOT, Socket::new(second, 0), Socket::new(target, 0))
+        .expect("one member, so the control output feeds one successor");
+    assert_eq!(
+        document.represent(ROOT, target, second).unwrap_err(),
+        StandInError::WouldCrowd {
+            tree: ROOT,
+            stand_in: target,
+            socket: Socket::new(second, 0),
+            side: Side::Output,
+            would_be: 2,
+        },
+        "★★★★★ derived from `Multiplicity`, not written down — and it names the \
+         SOCKET, which the reference's message does not carry"
     );
 }

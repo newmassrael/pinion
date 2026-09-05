@@ -1581,10 +1581,10 @@
       "verdict": "app-content"
     },
     "AnimGraph::CreateSelfTransition": {
-      "covered_by": "a link whose source and sink are the same node. `connect` refuses it as a cycle on the data plane, and R1599's control plane has no self-edge constructor either",
+      "covered_by": "A NODE THAT STANDS IN FOR SEVERAL (R2004): `NodeBody::StandIn` carries a `Represented` — a named set or *whoever is here* — and `Document::expanded_links` resolves it away, so one authored wire is one link per node it stands for. The reference's own baker says the mechanism in a comment: \"Alias's are simply decompiled into multiple connections.\" ★ THE ROW'S SENTENCE WAS WRONG: measured, its command never makes a self-edge at all — it creates an alias node, uniquifies its name, places it at +200,-100, puts the state in the alias's SET, and links alias to state; the self-loop is what that link EXPANDS to, so `connect` may go on refusing a node that feeds itself with nothing declaring it was meant. `Document::stand_in_for` is that command as the one-element case. ★★ And its hand-written validator (*an alias used as a transition's target must alias a single state*) is a THEOREM here: expanding piles links onto the socket at the far end, so `Flow::multiplicity` decides it — which recovers that rule on the control plane and INVERTS it on the value plane, the half a one-plane state machine cannot express.",
       "mechanism": "AnimGraph",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_anim_graph_create_self_transition",
+      "verdict": "have"
     },
     "AnimGraph::HideUnboundPropertyPins": {
       "covered_by": "`Appearance` hides ports with neither a link nor a default, the hidden set filtered by the signature's defaults",

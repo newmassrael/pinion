@@ -721,13 +721,21 @@ impl<K: NodeKind> Document<K> {
             // on, so there is no run for an item to be added to.
             // R1935 — a beacon and an echo derive their ports from the same
             // chain, so neither has a run either.
+            // ★ R2004 — a stand-in joins them, and its reason is the sharpest
+            // of the three: its ports are the ones its members SHARE, so a run
+            // it presents is a run those members declared and the place to edit
+            // it is on a member. Two members whose runs differ in length have
+            // different signatures, so the stand-in presents none at all —
+            // which is why "add an item here" has no meaning even in the case
+            // where it would look like it did.
             NodeBody::Group(_)
             | NodeBody::Interface(_)
             | NodeBody::Frame
             | NodeBody::Delay(_)
             | NodeBody::Reroute
             | NodeBody::Beacon
-            | NodeBody::Echo(_) => None,
+            | NodeBody::Echo(_)
+            | NodeBody::StandIn(_) => None,
         }
     }
 

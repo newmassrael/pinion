@@ -245,6 +245,60 @@ impl<K: NodeKind> Evaluator<'_, K> {
         let mut outputs = if bypassed {
             self.passed_through(descent, node, depth, &signature)
         } else {
+            self.body_outputs(descent, node, depth, &signature, body)
+        };
+        outputs.resize(arity, None);
+        // R1594 — the other half of one rule: an authored value is what a port
+        // carries when nothing else supplies one. For an input that means no
+        // link; for an output it means the kind produced nothing there, which
+        // is what makes a SOURCE node's constant this same mechanism instead
+        // of a second one. The DCC's Value node reads its own output socket in
+        // per-node C code, so there the fact is a node type's private
+        // arrangement rather than a rule.
+        if !bypassed
+            && let Some(held) = self
+                .document
+                .tree(descent.tree)
+                .and_then(|host| host.node(node))
+        {
+            for (index, slot) in outputs.iter_mut().enumerate() {
+                if slot.is_some() {
+                    continue;
+                }
+                let port = PortRef::output(u32::try_from(index).unwrap_or(u32::MAX));
+                *slot = held.port_value(port).cloned().or_else(|| {
+                    signature
+                        .outputs
+                        .get(index)
+                        .and_then(|declared| declared.default_value().cloned())
+                });
+            }
+        }
+
+        self.visiting.remove(&key);
+        self.memo.insert(key, outputs.clone());
+        outputs
+    }
+
+    /// What a node that is neither disabled nor bypassed produces, **by its
+    /// body**.
+    ///
+    /// Lifted out of [`Self::node_outputs`] at R2004, when adding a body tipped
+    /// that function past the length lint — the repair R1999 made to
+    /// [`Document::validate`], for the same reason and with the same choice of
+    /// cut: this match is one derivation, everything above it in the caller is
+    /// the guards (memo, depth, cycle, disabled, bypassed) that decide whether
+    /// to reach it at all, and everything below is R1594's authored-value
+    /// fallback, which applies to the answer whatever produced it.
+    fn body_outputs(
+        &mut self,
+        descent: &Descent<K>,
+        node: NodeId,
+        depth: usize,
+        signature: &Signature<K>,
+        body: NodeBody<K>,
+    ) -> Vec<Option<K::Value>> {
+        {
             match body {
                 NodeBody::Kind(kind) => {
                     let inputs = self.node_inputs(descent, node, depth);
@@ -253,14 +307,17 @@ impl<K: NodeKind> Evaluator<'_, K> {
                 // The inside end of this tree's interface inputs: it produces
                 // what the instance above was fed.
                 NodeBody::Interface(InterfaceSide::Input) => descent.bindings.clone(),
-                // Two bodies that produce nothing, for two different reasons:
-                // the inside end of the OUTPUTS has no outputs of its own, and
-                // a frame (R1589) is a fact about the canvas with no ports at
-                // all, so nothing reaches it by following a link and a caller
-                // asking directly gets the honest empty answer. One arm because
-                // the answer is one value; the compiler still enumerates a new
-                // body here rather than defaulting it.
-                NodeBody::Interface(InterfaceSide::Output) | NodeBody::Frame => Vec::new(),
+                // THREE bodies that produce nothing, for three different
+                // reasons: the inside end of the OUTPUTS has none of its own; a
+                // frame (R1589) is a fact about the canvas with no ports at all;
+                // and ★R2004 a stand-in is not on a path a value takes, because
+                // `Document::expanded_links` resolves it away before any wiring
+                // is walked. A caller asking any of them directly gets the
+                // honest empty answer. One arm because the answer is one value;
+                // the compiler still enumerates a new body here.
+                NodeBody::Interface(InterfaceSide::Output)
+                | NodeBody::Frame
+                | NodeBody::StandIn(_) => Vec::new(),
                 // R1600 — the one node whose output is not a function of its
                 // input. It does not read its input here at all, which is what
                 // breaks the recursion a value cycle would otherwise be: the
@@ -288,7 +345,7 @@ impl<K: NodeKind> Evaluator<'_, K> {
                 // R1935 — a beacon is transparent in exactly the same way, and
                 // shares the arm.
                 NodeBody::Reroute | NodeBody::Beacon => {
-                    self.passed_through(descent, node, depth, &signature)
+                    self.passed_through(descent, node, depth, signature)
                 }
                 // ★★★★★ R1935 — an echo has no input to pass through, so it
                 // reads the beacon's OUTPUT directly. That is the value
@@ -335,38 +392,7 @@ impl<K: NodeKind> Evaluator<'_, K> {
                     }
                 }
             }
-        };
-        outputs.resize(arity, None);
-        // R1594 — the other half of one rule: an authored value is what a port
-        // carries when nothing else supplies one. For an input that means no
-        // link; for an output it means the kind produced nothing there, which
-        // is what makes a SOURCE node's constant this same mechanism instead
-        // of a second one. The DCC's Value node reads its own output socket in
-        // per-node C code, so there the fact is a node type's private
-        // arrangement rather than a rule.
-        if !bypassed
-            && let Some(held) = self
-                .document
-                .tree(descent.tree)
-                .and_then(|host| host.node(node))
-        {
-            for (index, slot) in outputs.iter_mut().enumerate() {
-                if slot.is_some() {
-                    continue;
-                }
-                let port = PortRef::output(u32::try_from(index).unwrap_or(u32::MAX));
-                *slot = held.port_value(port).cloned().or_else(|| {
-                    signature
-                        .outputs
-                        .get(index)
-                        .and_then(|declared| declared.default_value().cloned())
-                });
-            }
         }
-
-        self.visiting.remove(&key);
-        self.memo.insert(key, outputs.clone());
-        outputs
     }
 
     /// What a **bypassed** node's outputs carry (R1586).

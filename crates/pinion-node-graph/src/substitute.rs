@@ -254,7 +254,18 @@ impl<K: NodeKind> Document<K> {
                 inputs: self.tree(tree)?.interface().outputs().to_vec(),
                 outputs: Vec::new(),
             }),
-            NodeBody::Frame => Prospect::Declared(Signature {
+            // ★★ R2004 — a stand-in shares the arm and NOT the reason, which is
+            // why it is written down: a frame has no ports because a frame is
+            // a fact about the canvas, and a stand-in that has not been placed
+            // has none because its ports are the ones its members share and the
+            // ids it names belong to the tree it came from. One is a statement
+            // about shape and the other about *time*. Declared-and-empty rather
+            // than `Passing`, because passing means whatever the chain decides
+            // and there is no chain through a stand-in to decide anything — so
+            // a substitution can never carry a wire on to one, which is the
+            // honest answer: that wire's port would be settled after the swap,
+            // by a membership the swap knows nothing about.
+            NodeBody::Frame | NodeBody::StandIn(_) => Prospect::Declared(Signature {
                 inputs: Vec::new(),
                 outputs: Vec::new(),
             }),

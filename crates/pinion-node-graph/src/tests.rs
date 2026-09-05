@@ -24,6 +24,7 @@ use crate::{
     Watches, ZoomRange, crossing,
 };
 use crate::{AdvancedView, ClassSource, Classified, Classify, ClassifyError, Hidden, PortClass};
+use crate::{Alone, Represented, StandInError};
 use crate::{DefinitionAct, DefinitionError, InZone, PairError, RemovedTree, Used};
 use crate::{Fault, Finding, Fitness, Objection, Surroundings, Weight};
 
@@ -19886,5 +19887,533 @@ fn focusing_leaves_the_document_exactly_as_it_was() {
         before,
         "a focus is a pure query (§2 #3), so a screen may ask what it WOULD \
          show without showing it"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// R2004 — a node that stands in for several.
+//
+// `Flo` is the fixture for every one of these, and deliberately: it is the only
+// taxonomy in this file with BOTH flows, so the crowding law — which is the
+// round's claim — can be shown to point opposite ways on the two planes. A
+// value-only fixture would let a test assert the reference's rule while a
+// derivation that had hard-coded the direction passed just as well.
+// ---------------------------------------------------------------------------
+
+/// ★★★★★ R2004 — **a link at a stand-in is one link per node it stands for.**
+///
+/// The reference's own sentence for its alias, quoted in its state-machine
+/// baker: *"Alias's are simply decompiled into multiple connections."* This is
+/// that decompilation as a reading anyone can take, where there it happens
+/// inside a compile and nothing outside the baker can ask for it.
+#[test]
+fn r2004_a_link_at_a_stand_in_is_one_link_per_member() {
+    let mut doc: Document<Flo> = Document::new("flow");
+    let first = doc
+        .add_node(ROOT, NodeBody::Kind(Flo::Step("a".into())), 0, 0)
+        .unwrap();
+    let second = doc
+        .add_node(ROOT, NodeBody::Kind(Flo::Step("b".into())), 0, 100)
+        .unwrap();
+    let sink = doc
+        .add_node(ROOT, NodeBody::Kind(Flo::End), 400, 50)
+        .unwrap();
+    let stand_in = doc
+        .add_node(
+            ROOT,
+            NodeBody::StandIn(Represented::Named(BTreeSet::from([first, second]))),
+            200,
+            50,
+        )
+        .unwrap();
+
+    // Its ports are the ones its members share, derived rather than authored.
+    let shape = doc.signature(ROOT, stand_in).unwrap();
+    assert_eq!(
+        (shape.inputs.len(), shape.outputs.len()),
+        (1, 2),
+        "★ a stand-in presents the signature its members share"
+    );
+
+    let drawn = doc
+        .connect(ROOT, Socket::new(stand_in, 0), Socket::new(sink, 0))
+        .expect("a control output reaches a control input")
+        .link;
+    assert_eq!(
+        doc.tree(ROOT).unwrap().links().len(),
+        1,
+        "★ ONE wire was drawn, which is what a person did"
+    );
+
+    let expanded = doc.expanded_links(ROOT);
+    assert_eq!(
+        expanded.len(),
+        2,
+        "★★★★★ and it MEANS two — one per node the stand-in stands for"
+    );
+    assert_eq!(
+        expanded
+            .iter()
+            .map(|held| held.from.node)
+            .collect::<Vec<_>>(),
+        vec![first, second],
+        "★ each derived link leaves a MEMBER, not the stand-in"
+    );
+    assert!(
+        expanded.iter().all(|held| held.to.node == sink
+            && held.authored == drawn
+            && held.through == vec![stand_in]),
+        "★ they share the authored id, which is what says they are one thing a \
+         person drew, and each names the stand-in it came through"
+    );
+}
+
+/// ★★★★★ R2004 — **the reference's hand-written rule is a theorem here**, and
+/// on the value plane it points the OTHER way.
+///
+/// Its alias validator says an alias used as a transition's TARGET must alias a
+/// single state, and writes that by hand for one plane. Nothing here says it:
+/// expanding piles links onto the socket at the FAR end, so what decides it is
+/// that socket's own `Multiplicity`, which R1599 derives from what the port
+/// carries. On the control plane that recovers the reference's rule exactly; on
+/// the value plane it inverts, which the reference cannot express at all.
+#[test]
+fn r2004_which_direction_admits_several_is_the_ports_own_answer() {
+    let mut doc: Document<Flo> = Document::new("flow");
+    let first = doc
+        .add_node(ROOT, NodeBody::Kind(Flo::Step("a".into())), 0, 0)
+        .unwrap();
+    let second = doc
+        .add_node(ROOT, NodeBody::Kind(Flo::Step("b".into())), 0, 100)
+        .unwrap();
+    let start = doc
+        .add_node(ROOT, NodeBody::Kind(Flo::Start), 0, 200)
+        .unwrap();
+    let sink = doc
+        .add_node(ROOT, NodeBody::Kind(Flo::End), 400, 0)
+        .unwrap();
+    let both = BTreeSet::from([first, second]);
+
+    // LEAVING a stand-in on the control plane: the links pile onto a control
+    // INPUT, which R1599 derives as `Many`. The reference's alias-as-source.
+    let leaving = doc
+        .add_node(
+            ROOT,
+            NodeBody::StandIn(Represented::Named(both.clone())),
+            200,
+            0,
+        )
+        .unwrap();
+    doc.connect(ROOT, Socket::new(leaving, 0), Socket::new(sink, 0))
+        .unwrap();
+    assert!(
+        doc.crowded(ROOT).is_empty(),
+        "★ two members leaving is fine: a control input takes many predecessors"
+    );
+
+    // ARRIVING at one: the links pile onto a control OUTPUT, which is `One`.
+    let arriving = doc
+        .add_node(ROOT, NodeBody::StandIn(Represented::Named(both)), 200, 200)
+        .unwrap();
+    doc.connect(ROOT, Socket::new(start, 0), Socket::new(arriving, 0))
+        .unwrap();
+    let crowded = doc.crowded(ROOT);
+    assert_eq!(crowded.len(), 1, "★★★★★ and two members arriving is not");
+    assert_eq!(
+        (crowded[0].stand_in, crowded[0].socket, crowded[0].would_be),
+        (arriving, Socket::new(start, 0), 2),
+        "★ named by the SOCKET that is over-subscribed, which the reference's \
+         message does not carry"
+    );
+
+    // ★★★★★ And the same two directions on the VALUE plane, the other way
+    // round — the half the reference has no way to say.
+    let mut values: Document<Flo> = Document::new("flow");
+    let one = values
+        .add_node(ROOT, NodeBody::Kind(Flo::Const(1)), 0, 0)
+        .unwrap();
+    let two = values
+        .add_node(ROOT, NodeBody::Kind(Flo::Const(2)), 0, 100)
+        .unwrap();
+    let tally = values
+        .add_node(ROOT, NodeBody::Kind(Flo::Tally), 400, 0)
+        .unwrap();
+    let pair = BTreeSet::from([one, two]);
+    let out_of = values
+        .add_node(ROOT, NodeBody::StandIn(Represented::Named(pair)), 200, 0)
+        .unwrap();
+    values
+        .connect(ROOT, Socket::new(out_of, 0), Socket::new(tally, 0))
+        .unwrap();
+    assert_eq!(
+        values.crowded(ROOT).len(),
+        1,
+        "★★★★★ leaving a stand-in is what is refused here: a value input takes \
+         ONE producer, so two sources would be a value with two answers"
+    );
+
+    let mut into: Document<Flo> = Document::new("flow");
+    let sink_a = into
+        .add_node(ROOT, NodeBody::Kind(Flo::Tally), 400, 0)
+        .unwrap();
+    let sink_b = into
+        .add_node(ROOT, NodeBody::Kind(Flo::Tally), 400, 100)
+        .unwrap();
+    let source = into
+        .add_node(ROOT, NodeBody::Kind(Flo::Const(7)), 0, 0)
+        .unwrap();
+    let into_many = into
+        .add_node(
+            ROOT,
+            NodeBody::StandIn(Represented::Named(BTreeSet::from([sink_a, sink_b]))),
+            200,
+            0,
+        )
+        .unwrap();
+    into.connect(ROOT, Socket::new(source, 0), Socket::new(into_many, 0))
+        .unwrap();
+    assert!(
+        into.crowded(ROOT).is_empty(),
+        "★★★★★ and arriving is fine: a value output has many readers. The two \
+         planes point OPPOSITE ways, which is why nothing here writes a \
+         direction down"
+    );
+}
+
+/// ★★★★★ R2004 — **"does it stand for exactly one" is a total answer.**
+///
+/// The reference answers it with a pointer that is null in three
+/// distinguishable situations — a global alias, more than one, or the one it
+/// names being gone — and its double-click jump target is that same null, so a
+/// group alias silently does nothing.
+#[test]
+fn r2004_standing_for_one_is_answered_with_a_reason() {
+    let mut doc: Document<Flo> = Document::new("flow");
+    let step = doc
+        .add_node(ROOT, NodeBody::Kind(Flo::Step("a".into())), 0, 0)
+        .unwrap();
+    let other = doc
+        .add_node(ROOT, NodeBody::Kind(Flo::Step("b".into())), 0, 100)
+        .unwrap();
+    let stand_in = doc
+        .add_node(
+            ROOT,
+            NodeBody::StandIn(Represented::Named(BTreeSet::new())),
+            200,
+            0,
+        )
+        .unwrap();
+
+    assert_eq!(doc.stands_alone(ROOT, stand_in), Some(Alone::Nobody));
+    doc.represent(ROOT, stand_in, step).unwrap();
+    assert_eq!(doc.stands_alone(ROOT, stand_in), Some(Alone::Yes(step)));
+    doc.represent(ROOT, stand_in, other).unwrap();
+    assert_eq!(doc.stands_alone(ROOT, stand_in), Some(Alone::Several(2)));
+    doc.represent_everyone(ROOT, stand_in).unwrap();
+    assert_eq!(doc.stands_alone(ROOT, stand_in), Some(Alone::Everyone));
+    assert_eq!(
+        doc.stands_for(ROOT, stand_in),
+        BTreeSet::from([step, other]),
+        "★ whoever is here, and the stand-in itself is not among them"
+    );
+
+    // ★ Four different reasons, and only ONE of them is the reference's whole
+    // answer — the other three are what its null collapses together.
+    let words: BTreeSet<&str> = [
+        Alone::Nobody,
+        Alone::Yes(step),
+        Alone::Several(2),
+        Alone::Everyone,
+    ]
+    .into_iter()
+    .map(Alone::wire_word)
+    .collect();
+    assert_eq!(words.len(), 4, "each reason has its own word: {words:?}");
+    assert_eq!(
+        [Alone::Nobody, Alone::Several(2), Alone::Everyone]
+            .into_iter()
+            .filter_map(Alone::one)
+            .count(),
+        0,
+        "★ the reference's pointer is DERIVED from the reason, so a caller that \
+         only wants it is not forced to match — and the reason is still there"
+    );
+
+    assert_eq!(
+        doc.stands_alone(ROOT, step),
+        None,
+        "★ a node that is not a stand-in answers None rather than `Nobody`: \
+         standing for nothing is a real state a stand-in can be in"
+    );
+}
+
+/// ★★★★★ R2004 — **a member that is gone is reported, not silently dropped.**
+///
+/// The reference REPAIRS this on every load: a private routine keeps only the
+/// members still in the graph, so deleting a state quietly shrinks what every
+/// alias of it covers and nobody is told. Changing the document to make a check
+/// pass is the opposite of what a check is for.
+#[test]
+fn r2004_a_member_that_is_gone_is_reported() {
+    let mut doc: Document<Flo> = Document::new("flow");
+    let kept = doc
+        .add_node(ROOT, NodeBody::Kind(Flo::Step("a".into())), 0, 0)
+        .unwrap();
+    let doomed = doc
+        .add_node(ROOT, NodeBody::Kind(Flo::Step("b".into())), 0, 100)
+        .unwrap();
+    let stand_in = doc
+        .add_node(
+            ROOT,
+            NodeBody::StandIn(Represented::Named(BTreeSet::from([kept, doomed]))),
+            200,
+            0,
+        )
+        .unwrap();
+    assert!(doc.validate().is_empty(), "the fixture starts clean");
+
+    doc.remove_node(ROOT, doomed).unwrap();
+    assert_eq!(
+        doc.lost_members(ROOT, stand_in),
+        vec![doomed],
+        "★ the member it names and the tree does not hold"
+    );
+    assert_eq!(
+        doc.stands_for(ROOT, stand_in),
+        BTreeSet::from([kept]),
+        "★ and it stands for the one that is left — the two readings are \
+         different questions and both are answerable"
+    );
+    let fault = Violation::StandInLostMember {
+        tree: ROOT,
+        node: stand_in,
+        member: doomed,
+    };
+    assert!(
+        doc.validate().contains(&fault),
+        "★★★★★ the standing check reports it, so a document says it about itself"
+    );
+    let said = fault.to_string();
+    assert!(
+        said.contains(&doomed.0.to_string()),
+        "★ and the sentence names the MEMBER, because the two repairs are \
+         opposite — take it out of the group, or put the node back: {said}"
+    );
+}
+
+/// ★★★★★ R2004 — **the reference's operator, generalised**: a stand-in for one
+/// node, wired back to it, whose EXPANSION is the self-loop the direct edit
+/// refuses.
+///
+/// The census row read *a link whose source and sink are the same node*, and
+/// measured, the reference's command never makes one: it creates an alias,
+/// uniquifies its name, places it up and to the right, puts the state in the
+/// alias's set, and links alias to state. So the capability is the stand-in and
+/// this is its one-element case.
+#[test]
+fn r2004_a_canned_stand_in_makes_the_loop_a_direct_edit_refuses() {
+    let mut doc: Document<Flo> = Document::new("flow");
+    let step = doc
+        .add_node(ROOT, NodeBody::Kind(Flo::Step("a".into())), 30, 70)
+        .unwrap();
+
+    // The refusal the census row named is REAL and stays: a node feeding itself
+    // with no stand-in in the picture is a mistake.
+    assert_eq!(
+        doc.connect(ROOT, Socket::new(step, 0), Socket::new(step, 0))
+            .unwrap_err(),
+        ConnectError::SelfLink(step),
+    );
+
+    let stood = doc.stand_in_for(ROOT, step).expect("a step has both ports");
+    let card = doc.tree(ROOT).unwrap().node(stood.stand_in).unwrap();
+    assert_eq!(
+        (card.x, card.y),
+        (230, -30),
+        "★ the reference's own offset, so a person who has used that editor \
+         finds the card where they expect it"
+    );
+    assert_eq!(
+        doc.stands_alone(ROOT, stood.stand_in),
+        Some(Alone::Yes(step))
+    );
+
+    let expanded = doc.expanded_links(ROOT);
+    assert_eq!(expanded.len(), 1);
+    assert_eq!(
+        (expanded[0].from.node, expanded[0].to.node),
+        (step, step),
+        "★★★★★ and the ONE derived link runs from the node to itself — the loop \
+         `connect` refuses to author is what a stand-in declares was meant"
+    );
+    assert!(
+        doc.validate().is_empty(),
+        "★ and it is not a fault: `Represented` is the declaration that says so"
+    );
+}
+
+/// ★★★★★ R2004 — **the expansion is what the cycle derivations walk**, so
+/// nothing in this crate reads a wiring a stand-in has not been resolved out
+/// of.
+///
+/// Threaded through `successors_on` rather than at each reader, which is this
+/// crate's repeating rule: the repair is a derivation, not a list of the places
+/// that read it. `control_loops` is the reading that shows it, because a loop
+/// through a stand-in exists only in the expanded graph.
+#[test]
+fn r2004_a_loop_through_a_stand_in_is_seen_by_the_cycle_derivation() {
+    let mut doc: Document<Flo> = Document::new("flow");
+    let step = doc
+        .add_node(ROOT, NodeBody::Kind(Flo::Step("a".into())), 0, 0)
+        .unwrap();
+    assert!(doc.control_loops(ROOT).is_empty());
+
+    doc.stand_in_for(ROOT, step).expect("a step has both ports");
+    assert_eq!(
+        doc.control_loops(ROOT),
+        vec![step],
+        "★★★★★ the loop is a fact about the EXPANDED graph — no authored link \
+         joins the step to itself, and the derivation sees it anyway"
+    );
+}
+
+/// ★★★★★ R2004 — **the edit that would over-subscribe a socket is refused in
+/// advance**, and refused by asking the same derivation that reports it.
+///
+/// The reference discovers this at compile time and phrases it as an error
+/// about the alias. Refusing the edit is what keeps the graph from holding the
+/// state at all — and the check runs on the written document and rolls back, so
+/// there is no second rule written to predict the first.
+#[test]
+fn r2004_widening_a_wired_stand_in_is_refused_by_its_own_law() {
+    let mut doc: Document<Flo> = Document::new("flow");
+    let first = doc
+        .add_node(ROOT, NodeBody::Kind(Flo::Step("a".into())), 0, 0)
+        .unwrap();
+    let second = doc
+        .add_node(ROOT, NodeBody::Kind(Flo::Step("b".into())), 0, 100)
+        .unwrap();
+    let start = doc
+        .add_node(ROOT, NodeBody::Kind(Flo::Start), 0, 200)
+        .unwrap();
+    let stand_in = doc
+        .add_node(
+            ROOT,
+            NodeBody::StandIn(Represented::Named(BTreeSet::from([first]))),
+            200,
+            0,
+        )
+        .unwrap();
+    doc.connect(ROOT, Socket::new(start, 0), Socket::new(stand_in, 0))
+        .expect("one member, so the control output feeds one successor");
+
+    assert_eq!(
+        doc.represent(ROOT, stand_in, second).unwrap_err(),
+        StandInError::WouldCrowd {
+            tree: ROOT,
+            stand_in,
+            socket: Socket::new(start, 0),
+            side: Side::Output,
+            would_be: 2,
+        },
+        "★★★★★ the general form of the reference's *must alias a single state*"
+    );
+    assert_eq!(
+        doc.stands_for(ROOT, stand_in),
+        BTreeSet::from([first]),
+        "★ and the refusal LEFT THE DOCUMENT ALONE — the check writes, asks the \
+         reading, and rolls back"
+    );
+    assert!(doc.validate().is_empty());
+
+    // ★ The two members that would make `stands_for` recursive, refused one at
+    // a time so a ring is unrepresentable rather than detected.
+    let nested = doc
+        .add_node(
+            ROOT,
+            NodeBody::StandIn(Represented::Named(BTreeSet::new())),
+            400,
+            0,
+        )
+        .unwrap();
+    assert_eq!(
+        doc.represent(ROOT, stand_in, nested).unwrap_err(),
+        StandInError::NestedStandIn {
+            tree: ROOT,
+            stand_in,
+            member: nested,
+        },
+    );
+    assert_eq!(
+        doc.represent(ROOT, stand_in, stand_in).unwrap_err(),
+        StandInError::ItsOwnMember {
+            tree: ROOT,
+            node: stand_in,
+        },
+    );
+    // ★ And *whoever is here* is not a list, so the list verbs say so rather
+    // than writing into a field nothing reads — which is how the reference
+    // spells it, a flag beside a set that makes the set irrelevant.
+    doc.represent_everyone(ROOT, nested).unwrap();
+    assert_eq!(
+        doc.represent(ROOT, nested, first).unwrap_err(),
+        StandInError::StandsForEveryone {
+            tree: ROOT,
+            node: nested,
+        },
+    );
+    assert_eq!(
+        doc.stop_representing(ROOT, nested, first).unwrap_err(),
+        StandInError::StandsForEveryone {
+            tree: ROOT,
+            node: nested,
+        },
+    );
+}
+
+/// ★★★★★ R2004 — **a stand-in over a mixed group has no ports at all**, so it
+/// cannot be wired.
+///
+/// The reference never has to ask: every state in a state machine has the same
+/// two transition pins by construction, so the uniformity is true and written
+/// down nowhere. Here it is checked, and a stand-in that cannot say what it
+/// presents says so by presenting nothing rather than by picking one member's.
+#[test]
+fn r2004_a_stand_in_over_a_mixed_group_presents_nothing() {
+    let mut doc: Document<Flo> = Document::new("flow");
+    let step = doc
+        .add_node(ROOT, NodeBody::Kind(Flo::Step("a".into())), 0, 0)
+        .unwrap();
+    let branch = doc
+        .add_node(ROOT, NodeBody::Kind(Flo::Branch), 0, 100)
+        .unwrap();
+    let sink = doc
+        .add_node(ROOT, NodeBody::Kind(Flo::End), 400, 0)
+        .unwrap();
+    let stand_in = doc
+        .add_node(
+            ROOT,
+            NodeBody::StandIn(Represented::Named(BTreeSet::from([step]))),
+            200,
+            0,
+        )
+        .unwrap();
+    assert_eq!(
+        doc.signature(ROOT, stand_in).unwrap().outputs.len(),
+        2,
+        "one member, so it presents that member's signature"
+    );
+
+    doc.represent(ROOT, stand_in, branch).unwrap();
+    let shape = doc.signature(ROOT, stand_in).unwrap();
+    assert!(
+        shape.inputs.is_empty() && shape.outputs.is_empty(),
+        "★★★★★ a step and a branch do not agree, so there is nothing to present"
+    );
+    assert!(
+        doc.connect(ROOT, Socket::new(stand_in, 0), Socket::new(sink, 0))
+            .is_err(),
+        "★ and nothing can be wired to it, which is the refusal that makes the \
+         absent signature a guarantee rather than a display choice"
     );
 }

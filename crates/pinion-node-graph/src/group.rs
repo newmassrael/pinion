@@ -173,6 +173,28 @@ fn node_fault(
     write!(f, "node {node} in tree {tree} {said}")
 }
 
+/// R2004 — what a stand-in that names a member the tree does not hold says
+/// after the card it is on.
+///
+/// A sentence fragment beside the three above, and lifted out of
+/// `Violation::fmt` for the reason R1999 lifted a pass out of `validate`:
+/// writing these two inline tipped that function past the length lint. The
+/// member is named because the two repairs are opposite — take it out of the
+/// group, or put the node back — and R1924's rule is that the sentence a person
+/// reads is the one that has to be right.
+fn member_gone(member: NodeId) -> String {
+    format!("stands in for node {}, which is not there", member.0)
+}
+
+/// R2004 — what a stand-in whose expansion over-subscribes a socket says.
+///
+/// Names the socket and the count rather than only the stand-in, which is all
+/// the reference's own message carries: a reader who is told *this alias is
+/// wrong* still has to find which wire is over-subscribed.
+fn crowds_socket(socket: Socket, would_be: usize) -> String {
+    format!("would put {would_be} links on {socket}, which holds one")
+}
+
 /// A node that says it is inside another one and the containment relation
 /// cannot honour it — the fragment the two arms about a stated parent share.
 fn parent_fault(
@@ -1003,6 +1025,49 @@ pub enum Violation {
         /// The far end left naming nothing.
         node: NodeId,
     },
+    /// ★★★★★ R2004 — a stand-in naming a member the tree no longer holds.
+    ///
+    /// The same shape as [`Self::DanglingEcho`] and reported for the same
+    /// reason: deleting a node is an ordinary edit that knows nothing about who
+    /// stands in for it, so the state is representable.
+    ///
+    /// ⚠ **The reference REPAIRS this silently**, on every load: a private
+    /// routine keeps only the members still in the graph, so an alias that
+    /// covered four states covers three and nobody is told. That is a fact
+    /// about the document being changed to make a check pass, which is the
+    /// opposite of what a check is for — R1999's rule, that a
+    /// re-classification says what it left behind.
+    StandInLostMember {
+        /// The tree it is in.
+        tree: TreeId,
+        /// The stand-in.
+        node: NodeId,
+        /// The member it names and the tree does not hold.
+        member: NodeId,
+    },
+    /// ★★★★★ R2004 — a stand-in whose expansion puts more links on a socket
+    /// than that socket holds.
+    ///
+    /// The general form of the reference's *an alias used as a transition's
+    /// target must alias a single state*, and **derived** rather than restated:
+    /// the far socket's own [`Multiplicity`] is what decides it, which recovers
+    /// the reference's rule on the control plane and **inverts** it on the
+    /// value one. [`Document::crowded`] is the reading.
+    ///
+    /// [`Document::represent`] refuses the edit that would cause this, so
+    /// reaching it needs a document that arrived from a file or a deletion that
+    /// changed what [`Represented::Everyone`](crate::Represented::Everyone)
+    /// covers.
+    StandInCrowds {
+        /// The tree it is in.
+        tree: TreeId,
+        /// The stand-in.
+        node: NodeId,
+        /// The far socket the expansion piles onto.
+        socket: Socket,
+        /// How many links land there.
+        would_be: usize,
+    },
     /// A socket holds more links than its [`Multiplicity`] allows (R1599).
     ///
     /// Which sockets those are is not a fixed side: a **value input** takes at
@@ -1265,6 +1330,17 @@ impl fmt::Display for Violation {
             Self::DanglingEcho { tree, node } => {
                 node_fault(f, *tree, *node, "shows a name whose endpoint is not there")
             }
+            // R2004 — each names the OTHER end (the member, the socket) so a
+            // reader can act; see the two variants' own docs for why.
+            Self::StandInLostMember { tree, node, member } => {
+                node_fault(f, *tree, *node, member_gone(*member))
+            }
+            Self::StandInCrowds {
+                tree,
+                node,
+                socket,
+                would_be,
+            } => node_fault(f, *tree, *node, crowds_socket(*socket, *would_be)),
             // R1999 — names the node and the tree and stops there: what KIND of
             // graph this is, and what that kind is called, are the taxonomy's
             // words and a screen renders them from `Document::graph_kind`.
@@ -1532,6 +1608,40 @@ impl<K: NodeKind> Document<K> {
             .collect()
     }
 
+    /// ★★★★★ R2004 — the breaches a walk over links cannot see because they
+    /// are about **who a node stands in for**.
+    ///
+    /// Both readings are called rather than re-implemented, for the reason
+    /// R1884 gave and R1990 restated: a gate that re-spells a law is a second
+    /// copy of it. [`Document::lost_members`] is what an editor would show
+    /// beside the card and [`Document::crowded`] is what
+    /// [`Document::represent`] refuses in advance, so the diagnosis and the
+    /// refusal cannot answer differently.
+    #[must_use]
+    fn standing_breaches(&self, tree: TreeId) -> Vec<Violation> {
+        let mut found: Vec<Violation> = Vec::new();
+        for held in self.tree(tree).into_iter().flat_map(Tree::nodes) {
+            found.extend(self.lost_members(tree, held.id).into_iter().map(|member| {
+                Violation::StandInLostMember {
+                    tree,
+                    node: held.id,
+                    member,
+                }
+            }));
+        }
+        found.extend(
+            self.crowded(tree)
+                .into_iter()
+                .map(|crowding| Violation::StandInCrowds {
+                    tree,
+                    node: crowding.stand_in,
+                    socket: crowding.socket,
+                    would_be: crowding.would_be,
+                }),
+        );
+        found
+    }
+
     /// Every way one tree's LINKS break their own rules — each link on its own,
     /// then what the set of them puts on a socket.
     ///
@@ -1614,6 +1724,10 @@ impl<K: NodeKind> Document<K> {
         for tree in self.trees() {
             // ★ R1935 — before the links, because this defect has none.
             found.extend(self.naming_breaches(tree.id));
+            // ★ R2004 — beside it, and for the same reason: a stand-in's
+            // members are named rather than linked, so no walk over links
+            // reaches either of these two defects.
+            found.extend(self.standing_breaches(tree.id));
             // ★★★★★ R1999 — and the nodes this tree's graph kind does not
             // admit, read from `not_at_home` rather than re-walked here: the
             // predicate that refuses the edit and the one that reports the

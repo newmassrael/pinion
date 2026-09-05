@@ -153,9 +153,19 @@ impl<K: NodeKind> Document<K> {
             // the arm because it shares the answer, and it is named first
             // because it is the one whose name is the *whole point*: a
             // value crosses the canvas TO it.
-            NodeBody::Beacon | NodeBody::Group(_) | NodeBody::Interface(_) | NodeBody::Delay(_) => {
-                Naming::InTree
-            }
+            // ★ R2004 — a stand-in joins them, on measured evidence rather
+            // than by analogy: the reference gives its alias node a rename
+            // hook, a name validator, and an operator that runs that validator
+            // to make `Self` unique before placing the card. A name it
+            // uniquifies is a name it treats as an address. ⚠ It uniquifies by
+            // appending until the name is free and tells nobody, which is the
+            // silent repair R1935 declined to copy for a beacon; answering
+            // `InTree` is what makes the clash a refusal here instead.
+            NodeBody::Beacon
+            | NodeBody::Group(_)
+            | NodeBody::Interface(_)
+            | NodeBody::Delay(_)
+            | NodeBody::StandIn(_) => Naming::InTree,
         }
     }
 

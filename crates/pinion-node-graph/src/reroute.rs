@@ -381,11 +381,19 @@ impl<K: NodeKind> Document<K> {
             // answers it by falling through is a body nobody decided about.
             // Listing every arm also puts the compiler back in the position of
             // asking the next round what a new body answers here.
+            // ★★ R2004 — and a stand-in answers `None` for a reason that is
+            // neither of the two above: it may well have two ends, since its
+            // ports are whatever its members share. But nothing passes THROUGH
+            // it — `Document::expanded_links` resolves it away, so the wire a
+            // person drew to it is a wire to each member and the stand-in is on
+            // no chain at all. A caller handed `Passing::ENDS` would follow a
+            // route that carries nothing.
             NodeBody::Echo(_)
             | NodeBody::Frame
             | NodeBody::Group(_)
             | NodeBody::Interface(_)
-            | NodeBody::Delay(_) => None,
+            | NodeBody::Delay(_)
+            | NodeBody::StandIn(_) => None,
             NodeBody::Kind(kind) => kind.passing(),
         }
     }

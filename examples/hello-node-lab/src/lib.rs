@@ -102,12 +102,12 @@ use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::widgets::wheel::WheelDirection;
 use pinion_core::{CellKind, Frame, Modifiers, Scene, WidgetCore, edit_field_keymap};
 use pinion_node_graph::{
-    Act, AdvancedView, Arrival, Camera, ClassSource, Classify, Crossings, Definitions, Document,
-    Drawn, EditPath, Extent, Faces, Fault, Fit, Focus, Focused, Found, Fragment, InZone, Instance,
-    Item, Judged, LandError, Landfall, LinkId, LinkLayer, Margin, NameSource, Node, NodeBody,
-    NodeId, NodeKind, Objection, ParentError, PortPath, PortRef, PortSite, ROOT, Relinked, Room,
-    RoomError, Sharing, Side, Socket, Tint, TreeId, Violation, WatchError, Watches, Weight,
-    Widening, ZoomRange, palette_of, type_palette,
+    Act, AdvancedView, Alone, Arrival, Camera, ClassSource, Classify, Crossings, Definitions,
+    Document, Drawn, EditPath, Extent, Faces, Fault, Fit, Focus, Focused, Found, Fragment, InZone,
+    Instance, Item, Judged, LandError, Landfall, LinkId, LinkLayer, Margin, NameSource, Node,
+    NodeBody, NodeId, NodeKind, Objection, ParentError, PortPath, PortRef, PortSite, ROOT,
+    Relinked, Room, RoomError, Sharing, Side, Socket, Tint, TreeId, Violation, WatchError, Watches,
+    Weight, Widening, ZoomRange, palette_of, type_palette,
 };
 use pinion_platform_storage::AppStorage;
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
@@ -2419,9 +2419,20 @@ impl LabState {
             // `spread_reroute` address them through the LINK they sit on, never
             // by a card name — and making them cards is a different question
             // from this one. Stated rather than left to the shape of the match.
+            //
+            // ★★★★★ R2004 — a STAND-IN is in, and this list is where the test
+            // for it lives: a card here is what this canvas ADDRESSES BY NAME.
+            // A stand-in answers `Naming::InTree`, `stand_in_for` returns its
+            // name and `represent` takes that name as an argument, so leaving
+            // it out would publish a verb whose subject the screen could not
+            // see — which is exactly the half-dressed arrival R1981 measured
+            // for a group instance and this round met again on the walk.
             let shown = matches!(
                 node.body,
-                NodeBody::Kind(_) | NodeBody::Group(_) | NodeBody::Interface(_)
+                NodeBody::Kind(_)
+                    | NodeBody::Group(_)
+                    | NodeBody::Interface(_)
+                    | NodeBody::StandIn(_)
             );
             if shown && !opening.contains(&node.id) {
                 all.push(node.id);
@@ -13502,6 +13513,33 @@ const FIELDS: &[SchemaField] = &{
         // is bracketed here" and "nobody asked" are different statements, and
         // only the first is a fact a client can act on.
         SchemaField::new("zones", "json"),
+        // ★★★★★ R2004 — which cards stand in for others, and what the wiring
+        // therefore MEANS. Published as a register beside the zone one and for
+        // the same reason: *nobody stands in for anybody here* and *nobody
+        // asked* are different statements, and the authored/expanded pair is
+        // the reference's own sentence for its alias — "decompiled into
+        // multiple connections" — made a number a client can read.
+        SchemaField::new("stand_ins", "json"),
+        // ★★★★★ R2004 — the reference's self-transition command, generalised:
+        // a stand-in for this card, placed at its own offset and wired back, so
+        // the loop a direct edit refuses is a DECLARATION rather than an
+        // exception.
+        SchemaField::action("stand_in_for", "string"),
+        // ★★★★★ R2004 — widen one to a second card. Its refusals are the
+        // round's claim reaching a person: a shape that does not agree, and a
+        // socket that would be over-subscribed. TWO arguments, so it declares
+        // its grammar (R1637).
+        SchemaField::action_with(
+            "represent",
+            "string",
+            ArgForm::Delimited(','),
+            const {
+                &[
+                    SchemaArg::key("stand_in", "string", "nodes"),
+                    SchemaArg::key("card", "string", "nodes"),
+                ]
+            },
+        ),
         // ★★★★★ R1944 — every definition this document holds and WHERE each is
         // used. The count has been derivable since groups existed; the sites
         // are what a refusal has to carry to be actionable and what a removal
@@ -13826,6 +13864,7 @@ impl ExternalIntrospect for LabOracle {
             "takes" => Ok(IntrospectValue::Json(takes_wire(state))),
             "watchable" => Ok(IntrospectValue::Json(watchable_wire(state))),
             "zones" => Ok(IntrospectValue::Json(zones_wire(state))),
+            "stand_ins" => Ok(IntrospectValue::Json(stand_ins_wire(state))),
             "definitions" => Ok(IntrospectValue::Json(definitions_wire(state))),
             // ★ R1742 — the SAME value the host publishes for this section, so
             // "one build, two placements" is a fact a client can check rather
@@ -14516,6 +14555,22 @@ impl ExternalIntrospect for LabOracle {
                 let name = Self::text(&args)?;
                 let node = Self::card(&state, name.trim())?;
                 Ok(IntrospectValue::Text(select_also(&state, node)))
+            }
+            // ★★★★★ R2004 — the reference's self-transition command, over any
+            // card rather than over a state.
+            "stand_in_for" => {
+                let name = Self::text(&args)?;
+                let node = Self::card(&state, name.trim())?;
+                stand_in_for_card(&state, node).map(IntrospectValue::Text)
+            }
+            "represent" => {
+                let raw = Self::text(&args)?;
+                let (which, card) = raw
+                    .split_once(',')
+                    .ok_or_else(|| InvokeError::rejected("represent takes <stand-in>,<card>"))?;
+                let stand_in = Self::card(&state, which.trim())?;
+                let member = Self::card(&state, card.trim())?;
+                represent_card(&state, stand_in, member).map(IntrospectValue::Text)
             }
             "group" => {
                 let name = Self::text(&args)?;
@@ -23646,6 +23701,153 @@ fn zones_wire(state: &Rc<LabState>) -> serde_json::Value {
         "any": any,
         "offer": { "asked": Role::ALL.len(), "opens": opens },
     })
+}
+
+/// ★★★★★ R2004 — **which cards stand in for others, and what the wiring
+/// therefore means.**
+///
+/// Two populations, kept apart the way R2003 kept the zone register's two: the
+/// `cards` rows run over the canvas and say what each card *is*, and `wiring`
+/// runs over the LINKS and says what the canvas *means* — the authored count
+/// against the expanded one, which is the reference's own sentence for its
+/// alias ("decompiled into multiple connections") as a pair of numbers rather
+/// than as a step inside a compile nobody outside can ask about.
+///
+/// ★ `shapes` is the measurement the reference never has to make. Every state
+/// in a state machine has the same two transition pins by construction, so its
+/// alias can stand for any group and the uniformity is written down nowhere.
+/// Here a stand-in presents the signature its members SHARE, so how many
+/// distinct shapes this canvas holds is what decides whether one over the whole
+/// canvas could present anything — and it is derived from
+/// [`Document::signature`], the framework's own answer, rather than re-decided
+/// here.
+fn stand_ins_wire(state: &Rc<LabState>) -> serde_json::Value {
+    let doc = state.doc.borrow();
+    let here = state.here();
+    let rows: Vec<serde_json::Value> = state
+        .cards()
+        .into_iter()
+        .map(|node| {
+            let stands_for = doc.stands_alone(here, node).map(|_| {
+                doc.stands_for(here, node)
+                    .into_iter()
+                    .map(|member| state.name_of(member))
+                    .collect::<Vec<_>>()
+            });
+            serde_json::json!({
+                "card": state.name_of(node),
+                // ★ Null for a card that stands in for nothing at all, which
+                // the crate answers apart from a stand-in that stands for
+                // nobody — those are different states and only one is a fault
+                // waiting to happen.
+                "stands_for": stands_for,
+                "alone": doc.stands_alone(here, node).map(Alone::wire_word),
+                "lost": doc
+                    .lost_members(here, node)
+                    .into_iter()
+                    .map(|member| state.name_of(member))
+                    .collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    let authored = doc.tree(here).map_or(0, |host| host.links().len());
+    let expanded = doc.expanded_links(here).len();
+    // ★ Distinct signatures among the cards, by the ports' published names and
+    // sides — the coarsest reading that still tells two shapes apart, and it
+    // asks the framework rather than the taxonomy.
+    let mut shapes: BTreeSet<(Vec<String>, Vec<String>)> = BTreeSet::new();
+    for node in state.cards() {
+        if let Some(signature) = doc.signature(here, node) {
+            shapes.insert((
+                signature.inputs.iter().map(|p| p.name.clone()).collect(),
+                signature.outputs.iter().map(|p| p.name.clone()).collect(),
+            ));
+        }
+    }
+    serde_json::json!({
+        "cards": rows,
+        "any": rows.iter().any(|row| !row["stands_for"].is_null()),
+        "wiring": { "authored": authored, "expanded": expanded },
+        "shapes": shapes.len(),
+    })
+}
+
+/// ★★★★★ R2004 — **a stand-in for this card, wired back to it.**
+///
+/// The reference's self-transition command, generalised: there it is a
+/// state-machine operator over a state, here it is
+/// [`Document::stand_in_for`] over any card, and the loop it makes exists only
+/// in the expansion — which is why `connect` may go on refusing a node feeding
+/// itself directly.
+///
+/// [`Document::stand_in_for`]: pinion_node_graph::Document::stand_in_for
+fn stand_in_for_card(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError> {
+    let name = state.name_of(node);
+    let here = state.here();
+    let stood = state
+        .doc
+        .borrow_mut()
+        .stand_in_for(here, node)
+        .map_err(|why| {
+            let said = why.to_string();
+            state.say(Utterance::refused(&said));
+            InvokeError::rejected(said)
+        })?;
+    let made = state.name_of(stood.stand_in);
+    // ★★★★★ R2004 — and WHAT THE WIRE COST. This verb lands on the card's first
+    // input, and on this topology that port already holds the analyzer's own
+    // wire — a value input takes one producer, so the new link displaces it.
+    // The reference's operator can never meet this (its transition pin holds
+    // many), so saying it is not copied from anywhere: it is what this crate's
+    // own ports make possible, and a canned verb that destroyed authored work
+    // without a word would be the defect.
+    match stood.displaced {
+        Some(gone) => state.say(Utterance::done(format!(
+            "{made} stands in for {name}, replacing the wire from {}",
+            state.name_of(gone.from.node)
+        ))),
+        None => state.say(Utterance::done(format!("{made} stands in for {name}"))),
+    }
+    Ok(made)
+}
+
+/// ★★★★★ R2004 — **widen a stand-in to a second card**, and let its refusal
+/// reach a person.
+///
+/// The two refusals are the round's claim arriving where it matters: a shape
+/// that does not agree leaves the stand-in presenting nothing, and a socket
+/// that would be over-subscribed is the general form of the reference's *an
+/// alias used as a transition's target must alias a single state* — which there
+/// is a compile-time error message and here refuses the edit.
+fn represent_card(
+    state: &Rc<LabState>,
+    stand_in: NodeId,
+    member: NodeId,
+) -> Result<String, InvokeError> {
+    let here = state.here();
+    state
+        .doc
+        .borrow_mut()
+        .represent(here, stand_in, member)
+        .map_err(|why| {
+            let said = why.to_string();
+            state.say(Utterance::refused(&said));
+            InvokeError::rejected(said)
+        })?;
+    let said = format!(
+        "{} stands in for {}",
+        state.name_of(stand_in),
+        state
+            .doc
+            .borrow()
+            .stands_for(here, stand_in)
+            .into_iter()
+            .map(|held| state.name_of(held))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    state.say(Utterance::done(&said));
+    Ok(said)
 }
 
 /// ★★★★★ R1942 — **whether each pin's value can be LOOKED AT**, and when it

@@ -368,11 +368,22 @@ impl<K: NodeKind> Document<K> {
             // re-classifying the tree, and both start from looking at it.
             | Violation::NotAtHome { node, .. }
             // The container it names is not there, so there is one card.
-            | Violation::DanglingParent { node, .. } => vec![*node],
+            | Violation::DanglingParent { node, .. }
+            // ★ R2004 — ONE card, and it is the stand-in rather than the
+            // missing member: the member is not there to be gone to. Both
+            // repairs — take it out of the group, or put the node back — start
+            // at the stand-in, which is R1935's argument for a far end whose
+            // endpoint is gone.
+            | Violation::StandInLostMember { node, .. } => vec![*node],
             // Both are there and both are the fault: the contained node is
             // blamed because moving it is the repair, and the container is shown
             // because making it a frame is the other one.
             Violation::ParentNotAFrame { node, parent, .. } => vec![*node, *parent],
+            // ★ R2004 — the stand-in is blamed and the socket it crowds is
+            // shown, in that order: the repair is narrowing what the stand-in
+            // stands for, and the far card is what makes the count make sense.
+            // The same pairing R1885 chose for a refused link.
+            Violation::StandInCrowds { node, socket, .. } => vec![*node, socket.node],
             // Every node on the knot, ascending — the set R1596 says is the only
             // one that can be acted on.
             Violation::Cycle { nodes, .. } => nodes.clone(),
@@ -487,7 +498,9 @@ const fn violation_tree(violation: &Violation) -> TreeId {
         | Violation::MistypedPortValue { tree, .. }
         | Violation::InadmissiblePortValue { tree, .. }
         | Violation::TooManyItems { tree, .. }
-        | Violation::NotAtHome { tree, .. } => *tree,
+        | Violation::NotAtHome { tree, .. }
+        | Violation::StandInLostMember { tree, .. }
+        | Violation::StandInCrowds { tree, .. } => *tree,
         Violation::Recursion { definition } => *definition,
     }
 }

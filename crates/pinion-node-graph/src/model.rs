@@ -2244,6 +2244,62 @@ pub enum NodeBody<K: NodeKind> {
     /// nobody is obliged to ask; a fact that is only true when someone asks is
     /// the shape R1888 recorded.
     Echo(NodeId),
+    /// ★★★★★ R2004 — **a node that stands in for several**: a link authored at
+    /// it is one link per node it stands for.
+    ///
+    /// The engine's state-machine alias, and its own baker says the mechanism
+    /// in one line — *"Alias's are simply decompiled into multiple
+    /// connections."* [`Document::expanded_links`] is that decompilation as a
+    /// reading rather than as a step inside a compile, and
+    /// [`Document::stands_for`] and [`Document::crowded`] are the rest of it.
+    ///
+    /// # Its signature is DERIVED, and that is what the expansion needs
+    ///
+    /// A stand-in presents the signature its members **share**, so its port *n*
+    /// is their port *n* and the expansion carries the index across untouched.
+    /// Authoring the ports instead would let a stand-in name a port its members
+    /// do not have, and the expansion would have nowhere to land. When the
+    /// members do not agree it presents **no** ports, so a stand-in over a
+    /// mixed group cannot be wired at all — a checked property where the
+    /// reference has an unstated one, every state in a state machine having the
+    /// same two transition pins by construction.
+    ///
+    /// # It never stands in for a stand-in
+    ///
+    /// [`Document::represent`] refuses one, which is what keeps
+    /// [`Document::stands_for`] a single step and therefore total. A chain
+    /// could otherwise be closed into a ring by two edits neither of which is
+    /// wrong on its own, and the crate would be detecting that instead of it
+    /// being unrepresentable.
+    StandIn(Represented),
+}
+
+/// What a [`NodeBody::StandIn`] stands in for (R2004).
+///
+/// Two arms and not a set beside a flag, which is how the reference spells it:
+/// its global-alias flag sits next to the aliased-state set and makes it
+/// irrelevant without clearing it, so the document can hold a global alias that
+/// also remembers three states — a state with no meaning, which every reader
+/// has to know to ignore. Here *whoever is here* is not a list, and the verbs
+/// that edit a list say so
+/// ([`Document::represent`] answers
+/// [`StandInError::StandsForEveryone`](crate::StandInError::StandsForEveryone))
+/// rather than writing into a field nothing reads.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Represented {
+    /// Exactly these nodes.
+    ///
+    /// Members the tree no longer holds stay in the set and are **reported** —
+    /// see [`Document::lost_members`]. The reference prunes them on every load
+    /// instead, so a deletion elsewhere quietly shrinks what an alias covers.
+    Named(BTreeSet<NodeId>),
+    /// Whoever is in the tree: every application node and every group instance.
+    ///
+    /// The reference's global alias, and an arm rather than an enumeration made
+    /// today because it stays right as nodes arrive and leave. What it excludes
+    /// is this crate's own furniture — the structural arms and the passing ones
+    /// — which is not subject matter anybody is quantifying over.
+    Everyone,
 }
 
 /// Which side of a node's own signature a port sits on (R1594).
@@ -2758,6 +2814,12 @@ impl<K: NodeKind> Node<K> {
             // reading that resolves it; this is the fallback for a dangling
             // one, and it says so rather than showing a blank card.
             NodeBody::Echo(_) => "Echo".to_owned(),
+            // ★ R2004 — the reference's own default for a fresh alias card, in
+            // its own word, and a stand-in almost always carries a label for
+            // the same reason a beacon does: what it stands for is the thing a
+            // person is naming. Its canned verb writes `Self`, which is why
+            // that word is `Document::stand_in_for`'s and not this arm's.
+            NodeBody::StandIn(_) => "Alias".to_owned(),
         }
     }
 
@@ -3631,6 +3693,10 @@ impl<K: NodeKind> Document<K> {
             // an input port would be a place to wire one, which is precisely
             // the edge this body exists to do without.
             NodeBody::Echo(_) => self.echo_signature(tree, node.id),
+            // R2004 — the signature its members SHARE, derived for the same
+            // reason the two above are and with a sharper consequence: these
+            // ports are what the expansion maps through.
+            NodeBody::StandIn(_) => self.stand_in_signature(tree, node.id),
         })
     }
 
@@ -4984,12 +5050,24 @@ impl<K: NodeKind> Document<K> {
     }
 
     /// Which nodes each node reaches, on one plane of the graph (R1599).
+    ///
+    /// ★★★★★ R2004 — over the **expanded** links, not the authored ones. A
+    /// stand-in is resolved away by [`Self::expanded_links`], so a wire drawn
+    /// to one is a wire to each node it stands in for and every derivation
+    /// built on this — [`Self::cycle_nodes`], [`Self::control_loops`], and the
+    /// path [`Self::connect`] reports when it refuses a cycle — sees the graph
+    /// that actually runs. Threading it here rather than at each of those is
+    /// this crate's repeating rule: the repair is a derivation, not a list of
+    /// the places that read it.
+    ///
+    /// ⚠ Behaviour-preserving for a document with no stand-in, where the
+    /// expansion answers the authored links unchanged and one at a time.
     fn successors_on(&self, tree: TreeId, control: bool) -> BTreeMap<NodeId, Vec<NodeId>> {
         let mut successors: BTreeMap<NodeId, Vec<NodeId>> = BTreeMap::new();
-        let Some(host) = self.tree(tree) else {
+        if self.tree(tree).is_none() {
             return successors;
-        };
-        for link in &host.links {
+        }
+        for link in &self.expanded_link_view(tree) {
             if self.link_is_control(tree, link) != control {
                 continue;
             }

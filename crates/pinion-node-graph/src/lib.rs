@@ -254,6 +254,7 @@ mod section;
 mod select;
 mod sighted;
 mod split;
+mod standin;
 mod substitute;
 mod swap;
 #[cfg(test)]
@@ -302,7 +303,8 @@ pub use model::{
     Described, Description, Document, DroppedLink, EditError, Flow, Found, InZone, Instance,
     Interface, InterfaceSide, Judged, KindPort, Link, LinkId, Matched, Multiplicity, Node,
     NodeBody, NodeId, NodeKind, PairError, Port, PortRef, PortValueError, PortValueResult, ROOT,
-    Refusal, Relabelled, Removed, Seed, Side, Signature, Socket, Tree, TreeId, crossing,
+    Refusal, Relabelled, Removed, Represented, Seed, Side, Signature, Socket, Tree, TreeId,
+    crossing,
 };
 pub use naming::{Labelled, NameSource, PortName};
 pub use naming_scope::{Copying, Naming};
@@ -326,6 +328,7 @@ pub use split::{
     AddressedPort, Composition, NoSuchMember, NotRecombinable, NotSplittable, PortPath, Recombined,
     RoundTrip, SplitChange, Splittable, round_trips,
 };
+pub use standin::{Alone, Crowding, Expanded, StandInError, StoodIn};
 pub use substitute::{Substitution, Unlandable};
 pub use swap::{Carried, RetypeError, SwapError, Swapped, ZoneSwapError, ZoneSwapped};
 pub use view::{Camera, Fit, Fitted, Margin, Unframed, ZoomRange};

@@ -983,6 +983,16 @@ fn body_name(body: &NodeBody<Op>) -> String {
         // no way in at all.
         NodeBody::Beacon => "named".to_owned(),
         NodeBody::Echo(end) => format!("far:{}", end.0),
+        // R2004 — a node that stands in for several, named with HOW MANY,
+        // because that is the fact a reader of this wire cannot get any other
+        // way: one stand-in and another differ in what they cover, not in what
+        // they are.
+        NodeBody::StandIn(represented) => match represented {
+            pinion_node_graph::Represented::Named(named) => {
+                format!("stand-in:{}", named.len())
+            }
+            pinion_node_graph::Represented::Everyone => "stand-in:everyone".to_owned(),
+        },
     }
 }
 
@@ -1012,7 +1022,11 @@ fn node_scene(
         // fact about the graph rather than about this taxonomy.
         // R1935 — a NAMED endpoint joins them: its name is the address a value
         // crosses the canvas to, so it is a card with something to read.
-        NodeBody::Group(_) | NodeBody::Delay(_) | NodeBody::Beacon => {
+        // R2004 — a STAND-IN joins them, and for the same reason: what it
+        // covers is a fact about the graph that a reader has to be able to see
+        // without opening anything, so it is a card with something to read
+        // rather than wire furniture.
+        NodeBody::Group(_) | NodeBody::Delay(_) | NodeBody::Beacon | NodeBody::StandIn(_) => {
             ColorRole::SurfaceContainerHighest
         }
         // A frame is not a card: it is drawn by `frame_scene`, behind
