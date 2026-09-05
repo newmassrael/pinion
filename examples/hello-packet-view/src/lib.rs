@@ -2965,8 +2965,19 @@ fn list_cell_tag(row: usize, column: usize) -> String {
 /// One message cell, tagged so a reader can traverse the grid a column at a
 /// time. Its accessible name is the text painted here, which is why nothing
 /// re-states the value in the accessibility layer.
+/// ★★★★★ R2015 — the figures setting comes from the COLUMN, here, and no
+/// caller passes it.
+///
+/// A cell of `sn` or `len` or `time` is a number a reader compares down the
+/// column, and until this round the framework had no way to ask a proportional
+/// face for figures of one width — so the sequence numbers did not line up and
+/// a gap in them was harder to see than it should be. The declaration lives on
+/// [`spec::ColumnSpec::numeric`], one field per column, and this function is
+/// the only place it becomes a style: every caller already passes the column
+/// index, so none of them can pass the wrong answer or forget to pass one.
 fn cell_label(row: usize, column: usize, text: impl Into<String>, rect: Rect, fg: Color) -> Scene {
-    tagged_label(&list_cell_tag(row, column), text, rect, FONT_SMALL, fg)
+    let style = run_style(FONT_SMALL, fg).with_numeric(spec::COLUMNS[column].numeric_style());
+    text_run(list_cell_tag(row, column), text, rect, style)
 }
 
 /// One decode row: its selection band, its fold chevron, its name, its derived

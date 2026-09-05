@@ -148,17 +148,6 @@
       ]
     },
     {
-      "name": "debt-a-column-of-numbers-cannot-ask-for-figures-of-one-width",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links analyzer-tool-capability-spec"
-      ]
-    },
-    {
       "name": "debt-a-composed-destination-has-no-single-published-description",
       "substituted": false,
       "blocked_by": "campaign",

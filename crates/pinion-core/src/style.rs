@@ -3383,6 +3383,14 @@ impl TextStyle {
         self.overflow = overflow;
         self
     }
+
+    /// (R2015 §5.36) Builder: how this run's digits are set. See
+    /// [`NumericStyle`].
+    #[must_use]
+    pub const fn with_numeric(mut self, numeric: NumericStyle) -> Self {
+        self.numeric = numeric;
+        self
+    }
 }
 
 impl Default for TextStyle {

@@ -2766,3 +2766,110 @@ fn r2012_a_fragment_that_is_not_a_fault_is_not_painted_as_one() {
          reached: {dropped} dropped, {intact} intact"
     );
 }
+
+/// ★★★★★ R2015 §5.36 — **the columns a reader compares down ask their face for
+/// figures of one width, and the rest do not.**
+///
+/// A capture viewer is a table of numbers: `sn` is scanned for a gap in the
+/// sequence and `len` for an outlier, and neither reads properly when the face
+/// gives `1` a narrower advance than `8`. Until R2014 the framework could not
+/// ask a proportional face for that at all; this is the screen doing the
+/// asking.
+///
+/// ⚠⚠ THE EXPECTATION IS DERIVED FROM `spec::COLUMNS`, NOT LISTED HERE, and
+/// that is the whole design of the round. A list of column indices in this test
+/// would be a second copy of that table — it would agree today and a column
+/// added later would land in whichever copy somebody remembered. `ColumnSpec`
+/// makes the answer a required field, so a new column cannot COMPILE without
+/// one, and this reads the painted cell back against it.
+///
+/// ⚠ It asserts the ASK and not the rendered advance, deliberately. The
+/// rendered width is a function of the face the host happens to resolve — this
+/// binding pins no family — and R1573 measured what that costs: 40 of 94 unit
+/// tests reading the machine. That the ask reaches the shaper and moves real
+/// glyphs is `pinion-text`'s `r2014_*` pair, on a face pinned for the purpose.
+/// Split so that neither half is a claim it cannot support.
+///
+/// ```text
+/// cargo test -p hello-packet-view r2015 -- --nocapture
+/// ```
+#[test]
+fn r2015_the_columns_compared_down_ask_for_figures_of_one_width() {
+    use pinion_core::style::{FigureSpacing, ZeroStyle};
+
+    let mut asked = 0usize;
+    let mut plain = 0usize;
+    sweep(|_, _, scene, _, case| {
+        for (n, _) in spec::ROWS.iter().enumerate() {
+            for (c, column) in spec::COLUMNS.iter().enumerate() {
+                let tag = super::list_cell_tag(n, c);
+                let Some(style) = cell_text_style(scene, &tag) else {
+                    // Not every row is above the fold in every swept state.
+                    continue;
+                };
+                if column.numeric {
+                    asked += 1;
+                    assert_eq!(
+                        style.numeric.figures,
+                        FigureSpacing::Tabular,
+                        "{case}: `{}` is declared a column read down, so its \
+                         cells must ask for one advance",
+                        column.title,
+                    );
+                    assert_eq!(
+                        style.numeric.zero,
+                        ZeroStyle::Slashed,
+                        "{case}: and a slashed zero, so a zero is not read as \
+                         a letter in `{}`",
+                        column.title,
+                    );
+                } else {
+                    plain += 1;
+                    assert_eq!(
+                        style.numeric,
+                        pinion_core::style::NumericStyle::UNSET,
+                        "{case}: `{}` is not compared down the column, so it \
+                         must ask its face for nothing",
+                        column.title,
+                    );
+                }
+            }
+        }
+    });
+    println!("[r2015] painted cells judged: {asked} asking, {plain} plain");
+    // Both denominators, because either at zero would make half of the above
+    // vacuous — and a table where every column asked would be as wrong as one
+    // where none did.
+    assert!(
+        asked > 0 && plain > 0,
+        "★ this gate separates two kinds of column and must reach both: \
+         {asked} asking, {plain} plain"
+    );
+    let declared = spec::COLUMNS.iter().filter(|c| c.numeric).count();
+    assert!(
+        declared > 0 && declared < spec::COLUMNS.len(),
+        "★ and the declaration itself must be a split rather than a constant: \
+         {declared} of {} columns",
+        spec::COLUMNS.len()
+    );
+}
+
+/// The [`TextStyle`] of the first text run owned by `tag`.
+///
+/// The sibling of `run_ink` one function up, and the same ownership rule: a
+/// `tagged_label` puts the tag on the run itself.
+fn cell_text_style(scene: &Scene, tag: &str) -> Option<pinion_core::style::TextStyle> {
+    let mut found = None;
+    scene.for_each_node(&mut |visit| {
+        if found.is_some() {
+            return;
+        }
+        let Scene::Text(text) = visit.node else {
+            return;
+        };
+        if text.tag.as_deref() == Some(tag) {
+            found = Some(text.style.clone());
+        }
+    });
+    found
+}

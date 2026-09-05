@@ -376,6 +376,38 @@ pub struct ColumnSpec {
     pub description: &'static str,
     /// Its width in logical pixels, or 0 for the column that takes the rest.
     pub width: u32,
+    /// ★★★★★ R2015 — **its cells are figures a reader compares DOWN the
+    /// column**, so they are set on one advance and its zero is slashed.
+    ///
+    /// A required field for `description`'s reason and a stronger one: the
+    /// alternative is a list of column indices somewhere in the painter, which
+    /// is a second copy of this table that a new column can be added without
+    /// touching. Here a new column cannot compile until somebody answers the
+    /// question, and `numeric_style` is the single place the answer becomes a
+    /// [`pinion_core::style::NumericStyle`].
+    ///
+    /// ⚠ `time` is `true` even though a timestamp is not an integer: it is
+    /// digits in fixed fields read down the column, which is exactly the
+    /// property `tabular-nums` names. `channel` and `type` are `false` even
+    /// where a value happens to contain a digit, because nobody compares them
+    /// vertically — the test is what a reader DOES with the column, not
+    /// whether the characters are numerals.
+    pub numeric: bool,
+}
+
+impl ColumnSpec {
+    /// The figures setting a cell of this column is drawn with.
+    ///
+    /// One origin, so the painter and any census read the same answer off the
+    /// same declaration.
+    #[must_use]
+    pub const fn numeric_style(&self) -> pinion_core::style::NumericStyle {
+        if self.numeric {
+            pinion_core::style::NumericStyle::TABULAR_SLASHED
+        } else {
+            pinion_core::style::NumericStyle::UNSET
+        }
+    }
 }
 
 /// The columns of the message list, left to right.
@@ -423,36 +455,48 @@ pub const COLUMNS: &[ColumnSpec] = &[
         title: "time",
         description: "When the message was captured",
         width: 96,
+        // Digits in fixed fields, read down the column to see how far apart
+        // two captures are. Not an integer, and still exactly what
+        // `tabular-nums` is for.
+        numeric: true,
     },
     ColumnSpec {
         title: "from -> to",
         description: "The endpoint that sent it and the one that received it",
         width: 96,
+        numeric: false,
     },
     ColumnSpec {
         title: "channel",
         description: "The transport channel it travelled on",
         width: 84,
+        numeric: false,
     },
     ColumnSpec {
         title: "sn",
         description: "Its sequence number on that channel",
         width: 54,
+        // The column a reader scans for a gap in the sequence, which is the
+        // whole reason the figures have to line up.
+        numeric: true,
     },
     ColumnSpec {
         title: "type",
         description: "Which message class it is",
         width: 76,
+        numeric: false,
     },
     ColumnSpec {
         title: "name",
         description: "The subject the message names, and what was derived about it",
         width: 0,
+        numeric: false,
     },
     ColumnSpec {
         title: "len",
         description: "How many bytes the message carries",
         width: 52,
+        numeric: true,
     },
 ];
 
