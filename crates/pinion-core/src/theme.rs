@@ -138,6 +138,7 @@
 //! [`Animation::set_target`]: crate::animation::Animation::set_target
 
 use std::cell::{Cell, RefCell};
+use std::fmt;
 use std::rc::Rc;
 
 use crate::animation::{AnimVec4, Animatable, Animation, SpringConfig};
@@ -868,6 +869,146 @@ impl Theme {
             ColorRole::OnSuccess => self.on_success,
             ColorRole::Info => self.info,
             ColorRole::OnInfo => self.on_info,
+        }
+    }
+}
+
+/// (R2016 §5.50) Why an authored palette could not be taken.
+///
+/// ★★★★★ It names EVERY role the document is short of, and serde does not.
+/// `serde_json::from_str::<Theme>` stops at the first missing field and says
+/// only *missing field: info*, which tells a person to add one thing and send
+/// it again — and then tells them the next one. A palette arrives from a design
+/// system as a whole document, so the useful answer is the whole shortfall at
+/// once.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThemeGap {
+    /// Roles this vocabulary requires that the document does not bind, in
+    /// [`ColorRole::all`] order.
+    pub missing: Vec<ColorRole>,
+    /// Keys the document binds that name no role, sorted.
+    ///
+    /// Reported rather than ignored: a key that resolves to nothing is
+    /// usually a role the AUTHOR has and this vocabulary does not, which is
+    /// the more interesting half of the mismatch and the one a silent parser
+    /// throws away.
+    pub unknown: Vec<String>,
+}
+
+impl fmt::Display for ThemeGap {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "the palette binds no ")?;
+        for (i, role) in self.missing.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "`{}`", role.name())?;
+        }
+        if self.missing.is_empty() {
+            write!(f, "role that is missing")?;
+        }
+        if !self.unknown.is_empty() {
+            write!(f, "; and binds {:?}, which name no role", self.unknown)?;
+        }
+        Ok(())
+    }
+}
+
+impl Theme {
+    /// (R2016 §5.50) Take a palette authored elsewhere, or say what it owes.
+    ///
+    /// The document is a JSON object keyed by [`ColorRole::name`], each value a
+    /// [`Color`] — which is what `serde`'s own derive on this struct already
+    /// accepts, so an authoring tool that targets the derive needs no adapter.
+    /// What this adds is the REFUSAL: every missing role at once, and every key
+    /// that names none.
+    ///
+    /// ★★★★★ WHY THIS EXISTS AT ALL, measured rather than assumed. A design
+    /// system authored for this project emits exactly this shape and has done
+    /// for some time; the framework could always have parsed it and NOTHING IN
+    /// THE TREE CALLED THE PARSER — the bridge was built from one side and
+    /// nobody crossed. The first thing that happens when you do cross is that
+    /// the document turns out to be short, because this vocabulary grew two
+    /// state tiers after the exporter was written. So the crossing and the
+    /// naming of the shortfall are the same act, and a reader that could only
+    /// say *missing field* would have made the second half somebody's manual
+    /// diff.
+    ///
+    /// # Errors
+    ///
+    /// [`ThemeGap`] when any role is unbound, listing them all. A document with
+    /// unknown keys and no missing roles is ACCEPTED — the extra keys are
+    /// reported through [`Self::take_palette`] rather than refused, because a
+    /// palette that binds everything this vocabulary has is usable whatever
+    /// else it carries.
+    pub fn from_wire(document: &str) -> Result<Self, ThemeGap> {
+        Self::take_palette(document).map(|(theme, _)| theme)
+    }
+
+    /// (R2016 §5.50) [`Self::from_wire`], and the keys it did not recognise.
+    ///
+    /// Two returns rather than two functions because the parse is one pass and
+    /// a caller that wants both should not run it twice.
+    ///
+    /// # Errors
+    ///
+    /// [`ThemeGap`] when a role is unbound — see [`Self::from_wire`].
+    pub fn take_palette(document: &str) -> Result<(Self, Vec<String>), ThemeGap> {
+        let bound: std::collections::BTreeMap<String, Color> =
+            serde_json::from_str(document).unwrap_or_default();
+        let missing: Vec<ColorRole> = ColorRole::all()
+            .iter()
+            .copied()
+            .filter(|role| !bound.contains_key(role.name()))
+            .collect();
+        let unknown: Vec<String> = bound
+            .keys()
+            .filter(|key| ColorRole::from_name(key).is_none())
+            .cloned()
+            .collect();
+        if !missing.is_empty() {
+            return Err(ThemeGap { missing, unknown });
+        }
+        // Every role is bound, so the derive cannot fail on a missing field and
+        // the only remaining shape error is one this map already rejected.
+        let mut theme = Self::light();
+        for role in ColorRole::all() {
+            let colour = bound[role.name()];
+            theme.bind(*role, colour);
+        }
+        Ok((theme, unknown))
+    }
+
+    /// (R2016 §5.50) Set one role's colour.
+    ///
+    /// The write half of [`Self::resolve`], and exhaustive for the same reason:
+    /// a role added to the enum must be placed here or the match does not
+    /// compile.
+    pub const fn bind(&mut self, role: ColorRole, colour: Color) {
+        match role {
+            ColorRole::Surface => self.surface = colour,
+            ColorRole::OnSurface => self.on_surface = colour,
+            ColorRole::OnSurfaceMuted => self.on_surface_muted = colour,
+            ColorRole::Accent => self.accent = colour,
+            ColorRole::OnAccent => self.on_accent = colour,
+            ColorRole::Outline => self.outline = colour,
+            ColorRole::SurfaceContainerHighest => self.surface_container_highest = colour,
+            ColorRole::SurfaceContainerLow => self.surface_container_low = colour,
+            ColorRole::SurfaceContainer => self.surface_container = colour,
+            ColorRole::SurfaceContainerHigh => self.surface_container_high = colour,
+            ColorRole::Error => self.error = colour,
+            ColorRole::OnError => self.on_error = colour,
+            ColorRole::ErrorContainer => self.error_container = colour,
+            ColorRole::OnErrorContainer => self.on_error_container = colour,
+            ColorRole::InverseSurface => self.inverse_surface = colour,
+            ColorRole::InverseOnSurface => self.inverse_on_surface = colour,
+            ColorRole::InversePrimary => self.inverse_primary = colour,
+            ColorRole::Warning => self.warning = colour,
+            ColorRole::OnWarning => self.on_warning = colour,
+            ColorRole::Success => self.success = colour,
+            ColorRole::OnSuccess => self.on_success = colour,
+            ColorRole::Info => self.info = colour,
+            ColorRole::OnInfo => self.on_info = colour,
         }
     }
 }
@@ -1971,6 +2112,117 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), 23, "names must be unique");
+    }
+
+    /// ★★★★★ R2016 §5.50 — **a palette authored elsewhere is taken, or every
+    /// role it is short of is named at once.**
+    ///
+    /// A design system authored for this project emits a palette in exactly
+    /// the shape this struct's own `serde` derive accepts, and had done for
+    /// some time before anything here called the parser: the bridge was built
+    /// from one side and nobody crossed it. The first thing crossing finds is
+    /// that the document is SHORT, because this vocabulary grew two state
+    /// tiers after that exporter was written — so the crossing and the naming
+    /// of the shortfall are one act.
+    ///
+    /// ⚠ `serde` alone would not do. It stops at the first missing field and
+    /// says only *missing field: info*, which sends a person round the loop
+    /// once per role. A palette arrives as a whole document; the useful answer
+    /// is the whole shortfall.
+    ///
+    /// The round trip is asserted first, because a refusal test whose happy
+    /// path nobody checks is a parser that might refuse everything.
+    #[test]
+    fn r2016_an_authored_palette_is_taken_or_says_what_it_owes() {
+        // Round trip: this vocabulary's own light palette, written out and
+        // read back. Derived from `ColorRole::all` so a new role joins.
+        let complete = serde_json::to_string(&Theme::light()).expect("a theme serialises");
+        let (taken, unknown) = Theme::take_palette(&complete).expect("a complete palette is taken");
+        assert_eq!(taken, Theme::light(), "the round trip must be exact");
+        assert!(unknown.is_empty(), "and name nothing this vocabulary lacks");
+
+        // The shortfall, whole. The document below is the shape an authoring
+        // tool emits — an object keyed by role name — with the two state tiers
+        // this vocabulary added afterwards left out, which is the real state
+        // of the bridge as this round found it.
+        let short: std::collections::BTreeMap<String, Color> = ColorRole::all()
+            .iter()
+            .filter(|role| {
+                !matches!(
+                    role,
+                    ColorRole::Success | ColorRole::OnSuccess | ColorRole::Info | ColorRole::OnInfo
+                )
+            })
+            .map(|role| (role.name().to_owned(), Theme::light().resolve(*role)))
+            .collect();
+        let gap = Theme::from_wire(&serde_json::to_string(&short).expect("serialises"))
+            .expect_err("a palette short of four roles is not a palette");
+        assert_eq!(
+            gap.missing,
+            vec![
+                ColorRole::Success,
+                ColorRole::OnSuccess,
+                ColorRole::Info,
+                ColorRole::OnInfo
+            ],
+            "all four at once, in declaration order — not the first one",
+        );
+        assert!(
+            gap.unknown.is_empty(),
+            "and it binds nothing this vocabulary does not have: {:?}",
+            gap.unknown
+        );
+        // The refusal is a sentence, because it is what a person reads.
+        let said = gap.to_string();
+        for role in &gap.missing {
+            assert!(
+                said.contains(role.name()),
+                "the refusal must name `{}`: {said}",
+                role.name()
+            );
+        }
+
+        // A key naming no role is REPORTED, not refused: a palette that binds
+        // everything this vocabulary has is usable whatever else it carries,
+        // and the extra key is usually a role the author has and this does not
+        // — the more interesting half, and the one a silent parser discards.
+        let mut extra: std::collections::BTreeMap<String, Color> = ColorRole::all()
+            .iter()
+            .map(|role| (role.name().to_owned(), Theme::light().resolve(*role)))
+            .collect();
+        extra.insert("tertiary".to_owned(), Color::rgb(1, 2, 3));
+        let (_, unknown) = Theme::take_palette(&serde_json::to_string(&extra).expect("serialises"))
+            .expect("a complete palette is taken whatever else it carries");
+        assert_eq!(unknown, vec!["tertiary".to_owned()]);
+        println!("[r2016] refusal reads: {said}");
+    }
+
+    /// ★★★★★ R2016 §5.50 — **`bind` and `resolve` are inverses over every
+    /// role**, which is what lets `take_palette` place a document without a
+    /// per-role list of its own.
+    ///
+    /// The write half is exhaustive by construction — a role added to the enum
+    /// fails to compile until it is placed — but exhaustive is not the same as
+    /// CORRECT: a mis-typed arm that writes `on_error` where it means `error`
+    /// compiles perfectly. Driving every role with a value nothing else has is
+    /// what separates the two.
+    #[test]
+    fn r2016_binding_a_role_is_the_inverse_of_resolving_it() {
+        let mut theme = Theme::light();
+        // A distinct colour per role, so a mis-aimed arm cannot coincide.
+        for (i, role) in ColorRole::all().iter().enumerate() {
+            let n = u8::try_from(i).expect("fewer than 256 roles");
+            theme.bind(*role, Color::rgb(n, n, n));
+        }
+        for (i, role) in ColorRole::all().iter().enumerate() {
+            let n = u8::try_from(i).expect("fewer than 256 roles");
+            assert_eq!(
+                theme.resolve(*role),
+                Color::rgb(n, n, n),
+                "`{}` resolves to what was bound to it",
+                role.name()
+            );
+        }
     }
 
     /// (R1651 §5.50) The warning tier reads **apart** from the error
