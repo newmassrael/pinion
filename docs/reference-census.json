@@ -2277,10 +2277,10 @@
       "verdict": "app-content"
     },
     "MaterialEditor::CreateRerouteUsageFromDeclaration": {
-      "covered_by": "creating a named reroute's usage",
+      "covered_by": "ONE MORE FAR END OF A NAME (R2005): `Document::echo_beacon` makes another `NodeBody::Echo` of an existing `NodeBody::Beacon` — the fifth operator over R1935's named pair, and the one that GROWS the far-end set where the other four read the two directions and convert both ways. The model was already here; what was absent was the verb. ★★★ THREE MEASURED DIFFERENCES, each one a defect in the reference's command rather than a preference: (1) IT HAS NO ACTIVATION CONDITION — `OnCreateRerouteUsageFromDeclaration` is bound TWICE as a bare execute action with no can-execute predicate, and the only gate is an `IsA` test in the context-menu builder, so *may I* exists only where the menu is drawn; `may_echo_beacon` is the question and the verb calls it (R1920). (2) IT STACKS CARDS ON ONE POINT — the new usage goes to `+150, same Y` unconditionally, so a second call lands exactly on the first and nothing says so; here the spot steps down by the fan-out's own `STACK` and `Echoed::past` NAMES what it stepped over. (3) IT CLEARS THE SELECTION AND SELECTS NOTHING, leaving a person with a new card and no indication which; here the id comes back and selection is the caller's, the split R1935 drew. ★ And the reference writes TWO addresses for one referent (a `Declaration` pointer plus a copy of its guid) where a far end here names its endpoint by `NodeId` and nothing else. ★ The refusal on the OTHER half carries the repair: `BeaconError::NotTheEndpoint` hands back the endpoint to ask instead, where the reference simply omits the menu entry.",
       "mechanism": "MaterialEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_material_editor_create_reroute_usage_from_declaration",
+      "verdict": "have"
     },
     "MaterialEditor::CreateSelectNode": {
       "covered_by": "a Substrate material node type",

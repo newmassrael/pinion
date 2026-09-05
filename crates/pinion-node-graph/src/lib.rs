@@ -272,7 +272,7 @@ pub use arrange::{
     Align, ArrangePass, ArrangeTail, Axis, Distribute, Edge, Stack, Straighten, Straightened,
 };
 pub use autowire::{Arrival, AutowireError, Autowired, Declined, Uptake};
-pub use beacon::{BeaconError, Gathered, Spread};
+pub use beacon::{BeaconError, Echoed, Gathered, Spread};
 pub use bypass::{Bridge, Passthrough, Rewired, Route};
 pub use debug::{
     BreakError, Breakpoints, Command, Direction, Halt, Inspectable, Landing, NodeSite, Occurrence,

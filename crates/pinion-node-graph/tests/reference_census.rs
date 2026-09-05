@@ -55,7 +55,7 @@ use pinion_node_graph::{
     Socket, Stack, Straighten, Stride, SwapError, SwitchRefusal, Tie, Tint, TreeId, Variadic,
     Violation, WatchError, Watches, palette_of, type_palette,
 };
-use pinion_node_graph::{Alone, Represented, StandInError};
+use pinion_node_graph::{Alone, BeaconError, Represented, StandInError};
 use pinion_node_graph::{Carried, ZoneSwapError};
 use pinion_node_graph::{
     Copying, DefinitionAct, DefinitionError, InZone, InsertError, PairError, Renamed, Substitution,
@@ -2749,6 +2749,13 @@ fn r1935_named_reroute_proofs() -> Vec<Proof> {
             "engine",
             "MaterialEditor::ConvertRerouteToNamedReroute",
             engine_material_editor_convert_reroute_to_named_reroute,
+        ),
+        // R2005 — and the fifth operator over the pair: one MORE far end of a
+        // name that already exists.
+        proof(
+            "engine",
+            "MaterialEditor::CreateRerouteUsageFromDeclaration",
+            engine_material_editor_create_reroute_usage_from_declaration,
         ),
         proof(
             "engine",
@@ -15402,4 +15409,94 @@ fn engine_anim_graph_create_self_transition() {
         "★★★★★ derived from `Multiplicity`, not written down — and it names the \
          SOCKET, which the reference's message does not carry"
     );
+}
+
+/// ★★★★★ R2005 — the material editor's **Create Reroute Usage** command: one
+/// more far end of a name that already exists.
+///
+/// The fifth operator over R1935's named pair, and the one that GROWS the far
+/// end set — where the other four read the two directions and convert both
+/// ways. The model was already here; what was absent was the verb.
+///
+/// ★★★★★ THREE THINGS MEASURED ABOUT ITS COMMAND, each deciding a piece:
+///
+/// * **It has no activation condition.** `OnCreateRerouteUsageFromDeclaration`
+///   is bound TWICE as a bare `FExecuteAction` with no `FCanExecuteAction`, and
+///   the only thing standing between it and a node it does nothing for is an
+///   `IsA(...Declaration)` test in the context-menu builder. So *may I* is a
+///   question that exists only where the menu is drawn.
+/// * **It stacks cards on one point.** The new usage goes to
+///   `NodePosX + 150, NodePosY` unconditionally, so a second call lands it
+///   exactly on the first and nothing reports it.
+/// * **It clears the selection and selects nothing.** `ClearSelectionSet()`
+///   runs first and the node it makes is never selected, so a person is left
+///   with a new card and no indication which it is.
+///
+/// ★ And it writes TWO addresses for one referent — a `Declaration` pointer and
+/// a copy of that declaration's guid — which R1935 already does not.
+#[test]
+fn engine_material_editor_create_reroute_usage_from_declaration() {
+    let mut document: Document<Op> = Document::new("root");
+    let source = node(&mut document, Op::Num(5));
+    let beacon = document
+        .add_node(ROOT, NodeBody::Beacon, 40, 70)
+        .expect("root tree");
+    wire(&mut document, source, 0, beacon, 0);
+
+    // (A) The question the reference does not have, and the verb ASKS it rather
+    // than repeating it.
+    assert_eq!(document.may_echo_beacon(ROOT, beacon), Ok(()));
+
+    // (B) The command itself, at the reference's own offset.
+    let first = document
+        .echo_beacon(ROOT, beacon)
+        .expect("a named endpoint echoes");
+    assert_eq!(first.at, (190, 70), "★ its own +150, same Y");
+    assert!(first.past.is_empty());
+    assert_eq!(
+        document.beacon_of(ROOT, first.echo),
+        Some(beacon),
+        "★ bound to the endpoint by ONE address, a `NodeId` — not a pointer and \
+         a guid that can come apart"
+    );
+    assert_eq!(
+        document.evaluate(ROOT, first.echo),
+        vec![Some(Val::Number(5))],
+        "★★★★★ and the value crosses the canvas to it over NO wire, which is \
+         what the pair is for"
+    );
+
+    // (C) ★★★★★ Twice, and the second does not land on the first.
+    let second = document.echo_beacon(ROOT, beacon).expect("and another");
+    assert_ne!(
+        second.at, first.at,
+        "★★★★★ the reference puts both on the same point"
+    );
+    assert_eq!(
+        second.past,
+        vec![first.echo],
+        "★ and what it stepped past is NAMED, which a fixed offset cannot say"
+    );
+    assert_eq!(
+        document.echoes_of(ROOT, beacon),
+        vec![first.echo, second.echo],
+        "★ both belong to the name, which is the reading the verb grew"
+    );
+
+    // (D) ★ Asked of the OTHER half, the refusal carries the repair — where the
+    // reference simply does not offer the menu entry.
+    assert_eq!(
+        document.may_echo_beacon(ROOT, first.echo),
+        Err(BeaconError::NotTheEndpoint {
+            node: first.echo,
+            endpoint: Some(beacon),
+        }),
+    );
+    assert_eq!(
+        document.may_echo_beacon(ROOT, source),
+        Err(BeaconError::NotNamed(source)),
+        "★ and a node that is neither half is a DIFFERENT refusal, because \
+         there is nothing to redirect to"
+    );
+    assert!(document.validate().is_empty());
 }

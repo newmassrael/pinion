@@ -20417,3 +20417,150 @@ fn r2004_a_stand_in_over_a_mixed_group_presents_nothing() {
          absent signature a guarantee rather than a display choice"
     );
 }
+
+/// ★★★★★ R2005 — **one more far end of this name**, and it does not land on
+/// the ones already there.
+///
+/// The reference's create-usage-from-declaration command places the new usage
+/// at `+150, same Y` from the declaration **unconditionally**, so calling it
+/// twice puts two cards on one point and nothing says so. The stepping here is
+/// the fan-out's own `STACK`, and what it stepped past is reported.
+#[test]
+fn r2005_another_far_end_does_not_land_on_the_last_one() {
+    let mut doc: Document<LOp> = Document::new("lattice");
+    let beacon = doc.add_node(ROOT, NodeBody::Beacon, 40, 70).unwrap();
+
+    let first = doc.echo_beacon(ROOT, beacon).expect("an endpoint echoes");
+    assert_eq!(
+        first.at,
+        (190, 70),
+        "★ the reference's own +150, same Y, from the endpoint"
+    );
+    assert!(
+        first.past.is_empty(),
+        "★ nothing was there, and an empty list is what says so"
+    );
+
+    let second = doc.echo_beacon(ROOT, beacon).expect("and another");
+    assert_eq!(
+        second.past,
+        vec![first.echo],
+        "★★★★★ it stepped past the one already there, and NAMES it — the \
+         reference cannot, because its position does not depend on what is \
+         drawn"
+    );
+    assert_eq!(second.at, (190, 120), "★ one STACK down, the fan-out's own");
+
+    let third = doc.echo_beacon(ROOT, beacon).expect("and a third");
+    assert_eq!(
+        third.past,
+        vec![first.echo, second.echo],
+        "★ and the report grows with the run it walked, ascending"
+    );
+    assert_eq!(third.at, (190, 170));
+
+    // ★ All three show the endpoint's name and none has a wire: that is what a
+    // far end IS, and making one more did not change it.
+    doc.relabel(ROOT, beacon, Some("Tempo")).expect("a name");
+    for made in [first.echo, second.echo, third.echo] {
+        assert_eq!(doc.echo_display_name(ROOT, made).as_deref(), Some("Tempo"));
+        assert_eq!(doc.beacon_of(ROOT, made), Some(beacon));
+    }
+    assert_eq!(
+        doc.echoes_of(ROOT, beacon),
+        vec![first.echo, second.echo, third.echo],
+        "★ and the endpoint's own reading is what the verb grew"
+    );
+    assert_eq!(
+        doc.tree(ROOT).unwrap().links().len(),
+        0,
+        "★★★★★ three far ends and NO wire — which is the capability the pair \
+         exists for"
+    );
+    assert!(doc.validate().is_empty());
+}
+
+/// ★★★★★ R2005 — **the verb can be asked before it is run**, and the refusal
+/// carries the repair.
+///
+/// ⚠ Measured on the reference: its command is registered TWICE as a bare
+/// execute action with no can-execute predicate, and the only thing deciding
+/// whether it is offered is a class test in the context-menu builder. So the
+/// question this asserts does not exist there — a person reaching the command
+/// any other way gets a no-op.
+#[test]
+fn r2005_asking_first_and_running_cannot_disagree() {
+    let mut doc: Document<LOp> = Document::new("lattice");
+    let beacon = doc.add_node(ROOT, NodeBody::Beacon, 0, 0).unwrap();
+    let echo = doc.add_node(ROOT, NodeBody::Echo(beacon), 100, 0).unwrap();
+    let plain = doc
+        .add_node(ROOT, NodeBody::Kind(LOp::Level(1)), 0, 300)
+        .unwrap();
+    let bend = doc.add_node(ROOT, NodeBody::Reroute, 0, 400).unwrap();
+
+    assert_eq!(doc.may_echo_beacon(ROOT, beacon), Ok(()));
+
+    // ★★★★★ A far end is refused with the endpoint to ask INSTEAD, which is a
+    // repair rather than a no.
+    assert_eq!(
+        doc.may_echo_beacon(ROOT, echo),
+        Err(BeaconError::NotTheEndpoint {
+            node: echo,
+            endpoint: Some(beacon),
+        }),
+    );
+    let said = BeaconError::NotTheEndpoint {
+        node: echo,
+        endpoint: Some(beacon),
+    }
+    .to_string();
+    assert!(
+        said.contains(&beacon.0.to_string()),
+        "★ and the sentence a person reads names it too: {said}"
+    );
+
+    // ★ Anything else is a different refusal, because the repair is different:
+    // there is no endpoint to redirect to.
+    assert_eq!(
+        doc.may_echo_beacon(ROOT, plain),
+        Err(BeaconError::NotNamed(plain))
+    );
+    assert_eq!(
+        doc.may_echo_beacon(ROOT, bend),
+        Err(BeaconError::NotNamed(bend))
+    );
+
+    // ★★★★★ The verb ASKS the question rather than repeating it, so the two
+    // cannot answer differently — R1920's rule, and the assertion that makes it
+    // one derivation instead of two.
+    for asked in [beacon, echo, plain, bend] {
+        assert_eq!(
+            doc.may_echo_beacon(ROOT, asked).is_ok(),
+            doc.echo_beacon(ROOT, asked).is_ok(),
+            "node {asked:?}: the check and the edit disagree"
+        );
+    }
+
+    // ★ And a far end whose endpoint is GONE is a third answer, not a repeat of
+    // the second: there is nothing to redirect to, and the sentence says so.
+    let orphan = doc
+        .add_node(ROOT, NodeBody::Echo(NodeId(999)), 0, 500)
+        .unwrap();
+    assert_eq!(
+        doc.may_echo_beacon(ROOT, orphan),
+        Err(BeaconError::NotTheEndpoint {
+            node: orphan,
+            endpoint: None,
+        }),
+    );
+    let orphaned_said = BeaconError::NotTheEndpoint {
+        node: orphan,
+        endpoint: None,
+    }
+    .to_string();
+    assert_ne!(
+        orphaned_said,
+        BeaconError::NotNamed(orphan).to_string(),
+        "★ two different states must not read as one sentence"
+    );
+}

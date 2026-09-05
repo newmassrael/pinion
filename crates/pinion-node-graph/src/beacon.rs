@@ -71,6 +71,15 @@ const OFFSET: i32 = 50;
 /// The vertical gap between stacked far ends, the reference's own.
 const STACK: i32 = 50;
 
+/// ★ R2005 — how far to the RIGHT of a named endpoint one more far end lands.
+///
+/// The reference's own `+150`, from its create-usage-from-declaration command,
+/// and deliberately **not** [`OFFSET`]: that one is the fan-out's, and the two
+/// are different numbers in the reference because they answer different
+/// gestures. Folding them into one would make the round trip's equality
+/// ([`OFFSET`]'s whole reason) accidentally depend on this.
+const BESIDE: i32 = 150;
+
 /// What [`Document::spread_reroute`] did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Spread {
@@ -102,6 +111,28 @@ pub struct Gathered {
     pub carried: Vec<LinkId>,
 }
 
+/// ★★★★★ R2005 — what [`Document::echo_beacon`] made, and **what it had to
+/// step past**.
+///
+/// The reference's command answers `void` and always places the new usage at
+/// exactly `+150, same Y` from the declaration, with no regard for what is
+/// already there — so running it twice puts two cards on the same point and
+/// nothing says so. `past` is that fact made reportable: it is the far ends the
+/// placement walked over, and it is empty exactly when the first spot was free.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Echoed {
+    /// The far end made.
+    pub echo: NodeId,
+    /// Where it landed.
+    pub at: (i32, i32),
+    /// The far ends of this same endpoint that were already sitting on the
+    /// spots this one stepped past, ascending.
+    ///
+    /// Empty on the first call, one long on the second, and so on — which is
+    /// what makes "they do not stack up" a measurement rather than a claim.
+    pub past: Vec<NodeId>,
+}
+
 /// Why a conversion could not be made.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BeaconError {
@@ -125,6 +156,28 @@ pub enum BeaconError {
     /// Reachable only through [`Document::gather_beacon`] on such a node, and
     /// it is the state [`Document::validate`] reports.
     Dangling(NodeId),
+    /// ★★★★★ R2005 — [`Document::echo_beacon`] was asked to make another far
+    /// end of something that is itself a far END.
+    ///
+    /// Its own arm rather than [`Self::NotNamed`] because the repair is
+    /// different **and available**: the endpoint this far end shows is one
+    /// [`Document::beacon_of`] away, so the refusal carries it and a screen can
+    /// offer *do it there instead* rather than only saying no. That is the same
+    /// argument [`Self::NotAReroute`] and [`Self::NotNamed`] were split on.
+    ///
+    /// ⚠ The reference cannot reach this state at all, and not because it
+    /// handles it: its context menu offers the command only on a declaration,
+    /// so the question is never put. Measured — the command is bound as a bare
+    /// execute action with **no** can-execute predicate, so the menu's
+    /// visibility test is the only thing standing between it and a node it does
+    /// nothing for.
+    NotTheEndpoint {
+        /// The far end that was asked.
+        node: NodeId,
+        /// The endpoint it shows, when it still has one — `None` for a far end
+        /// whose endpoint is gone, which [`Self::Dangling`] is the name of.
+        endpoint: Option<NodeId>,
+    },
 }
 
 impl std::fmt::Display for BeaconError {
@@ -137,6 +190,30 @@ impl std::fmt::Display for BeaconError {
             Self::Dangling(node) => {
                 write!(f, "node {} names an endpoint that is not there", node.0)
             }
+            // R2005 — the sentence NAMES THE REPAIR when there is one, because
+            // a refusal a person can act on is worth more than a correct no.
+            Self::NotTheEndpoint {
+                node,
+                endpoint: Some(end),
+            } => write!(
+                f,
+                "node {} shows a name rather than holding it — ask node {}",
+                node.0, end.0
+            ),
+            // ★ And when the far end has nothing to redirect to, the sentence
+            // says THAT rather than repeating `NotNamed`'s. Clippy asking for
+            // the two arms to be merged is what showed they had been written
+            // the same: a far end whose endpoint is gone and a node that was
+            // never part of a pair are different states, and a screen that
+            // reads one sentence for both cannot offer the repair.
+            Self::NotTheEndpoint {
+                node,
+                endpoint: None,
+            } => write!(
+                f,
+                "node {} shows a name whose endpoint is not there",
+                node.0
+            ),
         }
     }
 }
@@ -414,6 +491,117 @@ impl<K: NodeKind> Document<K> {
             reroute,
             gone,
             carried,
+        })
+    }
+
+    /// ★★★★★ R2005 — **may this node be asked for another far end?**
+    ///
+    /// The question [`Self::echo_beacon`] itself asks, so a screen that greys
+    /// the gesture and one that just calls the verb cannot get different
+    /// answers (R1920's rule).
+    ///
+    /// ⚠ **The reference has no such question.** Measured: its
+    /// create-usage-from-declaration command is registered as a bare execute
+    /// action with **no** can-execute predicate, twice, and the only thing
+    /// deciding whether it is offered is a class test in the node's context
+    /// menu builder. So the same command reached any other way runs on any node
+    /// and silently does nothing — which is the shape R1888 recorded, a fact
+    /// that is only true when the right person asks.
+    ///
+    /// # Errors
+    ///
+    /// [`BeaconError::NoSuchTree`], [`BeaconError::NoSuchNode`],
+    /// [`BeaconError::NotTheEndpoint`] for a far end (carrying the endpoint to
+    /// ask instead), and [`BeaconError::NotNamed`] for anything else.
+    pub fn may_echo_beacon(&self, tree: TreeId, node: NodeId) -> Result<(), BeaconError> {
+        let host = self.tree(tree).ok_or(BeaconError::NoSuchTree(tree))?;
+        let held = host.node(node).ok_or(BeaconError::NoSuchNode(node))?;
+        match held.body {
+            NodeBody::Beacon => Ok(()),
+            // ★ The one refusal that carries its own repair: `beacon_of`
+            // answers where the question should have been put, and `None` there
+            // is the dangling case rather than a second kind of absence.
+            NodeBody::Echo(_) => Err(BeaconError::NotTheEndpoint {
+                node,
+                endpoint: self.beacon_of(tree, node),
+            }),
+            _ => Err(BeaconError::NotNamed(node)),
+        }
+    }
+
+    /// ★★★★★ R2005 — **one more far end of this name**, placed where it does
+    /// not sit on top of the ones already there.
+    ///
+    /// The reference's create-usage-from-declaration command, and the three
+    /// things measured about it that this does differently:
+    ///
+    /// * **It is askable in advance** — see [`Self::may_echo_beacon`], which
+    ///   this calls rather than repeating.
+    /// * **It does not stack cards on one point.** There the position is
+    ///   `+150, same Y` unconditionally, so a second call lands the new usage
+    ///   exactly on the first. Here the spot steps down by the same
+    ///   fifty units the fan-out stacks by — one constant, two verbs, so they
+    ///   cannot disagree — and the far ends stepped past are **reported** in
+    ///   [`Echoed::past`].
+    /// * **It leaves the selection alone.** There the command *clears* the
+    ///   selection first and does not select what it made, so a person is left
+    ///   looking at a canvas with a new card on it and nothing indicating
+    ///   which. Here the id comes back and what to select is the caller's
+    ///   business, which is the split R1935 already drew.
+    ///
+    /// ★ And there is no second address. The reference writes BOTH a pointer
+    /// to the declaration and a copy of its guid onto the new usage; a far end
+    /// here names its endpoint by [`NodeId`] and by nothing else, so the two
+    /// cannot come apart.
+    ///
+    /// ⚠ The stated limit: the spot is stepped past the far ends **of this
+    /// endpoint**, not past everything on the canvas. A general
+    /// what-is-drawn-here reading does not exist in this crate — [`Occupants`]
+    /// is about a socket's links — and inventing one for this verb would be a
+    /// second layout rule with no other caller. The population is the one the
+    /// verb is about.
+    ///
+    /// [`Occupants`]: crate::Occupants
+    ///
+    /// # Errors
+    ///
+    /// Whatever [`Self::may_echo_beacon`] refuses.
+    pub fn echo_beacon(&mut self, tree: TreeId, node: NodeId) -> Result<Echoed, BeaconError> {
+        self.may_echo_beacon(tree, node)?;
+        let held = self
+            .tree(tree)
+            .and_then(|host| host.node(node))
+            .ok_or(BeaconError::NoSuchNode(node))?;
+        let (x, mut y) = (held.x + BESIDE, held.y);
+        // ★ The population is this endpoint's own far ends, read through
+        // `echoes_of` rather than by walking the tree here — so the verb and
+        // the reading a screen shows beside the card cannot disagree about who
+        // belongs to this name.
+        let taken: Vec<(NodeId, i32, i32)> = self
+            .echoes_of(tree, node)
+            .into_iter()
+            .filter_map(|echo| {
+                self.tree(tree)
+                    .and_then(|host| host.node(echo))
+                    .map(|far| (echo, far.x, far.y))
+            })
+            .collect();
+        let mut past = Vec::new();
+        while let Some((sitting, _, _)) = taken
+            .iter()
+            .find(|(_, at_x, at_y)| *at_x == x && *at_y == y)
+        {
+            past.push(*sitting);
+            y += STACK;
+        }
+        past.sort_unstable();
+        let echo = self
+            .add_node(tree, NodeBody::Echo(node), x, y)
+            .map_err(|_| BeaconError::NoSuchTree(tree))?;
+        Ok(Echoed {
+            echo,
+            at: (x, y),
+            past,
         })
     }
 }

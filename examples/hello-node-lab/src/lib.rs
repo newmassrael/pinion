@@ -13433,6 +13433,17 @@ const FIELDS: &[SchemaField] = &{
             ArgForm::Scalar,
             const { &[SchemaArg::key("node", "string", "nodes")] },
         ),
+        // ★★★★★ R2005 — one MORE far end of a name that already exists. The
+        // fifth operator over the pair, and the one that GROWS it where the
+        // other four read and convert. It answers where the new card landed and
+        // what it stepped past, because the reference's own command puts every
+        // one it makes on the same point and says nothing.
+        SchemaField::action_with(
+            "echo_name",
+            "string",
+            ArgForm::Scalar,
+            const { &[SchemaArg::key("node", "string", "nodes")] },
+        ),
         // ★★★★★ R1935 — the names on this canvas, each with the far ends that
         // show it. Published as ONE reading with two shapes inside it, because
         // the two directions differ in the shape of their answer: from a far
@@ -14939,6 +14950,12 @@ impl ExternalIntrospect for LabOracle {
                 let raw = Self::text(&args)?;
                 let node = Self::card(&state, raw.trim())?;
                 unname_bend(&state, node).map(IntrospectValue::Text)
+            }
+            // ★★★★★ R2005 — one more far end of this name.
+            "echo_name" => {
+                let raw = Self::text(&args)?;
+                let node = Self::card(&state, raw.trim())?;
+                echo_name(&state, node).map(IntrospectValue::Text)
             }
             "drop_definition" => {
                 let raw = Self::text(&args)?;
@@ -22224,6 +22241,52 @@ fn unname_bend(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError
     let said = format!("{folded} card(s) around {was} fold back into the bend {called}");
     state.say(Utterance::done(said.clone()));
     Ok(said)
+}
+
+/// ★★★★★ R2005 — **one more far end of this name.**
+///
+/// The reference's create-usage-from-declaration command, on the assembled
+/// tool. What this screen adds beyond calling the verb is the SENTENCE: the
+/// crate answers where the card landed and which far ends it stepped past, and
+/// both go into what a person is told — because the reference's own command
+/// puts every usage it makes on one point and reports nothing, so a second call
+/// there is indistinguishable from a first that did not happen.
+///
+/// ⚠ The new card is labelled the way [`name_bend`]'s far ends are, with the
+/// same minting, so this screen's registers publish an address for it that can
+/// be handed straight back. It is NOT selected — that is the caller's business,
+/// which is the split R1935 drew and the opposite of the reference, whose
+/// command clears the selection and leaves nothing chosen.
+fn echo_name(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError> {
+    let held = state.name_of(node);
+    // ★★★★★ R2005 — ASKED FIRST, so the refusal reaches a person as a sentence
+    // rather than only a client as an error. The crate's verb asks the same
+    // question again, which is what makes this safe to do here: the two cannot
+    // answer differently (R1920), so this is a place to SAY it rather than a
+    // second gate.
+    if let Err(why) = state.doc.borrow().may_echo_beacon(state.here(), node) {
+        let refused = why.to_string();
+        state.say(Utterance::refused(&refused));
+        return Err(InvokeError::rejected(refused));
+    }
+    let mut doc = state.doc.borrow_mut();
+    let made = doc
+        .echo_beacon(state.here(), node)
+        .map_err(|why| InvokeError::rejected(why.to_string()))?;
+    let tag = fresh_label(&doc, state.here(), "far");
+    let _ = doc.relabel(state.here(), made.echo, Some(&tag));
+    drop(doc);
+    let called = state.name_of(made.echo);
+    let said = if made.past.is_empty() {
+        format!("{called} shows {held}, beside it")
+    } else {
+        format!(
+            "{called} shows {held}, below the {} already there",
+            made.past.len()
+        )
+    };
+    state.say(Utterance::done(said.clone()));
+    Ok(called)
 }
 
 /// ★★★★★ R1935 — **the names on this canvas**, and the far ends that show each
