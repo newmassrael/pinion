@@ -55,6 +55,7 @@ use pinion_node_graph::{
     Socket, Stack, Straighten, Stride, SwapError, SwitchRefusal, Tie, Tint, TreeId, Variadic,
     Violation, WatchError, Watches, palette_of, type_palette,
 };
+use pinion_node_graph::{Carried, ZoneSwapError};
 use pinion_node_graph::{
     Copying, DefinitionAct, DefinitionError, InZone, InsertError, PairError, Renamed, Substitution,
     Tree, Unlandable, Used,
@@ -164,6 +165,23 @@ enum Op {
     /// assertion that holds for one and not the other cannot be reading
     /// anything else about them.
     Rig,
+    /// ★★★★★ R2003 — the SECOND zone opener: `(Execute ->|, Times: Number = 1)`,
+    /// closed by `Gather`.
+    ///
+    /// A fixture with one zone kind can prove a zone exists and cannot prove a
+    /// zone's kind can CHANGE, which is what this round's row is about. Two are
+    /// the floor, and these two are shaped so the swap is observably lossy in a
+    /// DIFFERENT way each way round — `Sequence`'s variadic run has nowhere to
+    /// go here, and `Times` has nowhere to go there, carrying its authored
+    /// value with it.
+    Span,
+    /// ★★★★★ R2003 — what closes a `Span`: `(Result: Number) -> Out: Number`.
+    ///
+    /// It PRODUCES, where `Sink` does not, so a zone's closer can have a
+    /// downstream wire — which is what makes the plain-node arm of a zone swap
+    /// observable at all: the node's outgoing wires have to land somewhere, and
+    /// the reference's own answer is that they land on the closer.
+    Gather,
 }
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
@@ -205,6 +223,8 @@ impl NodeKind for Op {
             Self::Roster => "Roster",
             Self::Tuned => "Tuned",
             Self::Rig => "Rig",
+            Self::Span => "Span",
+            Self::Gather => "Gather",
         }
         .to_owned()
     }
@@ -415,6 +435,10 @@ impl NodeKind for Op {
     fn closed_by(&self) -> Option<Self> {
         match self {
             Self::Sequence => Some(Self::Sink),
+            // ★★★★★ R2003 — the second pair, so a zone has another kind to
+            // BECOME. Two openers out of nineteen kinds, which still lets a
+            // proof tell a declaration from a blanket yes.
+            Self::Span => Some(Self::Gather),
             _ => None,
         }
     }
@@ -542,11 +566,22 @@ impl NodeKind for Op {
             ],
             Self::Relay => vec![Port::new("In", Ty::Number)],
             Self::Shout => vec![Port::new("Phrase", Ty::Text)],
-            Self::Sink => vec![Port::new("Result", Ty::Number)],
+            // ★ R2003 — `Gather` takes what `Sink` takes, under the same name,
+            // so a zone swap between the two pairs has something that carries
+            // and the report can be told from one that carried nothing.
+            Self::Sink | Self::Gather => vec![Port::new("Result", Ty::Number)],
             // R1632 — the FIXED half of a variadic kind. What repeats is
             // declared once, in `variadic`, so these two can never disagree
             // about where the run is.
             Self::Sequence | Self::Stage(_) => vec![Port::control("Execute")],
+            // ★★★★★ R2003 — the same control input under the same name, plus
+            // one this pair has and the other does not. Swapping to it carries
+            // `Execute`; swapping AWAY from it drops `Times` and discards the
+            // value authored on it, which is the report a person needs.
+            Self::Span => vec![
+                Port::control("Execute"),
+                Port::new("Times", Ty::Number).with_default(Val::Number(1)),
+            ],
             Self::Choose => vec![Port::new("Index", Ty::Number).with_default(Val::Number(0))],
             Self::Blend => vec![
                 Port::new("Base", Ty::Number).with_default(Val::Number(0)),
@@ -637,8 +672,10 @@ impl NodeKind for Op {
             Self::Word(_) | Self::Shout | Self::Bundle | Self::Roster => {
                 vec![Port::new("Out", Ty::Text)]
             }
-            Self::Choose | Self::Blend => vec![Port::new("Out", Ty::Number)],
-            Self::Sink | Self::Sequence => Vec::new(),
+            // ★ R2003 — `Gather` PRODUCES where `Sink` does not, so the closer
+            // of a zone can have a downstream wire.
+            Self::Choose | Self::Blend | Self::Gather => vec![Port::new("Out", Ty::Number)],
+            Self::Sink | Self::Sequence | Self::Span => Vec::new(),
             Self::Stage(_) => vec![Port::control("Then"), Port::new("Cost", Ty::Number)],
             Self::Carry => vec![Port::new("Out", Ty::Pair)],
         }
@@ -699,7 +736,13 @@ impl NodeKind for Op {
                 Val::Text(t) => Val::Text(t.to_uppercase()),
                 other @ Val::Number(_) => other.clone(),
             })],
-            Self::Sink | Self::Sequence => Vec::new(),
+            Self::Sink | Self::Sequence | Self::Span => Vec::new(),
+            // ★ R2003 — a zone's closer hands out what reached it, so the
+            // region between the two ends has a result the graph can go on
+            // with. `Sink` swallows and this does not, which is the difference
+            // that lets a plain node BECOME a zone without its downstream
+            // losing its supply.
+            Self::Gather => vec![number(0).map(Val::Number)],
             // Slot 0 is the control output and carries nothing: control is not
             // a value, which is why watching that port is refused.
             Self::Stage(cost) => vec![None, Some(Val::Number(*cost))],
@@ -1989,6 +2032,8 @@ fn hook_round_proofs() -> Vec<Proof> {
         ),
         // R1943 — a zone is a PAIR, and the region between is derived.
         proof("dcc", "add_zone", dcc_add_zone),
+        // R2003 — and a zone's KIND changes without either end being replaced.
+        proof("dcc", "swap_zone", dcc_swap_zone),
         // R1944 — a definition can be removed, and the removal says what went.
         proof(
             "engine",
@@ -3928,6 +3973,412 @@ fn dcc_add_zone() {
         .pair(ROOT, second, closes)
         .expect("the closer is free now");
     assert_eq!(document.in_zone(ROOT, closes), Some(InZone::Closes(second)));
+}
+
+/// The starting position that sections (A) to (D) of the `swap_zone` proof all
+/// run over: a zone whose opener passes control on and whose closer is fed a
+/// number, so a swap has something to carry, something to drop and a wire to
+/// sever.
+///
+/// ★ Its own function because those four are four separate claims about the
+/// same starting position — one test asserting all of them says only
+/// *something in here broke*, and this crate's own rule is that an assertion
+/// names what it is about.
+struct SwappableZone {
+    document: Document<Op>,
+    opens: NodeId,
+    closes: NodeId,
+    ran: LinkId,
+    fed_to_closer: LinkId,
+}
+
+fn a_zone_with_flow_through_both_ends() -> SwappableZone {
+    let mut document: Document<Op> = Document::new("root");
+    let opens = document
+        .add_node(ROOT, NodeBody::Kind(Op::Sequence), 0, 0)
+        .expect("root tree");
+    let closes = document
+        .add_node(ROOT, NodeBody::Kind(Op::Sink), 200, 0)
+        .expect("root tree");
+    let body = document
+        .add_node(ROOT, NodeBody::Kind(Op::Stage(3)), 100, 100)
+        .expect("root tree");
+    let feed = num(&mut document, 7);
+    document.pair(ROOT, opens, closes).expect("a zone");
+    let ran = document
+        .connect(ROOT, Socket::new(opens, 0), Socket::new(body, 0))
+        .expect("control leaves the opener")
+        .link;
+    let fed_to_closer = document
+        .connect(ROOT, Socket::new(feed, 0), Socket::new(closes, 0))
+        .expect("a number reaches the closer")
+        .link;
+    SwappableZone {
+        document,
+        opens,
+        closes,
+        ran,
+        fed_to_closer,
+    }
+}
+
+/// ★★★★★ R2003 — **a zone's KIND changes, and the two nodes it is made of
+/// survive the change.**
+///
+/// # What the reference's operator does, measured at it this round
+///
+/// It is offered from the *swap* menu with a pair of node-type strings, and it
+/// has two arms: a node already in a zone has the whole zone re-made, and an
+/// ordinary node is turned into one with its incoming wires going to the new
+/// opener and its outgoing wires to the new closer.
+///
+/// Four measurements decided what is built here:
+///
+/// * **It destroys both ends.** Two nodes are created, the old pair's settings,
+///   values and links are copied across, and the old pair is deleted — so every
+///   id dies and with it every selection, saved layout, held reference and undo
+///   record keyed by one. That is R1598's argument met on the zone axis, and it
+///   is why this verb re-kinds the nodes in place.
+/// * **The two ends' kinds are two independent arguments**, so a caller there
+///   can ask for a zone whose opener never declared that closer. Here the
+///   closer is [`NodeKind::closed_by`]'s own answer, so the mismatched request
+///   is not refused — it cannot be written.
+/// * **Its item transfer swallows what will not cross**: a loop over the old
+///   zone's items matching by NAME only, with `except RuntimeError: pass`
+///   around the one call that can fail and a silent early return when either
+///   side has no item list at all. Here both ends go through the same
+///   correspondence a swap uses, and everything that does not survive is NAMED.
+/// * **It has no branch for an opener whose closer has been deleted.** Its pair
+///   lookup answers *(this node, the thing it is paired with)* whenever the
+///   node has a pairing field at all, and that field holds nothing in exactly
+///   that state — which is a state this crate names
+///   ([`InZone::OpensNothingYet`]) and answers for.
+#[test]
+fn dcc_swap_zone() {
+    let SwappableZone {
+        mut document,
+        opens,
+        closes,
+        ran,
+        fed_to_closer,
+    } = a_zone_with_flow_through_both_ends();
+
+    // (A) ★ The kind asked for has to be one that OPENS. The refusal is its own
+    // arm and carries no payload: the kind is the caller's own argument, so
+    // what a caller needs is which of the things it passed was wrong.
+    assert_eq!(Op::Span.closed_by(), Some(Op::Gather));
+    assert_eq!(Op::Double.closed_by(), None);
+
+    assert_eq!(
+        document.set_zone_kind(ROOT, opens, Op::Double, (0, 0)),
+        Err(ZoneSwapError::KindOpensNothing),
+        "★ a kind that opens no zone cannot be what a zone becomes"
+    );
+
+    // (B) ★★★★★ The zone changes kind, ADDRESSED FROM THE CLOSER, and both ends
+    // keep their ids and their pairing. The reference has to be addressed from
+    // either end too, and gets there by walking every node in the tree.
+    let swapped = document
+        .set_zone_kind(ROOT, closes, Op::Span, (0, 0))
+        .expect("the zone becomes a Span");
+    assert_eq!(
+        swapped.was,
+        Some(InZone::Closes(opens)),
+        "★ the report says WHICH END the person addressed, in the vocabulary \
+         `in_zone` already answers in — a screen puts focus back where the \
+         gesture happened"
+    );
+    assert_eq!((swapped.opens, swapped.closes), (opens, Some(closes)));
+    assert_eq!(
+        swapped.made(),
+        None,
+        "★ nothing was made: the zone had two ends"
+    );
+    assert_eq!(
+        document.in_zone(ROOT, opens),
+        Some(InZone::Opens(closes)),
+        "★★★★★ the PAIRING survived, which two `set_kind` calls cannot do"
+    );
+    assert_eq!(document.in_zone(ROOT, closes), Some(InZone::Closes(opens)));
+    assert_eq!(
+        swapped.opened.carried,
+        vec![Carried {
+            from: PortRef::input(0),
+            to: PortRef::input(0),
+            by_name: true,
+        }],
+        "★ the opener's control input carried BY NAME — the author's own \
+         statement that these are the same port"
+    );
+    assert_eq!(
+        swapped.opened.dropped,
+        vec![PortRef::output(0), PortRef::output(1)],
+        "★ and the run of control outputs had nowhere to go, so it is named"
+    );
+    assert_eq!(
+        swapped
+            .opened
+            .severed
+            .iter()
+            .map(|l| l.id)
+            .collect::<Vec<_>>(),
+        vec![ran],
+        "★★★★★ the wire that was on a dropped port is NAMED. The reference \
+         drops what will not fit inside swallowed exceptions, so there a swap \
+         and a swap that cost you a wire are the same outcome"
+    );
+    assert_eq!(
+        swapped
+            .closed
+            .as_ref()
+            .expect("the closer was re-kinded")
+            .carried,
+        vec![Carried {
+            from: PortRef::input(0),
+            to: PortRef::input(0),
+            by_name: true,
+        }],
+        "★ and the CLOSER is reported separately, because an end can lose what \
+         the other kept"
+    );
+    assert!(
+        document
+            .tree(ROOT)
+            .expect("root")
+            .link(fed_to_closer)
+            .is_some(),
+        "★ the wire the new closer still answers for is untouched"
+    );
+}
+
+/// ★★★★★ R2003 — **the two ends of a zone cannot be asked to disagree.**
+///
+/// Section (C) of the `swap_zone` proof, its own test because it is its own
+/// claim: the reference takes the two ends as two independent strings, so a
+/// zone whose ends never declared each other is *sayable* there and is not
+/// sayable here.
+#[test]
+fn dcc_swap_zone_gives_the_two_ends_kinds_that_agree() {
+    let SwappableZone {
+        mut document,
+        closes,
+        ..
+    } = a_zone_with_flow_through_both_ends();
+    document
+        .set_zone_kind(ROOT, closes, Op::Span, (0, 0))
+        .expect("the zone becomes a Span");
+
+    // (C) ★★★★★ And the kinds of the two ends cannot disagree: only the opener
+    // was asked for, and the closer is what that opener DECLARES closes it.
+    assert!(
+        matches!(
+            document
+                .tree(ROOT)
+                .and_then(|t| t.node(closes))
+                .map(|n| &n.body),
+            Some(NodeBody::Kind(Op::Gather))
+        ),
+        "★★★★★ the reference takes the two ends as two independent strings, so \
+         a zone whose ends never declared each other is sayable there"
+    );
+}
+
+/// ★★★★★ R2003 — **swapping a zone BACK names every piece of what it cost.**
+///
+/// Section (D) of the `swap_zone` proof. Its own test because the loss here is
+/// a *different* loss from the one the outward swap reports — an authored value
+/// with nowhere to sit, and a wire on an output the old pair did not have — and
+/// the reference drops both inside a swallowed exception.
+#[test]
+fn dcc_swap_zone_back_again_names_what_it_cost() {
+    let SwappableZone {
+        mut document,
+        opens,
+        closes,
+        ..
+    } = a_zone_with_flow_through_both_ends();
+    document
+        .set_zone_kind(ROOT, closes, Op::Span, (0, 0))
+        .expect("the zone becomes a Span");
+
+    // (D) ★★★★★ Swapping BACK is lossy in a different way, and every piece of
+    // it is named: an authored value with nowhere to sit, and a wire on an
+    // output the old pair did not have.
+    document
+        .set_port_value(ROOT, opens, PortRef::input(1), Val::Number(9))
+        .expect("Times takes a number");
+    let after = document
+        .add_node(ROOT, NodeBody::Kind(Op::Sink), 320, 0)
+        .expect("root tree");
+    let onward = document
+        .connect(ROOT, Socket::new(closes, 0), Socket::new(after, 0))
+        .expect("the closer produces")
+        .link;
+    let back = document
+        .set_zone_kind(ROOT, opens, Op::Sequence, (0, 0))
+        .expect("the zone becomes a Sequence again");
+    assert_eq!(
+        back.opened.discarded,
+        vec![(PortRef::input(1), Val::Number(9))],
+        "★★★★★ the VALUE, not just its address — a report that named the port \
+         alone leaves a caller nothing to show or to put back"
+    );
+    assert_eq!(
+        back.closed
+            .as_ref()
+            .expect("the closer was re-kinded")
+            .severed
+            .iter()
+            .map(|l| l.id)
+            .collect::<Vec<_>>(),
+        vec![onward],
+        "★ and the closer losing its output is the closer's own report"
+    );
+    assert!(
+        !back.lossless(),
+        "★ which is what a swap that cost something says"
+    );
+    assert_eq!(document.in_zone(ROOT, opens), Some(InZone::Opens(closes)));
+}
+
+/// ★★★★★ R2003 — **an ordinary node BECOMES a zone, keeps its id, and its flow
+/// is split across the two ends.**
+///
+/// Section (E) of the `swap_zone` proof, and the claim the reference cannot
+/// make: it deletes the node and builds two, so every id dies and with it every
+/// selection, saved layout, held reference and undo record keyed by one.
+#[test]
+fn dcc_swap_zone_makes_a_zone_of_an_ordinary_node() {
+    // (E) ★★★★★ An ORDINARY node becomes a zone, keeps its id, and its flow is
+    // SPLIT: what fed it feeds the opener, what it fed is fed by the closer.
+    let mut plain: Document<Op> = Document::new("root");
+    let source = num(&mut plain, 5);
+    let node = plain
+        .add_node(ROOT, NodeBody::Kind(Op::Double), 40, 60)
+        .expect("root tree");
+    let downstream = plain
+        .add_node(ROOT, NodeBody::Kind(Op::Sink), 240, 60)
+        .expect("root tree");
+    let upstream_link = plain
+        .connect(ROOT, Socket::new(source, 0), Socket::new(node, 0))
+        .expect("wired in")
+        .link;
+    let downstream_link = plain
+        .connect(ROOT, Socket::new(node, 0), Socket::new(downstream, 0))
+        .expect("wired on")
+        .link;
+
+    let became = plain
+        .set_zone_kind(ROOT, node, Op::Span, (150, 20))
+        .expect("the node becomes a zone");
+    assert_eq!(
+        became.was, None,
+        "★ it was in no zone, which is what makes this the other arm"
+    );
+    let made = became.made().expect("a closer was made for it");
+    assert_eq!(
+        became.opens, node,
+        "★★★★★ THE NODE KEPT ITS ID. The reference \
+         deletes it and builds two, so every reference to it dies"
+    );
+    assert_eq!(became.closes, Some(made));
+    let placed = plain
+        .tree(ROOT)
+        .and_then(|t| t.node(made))
+        .expect("the made closer");
+    assert_eq!(
+        (placed.x, placed.y),
+        (190, 80),
+        "★ placed by the offset the CALLER gave — where a screen likes its \
+         cards is the application's, and the reference's own offset is a \
+         settable property of the operator"
+    );
+    assert_eq!(
+        became.handed,
+        vec![Carried {
+            from: PortRef::output(0),
+            to: PortRef::output(0),
+            by_name: true,
+        }],
+        "★ the outgoing side was handed over, by the same correspondence a \
+         swap uses rather than a second rule"
+    );
+    let wires = plain.tree(ROOT).expect("root");
+    assert_eq!(
+        wires.link(downstream_link).map(|l| l.from),
+        Some(Socket::new(made, 0)),
+        "★★★★★ the downstream wire KEPT ITS ID and now leaves the closer, so \
+         the region between the two ends is what was inserted into the flow"
+    );
+    assert_eq!(
+        wires.link(upstream_link).map(|l| l.to),
+        Some(Socket::new(node, 1)),
+        "★ and the incoming wire found the one port of the opener that would \
+         take it — the control input could not, and the correspondence said so \
+         rather than dropping the wire"
+    );
+    assert_eq!(plain.in_zone(ROOT, node), Some(InZone::Opens(made)));
+    assert_eq!(plain.in_zone(ROOT, made), Some(InZone::Closes(node)));
+    assert!(plain.validate().is_empty());
+}
+
+/// ★ R2003 — **an opener with nothing closing it yet is re-kinded and stays
+/// exactly that.**
+///
+/// Section (F) of the `swap_zone` proof. Making a closer here would be
+/// inventing a node to answer a request that did not ask for one, and this is
+/// the state the reference's own pair lookup has no branch for.
+#[test]
+fn dcc_swap_zone_leaves_a_lone_opener_lone() {
+    // (F) ★ An opener with nothing closing it yet is re-kinded and STAYS that
+    // way. Making a closer here would be inventing a node to answer a request
+    // that did not ask for one — and this is the state the reference's own pair
+    // lookup has no branch for.
+    let mut alone: Document<Op> = Document::new("root");
+    let waiting = alone
+        .add_node(ROOT, NodeBody::Kind(Op::Sequence), 0, 0)
+        .expect("root tree");
+    assert_eq!(alone.in_zone(ROOT, waiting), Some(InZone::OpensNothingYet));
+    let held = alone
+        .set_zone_kind(ROOT, waiting, Op::Span, (150, 0))
+        .expect("re-kinded");
+    assert_eq!(held.was, Some(InZone::OpensNothingYet));
+    assert_eq!((held.closes, held.made()), (None, None));
+    assert_eq!(alone.tree(ROOT).expect("root").nodes().count(), 1);
+    assert_eq!(alone.in_zone(ROOT, waiting), Some(InZone::OpensNothingYet));
+}
+
+/// ★★★★★ R2003 — **a zone is TWO kinds, so it can be unopenable in a tree that
+/// would have taken its opener perfectly happily**, and the refusal leaves the
+/// document as it found it.
+///
+/// Section (G) of the `swap_zone` proof.
+#[test]
+fn dcc_swap_zone_refuses_when_the_closer_has_nowhere_to_go() {
+    // (G) ★★★★★ A zone is TWO kinds, so it can be unopenable in a tree that
+    // would have taken its opener perfectly happily — and the refusal names the
+    // taxonomy's own reason rather than folding it into a general no.
+    let mut planes: Document<Placed> = Document::new("root");
+    let host = planes
+        .add_node(ROOT, NodeBody::Kind(Placed::DataOnly), 0, 0)
+        .expect("this tree is a data plane, so this kind is at home in it");
+    assert_eq!(Placed::Anywhere.closed_by(), Some(Placed::Nowhere));
+    assert_eq!(
+        planes.in_zone(ROOT, host),
+        None,
+        "★ an ordinary node, so this is the arm that has to MAKE a closer"
+    );
+    let refused = planes.set_zone_kind(ROOT, host, Placed::Anywhere, (150, 0));
+    assert!(
+        matches!(refused, Err(ZoneSwapError::CloserRefused { .. })),
+        "★ the node refused is not the one the caller named: {refused:?}"
+    );
+    assert_eq!(
+        planes.tree(ROOT).expect("root").nodes().count(),
+        1,
+        "★★★★★ and a refused swap left the document as it found it — everything \
+         that can refuse is asked before anything moves"
+    );
 }
 
 /// ★★★★★ R1942 — **whether a type's value can be LOOKED AT while the graph
@@ -14443,6 +14894,21 @@ impl NodeKind for Placed {
             Self::Anywhere => Admitted::Anything,
             Self::DataOnly => Admitted::These(vec![Plane::Data]),
             Self::Nowhere => Admitted::These(Vec::new()),
+        }
+    }
+
+    /// ★★★★★ R2003 — a zone whose opener is welcome anywhere and whose closer
+    /// is welcome nowhere.
+    ///
+    /// Declared HERE rather than in a taxonomy of its own because this is the
+    /// fixture that already has a kind at home in no graph, and the point being
+    /// made needs exactly that: a zone is TWO kinds, so where a zone may be
+    /// opened is not answered by asking about its opener. Nothing in R1999's
+    /// proofs reads this hook, so adding it cannot move them.
+    fn closed_by(&self) -> Option<Self> {
+        match self {
+            Self::Anywhere => Some(Self::Nowhere),
+            _ => None,
         }
     }
 

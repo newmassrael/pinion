@@ -3054,9 +3054,20 @@ pub struct Tree<K: NodeKind> {
     /// closes this?* is a field read there and *what does this close?* is a
     /// scan of every opening node in the tree — its own pairing routine does
     /// exactly that scan to find out whether a closer is already spoken for.
-    /// One map here has the same asymmetry in cost and none of it in TRUTH: a
-    /// dangling id cannot outlive the node, because [`Document::unpair`] and
-    /// node removal both go through the map.
+    /// One map here has the same asymmetry in cost and none of it in TRUTH.
+    ///
+    /// ⚠⚠ **R2003 — the sentence that used to end this paragraph was false.**
+    /// It read *a dangling id cannot outlive the node, because
+    /// [`Document::unpair`] and node removal both go through the map*, and node
+    /// removal did not go near the map: driven, removing a closer left its
+    /// opener answering `Opens(<a node that is not there>)` while
+    /// [`Document::validate`] reported nothing. What is true now is a different
+    /// claim and a weaker one, which is why it is worth writing down — **this
+    /// map is a CLAIM, and [`Document::standing_zones`] is the truth about it.**
+    /// A pairing is honoured only while both ends are present and the opener's
+    /// kind still declares the closer's, so a lapsed one is never reported;
+    /// [`Document::remove_node`] and [`Document::set_kind`] additionally drop
+    /// it, so it cannot come back when an end is swapped back.
     #[serde(default = "BTreeMap::new", skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) zones: BTreeMap<NodeId, NodeId>,
     next_node: u32,
@@ -3967,6 +3978,9 @@ impl<K: NodeKind> Document<K> {
     /// not deleting a pipeline stage, so its members survive — see
     /// [`Removed::adopted`] for where they land and why.
     ///
+    /// ★★★★★ R2003 — and it covers the ZONE the node was in, which until this
+    /// round it did not: see [`Removed::unpaired`].
+    ///
     /// # Errors
     ///
     /// [`EditError::NoSuchTree`], [`EditError::NoSuchNode`], or
@@ -3982,6 +3996,10 @@ impl<K: NodeKind> Document<K> {
         Ok(Removed {
             links: self.unwire_node(tree, node),
             adopted,
+            // ★ Read AFTER the node is gone, so the derivation is what decides
+            // the pairing has lapsed rather than this knowing the rule a second
+            // time.
+            unpaired: self.reap_zones(tree, node),
         })
     }
 
@@ -5553,6 +5571,24 @@ pub struct Removed {
     /// six nodes" is the half of the edit that is not on screen where the
     /// gesture happened.
     pub adopted: Vec<NodeId>,
+    /// ★★★★★ R2003 — the node this one was in a ZONE with, now standing alone.
+    ///
+    /// `None` when the removed node was in no zone, which is every node in a
+    /// taxonomy that opens none.
+    ///
+    /// It is named for the same reason [`adopted`](Self::adopted) is: the zone
+    /// is the half of this edit that is not where the gesture happened. A
+    /// person deleting the end of a bracketed region has changed what the OTHER
+    /// end means, and a screen that draws the region needs to know the region
+    /// stopped existing.
+    ///
+    /// ⚠ Measured at R2003, this crate had written the opposite down: the
+    /// stored map's own doc said node removal went through it, and removal did
+    /// not touch it at all — so an opener whose closer was deleted went on
+    /// answering with an id that resolved to no node, and
+    /// [`validate`](Document::validate) said nothing. That is what a prose
+    /// invariant with nothing performing it is worth.
+    pub unpaired: Option<NodeId>,
 }
 
 /// What a successful [`Document::relabel`] did (R1682).

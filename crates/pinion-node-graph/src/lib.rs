@@ -327,7 +327,7 @@ pub use split::{
     RoundTrip, SplitChange, Splittable, round_trips,
 };
 pub use substitute::{Substitution, Unlandable};
-pub use swap::{Carried, RetypeError, SwapError, Swapped};
+pub use swap::{Carried, RetypeError, SwapError, Swapped, ZoneSwapError, ZoneSwapped};
 pub use view::{Camera, Fit, Fitted, Margin, Unframed, ZoomRange};
 pub use warning::{Objection, Surroundings, Warning};
 

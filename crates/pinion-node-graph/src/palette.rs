@@ -234,7 +234,12 @@ impl<K: NodeKind> Document<K> {
         // only whether the closer is spoken for — its opener's own stored id is
         // simply overwritten, so re-pairing an opener silently abandons the
         // zone it was in.
-        for (already, taken) in &held.zones {
+        //
+        // ★ R2003 — against what STANDS, not against what is stored: a pairing
+        // whose support has gone must not refuse a new one, or a node whose
+        // partner was removed could never be paired again.
+        let standing = self.standing_zones(tree);
+        for (already, taken) in &standing {
             if *already == opener || *taken == opener {
                 return Err(PairError::AlreadyPaired {
                     node: opener,
@@ -261,14 +266,16 @@ impl<K: NodeKind> Document<K> {
     /// has whichever end they clicked — and making them find the opener first
     /// would be this crate's storage decision leaking into its surface.
     pub fn unpair(&mut self, tree: TreeId, node: NodeId) -> bool {
-        let Some(held) = self.tree(tree) else {
+        if self.tree(tree).is_none() {
             return false;
-        };
-        let opener = held
-            .zones
-            .iter()
-            .find(|(opens, closes)| **opens == node || **closes == node)
-            .map(|(opens, _)| *opens);
+        }
+        // ★ R2003 — what STANDS, so this answers `false` for a pairing whose
+        // support has already gone rather than reporting that it took one apart.
+        let opener = self
+            .standing_zones(tree)
+            .into_iter()
+            .find(|(opens, closes)| *opens == node || *closes == node)
+            .map(|(opens, _)| opens);
         match opener {
             Some(opens) => self.tree_mut(tree).is_some_and(|held| {
                 held.zones.remove(&opens);
@@ -278,19 +285,116 @@ impl<K: NodeKind> Document<K> {
         }
     }
 
+    /// ★★★★★ R2003 — **the pairings this tree still SUPPORTS**, which is not
+    /// the same set as the pairings it has stored.
+    ///
+    /// A zone is a pair of nodes and a pair is a claim about two things that go
+    /// on living their own lives. Two public verbs can take the support away
+    /// without ever naming a zone:
+    ///
+    /// * [`set_kind`](Self::set_kind) changes what one end IS. An opener swapped
+    ///   for a kind that opens nothing, or a closer swapped for a kind the
+    ///   opener never declared, leaves a pairing whose two ends no longer agree.
+    /// * [`remove_node`](Self::remove_node) takes an end away entirely, leaving
+    ///   an id that resolves to no node.
+    ///
+    /// ⚠ **Both were measured at R2003, and the second one falsified a sentence
+    /// this crate had written down.** [`Tree::zones`]'s own doc said *a dangling
+    /// id cannot outlive the node, because `unpair` and node removal both go
+    /// through the map* — and node removal did not go near it. Driven: pair two
+    /// nodes, remove the closer, and the opener still answered
+    /// `Opens(<a node that is not there>)` with [`validate`](Self::validate)
+    /// reporting nothing. The swap case was the same shape one verb over.
+    ///
+    /// # Why the repair is a derivation rather than a longer list of writers
+    ///
+    /// Making each writer maintain the map is the repair that has to be
+    /// performed again for every writer added afterwards, and nothing would
+    /// catch the one that forgot — the failure mode is silence. Deriving what
+    /// is *standing* from what the tree currently holds cannot go out of date,
+    /// because a verb that has not been written yet is already covered: the
+    /// pairing simply stops being honoured the moment its support goes.
+    ///
+    /// The stored map is then a **claim** and this is the truth about it, which
+    /// is the shape [`advanced_view`](Self::advanced_view) already has for
+    /// another declaration (R2001).
+    ///
+    /// [`Tree::zones`]: crate::Tree
+    pub(crate) fn standing_zones(
+        &self,
+        tree: TreeId,
+    ) -> std::collections::BTreeMap<NodeId, NodeId> {
+        let Some(held) = self.tree(tree) else {
+            return std::collections::BTreeMap::new();
+        };
+        held.zones
+            .iter()
+            .filter(|(opens, closes)| {
+                let want = match held.node(**opens).map(|held| &held.body) {
+                    Some(crate::NodeBody::Kind(kind)) => kind.closed_by(),
+                    _ => None,
+                };
+                match (want, held.node(**closes).map(|held| &held.body)) {
+                    (Some(want), Some(crate::NodeBody::Kind(kind))) => *kind == want,
+                    _ => false,
+                }
+            })
+            .map(|(opens, closes)| (*opens, *closes))
+            .collect()
+    }
+
+    /// ★★★★★ R2003 — drop the pairings this tree no longer supports, and name
+    /// the partner each one leaves standing alone.
+    ///
+    /// [`standing_zones`](Self::standing_zones) is what makes a lapsed pairing
+    /// harmless; this is what stops it coming BACK. Ids are handed out once per
+    /// tree and never reused, so a pairing whose closer was removed can never
+    /// be true again — but one whose opener was swapped away can, the moment
+    /// somebody swaps that opener back, and a zone reappearing because of an
+    /// edit two gestures ago is not something anybody asked for.
+    ///
+    /// Called by the two verbs measured able to lapse one. The derivation above
+    /// is what covers the third writer nobody has written yet.
+    pub(crate) fn reap_zones(&mut self, tree: TreeId, about: NodeId) -> Option<NodeId> {
+        let standing = self.standing_zones(tree);
+        let held = self.tree(tree)?;
+        let partner = held
+            .zones
+            .iter()
+            .find(|(opens, closes)| {
+                (**opens == about || **closes == about) && !standing.contains_key(*opens)
+            })
+            .map(|(opens, closes)| if *opens == about { *closes } else { *opens });
+        if held.zones.len() != standing.len() {
+            self.tree_mut(tree)?.zones = standing;
+        }
+        partner
+    }
+
     /// ★★★★★ R1943 — **what this node is with respect to zones**, or `None`
     /// when its kind has nothing to do with them.
     ///
     /// Answers from EITHER end, which the reference cannot without scanning:
     /// there the pairing lives on the opener as the closer's id, so asking a
     /// closer what it closes means walking every opening node in the tree.
+    ///
+    /// ★ R2003 — read against what the tree currently SUPPORTS rather than
+    /// against the stored pairing, so a pairing whose support has gone is never
+    /// reported as one that stands: a zone is honoured only while both ends are
+    /// present and the opener's kind still declares the closer's. A caller
+    /// therefore never has to ask whether the answer is still true.
+    ///
+    /// ⚠ Which is a guarantee this crate did not have until R2003 — removing
+    /// one end left the other answering with an id that resolved to no node,
+    /// and [`validate`](Self::validate) said nothing about it.
     #[must_use]
     pub fn in_zone(&self, tree: TreeId, node: NodeId) -> Option<crate::InZone> {
         let held = self.tree(tree)?;
-        if let Some(closer) = held.zones.get(&node) {
+        let standing = self.standing_zones(tree);
+        if let Some(closer) = standing.get(&node) {
             return Some(crate::InZone::Opens(*closer));
         }
-        if let Some((opener, _)) = held.zones.iter().find(|(_, closes)| **closes == node) {
+        if let Some((opener, _)) = standing.iter().find(|(_, closes)| **closes == node) {
             return Some(crate::InZone::Closes(*opener));
         }
         match &held.node(node)?.body {

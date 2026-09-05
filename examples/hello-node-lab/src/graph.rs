@@ -738,6 +738,34 @@ impl Role {
     }
 }
 
+/// ★★★★★ R2003 — **the roles whose fresh card OPENS a zone**, asked over the
+/// whole palette.
+///
+/// A different population from the one R1943's register answers: that one runs
+/// over the cards on the canvas and asks *is this one in a zone*, and this runs
+/// over the KINDS the palette can author and asks *could any card be made into
+/// one*. [`Document::set_zone_kind`] is what made the second question askable,
+/// and until it existed the answer lived in a doc comment with nothing
+/// performing it.
+///
+/// Derived through [`LabNode::of`] — the palette's own constructor — so this
+/// asks about exactly the kinds the palette can place, and a role added later
+/// is asked too.
+///
+/// ★ One function and two readers: the wire register that publishes it and the
+/// test that holds the judgement to it. Spelling the filter twice is how two
+/// consumers come to disagree, which is this crate's own repeating finding.
+///
+/// [`Document::set_zone_kind`]: pinion_node_graph::Document::set_zone_kind
+#[must_use]
+pub fn zone_openers() -> Vec<&'static str> {
+    Role::ALL
+        .into_iter()
+        .filter(|role| LabNode::of(*role).closed_by().is_some())
+        .map(Role::name)
+        .collect()
+}
+
 /// The taxonomy this lab authors graphs in.
 ///
 /// One arm carrying a [`Role`] rather than eight kinds: every node in this tool
@@ -2380,6 +2408,42 @@ mod tests {
                 pinion_node_graph::Composition::Members(_)
             ),
             "★ so the gesture that asks whether it has an inside is told yes",
+        );
+    }
+
+    /// ★★★★★ R2003 — **no role here opens a zone, and that is now PERFORMED
+    /// over the whole population instead of asserted in prose.**
+    ///
+    /// R1943 decided this taxonomy has no bracketed region — a deployment plan
+    /// has nothing a simulation across time, a repetition, a per-element
+    /// operation or a closure corresponds to — and wrote the decision into a
+    /// doc comment on the register that publishes it. Re-measured this round at
+    /// the command, the judgement still holds; what did not exist was anything
+    /// that would notice if it stopped holding.
+    ///
+    /// The population is [`Role::ALL`] and the card is built by
+    /// [`LabNode::of`], the palette's own constructor, so this asks about
+    /// exactly the kinds the palette can author and a role added later is asked
+    /// too. That is what makes the register's `offer.opens: []` a measurement
+    /// over a stated population rather than a sentence a reader has to trust.
+    ///
+    /// ⚠ It is deliberately NOT a claim that a zone would be wrong here. It is
+    /// the claim that nothing declares one — so the day a role does, this test
+    /// fails and somebody re-reads R1943's judgement rather than the register
+    /// quietly changing.
+    #[test]
+    fn r2003_no_role_on_this_screen_opens_a_zone() {
+        assert_eq!(
+            super::zone_openers(),
+            Vec::<&'static str>::new(),
+            "★★★★★ R1943's judgement, performed: a deployment plan brackets \
+             nothing, so the zone register's offer is empty by measurement",
+        );
+        assert_eq!(
+            Role::ALL.len(),
+            8,
+            "★ and the population is stated, so an empty answer cannot come \
+             from having asked nobody",
         );
     }
 }

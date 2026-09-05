@@ -42,6 +42,15 @@ so re-pairing an opener silently abandons the zone it was in.
   (D) ★★★★★ the register is DERIVED from the framework's own answer, so a
       taxonomy that began opening zones would show here without this screen
       being touched.
+  (E) ★★★★★ R2003 — and the OFFER, which is a different population. `set_zone_kind`
+      made a second question askable: not *is this card in a zone* but *what
+      zone could it be made into*, which runs over the KINDS the palette can
+      author rather than over the cards on the canvas. R1943 answered only the
+      first, so "this taxonomy opens no zone" lived in a doc comment with
+      nothing performing it. The register now states the population it asked
+      and lists who answered, so an empty list is a measurement.
+  (F) ★ every card's own `can_become` agrees with that offer, so the summary is
+      not a second statement free to disagree with the rows.
 
 Run from the workspace root:
     cargo build --release -p hello-analyzer-shell
@@ -139,6 +148,34 @@ def body() -> None:
             "D: ★ and the register is a distinct surface from the ones that "
             "describe pins, so a zone answer cannot be mistaken for a pin one",
             "cards" in published and "pins" not in published,
+        )
+
+        banner("E — ★★★★★ R2003 the OFFER, over the kinds rather than the cards")
+        offer = published["offer"]
+        # ★ The population is STATED. An empty answer with no population beside
+        # it cannot be told from having asked nobody, which is the shape R1982
+        # recorded for a gate that could not see its own blindness.
+        ok(
+            f"E: ★★★★★ the register says how many KINDS it put the question to "
+            f"— asked={offer['asked']}",
+            offer["asked"] > 1,
+        )
+        ok(
+            f"E: ★★★★★ and none of them opens a zone, which is R1943's "
+            f"judgement PERFORMED rather than written down — opens={offer['opens']}",
+            offer["opens"] == [],
+        )
+        ok(
+            "E: ★ the two halves are different populations, and the register "
+            "keeps them apart: the cards are answered per card, the offer once",
+            len(rows) != offer["asked"] or "opens" in offer,
+        )
+
+        banner("F — ★ every card agrees with the offer")
+        ok(
+            "F: ★ no card claims it could be made into a zone while the offer "
+            "is empty — the row is derived from the offer, not decided twice",
+            all(row["can_become"] is False for row in rows),
         )
 
         print(f"\n{len(CHECKS)} check(s) held.")

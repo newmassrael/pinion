@@ -23594,8 +23594,27 @@ fn copy_definition(state: &Rc<LabState>, raw: &str) -> Result<String, InvokeErro
 /// What the register carries instead is the JUDGEMENT, derived from the
 /// framework: `opens` is what the crate answers for each card, so a client
 /// reading `"any": false` is reading a fact rather than a silence.
+///
+/// # ★★★★★ R2003 — and the OFFER, which is a different population
+///
+/// [`Document::set_zone_kind`] made a second question askable: not *is this
+/// card in a zone* but *what zone could it be made into*. The two have
+/// different populations — the first runs over the cards on the canvas, the
+/// second over the KINDS the palette can author — and R1943 answered only the
+/// first. So *this taxonomy opens no zone* lived here as a sentence in a doc
+/// comment with nothing performing it, which is a shape this project has been
+/// caught by before.
+///
+/// `offer.asked` is how many kinds were put the question and `offer.opens` is
+/// which of them answered, so an empty list is a **measurement over a stated
+/// population** rather than a silence a reader has to trust. A role that began
+/// opening one would appear here without this function being touched.
 fn zones_wire(state: &Rc<LabState>) -> serde_json::Value {
     let doc = state.doc.borrow();
+    // ★ One derivation, two readers — `graph::zone_openers` is what the lab's
+    // own gate holds R1943's judgement to, so this register and that test
+    // cannot answer differently.
+    let opens = graph::zone_openers();
     let rows: Vec<serde_json::Value> = state
         .cards()
         .into_iter()
@@ -23615,11 +23634,18 @@ fn zones_wire(state: &Rc<LabState>) -> serde_json::Value {
                     }),
                     None => serde_json::Value::Null,
                 },
+                // ★ Derived from the offer, not decided a second time here: a
+                // card can be made into a zone exactly when some kind opens one.
+                "can_become": !opens.is_empty(),
             })
         })
         .collect();
     let any = rows.iter().any(|row| !row["in_zone"].is_null());
-    serde_json::json!({ "cards": rows, "any": any })
+    serde_json::json!({
+        "cards": rows,
+        "any": any,
+        "offer": { "asked": Role::ALL.len(), "opens": opens },
+    })
 }
 
 /// ★★★★★ R1942 — **whether each pin's value can be LOOKED AT**, and when it

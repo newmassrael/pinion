@@ -1447,10 +1447,10 @@
       "verdict": "app-content"
     },
     "swap_zone": {
-      "covered_by": "changing a zone's kind, which needs zones",
+      "covered_by": "Document::set_zone_kind, R2003 — a zone's KIND changes and the two nodes it is made of survive it, keeping their ids and their pairing. ⚠ This row's reason said `which needs zones`, and zones landed 60 rounds before it was read: the sentence was stale, which is why rule (9) re-measures one before starting. ★★★★★ The reference DESTROYS both ends and builds two new nodes, so every selection, saved layout, held reference and undo record keyed by an id dies; here both ends are re-kinded in place — R1598's argument met on the zone axis. ★ Its two ends arrive as two independent node-type strings, so a zone whose ends never declared each other is sayable there; here the closer is `closed_by`'s own answer, so the mismatch is not refused but unwritable. ★ Its item transfer swallows what will not cross — matching by NAME only, with `except RuntimeError: pass` around the one call that can fail and a silent early return when either side has no item list; here both ends go through the correspondence a swap uses and everything lost is NAMED, per end. ★ It has no branch for an opener whose closer was deleted — its pair lookup answers a pair holding nothing — which is a state this crate names and answers for. The plain-node arm splits the flow: what fed the node feeds the opener, what it fed is fed by the closer, and the wires keep their ids",
       "mechanism": "python-core",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::dcc_swap_zone",
+      "verdict": "have"
     },
     "test_inlining_shader_nodes": {
       "covered_by": "the DCC's shader/compositor tree kinds",

@@ -24,7 +24,7 @@ use crate::{
     Watches, ZoomRange, crossing,
 };
 use crate::{AdvancedView, ClassSource, Classified, Classify, ClassifyError, Hidden, PortClass};
-use crate::{DefinitionAct, DefinitionError, PairError, RemovedTree, Used};
+use crate::{DefinitionAct, DefinitionError, InZone, PairError, RemovedTree, Used};
 use crate::{Fault, Finding, Fitness, Objection, Surroundings, Weight};
 
 /// ★★★★★ R1925 — **an application that declares no two-state socket type is
@@ -7577,6 +7577,21 @@ impl NodeKind for LOp {
     type Type = LTy;
     type Value = LVal;
     type Graph = ();
+
+    /// ★★★★★ R2003 — ONE kind here opens a zone, so this fixture can reach the
+    /// two edits that take a zone's support away.
+    ///
+    /// `Cross` and not `Sum`, deliberately: `Sum` is what
+    /// [`r1943_the_default_kind_opens_no_zone`] asserts the supplied answer on,
+    /// and a fixture that overrode everywhere would leave that default with
+    /// nothing checking it — R1926's rule. One override and six defaults keeps
+    /// both questions askable in one taxonomy.
+    fn closed_by(&self) -> Option<Self> {
+        match self {
+            Self::Cross => Some(Self::Sink),
+            _ => None,
+        }
+    }
 
     fn name(&self) -> String {
         match self {
@@ -18211,6 +18226,200 @@ fn r1943_the_default_kind_opens_no_zone() {
         Err(PairError::ItsOwnCloser(one))
     );
     assert!(!document.unpair(ROOT, one), "and there was nothing to undo");
+}
+
+/// ★★★★★ R2003 — **a swap that takes a zone's support away ends the zone and
+/// SAYS so**, and the zone does not come back when the end is swapped back.
+///
+/// # What this measured before it was written
+///
+/// A zone rests on the two ends' kinds declaring each other, and
+/// [`Document::set_kind`] never went near the pairing. Driven at R2003's open:
+/// pair an opener with its closer, swap the opener for a kind that opens
+/// nothing, and both ends went on answering [`Document::in_zone`] as though the
+/// zone were still there — with [`Document::validate`] reporting nothing. A
+/// public verb could build a state no reader could tell from a real one.
+///
+/// ★ This is also the whole reason [`Document::set_zone_kind`] is a verb rather
+/// than two calls to `set_kind`: those two calls pass through exactly this
+/// state, and the second cannot put back what the first took away.
+#[test]
+fn r2003_a_swapped_end_ends_the_zone_and_says_so() {
+    let mut document: Document<LOp> = Document::new("lattice");
+    let opens = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Cross), 0, 0)
+        .expect("root tree");
+    let closes = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Sink), 80, 0)
+        .expect("root tree");
+    document.pair(ROOT, opens, closes).expect("a zone");
+
+    let swapped = document
+        .set_kind(ROOT, opens, LOp::Sum)
+        .expect("the opener becomes a kind that opens nothing");
+    assert_eq!(
+        swapped.unpaired,
+        Some(closes),
+        "★★★★★ the partner left standing alone is NAMED. The caller asked about \
+         a KIND — nothing in the request mentions a zone, so nothing in it would \
+         prompt anybody to go and look"
+    );
+    assert!(
+        !swapped.lossless(),
+        "★ and a lost zone counts as a loss: a report that called this lossless \
+         would be answering about ports rather than about the node"
+    );
+    assert_eq!(
+        document.in_zone(ROOT, opens),
+        None,
+        "★ the ex-opener is not in a zone and is not waiting to be, because its \
+         kind opens none"
+    );
+    assert_eq!(document.in_zone(ROOT, closes), None);
+
+    // ★★★★★ And it does not COME BACK. The pairing is dropped rather than
+    // merely stopped being honoured, so swapping the end back leaves an opener
+    // waiting rather than a zone nobody asked to reappear.
+    let again = document
+        .set_kind(ROOT, opens, LOp::Cross)
+        .expect("and back again");
+    assert_eq!(again.unpaired, None, "★ there was nothing left to lose");
+    assert_eq!(
+        document.in_zone(ROOT, opens),
+        Some(InZone::OpensNothingYet),
+        "★★★★★ an edit two gestures ago does not resurrect a zone"
+    );
+
+    // ★ The CLOSER end is the same rule read from the other side: a closer
+    // swapped for a kind the opener never declared is a pairing whose two ends
+    // no longer agree.
+    document.pair(ROOT, opens, closes).expect("paired again");
+    let from_the_closer_end = document
+        .set_kind(ROOT, closes, LOp::Meter)
+        .expect("the closer becomes something else");
+    assert_eq!(from_the_closer_end.unpaired, Some(opens));
+    assert_eq!(document.in_zone(ROOT, opens), Some(InZone::OpensNothingYet));
+    assert!(document.validate().is_empty());
+}
+
+/// ★★★★★ R2003 — **removing one end of a zone leaves no pairing behind**, and
+/// the end left standing is named.
+///
+/// ⚠⚠ **This crate had written the opposite down.** The stored map's own doc
+/// said *a dangling id cannot outlive the node, because `unpair` and node
+/// removal both go through the map*, and node removal did not go near the map.
+/// Driven at R2003's open: pair two nodes, remove the closer, and the opener
+/// answered `Opens(<a node that is not there>)` while
+/// [`Document::validate`] reported nothing — and the map is serialised, so the
+/// dangling id went to disk.
+///
+/// That is what a prose invariant with nothing performing it is worth, which is
+/// this project's own repeating lesson met on one more axis.
+#[test]
+fn r2003_a_removed_end_leaves_no_pairing_behind() {
+    let mut document: Document<LOp> = Document::new("lattice");
+    let opens = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Cross), 0, 0)
+        .expect("root tree");
+    let closes = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Sink), 80, 0)
+        .expect("root tree");
+    document.pair(ROOT, opens, closes).expect("a zone");
+
+    let removed = document.remove_node(ROOT, closes).expect("the closer goes");
+    assert_eq!(
+        removed.unpaired,
+        Some(opens),
+        "★★★★★ the end left standing alone is named, for the reason `adopted` \
+         is: the zone is the half of this edit that is not where the gesture \
+         happened"
+    );
+    assert_eq!(
+        document.in_zone(ROOT, opens),
+        Some(InZone::OpensNothingYet),
+        "★ and the opener is WAITING rather than pointing at a node that is not \
+         there"
+    );
+
+    // ★ And it is not spoken for: a node whose partner was removed can be
+    // paired again, which a check against the stored map rather than against
+    // what stands would have refused.
+    let fresh = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Sink), 160, 0)
+        .expect("root tree");
+    document.pair(ROOT, opens, fresh).expect("a new zone");
+    assert_eq!(document.in_zone(ROOT, opens), Some(InZone::Opens(fresh)));
+
+    // ★ Removing a node that was in NO zone says so, so the field is an answer
+    // rather than a shrug.
+    let plain = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Sum), 240, 0)
+        .expect("root tree");
+    assert_eq!(
+        document.remove_node(ROOT, plain).expect("it goes").unpaired,
+        None
+    );
+    assert!(document.validate().is_empty());
+}
+
+/// ★★★★★ R2003 — **a THIRD verb can take a zone's support away, and it is
+/// covered without having been touched.**
+///
+/// This is the whole argument for deriving what stands rather than adding the
+/// pairing to a longer list of writers to maintain. [`Document::group`] moves
+/// nodes into a new definition; folding one end of a zone therefore takes that
+/// end out of the tree the pairing is stored in — and nothing in this round
+/// went near `group`. It is covered anyway, because *is this pairing standing*
+/// is asked of the tree rather than remembered.
+///
+/// ⚠ And it is the case that would have caught the old behaviour without any of
+/// this: the opener answered an id that had left the tree, and asking to take
+/// the zone apart would have said it took one apart.
+#[test]
+fn r2003_a_verb_this_repair_never_touched_cannot_leave_a_zone_dangling() {
+    let mut document: Document<LOp> = Document::new("lattice");
+    let opens = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Cross), 0, 0)
+        .expect("root tree");
+    let closes = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Sink), 80, 0)
+        .expect("root tree");
+    document.pair(ROOT, opens, closes).expect("a zone");
+
+    document
+        .group(ROOT, &[closes], "folded")
+        .expect("the closer folds into a definition of its own");
+    assert_eq!(
+        document.in_zone(ROOT, opens),
+        Some(InZone::OpensNothingYet),
+        "★★★★★ the opener is WAITING, not pointing into a tree it is not in — \
+         and `group` was never taught about zones"
+    );
+    assert!(
+        !document.unpair(ROOT, opens),
+        "★ and there is no zone to take apart, so the question answers about \
+         what STANDS rather than about what is stored"
+    );
+
+    // ★★★★★ AND THE OPENER IS NOT SPOKEN FOR. This is the state no other test
+    // here can build: `remove_node` and `set_kind` both DROP the pairing they
+    // lapse, so after either of them the stored map and what stands are the
+    // same thing. `group` drops nothing — it was never taught about zones — so
+    // this is the one place the two differ, and therefore the only place that
+    // can hold `pair` to reading what STANDS.
+    //
+    // ⚠ Added because a counterfactual PASSED. Breaking `pair` to read the
+    // stored map left every gate green, and the cause was the population rather
+    // than the assertion: no fixture reached a lapsed-but-still-stored pairing
+    // and then tried to make a new one. R1845's repair, met again.
+    let fresh = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Sink), 160, 0)
+        .expect("root tree");
+    document
+        .pair(ROOT, opens, fresh)
+        .expect("★ a pairing nothing supports must not stand in the way of one that would");
+    assert_eq!(document.in_zone(ROOT, opens), Some(InZone::Opens(fresh)));
+    assert!(document.validate().is_empty());
 }
 
 /// ★★★★★ R1942 — **the DEFAULT answer to "can this type's value be looked at"

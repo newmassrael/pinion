@@ -21,7 +21,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::items::Items;
 use crate::model::{
     Container, Document, EditError, KindPort, Link, NodeBody, NodeId, NodeKind, Port, PortRef,
-    ROOT, Side, Signature, TreeId, crossing,
+    ROOT, Side, Signature, Socket, TreeId, crossing,
 };
 
 /// Why a node could not be made to stand for a definition (R1936).
@@ -96,6 +96,138 @@ impl std::fmt::Display for SwapError {
 }
 
 impl std::error::Error for SwapError {}
+
+/// What a [`set_zone_kind`](Document::set_zone_kind) did (R2003).
+///
+/// Two [`Swapped`] reports and the pairing between them, because a zone swap is
+/// one gesture over **two** nodes and a caller repairing it has to be told about
+/// each end separately: an end can lose ports the other kept.
+///
+/// The reference answers `{'FINISHED'}` and nothing else.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ZoneSwapped<K: NodeKind> {
+    /// What the addressed node was before the edit — exactly the answer
+    /// [`in_zone`](Document::in_zone) gave.
+    ///
+    /// The published vocabulary and not a second one invented for this report,
+    /// so *it was a closer* and *it was an opener waiting for a closer* reach a
+    /// caller in the words it already reads them in. It also records **which
+    /// end the person addressed**, which a screen wants: focus goes back where
+    /// the gesture happened, not to whichever end the storage keys on.
+    pub was: Option<crate::InZone>,
+    /// The node that opens the zone now. The addressed node, unless the person
+    /// addressed the closer.
+    pub opens: NodeId,
+    /// The node that closes it, or `None` — an opener that had nothing closing
+    /// it still has nothing closing it, because this edit changes what a zone
+    /// IS and does not invent a node to complete one.
+    pub closes: Option<NodeId>,
+    /// What the swap cost the opening node.
+    pub opened: Swapped<K>,
+    /// What it cost the closing node, or `None` when this edit MADE that node —
+    /// something made a moment ago had nothing to lose.
+    pub closed: Option<Swapped<K>>,
+    /// The addressed node's outputs, handed to the closer this edit made for
+    /// it, ascending.
+    ///
+    /// Empty for a zone that already had two ends, where nothing is handed
+    /// anywhere. It is the record of the flow being SPLIT: what fed the node
+    /// goes on feeding the opener, and what the node fed is fed by the closer.
+    pub handed: Vec<Carried>,
+}
+
+impl<K: NodeKind> ZoneSwapped<K> {
+    /// The closer this edit made, or `None` when it made none.
+    ///
+    /// Derived from [`was`](Self::was) rather than stored beside it, so the two
+    /// cannot disagree about whether a node is new: a node is made exactly when
+    /// the addressed one was in no zone at all.
+    #[must_use]
+    pub fn made(&self) -> Option<NodeId> {
+        if self.was.is_none() {
+            self.closes
+        } else {
+            None
+        }
+    }
+
+    /// Whether both ends kept everything they had.
+    #[must_use]
+    pub fn lossless(&self) -> bool {
+        self.opened.lossless() && self.closed.as_ref().is_none_or(Swapped::lossless)
+    }
+}
+
+/// Why a zone's kind could not be changed (R2003).
+///
+/// Its own type rather than arms on [`SwapError`] because the question is a
+/// different one — that asks what a NODE may become, this asks what a
+/// bracketed REGION may become — and one of these refusals is about a node the
+/// caller never mentioned.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ZoneSwapError {
+    /// The tree is not in this document.
+    NoSuchTree(TreeId),
+    /// That node is not in the tree.
+    NoSuchNode {
+        /// The tree asked about.
+        tree: TreeId,
+        /// The node asked about.
+        node: NodeId,
+    },
+    /// A body this crate owns has no kind to swap — a frame, a group instance,
+    /// an interface end, a bend, or either half of a name.
+    NotAKind {
+        /// The tree it is in.
+        tree: TreeId,
+        /// The node asked about.
+        node: NodeId,
+    },
+    /// The kind asked for opens no zone, so there is no zone to make this into.
+    ///
+    /// ★ It carries no payload, and that is deliberate: the kind is the
+    /// caller's own argument, so handing it back says nothing the caller does
+    /// not have. What a caller needs is WHICH of the things it passed was
+    /// wrong, and the arm is that.
+    KindOpensNothing,
+    /// The taxonomy would not place the closer this edit had to make.
+    ///
+    /// ⚠ The refused node is not the one the caller named. A kind may declare
+    /// where it belongs ([`Document::may`]), and a zone's two ends are two
+    /// kinds — so a zone can be unopenable in a tree that would have taken its
+    /// opener perfectly happily. Reported with the taxonomy's own refusal
+    /// rather than folded into a general no.
+    CloserRefused {
+        /// The tree it would have gone in.
+        tree: TreeId,
+        /// What the taxonomy said.
+        why: EditError,
+    },
+}
+
+impl std::fmt::Display for ZoneSwapError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoSuchTree(tree) => write!(f, "no tree {}", tree.0),
+            Self::NoSuchNode { tree, node } => {
+                write!(f, "no node {} in tree {}", node.0, tree.0)
+            }
+            Self::NotAKind { tree, node } => write!(
+                f,
+                "node {} in tree {} is a body this crate owns and has no kind to swap",
+                node.0, tree.0
+            ),
+            Self::KindOpensNothing => f.write_str("that kind opens no zone"),
+            Self::CloserRefused { tree, why } => write!(
+                f,
+                "tree {} would not take the node that closes the zone: {why}",
+                tree.0
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ZoneSwapError {}
 
 /// Why one port's type could not be chosen (R1937).
 ///
@@ -227,6 +359,25 @@ pub struct Swapped<K: NodeKind> {
     /// show or to put back, while "port in1 lost the number 7" does. The DCC
     /// loses these inside `except (AttributeError, KeyError, TypeError): pass`.
     pub discarded: Vec<(PortRef, K::Value)>,
+    /// ★★★★★ R2003 — the node this one was in a ZONE with, left standing alone
+    /// because the swap took the pairing's support away.
+    ///
+    /// A zone is a pair of node kinds that declare each other, so changing what
+    /// one end IS can end the zone without the caller having mentioned zones at
+    /// all: an opener swapped for a kind that opens nothing, or a closer swapped
+    /// for a kind the opener never declared.
+    ///
+    /// ⚠ Measured at R2003, this was **silent**: the pairing stayed in the tree
+    /// and both ends went on answering [`in_zone`](Document::in_zone) as though
+    /// the zone were still there. It is now dropped and named, and it is named
+    /// here rather than left to the caller to notice because the caller asked
+    /// about a KIND — nothing in the request mentions a zone, so nothing in the
+    /// request would prompt anybody to go and look.
+    ///
+    /// ★ [`set_zone_kind`](Document::set_zone_kind) is the verb that changes a
+    /// zone's kind WITHOUT this happening, and this field is why it has to
+    /// exist rather than being two calls to [`set_kind`](Document::set_kind).
+    pub unpaired: Option<NodeId>,
 }
 
 impl<K: NodeKind> Default for Swapped<K> {
@@ -236,15 +387,21 @@ impl<K: NodeKind> Default for Swapped<K> {
             dropped: Vec::new(),
             severed: Vec::new(),
             discarded: Vec::new(),
+            unpaired: None,
         }
     }
 }
 
 impl<K: NodeKind> Swapped<K> {
     /// Whether the swap kept everything the node had.
+    ///
+    /// ★ R2003 — a lost zone counts. It is something the node had, and a report
+    /// that called a swap lossless while the bracketed region it was an end of
+    /// stopped existing would be answering about ports rather than about the
+    /// node.
     #[must_use]
     pub fn lossless(&self) -> bool {
-        self.severed.is_empty() && self.discarded.is_empty()
+        self.severed.is_empty() && self.discarded.is_empty() && self.unpaired.is_none()
     }
 }
 
@@ -461,6 +618,11 @@ impl<K: NodeKind> Document<K> {
             .severed
             .extend(self.cut_what_no_longer_crosses(tree, node));
         swapped.severed.sort_by_key(|link| link.id);
+        // ★★★★★ R2003 — the node's kind is what a zone pairing rests on, so a
+        // swap is one of the two edits that can take that support away. Read
+        // after the new body is in, and through the same derivation
+        // `remove_node` uses, so the rule lives in one place.
+        swapped.unpaired = self.reap_zones(tree, node);
         swapped
     }
 
@@ -765,5 +927,243 @@ impl<K: NodeKind> Document<K> {
         let definition = self.add_definition(name);
         let swapped = self.set_definition(tree, node, definition)?;
         Ok((definition, swapped))
+    }
+
+    /// ★★★★★ R2003 — **change what KIND of zone this is, keeping which nodes it
+    /// is made of.**
+    ///
+    /// The DCC's `swap_zone`, and it is one verb with two arms because the
+    /// reference's operator is: a node already in a zone has the whole zone
+    /// re-kinded, and an ordinary node BECOMES one. Addressed from either end,
+    /// the same argument [`unpair`](Self::unpair) makes — a person clicking a
+    /// node has whichever end they clicked, and making them find the opener
+    /// first would be this crate's storage decision leaking into its surface.
+    ///
+    /// `beside` is where a made closer goes relative to the node that became
+    /// the opener, and it is a parameter for the reason
+    /// [`room_for`](Self::room_for)'s margin is: how far apart a screen likes
+    /// its cards is the application's, and the reference agrees — its own
+    /// offset is a settable property of the operator. It is unused when the
+    /// zone already has a closer, because then nothing is placed.
+    ///
+    /// # Why this is a verb and not two calls to [`set_kind`](Self::set_kind)
+    ///
+    /// Because those two calls pass through a state neither of them can name.
+    /// A zone rests on the two ends' kinds declaring each other, so re-kinding
+    /// one end takes the pairing's support away — [`Swapped::unpaired`] is that
+    /// measurement — and re-kinding the other cannot put it back. Doing it here
+    /// means the pairing is taken apart and re-made deliberately, so the report
+    /// says *the zone was kept* rather than *the zone was lost, then a new one
+    /// appeared*.
+    ///
+    /// # What the reference does, measured at its operator this round
+    ///
+    /// * It **destroys both ends and builds two new nodes**, so every id dies
+    ///   and with it every selection, saved layout, held reference and undo
+    ///   record keyed by one. Here both ends keep their [`NodeId`] — R1598's
+    ///   argument, met on the zone axis.
+    /// * It takes the two ends' kinds as **two independent arguments**, so a
+    ///   caller can ask for a zone whose opener never declared that closer.
+    ///   Here the closer is [`NodeKind::closed_by`]'s answer, so the pair cannot
+    ///   disagree: the wrong request is not refused, it is unsayable.
+    /// * Its item transfer **swallows what will not cross**: a loop over the
+    ///   old zone's items matching by NAME only, with `except RuntimeError:
+    ///   pass` around the one call that can fail, and a silent early return
+    ///   when either side has no item list at all. Here every end's ports go
+    ///   through the same correspondence a [`set_kind`](Self::set_kind) uses —
+    ///   by name, then by position — and what does not survive is named in that
+    ///   end's own [`Swapped`].
+    /// * Its pair lookup answers *(the node, whatever it is paired with)* for a
+    ///   node whose pairing field exists, and that field holds nothing for an
+    ///   opener whose closer has been deleted — a state this crate names
+    ///   ([`InZone::OpensNothingYet`]) and that one has no branch for.
+    ///
+    /// # Errors
+    ///
+    /// [`ZoneSwapError`] — the tree or node is not there, the node's body is
+    /// not a kind, the kind asked for opens no zone, or the taxonomy refused to
+    /// place the closer this edit had to make.
+    ///
+    /// [`InZone::OpensNothingYet`]: crate::InZone::OpensNothingYet
+    pub fn set_zone_kind(
+        &mut self,
+        tree: TreeId,
+        node: NodeId,
+        opener: K,
+        beside: (i32, i32),
+    ) -> Result<ZoneSwapped<K>, ZoneSwapError> {
+        let closer_kind = opener.closed_by().ok_or(ZoneSwapError::KindOpensNothing)?;
+        let held = self
+            .tree(tree)
+            .ok_or(ZoneSwapError::NoSuchTree(tree))?
+            .node(node)
+            .ok_or(ZoneSwapError::NoSuchNode { tree, node })?;
+        if !matches!(held.body, NodeBody::Kind(_)) {
+            return Err(ZoneSwapError::NotAKind { tree, node });
+        }
+        let (x, y) = (held.x, held.y);
+
+        let was = self.in_zone(tree, node);
+        let opens = match was {
+            Some(crate::InZone::Closes(opener)) => opener,
+            _ => node,
+        };
+        let standing = match was {
+            Some(crate::InZone::Opens(closer)) => Some(closer),
+            Some(crate::InZone::Closes(_)) => Some(node),
+            _ => None,
+        };
+
+        // ⚠ There is deliberately no separate permission pre-check here. The
+        // one thing that can refuse is the taxonomy declining to place the
+        // closer, and `add_node` asks that itself and refuses BEFORE it
+        // mutates anything — so a guard above would be a second copy of a rule
+        // with no path to firing, which is what this project deletes rather
+        // than writes. Every other arm below touches only nodes this function
+        // has already resolved.
+        match (standing, was) {
+            // The zone stands: both ends are re-kinded and the pairing is
+            // deliberately taken apart first, so `respecify`'s reaping finds
+            // nothing to report and this edit owns the story.
+            (Some(closes), _) => {
+                self.unpair(tree, opens);
+                let cost_to_opener = self.swap_end(tree, opens, opener)?;
+                let cost_to_closer = self.swap_end(tree, closes, closer_kind)?;
+                self.repair(tree, opens, closes);
+                Ok(ZoneSwapped {
+                    was,
+                    opens,
+                    closes: Some(closes),
+                    opened: cost_to_opener,
+                    closed: Some(cost_to_closer),
+                    handed: Vec::new(),
+                })
+            }
+            // An opener with nothing closing it yet stays exactly that. Making
+            // a closer here would be inventing a node to answer a request that
+            // did not ask for one — the node is already an opener, and what it
+            // opens is what changed.
+            (None, Some(_)) => {
+                let cost_to_opener = self.swap_end(tree, opens, opener)?;
+                Ok(ZoneSwapped {
+                    was,
+                    opens,
+                    closes: None,
+                    opened: cost_to_opener,
+                    closed: None,
+                    handed: Vec::new(),
+                })
+            }
+            // An ordinary node BECOMES a zone, and its flow is split across the
+            // two ends: what fed it feeds the opener, what it fed is fed by the
+            // closer. That is the reference's own answer, and it is the reason
+            // this arm cannot be left to the caller — the handover has to
+            // happen while the node still has the ports the wires are on.
+            (None, None) => {
+                let before = self
+                    .signature(tree, node)
+                    .ok_or(ZoneSwapError::NoSuchNode { tree, node })?;
+                let closes = self
+                    .add_node(
+                        tree,
+                        NodeBody::Kind(closer_kind),
+                        x.saturating_add(beside.0),
+                        y.saturating_add(beside.1),
+                    )
+                    .map_err(|why| ZoneSwapError::CloserRefused { tree, why })?;
+                let handed = self.hand_outputs_over(tree, node, closes, &before);
+                let cost_to_opener = self.swap_end(tree, node, opener)?;
+                self.repair(tree, node, closes);
+                Ok(ZoneSwapped {
+                    was,
+                    opens: node,
+                    closes: Some(closes),
+                    opened: cost_to_opener,
+                    closed: None,
+                    handed,
+                })
+            }
+        }
+    }
+
+    /// One end of a zone re-kinded, with the caller's error vocabulary.
+    ///
+    /// A thin call site of [`set_kind`](Self::set_kind) rather than a second
+    /// path through `respecify`: what survives a swap is decided in one place,
+    /// and a zone end is not a special kind of node.
+    ///
+    /// ⚠ The conversion is what the types ask for, not a state this verb can
+    /// reach: every node handed here has already been resolved and confirmed to
+    /// carry a kind, and the ends of a standing pairing are guaranteed both by
+    /// [`standing_zones`](Self::standing_zones).
+    fn swap_end(
+        &mut self,
+        tree: TreeId,
+        node: NodeId,
+        kind: K,
+    ) -> Result<Swapped<K>, ZoneSwapError> {
+        self.set_kind(tree, node, kind)
+            .map_err(|_| ZoneSwapError::NoSuchNode { tree, node })
+    }
+
+    /// Put the pairing back, when this edit has just established every
+    /// precondition [`pair`](Self::pair) checks.
+    ///
+    /// Every arm of [`PairError`](crate::PairError) is excluded here by
+    /// construction — the two ends are distinct nodes of this tree, both bodies
+    /// are kinds, the opener's kind is one whose `closed_by` answered, the
+    /// closer's kind IS that answer, and both were unpaired a moment ago — so
+    /// the result carries no information and is dropped rather than checked.
+    /// An assertion with no path to failure is one this crate deletes rather
+    /// than writes (R1964).
+    fn repair(&mut self, tree: TreeId, opens: NodeId, closes: NodeId) {
+        drop(self.pair(tree, opens, closes));
+    }
+
+    /// The outgoing wires of a node that is becoming a zone opener, moved onto
+    /// the closer that was made for it.
+    ///
+    /// Built on the same [`Correspondence`] a swap uses, so *which output
+    /// answers which* is one rule rather than two, and moved with
+    /// [`move_links`](Self::move_links) so each wire keeps its
+    /// [`LinkId`](crate::LinkId) and its mute.
+    ///
+    /// ★ A wire the closer's far end will not take stays where it is, and the
+    /// swap that follows severs it and NAMES it in the opener's own
+    /// [`Swapped::severed`]. So nothing is lost quietly even here, which is the
+    /// one place the reference loses wires without a report.
+    fn hand_outputs_over(
+        &mut self,
+        tree: TreeId,
+        node: NodeId,
+        closes: NodeId,
+        before: &Signature<K>,
+    ) -> Vec<Carried> {
+        let Some(after) = self.signature(tree, closes) else {
+            return Vec::new();
+        };
+        let crosses = |from: &KindPort<K>, to: &KindPort<K>| crossing::<K>(from, to).is_allowed();
+        let map = Correspondence::build(&before.outputs, &after.outputs, &crosses);
+        let mut handed: Vec<Carried> = Vec::new();
+        for (index, to) in &map.taken {
+            handed.push(Carried {
+                from: PortRef {
+                    side: Side::Output,
+                    index: *index,
+                },
+                to: PortRef {
+                    side: Side::Output,
+                    index: *to,
+                },
+                by_name: map.by_name.contains(index),
+            });
+            drop(self.move_links(
+                tree,
+                Side::Output,
+                Socket::new(node, *index),
+                Socket::new(closes, *to),
+            ));
+        }
+        handed
     }
 }
