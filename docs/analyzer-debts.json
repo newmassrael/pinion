@@ -148,6 +148,17 @@
       ]
     },
     {
+      "name": "debt-a-column-of-numbers-cannot-ask-for-figures-of-one-width",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links analyzer-tool-capability-spec"
+      ]
+    },
+    {
       "name": "debt-a-composed-destination-has-no-single-published-description",
       "substituted": false,
       "blocked_by": "campaign",
@@ -234,6 +245,17 @@
       "why": [
         "links debt-the-canon-is-one-app-and-we-are-many-binaries",
         "names dashboard.t2.9"
+      ]
+    },
+    {
+      "name": "debt-a-grid-track-cannot-be-told-not-to-grow",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links analyzer-behaviour-canon-is-the-standalone-prototype"
       ]
     },
     {
@@ -459,6 +481,17 @@
       ]
     },
     {
+      "name": "debt-an-authored-theme-arrives-and-nothing-reads-it",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links debt-the-canon-is-one-app-and-we-are-many-binaries"
+      ]
+    },
+    {
       "name": "debt-every-card-on-the-opening-graph-speaks-one-transport",
       "substituted": false,
       "blocked_by": "buildable",
@@ -667,6 +700,17 @@
       "closed_because": "",
       "why": [
         "links screen-a-vs-canon-operation-census"
+      ]
+    },
+    {
+      "name": "debt-two-declared-colour-roles-have-no-field-to-land-in",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links debt-canon-gui-surface-census"
       ]
     },
     {
