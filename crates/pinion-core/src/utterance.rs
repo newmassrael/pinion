@@ -164,6 +164,47 @@ impl Tone {
             Self::Done | Self::Unchanged => Urgency::WhenIdle,
         }
     }
+
+    /// The colour role a reader who can SEE this learns the tone from.
+    ///
+    /// ★★★★★ R2012 — the seeing half of [`urgency`](Self::urgency), derived for
+    /// the same reason and by the same argument. A tone is heard through its
+    /// urgency, which a screen cannot choose; it is seen through a mark whose
+    /// colour, until now, every screen picked for itself.
+    ///
+    /// A screen was measured picking wrong. The analysis shell's status bullet
+    /// drew [`Done`](Self::Done) in [`InversePrimary`](crate::theme::ColorRole::InversePrimary)
+    /// — an accent tone whose declared ground is
+    /// [`InverseSurface`](crate::theme::ColorRole::InverseSurface), not the
+    /// plain surface it sits on. It was not a careless choice: there was no
+    /// role for *it happened* to reach for, so the nearest tone that was not
+    /// the error red got used.
+    ///
+    /// ⚠ AND THE POPULATION IS THE DEFAULT PALETTES, NOT THAT SCREEN — a
+    /// counterfactual is what said so. Against [`crate::theme::Theme::light`]
+    /// and [`crate::theme::Theme::dark`] that pairing reads **1.70** and
+    /// **2.17**, under even the 3.0 a non-text mark is held to; the shell binds
+    /// a magenta of its own for the role and read 7.88 and 5.97, so the screen
+    /// that HAD the wrong mapping was not the screen the wrong mapping showed
+    /// on. Putting the mapping here is what makes that distinction stop
+    /// mattering: the next consumer inherits the answer instead of the search.
+    ///
+    /// ⚠ [`Unchanged`](Self::Unchanged) deliberately answers
+    /// [`OnSurfaceMuted`](crate::theme::ColorRole::OnSurfaceMuted) rather than
+    /// [`Info`](crate::theme::ColorRole::Info), and the
+    /// distinction is the arm's own reason for existing: *nothing changed* is
+    /// about the person's act having had nothing to do, not about a fact the
+    /// screen is volunteering. Painting it in the informational tone would give
+    /// a non-event the same weight as a notice.
+    #[must_use]
+    pub const fn role(self) -> crate::theme::ColorRole {
+        use crate::theme::ColorRole;
+        match self {
+            Self::Done => ColorRole::Success,
+            Self::Refused => ColorRole::Error,
+            Self::Unchanged => ColorRole::OnSurfaceMuted,
+        }
+    }
 }
 
 /// How urgently an utterance should reach a reader who is not looking at it.

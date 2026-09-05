@@ -7567,3 +7567,199 @@ fn r1989_no_mounted_screen_shadows_a_path_it_declares() {
         );
     });
 }
+
+/// ★★★★★ R2012 — **the status bullet is findable, in both palettes, and the
+/// tone it shows comes from the vocabulary rather than from this screen.**
+///
+/// R1719 put a coloured disc on the status band because a refusal and a
+/// confirmation were otherwise one picture, and its own comment says the disc
+/// is the whole of what a sighted reader learns the tone from. It was drawn in
+/// `inverse_primary` — a role whose declared ground is `inverse_surface`, not
+/// the band it sits on — and the legibility table could not see that, because
+/// `inverse_primary on surface` is a pairing nobody declared.
+///
+/// ★★★★★ THE POPULATION IS THE FRAMEWORK'S PALETTES AND NOT THIS SCREEN, AND
+/// THIS GATE'S OWN COUNTERFACTUAL IS WHAT ESTABLISHED THAT. The first draft
+/// checked the floor only in the palettes this shell BINDS, and putting `Done`
+/// back on `inverse_primary` left it green — because `reference_palettes`
+/// happens to bind a magenta for that role, reading **7.88** light and **5.97**
+/// dark. Against `Theme::light` / `Theme::dark` the same mapping reads **1.70**
+/// and **2.17**, under even the 3.0 a non-text mark is held to. So the screen
+/// that HAD the wrong mapping was legible, and every application inheriting
+/// the defaults was not. A counterfactual that passes is a statement about the
+/// population, which is this repository's own standing lesson met again.
+///
+/// So this judges the PAINTED FRAME and then both palettes behind it:
+///
+/// - it walks the assembled application, says something in each tone, and reads
+///   the fill off `shell.toast.tone` — the address the disc now carries;
+/// - it requires that fill to be what the theme in force resolves the tone's
+///   own role to, so a screen that re-decided the colour locally is caught;
+/// - and it requires the tone's role to clear the non-text floor in the BOUND
+///   palette and in the CANONICAL one, per mode — four palettes in all, which
+///   is the assertion the old mapping fails.
+///
+/// ⚠ The floor is `Floor::Boundary` and not `Floor::Text`: the disc is a
+/// graphical mark and WCAG 1.4.11 is the standard it answers. `Unchanged` takes
+/// `on_surface_muted`, which is body ink and clears the text floor anyway —
+/// holding all three to the weaker floor is deliberate, because the claim is
+/// *a reader can find this mark*, not *a reader can read it*.
+///
+/// ```text
+/// cargo test -p hello-analyzer-shell r2012 -- --nocapture
+/// ```
+#[test]
+fn r2012_the_status_bullet_is_findable_in_both_palettes() {
+    use pinion_core::contrast::contrast_ratio;
+    use pinion_core::legibility::Floor;
+    use pinion_core::theme::{ColorRole, ThemeMode};
+    use pinion_core::utterance::{Tone, Utterance};
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let report = walk_the_application(&state);
+        assert!(
+            report.conforms(),
+            "the application did not reproduce its specification over the walk: {}",
+            report.why().unwrap_or_default()
+        );
+
+        let mut judged = 0_usize;
+        let mut readings: Vec<String> = Vec::new();
+        for (mode, word) in [(ThemeMode::Light, "light"), (ThemeMode::Dark, "dark")] {
+            state.theme.set_mode(mode);
+            // ⚠⚠ THE FADE IS WHY THIS IS THREE STATEMENTS AND NOT ONE, AND THE
+            // ROUND GOT IT WRONG TWICE BEFORE GETTING IT RIGHT.
+            //
+            // The shell paints from `theme_animated()`, so the frame right
+            // after a mode change still carries the palette being left — the
+            // first draft compared against `theme()` and read the OTHER
+            // palette's tone out of the frame. The second draft ticked and then
+            // compared the painted colour against `theme_animated()`, which is
+            // WORSE: both sides then read one mid-flight value, so the equality
+            // agreed whatever the spring was doing and the contrast numbers
+            // were about no palette at all. Its own printout is what said so —
+            // three DIFFERENT tones all reading exactly 21.00 is not a palette,
+            // it is an animation caught between two.
+            //
+            // So: read once to arm the spring on the new target, drive it, and
+            // then REQUIRE it to have arrived. The settled palette is what the
+            // rest of this loop compares against, and the arrival is asserted
+            // rather than assumed — an animated read is not a palette until
+            // something has checked that it stopped moving.
+            //
+            // ⚠⚠ AND IT IS `settle_owner_animations` AND NOT ONE BIG TICK. A
+            // draft here called `tick_animations(2.0)` — two seconds of a
+            // 200ms spring, which reads like generous headroom and is in fact
+            // ONE integration step of dt=2.0 at stiffness 400. The integrator
+            // DETONATES: the arrival assertion's own printout showed every
+            // channel of the theme saturated to 0 or 255, and the contrast
+            // reading before it was a flat 21.00 for three different tones.
+            // The helper does sixty steps of a sixtieth, which is what a
+            // spring is integrated with.
+            let _arming = state.theme.theme_animated();
+            pinion_core::test_fixtures::settle_owner_animations(&owner);
+            let theme = state.theme.theme_animated();
+            let settled = if mode == ThemeMode::Dark {
+                state.theme.dark_palette()
+            } else {
+                state.theme.light_palette()
+            };
+            assert_eq!(
+                theme, settled,
+                "the {word} fade has not arrived after 2s of a ~200ms spring, \
+                 so every reading below would be of a palette that does not \
+                 exist"
+            );
+            for tone in Tone::ALL {
+                // Said through the same door a screen uses, so the toast is in
+                // the state a person would put it in.
+                let utterance = match tone {
+                    Tone::Done => Utterance::done("it happened"),
+                    Tone::Refused => Utterance::refused(&"it did not"),
+                    Tone::Unchanged => Utterance::unchanged("it was already so"),
+                };
+                assert_eq!(
+                    utterance.tone(),
+                    tone,
+                    "the constructor for {} must produce it",
+                    tone.wire(),
+                );
+                state.say(utterance);
+
+                let mut scene = super::view(ScreenState::default(), pinion_core::Frame::default());
+                let mut cache = pinion_runtime::LayoutCache::new();
+                pinion_runtime::compute_layout(&mut scene, &mut cache, super::WIN_W, super::WIN_H);
+
+                let painted = find_fill(&scene, "shell.toast.tone").unwrap_or_else(|| {
+                    panic!(
+                        "the {word} palette's `{}` toast paints no bullet at \
+                         `shell.toast.tone`, and that mark is the only thing \
+                         telling the three tones apart",
+                        tone.wire(),
+                    )
+                });
+                let owed = theme.resolve(tone.role());
+                assert_eq!(
+                    painted,
+                    owed,
+                    "the {word} palette's `{}` bullet is painted {painted:?} \
+                     where the tone's own role resolves to {owed:?} — a screen \
+                     deciding the colour for itself is the defect this closed",
+                    tone.wire(),
+                );
+
+                // ⚠⚠ TWO PALETTES PER MODE, AND THE SECOND ONE IS THE POINT.
+                //
+                // The first draft held the tone to a floor only in the palette
+                // THIS SHELL BINDS, and its counterfactual passed: put `Done`
+                // back on `inverse_primary` and nothing went red, because this
+                // shell binds a magenta for that role and it reads 7.88 / 5.97
+                // here. The defect was never this screen's — it is the
+                // framework's DEFAULT palettes, where the same mapping reads
+                // 1.70 and 2.17. A gate that only sees the bound palette
+                // reports that any application inheriting the defaults is fine.
+                //
+                // ⇒ A tone's role must clear the floor in the palette on
+                // screen AND in the canonical one it falls back to, because
+                // `Tone::role` is the vocabulary's answer for every consumer
+                // and not this shell's arrangement.
+                let canonical = if mode == ThemeMode::Dark {
+                    pinion_core::theme::Theme::dark()
+                } else {
+                    pinion_core::theme::Theme::light()
+                };
+                for (whose, palette) in [("bound", &settled), ("canonical", &canonical)] {
+                    let ink = palette.resolve(tone.role());
+                    let ground = palette.resolve(ColorRole::Surface);
+                    let ratio = contrast_ratio(ink, ground);
+                    assert!(
+                        ratio >= Floor::Boundary.ratio(),
+                        "the {whose} {word} palette resolves the `{}` tone to \
+                         {ink:?}, which reads {ratio:.2} on the surface it is \
+                         drawn against — under the {:.1} a mark a person must \
+                         be able to FIND is held to",
+                        tone.wire(),
+                        Floor::Boundary.ratio(),
+                    );
+                    readings.push(format!("{whose}/{word}/{}={ratio:.2}", tone.wire()));
+                    judged += 1;
+                }
+            }
+        }
+        // The denominator, asserted rather than reported: three tones, two
+        // modes, and two palettes per mode — the bound one and the canonical
+        // one. A loop that reached fewer would satisfy every assertion above
+        // by never entering it, and the counterfactual that exposed the first
+        // draft was precisely a population that was half this size.
+        assert_eq!(
+            judged,
+            2 * 2 * Tone::ALL.len(),
+            "two modes times two palettes times {} tones is the population \
+             this claim is about",
+            Tone::ALL.len(),
+        );
+        println!("[r2012] {}", readings.join(" "));
+    });
+}

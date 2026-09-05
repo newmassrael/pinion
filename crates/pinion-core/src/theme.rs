@@ -393,6 +393,36 @@ pub enum ColorRole {
     Warning,
     /// Foreground drawn on a [`Self::Warning`] fill.
     OnWarning,
+    /// R2012 — a state that is **right**: an act that happened, a check that
+    /// passed, a link that is up.
+    ///
+    /// ★★★★★ The argument is a count, not a convention. A design system
+    /// authored for this project's own screens declares its state colours as a
+    /// **closed enumeration of four** — right / caution / wrong / informational
+    /// — and paints all four; this vocabulary carried the middle two and had
+    /// nowhere to put the outer ones. Measured over that system's screens, the
+    /// right-tone ink is the most-used state colour of the four (58 text sites
+    /// against the wrong tone's 42), so it is not a rounding-out of the tier: it
+    /// is the state a tool that watches something healthy says most often.
+    ///
+    /// ⚠ Material 3 has no such role and neither does the mature toolkit at
+    /// 6.11, so there is nothing to borrow and the default tones below are
+    /// argued in [`Theme::light`] rather than cited.
+    Success,
+    /// Foreground drawn on a [`Self::Success`] fill.
+    OnSuccess,
+    /// R2012 — a state that is **neither right nor wrong**: a fact the reader
+    /// is being told, which no act is asked about.
+    ///
+    /// The arm exists because painting such a mark in [`Self::Warning`] tells a
+    /// person something is off when nothing is: measured on the capture screen,
+    /// a message that is simply one piece of a larger one was drawn in the
+    /// caution tone, beside the genuinely faulty `Drop` marker in the wrong
+    /// tone, so the two faults and the one non-fault came in two colours
+    /// instead of three.
+    Info,
+    /// Foreground drawn on an [`Self::Info`] fill.
+    OnInfo,
 }
 
 impl ColorRole {
@@ -434,6 +464,10 @@ impl ColorRole {
             ColorRole::InversePrimary,
             ColorRole::Warning,
             ColorRole::OnWarning,
+            ColorRole::Success,
+            ColorRole::OnSuccess,
+            ColorRole::Info,
+            ColorRole::OnInfo,
         ]
     }
 
@@ -473,6 +507,10 @@ impl ColorRole {
             ColorRole::InversePrimary => "inverse_primary",
             ColorRole::Warning => "warning",
             ColorRole::OnWarning => "on_warning",
+            ColorRole::Success => "success",
+            ColorRole::OnSuccess => "on_success",
+            ColorRole::Info => "info",
+            ColorRole::OnInfo => "on_info",
         }
     }
 
@@ -518,41 +556,24 @@ impl ColorRole {
     /// production code constructs [`Theme`] through the named
     /// factories ([`Theme::light`] / [`Theme::dark`]) so every role
     /// is bound and the fallback never fires.
+    /// ★★★★★ R2012 — this now READS [`Theme::light`] instead of re-spelling it.
+    ///
+    /// It used to be a nineteen-arm `match` carrying its own copy of every
+    /// light-palette value, under a doc comment saying it *returns the
+    /// light-palette default*. That sentence was a claim about two hand-written
+    /// lists agreeing, and a claim like that is exactly what this workspace has
+    /// paid for repeatedly: nothing compared them, so the day one moved was the
+    /// day the sentence became false, silently and in the direction of a
+    /// palette tweak that landed in one place.
+    ///
+    /// ⚠ Measured before the change rather than assumed: the two lists agreed
+    /// on all nineteen roles, so this is not a bug fix — it is the removal of
+    /// the second copy BEFORE it drifts, prompted by the compiler asking for
+    /// four more values that would have deepened it. The sentence is now true
+    /// by construction, and a new role gets one default rather than two.
     #[must_use]
-    #[allow(
-        clippy::match_same_arms,
-        reason = "each role's default is semantically distinct — the \
-                  Surface / OnAccent coincidence on pure white is a \
-                  property of the canonical light palette, not a \
-                  shared concept; future palette tuning may diverge \
-                  the two arms, and merging them now would erase the \
-                  per-role intent the role enum is built to express"
-    )]
     pub const fn default_for(self) -> Color {
-        match self {
-            ColorRole::Surface => Color::rgb(0xff, 0xff, 0xff),
-            ColorRole::OnSurface => Color::rgb(0x1a, 0x1a, 0x1a),
-            ColorRole::OnSurfaceMuted => Color::rgb(0x60, 0x60, 0x60),
-            ColorRole::Accent => Color::rgb(0x19, 0x76, 0xd2),
-            ColorRole::OnAccent => Color::rgb(0xff, 0xff, 0xff),
-            // R1839 — the nearest grey below the old `#c0c0c0` that clears
-            // WCAG 1.4.11's 3:1 boundary floor on this surface. Derived, and
-            // re-derived by `legibility::tests::r1839_the_boundary_floor_...`.
-            ColorRole::Outline => Color::rgb(0x94, 0x94, 0x94),
-            ColorRole::SurfaceContainerHighest => Color::rgb(0xe6, 0xe0, 0xe9),
-            ColorRole::SurfaceContainerLow => Color::rgb(0xf7, 0xf2, 0xfa),
-            ColorRole::SurfaceContainer => Color::rgb(0xf3, 0xed, 0xf7),
-            ColorRole::SurfaceContainerHigh => Color::rgb(0xec, 0xe6, 0xf0),
-            ColorRole::Error => Color::rgb(0xb3, 0x26, 0x1e),
-            ColorRole::OnError => Color::rgb(0xff, 0xff, 0xff),
-            ColorRole::ErrorContainer => Color::rgb(0xf9, 0xde, 0xdc),
-            ColorRole::OnErrorContainer => Color::rgb(0x41, 0x0e, 0x0b),
-            ColorRole::InverseSurface => Color::rgb(0x32, 0x2f, 0x35),
-            ColorRole::InverseOnSurface => Color::rgb(0xf5, 0xef, 0xf7),
-            ColorRole::InversePrimary => Color::rgb(0x9e, 0xca, 0xff),
-            ColorRole::Warning => Color::rgb(0x7a, 0x53, 0x00),
-            ColorRole::OnWarning => Color::rgb(0xff, 0xff, 0xff),
-        }
+        Theme::light().resolve(self)
     }
 }
 
@@ -616,6 +637,14 @@ pub struct Theme {
     pub warning: Color,
     /// Resolves [`ColorRole::OnWarning`].
     pub on_warning: Color,
+    /// Resolves [`ColorRole::Success`].
+    pub success: Color,
+    /// Resolves [`ColorRole::OnSuccess`].
+    pub on_success: Color,
+    /// Resolves [`ColorRole::Info`].
+    pub info: Color,
+    /// Resolves [`ColorRole::OnInfo`].
+    pub on_info: Color,
 }
 
 impl Theme {
@@ -679,6 +708,36 @@ impl Theme {
             inverse_primary: Color::rgb(0x9e, 0xca, 0xff),
             warning: Color::rgb(0x7a, 0x53, 0x00),
             on_warning: Color::rgb(0xff, 0xff, 0xff),
+            // ★★★★★ R2012 — the two state tones this vocabulary was short of,
+            // and the reason each hue was picked rather than inherited.
+            //
+            // `success` is the Material 3 green-40 tone. It reads 6.47 on this
+            // palette's `surface` and carries white at the same 6.47, headroom
+            // comparable to `error`'s 6.54 and `warning`'s 6.85 — the tier is
+            // deliberately uniform, because a state colour that is legible only
+            // in some of its arms is worse than one that is legible in none: a
+            // reader learns to trust it.
+            //
+            // ⚠ `info` is a TEAL and not the conventional blue, and that is a
+            // fact about THIS palette rather than about informational marks.
+            // The default `accent` here is `#1976D2`; an informational tone in
+            // the same hue window would read as an interactive one, which is
+            // the one thing a mark that asks for nothing must not do. A palette
+            // whose accent is not blue can put its `info` back in the blue
+            // window by supplying its own values — that is what the role is
+            // for. Measured 6.47 on `surface`, and white on it at 6.47.
+            //
+            // ⚠⚠ STATED LIMIT: nothing here checks colour-vision separation.
+            // These two clear the CONTRAST floors that `crate::legibility`
+            // declares, and no gate in this tree asks whether `success` and
+            // `info` stay apart under deuteranopia or tritanopia. Choosing the
+            // hues from four separated windows is a convention, not a solved
+            // optimisation, and a palette that needs the solved answer supplies
+            // it rather than deriving it from here.
+            success: Color::rgb(0x00, 0x6e, 0x1c),
+            on_success: Color::rgb(0xff, 0xff, 0xff),
+            info: Color::rgb(0x00, 0x69, 0x6e),
+            on_info: Color::rgb(0xff, 0xff, 0xff),
         }
     }
 
@@ -764,6 +823,17 @@ impl Theme {
             inverse_primary: Color::rgb(0x0d, 0x47, 0xa1),
             warning: Color::rgb(0xe8, 0xc0, 0x77),
             on_warning: Color::rgb(0x41, 0x2d, 0x00),
+            // R2012 — the dark halves of the two tones the light palette
+            // argues. Each is the light tone's hue lifted until it clears this
+            // surface, and each carries a foreground dark enough to sit on it:
+            // `success` 10.97 on `surface` and 7.74 under `on_success`, `info`
+            // 10.95 and 7.65. The light palette's own two tones read 2.90 each
+            // here — under even the 3.0 non-text floor — which is why a dark
+            // half exists at all.
+            success: Color::rgb(0x78, 0xdc, 0x77),
+            on_success: Color::rgb(0x00, 0x39, 0x0a),
+            info: Color::rgb(0x4f, 0xd8, 0xe4),
+            on_info: Color::rgb(0x00, 0x37, 0x39),
         }
     }
 
@@ -794,6 +864,10 @@ impl Theme {
             ColorRole::InversePrimary => self.inverse_primary,
             ColorRole::Warning => self.warning,
             ColorRole::OnWarning => self.on_warning,
+            ColorRole::Success => self.success,
+            ColorRole::OnSuccess => self.on_success,
+            ColorRole::Info => self.info,
+            ColorRole::OnInfo => self.on_info,
         }
     }
 }
@@ -844,6 +918,10 @@ struct ThemeLinear {
     inverse_primary: AnimVec4,
     warning: AnimVec4,
     on_warning: AnimVec4,
+    success: AnimVec4,
+    on_success: AnimVec4,
+    info: AnimVec4,
+    on_info: AnimVec4,
 }
 
 impl ThemeLinear {
@@ -873,6 +951,10 @@ impl ThemeLinear {
             inverse_primary: t.inverse_primary.to_linear(),
             warning: t.warning.to_linear(),
             on_warning: t.on_warning.to_linear(),
+            success: t.success.to_linear(),
+            on_success: t.on_success.to_linear(),
+            info: t.info.to_linear(),
+            on_info: t.on_info.to_linear(),
         }
     }
 
@@ -904,6 +986,10 @@ impl ThemeLinear {
             inverse_primary: Color::from_linear(self.inverse_primary),
             warning: Color::from_linear(self.warning),
             on_warning: Color::from_linear(self.on_warning),
+            success: Color::from_linear(self.success),
+            on_success: Color::from_linear(self.on_success),
+            info: Color::from_linear(self.info),
+            on_info: Color::from_linear(self.on_info),
         }
     }
 }
@@ -930,6 +1016,10 @@ impl Animatable for ThemeLinear {
             inverse_primary: AnimVec4::zero(),
             warning: AnimVec4::zero(),
             on_warning: AnimVec4::zero(),
+            success: AnimVec4::zero(),
+            on_success: AnimVec4::zero(),
+            info: AnimVec4::zero(),
+            on_info: AnimVec4::zero(),
         }
     }
 
@@ -958,6 +1048,10 @@ impl Animatable for ThemeLinear {
             inverse_primary: self.inverse_primary.add(other.inverse_primary),
             warning: self.warning.add(other.warning),
             on_warning: self.on_warning.add(other.on_warning),
+            success: self.success.add(other.success),
+            on_success: self.on_success.add(other.on_success),
+            info: self.info.add(other.info),
+            on_info: self.on_info.add(other.on_info),
         }
     }
 
@@ -986,6 +1080,10 @@ impl Animatable for ThemeLinear {
             inverse_primary: self.inverse_primary.sub(other.inverse_primary),
             warning: self.warning.sub(other.warning),
             on_warning: self.on_warning.sub(other.on_warning),
+            success: self.success.sub(other.success),
+            on_success: self.on_success.sub(other.on_success),
+            info: self.info.sub(other.info),
+            on_info: self.on_info.sub(other.on_info),
         }
     }
 
@@ -1010,27 +1108,85 @@ impl Animatable for ThemeLinear {
             inverse_primary: self.inverse_primary.scale(factor),
             warning: self.warning.scale(factor),
             on_warning: self.on_warning.scale(factor),
+            success: self.success.scale(factor),
+            on_success: self.on_success.scale(factor),
+            info: self.info.scale(factor),
+            on_info: self.on_info.scale(factor),
         }
     }
 
+    /// ★★★★★ R2012 — this DESTRUCTURES, and the other five arithmetic methods
+    /// deliberately do not need to.
+    ///
+    /// Every other method here builds a `Self { .. }`, so a field added to the
+    /// struct and forgotten in one of them is a COMPILE ERROR. This one folds
+    /// over fields instead, and a fold that forgets a channel still compiles —
+    /// so it is the one place a new role can go missing quietly, and it did:
+    /// R1651 added the warning pair to all six sites and this fold had
+    /// **seventeen of nineteen** channels. A spring is settled when its
+    /// remaining distance and its velocity are both near zero
+    /// ([`crate::animation`]'s `is_settled`), so a fold short of two channels
+    /// reports a theme fade FINISHED while those two are still travelling —
+    /// the caution tone freezing part-way between the two palettes, in the one
+    /// role whose whole job is to be noticed.
+    ///
+    /// Binding every field by name is what makes the omission impossible: the
+    /// pattern below fails to compile the moment [`ThemeLinear`] grows a field,
+    /// which is the same idiom this workspace uses wherever a hand-written
+    /// field list would otherwise rot.
     fn approx_zero(self, epsilon: f32) -> bool {
-        self.surface.approx_zero(epsilon)
-            && self.on_surface.approx_zero(epsilon)
-            && self.on_surface_muted.approx_zero(epsilon)
-            && self.accent.approx_zero(epsilon)
-            && self.on_accent.approx_zero(epsilon)
-            && self.outline.approx_zero(epsilon)
-            && self.surface_container_highest.approx_zero(epsilon)
-            && self.surface_container_low.approx_zero(epsilon)
-            && self.surface_container.approx_zero(epsilon)
-            && self.surface_container_high.approx_zero(epsilon)
-            && self.error.approx_zero(epsilon)
-            && self.on_error.approx_zero(epsilon)
-            && self.error_container.approx_zero(epsilon)
-            && self.on_error_container.approx_zero(epsilon)
-            && self.inverse_surface.approx_zero(epsilon)
-            && self.inverse_on_surface.approx_zero(epsilon)
-            && self.inverse_primary.approx_zero(epsilon)
+        let Self {
+            surface,
+            on_surface,
+            on_surface_muted,
+            accent,
+            on_accent,
+            outline,
+            surface_container_highest,
+            surface_container_low,
+            surface_container,
+            surface_container_high,
+            error,
+            on_error,
+            error_container,
+            on_error_container,
+            inverse_surface,
+            inverse_on_surface,
+            inverse_primary,
+            warning,
+            on_warning,
+            success,
+            on_success,
+            info,
+            on_info,
+        } = self;
+        [
+            surface,
+            on_surface,
+            on_surface_muted,
+            accent,
+            on_accent,
+            outline,
+            surface_container_highest,
+            surface_container_low,
+            surface_container,
+            surface_container_high,
+            error,
+            on_error,
+            error_container,
+            on_error_container,
+            inverse_surface,
+            inverse_on_surface,
+            inverse_primary,
+            warning,
+            on_warning,
+            success,
+            on_success,
+            info,
+            on_info,
+        ]
+        .into_iter()
+        .all(|channel| channel.approx_zero(epsilon))
     }
 }
 
@@ -1800,17 +1956,21 @@ mod tests {
                 | ColorRole::InverseOnSurface
                 | ColorRole::InversePrimary
                 | ColorRole::Warning
-                | ColorRole::OnWarning => (),
+                | ColorRole::OnWarning
+                | ColorRole::Success
+                | ColorRole::OnSuccess
+                | ColorRole::Info
+                | ColorRole::OnInfo => (),
             };
         }
         // Variant count = Tier 1 + R590 error tier + R723 inverse tier
-        // + R1651 warning pair (19).
-        assert_eq!(ColorRole::all().len(), 19);
+        // + R1651 warning pair + R2012 success and informational pairs (23).
+        assert_eq!(ColorRole::all().len(), 23);
         // No duplicates — pure-set semantics.
         let mut names: Vec<_> = ColorRole::all().iter().map(|r| r.name()).collect();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), 19, "names must be unique");
+        assert_eq!(names.len(), 23, "names must be unique");
     }
 
     /// (R1651 §5.50) The warning tier reads **apart** from the error

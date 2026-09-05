@@ -2690,3 +2690,79 @@ fn r1860_each_pane_can_draw_what_it_has_to_at_its_own_floor() {
         }
     });
 }
+
+/// ★★★★★ R2012 — **three situations, three colours: a fragment that is simply
+/// one piece is neither right nor wrong, and stops being painted as a caution.**
+///
+/// The capture's fragment markers say one of two things. `Drop` is a fault — a
+/// piece that never arrived. `First 1/3` and `More 2/3` are not: they are facts
+/// about how a message was carried, and the reference paints them in an
+/// informational tone. Until this round the framework's palette had no such
+/// tone, so the non-fault arm reached for the nearest thing that was not the
+/// error red and got the CAUTION tone — which told a reader something was off
+/// about a row where nothing was, and left the row that IS a fault
+/// distinguishable only by being red rather than by the others being calm.
+///
+/// This reads the painted run, so it judges what a reader sees rather than what
+/// the `match` says. Both arms must be REACHED: a capture with no dropped piece,
+/// or none with an intact one, would make half of this vacuous, and the counts
+/// are asserted instead of printed for that reason.
+///
+/// ⚠ The informational ink is deliberately NOT compared against `ink.warn`
+/// alone — that would pass for any colour at all that happens to differ. It is
+/// compared against the role the theme resolves, which is the claim being made.
+///
+/// ```text
+/// cargo test -p hello-packet-view r2012 -- --nocapture
+/// ```
+#[test]
+fn r2012_a_fragment_that_is_not_a_fault_is_not_painted_as_one() {
+    use pinion_core::theme::{ColorRole, Theme};
+
+    let faulty = Theme::default().resolve(ColorRole::Error);
+    let plain = Theme::dark().resolve(ColorRole::Info);
+    let caution = Theme::default().resolve(ColorRole::Warning);
+    assert_ne!(
+        plain, caution,
+        "★ the two tones this gate separates must differ, or it proves nothing"
+    );
+
+    let mut dropped = 0usize;
+    let mut intact = 0usize;
+    sweep(|_, _, scene, _, case| {
+        for (n, row) in spec::ROWS.iter().enumerate() {
+            let Some(fragment) = &row.fragment else {
+                continue;
+            };
+            let tag = format!("pv.list.row.{n}.fragment");
+            let Some(ink) = run_ink(scene, &tag) else {
+                // Not every row is above the fold in every swept state; a row
+                // the frame did not draw is not a row this gate can judge.
+                continue;
+            };
+            if fragment.marker == "Drop" {
+                dropped += 1;
+                assert_eq!(
+                    ink, faulty,
+                    "{case}: row {n} lost a piece and its marker is painted \
+                     {ink:?} rather than the wrong-state tone {faulty:?}"
+                );
+            } else {
+                intact += 1;
+                assert_eq!(
+                    ink, plain,
+                    "{case}: row {n} is `{} {}` — one piece of a whole message \
+                     and no fault at all — and its marker is painted {ink:?} \
+                     rather than the informational tone {plain:?}",
+                    fragment.marker, fragment.piece,
+                );
+            }
+        }
+    });
+    println!("[r2012] fragment markers judged: {dropped} dropped, {intact} intact");
+    assert!(
+        dropped > 0 && intact > 0,
+        "★ this gate separates a fault from a non-fault, so both must be \
+         reached: {dropped} dropped, {intact} intact"
+    );
+}

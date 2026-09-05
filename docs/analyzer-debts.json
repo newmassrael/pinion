@@ -304,6 +304,17 @@
       ]
     },
     {
+      "name": "debt-a-painted-pairing-outside-the-legibility-table-is-checked-by-nothing",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links debt-canon-gui-surface-census"
+      ]
+    },
+    {
       "name": "debt-a-panel-chrome-button-paints-no-glyph",
       "substituted": false,
       "blocked_by": "buildable",
@@ -400,6 +411,17 @@
       "closed_because": "",
       "why": [
         "links analyzer-debt-repayment-loop, debt-the-canon-is-one-app-and-we-are-many-binaries"
+      ]
+    },
+    {
+      "name": "debt-a-screen-with-its-own-chrome-reads-state-tones-from-the-readers-palette",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
     },
     {
@@ -614,6 +636,17 @@
       ]
     },
     {
+      "name": "debt-the-framework-grew-two-colour-roles-the-authored-theme-does-not-carry",
+      "substituted": false,
+      "blocked_by": "cross-repo",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links debt-the-canon-is-one-app-and-we-are-many-binaries"
+      ]
+    },
+    {
       "name": "debt-the-loops-standing-rules-name-instruments-that-do-not-exist",
       "substituted": false,
       "blocked_by": "buildable",
@@ -700,17 +733,6 @@
       "closed_because": "",
       "why": [
         "links screen-a-vs-canon-operation-census"
-      ]
-    },
-    {
-      "name": "debt-two-declared-colour-roles-have-no-field-to-land-in",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links debt-canon-gui-surface-census"
       ]
     },
     {

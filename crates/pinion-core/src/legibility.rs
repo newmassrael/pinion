@@ -178,6 +178,8 @@ pub const PAIRINGS: &[Pairing] = &[
     text(ColorRole::OnError, ColorRole::Error),
     text(ColorRole::OnErrorContainer, ColorRole::ErrorContainer),
     text(ColorRole::OnWarning, ColorRole::Warning),
+    text(ColorRole::OnSuccess, ColorRole::Success),
+    text(ColorRole::OnInfo, ColorRole::Info),
     text(ColorRole::InverseOnSurface, ColorRole::InverseSurface),
     // A snackbar's action label: the accent re-toned for the inverted ground.
     text(ColorRole::InversePrimary, ColorRole::InverseSurface),
@@ -185,6 +187,28 @@ pub const PAIRINGS: &[Pairing] = &[
     text(ColorRole::Accent, ColorRole::Surface),
     text(ColorRole::Error, ColorRole::Surface),
     text(ColorRole::Warning, ColorRole::Surface),
+    // ★★★★★ R2012 — and these two are declared because a mark that was ALREADY
+    // being painted here had no entry.
+    //
+    // The analysis shell's toast draws a small filled disc on the status band
+    // to say which kind of thing was said, and R1719's own comment calls it the
+    // only thing that tells a confirmation from a refusal. It was painted in
+    // `inverse_primary` — a role whose declared ground is `inverse_surface` —
+    // on the plain surface, which against THESE palettes measures **1.70**
+    // light and **2.17** dark, under even the non-text floor in both. (That
+    // screen binds a magenta of its own for the role and was legible by
+    // accident; the pairing is what was wrong, not its palette.) This table
+    // could not see it either way: `inverse_primary on surface` is not a
+    // pairing anybody declared, and a pairing nobody declares is a pairing
+    // nobody checks.
+    //
+    // ⚠ The residue, stated rather than hidden: declaring the two new tones
+    // fixes the mark that moved onto them, and it does NOT close the class.
+    // Nothing here reads what the screens paint, so the next undeclared
+    // ink-over-ground pairing will be just as quiet ⇒
+    // [[debt-a-painted-pairing-outside-this-table-is-checked-by-nothing]].
+    text(ColorRole::Success, ColorRole::Surface),
+    text(ColorRole::Info, ColorRole::Surface),
     // The one boundary pairing, and one is the right number: measured at
     // R1839 over six painted screens, `outline` draws 97 component boundaries
     // and 2 dividers, so a single `Floor::Boundary` is right for 98% of what

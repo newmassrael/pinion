@@ -466,6 +466,19 @@ struct Ink {
     accent: Color,
     warn: Color,
     err: Color,
+    /// R2012 — the tone for a fact that is neither right nor wrong.
+    ///
+    /// ⚠ Taken from the theme's DARK palette, and the reason is measured
+    /// rather than stylistic: this screen paints its own near-black chrome
+    /// (`bg` below) whatever the theme is, so a light-palette state tone lands
+    /// on a ground it was never chosen against. Measured on `bg`, the light
+    /// palette's `warning` reads **2.80** and its `error` **2.93**, both under
+    /// the 3.0 non-text floor, against **11.17** and **11.22** for the dark
+    /// palette's — so `warn` and `err` beside this field are legible only when
+    /// the reader happens to have chosen the dark theme. This field does not
+    /// join them in that ⇒
+    /// [[debt-a-screen-with-its-own-chrome-reads-state-tones-from-the-readers-palette]].
+    info: Color,
     ok: Color,
     lit: Color,
 }
@@ -481,6 +494,7 @@ fn ink(theme: &Theme) -> Ink {
         accent: rgb(0xEC_5AA0),
         warn: theme.resolve(ColorRole::Warning),
         err: theme.resolve(ColorRole::Error),
+        info: Theme::dark().resolve(ColorRole::Info),
         ok: rgb(0x35_C08B),
         lit: Color::rgba(0x9A, 0x00, 0x4F, 0x60),
     }
@@ -2819,10 +2833,21 @@ fn name_column_paint(n: usize, name_col: Rect, row: Rect, name: &str, ink: Ink) 
         annotation(&mut runs, "note", message.note.to_owned(), 0, ink.warn);
     }
     if let Some(fragment) = &message.fragment {
+        // ★★★★★ R2012 — the non-`Drop` arm was `ink.warn`, and it said the
+        // wrong thing. A message that is one piece of a larger one is a FACT
+        // about the capture, not a caution about it: the reference paints
+        // `First 1/3` and `More 2/3` in an informational tone and keeps the
+        // caution tone for what is actually off. Painting both in amber gave a
+        // reader two colours for three situations, so the one row that IS a
+        // fault (`Drop`) was the only one distinguishable — by being red, not
+        // by the other two being calm.
+        //
+        // The theme had no informational role until this round; that absence
+        // is why the arm reached for the nearest tone that was not the error.
         let ink_for = if fragment.marker == "Drop" {
             ink.err
         } else {
-            ink.warn
+            ink.info
         };
         let marker = format!("{} {}", fragment.marker, fragment.piece);
         annotation(&mut runs, "fragment", marker, 8, ink_for);

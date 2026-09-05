@@ -716,6 +716,10 @@ fn theme_from_role_map(map: &std::collections::HashMap<ColorRole, Color>) -> The
         inverse_primary: lookup(ColorRole::InversePrimary),
         warning: lookup(ColorRole::Warning),
         on_warning: lookup(ColorRole::OnWarning),
+        success: lookup(ColorRole::Success),
+        on_success: lookup(ColorRole::OnSuccess),
+        info: lookup(ColorRole::Info),
+        on_info: lookup(ColorRole::OnInfo),
     }
 }
 

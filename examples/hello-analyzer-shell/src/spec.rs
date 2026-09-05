@@ -3752,6 +3752,26 @@ pub const VOICES: &[VoiceSpec] = &[
 /// A total census is satisfied by declaring everything silent, so this table is
 /// the other half of the split and is what makes the first one a claim.
 pub const SILENCES: &[(&str, Population, &str, Where)] = &[
+    // ★★★★★ R2012 — the status bullet, which gained an address this round and
+    // must not gain a voice with it.
+    //
+    // The bullet is the SEEING half of a pair. Its hearing half is already
+    // said: `Tone::frame` puts `refused: ` or `no change: ` in front of the
+    // clause, so the sentence in `shell.toast` carries the tone in words, and
+    // the live region's urgency carries it in delivery. A reader who is told
+    // the tone a third time, by a shape with no words of its own, hears
+    // repetition — which is the same argument the toast's own annotation runs
+    // are silenced under one screen over.
+    //
+    // ⚠ It is `Where::Chrome` and not `At(...)`: the band is outside every
+    // page rect, so the bullet is on screen at whichever destination the rail
+    // has chosen. R1867 reported it at all seven, which is what says so.
+    (
+        "shell.toast.tone",
+        Population::One,
+        "part_of",
+        Where::Chrome,
+    ),
     // ★★★★★ R1761 — three marks that became ADDRESSABLE so a specification
     // could name them, and are silent because each one's words are already in
     // an announcement a reader gets. Being tagged and being announced are two

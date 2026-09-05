@@ -8087,11 +8087,28 @@ fn settings_ctrl_rect(row: Rect, w: u32) -> Rect {
 
 /// A small square dot — a grid pip, a status light, a grip dot.
 fn dot(x: u32, y: u32, size: u32, fill: Color) -> Scene {
-    Scene::Container(
-        ContainerNode::new(Vec::new())
-            .with_style(BoxStyle::filled(fill).with_corner_radius(size / 2))
-            .with_layout(absolute(Rect::new(x, y, size, size))),
-    )
+    disc(None, x, y, size, fill)
+}
+
+/// A [`dot`] a reader — or a walk — can address by name.
+///
+/// ★ R2012 — most dots here are strokes of a glyph and have nothing to be asked
+/// about individually. The status bullet is not one of those: it is the whole
+/// of what a sighted reader learns the tone from, so *what colour is it* has to
+/// be a question something can ask, and a question aimed at a shape with no
+/// address is answered by counting children.
+fn named_dot(tag: &'static str, x: u32, y: u32, size: u32, fill: Color) -> Scene {
+    disc(Some(tag), x, y, size, fill)
+}
+
+fn disc(tag: Option<&'static str>, x: u32, y: u32, size: u32, fill: Color) -> Scene {
+    let mut node = ContainerNode::new(Vec::new())
+        .with_style(BoxStyle::filled(fill).with_corner_radius(size / 2))
+        .with_layout(absolute(Rect::new(x, y, size, size)));
+    if let Some(tag) = tag {
+        node = node.with_tag(tag);
+    }
+    Scene::Container(node)
 }
 
 #[allow(
@@ -13016,7 +13033,7 @@ fn palette_scene(state: &ShellState, palette: Palette) -> Scene {
 /// toast (R1778's rule, kept). The gesture strip is what the slot holds
 /// otherwise, and it is the CALLER that says so — this returns the toast's
 /// occupancy or nothing, and the two possibilities meet in exactly one place.
-fn toast_in_slot(state: &ShellState, palette: Palette, slot: Rect) -> Option<Scene> {
+fn toast_in_slot(state: &ShellState, palette: Palette, theme: &Theme, slot: Rect) -> Option<Scene> {
     let said = state.toast.showing()?;
     let sentence = said.sentence();
     // ★★★★★ R1811 — **the box is a claim about its sentence, so it is measured
@@ -13050,12 +13067,19 @@ fn toast_in_slot(state: &ShellState, palette: Palette, slot: Rect) -> Option<Sce
             // from the gesture strip now, so it is centred on the slot's line
             // rather than placed at a hand-picked offset into a box that no
             // longer exists.
-            dot(
+            named_dot(
+                TOAST_DOT_TAG,
                 0,
                 slot.h.saturating_sub(TOAST_DOT) / 2,
                 TOAST_DOT,
-                toast_dot(said.tone(), palette),
-            ),
+                toast_dot(said.tone(), theme),
+            )
+            // ★ R2012 — addressable and deliberately NOT a second voice. The
+            // bullet is the seeing half of a pair whose hearing half is already
+            // said: `Tone::frame` puts the tone in words at the front of the
+            // sentence this toast announces. A shape with no words of its own,
+            // read as its own stop, is the same fact a third time.
+            .silenced(Silence::part_of("shell.toast")),
             label(
                 &sentence,
                 Rect::new(
@@ -13075,6 +13099,10 @@ fn toast_in_slot(state: &ShellState, palette: Palette, slot: Rect) -> Option<Sce
 
 /// The tone bullet's size.
 const TOAST_DOT: u32 = 8;
+
+/// The tone bullet's address. Inside `shell.toast`'s family, because the
+/// bullet is part of what the toast says rather than a mark of its own.
+const TOAST_DOT_TAG: &str = "shell.toast.tone";
 
 /// ★★★★★ R1864/R1865 — **the host's status band, drawn, and everything this
 /// application says about itself is in it.**
@@ -13153,13 +13181,13 @@ fn shell_tip_scene(state: &Rc<ShellState>, palette: Palette) -> Scene {
     )
 }
 
-fn status_band_scene(state: &ShellState, palette: Palette) -> Scene {
+fn status_band_scene(state: &ShellState, palette: Palette, theme: &Theme) -> Scene {
     let band = status_band_rect();
     let slot = status_slot_rect();
     // The slot in the BAND's space, which is what the band's own node is laid
     // out in.
     let local = Rect::new(slot.x - band.x, slot.y - band.y, slot.w, slot.h);
-    let saying = toast_in_slot(state, palette, slot).unwrap_or_else(|| {
+    let saying = toast_in_slot(state, palette, theme, slot).unwrap_or_else(|| {
         // ★★★★★ R1867 — the idle occupant is a REGION now, not a bare run.
         //
         // The slot below declares that whatever is in it speaks, and that
@@ -13266,14 +13294,28 @@ fn palette_of(theme: &Theme, dark: bool) -> Palette {
 /// The toast bullet's colour, which is what a sighted reader learns the tone
 /// from — the seeing half of the pair whose hearing half is the live region's
 /// urgency, both off one [`Tone`].
-const fn toast_dot(tone: Tone, palette: Palette) -> Color {
-    match tone {
-        Tone::Done => palette.accent_fg,
-        Tone::Refused => palette.refused,
-        // Nothing happened. The bullet says "heard you" rather than "did it",
-        // in the ink this screen already uses for present-but-not-the-point.
-        Tone::Unchanged => palette.muted,
-    }
+///
+/// ★★★★★ R2012 — this used to be a `match` HERE, and the match reached for a
+/// role whose ground is somewhere else. `Tone::Done` took `accent_fg`
+/// ([`ColorRole::InversePrimary`]), declared for
+/// [`ColorRole::InverseSurface`] and not for the status band this dot is drawn
+/// on. It was not carelessness — there was no role for *it happened*, so the
+/// nearest tone that was not the error red got used.
+///
+/// ⚠ WHAT SAVED THIS SCREEN WAS AN ACCIDENT, AND A COUNTERFACTUAL IS WHAT
+/// FOUND THAT OUT. [`reference_palettes`] binds a magenta for
+/// `inverse_primary`, so the bullet measured **7.88** light and **5.97** dark
+/// here and was perfectly findable. Against the framework's own
+/// `Theme::light` / `Theme::dark` the same mapping reads **1.70** and
+/// **2.17** — under the 3.0 a non-text mark is held to. So the defect was in
+/// the answer, not in this palette, and any application inheriting the
+/// defaults would have carried it.
+///
+/// The mapping lives on [`Tone::role`] now, where the vocabulary states it
+/// once for every consumer, and `r2012_the_status_bullet_is_findable_in_both_palettes`
+/// holds it to the floor in the canonical palettes as well as in these.
+fn toast_dot(tone: Tone, theme: &Theme) -> Color {
+    theme.resolve(tone.role())
 }
 
 fn view(_state: ScreenState, frame: Frame) -> Scene {
@@ -13395,7 +13437,7 @@ fn view(_state: ScreenState, frame: Frame) -> Scene {
             // page it must not leave. Painted after the page so a press on it
             // resolves to the roster rather than to whatever row it covers.
             settings_roster_scene(&state, here.key.as_ref()),
-            status_band_scene(&state, palette),
+            status_band_scene(&state, palette, &theme),
             // ★★★★★ R1916 — the description a reader is resting on, over
             // everything and last, because it is content ABOUT what is under
             // it. The canon's own `title` tooltips draw the same way.
