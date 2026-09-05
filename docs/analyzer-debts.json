@@ -681,6 +681,17 @@
       ]
     },
     {
+      "name": "debt-the-screens-own-palette-is-never-held-to-the-legibility-table",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links debt-the-canon-is-one-app-and-we-are-many-binaries"
+      ]
+    },
+    {
       "name": "debt-the-surplus-ratchet-says-non-empty-not-non-shrinking",
       "substituted": false,
       "blocked_by": "buildable",
