@@ -63,15 +63,32 @@
 //! a newer build would be this crate making a decision it has no standing to
 //! make.
 //!
-//! # One revision, and no migration invented before there are two
+//! # TWO versions, and only one of them has a migration
 //!
-//! [`REVISION`] is the format's own, stamped on write and checked on read.
-//! There is no migration hook: a chain written before a second revision exists
-//! is a guess at what the change will be, and the honest thing a reader can do
-//! today is *name* the mismatch — [`Unreadable::Revision`] carries both numbers
-//! — which is already the half the reference does not do. An application that
-//! versions its **own** extras does so inside its companion, where it knows
-//! what changed.
+//! ⚠ **This section said something narrower until R2006, and the narrower thing
+//! was true — about a different question.** It read *there is no migration
+//! hook*, full stop. That is right about [`REVISION`], the FORMAT's own version:
+//! one exists, so a chain written before a second is a guess at what the change
+//! will be, and the honest thing a reader can do is *name* the mismatch, which
+//! [`Unreadable::Revision`] does and the reference does not. It is **not** right
+//! about the application's node kinds, and R2005 cited it to rule that question
+//! out — a sentence answering the wrong question is worse than no sentence,
+//! because it reads like an answer.
+//!
+//! So there are two versions here and they are two histories with two owners:
+//!
+//! * [`REVISION`] moves when **this crate** changes the file's shape. No
+//!   migration, for the reason above.
+//! * [`NodeKind::version`] moves when the **application** changes what its node
+//!   kinds mean, and [`Document::migrate`] runs every step between the version a
+//!   file was written at and this build's, in order. R2006 built that, and the
+//!   reference is what showed why the version has to belong to the mechanism:
+//!   its own conversion hook carries none, so each implementor fetches one for
+//!   itself, and of the two that implement it only one does.
+//!
+//! One number for both would make a framework release force an application
+//! migration. An application that versions its own **extras** still does so
+//! inside its companion, where it knows what changed.
 //!
 //! ```
 //! use pinion_node_graph::{Archive, Camera, Document, NodeBody, NodeId, NodeKind, Port, ROOT};
@@ -118,7 +135,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::group::Violation;
-use crate::model::{Document, NodeId, NodeKind};
+use crate::model::{Document, NodeBody, NodeId, NodeKind, Tree, TreeId};
 use crate::view::Camera;
 
 /// The revision of the archive format itself.
@@ -126,7 +143,70 @@ use crate::view::Camera;
 /// Stamped by [`Archive::write`] and checked by [`Archive::read`]. It is the
 /// *format's*, not the application's: what a screen keeps beside its graph is
 /// versioned inside the companion, by whoever knows what changed.
+///
+/// ★ R2006 — and the taxonomy's own version is stamped BESIDE it, by
+/// [`NodeKind::version`]. Two numbers, because they are two histories with two
+/// owners: this one moves when the file's shape does, and that one when the
+/// application changes what its node kinds mean. One number for both would make
+/// a framework release force an application migration, and the reference has
+/// exactly that confusion in the other direction — its conversion hook carries
+/// no version at all, so each implementor fetches one for itself.
 pub const REVISION: u32 = 1;
+
+/// ★★★★★ R2006 — what [`Document::migrate`] did: every step it ran, in order,
+/// and which nodes each one rewrote.
+///
+/// The reference's equivalent answers `void` and writes its failures to a
+/// warning log, so *nothing happened* and *four things happened* are the same
+/// answer to a caller. Here a migration is a value: a screen can say what it
+/// did, a test can assert it, and a document that needed nothing reports
+/// `steps` empty rather than being indistinguishable from one that was never
+/// asked.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Migration {
+    /// The version the archive was written at.
+    pub from: u32,
+    /// The version it is now at — this build's [`NodeKind::version`].
+    pub to: u32,
+    /// One entry per step from `from + 1` to `to` that changed anything, in
+    /// ascending order.
+    ///
+    /// ⚠ Steps that changed nothing are **left out**, and steps that changed
+    /// something are all here: a step is in this list exactly when it did
+    /// work. That is why running is not the same as appearing.
+    pub steps: Vec<Rewritten>,
+}
+
+impl Migration {
+    /// Whether anything was rewritten at all.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.steps.is_empty()
+    }
+
+    /// Every node this migration rewrote, ascending and without repeats — a
+    /// node touched by two steps appears once.
+    #[must_use]
+    pub fn touched(&self) -> Vec<NodeId> {
+        let mut all: Vec<NodeId> = self
+            .steps
+            .iter()
+            .flat_map(|step| step.nodes.iter().copied())
+            .collect();
+        all.sort_unstable();
+        all.dedup();
+        all
+    }
+}
+
+/// One step of a taxonomy's history, and what it rewrote (R2006).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rewritten {
+    /// The version this step brings a document up to.
+    pub step: u32,
+    /// The nodes it rewrote, ascending.
+    pub nodes: Vec<NodeId>,
+}
 
 /// A document on its way out of the process, with the view it was left in and
 /// whatever the application keeps beside it.
@@ -233,6 +313,7 @@ where
     pub fn write(&self) -> Result<String, Unwritable> {
         let envelope = Envelope {
             revision: REVISION,
+            taxonomy: K::version(),
             document: to_value(&self.document)?,
             camera: self.camera,
             selection: self.selection.clone(),
@@ -339,6 +420,7 @@ where
             }
         };
 
+        let taxonomy = envelope.taxonomy;
         Opening::opened(
             document.validate(),
             dropped,
@@ -348,6 +430,7 @@ where
                 selection,
                 companion,
             },
+            taxonomy,
         )
     }
 }
@@ -398,6 +481,9 @@ enum Outcome<K: NodeKind, C> {
         violations: Vec<Violation>,
         dropped: Vec<Dropped>,
         archive: Archive<K, C>,
+        /// R2006 — the taxonomy version stamped on the file, or `0` for one
+        /// written before the stamp existed.
+        taxonomy: u32,
     },
 }
 
@@ -408,13 +494,38 @@ impl<K: NodeKind, C> Opening<K, C> {
         }
     }
 
-    fn opened(violations: Vec<Violation>, dropped: Vec<Dropped>, archive: Archive<K, C>) -> Self {
+    fn opened(
+        violations: Vec<Violation>,
+        dropped: Vec<Dropped>,
+        archive: Archive<K, C>,
+        taxonomy: u32,
+    ) -> Self {
         Self {
             outcome: Outcome::Read {
                 violations,
                 dropped,
                 archive,
+                taxonomy,
             },
+        }
+    }
+
+    /// ★★★★★ R2006 — **the taxonomy version this file was written at**, so a
+    /// caller knows what to migrate FROM.
+    ///
+    /// `None` for a file that could not be read at all — the version of nothing
+    /// is not zero, and answering zero there would send a caller migrating a
+    /// document it does not have.
+    ///
+    /// ⚠ A file written before the stamp existed answers `Some(0)`, which IS
+    /// the honest answer: it predates every step, so every step applies. The
+    /// distinction that matters is *unreadable* against *old*, and it is the
+    /// one an `Option` draws.
+    #[must_use]
+    pub const fn taxonomy_version(&self) -> Option<u32> {
+        match &self.outcome {
+            Outcome::Read { taxonomy, .. } => Some(*taxonomy),
+            Outcome::Unreadable(_) => None,
         }
     }
 
@@ -699,6 +810,14 @@ impl std::error::Error for Unwritable {}
 #[derive(Serialize, Deserialize)]
 struct Envelope {
     revision: u32,
+    /// ★ R2006 — the TAXONOMY's version, beside the format's.
+    ///
+    /// `#[serde(default)]` so an archive written before this field existed
+    /// reads as version `0` and migrates from there — which is the honest
+    /// answer for a file that predates the stamp, and is itself the first thing
+    /// a migration mechanism has to get right about its own arrival.
+    #[serde(default)]
+    taxonomy: u32,
     document: serde_json::Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     camera: Option<Camera>,
@@ -706,6 +825,74 @@ struct Envelope {
     selection: Vec<NodeId>,
     #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
     companion: serde_json::Value,
+}
+
+impl<K: NodeKind> Document<K> {
+    /// ★★★★★ R2006 — **bring this document's node kinds up to date**, one step
+    /// at a time, and say what each step did.
+    ///
+    /// Runs [`NodeKind::at_step`] for every step from `from + 1` up to
+    /// [`NodeKind::version`], **in ascending order**, over every application
+    /// node in every tree. A step sees what the step before it produced, which
+    /// is what lets a later step repair an earlier one's output.
+    ///
+    /// ⚠ **That is where the reference is wrong**, and its own source is what
+    /// says so: the versioned one of its two conversion hooks is written
+    /// `if (v < 21) { … } else if (v < 24) { … }`, and the declaration of step
+    /// 24 carries a comment saying that documents brought up to date by step 21
+    /// may end up with a wrong default for one parameter. Step 24 therefore
+    /// exists to repair what step 21 produces — and a document at version 10
+    /// takes step 21 and is then **excluded by the `else`** from the repair it
+    /// has just earned.
+    ///
+    /// A document already at or past the current version is left alone and
+    /// answers an empty [`Migration`] — not because nothing was asked, but
+    /// because a version that is not behind has no steps between it and now.
+    #[must_use]
+    pub fn migrate(&mut self, from: u32) -> Migration {
+        let to = K::version();
+        let mut ran = Migration {
+            from,
+            to,
+            steps: Vec::new(),
+        };
+        for step in (from + 1)..=to {
+            let mut changed = Vec::new();
+            for tree in 0..self.tree_count() {
+                let tree = TreeId(u32::try_from(tree).unwrap_or(u32::MAX));
+                // ★ The ids are collected before anything is written: the walk
+                // reads what the previous step left, and rewriting inside it
+                // would be reading a tree that is being changed.
+                let wanted: Vec<(NodeId, K)> = self
+                    .tree(tree)
+                    .into_iter()
+                    .flat_map(Tree::nodes)
+                    .filter_map(|held| match &held.body {
+                        NodeBody::Kind(kind) => kind.at_step(step).map(|next| (held.id, next)),
+                        _ => None,
+                    })
+                    .collect();
+                for (node, next) in wanted {
+                    if let Some(held) = self.tree_mut(tree).and_then(|host| host.node_mut(node)) {
+                        held.body = NodeBody::Kind(next);
+                        changed.push(node);
+                    }
+                }
+            }
+            changed.sort_unstable();
+            // ★ A step that changed nothing is left OUT rather than recorded
+            // empty, so `steps` is the list of steps that did work and its
+            // length is a count of them. `from`/`to` already say which steps
+            // were offered, so nothing is lost by the omission.
+            if !changed.is_empty() {
+                ran.steps.push(Rewritten {
+                    step,
+                    nodes: changed,
+                });
+            }
+        }
+        ran
+    }
 }
 
 fn to_value<T: Serialize>(value: &T) -> Result<serde_json::Value, Unwritable> {

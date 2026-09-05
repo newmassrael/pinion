@@ -551,7 +551,14 @@ const STORAGE_KEY: &str = "node_graph.state";
 // is a field in every saved graph. The default means an old blob READS
 // correctly; the version is what tells a person their file predates the field
 // rather than leaving them to infer a kind that was never written.
-const PERSISTED_SCHEMA_VERSION: u32 = 22;
+// R2006 — and the ARCHIVE ENVELOPE now stamps the taxonomy's own version
+// (`NodeKind::version`) beside the format's revision, which is a field in every
+// saved file. `serde(default)` means an old blob READS correctly as version 0 —
+// which is the honest reading, since it predates every step — and this
+// editor's own reader is what makes the change breaking anyway: it refuses on
+// any version mismatch at all, so a file saved at 22 is turned away by name
+// rather than being read as something it is not.
+const PERSISTED_SCHEMA_VERSION: u32 = 23;
 
 /// R1599 — the append-only `(version, digest)` ledger the persistence gate
 /// reads. See `pinion_core::test_fixtures::assert_persisted_shape` for why it
@@ -599,6 +606,15 @@ const PERSISTED_SHAPE_HISTORY: &[(u32, u64)] = &[
     // and the version is what tells a person their file predates the class
     // rather than leaving them to infer it from a card that folds nothing.
     (22, 0xd21e_9a89_fe6d_7e37),
+    // R2006 — the archive envelope stamps the TAXONOMY's own version
+    // (`NodeKind::version`) beside the format's revision, so a loader knows
+    // what to migrate FROM. A field in every saved file, so the persisted shape
+    // moved. `serde(default)` means an old blob READS correctly as version 0 —
+    // the honest reading, since it predates every step — and this editor's own
+    // reader is what makes the change breaking anyway: it refuses on any
+    // mismatch, so a file saved at 22 is turned away BY NAME rather than read
+    // as something it is not.
+    (23, 0x4d62_0ac3_6f72_70e5),
 ];
 
 /// R849 — where a newly added node first lands, and the per-add cascade step

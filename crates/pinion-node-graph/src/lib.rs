@@ -267,7 +267,9 @@ pub use advanced::{AdvancedView, ClassSource, Classified, Classify, ClassifyErro
 pub use appearance::{
     Appearance, Drawn, Faces, Hidden, PutAway, PutAwayRefusal, Tint, VisiblePorts,
 };
-pub use archive::{Archive, Condition, Dropped, Opening, REVISION, Unreadable, Unwritable};
+pub use archive::{
+    Archive, Condition, Dropped, Migration, Opening, REVISION, Rewritten, Unreadable, Unwritable,
+};
 pub use arrange::{
     Align, ArrangePass, ArrangeTail, Axis, Distribute, Edge, Stack, Straighten, Straightened,
 };

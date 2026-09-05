@@ -360,16 +360,48 @@ pub fn open(state: &Rc<LabState>, text: &str) -> Result<String, String> {
         .iter()
         .map(std::string::ToString::to_string)
         .collect();
+    // ★★★★★ R2006 — the version the FILE was written at, read before anything
+    // is installed, so the migration below has something to migrate FROM.
+    // `None` cannot be reached here: `Condition::Unreadable` returned above and
+    // that is the only outcome without a version — so the fall-back is a value
+    // no path produces rather than a decision.
+    let was = opening.taxonomy_version().unwrap_or_default();
     let archive = opening
         .take_despite_violations()
         .ok_or_else(|| "unreadable".to_owned())?;
     install(state, archive);
+    // ★★★★★ R2006 — and the taxonomy's own history is run HERE, at the moment
+    // the reference runs its equivalent: on load, once, over the document that
+    // just arrived. `Document::migrate` walks every step between the file's
+    // version and this build's IN ORDER, so a step added later still sees what
+    // an earlier one produced — which is the property the reference's own
+    // `else if` does not have.
+    //
+    // ⚠ This screen's taxonomy has no history yet (`LabNode` takes
+    // `NodeKind::version`'s default), so `ran` is empty today. That is not a
+    // reason to leave the call out: the day a role is renamed, a file saved
+    // before it must come back as the role it became, and a load path that had
+    // to be edited then is a load path that would have been forgotten. The
+    // register beside this publishes the version so the absence is a stated
+    // fact rather than a silence.
+    let ran = state.doc.borrow_mut().migrate(was);
     // ★★★★★ R1977 — the sentence names BOTH kinds of remainder, and an unsound
     // graph is named as unsound rather than as "opened". A person who sees
     // `opened` and nothing else on a broken file has been told the wrong thing;
     // the gate will say which card each fault is on, and this is what sends
     // them to look.
     let mut clauses = vec![format!("{} cards", state.cards().len())];
+    // ★★★★★ R2006 — and what the migration did, in the SAME sentence, because
+    // a person whose file was rewritten on the way in has to be told. The
+    // reference's hook answers `void` and writes its failures to a warning log,
+    // so there the rewrite is invisible to whoever opened the file.
+    if !ran.is_empty() {
+        clauses.push(format!(
+            "brought up from {was}: {} step(s), {} card(s)",
+            ran.steps.len(),
+            ran.touched().len()
+        ));
+    }
     if !dropped.is_empty() {
         clauses.push(format!(
             "{} left behind: {}",

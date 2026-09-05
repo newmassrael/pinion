@@ -3213,10 +3213,10 @@
       "verdict": "have"
     },
     "schema::BackwardCompatibilityNodeConversion": {
-      "covered_by": "no versioned migration of a document's node kinds",
+      "covered_by": "A TAXONOMY'S OWN HISTORY, RUN ONE STEP AT A TIME (R2006): `NodeKind::version` is the version of the application's vocabulary — distinct from the archive format's `REVISION`, and stamped beside it on every file — and `NodeKind::at_step` says what a kind becomes at one step of that history. `Document::migrate(from)` runs every step from `from + 1` to `version()` IN ASCENDING ORDER over every application node in every tree, and answers a `Migration` naming the steps that did work and the nodes each rewrote. ★★★★★ FOUR MEASURED DEFECTS IN THE REFERENCE'S HOOK, and the first two decided the shape: (1) IT CARRIES NO VERSION — the virtual takes a graph and a bool, so every implementor fetches one itself out of the serialisation linker, and of the TWO that implement it only one does; the other re-runs its conversions unconditionally on every load forever. (2) THE ONE THAT DOES BRANCHES INSTEAD OF COMPOSING — `if (v < 21) { four conversions } else if (v < 24) { one }`, where the declaration of step 24 carries a comment saying documents brought up to date by step 21 may end up with a wrong default for one parameter; so step 24 exists to repair what step 21 produces, and a document at version 10 takes step 21 and is then excluded by the `else` from the repair it just earned — THE DOCUMENT THAT MOST NEEDS IT IS EXACTLY THE ONE SKIPPED. (3) IT ANSWERS `void` and logs failures as warnings, so *nothing was needed* and *four things happened* reach a caller the same. (4) Its safe-changes parameter is `true` at its only call site, so the other mode is unreachable. ★ A file written before the stamp existed reads as version 0 and takes every step, which is the honest answer for a file that predates the stamp — and `Opening::taxonomy_version` answers `None` for one that could not be read at all, because the version of nothing is not zero.",
       "mechanism": "graph-schema",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_schema_backward_compatibility_node_conversion",
+      "verdict": "have"
     },
     "schema::BeginGraphDragAction": {
       "covered_by": "which node kinds a palette offers, and how it is searched",

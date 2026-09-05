@@ -963,6 +963,49 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
         crate::Admitted::Anything
     }
 
+    /// ★★★★★ R2006 — **the version of this taxonomy's own vocabulary**, stamped
+    /// on every archive it writes.
+    ///
+    /// Not the archive format's [`REVISION`](crate::REVISION), which is this
+    /// crate's and moves when the file's shape does. This one moves when the
+    /// APPLICATION changes what its node kinds mean, which is a different
+    /// history with a different owner — and conflating them is what would make
+    /// a framework release force an application migration.
+    ///
+    /// The default is `0`: a taxonomy that has never changed says so, and
+    /// [`Document::migrate`] then has nothing to do.
+    #[must_use]
+    fn version() -> u32 {
+        0
+    }
+
+    /// ★★★★★ R2006 — **what this kind becomes at one step of that history**, or
+    /// `None` when that step left it alone.
+    ///
+    /// [`Document::migrate`] calls this once per step from the version an
+    /// archive was written at up to [`version`](Self::version), **in order** —
+    /// so a document three versions old takes all three steps and each sees
+    /// what the one before it produced.
+    ///
+    /// ⚠ **That ordering is the round's whole point, and it is where the
+    /// reference is wrong.** Its equivalent hook takes no version at all, so
+    /// each override fetches one for itself — measured, of the two that
+    /// implement it only ONE does, and the other re-runs its conversions on
+    /// every load forever. And the one that does writes
+    /// `if (v < 21) { … } else if (v < 24) { … }`, so a document at version 10
+    /// takes the first branch and **never takes the second** — while the second
+    /// step's own declaration says, in its own comment, that it exists to
+    /// repair what the first one produces. The document that most needs the
+    /// repair is exactly the one that is skipped.
+    ///
+    /// The default changes nothing at any step, which is right for a taxonomy
+    /// whose vocabulary has never moved.
+    #[must_use]
+    fn at_step(&self, step: u32) -> Option<Self> {
+        let _ = step;
+        None
+    }
+
     /// A stable identity token — the answer to "what does this node do".
     ///
     /// Never derived from a user-facing label: a node renamed "Foo" still

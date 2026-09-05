@@ -13531,6 +13531,13 @@ const FIELDS: &[SchemaField] = &{
         // the reference's own sentence for its alias — "decompiled into
         // multiple connections" — made a number a client can read.
         SchemaField::new("stand_ins", "json"),
+        // ★★★★★ R2006 — the two versions a saved graph carries and what a
+        // migration would do to the canvas as it stands. Published because the
+        // reference's equivalent hook answers `void`: there, whether a file was
+        // rewritten on the way in is not a question anything can ask, and one
+        // of its two implementors re-converts on every load with nothing able
+        // to notice.
+        SchemaField::new("history", "json"),
         // ★★★★★ R2004 — the reference's self-transition command, generalised:
         // a stand-in for this card, placed at its own offset and wired back, so
         // the loop a direct edit refuses is a DECLARATION rather than an
@@ -13876,6 +13883,7 @@ impl ExternalIntrospect for LabOracle {
             "watchable" => Ok(IntrospectValue::Json(watchable_wire(state))),
             "zones" => Ok(IntrospectValue::Json(zones_wire(state))),
             "stand_ins" => Ok(IntrospectValue::Json(stand_ins_wire(state))),
+            "history" => Ok(IntrospectValue::Json(history_wire(state))),
             "definitions" => Ok(IntrospectValue::Json(definitions_wire(state))),
             // ★ R1742 — the SAME value the host publishes for this section, so
             // "one build, two placements" is a fact a client can check rather
@@ -23911,6 +23919,44 @@ fn represent_card(
     );
     state.say(Utterance::done(&said));
     Ok(said)
+}
+
+/// ★★★★★ R2006 — **the two versions a saved graph carries**, and what a
+/// migration from the oldest possible file would do to this canvas.
+///
+/// Two numbers because they are two histories with two owners: `revision` is
+/// the archive FORMAT's, which moves when the file's shape does, and `taxonomy`
+/// is this screen's own vocabulary version, which moves when a role changes
+/// meaning. The reference has neither published — its conversion hook carries
+/// no version at all, so each implementor fetches one for itself and, measured,
+/// only one of the two does.
+///
+/// ★★★★★ `would` is asked on a SCRATCH COPY of the document, because a register
+/// must not change what it reports on — the same rule R1942's watch register
+/// follows. So this answers *what a migration would do* without doing it.
+///
+/// ⚠ This screen's taxonomy has no history yet, so `taxonomy` is 0 and `would`
+/// is empty. That is a stated fact rather than a silence: a client reading zero
+/// is reading *this vocabulary has never moved*, which is exactly what the
+/// framework's own default says and what the load path is already wired for.
+fn history_wire(state: &Rc<LabState>) -> serde_json::Value {
+    // ★ A clone, so asking does not migrate. `Document` is a value here, which
+    // is what makes the scratch copy a clone rather than a second mechanism.
+    let mut scratch = state.doc.borrow().clone();
+    let would = scratch.migrate(0);
+    serde_json::json!({
+        "revision": pinion_node_graph::REVISION,
+        "taxonomy": <LabNode as NodeKind>::version(),
+        "would": {
+            "from": would.from,
+            "to": would.to,
+            "steps": would.steps.iter().map(|step| serde_json::json!({
+                "step": step.step,
+                "cards": step.nodes.iter().map(|node| state.name_of(*node)).collect::<Vec<_>>(),
+            })).collect::<Vec<_>>(),
+            "cards": would.touched().len(),
+        },
+    })
 }
 
 /// ★★★★★ R1942 — **whether each pin's value can be LOOKED AT**, and when it

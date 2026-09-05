@@ -20564,3 +20564,229 @@ fn r2005_asking_first_and_running_cannot_disagree() {
         "★ two different states must not read as one sentence"
     );
 }
+
+// ---------------------------------------------------------------------------
+// R2006 — a taxonomy WITH A HISTORY, so the composition property is reachable.
+//
+// Its own fixture and not `Op`'s, because every other taxonomy in this file
+// takes `NodeKind::version`'s default of zero — which is what a taxonomy that
+// has never changed should say, and which R2006 asserts stays true for them.
+// A history is exactly what the reference's two overriders differ about, so the
+// fixture that can tell a composing migration from a branching one has to have
+// one.
+//
+// ★★★★★ THE SHAPE IS THE REFERENCE'S OWN, measured: step 3 exists to repair
+// what step 1 produces. There the equivalent is written `if (v < 21) { … }
+// else if (v < 24) { … }`, so a document older than BOTH takes only the first
+// and never the repair. Here `Grown` is what step 1 makes and step 3 is what
+// fixes it, and a document at version 0 must come out the other end at `Ripe`.
+// ---------------------------------------------------------------------------
+
+/// A taxonomy whose vocabulary has moved three times.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+enum Aged {
+    /// What documents held before step 1.
+    Seed,
+    /// What step 1 makes — and what step 3 exists to repair.
+    Grown,
+    /// What step 3 makes.
+    Ripe,
+    /// Never touched by any step, so a migration's report can be shown to
+    /// LEAVE THINGS ALONE rather than merely to rewrite everything it walks.
+    Stone,
+}
+
+impl NodeKind for Aged {
+    type Type = Ty;
+    type Value = Val;
+    type Graph = ();
+
+    fn name(&self) -> String {
+        match self {
+            Self::Seed => "Seed".to_owned(),
+            Self::Grown => "Grown".to_owned(),
+            Self::Ripe => "Ripe".to_owned(),
+            Self::Stone => "Stone".to_owned(),
+        }
+    }
+
+    fn inputs(&self) -> Vec<Port<Ty, Val>> {
+        vec![Port::new("In", Ty::Number)]
+    }
+
+    fn outputs(&self) -> Vec<Port<Ty, Val>> {
+        vec![Port::new("Out", Ty::Number)]
+    }
+
+    fn evaluate(&self, inputs: &[Option<Val>]) -> Vec<Option<Val>> {
+        vec![inputs.first().cloned().flatten()]
+    }
+
+    fn version() -> u32 {
+        3
+    }
+
+    /// Step 1 ripens a seed, step 2 does nothing at all, step 3 repairs what
+    /// step 1 made. A step that changes nothing is declared rather than left
+    /// out, because "this version moved nothing in the vocabulary" is a real
+    /// answer and the report has to be able to show it was offered and passed.
+    fn at_step(&self, step: u32) -> Option<Self> {
+        match (step, self) {
+            (1, Self::Seed) => Some(Self::Grown),
+            (3, Self::Grown) => Some(Self::Ripe),
+            _ => None,
+        }
+    }
+}
+
+/// ★★★★★ R2006 — **every step from the document's version runs, in order**, so
+/// a later step sees what an earlier one produced.
+///
+/// This is the property the reference's own hook does not have. Its versioned
+/// implementation branches with `else if`, and the declaration of its later
+/// step carries a comment saying that documents brought up to date by the
+/// earlier one may end up wrong — so the later step exists to repair the
+/// earlier one's output, and the `else` excludes exactly the documents that
+/// took it.
+#[test]
+fn r2006_every_step_runs_in_order_so_a_later_one_repairs_an_earlier() {
+    let mut doc: Document<Aged> = Document::new("orchard");
+    let old = doc
+        .add_node(ROOT, NodeBody::Kind(Aged::Seed), 0, 0)
+        .unwrap();
+    let inert = doc
+        .add_node(ROOT, NodeBody::Kind(Aged::Stone), 0, 100)
+        .unwrap();
+
+    let ran = doc.migrate(0);
+    assert_eq!((ran.from, ran.to), (0, 3));
+    assert_eq!(
+        doc.tree(ROOT).unwrap().node(old).unwrap().body,
+        NodeBody::Kind(Aged::Ripe),
+        "★★★★★ step 1 made it Grown and step 3 then repaired THAT — a branch \
+         would have stopped after the first"
+    );
+    assert_eq!(
+        doc.tree(ROOT).unwrap().node(inert).unwrap().body,
+        NodeBody::Kind(Aged::Stone),
+        "★ and a kind no step names is left alone"
+    );
+
+    assert_eq!(
+        ran.steps.iter().map(|s| s.step).collect::<Vec<_>>(),
+        vec![1, 3],
+        "★ the report names the steps that DID work, ascending — step 2 was \
+         offered and changed nothing, so it is not here"
+    );
+    assert!(ran.steps.iter().all(|s| s.nodes == vec![old]));
+    assert_eq!(
+        ran.touched(),
+        vec![old],
+        "★ and a node two steps rewrote is counted once"
+    );
+    assert!(!ran.is_empty());
+}
+
+/// ★★★★★ R2006 — **the report is a value**, so *nothing was needed* and
+/// *nothing was asked* are different answers.
+///
+/// The reference's hook answers `void` and writes its failures to a warning
+/// log, so a caller cannot tell those apart at all — and its unversioned
+/// implementation, which is one of only two, therefore re-runs its conversions
+/// on every single load with nothing able to notice.
+#[test]
+fn r2006_a_document_already_current_is_left_alone_and_says_so() {
+    let mut doc: Document<Aged> = Document::new("orchard");
+    let ripe = doc
+        .add_node(ROOT, NodeBody::Kind(Aged::Ripe), 0, 0)
+        .unwrap();
+    let before = doc.tree(ROOT).unwrap().node(ripe).unwrap().body.clone();
+
+    let ran = doc.migrate(3);
+    assert_eq!((ran.from, ran.to), (3, 3));
+    assert!(ran.is_empty(), "★ no step lies between 3 and 3");
+    assert_eq!(ran.touched(), []);
+    assert_eq!(
+        doc.tree(ROOT).unwrap().node(ripe).unwrap().body,
+        before,
+        "★ and the document is untouched, which the empty report is the \
+         evidence for rather than the claim about"
+    );
+
+    // ★ A document PART of the way through takes only the steps above it.
+    let mut half: Document<Aged> = Document::new("orchard");
+    let grown = half
+        .add_node(ROOT, NodeBody::Kind(Aged::Grown), 0, 0)
+        .unwrap();
+    let later = half.migrate(2);
+    assert_eq!(
+        later.steps.iter().map(|s| s.step).collect::<Vec<_>>(),
+        vec![3],
+        "★ step 1 is below the document's version and is not offered"
+    );
+    assert_eq!(
+        half.tree(ROOT).unwrap().node(grown).unwrap().body,
+        NodeBody::Kind(Aged::Ripe)
+    );
+}
+
+/// ★★★★★ R2006 — **the taxonomy's version is stamped on the archive**, beside
+/// the format's, and a file written before the stamp existed reads as zero.
+///
+/// Two numbers because they are two histories with two owners. The reference
+/// has the confusion in the other direction: its conversion hook carries no
+/// version at all, so each implementor fetches one for itself out of the
+/// serialisation linker — and, measured, only one of the two bothers.
+#[test]
+fn r2006_an_archive_carries_the_taxonomy_version_it_was_written_at() {
+    let mut doc: Document<Aged> = Document::new("orchard");
+    doc.add_node(ROOT, NodeBody::Kind(Aged::Ripe), 0, 0)
+        .unwrap();
+    let text = Archive::<Aged>::of(doc).write().expect("representable");
+    assert!(
+        text.contains("\"taxonomy\": 3"),
+        "★ this build's taxonomy version is in the file: {text}"
+    );
+    assert!(
+        text.contains("\"revision\": 1"),
+        "★ and the FORMAT's revision is still there, separately"
+    );
+
+    let opening = Archive::<Aged>::read(&text);
+    assert_eq!(
+        opening.taxonomy_version(),
+        Some(3),
+        "★ and a reader gets it back, which is what it migrates FROM"
+    );
+
+    // ★★★★★ A file written before the stamp existed. Answering `Some(0)` is
+    // the honest reading — it predates every step, so every step applies —
+    // and the distinction that matters is UNREADABLE against OLD.
+    let older = text.replace("\"taxonomy\": 3,", "");
+    let opened = Archive::<Aged>::read(&older);
+    assert_eq!(
+        opened.refusal(),
+        None,
+        "the rest of the envelope still reads"
+    );
+    assert_eq!(opened.taxonomy_version(), Some(0));
+    assert_eq!(
+        Archive::<Aged>::read("{ not json").taxonomy_version(),
+        None,
+        "★ and the version of a file that could not be read is not zero"
+    );
+
+    // ★ Every other taxonomy in this file has never moved, and says so.
+    assert_eq!(<Op as NodeKind>::version(), 0);
+    assert_eq!(<LOp as NodeKind>::version(), 0);
+    let mut plain: Document<Op> = Document::new("root");
+    let node = plain.add_node(ROOT, NodeBody::Kind(Op::Add), 0, 0).unwrap();
+    assert!(
+        plain.migrate(0).is_empty(),
+        "★ a taxonomy with no history has no step to run"
+    );
+    assert_eq!(
+        plain.tree(ROOT).unwrap().node(node).unwrap().body,
+        NodeBody::Kind(Op::Add)
+    );
+}

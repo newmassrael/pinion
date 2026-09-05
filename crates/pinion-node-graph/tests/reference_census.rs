@@ -55,7 +55,7 @@ use pinion_node_graph::{
     Socket, Stack, Straighten, Stride, SwapError, SwitchRefusal, Tie, Tint, TreeId, Variadic,
     Violation, WatchError, Watches, palette_of, type_palette,
 };
-use pinion_node_graph::{Alone, BeaconError, Represented, StandInError};
+use pinion_node_graph::{Alone, Archive, BeaconError, Represented, StandInError};
 use pinion_node_graph::{Carried, ZoneSwapError};
 use pinion_node_graph::{
     Copying, DefinitionAct, DefinitionError, InZone, InsertError, PairError, Renamed, Substitution,
@@ -2042,6 +2042,12 @@ fn hook_round_proofs() -> Vec<Proof> {
             "engine",
             "AnimGraph::CreateSelfTransition",
             engine_anim_graph_create_self_transition,
+        ),
+        // R2006 — a taxonomy's own history, run one step at a time at load.
+        proof(
+            "engine",
+            "schema::BackwardCompatibilityNodeConversion",
+            engine_schema_backward_compatibility_node_conversion,
         ),
         // R1944 — a definition can be removed, and the removal says what went.
         proof(
@@ -15499,4 +15505,154 @@ fn engine_material_editor_create_reroute_usage_from_declaration() {
          there is nothing to redirect to"
     );
     assert!(document.validate().is_empty());
+}
+
+/// A taxonomy with a HISTORY, for the migration proof below (R2006).
+///
+/// Its own and not `Op`'s, because `Op` takes `NodeKind::version`'s default of
+/// zero — which is what a taxonomy that has never changed should say, and which
+/// the proof asserts stays true for it.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+enum Era {
+    /// What documents held before step 1.
+    Before,
+    /// What step 1 makes — and what step 3 exists to repair.
+    Between,
+    /// What step 3 makes.
+    After,
+}
+
+impl NodeKind for Era {
+    type Type = Ty;
+    type Value = Val;
+    type Graph = ();
+
+    fn name(&self) -> String {
+        match self {
+            Self::Before => "Before".to_owned(),
+            Self::Between => "Between".to_owned(),
+            Self::After => "After".to_owned(),
+        }
+    }
+
+    fn inputs(&self) -> Vec<Port<Ty, Val>> {
+        vec![Port::new("In", Ty::Number)]
+    }
+
+    fn outputs(&self) -> Vec<Port<Ty, Val>> {
+        vec![Port::new("Out", Ty::Number)]
+    }
+
+    fn evaluate(&self, inputs: &[Option<Val>]) -> Vec<Option<Val>> {
+        vec![inputs.first().cloned().flatten()]
+    }
+
+    fn version() -> u32 {
+        3
+    }
+
+    fn at_step(&self, step: u32) -> Option<Self> {
+        match (step, self) {
+            (1, Self::Before) => Some(Self::Between),
+            (3, Self::Between) => Some(Self::After),
+            _ => None,
+        }
+    }
+}
+
+/// ★★★★★ R2006 — the engine's **backward-compatibility node conversion**: a
+/// document's node kinds brought up to date at load, one version step at a
+/// time.
+///
+/// ★★★★★ FOUR THINGS MEASURED ABOUT ITS HOOK, and the first two decided the
+/// whole shape:
+///
+/// 1. **It carries no version.** The virtual takes a graph and a bool, nothing
+///    more, so every implementor has to fetch a version for itself out of the
+///    serialisation linker. Of the **two** that implement it, only ONE does —
+///    the other runs its conversions unconditionally on every load, forever,
+///    for every document however new. A version that each implementor decides
+///    to consult is a version half of them will not.
+/// 2. **The one that does branches instead of composing.** It is written
+///    `if (v < 21) { four conversions } else if (v < 24) { one }`, and the
+///    declaration of step 24 carries a comment saying documents brought up to
+///    date by step 21 may end up with a wrong default for one parameter. So
+///    step 24 exists to repair what step 21 produces — and a document at
+///    version 10 takes step 21 and is then excluded by the `else` from the
+///    repair it has just earned. **The document that most needs it is exactly
+///    the one skipped.**
+/// 3. **It answers `void`** and writes its failures to a warning log, so
+///    *nothing was needed* and *four things happened* reach a caller the same.
+/// 4. **Its `bOnlySafeChanges` parameter is `true` at its only call site**, so
+///    the unsafe mode is unreachable — a knob with one position.
+///
+/// Here the version belongs to the MECHANISM: `NodeKind::version` is stamped on
+/// every archive beside the format's own revision, `Document::migrate` runs
+/// every step between the two in ascending order, and the report is a value.
+#[test]
+fn engine_schema_backward_compatibility_node_conversion() {
+    // (A) A document written three versions ago, and a kind no step names.
+    let mut document: Document<Era> = Document::new("root");
+    let aged = document
+        .add_node(ROOT, NodeBody::Kind(Era::Before), 0, 0)
+        .expect("root tree");
+    let untouched = document
+        .add_node(ROOT, NodeBody::Kind(Era::After), 0, 100)
+        .expect("root tree");
+
+    let ran = document.migrate(0);
+
+    // (B) ★★★★★ THE COMPOSITION the reference's `else if` breaks.
+    assert_eq!(
+        document.tree(ROOT).unwrap().node(aged).unwrap().body,
+        NodeBody::Kind(Era::After),
+        "★★★★★ step 1 made it Between and step 3 then repaired THAT — the \
+         reference's branch stops after the first and the repair never runs"
+    );
+    assert_eq!(
+        document.tree(ROOT).unwrap().node(untouched).unwrap().body,
+        NodeBody::Kind(Era::After),
+        "★ and a node no step names is left where it was"
+    );
+
+    // (C) ★★★★★ THE REPORT IS A VALUE, where the reference answers void.
+    assert_eq!((ran.from, ran.to), (0, 3));
+    assert_eq!(
+        ran.steps.iter().map(|s| s.step).collect::<Vec<_>>(),
+        vec![1, 3],
+        "★ the steps that DID work, ascending — step 2 was offered and changed \
+         nothing, so it is not listed"
+    );
+    assert_eq!(
+        ran.touched(),
+        vec![aged],
+        "★ two steps, one node, counted once"
+    );
+
+    // (D) ★ A document already current is left alone AND SAYS SO, which the
+    // reference's unversioned implementor cannot: it re-converts every load.
+    let quiet = document.migrate(3);
+    assert!(quiet.is_empty());
+    assert_eq!(quiet.touched(), []);
+
+    // (E) ★★ The version is the MECHANISM's, stamped beside the format's own,
+    // rather than something each implementor fetches for itself.
+    let text = Archive::<Era>::of(document).write().expect("representable");
+    assert!(text.contains("\"taxonomy\": 3") && text.contains("\"revision\": 1"));
+    assert_eq!(
+        Archive::<Era>::read(&text).taxonomy_version(),
+        Some(3),
+        "★ and a reader gets back what it must migrate FROM"
+    );
+
+    // (F) ★ A taxonomy that has never changed says so, and migrating it is a
+    // no-op rather than a pass that rewrites what it walks.
+    assert_eq!(<Op as NodeKind>::version(), 0);
+    let mut plain: Document<Op> = Document::new("root");
+    let add = node(&mut plain, Op::Add);
+    assert!(plain.migrate(0).is_empty());
+    assert_eq!(
+        plain.tree(ROOT).unwrap().node(add).unwrap().body,
+        NodeBody::Kind(Op::Add)
+    );
 }
