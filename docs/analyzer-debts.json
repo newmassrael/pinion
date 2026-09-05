@@ -242,6 +242,17 @@
       ]
     },
     {
+      "name": "debt-a-node-cannot-be-collapsed-muted-or-deleted-only-its-whole-group",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links screen-a-vs-canon-operation-census"
+      ]
+    },
+    {
       "name": "debt-a-node-graphs-only-state-is-a-delay",
       "substituted": false,
       "blocked_by": "spec-round",
@@ -464,6 +475,17 @@
       ]
     },
     {
+      "name": "debt-four-labels-name-a-keyboard-shortcut-that-does-not-exist",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links screen-a-vs-canon-operation-census"
+      ]
+    },
+    {
       "name": "debt-four-per-card-tables-are-keyed-by-a-number-that-means-something-else-next-door",
       "substituted": false,
       "blocked_by": "buildable",
@@ -650,6 +672,17 @@
       "closed_because": "",
       "why": [
         "links analyzer-behaviour-canon-is-the-standalone-prototype, debt-canon-gui-surface-census"
+      ]
+    },
+    {
+      "name": "debt-the-theme-carries-two-of-the-four-states-a-screen-paints",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links debt-canon-gui-surface-census"
       ]
     },
     {

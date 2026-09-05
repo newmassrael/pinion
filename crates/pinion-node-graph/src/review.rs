@@ -12,7 +12,15 @@
 //! (up to date / up to date with warnings / error) and three are lifecycle
 //! (unknown / modified-since / being created).
 //!
-//! Five measurements shaped this module, each contradicting or completing a
+//! ★★★★★ R2007 — **and it is six now, not five.** The sixth is below and it is
+//! this module's own gap rather than the reference's alone: a review said what
+//! it FOUND and not what it LOOKED AT. The census row for this command was
+//! closed at R2007 on the strength of the five below plus that repair, and the
+//! judgement it rests on is that ① the act was built here at R1945, ③ the
+//! predicate was declined here for the reason in point 5, and only the
+//! compiled/dirty clause of the row was ever true.
+//!
+//! Six measurements shaped this module, each contradicting or completing a
 //! clause the census row carried:
 //!
 //! 1. ★★★★★ **The row said we have no compile-time diagnostic list, and that is
@@ -47,6 +55,23 @@
 //!    a person shown a disabled button is told neither. This module does not
 //!    reproduce that: the *findings* are the reason, and [`Review::fitness`]
 //!    reports the verdict rather than hiding it behind a greyed control.
+//! 6. ★★★★★ R2007 — **an empty log cannot say whether anything was looked at,
+//!    and this module had the same hole.** There the command body is wrapped in
+//!    a guard on *is there a document at all* with no else, so a log is empty
+//!    whether the
+//!    compile walked ten thousand nodes or returned at its first guard; here a
+//!    review with no findings read the same on a canvas of eight cards and on
+//!    one with nothing on it. [`Review::covered`] is the population beside the
+//!    verdict, counted as it is walked.
+//!
+//! ★ And one further measurement, recorded because it decided what NOT to
+//! build: **the reference's status crosses two questions incompletely.** Of its
+//! six members, *up to date* and *up to date with warnings* are one currency
+//! state times one diagnostic fact — and there is no dirty-with-warnings and no
+//! error-with-warnings, so the warning half is representable in exactly one of
+//! the three currency states. Keeping the two apart is what [`Fitness`] already
+//! does, and the currency axis is the one this crate does not have at all —
+//! see below.
 //!
 //! # What this deliberately does not reproduce
 //!
@@ -225,10 +250,68 @@ impl Fitness {
     }
 }
 
-/// Everything one check found, **worst first**.
+/// ★★★★★ R2007 — **what a review LOOKED AT**, so that finding nothing is a
+/// measurement rather than a silence.
+///
+/// A review with no findings has two readings a caller cannot tell apart
+/// without this — *the document is clean* and *nothing was asked* — and they
+/// call for opposite acts. The reference has exactly the same hole and no way
+/// to close it: an empty results log is empty whether the compile walked ten
+/// thousand nodes or returned at its first guard, and the guard is real (its
+/// command opens with a guard on *is there a document at all* and does nothing
+/// whatever otherwise).
+///
+/// ⚠ Two numbers rather than one, because [`Document::review`] asks **two
+/// populations**: the structural half runs over the whole document at once, and
+/// the judgement half is asked of every card in every tree. A single count
+/// would hide a half that did not run.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Covered {
+    /// The trees the judgement half was asked over, ascending.
+    ///
+    /// ⚠ Never empty for a document this crate builds — the root is always
+    /// there — so it is the CARD count below that tells *clean* from *nothing
+    /// to be clean about*. Published anyway, because *which* trees were walked
+    /// is what a caller checks against the document it thinks it handed over.
+    pub trees: Vec<TreeId>,
+    /// How many cards it put that question to.
+    ///
+    /// Every node of every tree in `trees` — the same population
+    /// [`Document::warnings`](crate::Document::warnings) walks, counted rather
+    /// than assumed.
+    pub cards: usize,
+    /// Whether the structural half ran.
+    ///
+    /// Always `true` today, and here as a **field rather than an assumption**:
+    /// the two halves are separate calls and this is the one that would go
+    /// quiet without the count above moving, so a report that could not say it
+    /// would be blind in exactly one direction.
+    pub structure: bool,
+}
+
+impl Covered {
+    /// Whether anything at all was looked at.
+    ///
+    /// The reading that tells *clean* from *there was nothing to be clean
+    /// about*.
+    ///
+    /// ⚠ **Cards, not trees**, and that is measured rather than chosen: a
+    /// document this crate builds always holds at least its root, so
+    /// `trees.is_empty()` is a condition no document can satisfy. The first
+    /// draft asked it and the test that drove the distinction failed on a
+    /// freshly made document — a predicate with no reachable path, which is the
+    /// error direction this crate refuses in both directions.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.cards == 0
+    }
+}
+
+/// Everything one check found, **worst first**, and what it looked at.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Review {
     findings: Vec<Finding>,
+    covered: Covered,
 }
 
 impl Review {
@@ -259,9 +342,22 @@ impl Review {
     }
 
     /// Whether nothing was found at all.
+    ///
+    /// ⚠ Read it beside [`covered`](Self::covered): *nothing was found* and
+    /// *nothing was looked at* are different facts and this answers `true` for
+    /// both.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.findings.is_empty()
+    }
+
+    /// ★★★★★ R2007 — **what this check looked at.**
+    ///
+    /// The population beside the verdict, so [`Fitness::Clean`] is a statement
+    /// about a stated set rather than about whatever happened to be asked.
+    #[must_use]
+    pub const fn covered(&self) -> &Covered {
+        &self.covered
     }
 
     /// How many findings there are.
@@ -307,7 +403,13 @@ impl<K: NodeKind> Document<K> {
             });
         }
         let trees: Vec<TreeId> = self.trees().map(|held| held.id).collect();
-        for tree in trees {
+        // ★★★★★ R2007 — the population is counted AS IT IS WALKED, not
+        // recomputed afterwards. A second walk to describe the first is a
+        // second answer to one question, which is the divergence this module's
+        // own header measured in the reference twice over.
+        let mut cards = 0usize;
+        for tree in trees.clone() {
+            cards += self.tree(tree).map_or(0, |host| host.nodes().count());
             for held in self.warnings(tree) {
                 findings.push(Finding {
                     tree,
@@ -320,7 +422,14 @@ impl<K: NodeKind> Document<K> {
         // two halves produced them in — which is already tree order and then
         // node order, because that is the order both halves walk in.
         findings.sort_by_key(|found| (Reverse(found.weight()), found.tree.0, found.site()));
-        Review { findings }
+        Review {
+            findings,
+            covered: Covered {
+                trees,
+                cards,
+                structure: true,
+            },
+        }
     }
 
     /// ★★★★★ R1945 — **which cards answer for a structural fault**, most-blamed

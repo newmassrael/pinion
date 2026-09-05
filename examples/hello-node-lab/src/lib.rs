@@ -22733,6 +22733,28 @@ fn review_wire(state: &Rc<LabState>) -> serde_json::Value {
     serde_json::json!({
         "fitness": reviewed.fitness().wire(),
         "may_run": reviewed.fitness().may_run(),
+        // ★★★★★ R2007 — WHAT THE CHECK LOOKED AT, beside what it found. Without
+        // it `fitness: clean` and `findings: []` read the same on a canvas of
+        // eight cards and on one with nothing on it at all, and those call for
+        // opposite acts. The reference has the same hole and cannot close it:
+        // its compile body is wrapped in a guard on *is there a document at
+        // all* with no else, so an empty
+        // results log is empty whether it walked everything or returned at the
+        // first guard.
+        "covered": {
+            "trees": reviewed.covered().trees.len(),
+            "cards": reviewed.covered().cards,
+            "structure": reviewed.covered().structure,
+            // ★★★★★ R2007 — and what THIS SCREEN draws as a card, beside it,
+            // because the two are different populations and reconciling them
+            // would be the error. The review's is the DOCUMENT's — every node
+            // of every tree, which is what the judgement half is really asked
+            // about — and this canvas draws the frames behind the cards rather
+            // than as cards. Measured on the canon topology: 10 nodes, 8 cards,
+            // 2 frames. A register that published one number as if it were the
+            // other would tell a person the check looked at less than it did.
+            "drawn": state.cards().len(),
+        },
         // Counted from the list rather than kept beside it — the divergence the
         // review's own header measured in the reference, where two public
         // methods move a count without adding a message.

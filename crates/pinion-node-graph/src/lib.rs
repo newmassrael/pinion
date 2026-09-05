@@ -321,7 +321,7 @@ pub use prune::{Doomed, NotPrunable, Pruned, Unused};
 pub use relink::{RelinkError, Relinked, Retargeted};
 pub use relocate::{Reception, RelocateError, Relocation};
 pub use reroute::{Passing, RerouteError, Rerouted};
-pub use review::{Fault, Finding, Fitness, Review, Weight};
+pub use review::{Covered, Fault, Finding, Fitness, Review, Weight};
 pub use run::{Run, RunError, Step, Stop};
 pub use section::{InterfacePort, Section, SectionBreach, SectionId, SwitchRefusal};
 pub use select::{Grow, Grown, Reach, SelectError};

@@ -20790,3 +20790,98 @@ fn r2006_an_archive_carries_the_taxonomy_version_it_was_written_at() {
         NodeBody::Kind(Op::Add)
     );
 }
+
+/// ★★★★★ R2007 — **a review says what it LOOKED AT**, so finding nothing is a
+/// measurement rather than a silence.
+///
+/// The reference has the same hole and no way to close it: an empty results log
+/// is empty whether the compile walked ten thousand nodes or returned at its
+/// first guard — and that guard is real, its command body being wrapped in
+/// a guard on *is there a document at all* with no else.
+#[test]
+fn r2007_a_clean_review_says_what_it_was_clean_about() {
+    // A document with nothing in it: `Clean`, and the population says why.
+    let empty: Document<Op> = Document::new("root");
+    let nothing = empty.review();
+    assert_eq!(nothing.fitness(), Fitness::Clean);
+    assert!(nothing.is_empty());
+    assert!(
+        nothing.covered().is_empty(),
+        "★★★★★ clean about NOTHING — the reading that tells this from a clean \
+         document, and the one an empty finding list cannot carry"
+    );
+    // ⚠ And it is the CARD count that says so, measured: a document this crate
+    // builds always holds its root, so a tree count can never be zero. The
+    // first draft asked `trees.is_empty()` and this assertion is what caught it
+    // — a predicate with no reachable path.
+    assert_eq!(nothing.covered().trees.len(), 1, "the root is always there");
+    assert_eq!(nothing.covered().cards, 0);
+
+    // A real document: also `Clean`, and the population is not empty.
+    let f = fixture();
+    let real = f.document.review();
+    assert_eq!(real.fitness(), Fitness::Clean);
+    assert!(real.is_empty());
+    assert!(
+        !real.covered().is_empty(),
+        "★★★★★ and THIS clean is about a stated set — same verdict, same empty \
+         finding list, different fact"
+    );
+    assert_eq!(
+        nothing.findings(),
+        real.findings(),
+        "the lists are identical"
+    );
+    assert_ne!(
+        nothing.covered(),
+        real.covered(),
+        "★★★★★ so the population is the ONLY thing that tells them apart, which \
+         is exactly why it had to be published"
+    );
+}
+
+/// ★★★★★ R2007 — **the report is complete about itself**: the population it
+/// states is the population it walked, counted a second way.
+///
+/// R1982's rule — a gate that cannot see its own blindness is not a gate — so
+/// the count is compared against an independent walk of the same document
+/// rather than against the number the review chose to report.
+#[test]
+fn r2007_the_population_is_counted_two_ways_and_they_agree() {
+    let mut doc: Document<Op> = Document::new("root");
+    let a = doc.add_node(ROOT, NodeBody::Kind(Op::Add), 0, 0).unwrap();
+    let b = doc
+        .add_node(ROOT, NodeBody::Kind(Op::Shout), 0, 100)
+        .unwrap();
+    let inner = doc.add_definition("part");
+    doc.add_node(inner, NodeBody::Kind(Op::Sink), 0, 0).unwrap();
+
+    let covered = doc.review().covered().clone();
+    let walked: usize = doc.trees().map(|tree| tree.nodes().count()).sum();
+    assert_eq!(
+        covered.cards, walked,
+        "★★★★★ the review's own count and an independent walk of the same \
+         document must agree — two methods, one population"
+    );
+    assert_eq!(
+        covered.trees,
+        doc.trees().map(|tree| tree.id).collect::<Vec<_>>(),
+        "★ and the trees it names are the trees that are there"
+    );
+    assert!(covered.structure, "★ the structural half ran");
+    assert!(
+        covered.cards >= 3,
+        "cards: {} for {a:?} {b:?}",
+        covered.cards
+    );
+
+    // ★ The population MOVES with the document, which is what makes it a
+    // measurement rather than a constant somebody wrote down.
+    doc.remove_node(ROOT, b).unwrap();
+    let after = doc.review().covered().clone();
+    assert_eq!(after.cards, covered.cards - 1);
+    assert_eq!(
+        after.trees, covered.trees,
+        "★ removing a card kept both trees"
+    );
+}

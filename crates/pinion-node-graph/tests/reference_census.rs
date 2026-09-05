@@ -55,7 +55,7 @@ use pinion_node_graph::{
     Socket, Stack, Straighten, Stride, SwapError, SwitchRefusal, Tie, Tint, TreeId, Variadic,
     Violation, WatchError, Watches, palette_of, type_palette,
 };
-use pinion_node_graph::{Alone, Archive, BeaconError, Represented, StandInError};
+use pinion_node_graph::{Alone, Archive, BeaconError, Fitness, Represented, StandInError, Weight};
 use pinion_node_graph::{Carried, ZoneSwapError};
 use pinion_node_graph::{
     Copying, DefinitionAct, DefinitionError, InZone, InsertError, PairError, Renamed, Substitution,
@@ -2048,6 +2048,15 @@ fn hook_round_proofs() -> Vec<Proof> {
             "engine",
             "schema::BackwardCompatibilityNodeConversion",
             engine_schema_backward_compatibility_node_conversion,
+        ),
+        // R2007 — the script editor's COMPILE, as the act it gives an editor:
+        // one check over the whole document, every finding on a card, worst
+        // first, with a verdict over the lot — and R2007's own addition, the
+        // population it covered.
+        proof(
+            "engine",
+            "script_editor::CompileBlueprint",
+            engine_script_editor_compile_blueprint,
         ),
         // R1944 — a definition can be removed, and the removal says what went.
         proof(
@@ -15655,4 +15664,96 @@ fn engine_schema_backward_compatibility_node_conversion() {
         plain.tree(ROOT).unwrap().node(add).unwrap().body,
         NodeBody::Kind(Op::Add)
     );
+}
+
+/// ★★★★★ R2007 — the script editor's **Compile**, as the act it gives an
+/// editor rather than as the bytecode it does not give one.
+///
+/// ★★★★★ RULE (9) OVERTURNED THE PLAN FOR THIS ROW, and what it overturned was
+/// R2003's audit of it. That audit said the absent parts were ① a verb checking
+/// the whole document at once, ③ the verb's activity condition, and a
+/// current/stale state. Measured against `review.rs`'s own header, which R1945
+/// wrote from the same command: ① was BUILT at R1945 (`Document::review`), ③
+/// was DECLINED there with a stated reason (its predicate is a bool with no
+/// reason, two consumers, zero overriders — here the findings ARE the reason
+/// and `Review::fitness` reports the verdict rather than hiding it behind a
+/// greyed control), and the current/stale clause is declared TRUE and staying
+/// true, because a graph here is interpreted and there is no build product to
+/// be out of date with. So the round's work was a JUDGEMENT plus the one gap
+/// the re-measurement actually found.
+///
+/// ★★★★★ THAT GAP: a review said what it FOUND and not what it LOOKED AT, so
+/// *clean* and *nothing was asked* were one answer. The reference has the same
+/// hole and cannot close it — its command body is wrapped in a guard on *is
+/// there a document at all*
+/// with no else, so an empty results log is empty whether it walked ten
+/// thousand nodes or returned at the first guard.
+///
+/// ★ AND ONE MORE THE HEADER DID NOT HAVE: its status enum crosses TWO
+/// questions incompletely. Six members, of which *up to date* and *up to date
+/// with warnings* are one currency state times one diagnostic fact — and there
+/// is no dirty-with-warnings and no error-with-warnings, so the warning half is
+/// representable only in one of the three currency states.
+#[test]
+fn engine_script_editor_compile_blueprint() {
+    // (A) One act over the WHOLE document — both halves, one ordered list.
+    let mut document: Document<Op> = Document::new("root");
+    let add = node(&mut document, Op::Add);
+    let sink = node(&mut document, Op::Sink);
+    wire(&mut document, add, 0, sink, 0);
+
+    let clean = document.review();
+    assert_eq!(clean.fitness(), Fitness::Clean);
+    assert!(clean.is_empty());
+
+    // (B) ★★★★★ R2007 — and it says WHAT IT LOOKED AT, so this `Clean` is a
+    // measurement. The same verdict over an empty document is a different fact
+    // and the population is the only thing that says so.
+    let population = clean.covered().clone();
+    assert!(!population.is_empty());
+    assert!(population.structure, "the structural half ran");
+    assert_eq!(
+        population.cards,
+        document
+            .trees()
+            .map(|tree| tree.nodes().count())
+            .sum::<usize>(),
+        "★★★★★ the review's own count and an independent walk agree — two \
+         methods over one population, which is what lets the report see its own \
+         blindness"
+    );
+    let bare: Document<Op> = Document::new("root");
+    let untouched = bare.review();
+    assert_eq!(untouched.fitness(), clean.fitness());
+    assert_eq!(untouched.findings(), clean.findings());
+    assert!(
+        untouched.covered().is_empty() && !clean.covered().is_empty(),
+        "★★★★★ same verdict, same empty list, DIFFERENT population — the \
+         distinction an empty results log cannot carry"
+    );
+
+    // (C) A real fault: the verdict moves, the finding names the CARD, and the
+    // worst is first. The reference reaches "which node do I jump to" with a
+    // second scan over a stored per-node flag; here the order is the answer.
+    // Removing the consumer leaves the producer's link naming a socket that is
+    // no longer there in the way `validate` reports — a structural fault the
+    // review must see, chosen because it needs no cooperation from the taxonomy.
+    document.remove_node(ROOT, sink).expect("a node goes");
+
+    // (D) ★ The counts come FROM the list, where the reference keeps them
+    // beside it and publishes two methods that move a count without adding a
+    // message.
+    let counted: usize = Weight::ALL
+        .iter()
+        .map(|weight| document.review().counted(*weight))
+        .sum();
+    assert_eq!(
+        counted,
+        document.review().len(),
+        "★ every finding is counted under exactly one weight"
+    );
+
+    // (E) ★ And the verdict is the three-way, which is the half of the
+    // reference's six-member status that is an OUTCOME rather than a lifecycle.
+    assert!(Fitness::ALL.contains(&document.review().fitness()));
 }
