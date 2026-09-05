@@ -75,6 +75,16 @@ failures of the *round*, for opposite reasons, and both are reported by name.
      nothing read. A parameter is easy to miss here because the eye is on the
      expression, not on the signature above it: **before writing a case, look at
      what the replaced text is the last reader OF.**
+   * **the only place a TYPE was inferred from** — R2019, and this one is not a
+     warning at all, it is `E0282`. `let mut left = Vec::new();` gets its
+     element type from the single `left.push(*role)` further down; a case that
+     replaced that push with a different statement left the vector with nothing
+     to infer from and the crate stopped compiling. Note the shape: the replaced
+     line was not the last USER of a name, it was the last thing that TYPED one,
+     which the "check what this line is the last reader of" habit does not
+     catch. The repair was again the usual one — keep the push and add the lie
+     beside it, so the report stays truthful while the value it reports about is
+     wrong, which is a sharper case than the deletion would have been.
 
    The repair is the same in all of them: keep every name used and make it do
    the wrong thing — invert the comparison, swap the two sizes, clamp with the

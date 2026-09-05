@@ -941,6 +941,103 @@ impl fmt::Display for ThemeGap {
     }
 }
 
+/// (R2019 §5.50) Why a document could not be read as a palette.
+///
+/// ★★★★★ **Two refusals, because they ask for different repairs**, and R2016
+/// shipped only one. A palette that is SHORT wants roles added to it; a
+/// document that is not a palette at all wants a different file. Until this
+/// existed the parse fell back to an empty map, so a truncated or misquoted
+/// document was reported as *the palette binds no [all 23 roles]* — the same
+/// sentence an empty object gets, and a person reading it goes looking for
+/// twenty-three colours to add rather than for the comma they dropped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PaletteRefusal {
+    /// The bytes are not an object of role names to colours. Carries what the
+    /// parser said, because that is the half that locates the fault.
+    Unreadable {
+        /// The parser's own complaint, verbatim.
+        because: String,
+    },
+    /// It IS a palette, and this vocabulary asks for more than it binds.
+    Gap(ThemeGap),
+}
+
+impl fmt::Display for PaletteRefusal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unreadable { because } => {
+                write!(f, "this is not a palette document: {because}")
+            }
+            Self::Gap(gap) => gap.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for PaletteRefusal {}
+
+impl Theme {
+    /// (R2019 §5.50) The roles a document binds, or why it is not a palette.
+    ///
+    /// Shared by [`Self::take_palette`] and [`Self::adopt`], which differ only
+    /// in what they do about the roles a document leaves out — refuse, or
+    /// leave them to a base.
+    fn read_palette(
+        document: &str,
+    ) -> Result<std::collections::BTreeMap<String, Color>, PaletteRefusal> {
+        serde_json::from_str(document).map_err(|because| PaletteRefusal::Unreadable {
+            because: because.to_string(),
+        })
+    }
+
+    /// (R2019 §5.50) Paint from a palette authored elsewhere, keeping this one
+    /// for whatever that palette does not carry — and say which roles those
+    /// were.
+    ///
+    /// ★★★★★ **This is the crossing [`Self::from_wire`] built the bridge for.**
+    /// That door refuses a short document, which is right when the question is
+    /// *is this a complete palette*. It is the wrong door when the question is
+    /// *paint this screen with what the design system says*, because a
+    /// vocabulary that grows a role would then take every authored screen down
+    /// until the exporter caught up. So the roles a document leaves out keep
+    /// `self`'s values — and the returned [`ThemeGap`] NAMES them, so *only
+    /// part of this screen is authored* is a sentence somebody can read
+    /// instead of a thing they have to notice.
+    ///
+    /// The gap is a return value here rather than an error precisely because
+    /// it is not a failure: measured at R2019, the palette this project's
+    /// design system exports binds nineteen of twenty-three roles, and the
+    /// four it leaves are ones this vocabulary grew afterwards.
+    ///
+    /// # Errors
+    ///
+    /// [`PaletteRefusal::Unreadable`] when the bytes are not an object of role
+    /// names to colours. A short document is NOT an error here — that is the
+    /// whole difference from [`Self::from_wire`].
+    pub fn adopt(&self, document: &str) -> Result<(Self, ThemeGap), PaletteRefusal> {
+        let bound = Self::read_palette(document)?;
+        let mut adopted = *self;
+        let mut left = Vec::new();
+        for role in ColorRole::all() {
+            match bound.get(role.name()) {
+                Some(colour) => adopted.bind(*role, *colour),
+                None => left.push(*role),
+            }
+        }
+        let unknown: Vec<String> = bound
+            .keys()
+            .filter(|key| ColorRole::from_name(key).is_none())
+            .cloned()
+            .collect();
+        Ok((
+            adopted,
+            ThemeGap {
+                missing: left,
+                unknown,
+            },
+        ))
+    }
+}
+
 impl Theme {
     /// (R2016 §5.50) Take a palette authored elsewhere, or say what it owes.
     ///
@@ -963,12 +1060,13 @@ impl Theme {
     ///
     /// # Errors
     ///
-    /// [`ThemeGap`] when any role is unbound, listing them all. A document with
-    /// unknown keys and no missing roles is ACCEPTED — the extra keys are
-    /// reported through [`Self::take_palette`] rather than refused, because a
-    /// palette that binds everything this vocabulary has is usable whatever
-    /// else it carries.
-    pub fn from_wire(document: &str) -> Result<Self, ThemeGap> {
+    /// [`PaletteRefusal::Gap`] when any role is unbound, listing them all, and
+    /// [`PaletteRefusal::Unreadable`] when the bytes are not a palette at all.
+    /// A document with unknown keys and no missing roles is ACCEPTED — the
+    /// extra keys are reported through [`Self::take_palette`] rather than
+    /// refused, because a palette that binds everything this vocabulary has is
+    /// usable whatever else it carries.
+    pub fn from_wire(document: &str) -> Result<Self, PaletteRefusal> {
         Self::take_palette(document).map(|(theme, _)| theme)
     }
 
@@ -979,10 +1077,10 @@ impl Theme {
     ///
     /// # Errors
     ///
-    /// [`ThemeGap`] when a role is unbound — see [`Self::from_wire`].
-    pub fn take_palette(document: &str) -> Result<(Self, Vec<String>), ThemeGap> {
-        let bound: std::collections::BTreeMap<String, Color> =
-            serde_json::from_str(document).unwrap_or_default();
+    /// [`PaletteRefusal`] — a gap when a role is unbound, and `Unreadable`
+    /// when the bytes are not a palette. See [`Self::from_wire`].
+    pub fn take_palette(document: &str) -> Result<(Self, Vec<String>), PaletteRefusal> {
+        let bound = Self::read_palette(document)?;
         let missing: Vec<ColorRole> = ColorRole::all()
             .iter()
             .copied()
@@ -994,7 +1092,7 @@ impl Theme {
             .cloned()
             .collect();
         if !missing.is_empty() {
-            return Err(ThemeGap { missing, unknown });
+            return Err(PaletteRefusal::Gap(ThemeGap { missing, unknown }));
         }
         // Every role is bound, so the derive cannot fail on a missing field and
         // the only remaining shape error is one this map already rejected.
@@ -1957,8 +2055,8 @@ mod tests {
     //! [`Rc`], no double-init), [`use_theme`] outside [`Owner`] panics.
 
     use super::{
-        ColorRole, SystemColorScheme, Theme, ThemeMode, ThemeProvider, set_system_color_scheme,
-        system_color_scheme, use_theme,
+        ColorRole, PaletteRefusal, SystemColorScheme, Theme, ThemeMode, ThemeProvider,
+        set_system_color_scheme, system_color_scheme, use_theme,
     };
     use crate::reactive::{Effect, Owner};
     use crate::style::Color;
@@ -2351,8 +2449,11 @@ mod tests {
             })
             .map(|role| (role.name().to_owned(), Theme::light().resolve(*role)))
             .collect();
-        let gap = Theme::from_wire(&serde_json::to_string(&short).expect("serialises"))
+        let refusal = Theme::from_wire(&serde_json::to_string(&short).expect("serialises"))
             .expect_err("a palette short of four roles is not a palette");
+        let PaletteRefusal::Gap(gap) = refusal else {
+            panic!("a short palette is a gap, not an unreadable document: {refusal}");
+        };
         assert_eq!(
             gap.missing,
             vec![
@@ -2391,6 +2492,109 @@ mod tests {
             .expect("a complete palette is taken whatever else it carries");
         assert_eq!(unknown, vec!["tertiary".to_owned()]);
         println!("[r2016] refusal reads: {said}");
+    }
+
+    /// ★★★★★ R2019 §5.50 — **a document that is not a palette is refused as
+    /// that, and not as a palette missing everything.**
+    ///
+    /// R2016's parse fell back to an empty map, so a truncated file and an
+    /// empty object produced the SAME sentence: *the palette binds no
+    /// `surface`, `on_surface`, …* all twenty-three. One of those asks for a
+    /// dropped bracket and the other asks for a design system; a reader could
+    /// not tell which they had.
+    #[test]
+    fn r2019_a_document_that_is_not_a_palette_says_so() {
+        let torn = "{ \"surface\": { \"r\": 1, \"g\": 2, ";
+        let refusal = Theme::from_wire(torn).expect_err("torn bytes are not a palette");
+        let PaletteRefusal::Unreadable { because } = &refusal else {
+            panic!("a torn document is unreadable, not a gap: {refusal}");
+        };
+        assert!(
+            !because.is_empty(),
+            "the parser's own complaint is what locates the fault"
+        );
+        assert!(
+            refusal.to_string().starts_with("this is not a palette"),
+            "and the sentence says which kind of wrong it is: {refusal}"
+        );
+
+        // The discrimination is the point, so the other side is asserted too:
+        // an EMPTY object is a readable palette that happens to bind nothing.
+        let empty = Theme::from_wire("{}").expect_err("an empty palette binds no role");
+        let PaletteRefusal::Gap(gap) = empty else {
+            panic!("an empty object is a palette, and a short one");
+        };
+        assert_eq!(
+            gap.missing.len(),
+            ColorRole::all().len(),
+            "an empty palette is short of the whole vocabulary"
+        );
+    }
+
+    /// ★★★★★ R2019 §5.50 — **adopting a palette paints from what it carries
+    /// and NAMES what it left**, which is what lets a screen be authored in
+    /// part without that being a thing somebody has to notice.
+    ///
+    /// Driven on the shape this project's design system actually exports,
+    /// measured at R2016 and again at R2019: nineteen of twenty-three roles,
+    /// the four it leaves being ones this vocabulary grew after the exporter
+    /// was written. `from_wire` refuses that document — correctly, for the
+    /// question it answers — and refusing it is not an option for a screen.
+    #[test]
+    fn r2019_an_adopted_palette_paints_what_it_carries_and_names_what_it_left() {
+        let left_out = [
+            ColorRole::Success,
+            ColorRole::OnSuccess,
+            ColorRole::Info,
+            ColorRole::OnInfo,
+        ];
+        // A document whose every value differs from the base, so "adopted"
+        // and "kept" are distinguishable on every role rather than by luck.
+        let authored: std::collections::BTreeMap<String, Color> = ColorRole::all()
+            .iter()
+            .copied()
+            .filter(|role| !left_out.contains(role))
+            .enumerate()
+            .map(|(i, role)| {
+                let step = u8::try_from(i).expect("the vocabulary is small");
+                (role.name().to_owned(), Color::rgb(step, 7, 11))
+            })
+            .collect();
+        let document = serde_json::to_string(&authored).expect("serialises");
+
+        let base = Theme::dark();
+        let (painted, gap) = base.adopt(&document).expect("a short palette is adoptable");
+        assert_eq!(
+            gap.missing,
+            left_out.to_vec(),
+            "the roles the document left are named, in declaration order"
+        );
+        assert!(gap.unknown.is_empty(), "and it binds no unknown key");
+        for role in ColorRole::all() {
+            if left_out.contains(role) {
+                assert_eq!(
+                    painted.resolve(*role),
+                    base.resolve(*role),
+                    "`{}` was not authored, so the base keeps it",
+                    role.name()
+                );
+            } else {
+                assert_eq!(
+                    painted.resolve(*role),
+                    authored[role.name()],
+                    "`{}` was authored, so the document wins",
+                    role.name()
+                );
+            }
+        }
+        // And the base is unchanged: adoption answers with a palette rather
+        // than editing the one it was asked from.
+        assert_eq!(base, Theme::dark(), "adoption does not mutate its base");
+        println!(
+            "[r2019] adopted {} role(s), left {} to the base",
+            ColorRole::all().len() - gap.missing.len(),
+            gap.missing.len()
+        );
     }
 
     /// ★★★★★ R2018 §5.50 — **the elevation ladder runs one way, and an

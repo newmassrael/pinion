@@ -7767,22 +7767,23 @@ fn r2012_the_status_bullet_is_findable_in_both_palettes() {
 /// ★★★★★ R2017 §5.50 — **this screen's palette departs from the framework's
 /// on exactly the roles it says it does, and on no others.**
 ///
-/// `reference_palettes` is a hand-authored palette: twelve overrides per mode
-/// over the framework defaults, written to match the design system this tool
-/// is drawn from. Twelve is a number in the source and nothing read it back —
-/// so an override that stopped differing (because a framework default moved to
-/// meet it) would leave a line that looks deliberate and does nothing, and an
-/// override added without intent would look like the others.
+/// ★★★★★ R2019 — **and the palette is no longer hand-authored**, which is what
+/// this round changed and what these numbers moved for. `reference_palettes`
+/// used to be twelve transcribed overrides per mode; it now adopts the
+/// committed authored documents, so the departures are whatever those documents
+/// say and not what somebody typed. The counts went 11 -> **16** light and
+/// 12 -> **19** dark, which is the size of the drift R2017 measured and could
+/// not then fix: the hand copy and the source disagreed on twenty-three of
+/// thirty-eight role-and-mode pairs.
 ///
-/// ⚠⚠ THE REASON THIS IS WORTH A GATE IS A MEASUREMENT TAKEN AT R2017 AND NOT
-/// BEFORE. The design system exports its palette in a shape this framework can
-/// read, and the two had never been compared: they disagree on **nine of
-/// nineteen** roles in the light palette and **fourteen of nineteen** in the
-/// dark, and some of that is systematic — this screen's dark elevation ladder
-/// sits one rung off, its `surface_container_low` being exactly the export's
-/// `surface`. That comparison is now `Theme::differences`, one call; this gate
-/// is the half of it that can live in the tree, because the export itself is
-/// not this repository's to carry.
+/// ⚠⚠ THE MEASUREMENT THAT MADE THIS GATE WORTH HAVING, taken at R2017 and not
+/// before: the design system exports its palette in a shape this framework can
+/// read, and the two had never been compared — nine of nineteen roles apart in
+/// light and fourteen of nineteen in dark, some of it systematic (this screen's
+/// dark elevation ladder sat one rung off, its `surface_container_low` being
+/// exactly the export's `surface`). That comparison is `Theme::differences`,
+/// one call, and this gate is what keeps the answer honest now that the
+/// document rather than a copy is what the screen reads.
 ///
 /// ```text
 /// cargo test -p hello-analyzer-shell r2017 -- --nocapture
@@ -7793,15 +7794,15 @@ fn r2017_the_screens_palette_departs_from_the_default_exactly_where_it_says() {
 
     let (light, dark) = super::reference_palettes();
     let mut judged = 0_usize;
-    // ⚠ The counts differ by one and that asymmetry is a RESULT, not an
-    // accident of writing. On its first run this gate found the light palette
-    // writing twelve override lines and departing on eleven: `on_accent` said
-    // `#FFFFFF`, which is what the framework default already answers. The dead
-    // line is gone, so eleven is now what the source states as well as what it
-    // does — and the next dead line is a failure rather than a decoration.
+    // ⚠ The two counts differ by three and the difference is a RESULT: the
+    // light document happens to agree with the framework on `on_accent`,
+    // `on_error` and `on_warning` (all three are white in both), while the dark
+    // one departs on every role it binds. Nineteen is also the whole of what
+    // either document carries, so the dark line says "every authored role
+    // differs from the default" and the light line says "all but three".
     for (word, mine, base, owed) in [
-        ("light", light, Theme::light(), 11),
-        ("dark", dark, Theme::dark(), 12),
+        ("light", light, Theme::light(), 16),
+        ("dark", dark, Theme::dark(), 19),
     ] {
         let differences = base.differences(&mine);
         assert_eq!(
@@ -7894,5 +7895,161 @@ fn r2018_the_bound_palettes_elevation_ladder_runs_one_way() {
     println!(
         "[r2018] both bound palettes step one way through {} tiers",
         Theme::ELEVATION.len()
+    );
+}
+
+/// ★★★★★ R2019 §5.50 — **this screen is painted from the authored documents,
+/// and the part of it that is NOT authored is named rather than noticed.**
+///
+/// The debt this closes reads *an authored theme arrives and nothing reads it*:
+/// a design system emitted these two palettes for a long time, a gate on the
+/// authoring side enforced that this framework's roles matched them, and no
+/// code here ever opened the files. What made that possible to miss is that a
+/// hand-transcribed copy LOOKS like adoption — the screen was the right colour
+/// most of the time. It was measured wrong on twenty-three of thirty-eight
+/// role-and-mode pairs at R2017.
+///
+/// Each document binds nineteen of the twenty-three roles this vocabulary has.
+/// The four it leaves are the state tones the vocabulary grew after the
+/// exporter was written, so they keep the framework's answer — and this asserts
+/// that they are exactly those four, in both modes, because *partly authored*
+/// has to be a claim somebody can check rather than a thing they discover.
+#[test]
+fn r2019_the_screen_paints_from_the_authored_documents() {
+    use pinion_core::theme::{ColorRole, Theme};
+
+    let ((light, light_gap), (dark, dark_gap)) = super::authored_palettes();
+    let left_to_the_framework = vec![
+        ColorRole::Success,
+        ColorRole::OnSuccess,
+        ColorRole::Info,
+        ColorRole::OnInfo,
+    ];
+    for (word, palette, gap, base) in [
+        ("light", light, &light_gap, Theme::light()),
+        ("dark", dark, &dark_gap, Theme::dark()),
+    ] {
+        assert_eq!(
+            gap.missing, left_to_the_framework,
+            "{word}: the document leaves exactly the four tones added after it was written",
+        );
+        assert!(
+            gap.unknown.is_empty(),
+            "{word}: and binds no key naming no role: {:?}",
+            gap.unknown
+        );
+        // The denominator, so a document that shrank could not pass by having
+        // less to disagree about.
+        assert_eq!(
+            ColorRole::all().len() - gap.missing.len(),
+            19,
+            "{word}: nineteen roles are authored"
+        );
+        for role in &gap.missing {
+            assert_eq!(
+                palette.resolve(*role),
+                base.resolve(*role),
+                "{word}: `{}` is unauthored, so the framework's answer stands",
+                role.name()
+            );
+        }
+    }
+    // ★★★★★ THE WIRE IS LIVE, and one pinned value is what says so. Everything
+    // above would still hold if `authored_palettes` went back to returning hand
+    // written literals — the shape of the gap is a property of the vocabulary,
+    // not of where the colours came from. So one authored colour is pinned
+    // here, chosen because it is the most distinctive tone the document
+    // carries: if the screen stops reading the file, or a copy creeps back,
+    // this is what fails.
+    //
+    // ⚠ It also fires when the authoring side re-exports a different accent,
+    // and that is DELIBERATE: the committed document is a copy in the one sense
+    // that matters, and nothing else here would notice it going stale.
+    assert_eq!(
+        light.resolve(ColorRole::Accent),
+        pinion_core::style::Color::rgb(0x9A, 0x00, 0x4F),
+        "the light accent is read from the authored document"
+    );
+    assert_eq!(
+        dark.resolve(ColorRole::OnAccent),
+        pinion_core::style::Color::rgb(0x0A, 0x0B, 0x0E),
+        "and the dark document's own ink for that accent, which is not white"
+    );
+    println!(
+        "[r2019] {} authored role(s) per mode, {} left to the framework",
+        ColorRole::all().len() - light_gap.missing.len(),
+        light_gap.missing.len()
+    );
+}
+
+/// ★★★★★ R2019 §5.50 — **the declared pairings this screen does not clear are
+/// PINNED, not driven to zero.**
+///
+/// ⚠⚠ A GATE THAT DEMANDED AN EMPTY LIST WOULD BE DEMANDING THE RIGHT TO CHANGE
+/// SOMEBODY ELSE'S COLOURS. These tones are authored outside this repository
+/// and a contrast floor is not this side's to enforce on them by editing. What
+/// this side CAN do is state the list, so a pairing that joins it is red the
+/// day it appears.
+///
+/// ★★★★★ AND THE LIST IS SHORTER THAN WHAT THIS SCREEN SHIPPED BEFORE, which is
+/// the measurement that settled whether adoption was a regression: the
+/// hand-transcribed palettes were short on **four** pairings in light and
+/// **five** in dark; the authored documents are short on two and four. 9 -> 6.
+/// Three of those six were already this repository's own debt — `outline` on
+/// `surface` in both modes, `inverse_primary` on `inverse_surface` in light,
+/// `accent` on `surface` in dark — and improve rather than appear. The two that
+/// are the authoring side's to decide are `on_accent` on `accent` and
+/// `on_error_container` on `error_container`, both dark.
+#[test]
+fn r2019_the_authored_palettes_shortfalls_are_pinned() {
+    use pinion_core::legibility::{PAIRINGS, shortfalls};
+    use pinion_core::theme::Theme;
+
+    let (light, dark) = super::reference_palettes();
+    let named = |palette: &Theme| -> Vec<String> {
+        shortfalls(palette).into_iter().map(|(n, _)| n).collect()
+    };
+    assert_eq!(
+        named(&light),
+        vec![
+            "inverse_primary/inverse_surface".to_owned(),
+            "outline/surface".to_owned(),
+        ],
+        "the light palette's shortfall list has moved: {:?}",
+        shortfalls(&light)
+    );
+    assert_eq!(
+        named(&dark),
+        vec![
+            "on_accent/accent".to_owned(),
+            "on_error_container/error_container".to_owned(),
+            "accent/surface".to_owned(),
+            "outline/surface".to_owned(),
+        ],
+        "the dark palette's shortfall list has moved: {:?}",
+        shortfalls(&dark)
+    );
+    // The denominator: a table that shrank would empty these lists without
+    // anything about the palettes having improved.
+    assert_eq!(
+        PAIRINGS.len(),
+        21,
+        "the declared table is twenty-one pairings"
+    );
+    // And the contrast that makes the finding legible: the framework's own
+    // palettes clear all of it, which is why nobody had noticed that the
+    // palettes a screen binds were never asked.
+    for (word, palette) in [("light", Theme::light()), ("dark", Theme::dark())] {
+        assert!(
+            shortfalls(&palette).is_empty(),
+            "the {word} framework palette clears the table: {:?}",
+            shortfalls(&palette)
+        );
+    }
+    println!(
+        "[r2019] shortfalls pinned at {} light and {} dark of {} declared",
+        named(&light).len(),
+        named(&dark).len(),
+        PAIRINGS.len()
     );
 }

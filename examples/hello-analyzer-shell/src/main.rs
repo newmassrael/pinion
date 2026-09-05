@@ -123,7 +123,7 @@ use pinion_core::style::{
     Border, BoxStyle, Chrome, ChromeEdge, ChromeRole, Color, LayoutStyle, PathStyle, Size, Stroke,
     TextAlign, TextOverflow, TextStyle,
 };
-use pinion_core::theme::{ColorRole, Theme, ThemeMode, ThemeProvider, use_theme};
+use pinion_core::theme::{ColorRole, Theme, ThemeGap, ThemeMode, ThemeProvider, use_theme};
 use pinion_core::utterance::{Announced, Tone, Utterance};
 use pinion_core::voice::Silence;
 use pinion_core::widgets::button::ButtonState;
@@ -756,50 +756,49 @@ const MATCH_SERIES: [f64; 12] = [
     4.0, 6.0, 5.0, 9.0, 7.0, 12.0, 10.0, 14.0, 11.0, 15.0, 13.0, 17.0,
 ];
 
-/// The reference tool's own dark and light token sets, mapped onto this
-/// framework's roles.
+/// ★★★★★ R2019 — **the authored palette, as the design system emits it.**
 ///
-/// A tool of this class is looked at for hours in a dim room, so its palette is
-/// a decision rather than a default, and matching it is most of what makes two
-/// screens look like the same product. The mapping is one-way and explicit:
-/// the canvas is the darkest ground, panels sit on it, the raised chrome is one
-/// step lighter again, and one accent serves every affirmative control.
+/// Committed rather than read at run time, for the reason every other spec
+/// document in this tree is (`analyzer-rail-spec`, `analyzer-keys-spec`,
+/// `analyzer-config-surface`): a demo binary is launched from several
+/// directories and a run-time read turns a missing file into *the colours look
+/// wrong* rather than into a refusal.
+///
+/// It is the emitted document unchanged — colour VALUES, which are a result,
+/// and no vocabulary from where they came.
+const AUTHORED_LIGHT: &str = include_str!("../../../docs/analyzer-palette.light.json");
+/// The dark half of [`AUTHORED_LIGHT`].
+const AUTHORED_DARK: &str = include_str!("../../../docs/analyzer-palette.dark.json");
+
+/// The authored palettes as this screen paints them, each with the roles its
+/// document left to the framework.
+///
+/// ★★★★★ R2019 — **this is the crossing, and until now nobody had made it.**
+/// A design system authored for this project has emitted these two documents
+/// for a long time and every colour on this screen was a hand-transcribed
+/// copy: measured at R2017 the copy and the source disagreed on TWENTY-THREE of
+/// thirty-eight role-and-mode pairs, which is what a second copy always
+/// eventually does. The document is now the source and the screen reads it.
+///
+/// ⚠ **Partly authored, and the gap says so rather than hiding.** Each
+/// document binds nineteen of twenty-three roles — the four it leaves are ones
+/// this vocabulary grew after the exporter was written — so those four keep the
+/// framework's answer, and [`Theme::adopt`] returns their names. A silent
+/// fallback would make *some of this screen is not authored* something a person
+/// has to notice.
+fn authored_palettes() -> ((Theme, ThemeGap), (Theme, ThemeGap)) {
+    let light = Theme::light()
+        .adopt(AUTHORED_LIGHT)
+        .expect("the committed light palette is a palette document");
+    let dark = Theme::dark()
+        .adopt(AUTHORED_DARK)
+        .expect("the committed dark palette is a palette document");
+    (light, dark)
+}
+
+/// The palettes this screen binds, light then dark.
 fn reference_palettes() -> (Theme, Theme) {
-    let dark = Theme {
-        surface: rgb(0x0E_0F_12),
-        on_surface: rgb(0xE8_EB_EF),
-        on_surface_muted: rgb(0x98_A2_AD),
-        accent: rgb(0x9A_00_4F),
-        on_accent: rgb(0xFF_FF_FF),
-        outline: rgb(0x2A_2E_36),
-        surface_container_low: rgb(0x16_18_1D),
-        surface_container: rgb(0x1E_21_27),
-        surface_container_high: rgb(0x25_2A_33),
-        surface_container_highest: rgb(0x3A_40_4B),
-        error: rgb(0xF0_70_5E),
-        inverse_primary: rgb(0xEC_5A_A0),
-        ..Theme::dark()
-    };
-    let light = Theme {
-        surface: rgb(0xF6_F7_F9),
-        on_surface: rgb(0x14_17_1C),
-        on_surface_muted: rgb(0x5B_65_70),
-        accent: rgb(0x9A_00_4F),
-        // ★ R2017 — `on_accent` is NOT overridden here, and the absence is the
-        // finding rather than an omission. The line was present and wrote
-        // `#FFFFFF`, which is what `Theme::light` already answers: a line that
-        // reads as a decision and changes nothing. `r2017_*` compares this
-        // palette with the default and counts, which is what found it — the
-        // dark palette's twelve are all real, so this is the one.
-        outline: rgb(0xE1_E5_EA),
-        surface_container_low: rgb(0xFF_FF_FF),
-        surface_container: rgb(0xEE_F0_F3),
-        surface_container_high: rgb(0xE7_EA_EF),
-        surface_container_highest: rgb(0xCD_D3_DB),
-        error: rgb(0xD3_3A_2C),
-        inverse_primary: rgb(0x9A_00_4F),
-        ..Theme::light()
-    };
+    let ((light, _), (dark, _)) = authored_palettes();
     (light, dark)
 }
 

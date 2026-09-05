@@ -357,6 +357,31 @@ pub fn canonical_parity() -> Parity {
     parity(&Theme::light(), &Theme::dark())
 }
 
+/// ★★★★★ (R2019 §5.50) **Every declared pairing ONE palette does not clear**,
+/// named and with the ratio it measured, in [`PAIRINGS`] order.
+///
+/// [`parity`] answers about a PAIR, because it exists to ask whether a light
+/// and a dark palette agree. A screen that binds a palette of its own has one
+/// palette per mode and no pair to compare, so until this existed there was no
+/// way to ask the table about it — and measured at R2018.1, nothing did:
+/// outside this module's own tests, `parity`, [`canonical_parity`] and
+/// [`Pairing::clears_in`] had **no callers at all**. The canonical palettes
+/// were held to the table and the shipped ones were not.
+///
+/// ⚠ **Read the answer as a LIST TO PIN, not as a thing to drive to zero.** A
+/// palette is a design decision and several of its tones arrive authored from
+/// outside this repository, so a gate that demanded an empty list would be
+/// demanding the right to change somebody else's colours. What a gate can
+/// honestly do is fix the list, so the day a pairing joins it, it is red.
+#[must_use]
+pub fn shortfalls(theme: &Theme) -> Vec<(String, f32)> {
+    PAIRINGS
+        .iter()
+        .filter(|pairing| !pairing.clears_in(theme))
+        .map(|pairing| (pairing_name(pairing), pairing.ratio_in(theme)))
+        .collect()
+}
+
 /// ★★★★★ R1839 — **what a mark painted in a role's colour is DOING**, which
 /// is the question a floor cannot be chosen without answering.
 ///
@@ -761,5 +786,64 @@ mod tests {
             .expect("the broken pairing is named");
         assert!(reading.light > 4.5 && reading.dark < 4.5);
         assert!(reading.say().contains("light") && reading.say().contains("dark"));
+    }
+
+    /// ★★★★★ R2019 — **one palette can be asked what it does not clear**,
+    /// which is the question a screen binding its own palette has and `parity`
+    /// cannot answer.
+    #[test]
+    fn r2019_a_single_palette_names_the_pairings_it_does_not_clear() {
+        for (word, palette) in [("light", Theme::light()), ("dark", Theme::dark())] {
+            assert!(
+                shortfalls(&palette).is_empty(),
+                "the {word} canonical palette clears the whole table: {:?}",
+                shortfalls(&palette)
+            );
+        }
+
+        // The detector's own failing path: two pairings broken, one per floor,
+        // so neither the text floor nor the boundary floor can be the only one
+        // it reads. Without this an empty `Vec` satisfies everything above.
+        let mut broken = Theme::light();
+        broken.on_surface = broken.surface;
+        broken.outline = broken.surface;
+        let found = shortfalls(&broken);
+        let named: Vec<&str> = found.iter().map(|(name, _)| name.as_str()).collect();
+        assert!(
+            named.contains(&"on_surface/surface"),
+            "the text pairing is named: {named:?}"
+        );
+        assert!(
+            named.contains(&"outline/surface"),
+            "and so is the boundary one: {named:?}"
+        );
+        // The two pairings whose ink was set to their own ground read 1.00,
+        // and every entry reported is under the loosest floor in the table —
+        // an inverted filter would report the clearing ones instead.
+        for (name, ratio) in &found {
+            if name == "on_surface/surface" || name == "outline/surface" {
+                assert!(
+                    (*ratio - 1.0).abs() < 0.01,
+                    "{name} is its own ground, so it reads 1.00, not {ratio:.2}"
+                );
+            }
+            assert!(
+                *ratio < Floor::Text.ratio(),
+                "{name} is reported as short, so it cannot read {ratio:.2}"
+            );
+        }
+        // The order is the table's, which a map-backed implementation would
+        // lose: `on_surface/surface` is the table's first entry and
+        // `outline/surface` its last, so they must come out that way round.
+        assert_eq!(
+            named.first().copied(),
+            Some("on_surface/surface"),
+            "reported in PAIRINGS order: {named:?}"
+        );
+        assert_eq!(
+            named.last().copied(),
+            Some("outline/surface"),
+            "reported in PAIRINGS order: {named:?}"
+        );
     }
 }
