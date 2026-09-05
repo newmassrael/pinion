@@ -226,8 +226,7 @@ impl DrivenPointer {
 
 /// Run `body` with every surface granted the extent it was placed in.
 ///
-/// Nested rather than sequential because
-/// [`with_surface_extent`](pinion_core::external::with_surface_extent) states a
+/// Nested rather than sequential because [`with_surface_extent`] states a
 /// grant for the duration of a call, and every surface must be stated at once:
 /// a host builds its scene while its guests are placed, and a guest asked
 /// during that has to be able to read its own rectangle.
