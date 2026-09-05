@@ -10772,6 +10772,29 @@ fn filter_counts(
     out
 }
 
+/// ★★★★★ R2002 — **the words a health tile paints at its label face**, and the
+/// only place they are spelled.
+///
+/// [`StatTile`] declares [`Silence::name_of`] on that face: *my ink is the
+/// tile's name*. WAI-ARIA calls the resulting obligation label-in-name, so the
+/// tile's accessible name has to carry these words — and until this round the
+/// two were built separately and disagreed. Measured by the census arm added
+/// the same round: tile 2 painted `Rate /s` and was announced `Rate`, so a
+/// person reading the tile's heading aloud reached nothing, while the `/s` was
+/// filed away in the tile's VALUE where a sighted reader never sees it.
+///
+/// ⚠ The unit rides with the label rather than with the value, and the reason
+/// is in [`tile_metrics`]: it is a property of the quantity, not of one reading
+/// of it. That decision was already made for the ink; this is it being made
+/// once instead of twice.
+fn tile_heading(tile: &spec::HealthTile) -> String {
+    if tile.unit.is_empty() {
+        tile.label.to_owned()
+    } else {
+        format!("{} {}", tile.label, tile.unit)
+    }
+}
+
 /// One health tile's specification — its words and its skin, with no placement.
 ///
 /// ★ R1843 — one definition, because the strip asks it TWICE: once to find how
@@ -10785,12 +10808,7 @@ fn filter_counts(
 /// words cost far less beside the label — and a unit belongs to the quantity
 /// rather than to one reading of it.
 fn tile_metrics(tile: &spec::HealthTile) -> StatTile {
-    let heading = if tile.unit.is_empty() {
-        tile.label.to_owned()
-    } else {
-        format!("{} {}", tile.label, tile.unit)
-    };
-    StatTile::new(heading, tile.value)
+    StatTile::new(tile_heading(tile), tile.value)
         .with_delta(tile.delta)
         .with_label_style(TextStyle::new().with_size_px(FONT_TINY))
         .with_value_style(TextStyle::new().with_size_px(FONT_TITLE))
@@ -11452,16 +11470,18 @@ fn health_nodes(state: &ShellState, card: &Card) -> Vec<AccessNode> {
     for (n, tile) in spec::HEALTH_TILES[..count as usize].iter().enumerate() {
         let tag = format!("card.{id}.stat.{n}");
         group = group.with_child(tag.clone());
-        let unit = if tile.unit.is_empty() {
-            String::new()
-        } else {
-            format!(" {}", tile.unit)
-        };
+        // ★★★★★ R2002 — the name is the HEADING the tile paints, through the
+        // one derivation both readers share. It was `tile.label` with the unit
+        // moved into the value, which meant the ink said `Rate /s` and the name
+        // said `Rate`: the tile's own label face declares itself that name, so
+        // this is label-in-name and it was broken. The unit leaves the value in
+        // the same move — it is stated once now, on the quantity, which is the
+        // arrangement the painted tile already argued for.
         nodes.push(
             AccessNode::new(tag, AriaRole::Status)
-                .with_name(tile.label)
+                .with_name(tile_heading(tile))
                 .with_value(AccessValue::Text(format!(
-                    "{}{unit}, {} since the previous window",
+                    "{}, {} since the previous window",
                     tile.value, tile.delta
                 ))),
         );

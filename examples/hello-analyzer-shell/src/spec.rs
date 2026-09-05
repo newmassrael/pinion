@@ -2434,7 +2434,13 @@ pub const HEALTH_TILES: &[HealthTile] = &[
         value: "6.4k",
         // ★ Terse because the heading carries it: at the tile widths this card
         // is placed at, "Rate msg/s" hung 12px past its own box and the ink
-        // gate said so. The a11y value spells the unit out.
+        // gate said so.
+        //
+        // ⚠ R2002 — the sentence that used to close this said the a11y VALUE
+        // spelled the unit out. It did not spell it out; it repeated the same
+        // terse form, and it did so in the one slot the tile's own label face
+        // had declared itself the NAME of. The unit is announced with the
+        // heading now, which is where it is painted.
         unit: "/s",
         delta: "+8%",
         trend: &[5.0, 5.5, 6.0, 5.8, 6.2, 6.1, 6.4],
@@ -2452,8 +2458,11 @@ pub const HEALTH_TILES: &[HealthTile] = &[
         // the strip can show at ANY width: with "Round trip ms" the fifth tile
         // never appeared, even maximised. `r1669` refuses that by name — a
         // clamp whose unclamped side no swept size reaches is a guard nothing
-        // exercises, and deleting it would change nothing. The a11y value
-        // spells the quantity out for a reader who needs it.
+        // exercises, and deleting it would change nothing.
+        //
+        // ⚠ R2002 — and the a11y NAME is the painted heading, `RTT ms`, rather
+        // than the label alone. An abbreviation a reader can see is one they
+        // have to be able to say.
         label: "RTT",
         value: "3.2",
         unit: "ms",

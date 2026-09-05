@@ -260,7 +260,25 @@ def body() -> None:
                 )
             checked += 1
         assert checked >= 3, f"only {checked} borrowed name(s) had ink to compare"
-        print(f"[C] {checked} borrowed name(s) say the words that were painted")
+        # ★★★★★ R2002 — and the two derivations judge EACH OTHER, which is what
+        # (B) above does for the three name rules. The framework judges this one
+        # now (`Voice::Misquoted`), so the loop just above is an independent
+        # oracle rather than the only reader — and an oracle nobody compares
+        # against is a second gate that can rot on its own (R1884). Both
+        # directions: a row the census calls misquoted that this loop passed
+        # would mean the census is stricter than the rule anybody wrote down.
+        misquoted = sorted(r["tag"] for r in rows.values() if r["voice"] == "misquoted")
+        assert_eq(
+            misquoted,
+            [],
+            "★★★★★ the census's own label-in-name arm and this independent "
+            "re-derivation agree, in both directions",
+        )
+        assert_eq(counts["misquoted"], 0, "no caption lends words the name does not carry")
+        print(
+            f"[C] {checked} borrowed name(s) say the words that were painted, "
+            f"and the census agrees on all {len(rows)} rows"
+        )
 
         # ── (D) the promise a layout silence makes ──────────────────
         layouts = [r for r in rows.values() if r.get("reason") == "layout"]

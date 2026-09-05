@@ -6800,6 +6800,55 @@ struct ToolbarSeat {
 /// it was written ([[debt-a-stated-limit-is-not-checked-by-anything]], third
 /// occurrence in three rounds).
 ///
+/// What the run seat SHOWS and what it SAYS — the two spellings of one state,
+/// from one place.
+///
+/// ★★★★★ R2002 — the caption declares [`Silence::name_of`] against the seat,
+/// which under WAI-ARIA's label-in-name obliges the seat's name to carry the
+/// caption's words. The paint site and the seat list derived that pair
+/// separately, and the comment beside the caption asserted they could not
+/// disagree because both were built "from the same two facts". Measured by the
+/// census arm added this round: while a graph is RUNNING the seat painted
+/// *running 3/3* and announced *stop*, and there is no word in common — a
+/// person saying the button's label out loud reached nothing, and a person read
+/// the button's name aloud to somebody looking at a different phrase.
+///
+/// ⚠ A pair returned as a two-field struct rather than a tuple: the two are
+/// both strings and both about this seat, so a swap at a call site would
+/// compile and would announce the caption while painting the name.
+struct RunSeatWords {
+    /// The words painted on the seat.
+    caption: String,
+    /// What a reader hears — the caption, and what pressing it does when that
+    /// is something else.
+    name: String,
+}
+
+impl RunSeatWords {
+    /// ★ The name is built by APPENDING to the caption, so the ink is a
+    /// contiguous run of the name by construction. The order is the one R1688
+    /// settled on for the zoom read-out: what is on the screen first, what
+    /// pressing it does after.
+    fn of(state: &LabState) -> Self {
+        if state.running.get() {
+            let cards = state.cards().len();
+            let caption = format!("running {cards}/{cards}");
+            let name = format!("{caption}, stop");
+            Self { caption, name }
+        } else {
+            let caption = if state.verdict().may_launch() {
+                "run".to_owned()
+            } else {
+                "run blocked".to_owned()
+            };
+            Self {
+                name: caption.clone(),
+                caption,
+            }
+        }
+    }
+}
+
 /// ★ The order is the reader's, left to right, because that is also the order a
 /// press is resolved in and the two must not be two orders.
 fn toolbar_seats(state: &LabState) -> Vec<ToolbarSeat> {
@@ -6874,13 +6923,7 @@ fn toolbar_seats(state: &LabState) -> Vec<ToolbarSeat> {
             "lab.toolbar.run",
             run_rect(),
             Hit::Run,
-            if state.running.get() {
-                "stop".to_owned()
-            } else if state.verdict().may_launch() {
-                "run".to_owned()
-            } else {
-                "run blocked".to_owned()
-            },
+            RunSeatWords::of(state).name,
         ),
     ]
     .into_iter()
@@ -9668,7 +9711,6 @@ fn toolbar_overflow_seat(seat: Rect, ink: Ink) -> Vec<Scene> {
 fn toolbar_run_seat(state: &LabState, run: Rect, ink: Ink) -> Vec<Scene> {
     let verdict = state.verdict();
     let running = state.running.get();
-    let nodes = state.cards().len();
     let run_ink = if !verdict.may_launch() {
         ink.text_3
     } else if running {
@@ -9678,19 +9720,17 @@ fn toolbar_run_seat(state: &LabState, run: Rect, ink: Ink) -> Vec<Scene> {
     };
     vec![
         box_at("lab.toolbar.run", run, ink.raised, Some(run_ink), 7),
-        // ★ The caption IS the seat's name — `toolbar_seats` builds both from
-        // the same two facts, so announcing it here would say "run blocked"
-        // twice.
+        // ★ The caption IS the seat's name, and since R2002 that is true by
+        // construction rather than by assertion: both come out of
+        // `RunSeatWords`, which builds the name by appending to the caption.
+        // The sentence that used to be here said `toolbar_seats` built both
+        // "from the same two facts" — it built them from the same two facts
+        // TWICE, and while running the two answers were `running 3/3` and
+        // `stop`.
         quiet(
             tagged_label(
                 "lab.toolbar.run.label",
-                if running {
-                    format!("running {nodes}/{nodes}")
-                } else if verdict.may_launch() {
-                    "run".to_string()
-                } else {
-                    "run blocked".to_string()
-                },
+                RunSeatWords::of(state).caption,
                 seat_caption(run),
                 FONT_SMALL,
                 run_ink,
@@ -10083,6 +10123,29 @@ fn turn_of(
 /// one level down.
 const TURN_WORD: &str = "turn";
 
+/// ★★★★★ R2002 — what the turn seat ANNOUNCES, composed from the word it
+/// paints rather than written beside it.
+///
+/// The seat declares [`Silence::name_of`] against itself: *my ink is that
+/// node's name*. WAI-ARIA calls the obligation label-in-name — the accessible
+/// name has to carry the visible label, because a speech-input user says the
+/// visible word out loud and a sighted helper reads it to somebody who cannot.
+///
+/// ⚠ R2000's comment above claimed the announcement read [`TURN_WORD`] and it
+/// did not: the seat painted `turn` and announced *make this wire run the other
+/// way*, four words of which none is `turn`. Two authors of one fact, one
+/// sentence apart, and the sighted reader and the listening reader were handed
+/// different words for the same seat. Prepending is what makes the ink a
+/// contiguous run of the name **by construction**, the shape R1954 settled on
+/// for the source badge; `Voice::Misquoted` is the gate that now checks it on
+/// every screen rather than only where a walk looks.
+fn turn_name(refusal: Option<&str>) -> String {
+    match refusal {
+        None => format!("{TURN_WORD} this wire round to run the other way"),
+        Some(why) => format!("cannot {TURN_WORD} this wire round: {why}"),
+    }
+}
+
 /// ★★★★★ R2000 — what to SAY when a wire will not turn round.
 ///
 /// The crate names the nodes by number, because a taxonomy's own word for a
@@ -10101,8 +10164,12 @@ fn reverse_refusal(state: &LabState, why: &LandError<Endpoint>) -> String {
         // derivation of the refusal, which the document already made; it is the
         // wording of one, which is exactly the split `graph_kind_token` draws.
         LandError::NoRoom { node, side } => match (state.role_of(*node), side) {
+            // ★ R2002 — the REASON clause only. The sentence it lands in is
+            // `turn_name`'s, which is where the painted word gets in front of
+            // it; saying "cannot run the other way" here too would say the
+            // refusal twice and still not say `turn`.
             (Some(role), Side::Input) if !role.accepts() => format!(
-                "{} is a {} and never listens, so the wire cannot run the other way",
+                "{} is a {} and never listens",
                 state.name_of(*node),
                 role.name()
             ),
@@ -10269,15 +10336,13 @@ fn link_chrome_access(state: &LabState) -> Vec<AccessNode> {
     // reader meeting a greyed control learns nothing from the greying, so the
     // refusal is the name: `disabled` alone is the half R1986's defect is
     // about, one axis over.
+    //
+    // ★★★★★ R2002 — and it says it AROUND the word the seat paints, through
+    // `turn_name`, so the refusal cannot cost the seat its label.
     if chrome.turn.is_some() {
         nodes.push(
             AccessNode::new("lab.link.turn", AriaRole::Button)
-                .with_name(
-                    chrome
-                        .turn_refusal
-                        .clone()
-                        .unwrap_or_else(|| "make this wire run the other way".to_owned()),
-                )
+                .with_name(turn_name(chrome.turn_refusal.as_deref()))
                 .with_state(AccessState {
                     disabled: chrome.turn_refusal.is_some(),
                     ..AccessState::default()

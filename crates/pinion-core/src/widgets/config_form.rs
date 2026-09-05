@@ -741,6 +741,32 @@ impl ConfigDefect {
         }
     }
 
+    /// ★★★★★ R2002 — **the words a PERSON reads**, as against
+    /// [`wire`](Self::wire), which is what an agent matches on.
+    ///
+    /// The split matters twice. A wire spelling painted at a reader is the same
+    /// error as [`NameFault::Address`](crate::voice::NameFault::Address) — a
+    /// machine's token handed to somebody who has to say it out loud, and
+    /// `out_of_range` is not a phrase anybody says. And the badge that paints it
+    /// declares [`Silence::name_of`](crate::voice::Silence::name_of) against the
+    /// row's description, so under WAI-ARIA's label-in-name the description has
+    /// to CONTAIN these words: a caller composes the description by putting this
+    /// in front of [`sentence`](Self::sentence), which is what makes the two
+    /// agree by construction rather than by two authors remembering to.
+    ///
+    /// ⚠ Measured at R2002 by the census arm added the same round: the badge
+    /// painted `out_of_range` while its description said *…is outside 1..=8192*,
+    /// and no gate anywhere could see it. R1954 had already repaired exactly
+    /// this on the source badge, one badge over in the same header.
+    #[must_use]
+    pub const fn phrase(&self) -> &'static str {
+        match self {
+            Self::UnknownKey { .. } => "unknown key",
+            Self::WrongType { .. } => "wrong type",
+            Self::OutOfRange { .. } => "out of range",
+        }
+    }
+
     /// **Whether this defect stops a launch.**
     ///
     /// Derived from which arm it is, and the whole reason the vocabulary has

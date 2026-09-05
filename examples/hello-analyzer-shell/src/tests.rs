@@ -1879,6 +1879,93 @@ fn r1868_what_a_destination_paints_is_what_it_publishes_about_itself() {
     });
 }
 
+/// ★★★★★ R2002 — **a borrowed name says the words that were borrowed**, on the
+/// assembled application and on every page of it.
+///
+/// A caption declaring [`pinion_core::voice::Silence::name_of`] says *my ink is
+/// that node's NAME*. WAI-ARIA calls the obligation label-in-name: a
+/// speech-input user says the visible label out loud, and a sighted helper reads
+/// it to somebody who cannot, so a control painted one phrase and announced
+/// another is reachable by neither. It is the one place on these screens where
+/// some ink and some announcement are DECLARED to be the same words — which is
+/// what makes this a comparison rather than a guess about how a screen chose to
+/// name things.
+///
+/// # Why the gate is here and not only in a walk
+///
+/// `tools/demos/r1692` has compared these since R1692, on **one screen**, in
+/// CI's sweep — after publishing, and 97 minutes into a job. Measured when the
+/// rule moved into `voice_census` this round, the assembled application had
+/// **four** violations and the walk could see one of them: the node lab's turn
+/// seat (`turn` / *make this wire run the other way*), the config form's defect
+/// badge (`out_of_range` / *…is outside 1..=8192*), the lab's run button while
+/// running (`running 3/3` / *stop*), and this shell's own health tile
+/// (`Rate /s` / *Rate*). Three were on pages no walk asked the question about.
+///
+/// ⚠ The population is the point, so it is asserted. A screen that lent no
+/// names at all would pass this by having nothing to judge, which is the shape
+/// every vacuous green takes — and the floor is a MEASUREMENT (`cargo test`,
+/// this round), not a wish.
+#[test]
+fn r2002_every_page_of_the_tool_says_the_words_its_captions_lend_out() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let roster = spec::destinations();
+        let mut lent = 0_usize;
+        let mut pages = 0_usize;
+        let mut wrong: Vec<String> = Vec::new();
+        for destination in roster.open() {
+            let key = destination.key.as_ref();
+            assert!(state.go(key).is_ok(), "the rail must reach {key}");
+            pages += 1;
+            let census = census_of_the_open_destination();
+            for row in &census.nodes {
+                // ★ Rows that MADE the promise, not rows an ancestor's promise
+                // reached: the obligation is the declaring node's, and that is
+                // also the only row the census can report against.
+                if row.self_declared
+                    && row.silence.as_ref().map(pinion_core::voice::Silence::kind)
+                        == Some(pinion_core::voice::SilenceKind::NameOf)
+                {
+                    lent += 1;
+                }
+                if row.voice == pinion_core::voice::Voice::Misquoted {
+                    wrong.push(format!(
+                        "{key}: {} lends its ink to {:?}, which says something else",
+                        row.tag,
+                        row.silence
+                            .as_ref()
+                            .map(pinion_core::voice::Silence::detail),
+                    ));
+                }
+            }
+        }
+        assert!(
+            wrong.is_empty(),
+            "{} caption(s) lend their words to a name that does not carry them — \
+             a person reading the label aloud reaches nothing:\n  {}",
+            wrong.len(),
+            wrong.join("\n  "),
+        );
+        assert!(
+            pages > 0,
+            "no page was walked at all, so the verdict is vacuous",
+        );
+        // ★ 89 across 8 pages, measured this round by raising this floor until
+        // it reported the number. A floor and not an equality: a round that
+        // adds a caption is not a regression, and what this catches is the
+        // walk quietly stopping short of the pages — which is how a gate over a
+        // population goes vacuous without saying so.
+        assert!(
+            lent >= 89,
+            "only {lent} caption(s) across {pages} page(s) lend a name, and 89 \
+             across 8 was the measurement — a count this low means the walk \
+             stopped reaching the pages rather than that the screens changed",
+        );
+    });
+}
+
 #[test]
 fn a_value_that_is_not_knowable_is_announced_as_its_meaning() {
     // The map's unresolved row paints an em dash, which is the typographic

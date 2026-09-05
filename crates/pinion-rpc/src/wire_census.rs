@@ -2584,6 +2584,7 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("dangling", WireTy::Integer, None),
                 WireField::new("mumbled", WireTy::Integer, None),
                 WireField::new("hollow", WireTy::Integer, None),
+                WireField::new("misquoted", WireTy::Integer, None),
             ],
         },
     },

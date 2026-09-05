@@ -1324,8 +1324,13 @@ fn view_header(
             } else {
                 theme.resolve(ColorRole::Warning)
             };
+            // ★★★★★ R2002 — the badge paints the PHRASE, not the wire
+            // spelling. See `ConfigDefect::phrase`: `out_of_range` is a token an
+            // agent matches, and the description this badge lends its ink to is
+            // built by putting the same phrase in front of the sentence, so
+            // label-in-name holds by construction.
             header.push(badge(
-                defect.wire(),
+                defect.phrase(),
                 ink,
                 theme,
                 Some((
@@ -2278,8 +2283,13 @@ pub fn row_access_nodes(
         if let Some(instead) = field.goes().instead() {
             said.push(format!("{instead}, not configuration"));
         }
+        // ★★★★★ R2002 — the SAME phrase the defect badge paints, with the
+        // sentence after it. R1954 did this for the source badge and stopped
+        // there; this badge went on painting `out_of_range` beside a
+        // description that never said those words, and a person reading the
+        // badge aloud reached nothing. One derivation, two readers.
         for defect in defects.iter().filter(|d| d.key() == row.key) {
-            said.push(defect.sentence());
+            said.push(format!("{}, {}", defect.phrase(), defect.sentence()));
         }
         // ★★★ R1691 — the role is the SHAPE's, not `TextInput` for everything.
         // A boolean row was announced as a text box for its whole life: a

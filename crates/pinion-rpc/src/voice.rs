@@ -43,6 +43,18 @@
 //! `hollow` completes the other half: `layout` is a promise that the children
 //! speak, and it is the one promise checkable only from below.
 //!
+//! # What arrives, not that it arrived (R2002)
+//!
+//! `misquoted` is the arm `dangling` leaves room for. A caption declaring
+//! `name_of` says *my ink is that node's NAME*, and until this round the only
+//! thing anybody checked was that the redirect arrived somewhere that speaks.
+//! Whether what arrives is what was painted is WAI-ARIA's **label-in-name** — a
+//! speech-input user says the visible label out loud and a sighted helper reads
+//! it to somebody who cannot — and it is a comparison between some INK and some
+//! NAME, so only a reader holding the scene can make it. Measured the round the
+//! census learned to: the reference analysis tool had **four** such regions, of
+//! which one screen's walk could see one.
+//!
 //! # Wire shape
 //!
 //! ```json
@@ -52,7 +64,8 @@
 //!   "result": {
 //!     "total": 166,
 //!     "counts": { "announced": 115, "silent": 51, "unvoiced": 0,
-//!                 "ghost": 0, "dangling": 0, "mumbled": 0, "hollow": 0 },
+//!                 "ghost": 0, "dangling": 0, "mumbled": 0, "hollow": 0,
+//!                 "misquoted": 0 },
 //!     "nodes": [
 //!       { "tag": "lab.toolbar.run", "voice": "announced", "name": "Run",
 //!         "fault": null },
@@ -97,9 +110,9 @@ pub struct VoiceEntry {
     /// The paint tag — the same spelling `scene/click`, `scene/invoke` and
     /// `scene/access` address, so a row can be acted on directly.
     pub tag: String,
-    /// `announced`, `silent`, `unvoiced`, `ghost`, `dangling`, `mumbled` or
-    /// `hollow`. Five of the seven are defects, and they are five *different*
-    /// defects.
+    /// `announced`, `silent`, `unvoiced`, `ghost`, `dangling`, `mumbled`,
+    /// `hollow` or `misquoted`. Six of the eight are defects, and they are six
+    /// *different* defects.
     pub voice: &'static str,
     /// What a reader actually hears, or `null` when the tree has no node for
     /// this tag.
@@ -145,6 +158,9 @@ pub struct VoiceCounts {
     /// Quiet by a reason that promises its children speak, over a subtree where
     /// nothing does.
     pub hollow: usize,
+    /// Quiet by a reason that lends its ink out as another node's name, where
+    /// that node speaks and says something else. **WAI-ARIA's label-in-name.**
+    pub misquoted: usize,
 }
 
 /// Response payload for `scene/voice`.
@@ -190,6 +206,7 @@ pub fn handle_scene_voice(
             dangling: census.count(Voice::Dangling),
             mumbled: census.count(Voice::Mumbled),
             hollow: census.count(Voice::Hollow),
+            misquoted: census.count(Voice::Misquoted),
         },
         nodes: census.nodes.iter().map(entry).collect(),
     };
@@ -218,6 +235,7 @@ mod tests {
     use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
     use pinion_core::style::LayoutStyle;
     use pinion_core::voice::Silence;
+    use std::collections::BTreeSet;
 
     fn text(tag: &'static str) -> Scene {
         Scene::Text(TextNode::new(tag, Rect::default()).with_tag(tag))
@@ -244,6 +262,40 @@ mod tests {
             .iter()
             .find(|r| r["tag"] == tag)
             .unwrap_or_else(|| panic!("no row for {tag}"))
+    }
+
+    /// ★★★★★ R2002 — [`VoiceCounts`] is a SECOND spelling of `Voice::ALL`, and
+    /// a hand-kept copy of a derived list is the thing this project keeps
+    /// finding rotted. The partition is published as one field per arm, so an
+    /// arm added to the enum with no field here would be counted nowhere and
+    /// the census would go on summing to a smaller total in silence.
+    ///
+    /// ★ The comparison is against the DERIVED vocabulary rather than a list
+    /// written here, and it is an equality in both directions: a field with no
+    /// arm behind it is a column that can never be anything but zero, which
+    /// reads to a client as a checked-and-clear answer.
+    ///
+    /// ⚠ This is what the existing `sum(counts) == total` gate cannot do. That
+    /// one only parts company with the truth on a screen that HAS a row on the
+    /// forgotten arm — so on a clean tree it passes while blind, which is the
+    /// shape of a gate that stops working without saying so.
+    #[test]
+    fn every_arm_of_the_census_has_a_column_in_the_published_partition() {
+        let value = handle_scene_voice(None, &[]).expect("ok");
+        let published: BTreeSet<&str> = value["counts"]
+            .as_object()
+            .expect("counts is an object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        let arms: BTreeSet<&str> = pinion_core::voice::VOICE_WIRE_NAMES
+            .iter()
+            .copied()
+            .collect();
+        assert_eq!(
+            published, arms,
+            "the published partition and the arms it partitions have to be the same set",
+        );
     }
 
     #[test]

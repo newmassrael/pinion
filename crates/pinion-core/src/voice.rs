@@ -476,12 +476,13 @@ impl Silence {
 
 /// What the accessibility tree says about one addressable region.
 ///
-/// Seven arms, of which [`Announced`](Self::Announced) and [`Silent`](Self::Silent)
-/// are the two correct outcomes and the other five are five *different*
+/// Eight arms, of which [`Announced`](Self::Announced) and [`Silent`](Self::Silent)
+/// are the two correct outcomes and the other six are six *different*
 /// defects. A census that only counted would merge them, and the fix for each is
 /// different: give it a name, say something usable instead of an address, decide
-/// why it is quiet, delete the node, point the reason somewhere real, or give
-/// the box that promised its children speak a child that does.
+/// why it is quiet, delete the node, point the reason somewhere real, give
+/// the box that promised its children speak a child that does, or make a
+/// borrowed name say the words that were painted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Voice {
@@ -519,6 +520,23 @@ pub enum Voice {
     /// carry them says it is only arranging things. The one promise that cannot
     /// be checked from the declaration — only from below.
     Hollow,
+    /// The region is silent by a reason that says **its ink is another node's
+    /// name**, that node speaks, and it says something else.
+    ///
+    /// WAI-ARIA calls the obligation *label-in-name*: a control's accessible
+    /// name has to contain the words a reader can see on it, because a
+    /// speech-input user says the visible label out loud and a sighted helper
+    /// reads it to somebody who cannot. A seat painted `turn` and announced only
+    /// as *make this wire run the other way* is reachable by neither.
+    ///
+    /// The sibling of [`Dangling`](Self::Dangling), and the distinction is the
+    /// whole point: a dangling redirect arrives NOWHERE, while this one arrives
+    /// somewhere that speaks — so every per-node rule passes. Classification
+    /// cannot see it either, because the defect is a disagreement between two
+    /// records that the tag comparison holds equal. Only the scene has both
+    /// halves, which is why this is judged during the walk and not in
+    /// [`NameFault`].
+    Misquoted,
 }
 
 impl Voice {
@@ -533,6 +551,7 @@ impl Voice {
             Voice::Dangling => "dangling",
             Voice::Mumbled => "mumbled",
             Voice::Hollow => "hollow",
+            Voice::Misquoted => "misquoted",
         }
     }
 
@@ -543,7 +562,7 @@ impl Voice {
     }
 
     /// Every arm, in declaration order.
-    pub const ALL: [Voice; 7] = [
+    pub const ALL: [Voice; 8] = [
         Voice::Announced,
         Voice::Silent,
         Voice::Unvoiced,
@@ -551,14 +570,20 @@ impl Voice {
         Voice::Dangling,
         Voice::Mumbled,
         Voice::Hollow,
+        Voice::Misquoted,
     ];
 
-    /// Whether this arm is a defect — five of the seven are.
+    /// Whether this arm is a defect — six of the eight are.
     #[must_use]
     pub const fn is_defect(self) -> bool {
         matches!(
             self,
-            Voice::Unvoiced | Voice::Ghost | Voice::Dangling | Voice::Mumbled | Voice::Hollow
+            Voice::Unvoiced
+                | Voice::Ghost
+                | Voice::Dangling
+                | Voice::Mumbled
+                | Voice::Hollow
+                | Voice::Misquoted
         )
     }
 
@@ -1103,6 +1128,25 @@ fn walk(
         | Scene::ImmediateModeNode(_)
         | Scene::TextGrid(_) => {}
     }
+    // ★★★★★ R2002 — the OTHER promise that can only be checked from below, and
+    // it needs the scene's other half. `SilenceKind::NameOf` says *my ink is
+    // that node's name*; `classify` can see that the redirect arrives somewhere
+    // that speaks, and nothing anywhere could see whether what arrives is what
+    // was painted, because that is a comparison between some INK and some NAME
+    // and only the scene holds the first. Judged at the node that MADE the
+    // declaration — the promise is its, and a subtree inheriting the reason
+    // would otherwise report one defect once per descendant.
+    if let Some(index) = row {
+        if out[index].voice == Voice::Silent
+            && let Some(target) = own
+                .filter(|silence| silence.kind() == SilenceKind::NameOf)
+                .and_then(Silence::relay_target)
+            && let Some(announcement) = announced.get(target)
+            && misquotes(scene, &announcement.name)
+        {
+            out[index].voice = Voice::Misquoted;
+        }
+    }
     // R1692 — the promise that can only be checked from below. `Relay::Children`
     // says a reader receives this region's information from what it holds; if
     // nothing under it is in the tree, the subtree is inaudible whole and every
@@ -1125,6 +1169,84 @@ fn walk(
 /// the tree is what a reader actually receives, and a stale declaration beside a
 /// real voice is a documentation problem rather than an accessibility one. The
 /// census still carries the declaration on the row, so it can be found.
+/// The pronounceable words of a string, in order, lowercased.
+///
+/// ★ Punctuation is dropped on purpose. A screen renders a separator as `·` or
+/// `—` and a listener is better served by `,`, so comparing raw strings would
+/// call a deliberate substitution a defect. What has to survive is the WORDS:
+/// that is what a speech-input user says out loud, and it is what label-in-name
+/// is about. A separator standing alone leaves nothing behind, and a token of
+/// nothing is not a word — keeping it would make the comparison a statement
+/// about punctuation after all.
+fn spoken_words(text: &str) -> Vec<String> {
+    text.split_whitespace()
+        .map(|word| {
+            word.chars()
+                .filter(|c| c.is_alphanumeric())
+                .flat_map(char::to_lowercase)
+                .collect::<String>()
+        })
+        .filter(|word| !word.is_empty())
+        .collect()
+}
+
+/// Whether `needle` appears as an unbroken run inside `haystack`.
+///
+/// ★ A run and not a subset: *turn* and *the other way* both appearing
+/// somewhere in a sentence does not let anyone say the label aloud. An empty
+/// needle is contained by anything, which is what makes ink-less regions a
+/// non-question rather than a special case.
+fn contiguous(needle: &[String], haystack: &[String]) -> bool {
+    needle.is_empty() || haystack.windows(needle.len()).any(|run| run == needle)
+}
+
+/// Whether the ink `scene` lends out is missing from `name`.
+///
+/// Each painted run is judged on its own rather than the subtree's ink being
+/// concatenated: two captions under one declaration are two things a reader
+/// reads aloud separately, and joining them would invent an order the screen
+/// never promised.
+fn misquotes(scene: &Scene, name: &str) -> bool {
+    let said = spoken_words(name);
+    let mut lent = Vec::new();
+    borrowed_ink(scene, true, &mut lent);
+    lent.iter()
+        .any(|ink| !contiguous(&spoken_words(ink), &said))
+}
+
+/// Every text run whose words this declaration lends out.
+///
+/// ★ Descent stops at a node that carries its OWN silence, because that node
+/// has said what its ink is for and the answer is no longer *this* name — a
+/// nested `decorative` rule or a second `name_of` is a different promise, kept
+/// or broken on its own row. `root` is what lets the declaring node be a text
+/// node itself, which is the commonest shape: a caption that is one run.
+fn borrowed_ink(scene: &Scene, root: bool, out: &mut Vec<String>) {
+    if !root
+        && scene
+            .layout_style()
+            .is_some_and(|layout| layout.silence.is_some())
+    {
+        return;
+    }
+    match scene {
+        Scene::Text(node) => out.push(node.content.clone()),
+        Scene::Container(c) => {
+            for child in &c.children {
+                borrowed_ink(child, false, out);
+            }
+        }
+        Scene::Scroll(s) => borrowed_ink(&s.content, false, out),
+        Scene::Box(_)
+        | Scene::Path(_)
+        | Scene::Image(_)
+        | Scene::External(_)
+        | Scene::Effect(_)
+        | Scene::ImmediateModeNode(_)
+        | Scene::TextGrid(_) => {}
+    }
+}
+
 fn classify(
     tag: &str,
     reason: Option<&Silence>,
@@ -1143,6 +1265,11 @@ fn classify(
         // A redirect to a node that is not in the tree at all. A node that IS in
         // the tree and mumbles is a defect of its own, reported on its own row —
         // the redirect did arrive somewhere.
+        //
+        // ★ R2002 — *arriving* is all this can judge. Whether what arrives says
+        // the words that were painted is [`Voice::Misquoted`], and it is settled
+        // in `walk` rather than here because the ink is in the scene and this
+        // function has only the tags.
         Some(target) if !announced.contains_key(target) => reason.relay().unkept(),
         _ => Voice::Silent,
     };
@@ -1475,6 +1602,195 @@ mod tests {
         let census = voice_census(&scene, &tags(&["root", "button"]), &BTreeSet::new());
         assert_eq!(row(&census, "caption").voice, Voice::Silent);
         assert_eq!(row(&census, "button").voice, Voice::Announced);
+        assert!(census.is_total());
+    }
+
+    /// A caption that paints `content` and lends those words to `lends_to`.
+    fn caption(tag: &'static str, content: &str, lends_to: &'static str) -> Scene {
+        Scene::Text(
+            TextNode::new(content, Rect::default())
+                .with_tag(tag)
+                .with_layout(LayoutStyle::new().with_silence(Silence::name_of(lends_to))),
+        )
+    }
+
+    /// A tree where `tag` is announced with exactly `name`, and a root that is
+    /// announced too so the test is about the caption alone.
+    fn announcing(tag: &str, name: &str) -> BTreeMap<String, Announcement> {
+        let mut announced = tags(&["root"]);
+        announced.insert(tag.to_owned(), Announcement::named(name));
+        announced
+    }
+
+    /// ★★★★★ R2002 — the redirect arrives somewhere that speaks and says
+    /// something else. Every per-node rule passes: the caption is quiet with a
+    /// declared reason, the seat is in the tree, and its name clears all three
+    /// name rules. What is broken is the relation between them, and this was
+    /// the shape shipped on the node lab — a seat painted `turn` announced only
+    /// as a sentence with no `turn` in it.
+    #[test]
+    fn a_borrowed_name_that_says_something_else_is_misquoted() {
+        let scene = group(
+            "root",
+            vec![group("seat", vec![caption("seat.text", "turn", "seat")])],
+        );
+        let census = voice_census(
+            &scene,
+            &announcing("seat", "make this wire run the other way"),
+            &BTreeSet::new(),
+        );
+        assert_eq!(row(&census, "seat.text").voice, Voice::Misquoted);
+        assert!(!census.is_total());
+        assert_eq!(census.count(Voice::Misquoted), 1);
+
+        // The repair is to say the painted word, and nothing else changes.
+        let census = voice_census(
+            &scene,
+            &announcing("seat", "turn this wire round to run the other way"),
+            &BTreeSet::new(),
+        );
+        assert_eq!(row(&census, "seat.text").voice, Voice::Silent);
+        assert!(census.is_total());
+    }
+
+    /// The visible label may sit anywhere in the name, and punctuation and case
+    /// are not the comparison — a screen writes `84%` where a listener is
+    /// better served by a sentence around it.
+    #[test]
+    fn a_borrowed_name_may_carry_the_ink_anywhere_in_it() {
+        let scene = group(
+            "root",
+            vec![group("reset", vec![caption("read.out", "84%", "reset")])],
+        );
+        let census = voice_census(
+            &scene,
+            &announcing("reset", "Zoom 84%, reset the view"),
+            &BTreeSet::new(),
+        );
+        assert_eq!(row(&census, "read.out").voice, Voice::Silent);
+        assert!(census.is_total());
+    }
+
+    /// A run, not a subset. Every painted word appearing SOMEWHERE in the name
+    /// does not let a person say the label out loud, which is the whole point
+    /// of label-in-name.
+    #[test]
+    fn the_ink_has_to_be_an_unbroken_run_of_the_name() {
+        let scene = group("root", vec![caption("cap", "run the other way", "seat")]);
+        let census = voice_census(
+            &scene,
+            &announcing("seat", "run this wire round the other way"),
+            &BTreeSet::new(),
+        );
+        assert_eq!(row(&census, "cap").voice, Voice::Misquoted);
+    }
+
+    /// A caption with no ink lends nothing, so there is nothing to disagree
+    /// about — the region a screen did not build this frame, and the reason the
+    /// rule needs no exemption list for it.
+    #[test]
+    fn a_caption_that_paints_nothing_is_not_misquoted() {
+        let scene = group(
+            "root",
+            vec![quiet("cap", Silence::name_of("seat"), vec![]), text("seat")],
+        );
+        let census = voice_census(
+            &scene,
+            &announcing("seat", "nothing like the caption"),
+            &BTreeSet::new(),
+        );
+        assert_eq!(row(&census, "cap").voice, Voice::Silent);
+    }
+
+    /// ★★★★★ R2002 — **one broken promise is one row**, and it is the row of
+    /// whoever made it.
+    ///
+    /// `NameOf` covers its subtree, so the reason reaches every descendant; if
+    /// the judgment were made wherever the reason ARRIVED, a caption holding
+    /// three tagged runs would report one defect three times and the census's
+    /// own count would be wrong about how many things are broken.
+    ///
+    /// ⚠ Written because a counterfactual PASSED. Replacing the declaring
+    /// node's silence with the inherited one caught nothing — not because the
+    /// distinction is idle but because every fixture here lent its name from a
+    /// caption with no tagged descendant, so the two readings could not differ
+    /// on anything the census had a row for. The repair is the POPULATION, not
+    /// the assertion (R1845, again).
+    #[test]
+    fn only_the_caption_that_made_the_promise_is_reported() {
+        let scene = group(
+            "root",
+            vec![group(
+                "seat",
+                vec![quiet(
+                    "cap",
+                    Silence::name_of("seat"),
+                    vec![Scene::Text(
+                        TextNode::new("turn", Rect::default()).with_tag("cap.word"),
+                    )],
+                )],
+            )],
+        );
+        let census = voice_census(
+            &scene,
+            &announcing("seat", "make this wire run the other way"),
+            &BTreeSet::new(),
+        );
+        assert_eq!(row(&census, "cap").voice, Voice::Misquoted);
+        assert_eq!(
+            row(&census, "cap.word").voice,
+            Voice::Silent,
+            "the run inherited the promise; it did not make it",
+        );
+        assert_eq!(
+            census.count(Voice::Misquoted),
+            1,
+            "one caption lending one name that disagrees is ONE defect",
+        );
+    }
+
+    /// Arriving nowhere and arriving somewhere that disagrees are different
+    /// defects with different repairs, so a dangling redirect stays dangling
+    /// rather than being reported as the newer arm.
+    #[test]
+    fn a_redirect_to_nobody_is_dangling_and_not_misquoted() {
+        let scene = group("root", vec![caption("cap", "turn", "seat")]);
+        let census = voice_census(&scene, &tags(&["root"]), &BTreeSet::new());
+        assert_eq!(row(&census, "cap").voice, Voice::Dangling);
+        assert_eq!(census.count(Voice::Misquoted), 0);
+    }
+
+    /// Descent stops where another declaration begins. A rule drawn inside a
+    /// caption is ornament on its own row and lends no words to anybody, so it
+    /// cannot make the caption around it wrong.
+    #[test]
+    fn ink_under_a_second_declaration_is_not_lent_out() {
+        let scene = group(
+            "root",
+            vec![group(
+                "seat",
+                vec![quiet(
+                    "cap",
+                    Silence::name_of("seat"),
+                    vec![
+                        Scene::Text(TextNode::new("turn", Rect::default()).with_tag("cap.word")),
+                        Scene::Text(
+                            TextNode::new("9,481", Rect::default())
+                                .with_tag("cap.tally")
+                                .with_layout(
+                                    LayoutStyle::new().with_silence(Silence::decorative("a tally")),
+                                ),
+                        ),
+                    ],
+                )],
+            )],
+        );
+        let census = voice_census(
+            &scene,
+            &announcing("seat", "turn this wire round"),
+            &BTreeSet::new(),
+        );
+        assert_eq!(row(&census, "cap").voice, Voice::Silent);
         assert!(census.is_total());
     }
 
