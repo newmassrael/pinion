@@ -94,7 +94,7 @@ use pinion_core::input::{Modifiers, PointerReading};
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
-    BoxStyle, FlexDirection, GridPlacement, GridTrack, LayoutStyle, TextStyle,
+    BoxStyle, FlexDirection, GridPlacement, GridTrack, LayoutStyle, TextStyle, TrackMax, TrackMin,
 };
 use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widgets::tile_grid::{
@@ -1122,7 +1122,24 @@ fn view(
             Scene::Container(
                 ContainerNode::new(children).with_tag(ROOT_TAG).with_layout(
                     LayoutStyle::new()
-                        .grid_columns(vec![GridTrack::Fr(1.0); COLUMNS as usize])
+                        // ★★★★★ R2013 — `minmax(0, 1fr)` and not `1fr`, which
+                        // is the one place on this screen the difference is
+                        // visible. A bare `1fr` column carries CSS's implicit
+                        // `auto` minimum, so the WIDEST CARD LABEL IN A COLUMN
+                        // sets that column's width and the other eleven share
+                        // what is left — a board whose geometry depends on how
+                        // long somebody named a card. The floor says the twelve
+                        // columns are twelve equal shares and a card that does
+                        // not fit is the card's problem, which is what a
+                        // dashboard grid means. Until this round the vocabulary
+                        // could not say it: see `GridTrack::MinMax`.
+                        .grid_columns(vec![
+                            GridTrack::MinMax {
+                                min: TrackMin::Px(0),
+                                max: TrackMax::Fr(1.0),
+                            };
+                            COLUMNS as usize
+                        ])
                         .with_grid_rows(vec![GridTrack::Px(ROW_H); rows as usize])
                         // R1609 — ONE Tab stop for the whole board. The selected
                         // card is its active descendant, so thirty cards are not

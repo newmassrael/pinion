@@ -88,7 +88,7 @@ use std::collections::HashMap;
 
 use pinion_core::Scene;
 use pinion_core::scene::Rect;
-use pinion_core::style::GridTrack;
+use pinion_core::style::{GridTrack, TrackMax, TrackMin};
 use pinion_core::text_table::CellPlacement;
 use serde::Serialize;
 use serde_json::Value;
@@ -166,9 +166,14 @@ pub struct TextTableWire {
     pub header_rows: u16,
     /// Leading header columns — the axis the toolkit has no property for.
     pub header_columns: u16,
-    /// The column tracks, in CSS `grid-template-columns` spelling
-    /// (`auto` / `120px` / `30%` / `1fr` / `min-content` / `max-content`), one
-    /// per column.
+    /// The column tracks, in CSS `grid-template-columns` spelling, one per
+    /// column.
+    ///
+    /// ⚠ R2013 — this used to list the spellings, and the list went stale the
+    /// moment `minmax()` was added one function away. The set is
+    /// [`GridTrack`]'s arms and the mapping is `track_as_wire`; a reader who
+    /// needs the vocabulary should be sent there rather than handed a second
+    /// copy of it.
     ///
     /// Resolved rather than echoed: a format that named fewer widths than it
     /// has columns is padded before it reaches the layout, so what is
@@ -364,6 +369,39 @@ fn track_as_wire(track: GridTrack) -> String {
         GridTrack::Fr(units) => format!("{units}fr"),
         GridTrack::MinContent => "min-content".to_owned(),
         GridTrack::MaxContent => "max-content".to_owned(),
+        // R2013 — written as the stylesheet writes it, for this function's own
+        // stated reason: a reader decoding `{"MinMax":{...}}` is reading Rust,
+        // not CSS.
+        GridTrack::MinMax { min, max } => {
+            format!("minmax({}, {})", min_as_wire(min), max_as_wire(max))
+        }
+        // ⚠ `Auto`, and any arm added upstream to a `#[non_exhaustive]` enum
+        // this crate does not own. The second half publishes a WRONG value
+        // rather than failing — see `GridTrack::ALL`, which the census test
+        // walks so a declared arm cannot reach here unnoticed.
+        _ => "auto".to_owned(),
+    }
+}
+
+/// (R2013 §5.21) The minimum half of a `minmax()`, as CSS writes it.
+fn min_as_wire(min: TrackMin) -> String {
+    match min {
+        TrackMin::Px(px) => format!("{px}px"),
+        TrackMin::Percent(fraction) => format!("{}%", fraction * 100.0),
+        TrackMin::MinContent => "min-content".to_owned(),
+        TrackMin::MaxContent => "max-content".to_owned(),
+        _ => "auto".to_owned(),
+    }
+}
+
+/// (R2013 §5.21) The maximum half of a `minmax()`, as CSS writes it.
+fn max_as_wire(max: TrackMax) -> String {
+    match max {
+        TrackMax::Px(px) => format!("{px}px"),
+        TrackMax::Percent(fraction) => format!("{}%", fraction * 100.0),
+        TrackMax::Fr(units) => format!("{units}fr"),
+        TrackMax::MinContent => "min-content".to_owned(),
+        TrackMax::MaxContent => "max-content".to_owned(),
         _ => "auto".to_owned(),
     }
 }
@@ -378,10 +416,12 @@ fn header_as_wire(placement: &CellPlacement) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_tables, handle_scene_text_tables, track_as_wire};
+    use super::{
+        collect_tables, handle_scene_text_tables, max_as_wire, min_as_wire, track_as_wire,
+    };
     use pinion_core::Scene;
     use pinion_core::scene::{ContainerNode, Rect, TextNode};
-    use pinion_core::style::GridTrack;
+    use pinion_core::style::{GridTrack, TrackMax, TrackMin};
     use pinion_core::text_table::{CellSpec, TableFormat, TablePart, place_cells};
 
     /// A painted table from `(text, colspan, rowspan, continues)` tuples, laid
@@ -531,6 +571,61 @@ mod tests {
         assert_eq!(track_as_wire(GridTrack::Percent(0.25)), "25%");
         assert_eq!(track_as_wire(GridTrack::MinContent), "min-content");
         assert_eq!(track_as_wire(GridTrack::MaxContent), "max-content");
+        // R2013 — the two-sided arm, and the census that stops the next one
+        // from being published as `auto`.
+        assert_eq!(
+            track_as_wire(GridTrack::MinMax {
+                min: TrackMin::Px(0),
+                max: TrackMax::Fr(1.0),
+            }),
+            "minmax(0px, 1fr)"
+        );
+        assert_eq!(
+            track_as_wire(GridTrack::MinMax {
+                min: TrackMin::Px(112),
+                max: TrackMax::Fr(1.0),
+            }),
+            "minmax(112px, 1fr)",
+            "a non-zero floor is a phrase the authored screens actually use"
+        );
+    }
+
+    /// ★★★★★ R2013 — **no DECLARED track arm is published as `auto`.**
+    ///
+    /// `GridTrack` is `#[non_exhaustive]`, so this crate's match must carry a
+    /// wildcard and the compiler cannot make it exhaustive. That wildcard
+    /// answers `"auto"`, which is right for `Auto` and a lie for anything
+    /// else — and the arm this round added would have been published as
+    /// `"auto"` with every test green. The list is the enum's own, so an arm
+    /// added upstream joins this census without anyone remembering to.
+    ///
+    /// ⚠ Stated limit: `ALL` is one representative per arm. This is the
+    /// bijection between declared arms and handled arms, not a claim about
+    /// every payload.
+    #[test]
+    fn r2013_every_declared_track_is_published_rather_than_defaulted() {
+        for track in GridTrack::ALL {
+            let wire = track_as_wire(track);
+            assert_eq!(
+                matches!(track, GridTrack::Auto),
+                wire == "auto",
+                "{track:?} is published as {wire:?}; only `Auto` may be `auto`"
+            );
+        }
+        for min in TrackMin::ALL {
+            let wire = min_as_wire(min);
+            assert_eq!(matches!(min, TrackMin::Auto), wire == "auto", "{min:?}");
+        }
+        for max in TrackMax::ALL {
+            let wire = max_as_wire(max);
+            assert_eq!(matches!(max, TrackMax::Auto), wire == "auto", "{max:?}");
+        }
+        println!(
+            "[r2013] published {} track arm(s), {} min, {} max",
+            GridTrack::ALL.len(),
+            TrackMin::ALL.len(),
+            TrackMax::ALL.len()
+        );
     }
 
     /// The negative controls: no scene and a scene with no table both answer

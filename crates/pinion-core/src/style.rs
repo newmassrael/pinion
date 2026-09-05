@@ -3764,6 +3764,151 @@ pub enum GridTrack {
     MinContent,
     /// CSS `max-content` — as wide as the track's items would like to be.
     MaxContent,
+    /// R2013 — CSS
+    /// [`minmax(min, max)`](https://www.w3.org/TR/css-grid-1/#funcdef-grid-template-columns-minmax):
+    /// **the only way to say "this track may not be pushed by its content".**
+    ///
+    /// Every other arm here fixes the two ends together or leaves the minimum
+    /// implicit, and CSS's implicit minimum for a flexible track is `auto` —
+    /// which is min-content. So [`Self::Fr`] does not mean *a share of the
+    /// space*; it means *a share of the space, but never narrower than the
+    /// widest thing in me*, and one long cell widens the column and squeezes
+    /// its neighbours. `minmax(0, 1fr)` is how a pane says the share is the
+    /// whole rule.
+    ///
+    /// That is not a preference: measured over an authored design system's
+    /// four screens, **seven** track functions are `minmax(...)` and forty-nine
+    /// across its whole component set — of which forty-eight are `minmax(0,
+    /// Nfr)`, the phrase above, and one is `minmax(112px, 1fr)`.
+    ///
+    /// ★★★★★ THE TWO SIDES TAKE DIFFERENT TYPES, AND THAT IS CSS'S GRAMMAR
+    /// RATHER THAN A RESTRICTION INVENTED HERE. `<track-size>` reads
+    /// `minmax( <inflexible-breadth> , <track-breadth> )`, and
+    /// `<inflexible-breadth>` is `<track-breadth>` **without `<flex>`**: a
+    /// minimum measured in shares of the leftover space is circular, because
+    /// the leftover space is what the minimum helps decide. taffy agrees at the
+    /// type level — its `MinTrackSizingFunction` has no fraction variant while
+    /// its max counterpart does — so `minmax(1fr, ...)` is not merely
+    /// discouraged, it is unrepresentable one layer down.
+    ///
+    /// ⚠ Hence [`TrackMin`] and [`TrackMax`] instead of a recursive
+    /// `Box<GridTrack>` on both sides. The recursive shape would admit the
+    /// illegal phrase AND cost this enum its `Copy`, which every caller here
+    /// relies on.
+    MinMax {
+        /// The floor. `Px(0)` is the one that says *do not grow me*.
+        min: TrackMin,
+        /// The ceiling.
+        max: TrackMax,
+    },
+}
+
+impl GridTrack {
+    /// One representative of every arm, in declaration order.
+    ///
+    /// ★★★★★ R2013 — this exists because [`GridTrack`] is `#[non_exhaustive]`,
+    /// so every match on it OUTSIDE this crate must carry a wildcard, and both
+    /// of the ones that matter answered `auto` there. A wildcard reached by a
+    /// declared arm is not a fallback, it is a silent wrong answer: the arm
+    /// added by this very round would have lowered to `auto` in the layout and
+    /// printed `"auto"` on the wire, and nothing would have failed.
+    ///
+    /// The wildcard cannot be removed — that is what `#[non_exhaustive]` means
+    /// — so what a consumer owes instead is a walk over this list. The tracks
+    /// are representatives rather than the whole space, which is the honest
+    /// limit: a per-arm answer that depends on the *payload* is not covered by
+    /// asking one payload.
+    pub const ALL: [Self; 7] = [
+        Self::Auto,
+        Self::Px(120),
+        Self::Percent(0.25),
+        Self::Fr(1.0),
+        Self::MinContent,
+        Self::MaxContent,
+        Self::MinMax {
+            min: TrackMin::Px(0),
+            max: TrackMax::Fr(1.0),
+        },
+    ];
+}
+
+/// (R2013 §5.21) CSS
+/// [`<inflexible-breadth>`](https://www.w3.org/TR/css-grid-1/#typedef-inflexible-breadth)
+/// — what may stand in the **minimum** position of a [`GridTrack::MinMax`].
+///
+/// `<track-breadth>` without `<flex>`. See [`GridTrack::MinMax`] for why the
+/// exclusion is the grammar's rather than this crate's.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub enum TrackMin {
+    /// CSS `auto` in the minimum position — the *implicit* floor of every
+    /// other track arm, and therefore the one that changes nothing.
+    #[default]
+    Auto,
+    /// CSS `<length>`. `Px(0)` is the phrase an authored layout reaches for
+    /// when a pane must take its share and no more.
+    Px(u32),
+    /// CSS `<percentage>` of the grid container's content box.
+    Percent(f32),
+    /// CSS `min-content` — the narrowest the items can be without overflowing.
+    MinContent,
+    /// CSS `max-content` — as wide as the items would like to be.
+    MaxContent,
+}
+
+impl TrackMin {
+    /// One representative of every arm, in declaration order. See
+    /// [`GridTrack::ALL`] for why a `#[non_exhaustive]` enum owes one.
+    pub const ALL: [Self; 5] = [
+        Self::Auto,
+        Self::Px(0),
+        Self::Percent(0.1),
+        Self::MinContent,
+        Self::MaxContent,
+    ];
+}
+
+/// (R2013 §5.21) CSS
+/// [`<track-breadth>`](https://www.w3.org/TR/css-grid-1/#typedef-track-breadth)
+/// — what may stand in the **maximum** position of a [`GridTrack::MinMax`].
+///
+/// [`TrackMin`] plus `<flex>`, which is the whole difference between the two.
+///
+/// ⚠ `fit-content()` is deliberately absent. It is not part of
+/// `<track-breadth>`: CSS puts it beside `minmax()` as a third alternative at
+/// `<track-size>` level, and taffy only carries it in its max position because
+/// it flattens that alternative. Putting it here would make this type claim to
+/// be a grammar it is not. Measured on the authored screens that motivated this
+/// round: `fit-content()` appears **zero** times.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub enum TrackMax {
+    /// CSS `auto` in the maximum position.
+    #[default]
+    Auto,
+    /// CSS `<length>`.
+    Px(u32),
+    /// CSS `<percentage>` of the grid container's content box.
+    Percent(f32),
+    /// CSS `<flex>` — a share of the space left once the rest are sized.
+    Fr(f32),
+    /// CSS `min-content`.
+    MinContent,
+    /// CSS `max-content`.
+    MaxContent,
+}
+
+impl TrackMax {
+    /// One representative of every arm, in declaration order. See
+    /// [`GridTrack::ALL`] for why a `#[non_exhaustive]` enum owes one.
+    pub const ALL: [Self; 6] = [
+        Self::Auto,
+        Self::Px(120),
+        Self::Percent(0.25),
+        Self::Fr(1.0),
+        Self::MinContent,
+        Self::MaxContent,
+    ];
 }
 
 /// (R1560 §5.21) Where a grid item sits on one axis — CSS `grid-row` /

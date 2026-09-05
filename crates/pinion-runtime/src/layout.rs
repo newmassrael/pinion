@@ -39,7 +39,7 @@ use pinion_core::scene::{
 };
 use pinion_core::style::{
     AlignItems, Display, FlexDirection, GridPlacement, GridTrack, JustifyContent, LayoutStyle,
-    Overflow, SizeValue, TextStyle,
+    Overflow, SizeValue, TextStyle, TrackMax, TrackMin,
 };
 use taffy::geometry::{MinMax, Point as TaffyPoint};
 
@@ -1484,11 +1484,56 @@ fn to_taffy_track(track: GridTrack) -> TrackSizingFunction {
             MinTrackSizingFunction::MaxContent,
             MaxTrackSizingFunction::MaxContent,
         ),
-        // `Auto` and any future arm: taffy's `auto` on both sides, which is
-        // the sizing every implicit track already gets.
+        // R2013 — the arm the other five were already spelling by hand.
+        GridTrack::MinMax { min, max } => (to_taffy_min(min), to_taffy_max(max)),
+        // ⚠ `Auto`, and — because `GridTrack` is `#[non_exhaustive]` and this
+        // is another crate — any arm added upstream and not brought here.
+        //
+        // ★★★★★ R2013: that second half is a SILENT WRONG ANSWER, not a
+        // fallback. The arm this round added would have landed here and sized
+        // as `auto`, which is the exact opposite of what `minmax(0, 1fr)`
+        // asks for, and no build would have failed. The wildcard cannot be
+        // removed (that is what `#[non_exhaustive]` means to a downstream
+        // crate), so `r2013_every_declared_track_is_lowered_rather_than_defaulted`
+        // walks `GridTrack::ALL` and refuses any DECLARED arm that reaches it.
         _ => (MinTrackSizingFunction::Auto, MaxTrackSizingFunction::Auto),
     };
     TrackSizingFunction::Single(MinMax { min, max })
+}
+
+/// (R2013 §5.21) Lower a [`TrackMin`] to taffy's minimum sizing function.
+///
+/// One arm each and no fraction, because [`TrackMin`] is CSS's
+/// `<inflexible-breadth>` and taffy's `MinTrackSizingFunction` is the same set
+/// — the two grammars agree, so this is a rename rather than a decision.
+#[allow(clippy::cast_precision_loss)]
+fn to_taffy_min(min: TrackMin) -> MinTrackSizingFunction {
+    match min {
+        TrackMin::Px(px) => MinTrackSizingFunction::Fixed(LengthPercentage::from_length(px as f32)),
+        TrackMin::Percent(fraction) => {
+            MinTrackSizingFunction::Fixed(LengthPercentage::from_percent(fraction))
+        }
+        TrackMin::MinContent => MinTrackSizingFunction::MinContent,
+        TrackMin::MaxContent => MinTrackSizingFunction::MaxContent,
+        // `Auto`, and any arm added upstream — see `to_taffy_track`'s note.
+        _ => MinTrackSizingFunction::Auto,
+    }
+}
+
+/// (R2013 §5.21) Lower a [`TrackMax`] to taffy's maximum sizing function.
+#[allow(clippy::cast_precision_loss)]
+fn to_taffy_max(max: TrackMax) -> MaxTrackSizingFunction {
+    match max {
+        TrackMax::Px(px) => MaxTrackSizingFunction::Fixed(LengthPercentage::from_length(px as f32)),
+        TrackMax::Percent(fraction) => {
+            MaxTrackSizingFunction::Fixed(LengthPercentage::from_percent(fraction))
+        }
+        TrackMax::Fr(units) => MaxTrackSizingFunction::Fraction(units),
+        TrackMax::MinContent => MaxTrackSizingFunction::MinContent,
+        TrackMax::MaxContent => MaxTrackSizingFunction::MaxContent,
+        // `Auto`, and any arm added upstream — see `to_taffy_track`'s note.
+        _ => MaxTrackSizingFunction::Auto,
+    }
 }
 
 /// (R1560 §5.21) Lower a [`GridPlacement`] to taffy's `(start, end)` line pair.
@@ -4541,7 +4586,10 @@ mod tests {
 #[cfg(test)]
 mod tile_dashboard_measurement {
     use super::*;
-    use pinion_core::style::{Display, GridPlacement, GridTrack, LayoutStyle};
+    use pinion_core::style::{
+        Display, GridPlacement, GridTrack, LayoutStyle, Size, TrackMax, TrackMin,
+    };
+    use taffy::style::{MaxTrackSizingFunction, MinTrackSizingFunction};
 
     fn cache() -> LayoutCache {
         LayoutCache::new()
@@ -4647,5 +4695,170 @@ mod tile_dashboard_measurement {
              had to re-divide the whole parent"
         );
         assert_eq!(row_two(&narrow), (300, 300));
+    }
+
+    /// ★★★★★ R2013 — **a track can be told not to grow, and the proof is the
+    /// rectangle rather than the field.**
+    ///
+    /// `1fr` does not mean *a share of the space*. CSS gives a flexible track
+    /// an implicit minimum of `auto`, which is min-content, so one wide item
+    /// widens its column and squeezes every neighbour — this is why an
+    /// authored layout writes `minmax(0, 1fr)` forty-eight times over. Until
+    /// this round that phrase had no arm here and no combination of the other
+    /// six could say it.
+    ///
+    /// The two halves of this test are the same grid with one word changed, so
+    /// the difference IS the capability: a 400px item in a three-column grid
+    /// 300px wide drags its `Fr(1.0)` column to 400 and starves the others,
+    /// and leaves the `minmax(0, 1fr)` columns at 100 each.
+    ///
+    /// ⚠ The item is sized in pixels rather than by text on purpose. A text
+    /// leaf's min-content width is a font measurement, and a gate whose
+    /// expected numbers move with a font is a gate that gets loosened until it
+    /// stops saying anything.
+    ///
+    /// ⚠⚠ AND WHAT IS READ IS THE TRACK, NOT THE ITEM — the first draft got
+    /// this wrong and the failure is worth keeping. It asserted the wide
+    /// item's own width and got `400` under `minmax(0, 1fr)`, which looks like
+    /// the floor being ignored and is not: an item with an explicit width
+    /// OVERFLOWS a narrower track rather than being clipped by it, which is
+    /// what CSS says should happen. The track's width is visible in where the
+    /// NEXT column begins, so that is what this reads. A gate aimed at the item
+    /// would have reported a working floor as broken, and — worse in the other
+    /// direction — could report a broken floor as working whenever the item
+    /// happens to fit.
+    #[test]
+    fn r2013_a_track_told_not_to_grow_keeps_its_share() {
+        let wide_item = || {
+            Scene::Container(
+                ContainerNode::new(Vec::new()).with_layout(
+                    LayoutStyle::default()
+                        .with_grid_column(GridPlacement::spanning(1, 1))
+                        .with_size(Size::width_px(400)),
+                ),
+            )
+        };
+        let filler = |col: u16| {
+            Scene::Container(ContainerNode::new(Vec::new()).with_layout(
+                LayoutStyle::default().with_grid_column(GridPlacement::spanning(col, 1)),
+            ))
+        };
+        let grid = |track: GridTrack| {
+            let mut scene = Scene::Container(
+                ContainerNode::new(vec![wide_item(), filler(2), filler(3)])
+                    .with_layout(LayoutStyle::default().grid_columns(vec![track; 3])),
+            );
+            compute_layout(&mut scene, &mut cache(), 300, 100);
+            let Scene::Container(root) = &scene else {
+                panic!("a container")
+            };
+            // Where each column BEGINS. The first is always 0, so the two that
+            // carry the information are the second and the third — and their
+            // differences are the first two tracks' widths.
+            (
+                root.children[0].rect().x,
+                root.children[1].rect().x,
+                root.children[2].rect().x,
+            )
+        };
+
+        // The state of affairs this arm exists to change, asserted rather than
+        // described: with only an implicit `auto` floor the wide item drags its
+        // column to 400 and pushes both neighbours off the 300 available.
+        let pushed = grid(GridTrack::Fr(1.0));
+        assert_eq!(
+            pushed.0, 0,
+            "the first column always begins at the origin: {pushed:?}"
+        );
+        assert_eq!(
+            pushed.1, 400,
+            "a bare `1fr` column is 400 wide because its content is — that is \
+             the implicit `auto` minimum, and the reason this round happened"
+        );
+        assert!(
+            pushed.2 > 300,
+            "and the third column starts beyond the 300 the grid was given, so \
+             the neighbours are off-screen: {pushed:?}"
+        );
+
+        let held = grid(GridTrack::MinMax {
+            min: TrackMin::Px(0),
+            max: TrackMax::Fr(1.0),
+        });
+        assert_eq!(
+            held,
+            (0, 100, 200),
+            "`minmax(0, 1fr)` holds every column to an equal share of 300 \
+             whatever is inside it, so the three begin at 0, 100 and 200"
+        );
+    }
+
+    /// ★★★★★ R2013 — **no DECLARED track arm reaches the wildcard.**
+    ///
+    /// `GridTrack` is `#[non_exhaustive]`, so this crate's match on it must
+    /// carry a `_` arm and cannot be made exhaustive by the compiler. That
+    /// wildcard answers taffy's `auto`, which is correct for `Auto` and a
+    /// silent wrong answer for anything else — and this round's own arm would
+    /// have landed in it and sized as `auto`, the exact opposite of what it
+    /// asks for, with every build green.
+    ///
+    /// So the census walks `GridTrack::ALL` and requires each arm to lower to
+    /// something `Auto` does not: the wildcard becomes reachable only by an arm
+    /// nobody has declared yet, which is what it is for.
+    ///
+    /// ⚠ Stated limit: `ALL` holds one representative per arm, so this says
+    /// nothing about arms whose lowering depends on the payload. It is the
+    /// bijection between declared arms and handled arms, not a proof about
+    /// values.
+    #[test]
+    fn r2013_every_declared_track_is_lowered_rather_than_defaulted() {
+        let fallback = to_taffy_track(GridTrack::Auto);
+        let mut judged = 0_usize;
+        for track in GridTrack::ALL {
+            let lowered = to_taffy_track(track);
+            if matches!(track, GridTrack::Auto) {
+                assert_eq!(
+                    lowered, fallback,
+                    "`Auto` is the one arm the wildcard's answer is right for"
+                );
+            } else {
+                assert_ne!(
+                    lowered, fallback,
+                    "{track:?} lowers to taffy's `auto` on both sides, which is \
+                     what the wildcard answers — so this arm is declared and \
+                     not handled"
+                );
+            }
+            judged += 1;
+        }
+        assert_eq!(
+            judged,
+            GridTrack::ALL.len(),
+            "the census must cover every representative"
+        );
+        // The two halves of `minmax()` owe the same thing, and their `Auto`
+        // arms are likewise the only ones the wildcard fits.
+        for min in TrackMin::ALL {
+            let lowered = to_taffy_min(min);
+            assert_eq!(
+                matches!(min, TrackMin::Auto),
+                lowered == MinTrackSizingFunction::Auto,
+                "{min:?} and taffy's `auto` minimum must agree only for `Auto`"
+            );
+        }
+        for max in TrackMax::ALL {
+            let lowered = to_taffy_max(max);
+            assert_eq!(
+                matches!(max, TrackMax::Auto),
+                lowered == MaxTrackSizingFunction::Auto,
+                "{max:?} and taffy's `auto` maximum must agree only for `Auto`"
+            );
+        }
+        println!(
+            "[r2013] lowered {} track arm(s), {} min arm(s), {} max arm(s)",
+            GridTrack::ALL.len(),
+            TrackMin::ALL.len(),
+            TrackMax::ALL.len()
+        );
     }
 }
