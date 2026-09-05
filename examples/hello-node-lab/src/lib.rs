@@ -53,6 +53,7 @@
 mod deploy;
 mod graph;
 mod judge;
+mod merging;
 mod persist;
 mod scenario;
 mod settings;
@@ -1819,6 +1820,25 @@ struct LabState {
     /// resolves through the shell's root owner and PANICS outside one, and this
     /// screen's pointer handlers and its wire both run outside an owner scope.
     storage: Rc<AppStorage>,
+    /// ★★★★★ R2008 — the two OTHER versions a merge needs, once a person has
+    /// named them.
+    ///
+    /// The third is the document on the canvas, which is why they live here
+    /// rather than in a tool of their own: a merge whose local side were a
+    /// fourth copy would go stale the moment somebody dragged a card, and the
+    /// whole value of doing this on the editing screen is that resolving a
+    /// conflict by editing makes the conflict go away in front of them.
+    ///
+    /// Deliberately NOT carried by a save, and it is not in
+    /// [`spec::KEPT`] either — that partition's population
+    /// is [`spec::OPERATIONS`], the reference's own
+    /// published list of this screen's thirty-one pointer operations, and
+    /// merging is not one of them any more than saving is (see
+    /// [`persist`]'s header, which measured that same gap). The reason a save
+    /// would be wrong regardless: a base is *where the two of us started a
+    /// moment ago*, and handing one back with a file opened an hour later would
+    /// compare a person's work against a version they had forgotten naming.
+    sides: RefCell<merging::Sides>,
 }
 
 thread_local! {
@@ -2169,6 +2189,7 @@ impl LabState {
             inspector_scroll: Rc::new(ScrollState::with_tag(INSPECTOR_SCROLL)),
             produced: RefCell::new(Produced::default()),
             storage: app_storage(),
+            sides: RefCell::new(merging::Sides::default()),
         }
     }
 
@@ -13538,6 +13559,22 @@ const FIELDS: &[SchemaField] = &{
         // of its two implementors re-converts on every load with nothing able
         // to notice.
         SchemaField::new("history", "json"),
+        // ★★★★★ R2008 — where two people's changes to this graph MEET. The
+        // reference's merge tool is reached from source control and draws
+        // exactly this: which of the three versions hold each graph, what each
+        // side did, and the join. Derived on every read, so resolving a
+        // conflict by editing the canvas is visible here as it happens.
+        SchemaField::new("merging", "json"),
+        // ★★★★★ R2008 — say that the graph as it stands is where both sides
+        // started. It takes no argument, spelled the way `save_graph` above
+        // spells the same thing: the version is what is on screen, and a verb
+        // that took one would be a second way to name a document this screen
+        // already holds.
+        SchemaField::action("keep_base", "string"),
+        // ★★★★★ R2008 — bring a version in WITHOUT putting it on the canvas.
+        // The same optional-text grammar the open has, which is the
+        // reference's own: text when there is any, storage otherwise.
+        SchemaField::action("take_peer", "string"),
         // ★★★★★ R2004 — the reference's self-transition command, generalised:
         // a stand-in for this card, placed at its own offset and wired back, so
         // the loop a direct edit refuses is a DECLARATION rather than an
@@ -13884,6 +13921,9 @@ impl ExternalIntrospect for LabOracle {
             "zones" => Ok(IntrospectValue::Json(zones_wire(state))),
             "stand_ins" => Ok(IntrospectValue::Json(stand_ins_wire(state))),
             "history" => Ok(IntrospectValue::Json(history_wire(state))),
+            // ★★★★★ R2008 — where two people's changes meet, run now rather
+            // than remembered.
+            "merging" => Ok(IntrospectValue::Json(merging::merging_wire(state))),
             "definitions" => Ok(IntrospectValue::Json(definitions_wire(state))),
             // ★ R1742 — the SAME value the host publishes for this section, so
             // "one build, two placements" is a fact a client can check rather
@@ -15293,6 +15333,21 @@ impl ExternalIntrospect for LabOracle {
                     .map_err(InvokeError::rejected)
             }
             "clear_graph" => Ok(IntrospectValue::Text(persist::clear(&state))),
+            // ★★★★★ R2008 — the merge's two verbs. `keep_base` names where
+            // both sides started; `take_peer` brings a version in without
+            // putting it on the canvas, with `open_graph`'s optional-text
+            // grammar one line up.
+            "keep_base" => Ok(IntrospectValue::Text(merging::keep_base(&state))),
+            "take_peer" => {
+                let text = match &args {
+                    IntrospectValue::Text(text) => text.as_str(),
+                    IntrospectValue::Null => "",
+                    _ => return Err(InvokeError::TypeMismatch),
+                };
+                merging::take_peer(&state, text)
+                    .map(IntrospectValue::Text)
+                    .map_err(InvokeError::rejected)
+            }
             // ★★★★★ R1789 — the scenario's three verbs.
             "schedule" => {
                 let obj = ObjectArgs::of(&args, "schedule")?;

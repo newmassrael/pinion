@@ -236,6 +236,7 @@ mod items;
 mod landing;
 mod layout;
 mod machine;
+mod merge;
 mod model;
 mod naming;
 mod naming_scope;
@@ -300,6 +301,7 @@ pub use items::{Item, ItemChange, ItemEdit, ItemEditTail, ItemError, Items, Vari
 pub use landing::{Berth, LandError, Landed, Landfall, Turned};
 pub use layout::{Extent, Layered, Organic, Placement, Quality};
 pub use machine::{Committed, ForceError, Machine, Tick};
+pub use merge::{Change, Meet, Meeting, Merged, Standing as ThreeWay, Subject, What};
 pub use model::{
     Act, Admission, Admits, Born, ConnectError, Connected, Container, Control, Conversion,
     Described, Description, Document, DroppedLink, EditError, Flow, Found, InZone, Instance,

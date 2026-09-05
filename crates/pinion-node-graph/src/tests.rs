@@ -25,6 +25,7 @@ use crate::{
 };
 use crate::{AdvancedView, ClassSource, Classified, Classify, ClassifyError, Hidden, PortClass};
 use crate::{Alone, Represented, StandInError};
+use crate::{Change, Meet, Subject, ThreeWay, What};
 use crate::{DefinitionAct, DefinitionError, InZone, PairError, RemovedTree, Used};
 use crate::{Fault, Finding, Fitness, Objection, Surroundings, Weight};
 
@@ -20883,5 +20884,315 @@ fn r2007_the_population_is_counted_two_ways_and_they_agree() {
     assert_eq!(
         after.trees, covered.trees,
         "★ removing a card kept both trees"
+    );
+}
+
+/// A base document and the two sides that will be merged into it (R2008).
+fn three_ways() -> (Document<Op>, Document<Op>, Document<Op>, NodeId, NodeId) {
+    let mut base: Document<Op> = Document::new("root");
+    let one = base.add_node(ROOT, NodeBody::Kind(Op::Add), 0, 0).unwrap();
+    let two = base
+        .add_node(ROOT, NodeBody::Kind(Op::Shout), 0, 100)
+        .unwrap();
+    let remote = base.clone();
+    let local = base.clone();
+    (base, remote, local, one, two)
+}
+
+/// ★★★★★ R2008 — **the same change made twice is AGREEMENT**, which the
+/// reference cannot say and says so.
+///
+/// Its own source, beside the pin case: *given the wide variety of changes that
+/// can be made to a pin it is difficult to identify the change as identical,
+/// for now I'm just flagging all changes to the same pin as a conflict*. It is
+/// difficult there because a difference is a description built for display; the
+/// two versions are still in hand here.
+///
+/// ★ And the second half is what stops this being the same coarseness in a new
+/// shape: two moves are the same KIND of change and are NOT agreement unless
+/// the card ends up in the same place.
+#[test]
+fn r2008_the_same_change_on_both_sides_is_agreement() {
+    let (base, mut remote, mut local, one, _) = three_ways();
+    remote.translate(ROOT, one, 40, 40).unwrap();
+    local.translate(ROOT, one, 40, 40).unwrap();
+
+    let merged = base.merge_from(&remote, &local);
+    assert_eq!(merged.meetings.len(), 1, "one subject, both sides");
+    assert_eq!(
+        merged.meetings[0].meet,
+        Meet::Agreed,
+        "★★★★★ both moved it to the same place — the reference reports this as \
+         a conflict because it cannot compare two differences"
+    );
+    assert!(merged.conflicts().is_empty());
+    assert!(
+        merged.is_clean(),
+        "★ and nobody has to decide anything, which is the whole point"
+    );
+
+    // ★★★★★ The same KIND of change to a different place is NOT agreement, so
+    // the assertion above cannot be passing on `What::Moved == What::Moved`.
+    let mut elsewhere = base.clone();
+    elsewhere.translate(ROOT, one, 90, 90).unwrap();
+    let disagreed = base.merge_from(&remote, &elsewhere);
+    assert_eq!(
+        (
+            disagreed.meetings[0].remote,
+            disagreed.meetings[0].local,
+            disagreed.meetings[0].meet
+        ),
+        (What::Moved, What::Moved, Meet::Harmless),
+        "★★★★★ two moves, one kind, two places — and reading the kind alone \
+         would have called this agreement"
+    );
+
+    // ★ The same holds where it matters most: two sides giving a card the same
+    // new kind agree, two sides giving it DIFFERENT kinds do not.
+    let (mut same_a, mut same_b, mut other) = (base.clone(), base.clone(), base.clone());
+    same_a.set_kind(ROOT, one, Op::Sink).unwrap();
+    same_b.set_kind(ROOT, one, Op::Sink).unwrap();
+    other.set_kind(ROOT, one, Op::Shout).unwrap();
+    assert_eq!(
+        base.merge_from(&same_a, &same_b).meetings[0].meet,
+        Meet::Agreed
+    );
+    assert_eq!(
+        base.merge_from(&same_a, &other).meetings[0].meet,
+        Meet::Conflict
+    );
+}
+
+/// ★★★★★ R2008 — **the harmless-change rule is SYMMETRIC**, where the
+/// reference tests only one side of the pair.
+///
+/// Measured: its exclusion asks whether the REMOTE difference is a move or a
+/// comment and never asks the local one, so *they moved it, I rewrote it* is
+/// excused and *I moved it, they rewrote it* is a conflict. Two people doing
+/// the same two things get different answers depending on who pushed first.
+#[test]
+fn r2008_who_moved_and_who_rewrote_does_not_change_the_answer() {
+    let (base, _, _, one, _) = three_ways();
+
+    let mut moved = base.clone();
+    moved.translate(ROOT, one, 40, 40).unwrap();
+    let mut rewritten = base.clone();
+    rewritten
+        .set_kind(ROOT, one, Op::Shout)
+        .expect("a card takes another kind");
+
+    let one_way = base.merge_from(&moved, &rewritten);
+    let other_way = base.merge_from(&rewritten, &moved);
+    assert_eq!(one_way.meetings.len(), 1);
+    assert_eq!(other_way.meetings.len(), 1);
+    assert_eq!(
+        one_way.meetings[0].meet,
+        Meet::Conflict,
+        "a move against a rewrite is a conflict"
+    );
+    assert_eq!(
+        other_way.meetings[0].meet, one_way.meetings[0].meet,
+        "★★★★★ and it is the SAME verdict with the sides swapped — the \
+         reference answers differently depending on which side moved"
+    );
+    assert_eq!(
+        (one_way.meetings[0].remote, one_way.meetings[0].local),
+        (other_way.meetings[0].local, other_way.meetings[0].remote),
+        "★ the sides really were swapped, so the assertion above is not \
+         comparing a merge with itself"
+    );
+
+    // ★ And two harmless changes are harmless whichever way round, which is the
+    // half the reference's asymmetry gets right by accident.
+    let mut renamed = base.clone();
+    renamed.relabel(ROOT, one, Some("Sum")).unwrap();
+    assert_eq!(
+        base.merge_from(&moved, &renamed).meetings[0].meet,
+        Meet::Harmless
+    );
+    assert_eq!(
+        base.merge_from(&renamed, &moved).meetings[0].meet,
+        Meet::Harmless
+    );
+}
+
+/// ★★★★★ R2008 — **a change meets every change on its subject**, where the
+/// reference stops at the first.
+///
+/// Its search `break`s on the first local difference clashing with a remote
+/// one and keys its conflict map by a pointer to that one, so a second clash
+/// on the same subject passes as a clean change. Here a meeting is keyed by
+/// SUBJECT, so the count is the count of subjects both sides touched.
+#[test]
+fn r2008_every_touched_subject_is_reported() {
+    let (base, mut remote, mut local, one, two) = three_ways();
+    remote.set_kind(ROOT, one, Op::Shout).unwrap();
+    remote.set_kind(ROOT, two, Op::Add).unwrap();
+    local.translate(ROOT, one, 10, 10).unwrap();
+    local.remove_node(ROOT, two).unwrap();
+
+    let merged = base.merge_from(&remote, &local);
+    assert_eq!(
+        merged.meetings.len(),
+        2,
+        "★★★★★ BOTH subjects both sides touched — not the first one found: {:?}",
+        merged.meetings
+    );
+    assert!(
+        merged.meetings.iter().all(|met| met.meet == Meet::Conflict),
+        "★ each is a real disagreement: {:?}",
+        merged.meetings
+    );
+    assert_eq!(merged.conflicts().len(), 2);
+    assert!(!merged.is_clean());
+
+    // ★ And each side's own change list is complete, so the meetings are a
+    // JOIN of two full lists rather than a walk that stopped early.
+    assert_eq!(merged.remote.len(), 2, "{:?}", merged.remote);
+    assert_eq!(merged.local.len(), 2, "{:?}", merged.local);
+}
+
+/// ★★★★★ R2008 — **a merge sees every field that carries meaning**, and the
+/// compiler is what keeps that true.
+///
+/// The bypass switch's own documentation calls it *the one fact on a node,
+/// other than its body and its links, that changes what the graph means*. A
+/// difference function that reads a hand-listed set of fields answers *nothing
+/// changed* for it — which is what this module's first draft did, over five of
+/// the eleven fields at once — so the function destructures instead and a new
+/// field cannot compile until it is placed.
+#[test]
+fn r2008_a_switch_that_changes_meaning_is_a_change() {
+    let (base, _, _, one, _) = three_ways();
+
+    // Each of these is a field NO body/position/label comparison can see, and
+    // the split puts them on opposite sides of `structural`.
+    let mut bypassed = base.clone();
+    bypassed.set_bypassed(ROOT, one, true).unwrap();
+    let mut switched_off = base.clone();
+    switched_off.set_disabled(ROOT, one, true).unwrap();
+    let mut folded = base.clone();
+    folded
+        .put_away_ports(ROOT, one, crate::PutAway::Port(Side::Input, 0))
+        .expect("the card has an input to fold away");
+
+    for (side, what) in [
+        (&bypassed, What::Rewritten),
+        (&switched_off, What::Rewritten),
+        (&folded, What::Restyled),
+    ] {
+        assert_eq!(
+            side.changes_from(&base),
+            vec![Change {
+                tree: ROOT,
+                at: Subject::Node(one),
+                what,
+            }],
+            "★★★★★ a merge that cannot see this field drops the change silently"
+        );
+    }
+
+    // ★★★★★ And the consequence the split exists for: a bypass against a move
+    // is a CONFLICT, where a folded port against a move is not.
+    let mut moved = base.clone();
+    moved.translate(ROOT, one, 30, 0).unwrap();
+    assert_eq!(
+        base.merge_from(&bypassed, &moved).meetings[0].meet,
+        Meet::Conflict
+    );
+    assert_eq!(
+        base.merge_from(&folded, &moved).meetings[0].meet,
+        Meet::Harmless
+    );
+
+    // ★ A muted link is the same question one type over: the link's own field
+    // documentation says the evaluator reads it, so it changes what the graph
+    // MEANS even though neither end moved.
+    let mut wired = base.clone();
+    let sum = wired
+        .add_node(ROOT, NodeBody::Kind(Op::Add), 200, 0)
+        .unwrap();
+    let link = wired
+        .connect(
+            ROOT,
+            Socket { node: one, port: 0 },
+            Socket { node: sum, port: 0 },
+        )
+        .expect("a number reaches an addend")
+        .link;
+    let mut muted = wired.clone();
+    muted.set_link_muted(ROOT, link, true).unwrap();
+    assert_eq!(
+        muted.changes_from(&wired),
+        vec![Change {
+            tree: ROOT,
+            at: Subject::Link(link),
+            what: What::Rewritten,
+        }],
+        "★★★★★ a link has no looks — every field of it carries meaning"
+    );
+}
+
+/// ★★★★★ R2008 — **which of the three hold a tree** is the existence axis the
+/// reference's merge puts above everything else, and it is the question
+/// `LinkLayer` already answers one dimension narrower.
+#[test]
+fn r2008_a_tree_says_which_of_the_three_hold_it() {
+    let (base, mut remote, local, _, _) = three_ways();
+    let added = remote.add_definition("theirs");
+    remote
+        .add_node(added, NodeBody::Kind(Op::Sink), 0, 0)
+        .unwrap();
+
+    let merged = base.merge_from(&remote, &local);
+    let (_, how) = merged
+        .trees
+        .iter()
+        .find(|(tree, _)| *tree == added)
+        .copied()
+        .expect("the added tree is in the table");
+    assert_eq!(
+        how,
+        ThreeWay {
+            base: false,
+            remote: true,
+            local: false,
+        }
+    );
+    assert!(
+        how.added_by_one(),
+        "★ one side added it, so there is nothing to weigh it against"
+    );
+    assert!(!how.removed_by_one());
+
+    // ★★★★★ The other shape: one side removed what the other still has, which
+    // is the one case a merge cannot settle on its own — keeping and deleting
+    // are both losses, in opposite directions.
+    let mut shared_base = base.clone();
+    let shared = shared_base.add_definition("shared");
+    let kept = shared_base.clone();
+    let mut without = shared_base.clone();
+    without
+        .remove_definition(shared, Used::TakeThemToo)
+        .expect("nothing stands for it");
+    let split = shared_base.merge_from(&kept, &without);
+    let (_, how) = split
+        .trees
+        .iter()
+        .find(|(tree, _)| *tree == shared)
+        .copied()
+        .expect("the shared tree is in the table");
+    assert!(
+        how.removed_by_one(),
+        "★★★★★ one side removed it and the other did not: {how:?}"
+    );
+    assert!(
+        split.meetings.is_empty(),
+        "★ and no node of it met anything — the tree IS the disagreement"
+    );
+    assert!(
+        !split.is_clean(),
+        "★★★★★ which alone stops the merge being clean, with no meeting to \
+         carry it"
     );
 }

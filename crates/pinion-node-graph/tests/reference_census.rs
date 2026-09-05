@@ -57,6 +57,7 @@ use pinion_node_graph::{
 };
 use pinion_node_graph::{Alone, Archive, BeaconError, Fitness, Represented, StandInError, Weight};
 use pinion_node_graph::{Carried, ZoneSwapError};
+use pinion_node_graph::{Change, Meet, Subject, ThreeWay, What};
 use pinion_node_graph::{
     Copying, DefinitionAct, DefinitionError, InZone, InsertError, PairError, Renamed, Substitution,
     Tree, Unlandable, Used,
@@ -2057,6 +2058,14 @@ fn hook_round_proofs() -> Vec<Proof> {
             "engine",
             "script_editor::CompileBlueprint",
             engine_script_editor_compile_blueprint,
+        ),
+        // R2008 — the script editor's MERGE: a base and the two versions built
+        // on it. The row's own sentence said no diff derivation was built here
+        // and one was; what was absent was the third version and the join.
+        proof(
+            "engine",
+            "script_editor::BeginBlueprintMerge",
+            engine_script_editor_begin_blueprint_merge,
         ),
         // R1944 — a definition can be removed, and the removal says what went.
         proof(
@@ -15756,4 +15765,145 @@ fn engine_script_editor_compile_blueprint() {
     // (E) ★ And the verdict is the three-way, which is the half of the
     // reference's six-member status that is an OUTCOME rather than a lifecycle.
     assert!(Fitness::ALL.contains(&document.review().fitness()));
+}
+
+/// ★★★★★ R2008 — **a base and the two versions built on it, and where their
+/// changes meet.**
+///
+/// The reference's own three-way entry point takes exactly this
+/// `(base, remote, local, resolved)`, and its view takes the union of graph
+/// paths, records per path which of the three hold it, diffs each side against
+/// the base and then joins the two difference lists. `Document::merge_from` is
+/// that shape, and `Document::changes_from` is one side of it.
+///
+/// ⚠ **The pin's own sentence is wrong in one clause and this proof re-measured
+/// it** (R2008): it said *no diff or merge derivation is built on that*, and a
+/// diff derivation was already here — `LinkLayer` answers *in both / in the
+/// first only / in the second only* over two link sets, which is this same
+/// existence question one dimension narrower. What was absent is the THIRD
+/// version and the join, not diffing.
+///
+/// # Three measured defects in the reference's conflict rule, one of which its
+/// own source states
+///
+/// 1. **The same change made by both is a conflict.** Its comment beside the
+///    pin case: *given the wide variety of changes that can be made to a pin it
+///    is difficult to identify the change as identical, for now I'm just
+///    flagging all changes to the same pin as a conflict.*
+/// 2. **The harmless-change exclusion is asymmetric** — it tests whether the
+///    REMOTE difference is a move or a comment and never asks the local one, so
+///    *they moved it, I rewrote it* is excused and the mirror is a conflict.
+/// 3. **A change conflicts with at most one other.** The search stops at its
+///    first match and the map is keyed by a pointer to that one, so a second
+///    clash on the same subject passes as a clean change.
+#[test]
+fn engine_script_editor_begin_blueprint_merge() {
+    // (A) Three versions of one document, which is what the reference's
+    // explicit entry point takes and what its source-control-driven one
+    // resolves to.
+    let mut base: Document<Op> = Document::new("root");
+    let add = node(&mut base, Op::Add);
+    let sink = node(&mut base, Op::Sink);
+    wire(&mut base, add, 0, sink, 0);
+
+    let mut remote = base.clone();
+    let mut local = base.clone();
+    remote.translate(ROOT, add, 40, 0).unwrap();
+    local.translate(ROOT, add, 40, 0).unwrap();
+
+    // (B) ★★★★★ THE SAME CHANGE ON BOTH SIDES IS AGREEMENT — the answer the
+    // reference says out loud that it cannot give.
+    let merged = base.merge_from(&remote, &local);
+    assert_eq!(merged.meetings.len(), 1, "{:?}", merged.meetings);
+    assert_eq!(merged.meetings[0].meet, Meet::Agreed);
+    assert!(merged.is_clean(), "nobody has to decide anything");
+
+    // ★ And it is not passing on the KIND of change alone: the same kind to a
+    // different place is not agreement.
+    let mut elsewhere = base.clone();
+    elsewhere.translate(ROOT, add, 90, 0).unwrap();
+    let apart = base.merge_from(&remote, &elsewhere);
+    assert_eq!(
+        (
+            apart.meetings[0].remote,
+            apart.meetings[0].local,
+            apart.meetings[0].meet
+        ),
+        (What::Moved, What::Moved, Meet::Harmless),
+        "★★★★★ two moves, one kind, two places"
+    );
+
+    // (C) ★★★★★ THE HARMLESS RULE IS SYMMETRIC. A move against a rewrite is
+    // the same verdict whichever side made which.
+    let mut rewritten = base.clone();
+    rewritten.set_kind(ROOT, add, Op::Mul).unwrap();
+    let one_way = base.merge_from(&remote, &rewritten);
+    let other_way = base.merge_from(&rewritten, &remote);
+    assert_eq!(one_way.meetings[0].meet, Meet::Conflict);
+    assert_eq!(other_way.meetings[0].meet, Meet::Conflict);
+    assert_eq!(
+        (one_way.meetings[0].remote, one_way.meetings[0].local),
+        (other_way.meetings[0].local, other_way.meetings[0].remote),
+        "★ the sides really were swapped"
+    );
+
+    // (D) ★★★★★ EVERY TOUCHED SUBJECT IS REPORTED, not the first match found.
+    let mut theirs = base.clone();
+    let mut ours = base.clone();
+    theirs.set_kind(ROOT, add, Op::Mul).unwrap();
+    theirs.set_bypassed(ROOT, sink, true).unwrap();
+    ours.translate(ROOT, add, 10, 10).unwrap();
+    ours.remove_node(ROOT, sink).unwrap();
+    let both = base.merge_from(&theirs, &ours);
+    assert_eq!(
+        both.conflicts().len(),
+        2,
+        "★★★★★ both subjects, where the reference reports one: {:?}",
+        both.meetings
+    );
+
+    // ★ A bypass is one of the five fields the first draft of this could not
+    // see. It changes what the graph MEANS by its own field's documentation,
+    // so it is structural and meets a move as a conflict.
+    let mut bypassed = base.clone();
+    bypassed.set_bypassed(ROOT, sink, true).unwrap();
+    assert_eq!(
+        bypassed.changes_from(&base),
+        vec![Change {
+            tree: ROOT,
+            at: Subject::Node(sink),
+            what: What::Rewritten,
+        }]
+    );
+
+    // (E) ★★★★★ WHICH OF THE THREE HOLD A TREE — the existence axis the
+    // reference's view puts above everything else, and the one shape a merge
+    // cannot settle alone: one side removed what the other still has.
+    let mut with = base.clone();
+    let shared = with.add_definition("shared");
+    let kept = with.clone();
+    let mut without = with.clone();
+    without
+        .remove_definition(shared, Used::TakeThemToo)
+        .expect("nothing stands for it");
+    let split = with.merge_from(&kept, &without);
+    let (_, how) = split
+        .trees
+        .iter()
+        .find(|(tree, _)| *tree == shared)
+        .copied()
+        .expect("the tree is in the table");
+    assert_eq!(
+        how,
+        ThreeWay {
+            base: true,
+            remote: true,
+            local: false,
+        }
+    );
+    assert!(how.removed_by_one() && !how.added_by_one());
+    assert!(
+        split.meetings.is_empty() && !split.is_clean(),
+        "★★★★★ no meeting carries it — the TREE is the disagreement"
+    );
 }

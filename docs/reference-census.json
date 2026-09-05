@@ -3903,10 +3903,10 @@
       "verdict": "app-content"
     },
     "script_editor::BeginBlueprintMerge": {
-      "covered_by": "a three-way merge of two versions of a graph. A graph IS a value here (`Fragment`, serializable and comparable) and no diff or merge derivation is built on that",
+      "covered_by": "`Document::merge_from` — a base and the two versions built on it, giving which of the three hold each tree, what each side changed, and where those changes meet. `Document::changes_from` is one side of it. R2008 re-measured this row's own sentence and one clause was false: a diff derivation was already here (`LinkLayer`, the same existence question over two link sets), so what was absent was the THIRD version and the join",
       "mechanism": "script-editor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_script_editor_begin_blueprint_merge",
+      "verdict": "have"
     },
     "script_editor::ClearAllBreakpoints": {
       "covered_by": "R1644 — `Document::set_breakpoint` / `Breakpoints`. A breakpoint is a `NodeSite`: a node in SOME SET of its occurrences, which the reference cannot address because it expands a macro into a copy per use before anything runs. It cannot change the run — the timeline is computed without reference to any breakpoint, which a pure run (R1600) is what buys — `Breakpoints::clear`, answering how many were forgotten",

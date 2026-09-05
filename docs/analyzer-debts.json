@@ -242,17 +242,6 @@
       ]
     },
     {
-      "name": "debt-a-node-cannot-be-collapsed-muted-or-deleted-only-its-whole-group",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links screen-a-vs-canon-operation-census"
-      ]
-    },
-    {
       "name": "debt-a-node-graphs-only-state-is-a-delay",
       "substituted": false,
       "blocked_by": "spec-round",
@@ -483,17 +472,6 @@
       "closed_because": "",
       "why": [
         "links analyzer-debt-repayment-loop"
-      ]
-    },
-    {
-      "name": "debt-node-system-coverage-campaign",
-      "substituted": true,
-      "blocked_by": "campaign",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links protocol-analyzer-class-tool-capability-audit"
       ]
     },
     {
