@@ -637,17 +637,6 @@
       ]
     },
     {
-      "name": "debt-the-shells-walk-cannot-press-a-mounted-screens-control",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links debt-the-canon-is-one-app-and-we-are-many-binaries"
-      ]
-    },
-    {
       "name": "debt-the-surplus-ratchet-says-non-empty-not-non-shrinking",
       "substituted": false,
       "blocked_by": "buildable",
@@ -667,6 +656,17 @@
       "closed_because": "",
       "why": [
         "links debt-canon-gui-surface-census"
+      ]
+    },
+    {
+      "name": "debt-the-walks-wheel-reaches-a-mounted-screen-without-the-router",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
     },
     {

@@ -350,10 +350,17 @@ struct Painted {
     /// reached it. Read from the framework's own census rather than from this
     /// module's idea of which tags ought to be inert.
     inert: BTreeMap<String, (UnavailableKind, String, Recourse)>,
+    /// ★★★★★ R2010 — the window this frame was painted for.
+    ///
+    /// A shot is *where things are*, and where a thing is only means something
+    /// in a window. Carried so a press aimed into this frame can be delivered
+    /// through the application's own router — see [`press_tag`], which needs
+    /// the scene and had no way to know which one this is.
+    size: (u32, u32),
 }
 
 impl Painted {
-    fn of(scene: &Scene) -> Self {
+    fn of(scene: &Scene, size: (u32, u32)) -> Self {
         let mut tags = BTreeMap::new();
         let mut runs = Vec::new();
         scene.for_each_node(&mut |visit| {
@@ -386,7 +393,12 @@ impl Painted {
                 )
             })
             .collect();
-        Self { tags, runs, inert }
+        Self {
+            tags,
+            runs,
+            inert,
+            size,
+        }
     }
 
     fn rect(&self, tag: &str) -> Option<Rect> {
@@ -469,7 +481,7 @@ fn painted_at(size: (u32, u32)) -> (Painted, Scene) {
     // in which nothing had yet resolved, and would answer no for a reason that
     // has nothing to do with the screen.
     pinion_core::scene_disabled::resolve_disabled(&mut scene);
-    (Painted::of(&scene), scene)
+    (Painted::of(&scene, size), scene)
 }
 
 /// Which case a check is looking at.
@@ -4020,12 +4032,46 @@ fn aim(shot: &Painted, tag: &str) -> (u32, u32) {
     )
 }
 
-/// A press and a release at one painted tag's centre.
+/// ★★★★★ R2010 — **a press and a release at one painted tag's centre, through
+/// the application's own router.**
+///
+/// # Why this does not call the host screen directly any more
+///
+/// It used to be `ShellOracle::{move_cursor, press, release}`, which resolves a
+/// press against the HOST's own hit test and nothing else. That is right for a
+/// mark the host draws and silently does nothing for a mark a mounted screen
+/// draws — and this walk has six mounted screens, whose marks are painted into
+/// the same frame and named in the same shot. So a caller aiming at one got a
+/// helper that performed no press and reported no failure: R1957's measurement,
+/// which is the whole of `debt-the-shells-walk-cannot-press-a-mounted-screens-control`.
+///
+/// The router resolves the surface the same way the window does, so the same
+/// two lines now reach whichever surface drew the mark.
+///
+/// ⚠ **And it says so when it cannot.** A press the router would deliver
+/// nowhere is the failure this helper was silent about, so it is now the one
+/// thing it refuses: `hovering` is the surface the press is about to be sent
+/// to, and `None` means the point resolves to no surface at all.
+///
+/// ⚠ The frame is re-painted from [`Painted::size`] rather than carried,
+/// because a shot and its scene are two halves of one frame and only the shot
+/// travels through this signature. The view function is pure (§6.3), so
+/// re-running it on unchanged state produces the same scene; on state a
+/// previous press has moved it produces the CURRENT one, which is what the
+/// direct path resolved against too.
 fn press_tag(state: &std::rc::Rc<ShellState>, shot: &Painted, tag: &str) {
-    let (x, y) = aim(shot, tag);
-    ShellOracle::move_cursor(state, x, y);
-    ShellOracle::press(state);
-    ShellOracle::release(state);
+    let _ = state;
+    let at = aim(shot, tag);
+    let mut hand = hand_on(painted_at(shot.size).1);
+    hand.cursor(at);
+    assert!(
+        hand.hovering().is_some(),
+        "a press aimed at `{tag}` at {at:?} resolves to no surface, so the \
+         router would deliver it nowhere — which is the failure this helper \
+         used to keep quiet about",
+    );
+    hand.press();
+    hand.release();
 }
 
 /// A press at one painted tag's centre, a move by a signed delta, a release.
@@ -4045,12 +4091,23 @@ fn drag_tag(state: &std::rc::Rc<ShellState>, shot: &Painted, tag: &str, by: (i32
 /// a delta that reaches them at one window size reaches somewhere else at
 /// another. The delta form above is written in terms of this one, so the cursor
 /// arc is the same code for both.
+///
+/// ★★★★★ R2010 — through the router, for [`press_tag`]'s reason: a carry that
+/// begins on a mark a mounted screen drew is a carry the host's own hit test
+/// never sees.
 fn drag_tag_to(state: &std::rc::Rc<ShellState>, shot: &Painted, tag: &str, to: (u32, u32)) {
-    let (x, y) = aim(shot, tag);
-    ShellOracle::move_cursor(state, x, y);
-    ShellOracle::press(state);
-    ShellOracle::move_cursor(state, to.0, to.1);
-    ShellOracle::release(state);
+    let _ = state;
+    let from = aim(shot, tag);
+    let mut hand = hand_on(painted_at(shot.size).1);
+    hand.cursor(from);
+    assert!(
+        hand.hovering().is_some(),
+        "a carry beginning at `{tag}` at {from:?} resolves to no surface, so \
+         the router would deliver it nowhere",
+    );
+    hand.press();
+    hand.cursor(to);
+    hand.release();
 }
 
 /// Read one introspection slot, through the surface an agent reads it through.
@@ -4692,162 +4749,32 @@ fn carry_to_middle(state: &std::rc::Rc<ShellState>, shot: &Painted, kind: &str) 
         .expect("a carry over the middle of the board has a landing")
 }
 
-/// ★★★★★ R1735 — a **real router drag session** against the running screen.
+/// ★★★★★ R2010 — **the walk's ONE hand on the assembled tool**: the
+/// framework's own [`DrivenPointer`](pinion_runtime::DrivenPointer), opened
+/// over the paint this frame produced.
 ///
-/// Not a helper called directly: an `InputRouter` is built over the paint this
-/// sweep just produced and a state scene holding this screen's own `External`,
-/// and the gesture goes in as cursor moves, a press and a release. So every
-/// link is exercised — the root's `drop_target` opt-in that makes the drop point
-/// resolve to this surface at all, the declaration that gates dispatch, this
-/// screen's `drop_offered`, the standing the router forwards back to the source,
-/// and the commit that takes the acceptance as its witness.
+/// # Why this is a name for a framework type and not a session built here
 ///
-/// Before this round none of that could run against this screen: nothing routed
-/// a drop to it, because no node in its paint had opted in as a drop region.
-/// The screen-driven `press` / `move_cursor` / `release` path is still exercised
-/// wherever the claim is about the PAINT — but a claim about what a release
-/// DOES belongs here, because the router is what performs one.
-struct RouterDrag {
-    router: pinion_runtime::InputRouter,
-    model: Scene,
-    /// The extent each surface was PLACED in, by tag — what `deliver` grants.
-    placed: std::collections::BTreeMap<String, (u32, u32)>,
-}
-
-impl RouterDrag {
-    /// Open a session over `scene`, with **this application's whole surface
-    /// set** behind it.
-    ///
-    /// ★★★★★ R1958 — the model is
-    /// [`CoreShell::state_scene`](pinion_runtime::CoreShell::state_scene), the
-    /// same derivation the running application boots from, rather than one
-    /// built here.
-    ///
-    /// # ⚠ What the hand-built model could not do
-    ///
-    /// It was the host's own `External`, alone. A press aimed at a mounted
-    /// screen's control resolves — correctly — to that screen's tag, and no
-    /// External in that model answered it, so the press went nowhere: measured
-    /// at R1957, `lab.toolbar.more` is painted, the press lands, and
-    /// `toolbar_open` never turns on. The real application has those surfaces
-    /// because `create_extra_externals` returns `screens.externals(journey)`,
-    /// and that call was one of the two lines this constructor had no way to
-    /// reach. Asking the runtime for the scene reaches both.
-    ///
-    /// ⚠ Built inside the CURRENT owner scope, so the surfaces resolve the same
-    /// reactive state the view function does. The set is the journey's, so a
-    /// session opened after `state.go(…)` holds the destination's screens.
-    fn over(_state: &std::rc::Rc<ShellState>, scene: Scene) -> Self {
-        let owner = pinion_core::reactive::Owner::current()
-            .expect("the sweep runs inside a scope, which is where the surfaces resolve");
-        let mut model = pinion_runtime::CoreShell::<super::AnalyzerShellView>::state_scene(&owner);
-        // ★★★★★ R1958 — **announce the surface sizes, exactly as a frame
-        // does.** `layout_point` asks `external::surface_size` for the basis it
-        // multiplies a pointer FRACTION by, and that store is filled by
-        // `announce_external_sizes` — a per-frame step of the real shell that a
-        // hand-driven router never performed. Without it a mounted screen reads
-        // the `(1, 1)` fallback and floors every fraction to zero, which is the
-        // failure R1826 measured on this very binding when a second window
-        // forgot a surface: the cursor reported `0,0` and hit nothing.
-        let mut known = pinion_runtime::ExternalSizes::default();
-        pinion_runtime::announce_external_sizes(&scene, &mut model, &mut known);
-        // ★★★★★ R1958.2 — the rectangle each surface was PLACED in, kept so
-        // every pointer call below can grant it. See `deliver` for why.
-        let mut surfaces: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-        model.for_each_node(&mut |visit| {
-            if matches!(visit.node, Scene::External(_)) {
-                if let Some(tag) = visit.node.tag() {
-                    surfaces.insert(tag.to_owned());
-                }
-            }
-        });
-        let mut placed: std::collections::BTreeMap<String, (u32, u32)> =
-            std::collections::BTreeMap::new();
-        scene.for_each_node(&mut |visit| {
-            let (Some(tag), Some(rect)) = (visit.node.tag(), visit.absolute_rect()) else {
-                return;
-            };
-            if surfaces.contains(tag) && rect.w > 0 && rect.h > 0 {
-                placed.insert(tag.to_owned(), (rect.w, rect.h));
-            }
-        });
-        let mut router = pinion_runtime::InputRouter::new();
-        router.update_paint_scene(scene, &mut model);
-        Self {
-            router,
-            model,
-            placed,
-        }
-    }
-
-    /// ★★★★★ R1958.2 — **every pointer call runs inside the extent grant the
-    /// surface under the cursor was placed with.**
-    ///
-    /// # The measurement this comes from
-    ///
-    /// `external::layout_size` — what a mounted screen asks for its own window
-    /// — reads three sources in order: the enclosing
-    /// [`with_surface_extent`](pinion_core::external::with_surface_extent)
-    /// grant, then `painting_extent()` when an `Owner` scope is live, then the
-    /// recorded `surface_size`. A sweep runs INSIDE an owner scope, so it took
-    /// the middle branch and handed the mounted screen **the shell's viewport**
-    /// (1440x900) as its own window — while the screen had been PAINTED into a
-    /// 1388x820 region. Measured: the cursor arrived at exactly the right
-    /// place, `767,23` for a control the shell drew at `(805, 63)` in a surface
-    /// at `(52, 52)`, and the screen resolved that point against a toolbar it
-    /// would have laid out in a window 52 pixels wider — so the press hit
-    /// nothing.
-    ///
-    /// The running application does not take that branch: input arrives outside
-    /// any owner scope and falls through to `surface_size`, which
-    /// `announce_external_sizes` has just filled from the same rectangle. So
-    /// granting the placement here is not a special case for tests — it makes
-    /// the sweep read the number production reads, through the source
-    /// `layout_size` documents as beating both others.
-    fn deliver(&mut self, call: impl FnOnce(&mut pinion_runtime::InputRouter, &mut Scene)) {
-        let under = self
-            .router
-            .hover_target(pinion_runtime::PointerId::MOUSE)
-            .and_then(|tag| self.placed.get(tag).map(|extent| (tag.to_owned(), *extent)));
-        match under {
-            Some((tag, extent)) => {
-                let Self { router, model, .. } = self;
-                pinion_core::external::with_surface_extent(&tag, extent, || call(router, model));
-            }
-            None => call(&mut self.router, &mut self.model),
-        }
-    }
-
-    fn cursor(&mut self, at: (u32, u32)) {
-        // ⚠ Two calls: the first establishes the hover (and so the grant the
-        // second runs under), because `deliver` can only grant what the cursor
-        // is already over. A move that crosses INTO a surface is therefore
-        // delivered ungranted and then again granted — which is what the real
-        // sequence does too, since a frame's grant follows the paint that
-        // placed the surface.
-        for _ in 0..2 {
-            self.deliver(|router, model| {
-                router.cursor_moved(
-                    pinion_runtime::PointerId::MOUSE,
-                    f64::from(at.0),
-                    f64::from(at.1),
-                    model,
-                );
-            });
-        }
-    }
-
-    fn press(&mut self) {
-        self.deliver(|router, model| {
-            router.pointer_down(pinion_runtime::PointerId::MOUSE, model);
-        });
-    }
-
-    fn release(&mut self) {
-        self.deliver(|router, model| {
-            router.pointer_up(pinion_runtime::PointerId::MOUSE, model);
-        });
-    }
+/// R1735 built a real router session in this file by hand, so that a claim
+/// about what a release DOES could be made by performing one. R1957 then found
+/// what a hand-built one leaves out, and R1958 measured it as **three failures
+/// in a row, each hiding the next**: the model held the host's surface alone,
+/// no size had been announced, and a guest asked anything inside an owner scope
+/// answers about its HOST's window. Each was repaired here, in an example.
+///
+/// R2010 published the composition
+/// ([`pinion_runtime::driven_pointer`]) — the five steps a window performs
+/// before a press means anything — so this file names it instead of holding a
+/// second copy of it. What is left here is the one thing that is this
+/// application's: which binding it is composed from.
+///
+/// ⚠ Opened inside the CURRENT owner scope, so the surfaces resolve the same
+/// reactive state the view function does, and the surface set is the journey's:
+/// a session opened after `state.go(…)` holds that destination's screens.
+fn hand_on(scene: Scene) -> pinion_runtime::DrivenPointer {
+    let owner = pinion_core::reactive::Owner::current()
+        .expect("the sweep runs inside a scope, which is where the surfaces resolve");
+    pinion_runtime::DrivenPointer::over::<super::AnalyzerShellView>(&owner, scene)
 }
 
 /// The middle of the board, in window coordinates.
@@ -4868,7 +4795,7 @@ fn router_standings(
     pinion_core::drop_target::DropStanding,
 ) {
     let row = aim(shot, &format!("shell.palette.{kind}"));
-    let mut drag = RouterDrag::over(state, scene);
+    let mut drag = hand_on(scene);
     drag.cursor(row);
     drag.press();
     drag.cursor(board_middle());
@@ -5056,7 +4983,7 @@ fn r1733_a_carry_lands_where_its_preview_said_it_would() {
         // longer takes, and it would have stayed green while the gesture a
         // person makes did nothing.
         let row = aim(shot, &format!("shell.palette.{kind}"));
-        let mut drag = RouterDrag::over(state, painted_at(case.size).1);
+        let mut drag = hand_on(painted_at(case.size).1);
         drag.cursor(row);
         drag.press();
         drag.cursor(board_middle());
@@ -5195,7 +5122,7 @@ fn r1735_a_fresh_carry_is_not_the_shells_to_commit() {
     sweep(|state, shot, _, case| {
         let before = state.board.get().tiles().len();
         let row = aim(shot, &format!("shell.palette.{kind}"));
-        let mut drag = RouterDrag::over(state, painted_at(case.size).1);
+        let mut drag = hand_on(painted_at(case.size).1);
         drag.cursor(row);
         drag.press();
         drag.cursor(board_middle());
@@ -5258,7 +5185,7 @@ fn r1733_a_carry_let_go_off_the_board_is_not_a_placement() {
             .map(|t| t.id.as_str().to_owned())
             .collect();
         let row = aim(shot, &format!("shell.palette.{kind}"));
-        let mut drag = RouterDrag::over(state, painted_at(case.size).1);
+        let mut drag = hand_on(painted_at(case.size).1);
         drag.cursor(row);
         drag.press();
         // Onto the board, so a landing exists...
@@ -8052,9 +7979,10 @@ fn r1956_things_placed_beside_each_other_share_their_seats_centre_line() {
 ///    `Owner` is live, then the recorded size. The middle branch handed the
 ///    screen the shell's viewport (1440x900) while it had been painted into
 ///    1388x820, so it resolved a perfectly-delivered cursor against a toolbar
-///    it would have laid out 52 pixels wider. [`RouterDrag::deliver`] grants
-///    the placement, which is the source `layout_size` documents as beating
-///    both others and is the same number production reads.
+///    it would have laid out 52 pixels wider.
+///    [`DrivenPointer`](pinion_runtime::DrivenPointer) grants the placement,
+///    which is the source `layout_size` documents as beating both others and is
+///    the same number production reads.
 ///
 /// ⚠ The cursor was never the problem and the probes proved it in this order:
 /// the hover is `node_lab`, the delivered point is `767,23` for a control the
@@ -8083,7 +8011,7 @@ fn r1958_a_press_reaches_a_mounted_screens_control() {
             "the press lands on the mounted screen, not on the host: {hit:?}",
         );
 
-        let mut drag = RouterDrag::over(&state, scene);
+        let mut drag = hand_on(scene);
         // ★ R1958.1 — and a cursor move onto that control leaves the ROUTER
         // hovering the mounted screen, which is the tag a press is then sent
         // to (`InputRouter::pointer_down` → `dispatch_send(state_scene, hover,
@@ -8092,24 +8020,20 @@ fn r1958_a_press_reaches_a_mounted_screens_control() {
         // press is addressed correctly and still does not move the screen.
         drag.cursor(centre(control));
         assert_eq!(
-            drag.router.hover_target(pinion_runtime::PointerId::MOUSE),
+            drag.hovering(),
             Some("node_lab"),
             "a cursor over a mounted screen's control hovers that screen, so \
              the press that follows is addressed to it",
         );
-        let mut surfaces: Vec<String> = Vec::new();
-        drag.model.for_each_node(&mut |visit| {
-            if matches!(visit.node, Scene::External(_)) {
-                surfaces.push(visit.node.tag().unwrap_or("<untagged>").to_owned());
-            }
-        });
+        let surfaces: Vec<&str> = drag.surfaces().collect();
         assert!(
-            surfaces.iter().any(|tag| tag == "node_lab"),
-            "the router's model holds the mounted screen's surface, so a press \
-             that resolves to it has somewhere to go; it holds {surfaces:?}",
+            surfaces.contains(&"node_lab"),
+            "the session holds the mounted screen's surface, at the extent the \
+             paint placed it in, so a press that resolves to it has somewhere \
+             to go; it holds {surfaces:?}",
         );
         assert!(
-            surfaces.iter().any(|tag| tag == super::VIEW_TAG),
+            surfaces.contains(&super::VIEW_TAG),
             "and the host's own, which the drag cases depend on: {surfaces:?}",
         );
 
@@ -8277,8 +8201,8 @@ fn lab_report(state: &std::rc::Rc<ShellState>, verb: &str, arg: &str) -> serde_j
 /// A press on a card's dial pin, a move to empty canvas, a release — where this
 /// screen used to say *a link needs an accept pin* and throw the gesture away —
 /// then a press on a palette role. Every step goes through the router against
-/// the shell's real surface set (see [`RouterDrag::over`] for the three things
-/// that had to be true before a press could reach a mounted screen at all).
+/// the shell's real surface set (see [`hand_on`] for the five things that had
+/// to be true before a press could reach a mounted screen at all).
 #[test]
 fn r1987_a_wire_let_go_over_the_canvas_is_taken_by_the_card_chosen_for_it() {
     let owner = Owner::new();
@@ -8387,7 +8311,7 @@ fn a_wire_is_let_go_over_empty_canvas(state: &std::rc::Rc<ShellState>) -> Waitin
         .len();
     let clear = a_clear_patch_of_canvas(&shot);
 
-    let mut drag = RouterDrag::over(state, scene);
+    let mut drag = hand_on(scene);
     drag.cursor(aim(&shot, &pin_tag));
     drag.press();
     drag.cursor(clear);
@@ -8458,7 +8382,7 @@ fn a_press_on_that_role_brings_a_card_in_already_wired(
 ) {
     let (shot, scene) = painted_at((WIN_W, WIN_H));
     let row = format!("lab.palette.role.{taker}");
-    let mut press = RouterDrag::over(state, scene);
+    let mut press = hand_on(scene);
     press.cursor(aim(&shot, &row));
     press.press();
     press.release();
@@ -9544,11 +9468,11 @@ const CANON_GESTURES: &[(&str, CanonReach, CanonDrive)] = &[
     (
         "gesture.carry",
         |_| {},
-        |state| {
+        |_state| {
             let kind = first_placeable();
             let shot = painted();
             let row = aim(&shot, &format!("shell.palette.{kind}"));
-            let mut drag = RouterDrag::over(state, painted_at((WIN_W, WIN_H)).1);
+            let mut drag = hand_on(painted_at((WIN_W, WIN_H)).1);
             drag.cursor(row);
             drag.press();
             drag.cursor(board_middle());
@@ -10162,16 +10086,16 @@ fn focus_standing(wire: &serde_json::Value, card: &str) -> (bool, Vec<String>) {
 /// control — which is why this opens the overflow rather than aiming at a seat
 /// the row does not have. Neither case is assumed: the seat is looked for on
 /// the row first.
-fn press_the_focus_chip(state: &std::rc::Rc<ShellState>) {
+fn press_the_focus_chip() {
     let (shot, scene) = painted_at((WIN_W, WIN_H));
     if shot.rect("lab.toolbar.focus").is_none() {
-        let mut open = RouterDrag::over(state, scene);
+        let mut open = hand_on(scene);
         open.cursor(aim(&shot, "lab.toolbar.more"));
         open.press();
         open.release();
     }
     let (shot, scene) = painted_at((WIN_W, WIN_H));
-    let mut press = RouterDrag::over(state, scene);
+    let mut press = hand_on(scene);
     press.cursor(aim(&shot, "lab.toolbar.focus"));
     press.press();
     press.release();
@@ -10340,7 +10264,7 @@ fn a_card_at_the_head_of_the_chain_is_selected(state: &std::rc::Rc<ShellState>) 
     );
 
     let (shot, scene) = painted_at((WIN_W, WIN_H));
-    let mut press = RouterDrag::over(state, scene);
+    let mut press = hand_on(scene);
     press.cursor(aim(&shot, &format!("lab.node.{head}")));
     press.press();
     press.release();
@@ -10358,7 +10282,7 @@ fn a_card_at_the_head_of_the_chain_is_selected(state: &std::rc::Rc<ShellState>) 
 /// Phase 2 — the narrower closure: the head's descendants are in play and the
 /// cards that merely share a descendant are not.
 fn the_lineage_of_that_card_leaves_its_siblings_out(state: &std::rc::Rc<ShellState>, head: &Head) {
-    press_the_focus_chip(state);
+    press_the_focus_chip();
     let wire = lab_slot(state, "focused");
     assert_eq!(
         wire["mode"].as_str(),
@@ -10411,7 +10335,7 @@ fn the_lineage_of_that_card_leaves_its_siblings_out(state: &std::rc::Rc<ShellSta
 /// and the script editor has not got: the siblings come back in, under their
 /// own word.
 fn the_whole_chain_takes_the_siblings_back_in(state: &std::rc::Rc<ShellState>, head: &Head) {
-    press_the_focus_chip(state);
+    press_the_focus_chip();
     let wire = lab_slot(state, "focused");
     assert_eq!(
         wire["mode"].as_str(),
@@ -10451,7 +10375,7 @@ fn the_whole_chain_takes_the_siblings_back_in(state: &std::rc::Rc<ShellState>, h
 /// Phase 4 — and the mode has a way out, which is the same one press: the
 /// reference's fade can be left only from the button that started it.
 fn one_more_press_shows_the_graph_whole_again(state: &std::rc::Rc<ShellState>) {
-    press_the_focus_chip(state);
+    press_the_focus_chip();
     let wire = lab_slot(state, "focused");
     assert!(
         wire["mode"].is_null(),
@@ -10581,7 +10505,7 @@ fn choosing_a_card_and_framing_it_moves_the_canvas(state: &std::rc::Rc<ShellStat
         .to_owned();
 
     // Pressed, not wired: the selection this frames is the one a person makes.
-    let mut press = RouterDrag::over(state, scene);
+    let mut press = hand_on(scene);
     press.cursor(aim(&shot, &format!("lab.node.{card}")));
     press.press();
     press.release();
@@ -11656,7 +11580,7 @@ fn r1996_a_host_says_whether_it_will_take_the_card_before_the_hand_lets_go() {
 fn a_card_sitting_over_a_host_it_is_not_in_is_still_not_offered(state: &std::rc::Rc<ShellState>) {
     let (shot, scene) = painted_at((WIN_W, WIN_H));
     let opening = lab_cards(state);
-    let mut press = RouterDrag::over(state, scene);
+    let mut press = hand_on(scene);
     press.cursor(aim(&shot, "lab.palette.role.Router"));
     press.press();
     press.release();
@@ -11737,7 +11661,7 @@ fn carrying_a_card_over_a_host_says_it_would_be_taken(state: &std::rc::Rc<ShellS
         .expect("the opening graph paints a card")
         .to_owned();
 
-    let mut drag = RouterDrag::over(state, scene);
+    let mut drag = hand_on(scene);
     drag.cursor(aim(&shot, &format!("lab.node.{card}")));
     drag.press();
 
@@ -12179,7 +12103,7 @@ fn a_press_on_the_seat_goes_there_and_says_so(state: &std::rc::Rc<ShellState>, h
     lab_invoke(state, "fit", "").expect("framing the whole graph is answerable");
     let adrift = camera_of(state);
 
-    press_the_home_seat(state);
+    press_the_home_seat();
     assert_ne!(
         camera_of(state),
         adrift,
@@ -12196,7 +12120,7 @@ fn a_press_on_the_seat_goes_there_and_says_so(state: &std::rc::Rc<ShellState>, h
     // it, the canvas does not drift.
     let pressed = camera_of(state);
     lab_invoke(state, "fit", "").expect("framing the whole graph is answerable");
-    press_the_home_seat(state);
+    press_the_home_seat();
     assert_eq!(
         camera_of(state),
         pressed,
@@ -12227,14 +12151,14 @@ fn a_press_on_the_seat_goes_there_and_says_so(state: &std::rc::Rc<ShellState>, h
 /// step right of the zoom group so that a live read-out of the canvas keeps the
 /// row ahead of a convenience. Pressing it wherever it is also asserts that the
 /// new group's overflow path works at all.
-fn press_the_home_seat(state: &std::rc::Rc<ShellState>) {
+fn press_the_home_seat() {
     let (shot, scene) = painted_at((WIN_W, WIN_H));
     // Room on the row: press it where it is drawn. Otherwise it is behind the
     // `…` control — open that, and the seat is painted inside.
     let seat = if shot.rect("lab.toolbar.home").is_some() {
         aim(&shot, "lab.toolbar.home")
     } else {
-        let mut open = RouterDrag::over(state, scene);
+        let mut open = hand_on(scene);
         open.cursor(aim(&shot, "lab.toolbar.more"));
         open.press();
         open.release();
@@ -12248,7 +12172,7 @@ fn press_the_home_seat(state: &std::rc::Rc<ShellState>) {
         aim(&opened, "lab.toolbar.home")
     };
     let (_, scene) = painted_at((WIN_W, WIN_H));
-    let mut press = RouterDrag::over(state, scene);
+    let mut press = hand_on(scene);
     press.cursor(seat);
     press.press();
     press.release();
@@ -12293,7 +12217,7 @@ fn going_home_is_not_framing_the_whole_graph(state: &std::rc::Rc<ShellState>, ho
 fn a_card_nobody_wired_is_an_end_but_not_home(state: &std::rc::Rc<ShellState>) {
     let (shot, scene) = painted_at((WIN_W, WIN_H));
     let opening = lab_cards(state);
-    let mut press = RouterDrag::over(state, scene);
+    let mut press = hand_on(scene);
     press.cursor(aim(&shot, "lab.palette.role.Router"));
     press.press();
     press.release();
@@ -12667,7 +12591,7 @@ fn a_card_arrives_from_the_palette_with_no_wires(state: &std::rc::Rc<ShellState>
     );
     let (shot, scene) = painted_at((WIN_W, WIN_H));
     let opening = lab_cards(state);
-    let mut press = RouterDrag::over(state, scene);
+    let mut press = hand_on(scene);
     press.cursor(aim(&shot, "lab.palette.role.Router"));
     press.press();
     press.release();
@@ -12710,7 +12634,7 @@ fn carrying_it_over_a_wire_says_which_one_and_that_it_would_be_taken(
 ) -> (std::collections::BTreeMap<String, Rect>, serde_json::Value) {
     let (shot, scene) = painted_at((WIN_W, WIN_H));
     let boxes = lab_card_boxes(&shot);
-    let mut drag = RouterDrag::over(state, scene);
+    let mut drag = hand_on(scene);
     drag.cursor(aim(&shot, &format!("lab.node.{card}")));
     drag.press();
     // ★★ Picked up, and over nothing. This separates *a card is being carried*
@@ -12870,7 +12794,7 @@ fn a_card_that_cannot_listen_is_aimed_and_says_it_would_not_be_taken(
 
     // A role that depends on a router rather than being dialled: it has a dial
     // pin, like every role here, and no accept pin at all.
-    let mut press = RouterDrag::over(state, scene);
+    let mut press = hand_on(scene);
     press.cursor(aim(&shot, "lab.palette.role.Client"));
     press.press();
     press.release();
@@ -12882,7 +12806,7 @@ fn a_card_that_cannot_listen_is_aimed_and_says_it_would_not_be_taken(
         .clone();
 
     let (shot, scene) = painted_at((WIN_W, WIN_H));
-    let mut drag = RouterDrag::over(state, scene);
+    let mut drag = hand_on(scene);
     drag.cursor(aim(&shot, &format!("lab.node.{card}")));
     drag.press();
     let mut refused = serde_json::Value::Null;
@@ -12968,7 +12892,7 @@ fn an_already_wired_card_carried_over_a_wire_aims_at_nothing(state: &std::rc::Rc
         .clone();
     let held = links.len();
 
-    let mut drag = RouterDrag::over(state, scene);
+    let mut drag = hand_on(scene);
     drag.cursor(aim(&shot, &format!("lab.node.{wired}")));
     drag.press();
     let mut tried = 0usize;
@@ -13010,6 +12934,229 @@ fn an_already_wired_card_carried_over_a_wire_aims_at_nothing(state: &std::rc::Rc
     );
 }
 
+/// Every mark a mounted screen owns on the assembled frame, in tag order.
+///
+/// Attributed by the composed scene's own hit test rather than by a prefix on
+/// the tag: which surface a point belongs to is the question a press asks, and
+/// spelling it as `tag.starts_with("lab.")` would be a second, quieter answer
+/// to it — one that a screen renaming its marks would silently empty.
+fn marks_owned_by(shot: &Painted, scene: &Scene, surface: &str) -> Vec<String> {
+    shot.tags
+        .iter()
+        .filter(|(tag, rect)| rect.w > 0 && rect.h > 0 && tag.as_str() != surface)
+        .filter(|(_, rect)| {
+            let (cx, cy) = centre(**rect);
+            scene
+                .hit_test(cx, cy)
+                .is_some_and(|hit| hit.segments.last().map(String::as_str) == Some(surface))
+        })
+        .map(|(tag, _)| tag.clone())
+        .collect()
+}
+
+/// ★★★★★ R2010 — how far a press had to travel INSIDE one painted mark before
+/// the screen that drew it agreed that is what the mark addresses.
+enum MarkReach {
+    /// The screen names no word for this mark — a caption, a rule, a badge.
+    /// Not a defect and not a pass: nobody was asked to press it.
+    Unnamed,
+    /// Reached at the framework's nth probe point. `0` is the mark's own
+    /// centre — pressable where it is drawn; anything else is a grip, which is
+    /// what a group whose handle is its strip answers.
+    Reached(usize),
+    /// Named, and reached at no point inside itself. The sentence is the
+    /// evidence: the centre's delivered point and what the screen said was
+    /// there, because that is the point a reader aims at.
+    Unreached(String),
+}
+
+/// Drive the framework's nine probe points over `mark` and answer how far in
+/// the press had to go.
+///
+/// The nine are [`pinion_core::painted::probe_points`] — the same set
+/// `scene/pointer_target` uses, and the framework's rather than this file's,
+/// so a group gripped by its strip is given here exactly the chance it is
+/// given there. They are window-absolute, which is what makes them driveable
+/// through the router at all.
+fn reach_of_mark(
+    hand: &mut pinion_runtime::DrivenPointer,
+    surface: &str,
+    mark: &str,
+    rect: Rect,
+) -> MarkReach {
+    let mut evidence = None;
+    for (nth, point) in pinion_core::painted::probe_points(rect)
+        .into_iter()
+        .enumerate()
+    {
+        hand.cursor(point);
+        let Some(arrivals) = pinion_core::arrival::pointer_arrival(surface) else {
+            return MarkReach::Unreached("the screen was delivered no arrival".to_owned());
+        };
+        let (rx, ry) = arrivals.last.resolved();
+        let Some((by_name, at_point)) = hand.ask(surface, |screen| {
+            (screen.target_of_tag(mark), screen.target_at(rx, ry))
+        }) else {
+            return MarkReach::Unreached("the session holds no such surface".to_owned());
+        };
+        let Some(word) = by_name.word().map(str::to_owned) else {
+            return MarkReach::Unnamed;
+        };
+        if at_point.word() == Some(word.as_str()) {
+            return MarkReach::Reached(nth);
+        }
+        if nth == 0 {
+            evidence = Some(format!(
+                "addresses {word:?} by name, and the point the router delivered \
+                 for its centre ({rx},{ry}) resolves to {at_point:?}"
+            ));
+        }
+    }
+    MarkReach::Unreached(evidence.unwrap_or_else(|| "no probe reached it".to_owned()))
+}
+
+/// ★★★★★ R2010 §5.35 §2 #7 — **every control every mounted screen draws is
+/// pressable where it is drawn, through the assembled tool's own pointer.**
+///
+/// # The claim, and why rule (7) wants it here
+///
+/// R1957 measured that this walk could not press a control on a mounted screen
+/// at all, and R1958 repaid it for ONE control of ONE screen — `lab.toolbar.more`,
+/// which is what [`r1958_a_press_reaches_a_mounted_screens_control`] still
+/// asserts end to end. That left the general claim unmade: this application
+/// mounts **six** screens, and a press reaching one of them says nothing about
+/// the other five.
+///
+/// So the population here is the roster's — [`mounted_keys`] and [`tag_of`], so
+/// a screen mounted in a later round is asked without anyone remembering to add
+/// it — and the marks are the ones the composed scene's own hit test attributes
+/// to each screen.
+///
+/// [`mounted_keys`]: pinion_screen::ScreenRoster::mounted_keys
+/// [`tag_of`]: pinion_screen::ScreenRoster::tag_of
+///
+/// # The two things asserted, and why neither is derived from the other
+///
+/// **The delivery.** Every arrival the framework recorded for the screen landed
+/// on the pixel the pointer was over ([`Landing::Exact`](pinion_core::arrival::Landing)) —
+/// the framework's own comparison of the two accounts it holds of one fact, and
+/// the axis R1958's second layer failed on, where a missing announcement floored
+/// every fraction to zero.
+///
+/// **The address.** What the screen says the mark addresses BY NAME
+/// ([`target_of_tag`](pinion_core::external::External::target_of_tag)) is what
+/// it says is AT the point the router delivered
+/// ([`target_at`](pinion_core::external::External::target_at)). The paint
+/// decides where to ask; the screen's two answers decide the verdict; and the
+/// point comes from the delivery rather than from either. That is the axis
+/// R1958's third layer failed on, where a screen resolved a perfectly-delivered
+/// cursor against a window 52 pixels wider than its own.
+///
+/// # ★★★★★ What the first run of this measured
+///
+/// Asked with the questions OUTSIDE the placement grants — which is what an
+/// example asking a guest anything from inside an owner scope does — the two
+/// answers disagreed on **76 of 504** named marks, across four of the six
+/// screens. Asked inside them, on **2**, and both are the case the framework
+/// already has a word for: a group whose grip is its strip, addressable at the
+/// probe points rather than at its centre. So the grant is not the delivery's
+/// alone, and [`pinion_runtime::DrivenPointer::ask`] is where that now lives.
+///
+/// ⚠ **What this is not.** It is not the astray census — whether some point
+/// inside a rectangle resolves to something the paint puts elsewhere is asked
+/// of each screen's own frame by `scene/pointer_target`, over nine probes. This
+/// asks the composition: that the assembled application delivers a press to the
+/// screen that drew the mark, in the frame that screen was drawn in.
+#[test]
+fn r2010_a_press_reaches_every_mounted_screens_controls() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let roster = super::screen_roster();
+        let mounted: Vec<(String, &'static str)> = roster
+            .mounted_keys()
+            .map(str::to_owned)
+            .filter_map(|key| roster.tag_of(&key).map(|tag| (key, tag)))
+            .collect();
+        assert!(
+            mounted.len() >= 6,
+            "the roster reports {} mounted screen(s); this application mounts \
+             six, and a population that shrank silently is how a green walk \
+             comes to mean nothing",
+            mounted.len(),
+        );
+        let mut unreachable: Vec<String> = Vec::new();
+        let mut gripped = 0usize;
+        let mut named_total = 0usize;
+        for (key, tag) in &mounted {
+            state.go(key).unwrap_or_else(|why| panic!("{key}: {why:?}"));
+            let (shot, scene) = painted_at((WIN_W, WIN_H));
+            let marks = marks_owned_by(&shot, &scene, tag);
+            assert!(
+                marks.len() >= 10,
+                "`{key}` owns {} painted mark(s) on the assembled frame — too \
+                 few for this screen to be the one that is mounted there, and \
+                 every clause below would be vacuous",
+                marks.len(),
+            );
+            // The tally is the framework's and it accumulates, so it is reset
+            // per screen: a verdict about `logs` must not be satisfied by
+            // arrivals `packets` was delivered.
+            pinion_core::arrival::forget_pointer_arrival(tag);
+            let mut hand = hand_on(scene);
+            let mut named = 0usize;
+            for mark in &marks {
+                let Some(rect) = shot.rect(mark) else {
+                    continue;
+                };
+                match reach_of_mark(&mut hand, tag, mark, rect) {
+                    MarkReach::Unnamed => {}
+                    MarkReach::Reached(0) => named += 1,
+                    MarkReach::Reached(_) => {
+                        named += 1;
+                        gripped += 1;
+                    }
+                    MarkReach::Unreached(why) => {
+                        named += 1;
+                        unreachable.push(format!("{key}/{mark}: {why}"));
+                    }
+                }
+            }
+            named_total += named;
+            assert!(
+                named >= 5,
+                "`{key}` answers by name for {named} of its {} painted mark(s); \
+                 a screen that names nothing satisfies every clause below by \
+                 having nothing to press",
+                marks.len(),
+            );
+            let tally = pinion_core::arrival::pointer_arrival(tag)
+                .unwrap_or_else(|| panic!("`{key}` was delivered no pointer arrival at all"));
+            assert_eq!(
+                (tally.drifted, tally.strayed),
+                (0, 0),
+                "`{key}` was delivered {} arrival(s) of which {} landed on a \
+                 pixel the pointer was not over and {} arrived with the cursor \
+                 outside its rectangle; the first drift is {:?}",
+                tally.delivered,
+                tally.drifted,
+                tally.strayed,
+                tally.drifted_at,
+            );
+        }
+        assert!(
+            unreachable.is_empty(),
+            "{} of {named_total} mark(s) the mounted screens name are \
+             addressable at no point inside themselves once a press has \
+             travelled through the assembled tool — which is a press a person \
+             makes and the screen does not receive. {gripped} were reached by a \
+             grip rather than at their own centre:\n  {}",
+            unreachable.len(),
+            unreachable.join("\n  "),
+        );
+    });
+}
+
 #[test]
 fn r1875_no_run_in_the_decode_tree_sits_in_a_box_too_short_for_its_face() {
     /// The pane whose content this gate judges, as it appears in a run's path.
@@ -13022,7 +13169,6 @@ fn r1875_no_run_in_the_decode_tree_sits_in_a_box_too_short_for_its_face() {
             .go("packets")
             .unwrap_or_else(|why| panic!("the capture section is open and refused: {why:?}"));
         let (_, scene) = painted_at((WIN_W, WIN_H));
-
         let mut seen = 0usize;
         scene.for_each_node(&mut |visit| {
             if matches!(visit.node, Scene::Text(_)) && visit.path.iter().any(|seg| seg == PANE) {

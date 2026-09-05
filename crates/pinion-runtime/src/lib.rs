@@ -54,6 +54,7 @@
 pub mod command;
 pub mod core_shell;
 pub mod draw_profile;
+pub mod driven_pointer;
 pub mod focus;
 pub mod frame_pacing;
 pub mod frame_timing;
@@ -79,6 +80,7 @@ pub use core_shell::{
     ASCII_PROBE_RANGE, AcceleratorRow, CoreShell, DEFAULT_WINDOW, DispatchTail, StateChange,
 };
 pub use draw_profile::{DrawProfile, DrawProfileNode, DrawProfiler};
+pub use driven_pointer::DrivenPointer;
 pub use focus::FocusManager;
 pub use frame_pacing::{FixedTimestep, MAX_FRAME_DT_SECS, PacingState, clamp_frame_dt, substep};
 pub use frame_timing::{
