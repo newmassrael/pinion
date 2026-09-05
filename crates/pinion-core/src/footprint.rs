@@ -227,6 +227,11 @@ impl Footprint for crate::style::TextStyle {
             line_height,
             letter_spacing,
             word_spacing,
+            // R2014 — two `Copy` enums behind one `Copy` struct, so it is
+            // `size_of` and carries no allocation. Named rather than `_`
+            // because a field that borrows later must be counted, and a
+            // pattern that ignores it would not say so.
+            numeric: _,
             text_align,
             text_indent,
             decoration,

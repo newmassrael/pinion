@@ -328,6 +328,10 @@ fn fade_text_style(style: &mut TextStyle, backdrop: Color) {
         line_height: _,
         letter_spacing: _,
         word_spacing: _,
+        // R2014 — how the FIGURES are set is not ink, and disabling does not
+        // change what a number means. A column that lined up while it was
+        // enabled still lines up greyed out.
+        numeric: _,
         text_align: _,
         text_indent: _,
         decoration,

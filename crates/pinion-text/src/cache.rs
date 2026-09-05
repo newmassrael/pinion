@@ -26,9 +26,11 @@ use crate::glyph_run::{self, PositionedRun, TextBackground};
 use crate::layout::Layout;
 use lru::LruCache;
 use parley::fontique::Blob;
+use parley::setting::Tag;
 use parley::{
-    Alignment, AlignmentOptions, FontContext, FontFamily, FontFamilyName, GenericFamily,
-    IndentOptions, LayoutContext, LineHeight as ParleyLineHeight, StyleProperty,
+    Alignment, AlignmentOptions, FontContext, FontFamily, FontFamilyName, FontFeature,
+    FontFeatures, GenericFamily, IndentOptions, LayoutContext, LineHeight as ParleyLineHeight,
+    StyleProperty,
 };
 use pinion_core::reactive::SystemFontStatus;
 use pinion_core::scene::StyleRun;
@@ -1666,6 +1668,26 @@ fn style_properties(
         StyleProperty::UnderlineBrush(style.decoration.underline_color),
         StyleProperty::Strikethrough(style.decoration.strikethrough),
     ];
+    // ★★★★★ R2014 — the figures' own settings, handed down as OpenType
+    // features. `NumericStyle::UNSET` yields an EMPTY list and the property is
+    // not pushed at all, so a run that asks for nothing is shaped byte for byte
+    // as it was before this existed — which is what let the field land without
+    // moving a pixel anywhere.
+    //
+    // ⚠ The tags are asked of the FACE, so what they do depends on the face,
+    // and this crate's own fixture proves the point: its default figures are
+    // already tabular, so `tnum` substitutes nothing there and `pnum` is what
+    // visibly changes. A caller gets the CSS meaning — *ask for one advance* —
+    // not a promise that every face has something to change.
+    let features = style.numeric.features();
+    if !features.is_empty() {
+        props.push(StyleProperty::FontFeatures(FontFeatures::List(Cow::Owned(
+            features
+                .into_iter()
+                .map(|(tag, value)| FontFeature::new(Tag::from_bytes(tag), value))
+                .collect(),
+        ))));
+    }
     // R47.6 — pinned font family override. R1472 §5.36 — an unset family is
     // resolved against the application default (`LayoutCache::
     // set_default_font_family`, the toolkit's `setFont`) before it is
@@ -2685,6 +2707,164 @@ mod tests {
         assert!(
             grew_big > grew_small * 1.5,
             "an em follows the font size: {grew_small} at 16px, {grew_big} at 32px",
+        );
+    }
+
+    /// ★★★★★ R2014 §5.36 — **the figures' advance is asked of the face, and
+    /// the ask reaches the shaper.**
+    ///
+    /// A tool whose main screen is a table of numbers needs the digits of one
+    /// column over the digits of the next, and that is a FEATURE of the
+    /// proportional face rather than a monospace family — the framework could
+    /// already pick the family and had no way to ask for the feature.
+    ///
+    /// ⚠⚠ THE OBVIOUS GATE WOULD HAVE BEEN VACUOUS HERE, AND THAT IS WHY THIS
+    /// ONE IS AIMED THE OTHER WAY. The debt asked for *two digit strings that
+    /// measure the same width*. Measured on this crate's pinned face before
+    /// writing a line: its DEFAULT figures are already tabular — every digit
+    /// advances 572 — so `tnum` substitutes nothing and the equal-width
+    /// assertion passes with the feature switched off. What that face can show
+    /// is `pnum`, which really does swap the glyphs (`one` 572 -> `one.lf`
+    /// 441). So the difference this asserts is Tabular against PROPORTIONAL,
+    /// which is a difference the face has.
+    ///
+    /// That is also why [`FigureSpacing`] has three arms and not two: *ask
+    /// nothing* and *ask for proportional* are different requests, and on this
+    /// face they produce different glyphs.
+    #[test]
+    fn r2014_asking_for_tabular_figures_changes_what_the_shaper_does() {
+        use pinion_core::style::{FigureSpacing, NumericStyle, ZeroStyle};
+        let mut cache = crate::test_font::own_font_cache();
+        let base = style(16);
+        let with = |figures| {
+            let mut s = base.clone();
+            s.numeric = NumericStyle {
+                figures,
+                zero: ZeroStyle::AsDesigned,
+            };
+            s
+        };
+
+        // Ten digits, so a per-figure advance difference cannot cancel out.
+        let digits = "0123456789";
+        let unset = cache.layout(digits, &base, None).width();
+        let tabular = cache
+            .layout(digits, &with(FigureSpacing::Tabular), None)
+            .width();
+        let proportional = cache
+            .layout(digits, &with(FigureSpacing::Proportional), None)
+            .width();
+
+        assert!(
+            (tabular - proportional).abs() > 1.0,
+            "asking for one advance and asking for each figure's own must not \
+             measure the same: tabular={tabular} proportional={proportional} — \
+             if they are equal the feature is not reaching the shaper",
+        );
+        // The face's own figures are tabular, so `AsDesigned` and `Tabular`
+        // agree HERE. Asserted rather than left implicit, because it is the
+        // fact that makes the equal-width gate vacuous and the next reader
+        // will otherwise re-derive it the hard way.
+        assert!(
+            (unset - tabular).abs() < f32::EPSILON,
+            "this face designs its figures tabular, so asking changes nothing: \
+             unset={unset} tabular={tabular}",
+        );
+
+        // And the property `tabular-nums` actually names: every figure the
+        // same width. Ten single-digit layouts rather than one string, so
+        // this reads the FIGURE's advance and not the string's.
+        let widths: Vec<f32> = ('0'..='9')
+            .map(|d| {
+                cache
+                    .layout(&d.to_string(), &with(FigureSpacing::Tabular), None)
+                    .width()
+            })
+            .collect();
+        let first = widths[0];
+        assert!(
+            widths.iter().all(|w| (w - first).abs() < f32::EPSILON),
+            "under `tabular-nums` every figure is one advance: {widths:?}",
+        );
+        let loose: Vec<f32> = ('0'..='9')
+            .map(|d| {
+                cache
+                    .layout(&d.to_string(), &with(FigureSpacing::Proportional), None)
+                    .width()
+            })
+            .collect();
+        assert!(
+            loose.iter().any(|w| (w - loose[0]).abs() > f32::EPSILON),
+            "★ and under `proportional-nums` they are NOT, or this comparison \
+             proves nothing about either: {loose:?}",
+        );
+        println!("[r2014] tabular={first} proportional={loose:?}");
+    }
+
+    /// ★★★★★ R2014 §5.36 — **a slashed zero is a different GLYPH at the same
+    /// advance, so nothing measuring width can see it.**
+    ///
+    /// Measured on the pinned face before this was written: `zero` (572) is
+    /// substituted by `zero.slash` (572). A gate asserting a width would have
+    /// been green whether or not the feature was plumbed at all, which is the
+    /// class this workspace keeps paying for — a check over the wrong quantity
+    /// gives a green light to the thing it was written to catch.
+    ///
+    /// So this reads the glyph id out of the positioned run, and asserts both
+    /// halves: the zero MOVES to another glyph, and the digit beside it does
+    /// not.
+    #[test]
+    fn r2014_a_slashed_zero_is_a_different_glyph_at_the_same_width() {
+        use pinion_core::style::{FigureSpacing, NumericStyle, ZeroStyle};
+        let mut cache = crate::test_font::own_font_cache();
+        let base = style(16);
+        let slashed = {
+            let mut s = base.clone();
+            s.numeric = NumericStyle {
+                figures: FigureSpacing::AsDesigned,
+                zero: ZeroStyle::Slashed,
+            };
+            s
+        };
+
+        let ids = |cache: &mut LayoutCache, style: &TextStyle| -> Vec<u32> {
+            cache
+                .positioned_runs("01", style, &[], None)
+                .iter()
+                .flat_map(|run| run.glyphs.iter().map(|g| g.id))
+                .collect()
+        };
+        let plain = ids(&mut cache, &base);
+        let slash = ids(&mut cache, &slashed);
+
+        assert_eq!(
+            plain.len(),
+            2,
+            "two characters, two glyphs — the premise of the comparison below"
+        );
+        assert_eq!(plain.len(), slash.len(), "a substitution, not an insertion");
+        assert_ne!(
+            plain[0], slash[0],
+            "`slashed-zero` must substitute the zero: both are glyph {}",
+            plain[0]
+        );
+        assert_eq!(
+            plain[1], slash[1],
+            "and only the zero — the one beside it is untouched"
+        );
+
+        // The half a width gate cannot see, stated as the assertion that would
+        // have made that gate vacuous.
+        let plain_w = cache.layout("01", &base, None).width();
+        let slash_w = cache.layout("01", &slashed, None).width();
+        assert!(
+            (plain_w - slash_w).abs() < f32::EPSILON,
+            "the substituted zero keeps its advance, which is exactly why this \
+             test reads glyphs: {plain_w} vs {slash_w}",
+        );
+        println!(
+            "[r2014] zero {} -> {} at width {plain_w}",
+            plain[0], slash[0]
         );
     }
 

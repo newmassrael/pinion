@@ -3171,6 +3171,12 @@ pub struct TextStyle {
     /// was the only layer in that stack without it until R1641.3, which is
     /// the shape of gap "no consumer has asked" leaves behind.
     pub word_spacing: TextSpacing,
+    /// R2014 — how this run's DIGITS are set: see [`NumericStyle`].
+    ///
+    /// Default is [`NumericStyle::UNSET`], which emits no OpenType feature at
+    /// all and leaves the face's own figures alone — CSS's `normal`, and
+    /// byte-identical to every run shaped before this field existed.
+    pub numeric: NumericStyle,
     /// CSS `text-align` (R47.5). Default = [`TextAlign::Start`].
     pub text_align: TextAlign,
     /// CSS `text-indent` (R1551) — the first line's own start offset, and the only field
@@ -3207,6 +3213,9 @@ impl TextStyle {
             font_style: FontStyle::Normal,
             line_height: LineHeight::Normal,
             letter_spacing: TextSpacing::Normal,
+            // R2014 — CSS `font-variant-numeric: normal`: no feature is asked
+            // of the face, so this default shapes byte for byte as before.
+            numeric: NumericStyle::UNSET,
             word_spacing: TextSpacing::Normal,
             text_align: TextAlign::Start,
             text_indent: TextIndent::none(),
@@ -3830,6 +3839,129 @@ impl GridTrack {
             max: TrackMax::Fr(1.0),
         },
     ];
+}
+
+/// (R2014 §5.36) How a run's **digits** are set — the part of CSS
+/// [`font-variant-numeric`](https://www.w3.org/TR/css-fonts-4/#font-variant-numeric-prop)
+/// that a tool full of numbers depends on.
+///
+/// ★★★★★ This is NOT the monospace face, and confusing the two is how the gap
+/// stayed open. A monospace family sets every glyph on one advance and changes
+/// the voice of the whole run; what a table of numbers needs is the FIGURES
+/// aligned inside the proportional face the rest of the interface is set in.
+/// The framework could already pick the face ([`FontFamily::Generic`] with
+/// [`GenericFontFamily::Monospace`]) and had no way at all to ask for the
+/// second thing.
+///
+/// An authored type scale that motivated this round carries a per-role flag for
+/// it whose own comment calls it *mandatory wherever a number is compared down
+/// a column*, and its screens resolve `font-variant-numeric` at twelve sites.
+///
+/// # What is here, and what is deliberately not
+///
+/// CSS's property has five independent axes. Two are here — the two that
+/// property's declared consumers use — and the absence of the other three is a
+/// measurement rather than an oversight: figure case (`lining-nums` /
+/// `oldstyle-nums`), fractions (`diagonal-fractions` / `stacked-fractions`) and
+/// `ordinal` appear **zero** times across the authored screens. Each is a field
+/// on this struct when something asks; [`Self::UNSET`] stays the default and
+/// the wire form stays additive.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
+pub struct NumericStyle {
+    /// Whether the figures share one advance.
+    pub figures: FigureSpacing,
+    /// Whether zero is drawn with a slash through it.
+    pub zero: ZeroStyle,
+}
+
+impl NumericStyle {
+    /// Nothing asked of the face — CSS `font-variant-numeric: normal`.
+    ///
+    /// The default, and the reason this field could be added without moving a
+    /// single existing pixel: it emits no feature, so the shaper sees exactly
+    /// what it saw before.
+    pub const UNSET: Self = Self {
+        figures: FigureSpacing::AsDesigned,
+        zero: ZeroStyle::AsDesigned,
+    };
+
+    /// What a column of numbers wants: one advance per figure, and a zero that
+    /// cannot be read as a letter O.
+    pub const TABULAR_SLASHED: Self = Self {
+        figures: FigureSpacing::Tabular,
+        zero: ZeroStyle::Slashed,
+    };
+
+    /// The OpenType features this style asks of the face.
+    ///
+    /// Empty for [`Self::UNSET`], which is what makes the default free: the
+    /// shaper is handed no feature list at all and shapes exactly what it
+    /// shaped before this type existed.
+    ///
+    /// ⚠ The tag is FOUR BYTES and not a `&str`, because the shaper's own tag
+    /// type is built from a `[u8; 4]` and a string would have to be parsed —
+    /// introducing a failing path on a value this code chose itself, which is
+    /// the shape this workspace deletes rather than handles.
+    #[must_use]
+    pub fn features(self) -> Vec<([u8; 4], u16)> {
+        let mut out = Vec::new();
+        match self.figures {
+            FigureSpacing::AsDesigned => {}
+            FigureSpacing::Proportional => out.push((*b"pnum", 1)),
+            FigureSpacing::Tabular => out.push((*b"tnum", 1)),
+        }
+        match self.zero {
+            ZeroStyle::AsDesigned => {}
+            ZeroStyle::Slashed => out.push((*b"zero", 1)),
+        }
+        out
+    }
+}
+
+/// (R2014 §5.36) Whether a run's figures share one advance — CSS
+/// `proportional-nums` / `tabular-nums`.
+#[non_exhaustive]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
+pub enum FigureSpacing {
+    /// Ask nothing; the face's own figures, whatever they are. CSS `normal`.
+    ///
+    /// ⚠ This is NOT a synonym for [`Self::Proportional`], and the difference
+    /// is measurable rather than pedantic: the face this crate's tests are
+    /// pinned to sets its default figures on ONE advance already, so asking it
+    /// for `tnum` substitutes nothing and asking it for `pnum` genuinely
+    /// changes the glyphs. A type with two arms would have made "the default"
+    /// and "proportional" the same word and been wrong about that face.
+    #[default]
+    AsDesigned,
+    /// CSS `proportional-nums` (`pnum`) — each figure takes the width its shape
+    /// wants. Right for running prose, wrong for a column.
+    Proportional,
+    /// CSS `tabular-nums` (`tnum`) — every figure on the same advance, so the
+    /// hundreds column of one row sits over the hundreds column of the next.
+    Tabular,
+}
+
+/// (R2014 §5.36) Whether zero carries a slash — CSS `slashed-zero`.
+#[non_exhaustive]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
+pub enum ZeroStyle {
+    /// Ask nothing; the face's own zero. CSS `normal`.
+    #[default]
+    AsDesigned,
+    /// CSS `slashed-zero` (`zero`).
+    ///
+    /// ⚠ A width measurement CANNOT see this, and that is a fact about the
+    /// feature rather than about any one font: the substituted glyph is a zero
+    /// with a mark through it and keeps its advance (measured on this crate's
+    /// pinned face, `zero` 572 -> `zero.slash` 572). Anything asserting this
+    /// arm has to read the GLYPH.
+    Slashed,
 }
 
 /// (R2013 §5.21) CSS
