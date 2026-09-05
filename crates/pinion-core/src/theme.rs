@@ -2144,10 +2144,25 @@ mod tests {
     /// `surface_container_highest`. Pinning this ordering protects
     /// against a palette tweak that would silently invert the
     /// elevation visual.
+    ///
+    /// ★★★★★ R2018.1 — **this reads the same lightness the rest of the tree
+    /// reads.** It used to compare `r + g + b`, which is not a measure of how
+    /// light a tone looks and was the tree's SECOND spelling of *lighter than*
+    /// beside [`crate::contrast::relative_luminance`] — the one
+    /// [`Theme::elevation_inversions`] uses, and the one every contrast floor
+    /// is judged with. Two spellings of one property is the defect this
+    /// workspace has paid for repeatedly; the channel-sum form was counted at
+    /// exactly two sites, both here, and is now at none. Safe to unify because
+    /// it was MEASURED first: on all six palettes this tree can reach — the
+    /// two canonical, the two the analysis shell binds, the two an authored
+    /// design system exports — the two arithmetics put the five tiers in the
+    /// same order, so nothing that passed before fails now. That they CAN
+    /// disagree is what the test below shows, which is why one had to be
+    /// picked rather than either being fine.
     #[test]
     fn r57_x_surface_tiers_light_lightness_progression() {
         let t = Theme::light();
-        let lum = |c: Color| u32::from(c.r) + u32::from(c.g) + u32::from(c.b);
+        let lum = crate::contrast::relative_luminance;
         assert!(lum(t.surface) >= lum(t.surface_container_low));
         assert!(lum(t.surface_container_low) >= lum(t.surface_container));
         assert!(lum(t.surface_container) >= lum(t.surface_container_high));
@@ -2158,14 +2173,78 @@ mod tests {
     /// `surface` is the darkest tone (panel background) and the four
     /// containers lighten progressively toward
     /// `surface_container_highest` (inverse of light).
+    ///
+    /// R2018.1 — reads [`crate::contrast::relative_luminance`], for the
+    /// reasons on the light pin above.
     #[test]
     fn r57_x_surface_tiers_dark_lightness_progression() {
         let t = Theme::dark();
-        let lum = |c: Color| u32::from(c.r) + u32::from(c.g) + u32::from(c.b);
+        let lum = crate::contrast::relative_luminance;
         assert!(lum(t.surface) <= lum(t.surface_container_low));
         assert!(lum(t.surface_container_low) <= lum(t.surface_container));
         assert!(lum(t.surface_container) <= lum(t.surface_container_high));
         assert!(lum(t.surface_container_high) <= lum(t.surface_container_highest));
+    }
+
+    /// ★★★★★ R2018.1 §5.50 — **the two ways this tree has ordered tones by
+    /// lightness are not interchangeable**, which is what makes picking one a
+    /// decision rather than a tidy-up.
+    ///
+    /// A channel sum weights the three primaries equally; the eye does not,
+    /// and green carries most of what it reads as brightness. So a tone can be
+    /// the DIMMER of two by `r + g + b` and the LIGHTER of the two to look at.
+    /// This drives exactly that pair, so the two pins above cannot be said to
+    /// have kept their meaning by luck.
+    ///
+    /// The second half is the measurement that licensed the change: on the two
+    /// palettes this crate owns, both arithmetics order the five surface tiers
+    /// identically. It is asserted here rather than written in a comment,
+    /// because a palette edit is precisely what would end it — and the day it
+    /// does, the recorded fork has come due and the pins are the half that
+    /// stays.
+    #[test]
+    fn r2018_1_a_channel_sum_and_the_eye_can_order_two_tones_differently() {
+        let sum = |c: Color| u32::from(c.r) + u32::from(c.g) + u32::from(c.b);
+        let lum = crate::contrast::relative_luminance;
+
+        // 730 against 739: dimmer by channel sum, and the green-heavy one is
+        // plainly the lighter of the two to look at.
+        let green_heavy = Color::rgb(0xE6, 0xFF, 0xF5);
+        let even = Color::rgb(0xF7, 0xF2, 0xFA);
+        assert!(
+            sum(green_heavy) < sum(even),
+            "the fixture must be the dimmer of the two by channel sum: {} vs {}",
+            sum(green_heavy),
+            sum(even)
+        );
+        assert!(
+            lum(green_heavy) > lum(even),
+            "and the lighter of the two to the eye: {} vs {}",
+            lum(green_heavy),
+            lum(even)
+        );
+
+        // And on what this crate ships, the two agree — which is why moving
+        // the pins to the perceptual one changed no verdict.
+        // The population the pins cover: the plain surface and, rather than a
+        // second list of the containers, `ELEVATION` itself.
+        let tiers: Vec<ColorRole> = std::iter::once(ColorRole::Surface)
+            .chain(Theme::ELEVATION)
+            .collect();
+        for (word, palette) in [("light", Theme::light()), ("dark", Theme::dark())] {
+            let mut by_sum = tiers.clone();
+            let mut by_lum = tiers.clone();
+            by_sum.sort_by_key(|role| sum(palette.resolve(*role)));
+            by_lum.sort_by(|a, b| {
+                lum(palette.resolve(*a))
+                    .partial_cmp(&lum(palette.resolve(*b)))
+                    .expect("palette colours are ordinary numbers")
+            });
+            assert_eq!(
+                by_sum, by_lum,
+                "{word}: the two arithmetics order this palette's surface tiers differently"
+            );
+        }
     }
 
     #[test]
