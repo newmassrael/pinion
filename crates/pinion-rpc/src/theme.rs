@@ -693,34 +693,27 @@ pub fn parse_palette_value(
 /// Panics if `map` is missing any [`ColorRole`] variant — i.e. the
 /// caller bypassed the `MissingRoles` precondition. Cannot happen
 /// through the public [`parse_palette_value`] surface.
+///
+/// ★★★★★ R2020 — it WALKS `ColorRole::all()` now instead of naming every field.
+///
+/// The literal above it — the `missing` check — has always walked that slice,
+/// and this was a second list beside it that had to agree by hand. The two
+/// disagreeing has a specific shape: a role added to the vocabulary is refused
+/// as missing by the check (which derives) while this (which did not) would not
+/// even compile, so the failure was loud here. That is luck rather than design,
+/// and it cost every role-adding round an edit in a file about something else.
+/// [`Theme::bind`] is exhaustive, so the compiler still holds the pairing —
+/// one level up, where it belongs.
 fn theme_from_role_map(map: &std::collections::HashMap<ColorRole, Color>) -> Theme {
-    let lookup =
-        |role: ColorRole| -> Color { *map.get(&role).expect("role bound by parse_palette_value") };
-    Theme {
-        surface: lookup(ColorRole::Surface),
-        on_surface: lookup(ColorRole::OnSurface),
-        on_surface_muted: lookup(ColorRole::OnSurfaceMuted),
-        accent: lookup(ColorRole::Accent),
-        on_accent: lookup(ColorRole::OnAccent),
-        outline: lookup(ColorRole::Outline),
-        surface_container_highest: lookup(ColorRole::SurfaceContainerHighest),
-        surface_container_low: lookup(ColorRole::SurfaceContainerLow),
-        surface_container: lookup(ColorRole::SurfaceContainer),
-        surface_container_high: lookup(ColorRole::SurfaceContainerHigh),
-        error: lookup(ColorRole::Error),
-        on_error: lookup(ColorRole::OnError),
-        error_container: lookup(ColorRole::ErrorContainer),
-        on_error_container: lookup(ColorRole::OnErrorContainer),
-        inverse_surface: lookup(ColorRole::InverseSurface),
-        inverse_on_surface: lookup(ColorRole::InverseOnSurface),
-        inverse_primary: lookup(ColorRole::InversePrimary),
-        warning: lookup(ColorRole::Warning),
-        on_warning: lookup(ColorRole::OnWarning),
-        success: lookup(ColorRole::Success),
-        on_success: lookup(ColorRole::OnSuccess),
-        info: lookup(ColorRole::Info),
-        on_info: lookup(ColorRole::OnInfo),
+    // Every role is overwritten below; the base is a shape to fill.
+    let mut theme = Theme::light();
+    for role in ColorRole::all() {
+        theme.bind(
+            *role,
+            *map.get(role).expect("role bound by parse_palette_value"),
+        );
     }
+    theme
 }
 
 /// R615 §5.50 — wire-side delegate to [`Color::from_hex`] (substrate

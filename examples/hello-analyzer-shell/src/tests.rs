@@ -7909,11 +7909,20 @@ fn r2018_the_bound_palettes_elevation_ladder_runs_one_way() {
 /// most of the time. It was measured wrong on twenty-three of thirty-eight
 /// role-and-mode pairs at R2017.
 ///
-/// Each document binds nineteen of the twenty-three roles this vocabulary has.
-/// The four it leaves are the state tones the vocabulary grew after the
-/// exporter was written, so they keep the framework's answer — and this asserts
-/// that they are exactly those four, in both modes, because *partly authored*
-/// has to be a claim somebody can check rather than a thing they discover.
+/// Each document binds nineteen roles. What it LEAVES is everything this
+/// vocabulary grew after the exporter was written, and this asserts they are
+/// exactly those, in both modes, because *partly authored* has to be a claim
+/// somebody can check rather than a thing they discover.
+///
+/// ⚠ R2020 took the unauthored list from four to **ten** and the authored count
+/// did not move: the exporter is unchanged and this side added six roles, so
+/// the whole of the growth lands on the framework's side of the gap. That is
+/// the honest reading and it is why the two numbers are asserted separately —
+/// a single "ten of twenty-nine" would let an exporter that lost a role look
+/// like a vocabulary that gained one. The other half of this — that the
+/// AUTHORING side's export is now short of six roles rather than four — is not
+/// this repository's to fix ⇒
+/// [[debt-the-framework-grew-two-colour-roles-the-authored-theme-does-not-carry]].
 #[test]
 fn r2019_the_screen_paints_from_the_authored_documents() {
     use pinion_core::theme::{ColorRole, Theme};
@@ -7924,6 +7933,12 @@ fn r2019_the_screen_paints_from_the_authored_documents() {
         ColorRole::OnSuccess,
         ColorRole::Info,
         ColorRole::OnInfo,
+        ColorRole::WarningContainer,
+        ColorRole::OnWarningContainer,
+        ColorRole::SuccessContainer,
+        ColorRole::OnSuccessContainer,
+        ColorRole::InfoContainer,
+        ColorRole::OnInfoContainer,
     ];
     for (word, palette, gap, base) in [
         ("light", light, &light_gap, Theme::light()),
@@ -7931,7 +7946,7 @@ fn r2019_the_screen_paints_from_the_authored_documents() {
     ] {
         assert_eq!(
             gap.missing, left_to_the_framework,
-            "{word}: the document leaves exactly the four tones added after it was written",
+            "{word}: the document leaves exactly the roles added after it was written",
         );
         assert!(
             gap.unknown.is_empty(),
@@ -8031,10 +8046,19 @@ fn r2019_the_authored_palettes_shortfalls_are_pinned() {
     );
     // The denominator: a table that shrank would empty these lists without
     // anything about the palettes having improved.
+    //
+    // ⚠ R2020 moved it from 21 to 24, and the shortfall lists above did NOT
+    // move — which is the fact worth recording. The three pairings added are
+    // the caution, right and informational container pairs, and the authored
+    // documents bind none of the six roles they involve, so all three fall back
+    // to this framework's values and clear (7.2–13.3, measured in
+    // `Theme::light`'s own comment). ⇒ growing the table made the claim
+    // STRONGER without moving what it reports, which is what a table that is
+    // checked rather than curated looks like when it grows.
     assert_eq!(
         PAIRINGS.len(),
-        21,
-        "the declared table is twenty-one pairings"
+        24,
+        "the declared table is twenty-four pairings"
     );
     // And the contrast that makes the finding legible: the framework's own
     // palettes clear all of it, which is why nobody had noticed that the
@@ -8052,4 +8076,426 @@ fn r2019_the_authored_palettes_shortfalls_are_pinned() {
         named(&dark).len(),
         PAIRINGS.len()
     );
+}
+
+/// The ground and the word colour of the first badge carrying `tag`, plus the
+/// word itself — which is the whole of what a badge shows a reader.
+fn badge_paint(
+    scene: &pinion_core::Scene,
+    tag: &str,
+) -> Option<(pinion_core::style::Color, pinion_core::style::Color, String)> {
+    let mut found = None;
+    scene.for_each_node(&mut |visit| {
+        if found.is_some() || visit.node.tag() != Some(tag) {
+            return;
+        }
+        let pinion_core::Scene::Container(node) = visit.node else {
+            return;
+        };
+        let Some(pinion_core::Scene::Text(word)) = node.children.first() else {
+            return;
+        };
+        found = Some((node.style.fill, word.style.fg_color, word.content.clone()));
+    });
+    found
+}
+
+/// Every painted tag under `stem`, in paint order.
+fn painted_under(scene: &pinion_core::Scene, stem: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    scene.for_each_node(&mut |visit| {
+        if let Some(tag) = visit.node.tag() {
+            if tag.starts_with(stem) && !out.iter().any(|seen: &String| seen == tag) {
+                out.push(tag.to_owned());
+            }
+        }
+    });
+    out
+}
+
+/// Take one fault of each severity the node lab OFFERS, through the verb the
+/// screen publishes, and answer which rows now carry a defect.
+///
+/// ⚠⚠ THE SEVERITIES ARE READ OFF THE OFFERS, not assumed to be both. A first
+/// draft asked for one blocking and one non-blocking and was refused by the
+/// screen: measured at R2020, every fault a FORM can inject blocks, because the
+/// one that does not — a key the target does not know — is `Scope::Document`,
+/// and a form reports an undeclared leaf unplaceable rather than taking it.
+/// That boundary is the lab's own published decision (`fault_scopes`), so
+/// asking for a defect it says it cannot make would be a gate demanding the
+/// screen be a different screen.
+///
+/// The offers come from the screen's own `faults` slot, so this picks from what
+/// the tool admits rather than naming a configuration path this file would then
+/// have to keep in step with the lab's.
+fn inject_a_fault_of_each_severity(state: &std::rc::Rc<super::ShellState>) -> Vec<(String, bool)> {
+    use pinion_core::external::IntrospectValue;
+    use pinion_core::widgets::fault_injection::DefectKind;
+
+    let mut injected: Vec<(String, bool)> = Vec::new();
+    let mut externals = state.screens.externals(&state.journey.get());
+    let lab = externals
+        .iter_mut()
+        .filter_map(|e| e.handle.introspect_mut())
+        .find(|it| it.query("gate").is_ok())
+        .expect("an external of the lab section answers for the lab");
+    let offers = as_json(lab.query("faults").expect("the lab publishes its offers"));
+    let rows = offers.as_array().cloned().unwrap_or_default();
+    let severities: std::collections::BTreeSet<bool> = rows
+        .iter()
+        .filter_map(|row| row["blocks"].as_bool())
+        .collect();
+    assert!(
+        !severities.is_empty(),
+        "the lab offers no injectable fault at all, so no defect badge is \
+         reachable: {offers}"
+    );
+    for blocks in severities {
+        let offer = rows
+            .iter()
+            .find(|row| row["blocks"].as_bool() == Some(blocks))
+            .expect("the severity came from these rows");
+        let key = offer["key"].as_str().expect("an offer names its row");
+        let kind = offer["kind"].as_str().expect("an offer names its arm");
+        // The arm is the framework's vocabulary, so a wire word that stopped
+        // parsing fails here rather than colouring something by accident.
+        let parsed =
+            DefectKind::from_wire(kind).unwrap_or_else(|| panic!("{kind:?} is not a fault arm"));
+        assert_eq!(
+            parsed.blocks(),
+            blocks,
+            "the offer's own `blocks` disagrees with the arm it names"
+        );
+        lab.invoke("inject", IntrospectValue::Text(format!("{key}:{kind}")))
+            .unwrap_or_else(|why| panic!("`inject` refused an offer the screen made: {why:?}"));
+        injected.push((key.to_owned(), blocks));
+    }
+    injected
+}
+
+/// Every status badge in a painted frame, paired with the state its OWN WORD
+/// claims — not with a state this file decided for it.
+///
+/// ★★★★★ That is the load-bearing part. An applies badge paints
+/// `Applies::wire`, so the chip says which state it is in, and `applies_state`
+/// — the painter's published rule — says what that state should look like. A
+/// table here would be a second spelling that agreed with the painter by
+/// construction and checked nothing. The same for a defect: its severity is
+/// read back from the PHRASE the badge paints, through the vocabulary the
+/// injection used, so a badge reporting a defect other than the one taken fails
+/// here rather than silently.
+fn status_badges_painted(
+    scene: &pinion_core::Scene,
+    injected: &[(String, bool)],
+    word: &str,
+) -> Vec<(String, pinion_core::theme::StateTone)> {
+    use pinion_core::widgets::config_form::{Applies, ConfigDefect};
+    use pinion_widget_paint::config_form::{applies_state, defect_state};
+
+    // The applies badges: every row of the inspector that has one, found by its
+    // address rather than listed here.
+    let mut here = Vec::new();
+    for tag in painted_under(scene, "lab.form.applies.") {
+        let (_, _, said) = badge_paint(scene, &tag)
+            .unwrap_or_else(|| panic!("{tag} is painted and is not a badge"));
+        let applies = Applies::from_wire(&said).unwrap_or_else(|| {
+            panic!(
+                "{tag} paints {said:?}, which is not an applies-scope this \
+                 vocabulary has — the badge's own word is what says which state \
+                 it claims"
+            )
+        });
+        here.push((tag, applies_state(applies)));
+    }
+    assert!(
+        !here.is_empty(),
+        "the {word} frame paints no applies badge at all, so this gate asked \
+         nothing"
+    );
+    // The defect badges the injections put on the screen.
+    for (key, blocks) in injected {
+        let tag = format!("lab.form.defect.{key}");
+        let (_, _, said) = badge_paint(scene, &tag).unwrap_or_else(|| {
+            panic!(
+                "the tool took a fault at {key} and paints no badge at {tag} — \
+                 the defect is on the row or it is nowhere"
+            )
+        });
+        let reported = ConfigDefect::all()
+            .into_iter()
+            .find(|d| d.phrase() == said)
+            .unwrap_or_else(|| panic!("{tag} paints {said:?}, which names no defect"));
+        assert_eq!(
+            reported.blocks(),
+            *blocks,
+            "{tag} reports {said:?}, whose severity is not the one that was \
+             injected"
+        );
+        here.push((tag, defect_state(&reported)));
+    }
+    here
+}
+
+/// Put the shell in `mode`, let the theme fade ARRIVE, and paint a frame.
+///
+/// Answers the palette in force, the palette the shell binds for that mode, and
+/// the painted scene.
+///
+/// ⚠ The shell paints from `theme_animated`, so the frame right after a mode
+/// change still carries the palette being LEFT. Arm the spring, drive it, and
+/// REQUIRE it to have arrived — R2012 measured what each of the two wrong ways
+/// costs, and one of them makes every contrast reading a number about no palette
+/// at all. `settle_owner_animations` and not one big tick: a 2.0-second `dt` is
+/// one integration step of a 200 ms spring and detonates it.
+fn settled_frame_in_mode(
+    state: &std::rc::Rc<super::ShellState>,
+    owner: &Owner,
+    mode: pinion_core::theme::ThemeMode,
+    word: &str,
+) -> (
+    pinion_core::theme::Theme,
+    pinion_core::theme::Theme,
+    pinion_core::Scene,
+) {
+    use pinion_core::theme::ThemeMode;
+
+    state.theme.set_mode(mode);
+    let _arming = state.theme.theme_animated();
+    pinion_core::test_fixtures::settle_owner_animations(owner);
+    let theme = state.theme.theme_animated();
+    let bound = if mode == ThemeMode::Dark {
+        state.theme.dark_palette()
+    } else {
+        state.theme.light_palette()
+    };
+    assert_eq!(
+        theme, bound,
+        "the {word} fade has not arrived, so every reading below would be of a \
+         palette that does not exist"
+    );
+
+    let mut scene = super::view(ScreenState::default(), pinion_core::Frame::default());
+    let mut cache = pinion_runtime::LayoutCache::new();
+    pinion_runtime::compute_layout(&mut scene, &mut cache, super::WIN_W, super::WIN_H);
+    (theme, bound, scene)
+}
+
+/// Hold one state's badge pairing to the text floor in each palette, and record
+/// the readings.
+///
+/// ⚠⚠ TWO PALETTES PER MODE, and the second is the point (R2012). A gate that
+/// only saw the palette THIS shell binds would report that every application
+/// inheriting the framework's defaults is fine.
+///
+/// ⚠⚠ A SHORTFALL THIS SIDE DOES NOT OWN IS EXCUSED BY NAME, NOT IGNORED —
+/// R2019's rule, met by a painted mark for the first time. `shortfalls` is asked
+/// of the palette rather than compared with a literal, so what is excused is
+/// exactly what that palette already declares itself short of; the caller pins
+/// the set of excuses. Demanding zero would be demanding the right to change
+/// colours authored in another repository, and silently skipping would be worse.
+fn judge_badge_legibility(
+    tone: pinion_core::theme::StateTone,
+    word: &str,
+    palettes: &[(&str, &pinion_core::theme::Theme)],
+    readings: &mut Vec<String>,
+    excused: &mut std::collections::BTreeSet<String>,
+) {
+    use pinion_core::contrast::contrast_ratio;
+    use pinion_core::legibility::Floor;
+
+    let pairing = format!("{}/{}", tone.on_container().name(), tone.container().name());
+    for (whose, palette) in palettes {
+        let ratio = contrast_ratio(
+            palette.resolve(tone.on_container()),
+            palette.resolve(tone.container()),
+        );
+        let already_short = pinion_core::legibility::shortfalls(palette)
+            .into_iter()
+            .any(|(name, _)| name == pairing);
+        if already_short {
+            excused.insert(format!("{whose}/{word}/{pairing}={ratio:.2}"));
+        } else {
+            assert!(
+                ratio >= Floor::Text.ratio(),
+                "the {whose} {word} palette paints `{}`'s badge word at \
+                 {ratio:.2} on its own ground — under the {:.1} a word a person \
+                 has to READ is held to",
+                tone.word(),
+                Floor::Text.ratio(),
+            );
+        }
+        readings.push(format!("{whose}/{word}/{}={ratio:.2}", tone.word()));
+    }
+}
+
+/// ★★★★★ R2020 §5.38 §5.50 — **the assembled tool's status badges are painted
+/// on their own state's ground, and the state is read off the badge's word.**
+///
+/// # What was wrong
+///
+/// Measured on the behaviour canon this project reproduces, a status badge is a
+/// chip FILLED with its state's low-emphasis tone: the inspector draws `HOT` on
+/// the right-state ground and `RESTART` on the caution one, and the capture
+/// screen draws `Drop` on the wrong one. Here every badge was the same shape —
+/// the shared raised tier with an outline — and the state was carried by the
+/// colour of eight small letters. `HOT` was drawn in `accent`, this
+/// vocabulary's INTERACTIVE tone, so the one badge saying *this edit lands
+/// immediately* read as a thing to press.
+///
+/// It could not be otherwise: filling a chip with a state's ground needs
+/// `<state>_container` and `on_<state>_container`, and until R2020 the palette
+/// had that pair for `error` alone. The four states had four different shapes,
+/// which is the debt this closes — and the badge is the consumer that forced
+/// them uniform.
+///
+/// # What this judges, and why each part
+///
+/// - **The walk first**, so the claim is about an application that reproduces
+///   its specification rather than about a scene assembled here.
+/// - **The tone is derived from the painted WORD.** The applies badge paints
+///   `Applies::wire`, so the badge itself says which state it claims to be in,
+///   and `applies_state` — the painter's published rule — says what that state
+///   should look like. A table here would be a second spelling that agreed with
+///   the painter by construction and checked nothing.
+/// - **Defects are DRIVEN, not fixtured.** Both arms, through the lab's own
+///   published `inject` verb, because `blocks` is the whole reason the caution
+///   tier exists and a gate that only saw one of them would pass while the two
+///   were painted alike — which is what they were.
+/// - **Then the floor, in four palettes.** R2012's finding applies unchanged: a
+///   pairing that clears in the palette a screen BINDS can be under the floor in
+///   the canonical one every other application inherits, so both are asked, per
+///   mode. The floor is `Floor::Text` and not `Boundary`: the reader's task
+///   here is to READ a word, not to find a mark.
+///
+/// ```text
+/// cargo test -p hello-analyzer-shell r2020 -- --nocapture
+/// ```
+#[test]
+fn r2020_the_assembled_tool_paints_its_status_badges_on_their_states_ground() {
+    use pinion_core::theme::{StateTone, Theme, ThemeMode};
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let report = walk_the_application(&state);
+        assert!(
+            report.conforms(),
+            "the application did not reproduce its specification over the walk: {}",
+            report.why().unwrap_or_default()
+        );
+        assert!(
+            report.itinerary().iter().any(|key| key == "lab"),
+            "the walk must stand in the node lab, which is where the inspector \
+             is: {:?}",
+            report.itinerary()
+        );
+
+        state.go("lab").expect("the node lab section is open");
+
+        // ── drive one defect of each severity, through the published verb ──
+        let injected = inject_a_fault_of_each_severity(&state);
+        assert!(
+            !injected.is_empty(),
+            "no defect was driven, so no defect badge is judged below"
+        );
+
+        // ── read every status badge the assembled tool now paints ─────────
+        let mut judged: Vec<(String, StateTone)> = Vec::new();
+        let mut readings: Vec<String> = Vec::new();
+        let mut excused: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for (mode, word) in [(ThemeMode::Light, "light"), (ThemeMode::Dark, "dark")] {
+            let (theme, bound, scene) = settled_frame_in_mode(&state, &owner, mode, word);
+            let here = status_badges_painted(&scene, &injected, word);
+
+            let canonical = if mode == ThemeMode::Dark {
+                Theme::dark()
+            } else {
+                Theme::light()
+            };
+            for (tag, tone) in &here {
+                let (ground, ink, said) =
+                    badge_paint(&scene, tag).expect("the badge was found a moment ago");
+                assert_eq!(
+                    ground,
+                    theme.resolve(tone.container()),
+                    "{word}: `{tag}` says {said:?}, which is a `{}` state, and it \
+                     is filled with something else — a screen deciding a state's \
+                     colour for itself is the defect this closed",
+                    tone.word()
+                );
+                assert_eq!(
+                    ink,
+                    theme.resolve(tone.on_container()),
+                    "{word}: `{tag}`'s word is not the ink its own ground carries",
+                );
+                judge_badge_legibility(
+                    *tone,
+                    word,
+                    &[("bound", &bound), ("canonical", &canonical)],
+                    &mut readings,
+                    &mut excused,
+                );
+                judged.push((tag.clone(), *tone));
+            }
+        }
+
+        // ★ The denominator, asserted rather than reported. Two modes, and in
+        // each of them every applies badge the inspector painted plus the two
+        // driven defects — so a frame that stopped painting the inspector, or an
+        // injection that quietly did nothing, takes this down instead of
+        // satisfying every assertion above by never entering the loop.
+        assert_eq!(
+            judged.len() % 2,
+            0,
+            "the two modes judged different populations: {judged:?}"
+        );
+        assert_eq!(
+            judged.len(),
+            18,
+            "measured at R2020: nine status badges per mode — seven `RESTART` \
+             rows, one `HOT`, and the driven defect. A count that moved means \
+             the inspector's rows moved, and this claim's population with them: \
+             {judged:?}"
+        );
+        let states: std::collections::BTreeSet<&str> =
+            judged.iter().map(|(_, tone)| tone.word()).collect();
+        // ⚠ THREE of the vocabulary's four, measured: seven `RESTART` badges,
+        // one `HOT`, and the driven defect, in each of two modes. The fourth is
+        // named here rather than quietly absent — `info` has no painted badge in
+        // this tool. The canon draws one, on the capture screen, where a
+        // fragment's `First` / `More` marks sit on the informational ground and
+        // ours are plain runs ⇒
+        // [[debt-the-capture-screens-fragment-marks-are-drawn-as-plain-runs]].
+        assert_eq!(
+            states.iter().copied().collect::<Vec<_>>(),
+            vec!["error", "success", "warning"],
+            "the states this tool paints a filled badge for have changed: \
+             {judged:?}"
+        );
+
+        // ★★★★★ THE EXCUSE LIST IS PINNED, so a pairing that joins it is red on
+        // the day it appears.
+        //
+        // ⚠ ONE entry, and it is the finding this round hands on: the authored
+        // dark document's error container carries its own foreground at
+        // **4.16**, under the 4.5 a word is held to. R2019 pinned that pairing
+        // as a shortfall nobody painted; R2020 is the round that paints it, so
+        // it has a READER now. The values are authored in another repository and
+        // are not this side's to edit ⇒
+        // [[debt-the-framework-grew-two-colour-roles-the-authored-theme-does-not-carry]]
+        // carries the handoff, and this line is what stops the list growing
+        // quietly beside it.
+        assert_eq!(
+            excused.iter().map(String::as_str).collect::<Vec<_>>(),
+            vec!["bound/dark/on_error_container/error_container=4.16"],
+            "the pairings this tool paints and cannot hold to the floor have \
+             changed — a new one is somebody's regression, and a departed one \
+             should be celebrated in this comment rather than silently dropped"
+        );
+        println!(
+            "[r2020] {} badge(s) judged over states {states:?}; excused \
+             {excused:?}; {readings:?}",
+            judged.len(),
+        );
+    });
 }

@@ -76,6 +76,7 @@
 #![forbid(unsafe_code)]
 
 pub mod anchor;
+pub mod badge;
 pub mod barrier;
 pub mod button;
 pub mod caption;

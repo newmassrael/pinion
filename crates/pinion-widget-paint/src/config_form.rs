@@ -48,7 +48,7 @@ use pinion_core::style::{
     AlignItems, Border, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size,
     TextOverflow, TextStyle,
 };
-use pinion_core::theme::{ColorRole, Theme};
+use pinion_core::theme::{ColorRole, StateTone, Theme};
 use pinion_core::voice::Silence;
 use pinion_core::widgets::config_form::{
     Applies, ConfigDefect, ConfigField, ConfigForm, FieldType, Source,
@@ -57,6 +57,7 @@ use pinion_core::widgets::picker::Picker;
 use pinion_core::widgets::toggle::ToggleState;
 use pinion_core::{Scene, measured_text_extent};
 
+use crate::badge::{BadgeTone, view_badge};
 use crate::indicator::Indicator;
 use crate::switch::SwitchStyle;
 
@@ -623,9 +624,13 @@ const CHIP_GAP: u32 = 6;
 /// Height of the "add this key" chip row entries.
 const ADD_CHIP_H: u32 = 24;
 
-/// A badge's horizontal padding, one side. Named because the header's width
-/// budget has to add it back (R1656).
-const BADGE_PAD: u32 = 6;
+// ★ R2020 — `BADGE_PAD` moved to `crate::badge`, with the paint it belongs to.
+//
+// ⚠ It is published there rather than private, and NOT because this form reads
+// it: the header hands its width deficit to the flex pass (see `view_header`),
+// so no number here has to be right. It is public because a caller laying a row
+// out by hand has to know how much a badge takes beyond its word — which is the
+// thing R1656 measured going wrong.
 
 /// The gap between the header's items, which the width budget also spends.
 const HEADER_GAP: u32 = 6;
@@ -1065,60 +1070,54 @@ pub(crate) fn placed(layout: LayoutStyle, rect: Rect, origin: (u32, u32)) -> Lay
         .with_pointer_transparent(true)
 }
 
-/// The badge colours a row's applies-scope is shown in.
-fn applies_ink(applies: Applies, theme: &Theme) -> Color {
+/// ★★★★★ R2020 — **the state a row's applies-scope reports, so the badge is
+/// filled with that state's own ground.**
+///
+/// It was a bare ink — `Accent` for hot, `OnSurfaceMuted` for restart — on the
+/// shared raised tier, and it said neither of the two things the canon says
+/// here. Measured on the behaviour canon's own inspector, the policy chip is
+/// drawn `HOT` on the RIGHT-state ground and `RESTART` on the CAUTION one:
+/// *this edit reaches the running node* is a state that is well, and *this edit
+/// waits for a restart* is one that wants care. `Accent` said something else
+/// again — it is this vocabulary's interactive tone, so a hot row's badge read
+/// as a thing to press.
+/// It is `pub` because a gate that judged the painted colour against a table of
+/// its own would be checking two spellings agree rather than checking the
+/// screen. A consumer asks the rule and compares that to the pixels.
+#[must_use]
+pub const fn applies_state(applies: Applies) -> StateTone {
     match applies {
-        Applies::Hot => theme.resolve(ColorRole::Accent),
-        Applies::Restart => theme.resolve(ColorRole::OnSurfaceMuted),
+        Applies::Hot => StateTone::Success,
+        Applies::Restart => StateTone::Warning,
     }
 }
 
-/// A read-out chip beside a row's key.
+/// ★★★★★ R2020 — **the state a row's worst defect reports.**
 ///
-/// ★★ R1691 — a tagged badge declares its own **silence**. Its words are
-/// already announced, whole, as the name of the row's description region (the
-/// `said` node `describedby_region` builds), so a node here would read the
-/// applies-scope and the defect class out twice on every focus move — the
-/// duplicate the reference toolkit produces by construction for every label
-/// bound to a field, and which it offers nothing to suppress. Declaring it is
-/// what keeps `scene/voice` from counting it as forgotten.
-fn badge(text: &str, ink: Color, theme: &Theme, tag: Option<(String, Silence)>) -> Scene {
-    let label = Scene::Text(TextNode::styled(
-        text.to_owned(),
-        Rect::default(),
-        form_run_style().with_size_px(9).with_fg(ink),
-    ));
-    let mut node = ContainerNode::new(vec![label])
-        .with_style(
-            BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh))
-                .with_corner_radius(4)
-                .with_border(Border::new(ink, 1)),
-        )
-        .with_layout(
-            LayoutStyle::new()
-                .flex(FlexDirection::Row)
-                .with_align_items(AlignItems::Center)
-                .with_justify(JustifyContent::Center)
-                .with_padding(Rect::new(BADGE_PAD, 2, BADGE_PAD, 2))
-                // ★ R1656 — a badge is a read-out and must not be shrunk to
-                // make room; the key beside it is what gives way (R1536
-                // measured a 10px mark painted at 6px when a decoration was
-                // allowed to absorb a deficit).
-                .with_flex_shrink(0.0)
-                // ★ R1655 — a badge is a READ-OUT, and a tagged node that is
-                // not transparent becomes the §5.35 router's hit target: the
-                // router looks its tag up as an `External`, finds none (the tag
-                // is an address, not a widget), and forwards NOTHING. Wherever
-                // a badge is painted the form was dead to a real mouse, while
-                // every wire-driven assertion about it passed — R1649.1's
-                // class, in a crate, so every consumer of this painter had it.
-                .with_pointer_transparent(true),
-        );
-    if let Some((tag, silence)) = tag {
-        node = node.with_tag(tag);
-        node.layout.silence = Some(silence);
+/// The two arms are the distinction [`ConfigDefect::blocks`] already draws —
+/// this one stops the node coming up, that one does not — and R1651 argued the
+/// caution tier into existence for exactly it. Until this round both were an
+/// ink on the shared raised tier, so the row that stops a launch and the row
+/// that does not differed by the colour of eight small letters.
+///
+/// `pub` for [`applies_state`]'s reason.
+#[must_use]
+pub const fn defect_state(defect: &ConfigDefect) -> StateTone {
+    if defect.blocks() {
+        StateTone::Error
+    } else {
+        StateTone::Warning
     }
-    Scene::Container(node)
+}
+
+/// A read-out chip beside a row's key, in the neutral form.
+///
+/// The paint lives in [`crate::badge`] now — a badge is not this widget's, and
+/// leaving it private here is what would have made the next screen that wanted
+/// one copy it. What stays here is which of the two forms each of this form's
+/// badges takes, which IS this widget's decision.
+fn badge(text: &str, ink: ColorRole, theme: &Theme, tag: Option<(String, Silence)>) -> Scene {
+    view_badge(text, BadgeTone::Neutral { ink }, theme, tag)
 }
 
 /// Paint a form from the geometry it was laid out into.
@@ -1294,7 +1293,7 @@ fn view_header(
         )];
         header.push(badge(
             &type_word(field),
-            theme.resolve(ColorRole::OnSurfaceMuted),
+            ColorRole::OnSurfaceMuted,
             theme,
             Some((
                 format!("{tag_prefix}.type.{}", row.key),
@@ -1310,7 +1309,7 @@ fn view_header(
             // this value ship" are two questions and a reader has both.
             header.push(badge(
                 instead,
-                theme.resolve(ColorRole::OnSurfaceMuted),
+                ColorRole::OnSurfaceMuted,
                 theme,
                 Some((
                     format!("{tag_prefix}.aside.{}", row.key),
@@ -1319,19 +1318,17 @@ fn view_header(
             ));
         }
         if let Some(defect) = worst {
-            let ink = if defect.blocks() {
-                theme.resolve(ColorRole::Error)
-            } else {
-                theme.resolve(ColorRole::Warning)
-            };
+            // ★★★★★ R2020 — a defect is a STATE, so it is filled with that
+            // state's ground. See `defect_state` for which is which.
+            let tone = defect_state(defect);
             // ★★★★★ R2002 — the badge paints the PHRASE, not the wire
             // spelling. See `ConfigDefect::phrase`: `out_of_range` is a token an
             // agent matches, and the description this badge lends its ink to is
             // built by putting the same phrase in front of the sentence, so
             // label-in-name holds by construction.
-            header.push(badge(
+            header.push(view_badge(
                 defect.phrase(),
-                ink,
+                BadgeTone::State(tone),
                 theme,
                 Some((
                     format!("{tag_prefix}.defect.{}", row.key),
@@ -1397,9 +1394,9 @@ fn provenance_badges(
     theme: &Theme,
 ) -> Vec<Scene> {
     let applies = || {
-        badge(
+        view_badge(
             field.applies().wire(),
-            applies_ink(field.applies(), theme),
+            BadgeTone::State(applies_state(field.applies())),
             theme,
             Some((
                 format!("{tag_prefix}.applies.{key}"),
@@ -1410,7 +1407,7 @@ fn provenance_badges(
     let source = |word: &str| {
         badge(
             word,
-            theme.resolve(ColorRole::OnSurfaceMuted),
+            ColorRole::OnSurfaceMuted,
             theme,
             Some((
                 format!("{tag_prefix}.source.{key}"),
@@ -2581,6 +2578,83 @@ pub fn row_description(nodes: &[AccessNode], tag_prefix: &str, key: &str) -> Opt
 
 #[cfg(test)]
 mod tests {
+    /// ★★★★★ R2020 — **which state each applies-scope is painted in, PINNED
+    /// against the behaviour canon.**
+    ///
+    /// This is a re-spelling of [`applies_state`] and it is deliberate, because
+    /// the source it is checked against is not in this tree. The consumer gates
+    /// derive their expectation from that function, so they are silent about
+    /// whether the mapping is RIGHT — they only check the screen agrees with
+    /// it. Something has to hold the mapping itself, and what it is held to is a
+    /// measurement of the canon's own inspector: its policy chip is drawn `HOT`
+    /// on the right-state ground and `RESTART` on the caution one.
+    ///
+    /// ⚠ And a negative, which is the half a pin usually omits: neither is
+    /// `Accent`'s family. `HOT` was painted in the accent until this round —
+    /// this vocabulary's INTERACTIVE tone — so the badge saying *this edit lands
+    /// immediately* read as a thing to press.
+    #[test]
+    fn r2020_each_applies_scope_is_painted_in_the_state_the_canon_uses() {
+        use pinion_core::theme::StateTone;
+
+        assert_eq!(super::applies_state(Applies::Hot), StateTone::Success);
+        assert_eq!(super::applies_state(Applies::Restart), StateTone::Warning);
+        // The population, so an arm added to `Applies` is unpinned loudly.
+        assert_eq!(Applies::ALL.len(), 2);
+        for scope in Applies::ALL {
+            let tone = super::applies_state(scope);
+            assert_ne!(
+                tone.container(),
+                pinion_core::theme::ColorRole::Accent,
+                "`{}` is painted in the interactive tone's family, which says \
+                 *press me* about a read-out",
+                scope.wire()
+            );
+        }
+    }
+
+    /// ★★★★★ R2020 — **a defect that stops a launch and one that does not are
+    /// not painted alike.**
+    ///
+    /// The claim R1651 argued the caution tier into existence for, asserted at
+    /// last on the thing a person sees. Until this round both were an ink on the
+    /// shared raised tier, so the two severities differed by the colour of eight
+    /// small letters; a reader scanning a form for *what stops me* had to read
+    /// each badge.
+    ///
+    /// Stated as a partition over [`ConfigDefect::all`] rather than two
+    /// equalities, so it is about the vocabulary rather than about three
+    /// particular arms: a fourth defect joining either side inherits the claim.
+    #[test]
+    fn r2020_a_blocking_defect_is_not_painted_like_one_that_warns() {
+        use pinion_core::widgets::config_form::ConfigDefect;
+        use std::collections::BTreeSet;
+
+        let mut blocking: BTreeSet<&str> = BTreeSet::new();
+        let mut warning: BTreeSet<&str> = BTreeSet::new();
+        for defect in ConfigDefect::all() {
+            let word = super::defect_state(&defect).word();
+            if defect.blocks() {
+                blocking.insert(word);
+            } else {
+                warning.insert(word);
+            }
+        }
+        assert!(
+            !blocking.is_empty() && !warning.is_empty(),
+            "one side is empty, so the partition asserts nothing: \
+             {blocking:?} / {warning:?}"
+        );
+        assert!(
+            blocking.is_disjoint(&warning),
+            "a defect that stops a launch is painted the same as one that does \
+             not: {blocking:?} / {warning:?}"
+        );
+        // And which side is which, because *different* is not enough: the one
+        // that stops you is the wrong-state tone.
+        assert_eq!(blocking, ["error"].into_iter().collect::<BTreeSet<_>>());
+        assert_eq!(warning, ["warning"].into_iter().collect::<BTreeSet<_>>());
+    }
 
     /// A form holding one choice row over `words`, for the picker checks.
     fn choosing(words: &[&'static str]) -> ConfigForm {

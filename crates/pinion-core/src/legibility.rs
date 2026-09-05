@@ -180,6 +180,25 @@ pub const PAIRINGS: &[Pairing] = &[
     text(ColorRole::OnWarning, ColorRole::Warning),
     text(ColorRole::OnSuccess, ColorRole::Success),
     text(ColorRole::OnInfo, ColorRole::Info),
+    // ★★★★★ R2020 — the other three container pairs, which arrived with a
+    // painted consumer: a status badge is drawn on its state's container now,
+    // so these are grounds a person reads words off rather than tokens.
+    //
+    // ⚠ The pairing declared is the FOREGROUND on the container and NOT the
+    // container on the surface, and that is a deliberate limit rather than an
+    // oversight. Measured on this crate's own palettes, a container reads about
+    // **1.3** on the light surface and **2.0** on the dark one — `error`'s has
+    // read that way since R590 — so a boundary pairing here would declare a
+    // floor the whole tier fails. A filled badge is found by its WORD, which
+    // clears the text floor with headroom to spare; the tint groups the word,
+    // it does not carry it. A design that needed the ground itself to be
+    // findable would have to move four container values, which is a decision
+    // about a palette and not a rule about a vocabulary ⇒ the residue is stated
+    // in `Theme::light`'s own comment rather than hidden behind a pairing
+    // nobody could hold.
+    text(ColorRole::OnWarningContainer, ColorRole::WarningContainer),
+    text(ColorRole::OnSuccessContainer, ColorRole::SuccessContainer),
+    text(ColorRole::OnInfoContainer, ColorRole::InfoContainer),
     text(ColorRole::InverseOnSurface, ColorRole::InverseSurface),
     // A snackbar's action label: the accent re-toned for the inverted ground.
     text(ColorRole::InversePrimary, ColorRole::InverseSurface),
@@ -611,6 +630,62 @@ mod tests {
                 .collect::<Vec<_>>(),
         );
         assert!(report.holds(), "and the parity verdict still holds");
+    }
+
+    /// ★★★★★ R2020 — **every state's own two pairings are declared, and the
+    /// question is asked of the STATE rather than of this table.**
+    ///
+    /// A table is a list somebody keeps, and this repository's standing finding
+    /// about lists is that they rot in the direction that hides work: the tier
+    /// went from one state to two to four while `error` was the only one whose
+    /// container pair was declared here, and nothing said so, because a pairing
+    /// nobody declares is a pairing nobody checks — this module's own opening
+    /// sentence. R2012 met the same shape from the other side and wrote it down:
+    /// *"the next undeclared ink-over-ground pairing will be just as quiet."*
+    ///
+    /// So the population is [`StateTone::ALL`], which is derived from the enum
+    /// by `VariantCensus`, and the claim is that a state's tone pairing AND its
+    /// container pairing are both in the table. A fifth state added to the
+    /// vocabulary fails this the moment it exists, which is the point: it is
+    /// the *shape* of a state that is being asserted, not the membership of
+    /// eight particular rows.
+    #[test]
+    fn r2020_every_state_declares_both_of_its_pairings() {
+        use crate::theme::StateTone;
+
+        // Keyed by the roles' wire names rather than by the roles: `ColorRole`
+        // is `Eq + Hash` and not `Ord`, and a name is what the message has to
+        // print anyway.
+        let declared: BTreeSet<(&str, &str)> = PAIRINGS
+            .iter()
+            .map(|p| (p.ink.name(), p.ground.name()))
+            .collect();
+        let mut asked = 0_usize;
+        for tone in StateTone::ALL {
+            for (ink, ground) in [
+                (tone.on_tone(), tone.tone()),
+                (tone.on_container(), tone.container()),
+            ] {
+                assert!(
+                    declared.contains(&(ink.name(), ground.name())),
+                    "`{}` is painted on `{}` by every screen that shows a `{}` \
+                     state, and this table does not declare the pairing — so \
+                     nothing holds it to a floor",
+                    ink.name(),
+                    ground.name(),
+                    tone.word(),
+                );
+                asked += 1;
+            }
+        }
+        // The denominator, so a `StateTone::ALL` that shrank could not pass by
+        // having less to ask about.
+        assert_eq!(
+            asked,
+            2 * StateTone::ARMS,
+            "two pairings for each of the vocabulary's states"
+        );
+        println!("[r2020] {asked} state pairing(s) declared");
     }
 
     #[test]

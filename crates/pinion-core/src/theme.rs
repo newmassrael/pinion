@@ -291,7 +291,17 @@ pub fn set_system_color_scheme(scheme: SystemColorScheme) {
 /// `hello-textfield`). Subsequent slices add the Material 3 container
 /// / variant pairs without breaking `SemVer` thanks to the
 /// `#[non_exhaustive]` annotation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    pinion_derive::VariantCensus,
+)]
 #[non_exhaustive]
 pub enum ColorRole {
     /// Window / panel background. Material 3 `surface`, W3C
@@ -388,12 +398,23 @@ pub enum ColorRole {
     /// A gate that showed a non-blocking defect in the error tone would say
     /// "you cannot start" about the one case where you can, and the mature
     /// toolkit's palette has no warning role either, so there is nothing to
-    /// borrow. Two roles, not four: nothing here fills a warning *container*
-    /// yet, and a role no surface resolves is a token nobody can be wrong
-    /// about.
+    /// borrow.
+    ///
+    /// ⚠ R1651 wrote here *"two roles, not four: nothing here fills a warning
+    /// container yet, and a role no surface resolves is a token nobody can be
+    /// wrong about"*. R2020 is the round that made that false — a status badge
+    /// is painted on a filled ground now, so every state answers for its
+    /// container pair. [`StateTone`] is where the four roles a state has
+    /// stopped being four things to remember.
     Warning,
     /// Foreground drawn on a [`Self::Warning`] fill.
     OnWarning,
+    /// R2020 — filled-but-low-emphasis caution surface: the ground a caution
+    /// badge is painted on. The [`Self::ErrorContainer`] tier, for the state
+    /// next to it.
+    WarningContainer,
+    /// Foreground drawn on a [`Self::WarningContainer`] fill.
+    OnWarningContainer,
     /// R2012 — a state that is **right**: an act that happened, a check that
     /// passed, a link that is up.
     ///
@@ -412,6 +433,10 @@ pub enum ColorRole {
     Success,
     /// Foreground drawn on a [`Self::Success`] fill.
     OnSuccess,
+    /// R2020 — filled-but-low-emphasis right-state surface.
+    SuccessContainer,
+    /// Foreground drawn on a [`Self::SuccessContainer`] fill.
+    OnSuccessContainer,
     /// R2012 — a state that is **neither right nor wrong**: a fact the reader
     /// is being told, which no act is asked about.
     ///
@@ -424,7 +449,148 @@ pub enum ColorRole {
     Info,
     /// Foreground drawn on an [`Self::Info`] fill.
     OnInfo,
+    /// R2020 — filled-but-low-emphasis informational surface.
+    InfoContainer,
+    /// Foreground drawn on an [`Self::InfoContainer`] fill.
+    OnInfoContainer,
 }
+
+/// (R2020 §5.50) A **state** this vocabulary can paint, and the four roles it
+/// answers for.
+///
+/// ★★★★★ THIS EXISTS BECAUSE THE FOUR STATES HAD FOUR DIFFERENT SHAPES.
+/// Measured at R2019: `error` carried four roles, `warning` two, and `success`
+/// and `info` two apiece — so *what does a caution badge's filled ground look
+/// like* was a question the vocabulary could answer for one state and not for
+/// its three neighbours. A painter reaching for one therefore had to know which
+/// state it was looking at before it knew whether the question had an answer,
+/// which is the shape of a defect rather than of a vocabulary.
+///
+/// Answering through the state rather than through six remembered role names is
+/// what makes the shape uniform BY CONSTRUCTION: a fifth state cannot be added
+/// half-built, because [`Self::roles`] is one `match` returning all four at
+/// once. `r2020_every_state_tone_names_its_own_four_roles` is the gate, and it
+/// compares against a DERIVED expectation — each role's [`ColorRole::name`]
+/// against the state's own word plus the suffix — rather than re-spelling the
+/// table a second time.
+///
+/// ⚠ The four here are the STATES a screen reports, and not every role that
+/// happens to have a container. `surface_container*` is an elevation ladder
+/// (see [`Theme::ELEVATION`]) and `accent` is an interaction tone; neither is a
+/// thing being said about a value, so neither is an arm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, pinion_derive::VariantCensus)]
+#[variant_census(all)]
+pub enum StateTone {
+    /// It is wrong, and something is stopped by it.
+    Error,
+    /// It wants care, and nothing is stopped.
+    Warning,
+    /// It is right: an act that happened, a check that passed.
+    Success,
+    /// It is a fact the reader is being told, which asks for nothing.
+    Info,
+}
+
+impl StateTone {
+    /// Every state, in the order a reader meets them on a severity scale.
+    pub const ALL: [StateTone; 4] = [
+        StateTone::Error,
+        StateTone::Warning,
+        StateTone::Success,
+        StateTone::Info,
+    ];
+
+    /// The word this state is spelled with — the stem every one of its role
+    /// names is built from.
+    #[must_use]
+    pub const fn word(self) -> &'static str {
+        match self {
+            StateTone::Error => "error",
+            StateTone::Warning => "warning",
+            StateTone::Success => "success",
+            StateTone::Info => "info",
+        }
+    }
+
+    /// The state's four roles: the tone, its foreground, the filled ground a
+    /// low-emphasis mark is painted on, and THAT ground's foreground.
+    ///
+    /// One `match` and one array, so a state cannot be given three of the four.
+    #[must_use]
+    pub const fn roles(self) -> [ColorRole; 4] {
+        match self {
+            StateTone::Error => [
+                ColorRole::Error,
+                ColorRole::OnError,
+                ColorRole::ErrorContainer,
+                ColorRole::OnErrorContainer,
+            ],
+            StateTone::Warning => [
+                ColorRole::Warning,
+                ColorRole::OnWarning,
+                ColorRole::WarningContainer,
+                ColorRole::OnWarningContainer,
+            ],
+            StateTone::Success => [
+                ColorRole::Success,
+                ColorRole::OnSuccess,
+                ColorRole::SuccessContainer,
+                ColorRole::OnSuccessContainer,
+            ],
+            StateTone::Info => [
+                ColorRole::Info,
+                ColorRole::OnInfo,
+                ColorRole::InfoContainer,
+                ColorRole::OnInfoContainer,
+            ],
+        }
+    }
+
+    /// The full-emphasis tone — an ink on the plain surface, or a fill a
+    /// foreground of [`Self::on_tone`] is drawn on.
+    #[must_use]
+    pub const fn tone(self) -> ColorRole {
+        self.roles()[0]
+    }
+
+    /// The foreground a [`Self::tone`] fill carries.
+    #[must_use]
+    pub const fn on_tone(self) -> ColorRole {
+        self.roles()[1]
+    }
+
+    /// The low-emphasis filled ground — what a status badge is painted on.
+    #[must_use]
+    pub const fn container(self) -> ColorRole {
+        self.roles()[2]
+    }
+
+    /// The foreground a [`Self::container`] fill carries.
+    #[must_use]
+    pub const fn on_container(self) -> ColorRole {
+        self.roles()[3]
+    }
+}
+
+/// ★★★★★ R2020 — **`all()` is now checked against the definition, at build
+/// time.**
+///
+/// `r595_all_enumerates_every_variant` has pinned a literal count since R595 and
+/// touches every variant in a `match`, so a variant added without a match arm
+/// has always been a compile error. What neither could see is a variant added,
+/// given its arm, and left OUT of the slice: the `match` still compiles and the
+/// literal still equals the slice's own length. The slice is what
+/// `Theme::adopt`, `ThemeGap`, the RPC token census and `ThemeLinear` all walk,
+/// so a role missing from it is a role no palette can carry and nothing would
+/// have said so.
+///
+/// `ARMS` comes from the definition rather than from a list, which is what makes
+/// this a comparison rather than a second spelling.
+const _: () = assert!(
+    ColorRole::all().len() == ColorRole::ARMS,
+    "`ColorRole::all()` is short of the enum's own variants: a role missing from \
+     that slice is one no palette can bind and no gap can report"
+);
 
 impl ColorRole {
     /// Every [`ColorRole`] variant in a fixed, schema-stable order.
@@ -469,6 +635,18 @@ impl ColorRole {
             ColorRole::OnSuccess,
             ColorRole::Info,
             ColorRole::OnInfo,
+            // ★ R2020 — appended, rather than interleaved beside the tones they
+            // belong to, because the paragraph above asks for exactly that: this
+            // slice is a wire order as well as an enumeration, and moving an
+            // existing role's index to make the reading nicer would move it for
+            // every consumer. [`StateTone`] is where the grouping is expressed,
+            // and it is derived from the roles rather than from this order.
+            ColorRole::WarningContainer,
+            ColorRole::OnWarningContainer,
+            ColorRole::SuccessContainer,
+            ColorRole::OnSuccessContainer,
+            ColorRole::InfoContainer,
+            ColorRole::OnInfoContainer,
         ]
     }
 
@@ -512,6 +690,12 @@ impl ColorRole {
             ColorRole::OnSuccess => "on_success",
             ColorRole::Info => "info",
             ColorRole::OnInfo => "on_info",
+            ColorRole::WarningContainer => "warning_container",
+            ColorRole::OnWarningContainer => "on_warning_container",
+            ColorRole::SuccessContainer => "success_container",
+            ColorRole::OnSuccessContainer => "on_success_container",
+            ColorRole::InfoContainer => "info_container",
+            ColorRole::OnInfoContainer => "on_info_container",
         }
     }
 
@@ -646,6 +830,18 @@ pub struct Theme {
     pub info: Color,
     /// Resolves [`ColorRole::OnInfo`].
     pub on_info: Color,
+    /// Resolves [`ColorRole::WarningContainer`].
+    pub warning_container: Color,
+    /// Resolves [`ColorRole::OnWarningContainer`].
+    pub on_warning_container: Color,
+    /// Resolves [`ColorRole::SuccessContainer`].
+    pub success_container: Color,
+    /// Resolves [`ColorRole::OnSuccessContainer`].
+    pub on_success_container: Color,
+    /// Resolves [`ColorRole::InfoContainer`].
+    pub info_container: Color,
+    /// Resolves [`ColorRole::OnInfoContainer`].
+    pub on_info_container: Color,
 }
 
 impl Theme {
@@ -739,6 +935,31 @@ impl Theme {
             on_success: Color::rgb(0xff, 0xff, 0xff),
             info: Color::rgb(0x00, 0x69, 0x6e),
             on_info: Color::rgb(0xff, 0xff, 0xff),
+            // ★★★★★ R2020 — the three container pairs the tier was short of,
+            // built to the recipe `error_container` was already built to rather
+            // than picked: each hue's tone-90 as the ground and its tone-10 as
+            // the foreground, which is Material 3's container construction.
+            //
+            // The point of following one recipe is that the tier reads
+            // UNIFORMLY, and that is measured rather than intended. Foreground
+            // on ground, this palette: error **12.77**, warning **13.22**,
+            // success **13.28**, info **13.11** — a band of half a point across
+            // four states, where a hand-picked set would have to be re-argued
+            // every time one moved.
+            //
+            // ⚠ STATED LIMIT, and it is true of `error_container` too and has
+            // been all along: a container on the plain `surface` reads about
+            // **1.3** here, so a filled badge's GROUND is not findable by
+            // contrast — its WORD is what a reader finds, at the ratios above.
+            // That is why `crate::legibility` declares the text pairing and not
+            // a boundary one: declaring a boundary pairing this tier cannot
+            // meet would be a floor nobody could hold it to.
+            warning_container: Color::rgb(0xff, 0xdd, 0xb3),
+            on_warning_container: Color::rgb(0x2a, 0x18, 0x00),
+            success_container: Color::rgb(0x95, 0xf9, 0x90),
+            on_success_container: Color::rgb(0x00, 0x21, 0x0a),
+            info_container: Color::rgb(0x97, 0xf0, 0xf7),
+            on_info_container: Color::rgb(0x00, 0x20, 0x22),
         }
     }
 
@@ -835,6 +1056,20 @@ impl Theme {
             on_success: Color::rgb(0x00, 0x39, 0x0a),
             info: Color::rgb(0x4f, 0xd8, 0xe4),
             on_info: Color::rgb(0x00, 0x37, 0x39),
+            // R2020 — the dark halves, on the recipe this palette's
+            // `error_container` already uses: the hue's tone-30 as the ground
+            // and its tone-90 as the foreground, which is the light pair
+            // exchanged rather than a second decision. Measured on ground:
+            // error **7.17**, warning **7.50**, success **7.22**, info
+            // **7.19** — the same half-point band the light palette holds, so
+            // the two modes agree about how legible a filled badge is and not
+            // only about whether it is.
+            warning_container: Color::rgb(0x5c, 0x3f, 0x00),
+            on_warning_container: Color::rgb(0xff, 0xdd, 0xb3),
+            success_container: Color::rgb(0x00, 0x53, 0x13),
+            on_success_container: Color::rgb(0x95, 0xf9, 0x90),
+            info_container: Color::rgb(0x00, 0x4f, 0x53),
+            on_info_container: Color::rgb(0x97, 0xf0, 0xf7),
         }
     }
 
@@ -869,6 +1104,12 @@ impl Theme {
             ColorRole::OnSuccess => self.on_success,
             ColorRole::Info => self.info,
             ColorRole::OnInfo => self.on_info,
+            ColorRole::WarningContainer => self.warning_container,
+            ColorRole::OnWarningContainer => self.on_warning_container,
+            ColorRole::SuccessContainer => self.success_container,
+            ColorRole::OnSuccessContainer => self.on_success_container,
+            ColorRole::InfoContainer => self.info_container,
+            ColorRole::OnInfoContainer => self.on_info_container,
         }
     }
 }
@@ -1224,6 +1465,12 @@ impl Theme {
             ColorRole::OnSuccess => self.on_success = colour,
             ColorRole::Info => self.info = colour,
             ColorRole::OnInfo => self.on_info = colour,
+            ColorRole::WarningContainer => self.warning_container = colour,
+            ColorRole::OnWarningContainer => self.on_warning_container = colour,
+            ColorRole::SuccessContainer => self.success_container = colour,
+            ColorRole::OnSuccessContainer => self.on_success_container = colour,
+            ColorRole::InfoContainer => self.info_container = colour,
+            ColorRole::OnInfoContainer => self.on_info_container = colour,
         }
     }
 }
@@ -1253,31 +1500,47 @@ impl Default for Theme {
 /// implementing [`Animatable`] for [`Color`] directly. The deferred
 /// carry stays deferred — a future 2nd consumer evidences the
 /// per-color generalization ([[abstraction-needs-second-consumer]]).
-#[derive(Debug, Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize)]
-struct ThemeLinear {
-    surface: AnimVec4,
-    on_surface: AnimVec4,
-    on_surface_muted: AnimVec4,
-    accent: AnimVec4,
-    on_accent: AnimVec4,
-    outline: AnimVec4,
-    surface_container_highest: AnimVec4,
-    surface_container_low: AnimVec4,
-    surface_container: AnimVec4,
-    surface_container_high: AnimVec4,
-    error: AnimVec4,
-    on_error: AnimVec4,
-    error_container: AnimVec4,
-    on_error_container: AnimVec4,
-    inverse_surface: AnimVec4,
-    inverse_on_surface: AnimVec4,
-    inverse_primary: AnimVec4,
-    warning: AnimVec4,
-    on_warning: AnimVec4,
-    success: AnimVec4,
-    on_success: AnimVec4,
-    info: AnimVec4,
-    on_info: AnimVec4,
+/// ★★★★★ R2020 — **it is INDEXED BY ROLE now, and that is a repair rather than
+/// a tidy-up.**
+///
+/// It was twenty-three named fields, written out again in eight places: the
+/// struct, `from_theme`, `to_theme`, `zero`, `add`, `sub`, `scale` and
+/// `approx_zero`. Six of those build a `Self { .. }`, so the compiler catches a
+/// field left out of them — but R2012's own comment two screens down recorded
+/// what the shape costs anyway: R1651 added the caution pair to all six and
+/// `approx_zero`'s fold carried **seventeen of nineteen** channels, so a theme
+/// fade reported itself finished while the caution tone was still travelling.
+/// The repair then was to make that fold destructure. This round's would have
+/// been to write six more names into eight lists, which is the same wager
+/// again with more tickets.
+///
+/// So the carrier holds one channel per [`ColorRole::all`] entry and the
+/// arithmetic maps over the array. Adding a role is now a **zero-site** change
+/// here, and `approx_zero` cannot be short of a channel because its length is
+/// derived from the same slice `from_theme` fills. The two ends stay honest by
+/// going through [`Theme::resolve`] and [`Theme::bind`], which are exhaustive
+/// `match`es the compiler already checks — so a role added to the vocabulary
+/// and forgotten in `Theme` does not reach this file at all.
+///
+/// ⚠ STATED LIMIT: `serde`'s array impls stop at 32, and [`Animation`] requires
+/// `Serialize + DeserializeOwned`. The const assertion below is what turns the
+/// 33rd role from a confusing trait error into a sentence.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+struct ThemeLinear([AnimVec4; ROLE_CHANNELS]);
+
+/// One animated channel per colour role — the carrier's length, derived.
+const ROLE_CHANNELS: usize = ColorRole::all().len();
+
+const _: () = assert!(
+    ROLE_CHANNELS <= 32,
+    "ThemeLinear rides on serde's fixed-array impls, which stop at 32 channels: \
+     a role past that needs a hand-written Serialize/Deserialize here"
+);
+
+impl Default for ThemeLinear {
+    fn default() -> Self {
+        Self([AnimVec4::default(); ROLE_CHANNELS])
+    }
 }
 
 impl ThemeLinear {
@@ -1287,31 +1550,11 @@ impl ThemeLinear {
     /// sRGB round-trip and reproduces every Theme field within
     /// 8-bit rounding.
     fn from_theme(t: Theme) -> Self {
-        Self {
-            surface: t.surface.to_linear(),
-            on_surface: t.on_surface.to_linear(),
-            on_surface_muted: t.on_surface_muted.to_linear(),
-            accent: t.accent.to_linear(),
-            on_accent: t.on_accent.to_linear(),
-            outline: t.outline.to_linear(),
-            surface_container_highest: t.surface_container_highest.to_linear(),
-            surface_container_low: t.surface_container_low.to_linear(),
-            surface_container: t.surface_container.to_linear(),
-            surface_container_high: t.surface_container_high.to_linear(),
-            error: t.error.to_linear(),
-            on_error: t.on_error.to_linear(),
-            error_container: t.error_container.to_linear(),
-            on_error_container: t.on_error_container.to_linear(),
-            inverse_surface: t.inverse_surface.to_linear(),
-            inverse_on_surface: t.inverse_on_surface.to_linear(),
-            inverse_primary: t.inverse_primary.to_linear(),
-            warning: t.warning.to_linear(),
-            on_warning: t.on_warning.to_linear(),
-            success: t.success.to_linear(),
-            on_success: t.on_success.to_linear(),
-            info: t.info.to_linear(),
-            on_info: t.on_info.to_linear(),
+        let mut channels = [AnimVec4::default(); ROLE_CHANNELS];
+        for (channel, role) in channels.iter_mut().zip(ColorRole::all()) {
+            *channel = t.resolve(*role).to_linear();
         }
+        Self(channels)
     }
 
     /// Encode the linear-light state back to sRGB [`Theme`]. Each
@@ -1321,228 +1564,80 @@ impl ThemeLinear {
     /// `[0.0, 1.0]` during overshoot, and the saturating encode
     /// keeps the rendered output valid sRGB without wrapping
     /// channels.
+    /// ⚠ The base is a shape to fill, not a fallback: every role in
+    /// [`ColorRole::all`] is bound below, so no value of `Theme::light` survives
+    /// the loop. It is named explicitly rather than through `Theme::default`
+    /// (which is the same palette) so that a reader is not left wondering
+    /// whether a default is being *chosen* here.
     fn to_theme(self) -> Theme {
-        Theme {
-            surface: Color::from_linear(self.surface),
-            on_surface: Color::from_linear(self.on_surface),
-            on_surface_muted: Color::from_linear(self.on_surface_muted),
-            accent: Color::from_linear(self.accent),
-            on_accent: Color::from_linear(self.on_accent),
-            outline: Color::from_linear(self.outline),
-            surface_container_highest: Color::from_linear(self.surface_container_highest),
-            surface_container_low: Color::from_linear(self.surface_container_low),
-            surface_container: Color::from_linear(self.surface_container),
-            surface_container_high: Color::from_linear(self.surface_container_high),
-            error: Color::from_linear(self.error),
-            on_error: Color::from_linear(self.on_error),
-            error_container: Color::from_linear(self.error_container),
-            on_error_container: Color::from_linear(self.on_error_container),
-            inverse_surface: Color::from_linear(self.inverse_surface),
-            inverse_on_surface: Color::from_linear(self.inverse_on_surface),
-            inverse_primary: Color::from_linear(self.inverse_primary),
-            warning: Color::from_linear(self.warning),
-            on_warning: Color::from_linear(self.on_warning),
-            success: Color::from_linear(self.success),
-            on_success: Color::from_linear(self.on_success),
-            info: Color::from_linear(self.info),
-            on_info: Color::from_linear(self.on_info),
+        let mut theme = Theme::light();
+        for (channel, role) in self.0.iter().zip(ColorRole::all()) {
+            theme.bind(*role, Color::from_linear(*channel));
         }
+        theme
+    }
+}
+
+impl ThemeLinear {
+    /// Channel-wise combination of two carriers — the one shape [`Animatable`]'s
+    /// three binary operations differ only in the operator of.
+    fn zip_with(self, other: Self, op: impl Fn(AnimVec4, AnimVec4) -> AnimVec4) -> Self {
+        let mut out = self.0;
+        for (channel, right) in out.iter_mut().zip(other.0) {
+            *channel = op(*channel, right);
+        }
+        Self(out)
     }
 }
 
 impl Animatable for ThemeLinear {
     fn zero() -> Self {
-        Self {
-            surface: AnimVec4::zero(),
-            on_surface: AnimVec4::zero(),
-            on_surface_muted: AnimVec4::zero(),
-            accent: AnimVec4::zero(),
-            on_accent: AnimVec4::zero(),
-            outline: AnimVec4::zero(),
-            surface_container_highest: AnimVec4::zero(),
-            surface_container_low: AnimVec4::zero(),
-            surface_container: AnimVec4::zero(),
-            surface_container_high: AnimVec4::zero(),
-            error: AnimVec4::zero(),
-            on_error: AnimVec4::zero(),
-            error_container: AnimVec4::zero(),
-            on_error_container: AnimVec4::zero(),
-            inverse_surface: AnimVec4::zero(),
-            inverse_on_surface: AnimVec4::zero(),
-            inverse_primary: AnimVec4::zero(),
-            warning: AnimVec4::zero(),
-            on_warning: AnimVec4::zero(),
-            success: AnimVec4::zero(),
-            on_success: AnimVec4::zero(),
-            info: AnimVec4::zero(),
-            on_info: AnimVec4::zero(),
-        }
+        Self([AnimVec4::zero(); ROLE_CHANNELS])
     }
 
     fn add(self, other: Self) -> Self {
-        Self {
-            surface: self.surface.add(other.surface),
-            on_surface: self.on_surface.add(other.on_surface),
-            on_surface_muted: self.on_surface_muted.add(other.on_surface_muted),
-            accent: self.accent.add(other.accent),
-            on_accent: self.on_accent.add(other.on_accent),
-            outline: self.outline.add(other.outline),
-            surface_container_highest: self
-                .surface_container_highest
-                .add(other.surface_container_highest),
-            surface_container_low: self.surface_container_low.add(other.surface_container_low),
-            surface_container: self.surface_container.add(other.surface_container),
-            surface_container_high: self
-                .surface_container_high
-                .add(other.surface_container_high),
-            error: self.error.add(other.error),
-            on_error: self.on_error.add(other.on_error),
-            error_container: self.error_container.add(other.error_container),
-            on_error_container: self.on_error_container.add(other.on_error_container),
-            inverse_surface: self.inverse_surface.add(other.inverse_surface),
-            inverse_on_surface: self.inverse_on_surface.add(other.inverse_on_surface),
-            inverse_primary: self.inverse_primary.add(other.inverse_primary),
-            warning: self.warning.add(other.warning),
-            on_warning: self.on_warning.add(other.on_warning),
-            success: self.success.add(other.success),
-            on_success: self.on_success.add(other.on_success),
-            info: self.info.add(other.info),
-            on_info: self.on_info.add(other.on_info),
-        }
+        self.zip_with(other, AnimVec4::add)
     }
 
     fn sub(self, other: Self) -> Self {
-        Self {
-            surface: self.surface.sub(other.surface),
-            on_surface: self.on_surface.sub(other.on_surface),
-            on_surface_muted: self.on_surface_muted.sub(other.on_surface_muted),
-            accent: self.accent.sub(other.accent),
-            on_accent: self.on_accent.sub(other.on_accent),
-            outline: self.outline.sub(other.outline),
-            surface_container_highest: self
-                .surface_container_highest
-                .sub(other.surface_container_highest),
-            surface_container_low: self.surface_container_low.sub(other.surface_container_low),
-            surface_container: self.surface_container.sub(other.surface_container),
-            surface_container_high: self
-                .surface_container_high
-                .sub(other.surface_container_high),
-            error: self.error.sub(other.error),
-            on_error: self.on_error.sub(other.on_error),
-            error_container: self.error_container.sub(other.error_container),
-            on_error_container: self.on_error_container.sub(other.on_error_container),
-            inverse_surface: self.inverse_surface.sub(other.inverse_surface),
-            inverse_on_surface: self.inverse_on_surface.sub(other.inverse_on_surface),
-            inverse_primary: self.inverse_primary.sub(other.inverse_primary),
-            warning: self.warning.sub(other.warning),
-            on_warning: self.on_warning.sub(other.on_warning),
-            success: self.success.sub(other.success),
-            on_success: self.on_success.sub(other.on_success),
-            info: self.info.sub(other.info),
-            on_info: self.on_info.sub(other.on_info),
-        }
+        self.zip_with(other, AnimVec4::sub)
     }
 
     fn scale(self, factor: f32) -> Self {
-        Self {
-            surface: self.surface.scale(factor),
-            on_surface: self.on_surface.scale(factor),
-            on_surface_muted: self.on_surface_muted.scale(factor),
-            accent: self.accent.scale(factor),
-            on_accent: self.on_accent.scale(factor),
-            outline: self.outline.scale(factor),
-            surface_container_highest: self.surface_container_highest.scale(factor),
-            surface_container_low: self.surface_container_low.scale(factor),
-            surface_container: self.surface_container.scale(factor),
-            surface_container_high: self.surface_container_high.scale(factor),
-            error: self.error.scale(factor),
-            on_error: self.on_error.scale(factor),
-            error_container: self.error_container.scale(factor),
-            on_error_container: self.on_error_container.scale(factor),
-            inverse_surface: self.inverse_surface.scale(factor),
-            inverse_on_surface: self.inverse_on_surface.scale(factor),
-            inverse_primary: self.inverse_primary.scale(factor),
-            warning: self.warning.scale(factor),
-            on_warning: self.on_warning.scale(factor),
-            success: self.success.scale(factor),
-            on_success: self.on_success.scale(factor),
-            info: self.info.scale(factor),
-            on_info: self.on_info.scale(factor),
+        let mut out = self.0;
+        for channel in &mut out {
+            *channel = channel.scale(factor);
         }
+        Self(out)
     }
 
-    /// ★★★★★ R2012 — this DESTRUCTURES, and the other five arithmetic methods
-    /// deliberately do not need to.
+    /// ★★★★★ R2012 recorded here that this was **the one place a new role could
+    /// go missing quietly**, and R2020 is the round that took the possibility
+    /// away rather than watching for it again.
     ///
-    /// Every other method here builds a `Self { .. }`, so a field added to the
-    /// struct and forgotten in one of them is a COMPILE ERROR. This one folds
-    /// over fields instead, and a fold that forgets a channel still compiles —
-    /// so it is the one place a new role can go missing quietly, and it did:
-    /// R1651 added the warning pair to all six sites and this fold had
+    /// The history is worth keeping, because it is what the repair is measured
+    /// against. Every other method used to build a `Self { .. }` — so a field
+    /// left out of one was a compile error — while this one folded over a
+    /// hand-written list, and a fold that is short still compiles. It was: R1651
+    /// added the caution pair to all six sites and this fold carried
     /// **seventeen of nineteen** channels. A spring is settled when its
     /// remaining distance and its velocity are both near zero
     /// ([`crate::animation`]'s `is_settled`), so a fold short of two channels
-    /// reports a theme fade FINISHED while those two are still travelling —
-    /// the caution tone freezing part-way between the two palettes, in the one
-    /// role whose whole job is to be noticed.
+    /// reports a theme fade FINISHED while those two are still travelling — the
+    /// caution tone freezing part-way between two palettes, in the one role
+    /// whose whole job is to be noticed. R2012's repair was to destructure, so
+    /// the pattern would fail to compile when the struct grew.
     ///
-    /// Binding every field by name is what makes the omission impossible: the
-    /// pattern below fails to compile the moment [`ThemeLinear`] grows a field,
-    /// which is the same idiom this workspace uses wherever a hand-written
-    /// field list would otherwise rot.
+    /// ⚠ That repair held for the shape it was written against and NOT for the
+    /// class: a destructuring pattern catches a field ADDED and cannot catch a
+    /// vocabulary that grew a role nobody gave a field to. There is no list here
+    /// any more — the array's length is [`ROLE_CHANNELS`], derived from
+    /// [`ColorRole::all`], so "every channel" and "every role" are the same
+    /// sentence and a fold cannot disagree with the vocabulary it is folding.
     fn approx_zero(self, epsilon: f32) -> bool {
-        let Self {
-            surface,
-            on_surface,
-            on_surface_muted,
-            accent,
-            on_accent,
-            outline,
-            surface_container_highest,
-            surface_container_low,
-            surface_container,
-            surface_container_high,
-            error,
-            on_error,
-            error_container,
-            on_error_container,
-            inverse_surface,
-            inverse_on_surface,
-            inverse_primary,
-            warning,
-            on_warning,
-            success,
-            on_success,
-            info,
-            on_info,
-        } = self;
-        [
-            surface,
-            on_surface,
-            on_surface_muted,
-            accent,
-            on_accent,
-            outline,
-            surface_container_highest,
-            surface_container_low,
-            surface_container,
-            surface_container_high,
-            error,
-            on_error,
-            error_container,
-            on_error_container,
-            inverse_surface,
-            inverse_on_surface,
-            inverse_primary,
-            warning,
-            on_warning,
-            success,
-            on_success,
-            info,
-            on_info,
-        ]
-        .into_iter()
-        .all(|channel| channel.approx_zero(epsilon))
+        self.0
+            .into_iter()
+            .all(|channel| channel.approx_zero(epsilon))
     }
 }
 
@@ -2055,7 +2150,7 @@ mod tests {
     //! [`Rc`], no double-init), [`use_theme`] outside [`Owner`] panics.
 
     use super::{
-        ColorRole, PaletteRefusal, SystemColorScheme, Theme, ThemeMode, ThemeProvider,
+        ColorRole, PaletteRefusal, StateTone, SystemColorScheme, Theme, ThemeMode, ThemeProvider,
         set_system_color_scheme, system_color_scheme, use_theme,
     };
     use crate::reactive::{Effect, Owner};
@@ -2392,20 +2487,93 @@ mod tests {
                 | ColorRole::InversePrimary
                 | ColorRole::Warning
                 | ColorRole::OnWarning
+                | ColorRole::WarningContainer
+                | ColorRole::OnWarningContainer
                 | ColorRole::Success
                 | ColorRole::OnSuccess
+                | ColorRole::SuccessContainer
+                | ColorRole::OnSuccessContainer
                 | ColorRole::Info
-                | ColorRole::OnInfo => (),
+                | ColorRole::OnInfo
+                | ColorRole::InfoContainer
+                | ColorRole::OnInfoContainer => (),
             };
         }
-        // Variant count = Tier 1 + R590 error tier + R723 inverse tier
-        // + R1651 warning pair + R2012 success and informational pairs (23).
-        assert_eq!(ColorRole::all().len(), 23);
-        // No duplicates — pure-set semantics.
+        // ★ R2020 — the population is the DEFINITION's, not a literal. This
+        // assertion carried `23` from R595 to R2019 and was re-typed by every
+        // round that grew the tier; the `const _` beside `ColorRole::all` now
+        // compares the slice against `ARMS` at build time, so what is left for
+        // this line to say is that the NAMES are a set. Tier 1 + R590 error
+        // tier + R723 inverse tier + R1651 caution pair + R2012 right and
+        // informational pairs + R2020's three container pairs.
         let mut names: Vec<_> = ColorRole::all().iter().map(|r| r.name()).collect();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), 23, "names must be unique");
+        assert_eq!(
+            names.len(),
+            ColorRole::ARMS,
+            "two roles answer to one name, so one of them is unreachable through \
+             the wire vocabulary"
+        );
+    }
+
+    /// ★★★★★ R2020 §5.50 — **every state names its own four roles, and the
+    /// expectation is DERIVED rather than re-spelled.**
+    ///
+    /// The defect [`StateTone`] exists for is that the four states had four
+    /// different shapes: `error` carried a container pair and its three
+    /// neighbours did not, so a painter asking *what does this state's filled
+    /// ground look like* got an answer for one of them. A table here listing the
+    /// sixteen roles would be a second copy of [`StateTone::roles`] and would
+    /// agree with it by construction — it would check nothing.
+    ///
+    /// So the expectation is the NAMING LAW: a state's four roles are its word,
+    /// `on_` + its word, its word + `_container`, and `on_` + its word +
+    /// `_container`. That is falsifiable — an arm pointed at the wrong role,
+    /// or at a neighbour's container, fails it — and it is what makes the tier
+    /// uniform rather than merely complete.
+    #[test]
+    fn r2020_every_state_tone_names_its_own_four_roles() {
+        let mut seen: Vec<&str> = Vec::new();
+        for tone in StateTone::ALL {
+            let word = tone.word();
+            for (role, owed) in [
+                (tone.tone(), word.to_owned()),
+                (tone.on_tone(), format!("on_{word}")),
+                (tone.container(), format!("{word}_container")),
+                (tone.on_container(), format!("on_{word}_container")),
+            ] {
+                assert_eq!(
+                    role.name(),
+                    owed,
+                    "`{word}` reaches for `{}` where its own naming law says \
+                     `{owed}`",
+                    role.name()
+                );
+                assert!(
+                    ColorRole::all().contains(&role),
+                    "`{owed}` is not in the vocabulary's own enumeration, so no \
+                     palette can bind it"
+                );
+                seen.push(role.name());
+            }
+        }
+        seen.sort_unstable();
+        let judged = seen.len();
+        seen.dedup();
+        assert_eq!(
+            seen.len(),
+            judged,
+            "two states share a role, so painting one would paint the other"
+        );
+        // The denominator, so a shrunken `ALL` could not pass by asking less.
+        assert_eq!(
+            judged,
+            4 * StateTone::ARMS,
+            "four roles for each of the vocabulary's states is the population \
+             this claim is about"
+        );
+        println!("[r2020] {} state(s), {judged} role(s)", StateTone::ARMS);
     }
 
     /// ★★★★★ R2016 §5.50 — **a palette authored elsewhere is taken, or every
@@ -3355,36 +3523,45 @@ mod tests {
     /// round-trip through `ThemeLinear` does not flake the
     /// assertion at 8-bit precision.
     #[track_caller]
-    fn assert_color_close(actual: Color, expected: Color) {
+    fn assert_color_close(what: &str, actual: Color, expected: Color) {
         let diff = |x: u8, y: u8| (i32::from(x) - i32::from(y)).abs();
         assert!(
             diff(actual.r, expected.r) <= ROUND_TRIP_TOLERANCE
                 && diff(actual.g, expected.g) <= ROUND_TRIP_TOLERANCE
                 && diff(actual.b, expected.b) <= ROUND_TRIP_TOLERANCE
                 && diff(actual.a, expected.a) <= ROUND_TRIP_TOLERANCE,
-            "expected {expected:?} +/- {ROUND_TRIP_TOLERANCE}, got {actual:?}"
+            "`{what}`: expected {expected:?} +/- {ROUND_TRIP_TOLERANCE}, got {actual:?}"
         );
     }
 
-    /// Component-wise close-equality on [`Theme`] across every field.
+    /// Component-wise close-equality on [`Theme`] across every role.
+    ///
+    /// ★★★★★ R2020 — **it walks [`ColorRole::all`] now, and it was found by a
+    /// counterfactual that PASSED.**
+    ///
+    /// Its doc comment said *across every field* and it named **ten** — the
+    /// R57 tier. Every tier added since was outside it: `error` (R590),
+    /// `inverse` (R723), `warning` (R1651), `success` and `info` (R2012). R590
+    /// noticed for its own tier and patched around the shape rather than
+    /// through it, adding a second test naming four fields by hand
+    /// (`r590_error_tier_linear_round_trip_preserves_error_fields`); nobody did
+    /// that for the four tiers after it, so thirteen of twenty-three roles were
+    /// round-tripped by nothing.
+    ///
+    /// What made it visible: R2020 broke `ThemeLinear` to carry one channel
+    /// fewer than the vocabulary has, expecting this to refuse, and **the whole
+    /// suite stayed green** — the dropped role was the last one, and no
+    /// assertion in the tree mentioned it. That is the defect R2012's own
+    /// comment on `approx_zero` describes, in the other half of the carrier, and
+    /// it had been reachable all along.
+    ///
+    /// ⇒ the population is the vocabulary's, so a role added to `ColorRole` is
+    /// round-tripped by this the day it exists, with nobody remembering.
     #[track_caller]
     fn assert_theme_close(actual: Theme, expected: Theme) {
-        assert_color_close(actual.surface, expected.surface);
-        assert_color_close(actual.on_surface, expected.on_surface);
-        assert_color_close(actual.on_surface_muted, expected.on_surface_muted);
-        assert_color_close(actual.accent, expected.accent);
-        assert_color_close(actual.on_accent, expected.on_accent);
-        assert_color_close(actual.outline, expected.outline);
-        assert_color_close(
-            actual.surface_container_highest,
-            expected.surface_container_highest,
-        );
-        assert_color_close(actual.surface_container_low, expected.surface_container_low);
-        assert_color_close(actual.surface_container, expected.surface_container);
-        assert_color_close(
-            actual.surface_container_high,
-            expected.surface_container_high,
-        );
+        for role in ColorRole::all() {
+            assert_color_close(role.name(), actual.resolve(*role), expected.resolve(*role));
+        }
     }
 
     #[test]

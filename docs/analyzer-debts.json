@@ -603,6 +603,17 @@
       ]
     },
     {
+      "name": "debt-the-capture-screens-fragment-marks-are-drawn-as-plain-runs",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links debt-canon-gui-surface-census, debt-the-canon-is-one-app-and-we-are-many-binaries"
+      ]
+    },
+    {
       "name": "debt-the-entry-point-document-has-no-gate-and-went-fifty-rounds-stale",
       "substituted": false,
       "blocked_by": "buildable",
@@ -689,17 +700,6 @@
       "closed_because": "",
       "why": [
         "links analyzer-behaviour-canon-is-the-standalone-prototype, debt-canon-gui-surface-census"
-      ]
-    },
-    {
-      "name": "debt-the-theme-carries-two-of-the-four-states-a-screen-paints",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links debt-canon-gui-surface-census"
       ]
     },
     {
