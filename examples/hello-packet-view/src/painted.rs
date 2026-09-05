@@ -63,8 +63,16 @@ type SweptState = (&'static str, fn(&std::rc::Rc<ViewState>));
 /// only state anybody had ever checked, and it is the state nobody works in.
 const STATES: &[SweptState] = &[
     ("as it opens", |_| {}),
+    // ★★★★★ R2011 — the byte is DERIVED from the table rather than written.
+    //
+    // It was `0x18`, which was the message layer's first byte when the sweep
+    // was written. R2011 moved every framed field two bytes along, and a
+    // literal here would have gone on passing while pressing a byte in the
+    // network layer's slack — the same sweep name over a state that no longer
+    // exercises what it was chosen for. A sweep state that quietly changes
+    // meaning is worse than one that fails.
     ("with a byte pressed", |state| {
-        select_byte(state, 0x18);
+        select_byte(state, message_layer_first_byte());
     }),
     ("with a derived field selected", |state| {
         select_field(state, "l3.resolved");
@@ -86,6 +94,15 @@ const STATES: &[SweptState] = &[
         select_field(state, "l3.payload");
     }),
 ];
+
+/// The first byte of the message layer, as the specification places it.
+fn message_layer_first_byte() -> usize {
+    spec::FIELDS
+        .iter()
+        .find(|f| f.path == "l3")
+        .expect("the described decode names the message layer")
+        .at
+}
 
 /// The window sizes the screen is swept at.
 ///

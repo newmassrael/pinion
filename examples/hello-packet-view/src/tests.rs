@@ -244,7 +244,7 @@ fn r1663_the_frame_bytes_are_the_same_every_time() {
 /// cannot be declared without inventing one. The size of each group is printed
 /// by the test below rather than written here, because the first draft of this
 /// paragraph got both numbers wrong in the round that measured them.
-const DECLARED_ENCODINGS: usize = 6;
+const DECLARED_ENCODINGS: usize = 7;
 
 /// Which fields of the described message state what their bytes hold, and
 /// whether the painted frame reads back as that — the **third direction**.
@@ -265,25 +265,44 @@ fn r1814_a_declared_field_encodes_the_value_the_screen_shows() {
     let bytes = frame_bytes(spec::OPENING_ROW);
     let mut declared = 0usize;
     let mut covered = 0usize;
+    let mut judged = 0usize;
     for field in spec::FIELDS {
-        if field.source != Some(0) || !field.wire.is_declared() {
+        if !field.wire.is_declared() {
             continue;
         }
-        declared += 1;
-        covered += field.len;
 
-        let slice = bytes
-            .get(field.at..field.at + field.len)
-            .unwrap_or_else(|| panic!("`{}` is declared outside the frame", field.path));
-        assert!(
-            field.wire.reads(slice),
-            "`{}` declares {:?} and the painted frame holds {:02x?} at {:#04x}..{:#04x}",
-            field.path,
-            field.wire,
-            slice,
-            field.at,
-            field.at + field.len
-        );
+        // ★★★★★ R2011 — **the two halves have different populations, and until
+        // this round they shared one.**
+        //
+        // The round trip below needs the frame's bytes, so it is source-0's by
+        // construction. The anti-decoration half needs no bytes at all — it
+        // compares a declaration against the text the row prints — and it was
+        // skipping every field on another source for a reason that only applies
+        // to its sibling. Nothing was wrong today, because no reassembled field
+        // declares an encoding; what was wrong is that a declaration on the
+        // payload would have gone unjudged, and this screen's whole subject is
+        // that a value and its bytes are one fact whichever buffer they are in.
+        //
+        // Found while writing a gate for something else and measuring that the
+        // gate could not fail: the audit's own reason for existing.
+        if field.source == Some(0) {
+            declared += 1;
+            covered += field.len;
+
+            let slice = bytes
+                .get(field.at..field.at + field.len)
+                .unwrap_or_else(|| panic!("`{}` is declared outside the frame", field.path));
+            assert!(
+                field.wire.reads(slice),
+                "`{}` declares {:?} and the painted frame holds {:02x?} at {:#04x}..{:#04x}",
+                field.path,
+                field.wire,
+                slice,
+                field.at,
+                field.at + field.len
+            );
+        }
+        judged += 1;
 
         // ★★★★★ The anti-decoration half: the declared value has to be one the
         // reader can see, or the round trip above is the writer checking the
@@ -292,11 +311,27 @@ fn r1814_a_declared_field_encodes_the_value_the_screen_shows() {
             spec::Wire::Be(n) => number_tokens(field.value).contains(&n),
             spec::Wire::Ascii(text) => field.value.contains(text),
             spec::Wire::Flag(set) => field.value == if set { "true" } else { "false" },
+            // ★★★★★ R2011 — EQUALITY, not containment, and that is the whole
+            // strength of this arm. The three above accept a value the printed
+            // text merely carries, because a number can sit inside a sentence;
+            // an address IS the printed text, so anything weaker would let a
+            // declaration whose octets render to something else through on the
+            // strength of a shared prefix.
+            spec::Wire::Octets(bytes) => spec::link_address(bytes).as_deref() == Some(field.value),
             spec::Wire::Undeclared(_) => unreachable!("filtered above"),
         };
+        // ★ R2011 — a declaration that renders says what it renders AS. A byte
+        // slice printed by `Debug` is decimal, so the Octets arm's refusal
+        // otherwise asks the reader to convert eight numbers by hand before
+        // they can see how far off it is.
+        let renders = field
+            .wire
+            .shown()
+            .map_or(String::new(), |text| format!(", rendering as {text:?}"));
         assert!(
             shown,
-            "`{}` declares {:?}, which is not a value the screen shows — it prints {:?}",
+            "`{}` declares {:?}{renders}, which is not a value the screen \
+             shows — it prints {:?}",
             field.path, field.wire, field.value
         );
     }
@@ -319,7 +354,8 @@ fn r1814_a_declared_field_encodes_the_value_the_screen_shows() {
     let leaves_undeclared = framed - declared - headings;
     println!(
         "R1814 framed={framed} declared={declared} headings={headings} \
-         undeclared_leaves={leaves_undeclared} covered={covered}B of {}B frame",
+         undeclared_leaves={leaves_undeclared} covered={covered}B of {}B frame; \
+         R2011 anti-decoration judged={judged} declaration(s) across every source",
         spec::SOURCES[0].1
     );
 }
@@ -458,6 +494,68 @@ fn r1814_the_opening_field_paints_the_bytes_the_reference_draws() {
          encode the number the tree prints beside it"
     );
     assert_eq!(field.value, "3419", "and 0x0d5b is that number");
+}
+
+/// ★★★★★ R2011 — **the stand-in decode places a row where the described decode
+/// places it**, for every row the two have in common.
+///
+/// The screen has two decoders: the specification's table for the one message
+/// it describes, and a stand-in built from a row's own facts for the other
+/// fifteen. The stand-in's comment claimed its extents mirrored the described
+/// ones, and the claim was a sentence — so it drifted. Measured when this round
+/// moved `l0.link`: `l0.stream` was six bytes in the stand-in and four in the
+/// table, which a reader would have met as one row lighting a different number
+/// of bytes depending only on which message was open.
+///
+/// ⚠ The extents are now read out of the table, so this cannot fail today. That
+/// is what a ratchet is: it fails the day somebody writes a literal back in,
+/// which is exactly how the drift got there the first time. The population is
+/// asserted for the same reason — a stand-in that stopped naming any of the
+/// described rows would make the loop vacuous and this test silent.
+#[test]
+fn r2011_the_stand_in_decode_places_rows_where_the_described_one_does() {
+    let described = decode(spec::OPENING_ROW);
+    let other = (0..spec::ROWS.len())
+        .find(|row| *row != spec::OPENING_ROW)
+        .expect("the capture holds more than the described message");
+    let stand_in = decode(other);
+
+    let mut shared = 0usize;
+    for span in stand_in.fields() {
+        let path = span.path();
+        let (Some((source, here)), Some((there_source, there))) =
+            (stand_in.extent_of(path), described.extent_of(path))
+        else {
+            continue;
+        };
+        // The message layer's own extent is the message's length, which is a
+        // fact about the row rather than about the specification — it is the
+        // one span the stand-in is entitled to compute.
+        if path == "l3" {
+            continue;
+        }
+        shared += 1;
+        assert_eq!(
+            (source, here.at(), here.len()),
+            (there_source, there.at(), there.len()),
+            "the stand-in decode puts `{path}` at {:#04x}..{:#04x} and the \
+             described decode puts it at {:#04x}..{:#04x}",
+            here.at(),
+            here.at() + here.len(),
+            there.at(),
+            there.at() + there.len()
+        );
+    }
+    println!(
+        "R2011 stand-in rows compared against the described decode: {shared} \
+         (message {other} of {})",
+        spec::ROWS.len()
+    );
+    assert!(
+        shared >= 6,
+        "only {shared} row(s) of the stand-in decode are named by the \
+         specification, so this comparison covers almost nothing"
+    );
 }
 
 /// ★★★★★ A layer heading OPENS when it is pressed, and the two channels agree.

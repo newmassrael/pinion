@@ -248,17 +248,6 @@
       ]
     },
     {
-      "name": "debt-a-link-address-is-printed-wider-than-its-extent",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links analyzer-behaviour-canon-is-the-standalone-prototype"
-      ]
-    },
-    {
       "name": "debt-a-new-section-joins-the-application-half-dressed",
       "substituted": false,
       "blocked_by": "buildable",

@@ -5480,6 +5480,139 @@ fn r1852_the_walk_reaches_a_topology_built_from_the_captures_own_hops() {
     });
 }
 
+/// ★★★★★ R2011 — **the capture section prints the address it lights.**
+///
+/// Rule (7)'s form: the claim is about a section of THIS application, reached
+/// over the same walk every other section is, and settled from the painted
+/// frame rather than from the mounted screen's own suite.
+///
+/// R1814 measured that screen B's link row printed a pair of four-octet
+/// addresses — eight octets — against a six-byte extent, said one of the two
+/// was wrong and declined to pick. R2011 opened the reference screen, found it
+/// draws all eight under a link-layer heading, and moved the extent. This is
+/// what that means for a reader: the row's text and the bytes the pane
+/// highlights are the same eight octets, so the highlight is an answer to the
+/// row rather than a decoration beside it.
+///
+/// ⚠ The notation is spelled HERE and not imported. The host must not reach
+/// into a mounted screen's specification module — a host that reads the screen's
+/// own constants can pass while the screen is broken — so the octets are read
+/// out of the painted cells, rendered by this test's own statement of the
+/// notation, and looked for among the words the frame drew.
+///
+/// ```text
+/// cargo test -p hello-analyzer-shell r2011 -- --nocapture
+/// ```
+#[test]
+fn r2011_the_capture_section_prints_the_address_it_lights() {
+    use pinion_core::external::IntrospectValue;
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let report = walk_the_application(&state);
+        assert!(
+            report.conforms(),
+            "the application did not reproduce its specification over the walk: {}",
+            report.why().unwrap_or_default()
+        );
+        assert!(
+            report.itinerary().iter().any(|key| key == "packets"),
+            "the walk must stand in the capture section: {:?}",
+            report.itinerary()
+        );
+
+        state.go("packets").expect("the capture section is open");
+
+        // Open the link row through the verb the section publishes, which is
+        // the same path a person's press takes.
+        let mut accepted = 0usize;
+        let mut externals = state.screens.externals(&state.journey.get());
+        for external in &mut externals {
+            let Some(surface) = external.handle.introspect_mut() else {
+                continue;
+            };
+            if surface
+                .invoke("select_field", IntrospectValue::Text("l0.link".to_owned()))
+                .is_ok()
+            {
+                accepted += 1;
+            }
+        }
+        drop(externals);
+        assert_eq!(
+            accepted, 1,
+            "exactly one surface of the arrived section answers `select_field`"
+        );
+
+        let mut scene = super::view(ScreenState::default(), pinion_core::Frame::default());
+        let mut cache = pinion_runtime::LayoutCache::new();
+        pinion_runtime::compute_layout(&mut scene, &mut cache, super::WIN_W, super::WIN_H);
+
+        // What the frame lit, what it drew in those cells, and every word on it.
+        let mut lit: Vec<usize> = Vec::new();
+        let mut cells: std::collections::BTreeMap<usize, String> =
+            std::collections::BTreeMap::new();
+        let mut words: Vec<String> = Vec::new();
+        scene.for_each_node(&mut |visit| {
+            if let Some(tag) = visit.node.tag()
+                && let Some(rest) = tag.strip_prefix("pv.bytes.lit.")
+                && let Ok(byte) = rest.parse::<usize>()
+            {
+                lit.push(byte);
+            }
+            if let pinion_core::Scene::Text(text) = visit.node {
+                words.push(text.content.clone());
+                if let Some(rest) = text
+                    .tag
+                    .as_deref()
+                    .and_then(|tag| tag.strip_prefix("pv.bytes.cell."))
+                    && let Ok(byte) = rest.parse::<usize>()
+                {
+                    cells.insert(byte, text.content.clone());
+                }
+            }
+        });
+        lit.sort_unstable();
+        println!("R2011 the capture section lights {lit:?}");
+
+        assert!(
+            !lit.is_empty(),
+            "the section lit no byte for the row it was told to open"
+        );
+        assert_eq!(
+            lit.len() % 2,
+            0,
+            "an address pair is an even number of octets and this one lit {}",
+            lit.len()
+        );
+
+        let octets: Vec<&str> = lit
+            .iter()
+            .map(|byte| {
+                cells.get(byte).map_or_else(
+                    || panic!("byte {byte} is lit and the pane drew no cell for it"),
+                    String::as_str,
+                )
+            })
+            .collect();
+        let half = octets.len() / 2;
+        let printed = format!(
+            "{} -> {}",
+            octets[..half].join(":"),
+            octets[half..].join(":")
+        );
+        println!("R2011 those octets render as {printed:?}");
+
+        assert!(
+            words.iter().any(|word| word == &printed),
+            "the capture section lights {lit:?}, which render as {printed:?}, and \
+             draws no such text — so the row and its highlight are two accounts \
+             of one address"
+        );
+    });
+}
+
 /// ★★★★★ R1851 — **the order the feed is in, the arrow it shows and the threshold
 /// it applies are one state.**
 ///

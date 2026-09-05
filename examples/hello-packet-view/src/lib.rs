@@ -907,7 +907,8 @@ fn decode(row: usize) -> ByteMap {
     let frame_len = spec::SOURCES[0].1;
     // The message's own length decides how much of the frame the message layer
     // covers; the framing, transport and network headers are fixed.
-    let body = (message.len as usize).clamp(4, frame_len - 0x18);
+    let message_layer = described_extent("l3");
+    let body = (message.len as usize).clamp(4, frame_len - message_layer.at());
     // ★★★★★ R1747 — the network layer, which this stand-in decode did not have.
     //
     // Found by the conformance verdict rather than by reading the code: the
@@ -918,22 +919,55 @@ fn decode(row: usize) -> ByteMap {
     // was green because the only decode anything ever asserted about was the
     // one message `spec::FIELDS` describes.
     //
-    // The extent mirrors the described decode's, which is what makes it a
-    // stand-in rather than an invention: L2 is the four bytes between the
-    // transport header and the message body there too.
+    // ★★★★★ R2011 — the extents are now READ from the described decode instead
+    // of written a second time, and the reason is that the second copy had
+    // already drifted.
+    //
+    // The paragraph above said *the extent mirrors the described decode's*,
+    // which is what made it a stand-in rather than an invention. Measured while
+    // moving `l0.link`: it did not. `l0.stream` was six bytes here and four
+    // there, so selecting the stream offset lit `0x06..0x0c` on fifteen
+    // messages and `0x06..0x0a` on the sixteenth — one row, two extents,
+    // depending only on which message a reader had open. Nothing could see it,
+    // because every check in this crate asks about the described decode and
+    // this list is the one place the described decode is not what answers.
+    //
+    // A sentence claiming two lists agree is not a gate. Reading one out of the
+    // other is, and it also means the shift `l0.link` just caused arrives here
+    // by construction rather than by somebody remembering.
+    //
+    // ★ The path list stays this function's own: a stand-in is deliberately
+    // COARSER than the described decode (no `l0.batch`, no transport leaves
+    // beyond the sequence number), and which rows it draws is a statement about
+    // what can be known from a row's own facts. What it must not have is its
+    // own idea of where those rows are.
     let spans = vec![
-        FieldSpan::bytes("l0", frame, ByteExtent::new(0x00, 0x0c)),
-        FieldSpan::bytes("l0.link", frame, ByteExtent::new(0x00, 0x06)),
-        FieldSpan::bytes("l0.stream", frame, ByteExtent::new(0x06, 0x06)),
-        FieldSpan::bytes("l1", frame, ByteExtent::new(0x0c, 0x08)),
-        FieldSpan::bytes("l1.sn", frame, ByteExtent::new(0x0e, 0x02)),
-        FieldSpan::bytes("l2", frame, ByteExtent::new(0x14, 0x04)),
-        FieldSpan::bytes("l3", frame, ByteExtent::new(0x18, body)),
-        FieldSpan::bytes("l3.name_id", frame, ByteExtent::new(0x18, 0x02)),
+        FieldSpan::bytes("l0", frame, described_extent("l0")),
+        FieldSpan::bytes("l0.link", frame, described_extent("l0.link")),
+        FieldSpan::bytes("l0.stream", frame, described_extent("l0.stream")),
+        FieldSpan::bytes("l1", frame, described_extent("l1")),
+        FieldSpan::bytes("l1.sn", frame, described_extent("l1.sn")),
+        FieldSpan::bytes("l2", frame, described_extent("l2")),
+        FieldSpan::bytes("l3", frame, ByteExtent::new(message_layer.at(), body)),
+        FieldSpan::bytes("l3.name_id", frame, described_extent("l3.name_id")),
         FieldSpan::derived("l3.resolved"),
     ];
     ByteMap::build(vec![ByteSource::new(spec::SOURCES[0].0, frame_len)], spans)
         .expect("the example's decoder produces a well-formed dissection")
+}
+
+/// Where the described decode puts `path`.
+///
+/// ★ Panics for a path the specification does not have, which is the point: the
+/// stand-in decode names rows it expects the described one to define, and a
+/// typo or a row removed from [`spec::FIELDS`] must stop this screen rather
+/// than quietly produce a dissection with a hole in it.
+fn described_extent(path: &str) -> ByteExtent {
+    let field = spec::FIELDS
+        .iter()
+        .find(|f| f.path == path)
+        .unwrap_or_else(|| panic!("the described decode has no `{path}` to place"));
+    ByteExtent::new(field.at, field.len)
 }
 
 /// The reference's own decode table, as a [`ByteMap`].
@@ -984,18 +1018,25 @@ fn visible_fields(state: &ViewState) -> Vec<(String, String, String, usize)> {
                     spec::FIELDS
                         .iter()
                         .find(|f| f.path == path)
-                        .map_or_else(String::new, |f| f.value.to_owned())
+                        .map_or_else(String::new, spec::FieldSpecRow::shown_value)
                 } else {
                     String::new()
                 };
                 (spec::LAYERS[n].1.to_owned(), value)
             } else if described {
-                spec::FIELDS
-                    .iter()
-                    .find(|f| f.path == path)
-                    .map_or((path.clone(), String::new()), |f| {
-                        (f.name.to_owned(), f.value.to_owned())
-                    })
+                spec::FIELDS.iter().find(|f| f.path == path).map_or(
+                    (path.clone(), String::new()),
+                    |f| {
+                        // ★★★★★ R2011 — a field whose DECLARATION determines
+                        // its printed form is painted from the declaration.
+                        // See `spec::FieldSpecRow::shown_value`: for an address
+                        // the reader now sees the octets the byte pane lights,
+                        // so the row and the highlight cannot say different
+                        // things — and the External publishes the same call, so
+                        // neither can the two channels.
+                        (f.name.to_owned(), f.shown_value())
+                    },
+                )
             } else {
                 let leaf = path.rsplit('.').next().unwrap_or(&path).to_owned();
                 let value = map.extent_of(&path).map_or_else(
@@ -4089,7 +4130,11 @@ fn spec_json() -> serde_json::Value {
         // by `cargo test -p hello-packet-view r1814 -- --nocapture`; this
         // round's audit caught a hand-written count here that was wrong.)
         "fields": spec::FIELDS.iter().map(|f| serde_json::json!({
-            "path": f.path, "name": f.name, "value": f.value,
+            // ★★★★★ R2011 — `value` is what the ROW SHOWS, which is the tree's
+            // own call and not this table's string. They differ wherever a
+            // declaration renders itself, and an agent that read one while a
+            // person read the other would have no way to notice.
+            "path": f.path, "name": f.name, "value": f.shown_value(),
             "source": f.source, "at": f.at, "len": f.len,
             "encodes": f.wire.is_declared(),
             "undeclared_because": match f.wire {

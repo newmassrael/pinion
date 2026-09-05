@@ -1101,6 +1101,26 @@ pub enum Wire {
     /// so a site declaring `Be(1)` would be reading a number the screen never
     /// shows and the check below could not tell it from a guess.
     Flag(bool),
+    /// Opaque octets filling the field's whole extent, printed by the screen in
+    /// a notation of its own — see [`link_address`].
+    ///
+    /// ★★★★★ R2011 — the variant `l0.link` needed and this table did not have.
+    /// The three above all describe a value that is *a number, a word or a
+    /// flag*, and an address is none of them: it has no magnitude to compare,
+    /// no text to read, and its printed form is a rendering of the bytes rather
+    /// than the bytes themselves. Declaring one as [`Wire::Be`] would put an
+    /// address into a field whose documented meaning is an integer, which is
+    /// the same class of lie the module header warns about one level up — a
+    /// declaration that reads as a decode and is not one.
+    ///
+    /// ★ The rendering is what makes this checkable rather than decorative. A
+    /// declaration of raw bytes is trivially satisfiable — any extent "holds"
+    /// whatever is in it — so the gate does not ask whether the bytes are
+    /// there; it asks whether **the string the screen prints is what these
+    /// octets render as**. That is the anti-decoration half of R1814's rule
+    /// applied to a value the reference prints in a notation instead of as a
+    /// number.
+    Octets(&'static [u8]),
     /// This specification does not state the field's encoding, **and why**.
     ///
     /// The bytes under it stay the deterministic capture filler, which is the
@@ -1133,6 +1153,7 @@ impl Wire {
             }
             Self::Ascii(text) => (text.len() == len).then(|| text.as_bytes().to_vec()),
             Self::Flag(set) => (len == 1).then(|| vec![u8::from(set)]),
+            Self::Octets(bytes) => (bytes.len() == len).then(|| bytes.to_vec()),
             Self::Undeclared(_) => None,
         }
     }
@@ -1152,6 +1173,7 @@ impl Wire {
             }
             Self::Ascii(text) => std::str::from_utf8(bytes) == Ok(text),
             Self::Flag(set) => bytes == [u8::from(set)],
+            Self::Octets(declared) => bytes == declared,
             Self::Undeclared(_) => false,
         }
     }
@@ -1161,6 +1183,65 @@ impl Wire {
     pub const fn is_declared(self) -> bool {
         !matches!(self, Self::Undeclared(_))
     }
+
+    /// The text a reader sees for this field, where the declaration is what
+    /// determines it — and `None` where the printed value carries more than the
+    /// bytes do.
+    ///
+    /// ★★★★★ R2011 — this is what keeps [`FieldSpecRow::value`] from being a
+    /// second, hand-kept spelling of the same fact. The tree paints this where
+    /// it is `Some`, so for an address the reader sees the octets the byte pane
+    /// lights, rendered, and the authored string becomes what the gate checks
+    /// the rendering AGAINST rather than what the screen believes.
+    ///
+    /// ★ Only [`Wire::Octets`] answers, and that is a statement rather than an
+    /// omission: an address IS its rendering, while `3419`, `data (4)` and
+    /// `application/octet-stream` are printed with context the wire does not
+    /// carry — a delta, a name for a code, a registry lookup. A variant that
+    /// rendered those would be inventing the half the reference supplies.
+    #[must_use]
+    pub fn shown(self) -> Option<String> {
+        match self {
+            Self::Octets(bytes) => link_address(bytes),
+            Self::Be(_) | Self::Ascii(_) | Self::Flag(_) | Self::Undeclared(_) => None,
+        }
+    }
+}
+
+/// The screen's notation for a link address pair: `bytes` split in half, each
+/// half printed as colon-separated lowercase octets, the two joined by an
+/// arrow — or `None` when `bytes` is not a pair of addresses.
+///
+/// ★★★★★ R2011 — the notation lives HERE, once, because it is what makes
+/// [`Wire::Octets`] a claim instead of a decoration: the gate renders the
+/// declared octets through this and demands the result be exactly the string
+/// [`FieldSpecRow::value`] prints. Two spellings of one notation — one in the
+/// table's authored string and one in whatever the check happened to write —
+/// is the shape this screen has already been repaired for twice, so there is
+/// one function and both sides go through it.
+///
+/// ★ It refuses an odd or empty extent rather than rendering something. An
+/// address pair with no second half is not an address pair, and a notation that
+/// invented one would let a wrong `len` through with a plausible-looking
+/// string, which is precisely the failure R1814 opened this field's debt for.
+#[must_use]
+pub fn link_address(bytes: &[u8]) -> Option<String> {
+    if bytes.is_empty() || bytes.len() % 2 != 0 {
+        return None;
+    }
+    let half = bytes.len() / 2;
+    let side = |octets: &[u8]| {
+        octets
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<Vec<_>>()
+            .join(":")
+    };
+    Some(format!(
+        "{} -> {}",
+        side(&bytes[..half]),
+        side(&bytes[half..])
+    ))
 }
 
 /// One field of the decode tree.
@@ -1184,6 +1265,35 @@ pub struct FieldSpecRow {
     /// the struct made the compiler demand a decision at all twenty-one rows,
     /// which is how this tree proves an absence rather than assuming one.
     pub wire: Wire,
+}
+
+impl FieldSpecRow {
+    /// The text this row shows: its declaration's rendering where the
+    /// declaration determines it, and the authored [`value`](Self::value)
+    /// otherwise.
+    ///
+    /// ★★★★★ R2011 — one function, called by the tree AND by the External, so
+    /// the two channels have one origin rather than two answers.
+    ///
+    /// ⚠ **It is a single origin, not a drift guard, and the difference was
+    /// measured rather than argued.** The round's closing audit found the tree
+    /// painting the rendering while the wire published [`value`](Self::value),
+    /// wrote a gate comparing the two channels, and the gate PASSED with the
+    /// wire deliberately put back to `value` — because
+    /// `r1814_a_declared_field_encodes_the_value_the_screen_shows` already
+    /// refuses a declaration whose rendering is not the printed text, so the
+    /// two strings cannot differ. An assertion with no failing path is worse
+    /// than none: it reads as protection.
+    ///
+    /// ★ What the audit found that DID have a failing path is recorded where it
+    /// belongs — that gate's anti-decoration half was skipping every field on a
+    /// source other than the frame, for a reason that only its byte-reading
+    /// sibling has. A declaration on the reassembled payload would have gone
+    /// unjudged, and then these two would genuinely diverge.
+    #[must_use]
+    pub fn shown_value(&self) -> String {
+        self.wire.shown().unwrap_or_else(|| self.value.to_owned())
+    }
 }
 
 /// The four layers the reference names, outermost first.
@@ -1216,7 +1326,7 @@ pub const FIELDS: &[FieldSpecRow] = &[
         value: "frame 18,442",
         source: Some(0),
         at: 0x00,
-        len: 0x0c,
+        len: 0x0e,
         // A layer heading summarises the fields inside it. Its extent is
         // theirs, so writing anything here would overwrite them — the
         // containment check below refuses a declaration on a spanning row.
@@ -1228,19 +1338,36 @@ pub const FIELDS: &[FieldSpecRow] = &[
         value: "00:1b:21:c4 -> 00:1b:21:9a",
         source: Some(0),
         at: 0x00,
-        len: 0x06,
-        // ★ Found while declaring this table: the reference prints a PAIR of
-        // four-byte addresses — eight bytes — against a six-byte extent. One
-        // of the two is wrong and this specification cannot say which, so it
-        // says that instead of picking.
-        wire: Wire::Undeclared("the reference prints eight bytes of address in a six-byte extent"),
+        len: 0x08,
+        // ★★★★★ R2011 — the contradiction R1814 found here is settled, and the
+        // extent is what moved.
+        //
+        // R1814 measured that this row prints a PAIR of four-octet addresses
+        // against a six-byte extent, said one of the two was wrong, and
+        // declined to pick. What decided it was opening the reference screen
+        // rather than re-reading this table: it draws these eight octets under
+        // a link-layer heading, and every one of them is on the reader's
+        // screen. So the printed form is the WHOLE value and the extent was
+        // short by two.
+        //
+        // ★ The other reading — a six-byte address printed abbreviated — was
+        // rejected for the reason this screen exists: it would put two octets
+        // in the frame that the reader is shown a value for and can never see,
+        // which is `l3.encoding`'s defect turned inside out. Here the highlight
+        // covers exactly what the row prints.
+        //
+        // ⚠ Everything framed after this moved two bytes along with it. That
+        // shift is checked rather than trusted — see
+        // `r1663_the_reference_decode_table_is_a_well_formed_dissection`, which
+        // is the test that exists for exactly this edit.
+        wire: Wire::Octets(&[0x00, 0x1b, 0x21, 0xc4, 0x00, 0x1b, 0x21, 0x9a]),
     },
     FieldSpecRow {
         path: "l0.stream",
         name: "stream offset",
         value: "41,118 (+1,164)",
         source: Some(0),
-        at: 0x06,
+        at: 0x08,
         len: 0x04,
         // The offset is on the wire; the parenthesised delta is against the
         // previous message, which is a fact about the LIST and not the frame.
@@ -1251,7 +1378,7 @@ pub const FIELDS: &[FieldSpecRow] = &[
         name: "batch",
         value: "1,164 -> 2,880 B",
         source: Some(0),
-        at: 0x0a,
+        at: 0x0c,
         len: 0x02,
         wire: Wire::Undeclared(
             "the reference prints a before and an after; which is on the wire is not stated",
@@ -1262,7 +1389,7 @@ pub const FIELDS: &[FieldSpecRow] = &[
         name: "L1 · transport",
         value: "v0x09",
         source: Some(0),
-        at: 0x0c,
+        at: 0x0e,
         len: 0x08,
         wire: Wire::Undeclared("a layer heading; its bytes belong to the fields inside it"),
     },
@@ -1271,7 +1398,7 @@ pub const FIELDS: &[FieldSpecRow] = &[
         name: "delivery",
         value: "reliable",
         source: Some(0),
-        at: 0x0c,
+        at: 0x0e,
         len: 0x01,
         wire: Wire::Undeclared("an enumerated word whose code the reference never prints"),
     },
@@ -1280,7 +1407,7 @@ pub const FIELDS: &[FieldSpecRow] = &[
         name: "priority",
         value: "data (4)",
         source: Some(0),
-        at: 0x0d,
+        at: 0x0f,
         len: 0x01,
         // The reference prints the code beside the name, which is what makes
         // this declarable where `delivery` two rows up is not.
@@ -1291,7 +1418,7 @@ pub const FIELDS: &[FieldSpecRow] = &[
         name: "sn",
         value: "3419",
         source: Some(0),
-        at: 0x0e,
+        at: 0x10,
         len: 0x02,
         // ★★★★★ The reference's own illustration of what field-to-byte MEANS,
         // and the row this debt was written against: these two bytes are now
@@ -1304,7 +1431,7 @@ pub const FIELDS: &[FieldSpecRow] = &[
         name: "fragment",
         value: "3/3 · more=0",
         source: Some(0),
-        at: 0x10,
+        at: 0x12,
         len: 0x02,
         wire: Wire::Undeclared("three facts in two bytes and the reference states no packing"),
     },
@@ -1322,7 +1449,7 @@ pub const FIELDS: &[FieldSpecRow] = &[
         name: "L2 · network",
         value: "push",
         source: Some(0),
-        at: 0x14,
+        at: 0x16,
         len: 0x04,
         wire: Wire::Undeclared("a layer heading; its bytes belong to the fields inside it"),
     },
@@ -1331,7 +1458,7 @@ pub const FIELDS: &[FieldSpecRow] = &[
         name: "congestion",
         value: "drop",
         source: Some(0),
-        at: 0x14,
+        at: 0x16,
         len: 0x01,
         wire: Wire::Undeclared("an enumerated word whose code the reference never prints"),
     },
@@ -1340,7 +1467,7 @@ pub const FIELDS: &[FieldSpecRow] = &[
         name: "express",
         value: "true",
         source: Some(0),
-        at: 0x15,
+        at: 0x17,
         len: 0x01,
         wire: Wire::Flag(true),
     },
@@ -1349,7 +1476,7 @@ pub const FIELDS: &[FieldSpecRow] = &[
         name: "L3 · message",
         value: "put",
         source: Some(0),
-        at: 0x18,
+        at: 0x1a,
         len: 0x18,
         wire: Wire::Undeclared("a layer heading; its bytes belong to the fields inside it"),
     },
@@ -1358,7 +1485,7 @@ pub const FIELDS: &[FieldSpecRow] = &[
         name: "name id",
         value: "4",
         source: Some(0),
-        at: 0x18,
+        at: 0x1a,
         len: 0x02,
         wire: Wire::Be(4),
     },
@@ -1367,7 +1494,7 @@ pub const FIELDS: &[FieldSpecRow] = &[
         name: "suffix",
         value: "/1/depth",
         source: Some(0),
-        at: 0x1a,
+        at: 0x1c,
         len: 0x08,
         // Eight characters in an eight-byte extent, so the byte pane's own
         // text column reads it back — the one field on this screen where a
@@ -1388,7 +1515,7 @@ pub const FIELDS: &[FieldSpecRow] = &[
         name: "encoding",
         value: "application/octet-stream",
         source: Some(0),
-        at: 0x22,
+        at: 0x24,
         len: 0x02,
         // The clearest case in the table of `value` and `wire` being different
         // questions: a registry id on the wire, its name on the screen.
@@ -1401,7 +1528,7 @@ pub const FIELDS: &[FieldSpecRow] = &[
         name: "timestamp",
         value: "17:04:37.900 · n1",
         source: Some(0),
-        at: 0x24,
+        at: 0x26,
         len: 0x08,
         wire: Wire::Undeclared("a wall clock the reference prints without an epoch"),
     },
@@ -1410,7 +1537,7 @@ pub const FIELDS: &[FieldSpecRow] = &[
         name: "extension 0x1f",
         value: "unknown · 12 B · shown, not decoded",
         source: Some(0),
-        at: 0x2c,
+        at: 0x2e,
         len: 0x04,
         // The reference declares this one undecoded itself, in the value the
         // reader sees. Declaring an encoding here would contradict the screen.
