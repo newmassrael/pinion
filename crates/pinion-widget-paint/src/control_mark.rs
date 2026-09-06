@@ -46,7 +46,7 @@
 
 use pinion_core::edge_panel::{PanelAffordance, PanelControl};
 use pinion_core::scene::{ContainerNode, PathCommand, PathNode, PathPoint, Rect, Scene};
-use pinion_core::style::{BoxStyle, ChromeEdge, Color, LayoutStyle, PathStyle, Size, Stroke};
+use pinion_core::style::{BoxStyle, ChromeEdge, Color, LayoutStyle, PathStyle, Stroke};
 use pinion_core::widgets::card::CardAffordance;
 
 /// The face one chrome control draws.
@@ -333,11 +333,11 @@ pub(crate) fn dot(x: u32, y: u32, size: u32, fill: Color) -> Scene {
 }
 
 /// The layout a mark, and the slot holding it, are placed with.
+///
+/// R2032 — the framework publishes it: this was one of nine hand copies, and
+/// the screen with no copy to reach for is the one that dropped a half.
 pub(crate) fn absolute(rect: Rect) -> LayoutStyle {
-    LayoutStyle::new()
-        .with_absolute_position(rect.x, rect.y)
-        .with_size(Size::px(rect.w, rect.h))
-        .with_pointer_transparent(true)
+    LayoutStyle::decoration(rect)
 }
 
 #[allow(

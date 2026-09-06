@@ -1178,10 +1178,14 @@ fn spanning_y(bar: Rect, label_h: u32) -> Rect {
 }
 
 /// A layout that pins a node to `rect` (parent-relative absolute position + size).
+///
+/// R2032 — the placement is the framework's [`LayoutStyle::placed`]. What this
+/// adds is a chart's own rule and stays here: a mark measured from data can
+/// round to nothing, and a plotted mark of no extent is not a mark, so each
+/// axis is floored at one pixel. Charts take the cursor, so this is the
+/// non-decorative placement of the pair.
 pub(crate) fn absolute(rect: Rect) -> LayoutStyle {
-    LayoutStyle::new()
-        .with_absolute_position(rect.x, rect.y)
-        .with_size(Size::px(rect.w.max(1), rect.h.max(1)))
+    LayoutStyle::placed(Rect::new(rect.x, rect.y, rect.w.max(1), rect.h.max(1)))
 }
 
 /// R1360 — a chart root that FILLS its layout slot (both axes 100%), so

@@ -8327,10 +8327,7 @@ fn inspector_geometry(state: &LabState) -> FormGeometry {
 // ── Paint helpers ───────────────────────────────────────────────────────────
 
 fn absolute(rect: Rect) -> LayoutStyle {
-    LayoutStyle::new()
-        .with_absolute_position(rect.x, rect.y)
-        .with_size(Size::px(rect.w, rect.h))
-        .with_pointer_transparent(true)
+    LayoutStyle::decoration(rect)
 }
 
 /// A text run at an exact rectangle inside its container.

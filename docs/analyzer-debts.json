@@ -305,6 +305,17 @@
       ]
     },
     {
+      "name": "debt-a-placement-that-drops-its-extent-is-still-spellable",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links debt-canon-gui-surface-census, debt-the-canon-is-one-app-and-we-are-many-binaries"
+      ]
+    },
+    {
       "name": "debt-a-push-dies-after-the-gates-with-the-keepalive-already-set",
       "substituted": false,
       "blocked_by": "buildable",
@@ -435,6 +446,17 @@
       "closed_because": "",
       "why": [
         "links screen-a-vs-canon-operation-census"
+      ]
+    },
+    {
+      "name": "debt-a-wire-is-drawn-in-a-frame-its-box-does-not-share",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links debt-canon-gui-surface-census"
       ]
     },
     {

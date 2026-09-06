@@ -4893,12 +4893,58 @@ impl LayoutStyle {
         }
     }
 
+    /// (R2032 §5.45 §5.21) The layout that puts a node **at** `rect`:
+    /// both halves of a placement, where it sits and how big it is.
+    ///
+    /// A primitive that carries its own rectangle — a stroked curve, a
+    /// text run, an image — keeps its geometry in that field, and the
+    /// layout pass **overwrites** the field with the box it computed.
+    /// Pinning only the corner leaves the size `Auto`, an absolutely
+    /// placed leaf has no intrinsic content for the solver to measure,
+    /// and the box written back is `0 x 0` at the right corner. Every
+    /// index built from [`absolute_rect`](crate::Scene::absolute_rect)
+    /// then drops the node, and [`crate::reach`] reports a name that
+    /// nothing on the screen can be found by.
+    ///
+    /// ⚠ [`Self::with_absolute_position`] says below that an `Auto` size
+    /// "expands to the parent's content rect". Measured at R2032 against
+    /// a leaf, it does not: five curves of a graph screen came back
+    /// `0 x 0` at their correct corners inside a parent 900 x 560. That
+    /// expansion is a container's behaviour, and the half-placement it
+    /// invites is what this constructor exists to make unspellable.
+    ///
+    /// Nine sites had written this pair by hand before it was published,
+    /// eight of them byte-identical; the one screen that had no copy to
+    /// reach for is the one that dropped the size half twice.
+    #[must_use]
+    pub const fn placed(rect: crate::scene::Rect) -> Self {
+        Self::new()
+            .with_absolute_position(rect.x, rect.y)
+            .with_size(Size::px(rect.w, rect.h))
+    }
+
+    /// (R2032 §5.39 §5.45) [`Self::placed`], and the node never takes the
+    /// cursor: the placement a **decoration** is given.
+    ///
+    /// A mark drawn over its neighbours — a wire between two ports, a
+    /// focus ring, an inspector highlight — has to declare a box so it
+    /// can be found, and a curve's box is most of the canvas it crosses.
+    /// Opaque, that box swallows every press aimed at what it crosses
+    /// (measured R1655: with the wires opaque, a graph screen received
+    /// no cursor at all). The two facts belong to one decision, so they
+    /// are spelled once.
+    #[must_use]
+    pub const fn decoration(rect: crate::scene::Rect) -> Self {
+        Self::placed(rect).with_pointer_transparent(true)
+    }
+
     /// (R55.D.6 §5.45 §5.21) Builder: pin the node at parent-relative
     /// `(left, top)` outside the parent's flex / block flow. The
-    /// node's [`Self::size`] declares the absolute box's dimensions
-    /// (use [`Self::with_size`] alongside this builder; `Auto` size
-    /// expands to the parent's content rect through taffy's default
-    /// resolution for absolute children).
+    /// node's [`Self::size`] declares the absolute box's dimensions —
+    /// reach for [`Self::placed`], which declares both halves at once,
+    /// rather than this builder alone. ⚠ An `Auto` size expands to the
+    /// parent's content rect only for a node with content to expand
+    /// around; a leaf primitive gets `0 x 0` (measured R2032).
     ///
     /// Mirrors CSS `position: absolute; left/top: <px>` plus
     /// `width/height`. The substrate's first consumer is the
@@ -5270,6 +5316,49 @@ impl core::hash::Hash for LayoutStyle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A placement is BOTH halves. The defect this constructor exists to make
+    /// unspellable is the half-placement — a corner with no extent — which is
+    /// indistinguishable, once the layout pass has written its box back, from
+    /// a node the author asked to be nothing.
+    #[test]
+    fn r2032_a_placement_declares_where_and_how_big() {
+        let rect = crate::scene::Rect::new(12, 34, 56, 78);
+        let placed = LayoutStyle::placed(rect);
+        assert_eq!(
+            placed.absolute_position,
+            Some((12, 34)),
+            "the corner half must be declared"
+        );
+        assert_eq!(
+            placed.size,
+            Size::px(56, 78),
+            "the extent half must be declared, which is the half that was dropped"
+        );
+        assert!(
+            !placed.pointer_transparent,
+            "a placement says where a node is, and nothing about the cursor"
+        );
+    }
+
+    /// The other half of R1655's measurement: a decoration must not take the
+    /// cursor, and it must still declare its box so it can be found at all.
+    #[test]
+    fn r2032_a_decoration_is_placed_and_never_takes_the_cursor() {
+        let rect = crate::scene::Rect::new(5, 6, 700, 400);
+        let mark = LayoutStyle::decoration(rect);
+        assert_eq!(mark.absolute_position, Some((5, 6)));
+        assert_eq!(mark.size, Size::px(700, 400));
+        assert!(
+            mark.pointer_transparent,
+            "a mark drawn over its neighbours must not swallow their presses"
+        );
+        assert_eq!(
+            LayoutStyle::placed(rect).with_pointer_transparent(true),
+            mark,
+            "the decoration is the placement plus that one fact, not a second spelling"
+        );
+    }
 
     /// The census and the destructure are two lists, and `is_declared` looks
     /// one up in the other. If a facet were missing from `BoxStyle::facets`

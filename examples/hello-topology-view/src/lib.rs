@@ -897,10 +897,7 @@ fn key_at(state: &Rc<ViewState>, chord: &str) -> bool {
 // ── Scene helpers ───────────────────────────────────────────────────────────
 
 fn absolute(rect: Rect) -> LayoutStyle {
-    LayoutStyle::new()
-        .with_absolute_position(rect.x, rect.y)
-        .with_size(Size::px(rect.w, rect.h))
-        .with_pointer_transparent(true)
+    LayoutStyle::decoration(rect)
 }
 
 fn run_style(px: u32, fg: Color) -> TextStyle {

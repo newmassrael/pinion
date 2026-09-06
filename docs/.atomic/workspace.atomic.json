@@ -88216,6 +88216,58 @@
         "⚠ AND `PINION_PUSH_ON_RED=1` IS STILL REQUIRED, for run 34012315705 (R2025's demo sweep). It stays red until the marks above are repaired."
       ]
     },
+    "R2032": {
+      "decision_summary": "A placement is BOTH halves — where a node sits and how big it is — and the framework now publishes it as one thing rather than leaving each screen to spell it.\n\nThe fourth instalment on the red CI run that R2025's gate first exposed. Its largest remaining piece was five wires of a graph screen carrying a name and no box, reported by fourteen walks and by no local gate. The cause was a half-placement: the wire declared its geometry on the node that carries it and gave the layout the CORNER alone, so `Auto` resolved to `0 x 0` for a leaf with no intrinsic content and the layout pass wrote that box back over the declared one.\n\nThe repair is the framework's rather than the example's, and the measurement decided that: `fn absolute(rect) -> LayoutStyle` had been written NINE times by hand across two crates and seven screens, EIGHT of them byte-identical, and the one screen with no copy to reach for is the one that dropped a half. `LayoutStyle::placed` and `LayoutStyle::decoration` are published; all nine sites delegate.\n\nR1970 fixed this exact cause in the sibling graph screen and wrote down that the screen spelled placement two ways. It did not publish, so the class recurred in a screen that never had the copy. A fix in one screen is a repair; publishing it is the repayment.",
+      "changes_bullets": [
+        "`pinion-core` publishes two constructors on the layout style: `placed(rect)` declares the corner and the extent together, and `decoration(rect)` adds the one further fact a mark drawn over its neighbours needs — that it never takes the cursor. Both carry the measurement that motivated them, and the note on the position builder is corrected: it claimed an `Auto` size expands to the parent's content rect, which for a leaf it does not.",
+        "The graph screen's wire now declares the convex hull of its four control points plus the stroke margin as its box, which is exactly where a cubic lies, and takes its placement from `decoration`. The drawn curve is unchanged — the origin moves left and the rect-relative commands move right by the same amount — so what changed is that the wire can be found and no longer swallows presses aimed under it.",
+        "The nine hand copies delegate. The chart's keeps only the rule that is its own: a mark measured from data can round to nothing, and a plotted mark of no extent is not a mark, so each axis is floored at one pixel.",
+        "Two unit tests assert the halves directly, one per constructor, including that a placement says nothing about the cursor and a decoration says exactly one thing about it."
+      ],
+      "verification_bullets": [
+        "The fourteen walks CI named all PASS, with `unplaced` zero — before the change the same fourteen are the exact failure the run reports. Eight walks over the delegated screens PASS (the sibling graph screen, the shell, the capture viewer, the log view, the sessions view, the topology view and two chart demos), which is what proves the eight identical delegations changed no behaviour.",
+        "6,225 tests passed and 0 failed over the changed crates and three example crates. Workspace clippy on CI's own flags rc=0 with zero warnings. `cargo fmt --all --check` rc=0.",
+        "Measured, not inferred: `shadows` on the graph screen 41 -> 36, exactly the five wires that stopped intercepting the cursor; the wires' boxes came back `0 x 0` at their correct corners inside a parent 900x560, which is the disproof of the note claiming an `Auto` size expands to the parent's content rect; nine definitions of the placement helper, eight byte-identical; 294 sites over 109 files still spell the corner alone.",
+        "The scratch probe written to read the graph screen's curve geometry was removed after it answered. Its answer is itself a finding: a 212KB scene snapshot mentions `\"commands\"` zero times."
+      ],
+      "impact_refs": [
+        "5.21",
+        "5.45",
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "The red is not closed. Five demos of the original 24 remain, over three screens: a dashboard card's handles (3 demos), a chart's untagged mark (1) and a font screen's four marks (1). Same class is not same cause — this arc has demonstrated that five times — so each is measured before it is repaired.",
+        "Two debts open, both outside the R2008 pin, family 45 -> 47, cohort loop unchanged at 36.",
+        "The first: publishing the right spelling does not forbid the wrong one. The corner alone is still legal at 294 sites over 109 files and nothing refuses it. Whether those are half-placements cannot be answered by text — a builder chain crosses lines and variables — so the instrument has to run rather than read, and until it does there is no way to choose between a gate, a semantic change (a leaf's `Auto` taking the extent its own rect declares, which puts 702 demos in radius), and lifting the walk's refusal to the push gate.",
+        "The second: no reader can ask where a curve is drawn. The scene-as-data surface carries no path commands, so the two graph screens writing their curves in different coordinate frames — one rect-relative, one window-absolute, through one painter that always composes the rect origin as a translate — are judged by nothing. Which one is displaced is not claimed here; the first act on that debt is to make the measurement possible, and the gate it would buy is that a wire's endpoints lie inside the ports it joins.",
+        "Next: the three remaining screens of this red, then back to the cohort."
+      ],
+      "publishable_decision_summary": "A placement is BOTH halves — where a node sits and how big it is — and the framework now publishes it as one thing rather than leaving each screen to spell it.\n\nThe fourth instalment on the red CI run that R2025's gate first exposed. Its largest remaining piece was five wires of a graph screen carrying a name and no box, reported by fourteen walks and by no local gate. The cause was a half-placement: the wire declared its geometry on the node that carries it and gave the layout the CORNER alone, so `Auto` resolved to `0 x 0` for a leaf with no intrinsic content and the layout pass wrote that box back over the declared one.\n\nThe repair is the framework's rather than the example's, and the measurement decided that: `fn absolute(rect) -> LayoutStyle` had been written NINE times by hand across two crates and seven screens, EIGHT of them byte-identical, and the one screen with no copy to reach for is the one that dropped a half. `LayoutStyle::placed` and `LayoutStyle::decoration` are published; all nine sites delegate.\n\nR1970 fixed this exact cause in the sibling graph screen and wrote down that the screen spelled placement two ways. It did not publish, so the class recurred in a screen that never had the copy. A fix in one screen is a repair; publishing it is the repayment.",
+      "publishable_changes_bullets": [
+        "`pinion-core` publishes two constructors on the layout style: `placed(rect)` declares the corner and the extent together, and `decoration(rect)` adds the one further fact a mark drawn over its neighbours needs — that it never takes the cursor. Both carry the measurement that motivated them, and the note on the position builder is corrected: it claimed an `Auto` size expands to the parent's content rect, which for a leaf it does not.",
+        "The graph screen's wire now declares the convex hull of its four control points plus the stroke margin as its box, which is exactly where a cubic lies, and takes its placement from `decoration`. The drawn curve is unchanged — the origin moves left and the rect-relative commands move right by the same amount — so what changed is that the wire can be found and no longer swallows presses aimed under it.",
+        "The nine hand copies delegate. The chart's keeps only the rule that is its own: a mark measured from data can round to nothing, and a plotted mark of no extent is not a mark, so each axis is floored at one pixel.",
+        "Two unit tests assert the halves directly, one per constructor, including that a placement says nothing about the cursor and a decoration says exactly one thing about it."
+      ],
+      "publishable_verification_bullets": [
+        "The fourteen walks CI named all PASS, with `unplaced` zero — before the change the same fourteen are the exact failure the run reports. Eight walks over the delegated screens PASS (the sibling graph screen, the shell, the capture viewer, the log view, the sessions view, the topology view and two chart demos), which is what proves the eight identical delegations changed no behaviour.",
+        "6,225 tests passed and 0 failed over the changed crates and three example crates. Workspace clippy on CI's own flags rc=0 with zero warnings. `cargo fmt --all --check` rc=0.",
+        "Measured, not inferred: `shadows` on the graph screen 41 -> 36, exactly the five wires that stopped intercepting the cursor; the wires' boxes came back `0 x 0` at their correct corners inside a parent 900x560, which is the disproof of the note claiming an `Auto` size expands to the parent's content rect; nine definitions of the placement helper, eight byte-identical; 294 sites over 109 files still spell the corner alone.",
+        "The scratch probe written to read the graph screen's curve geometry was removed after it answered. Its answer is itself a finding: a 212KB scene snapshot mentions `\"commands\"` zero times."
+      ],
+      "publishable_impact_refs": [
+        "5.21",
+        "5.45",
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The red is not closed. Five demos of the original 24 remain, over three screens: a dashboard card's handles (3 demos), a chart's untagged mark (1) and a font screen's four marks (1). Same class is not same cause — this arc has demonstrated that five times — so each is measured before it is repaired.",
+        "Two debts open, both outside the R2008 pin, family 45 -> 47, cohort loop unchanged at 36.",
+        "The first: publishing the right spelling does not forbid the wrong one. The corner alone is still legal at 294 sites over 109 files and nothing refuses it. Whether those are half-placements cannot be answered by text — a builder chain crosses lines and variables — so the instrument has to run rather than read, and until it does there is no way to choose between a gate, a semantic change (a leaf's `Auto` taking the extent its own rect declares, which puts 702 demos in radius), and lifting the walk's refusal to the push gate.",
+        "The second: no reader can ask where a curve is drawn. The scene-as-data surface carries no path commands, so the two graph screens writing their curves in different coordinate frames — one rect-relative, one window-absolute, through one painter that always composes the rect origin as a translate — are judged by nothing. Which one is displaced is not claimed here; the first act on that debt is to make the measurement possible, and the gate it would buy is that a wire's endpoints lie inside the ports it joins.",
+        "Next: the three remaining screens of this red, then back to the cohort."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

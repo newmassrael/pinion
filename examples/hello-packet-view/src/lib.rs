@@ -1087,10 +1087,7 @@ fn visible_fields(state: &ViewState) -> Vec<(String, String, String, usize)> {
 /// The root container is the one node that keeps its own layout, so it stays the
 /// target; everything built through this helper is an address.
 fn absolute(rect: Rect) -> LayoutStyle {
-    LayoutStyle::new()
-        .with_absolute_position(rect.x, rect.y)
-        .with_size(Size::px(rect.w, rect.h))
-        .with_pointer_transparent(true)
+    LayoutStyle::decoration(rect)
 }
 
 /// The style every run on this screen carries.

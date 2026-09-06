@@ -1169,14 +1169,33 @@ fn wire_scene(
     wire_with(from, to, look.stroke(direct, muted), tag)
 }
 
+/// How far outside its own curve a wire's box reaches, so a stroke's width and
+/// its end caps are inside the rectangle that says where the wire is.
+const WIRE_MARGIN: i32 = 4;
+
 fn wire_with(from: (i32, i32), to: (i32, i32), stroke: Stroke, tag: String) -> Scene {
     let reach = ((to.0 - from.0).abs() / 2).clamp(30, 120);
-    let left = from.0.min(to.0) - 4;
-    let top = from.1.min(to.1) - 4;
+    // ★★★★★ R2032 — a cubic lies inside the convex hull of its four control
+    // points, so the hull plus the stroke margin IS this wire's box. What stood
+    // here declared `1, 1` and pinned the corner alone, which the layout pass
+    // then overwrote with `0 x 0`: the five wires of this screen carried a name
+    // and no rectangle, so every reader that indexes by placement — the pointer
+    // router, the a11y bounds, `pinion_core::reach` — could not find one line
+    // on the canvas. Fourteen walks reported it and no local gate did.
+    //
+    // ⚠ The extent and the transparency are ONE decision, which is why they
+    // arrive together from [`LayoutStyle::decoration`]: a wire's box is most of
+    // the canvas it crosses, and an opaque one would swallow every press aimed
+    // at what it crosses.
+    let left = from.0.min(to.0).min(to.0 - reach) - WIRE_MARGIN;
+    let right = from.0.max(to.0).max(from.0 + reach) + WIRE_MARGIN;
+    let top = from.1.min(to.1) - WIRE_MARGIN;
+    let bottom = from.1.max(to.1) + WIRE_MARGIN;
+    let bounds = Rect::new(upx(left), upx(top), upx(right - left), upx(bottom - top));
     let point = |p: (i32, i32)| ppt(p.0 - left, p.1 - top);
     Scene::Path(
         PathNode::new(
-            Rect::new(upx(left), upx(top), 1, 1),
+            bounds,
             vec![
                 PathCommand::MoveTo(point(from)),
                 PathCommand::CurveTo {
@@ -1188,7 +1207,7 @@ fn wire_with(from: (i32, i32), to: (i32, i32), stroke: Stroke, tag: String) -> S
             PathStyle::stroked(stroke),
         )
         .with_tag(tag)
-        .with_layout(LayoutStyle::new().with_absolute_position(upx(left), upx(top))),
+        .with_layout(LayoutStyle::decoration(bounds)),
     )
 }
 

@@ -8300,10 +8300,7 @@ fn code_chip(code: &str, chip: Rect, skin: BoxStyle, ink: Color, tag: Option<Str
 /// docs claim does not exist. The root container is the one node that keeps
 /// its own layout, so it stays the target.
 fn absolute(rect: Rect) -> LayoutStyle {
-    LayoutStyle::new()
-        .with_absolute_position(rect.x, rect.y)
-        .with_size(Size::px(rect.w, rect.h))
-        .with_pointer_transparent(true)
+    LayoutStyle::decoration(rect)
 }
 
 // --- The Settings destination ------------------------------------------------
