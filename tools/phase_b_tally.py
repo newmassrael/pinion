@@ -3598,6 +3598,33 @@ def selftest() -> int:
         "question that answers nothing",
     )
 
+    # ★★★★★ R2028 — THE ORACLE `assign` IS FED, over the real tree.
+    #
+    # `assign` is pure and every case above hands it a fixture map, which is
+    # what makes the pattern rules testable. `universe` is what decides WHICH
+    # artifacts those rules are applied to, and nothing watched it: one that
+    # answered `{}` would make every axis report zero artifacts and every case
+    # above would still pass. `tools/oracle_census.py` counts that shape, and
+    # the number this tool publishes rests entirely on this function.
+    names = universe("example-name")
+    check(bool(names), "the artifact oracle answers example names")
+    check(
+        all(isinstance(k, str) and isinstance(v, str) for k, v in names.items()),
+        "and each is a name mapped to the text patterns match against",
+    )
+    check(
+        all(n not in NOT_PHASE_B for n in names),
+        "and the exclusions are applied by the oracle, not left to each caller",
+    )
+    # ★ The second kind, because the two are produced by different arms and a
+    # census that only exercised one would leave the other unwatched.
+    bodies = universe("demo-body")
+    check(bool(bodies), "and it answers demo bodies too")
+    check(
+        all(len(text) > 0 for text in bodies.values()),
+        "each demo body is the file's text, which is what a pattern is matched against",
+    )
+
     for f in fails:
         print(f"SELFTEST FAIL: {f}")
     print(f"selftest: {'PASS' if not fails else 'FAIL'} ({len(fails)} failure(s))")

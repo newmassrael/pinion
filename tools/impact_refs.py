@@ -198,7 +198,39 @@ def selftest() -> int:
     # ★ A token that is a PREFIX of a legal id is not legal: `5.1` is not `5.11`.
     expect("prefix is not a match", [t for t, _ in offenders(["5.1"], known)], ["5.1"])
 
-    print(f"impact_refs selftest: {11 - failures} of 11 passed")
+    # ★★★★★ R2028 — THE ORACLE, asked of the real store.
+    #
+    # Every case above hands `offenders` a fixture set of ids, which is what
+    # makes the rule testable. Nothing watched the function that produces the
+    # real set — and a `known_sections` answering the EMPTY set would make this
+    # gate refuse every impact ref ever written, while an over-wide one would
+    # accept the token that produced the four instances `mnemosyne.toml`
+    # records. `tools/oracle_census.py` counts that shape.
+    #
+    # ⚠ Skipped, loudly, where the pinned tool is not on PATH: this file is
+    # importable on a machine that has never built Mnemosyne, and a selftest
+    # that died there would be a gate nobody could run.
+    try:
+        real = known_sections()
+    except (OSError, subprocess.CalledProcessError):
+        real = None
+        print("impact_refs selftest: SKIPPED the store oracle — no CLI on PATH")
+    if real is not None:
+        expect("the store answers sections", len(real) > 20, True)
+        expect("§3 is one of them", "3" in real, True)
+        expect(
+            "and they are bare ids, which is the form `offenders` compares",
+            all(not s.startswith("§") for s in real),
+            True,
+        )
+        expect("a real id passes against the real store", offenders(["§3"], real), [])
+        expect(
+            "and an invented one does not",
+            [t for t, _ in offenders(["§5.999"], real)],
+            ["§5.999"],
+        )
+
+    print(f"impact_refs selftest: {16 - failures} of 16 passed")
     return 1 if failures else 0
 
 

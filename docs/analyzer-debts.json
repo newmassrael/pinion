@@ -305,17 +305,6 @@
       ]
     },
     {
-      "name": "debt-a-pure-rules-oracle-is-a-second-gate-nobody-tests",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links analyzer-debt-repayment-loop"
-      ]
-    },
-    {
       "name": "debt-a-push-dies-after-the-gates-with-the-keepalive-already-set",
       "substituted": false,
       "blocked_by": "buildable",

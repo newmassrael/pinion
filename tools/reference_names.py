@@ -530,6 +530,32 @@ def selftest() -> int:
         if not reason.strip():
             failures += 1
             print(f"  FAIL allowlisted {token!r} with no reason")
+    # ★★★★★ R2028 — THE ORACLE, over the real tree.
+    #
+    # Every case above hands the pure matcher a fixture line, which is what
+    # makes the vocabulary testable. Nothing watched `census`, and it is the
+    # function that decides WHICH files the ratchet is computed over: one that
+    # answered `{}` would let the budget be rewritten to empty and the gate
+    # would then pass on a tree full of the names it exists to keep out.
+    # `tools/oracle_census.py` counts that shape. Measured once here rather
+    # than pinned as a number, which is the same reason the budget file is a
+    # generated artifact.
+    seen = census()
+    if not isinstance(seen, dict) or any(not isinstance(n, int) for n in seen.values()):
+        failures += 1
+        print("  FAIL census must answer path -> count")
+    if any(n <= 0 for n in seen.values()):
+        failures += 1
+        print("  FAIL census omits zero counts, and a zero row would inflate the budget")
+    if any(Path(p).is_absolute() for p in seen):
+        failures += 1
+        print("  FAIL census keys are repository-relative paths")
+    # ★ And it READ something: a census over no files would answer `{}` too,
+    # and that is the failure this whole class is about.
+    if not tracked_files():
+        failures += 1
+        print("  FAIL the census read no tracked file, so its answer means nothing")
+
     if failures:
         print(f"reference_names selftest: {failures} failure(s)")
         return 1

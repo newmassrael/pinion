@@ -1985,7 +1985,7 @@ fi
 # selftest runs here, where the hook libraries' own tests already run.
 impact_self="$(python3 "$repo_root/tools/impact_refs.py" --selftest 2>&1 || true)"
 ok "the impact-ref guard passes its own selftest" \
-   "$(grep -c 'selftest: 11 of 11 passed' <<<"$impact_self")" \
+   "$(grep -c 'selftest: 16 of 16 passed' <<<"$impact_self")" \
    "1"
 # And it still refuses the token that created it, which is the one case a
 # regression here would be silent about.

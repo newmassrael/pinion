@@ -609,6 +609,25 @@ def check_citations(rows: list[dict], census: dict, gated: set[str], rules) -> l
     return out
 
 
+def rule_named(folder: pathlib.Path):
+    """An answer to *is there a memory file for this rule name*, over `folder`.
+
+    ★★★★★ R2028 — **named, because it is an ORACLE.** This was written inline
+    at the call site as `lambda name: (folder / f"{name}.md").is_file()`, and
+    `tools/oracle_census.py` counts that as a gap for a reason that is not
+    style: a lambda has no name, so nothing can assert it and no mutation can
+    be aimed at it. A `rules` oracle that answered `True` for everything would
+    let any `rule:` citation stand, and every fixture in this file's selftest
+    hands `check_citations` a synthetic one — so the rule was tested and the
+    thing deciding what the rule sees was not. R1884's shape, counted at R2028.
+    """
+
+    def known(name: str) -> bool:
+        return (folder / f"{name}.md").is_file()
+
+    return known
+
+
 def census_verdicts() -> dict[str, str]:
     """Each analysis-tool census row's verdict, from the pin beside this tool."""
     pin = ROOT / "docs" / "analyzer-census.json"
@@ -1401,6 +1420,81 @@ def selftest() -> int:
         check_cohort_live([], "a fixture", {}, pair) == [],
     )
 
+    # ★★★★★ R2028 — THE FIVE ORACLES, against the real memory folder.
+    #
+    # Every rule above is pure and every case above hands it a fixture, so the
+    # functions that decide WHAT those rules look at were watched by nothing —
+    # `tools/oracle_census.py` counts fifteen call sites in this file over five
+    # oracles, more than the tool where R1884 first met the shape. An oracle
+    # that answered nothing would make every rule here vacuous and every case
+    # above would still pass.
+    # ⚠ Through `memory_dir`, which is itself an oracle and fails open when the
+    # folder is not on this machine (a fresh clone has none). So the assertions
+    # below are skipped there rather than failing — and the SKIP is reported,
+    # because a check that quietly stops happening is what this whole class is
+    # about.
+    home = memory_dir()
+    if home is not None:
+        seen = survey(home)
+        check("the survey finds this project's debts", len(seen) > 20)
+        check(
+            "and every row it returns carries the fields the rules read",
+            all("name" in row and "blocked_by" in row for row in seen),
+        )
+        held = all_debts(home)
+        check("the index holds at least what the survey found", len(held) >= len(seen))
+        # ★★★★★ A key is a debt's FILE STEM or its PUBLIC NAME, and asserting
+        # only the first was this round's own wrong guess: one debt in this
+        # folder is filed under a private stem and published under a neutral
+        # one, and the index carries BOTH so a cohort citing either resolves.
+        # The first draft of this line asserted `key == stem` and the run said
+        # so — which is also how the ratchet in `reference_names.py` caught the
+        # first draft of this very comment, written with the private name in it.
+        substituted = sum(1 for name, row in held.items() if name != row.get("stem"))
+        check(
+            "every key is a stem, or a public name standing in for one",
+            all(
+                name == row.get("stem") or row.get("stem", "").startswith("debt-")
+                for name, row in held.items()
+            ),
+        )
+        check(
+            "and the substitution is REACHABLE — an index that resolved only "
+            "stems would refuse every cohort citation written in public words",
+            substituted > 0,
+        )
+        known = rule_named(home)
+        check(
+            "the rule oracle finds a rule this project actually keeps",
+            known("zero-flake-policy"),
+        )
+        check(
+            "and refuses one it does not — an oracle that said yes to every "
+            "name would let any `rule:` citation stand",
+            not known("no-such-rule-r2028"),
+        )
+    else:
+        print(
+            "selftest: SKIPPED the four memory-folder oracles — no debt folder "
+            "on this machine, which is a fresh clone rather than a failure"
+        )
+    verdicts = census_verdicts()
+    # ⚠ A floor rather than the count: a number here would be the second copy
+    # of a figure the pin already holds, which is the class this repository
+    # keeps paying for. What must not happen is an EMPTY answer, because that
+    # makes `check_citations`'s `census:` arm accept anything.
+    check("the census pin answers verdicts", len(verdicts) > 20)
+    check(
+        "and each is a word the citation rule knows",
+        all(isinstance(v, str) and v for v in verdicts.values()),
+    )
+    gated = gated_axes()
+    check("the tally names its gated axes", len(gated) >= 2)
+    check(
+        "and they are keys the tally itself carries",
+        all(axis in (ROOT / "tools" / "phase_b_tally.py").read_text(encoding="utf-8") for axis in gated),
+    )
+
     print(f"selftest: {'PASS' if not failures else 'FAIL'} ({failures} failure(s))")
     return 1 if failures else 0
 
@@ -1437,7 +1531,7 @@ def main() -> int:
             rows,
             census_verdicts(),
             gated_axes(),
-            lambda name: (folder / f"{name}.md").is_file(),
+            rule_named(folder),
         )
         + check_public_names(folder)
         + check_cohort(members, source, index)

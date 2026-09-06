@@ -244,6 +244,29 @@ def selftest() -> int:
         paths_to_text(dev_only, "a") == [],
     )
 
+    # ★★★★★ R2028 — THE ORACLE, over the real workspace.
+    #
+    # Every case above hands `paths_to_text` a fixture manifest map, which is
+    # what makes the reachability rule testable without cargo. Nothing watched
+    # the function that builds the real one — and a `crate_manifests` that
+    # found no crate would make this gate answer *no consumer reaches the text
+    # crate* for every crate in the workspace, with every case above green.
+    # `tools/oracle_census.py` counts that shape.
+    real = crate_manifests(Path(__file__).resolve().parent.parent)
+    case("the manifest oracle finds this workspace's crates", len(real) > 20)
+    case(
+        "and the crate this gate is about is one of them",
+        TEXT_CRATE in real,
+    )
+    case(
+        "each answer is a manifest that exists and the table it parsed",
+        all(path.is_file() and "package" in data for path, data in real.values()),
+    )
+    case(
+        "and the key is the package's own name, which is what a dependency cites",
+        all(name == data.get("package", {}).get("name") for name, (_, data) in real.items()),
+    )
+
     print(f"wire_only_deps selftest: {'PASS' if failures == 0 else 'FAIL'} "
           f"({failures} failure(s))")
     return 1 if failures else 0

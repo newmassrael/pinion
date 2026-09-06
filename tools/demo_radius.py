@@ -338,6 +338,20 @@ def selftest() -> int:
     if not named:
         failures.append("no demo names docs/analyzer-packets-spec.json")
 
+    # ★★★★★ R2028 — THE ORACLE, against this repository's real index.
+    #
+    # Every case above hands the pure readers a fixture path list. Nothing
+    # watched the function that produces the real one, and a `changed_paths`
+    # answering an empty list would make this tool select NO demo for every
+    # change while every case above stayed green — `tools/oracle_census.py`
+    # counts that shape. `staged` because it is the mode the hooks use; the
+    # answer may legitimately be empty, so this asserts its SHAPE.
+    staged = changed_paths("staged", None)
+    if not isinstance(staged, list) or any(not isinstance(p, str) for p in staged):
+        failures.append(f"changed_paths must answer a list of paths, got {staged!r}")
+    if any(p.startswith("/") or "\n" in p for p in staged):
+        failures.append("changed_paths answers one repository-relative path per entry")
+
     for line in failures:
         print(f"demo radius selftest: {line}", file=sys.stderr)
     print(f"demo radius selftest: {len(resolved)} demo(s) resolve a launch target")

@@ -191,6 +191,32 @@ if ! python3 "$repo_root/tools/analyzer_census.py" --selftest >&2; then
     echo "pre-push: the analysis-tool census failed its own tests" >&2
     exit 1
 fi
+# ★★★★★ R2028 — and the ORACLE every one of those selftests rests on.
+#
+# `debt-a-pure-rules-oracle-is-a-second-gate-nobody-tests`: a gate tool here is
+# built out of PURE rules so its selftest can hand them fixtures, and a pure
+# rule does not decide what it looks at. The ORACLE decides, the oracle is
+# impure by construction, and a fixture cannot reach it — so a tool can pass
+# every one of its own tests while the thing choosing what those tests are
+# about answers nothing. Measured at R1884 on one such pair (two mutations of
+# `store_sections` left `--selftest` AND `--check-pin` green while making a
+# REJECTED sentence citable as a ratified boundary); counted at R2028 across
+# the whole `tools/` folder — 32 pairs over 22 tools, of which 30 were
+# unexercised, in NINE tools rather than the three the debt had listed.
+#
+# It parses; it builds nothing; it runs beside the selftest whose blind spot it
+# names, because a census that only ran when somebody remembered is the exact
+# failure it exists to report.
+step "pure rules' oracles exercised"
+if ! python3 "$repo_root/tools/oracle_census.py" --selftest >&2; then
+    echo "pre-push: the oracle census failed its own tests" >&2
+    exit 1
+fi
+if ! python3 "$repo_root/tools/oracle_census.py" >&2; then
+    echo "pre-push: a pure rule's oracle is exercised by nothing — give it a" >&2
+    echo "          name if it is a lambda, and a call in that tool's selftest" >&2
+    exit 1
+fi
 # ★★★★★ R1953 — the rail specification's own consistency, which nothing asked.
 #
 # `tools/analyzer_spec.py` derives four rosters from `docs/analyzer-rail-spec.

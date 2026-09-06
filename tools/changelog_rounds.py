@@ -399,6 +399,34 @@ def selftest() -> int:
         rounds_in("chore(tools): R1744 two axes are looked at again") == [1744],
     )
 
+    # ★★★★★ R2028 — THE ORACLE, against this repository's real history.
+    #
+    # Every case above hands the two pure readers a fixture string, which is
+    # what makes them testable at all — and R1828 split `git_subjects` out
+    # precisely so both read ONE `git log`. Nothing then watched that log.
+    # A `git_subjects` answering the empty string would make this tool report
+    # zero rounds and zero roundless subjects, and every case above would pass;
+    # `tools/oracle_census.py` counts exactly that shape.
+    subjects = git_subjects()
+    check("the history oracle answers this repository's subjects", subjects.count("\n") > 100)
+    check(
+        "and they are subjects rather than a log — one line each, no diff",
+        all(not line.startswith("commit ") for line in subjects.splitlines()),
+    )
+    # ⚠★★★★★ TWO WRONG GUESSES, BOTH CORRECTED BY THE RUN, and the second is
+    # worth more than the assertion it produced. The first draft asked for
+    # ASCENDING and was answered `[2027, 2026, 2025, …]`; the second asked for
+    # strictly DESCENDING and was answered *18 adjacent pairs go the other way*
+    # — because commit order is not round order (a round's commit can land
+    # after the next round's, and this history has eighteen such places).
+    #
+    # ⇒ what is true, and what a reader of this tool actually takes off the
+    # front: it is a POPULATION with no repeats, and the newest round leads it.
+    seen = git_rounds(subjects)
+    check("the round population it feeds is not empty", len(seen) > 100)
+    check("and no round is counted twice", len(seen) == len(set(seen)))
+    check("and the newest round leads it, which is what this tool reports", seen[0] == max(seen))
+
     for name in failures:
         print(f"selftest FAIL: {name}")
     print(f"changelog_rounds selftest: {len(failures)} failure(s)")

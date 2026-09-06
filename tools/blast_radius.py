@@ -307,6 +307,34 @@ def selftest() -> int:
         ["app", "mid"],
     )
 
+    # ★★★★★ R2028 — THE TWO ORACLES, against the real repository.
+    #
+    # Every case above hands `radius` a FIXTURE workspace, which is the whole
+    # design: the rule is pure and can be tested without cargo or git. But a
+    # pure rule does not choose what it looks at, and until now nothing watched
+    # the two functions that do — `tools/oracle_census.py` counts that class.
+    # A `workspace_metadata` that named no package, or a `changed_paths` that
+    # returned nothing, would make this tool answer *nothing is affected* for
+    # every change while every case above stayed green.
+    real = Path(__file__).resolve().parent.parent
+    meta = workspace_metadata(real)
+    names = {p.get("name") for p in meta.get("packages", [])}
+    if "pinion-core" not in names:
+        failures.append(
+            "workspace_metadata does not name this workspace's own crates: "
+            f"{sorted(names)[:5]}"
+        )
+    if not all(p.get("manifest_path") for p in meta.get("packages", [])):
+        failures.append("a package with no manifest path cannot be located by `radius`")
+    # ★ `staged`, because it is the mode the hooks use and it answers whatever
+    # the index holds — including nothing, which is a legitimate answer and the
+    # reason this asserts the SHAPE rather than a count.
+    staged = changed_paths("staged", None, real)
+    if not isinstance(staged, list) or any(not isinstance(p, str) for p in staged):
+        failures.append(f"changed_paths must answer a list of paths, got {staged!r}")
+    if any(p.startswith("/") for p in staged):
+        failures.append("changed_paths answers repository-relative paths, and did not")
+
     for failure in failures:
         print(f"  FAIL {failure}")
     print(f"blast_radius selftest: {'FAIL' if failures else 'PASS'} "

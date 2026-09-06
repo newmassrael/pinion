@@ -1224,6 +1224,38 @@ def selftest() -> int:
     check("the report renders every verdict", all(v in "\n".join(lines) for v in VERDICTS))
     check("the report counts the rows", f"{len(VERDICTS)} capability(ies)" in lines[0])
 
+    # ★★★★★ R2028 — THE OTHER THREE ORACLES, against the real repository.
+    #
+    # R1884 asserted `store_sections` here and wrote down that it had repaired
+    # ONE SITE of a class it had not counted. `tools/oracle_census.py` is that
+    # count, and these are this file's share of it: every pure rule above takes
+    # its world as an argument, so a fixture can satisfy the rule while the
+    # thing that decides WHAT the rule looks at is watched by nothing.
+    check("the repository oracle finds a file this census cites", repo_has("Cargo.toml"))
+    check(
+        "and answers false for something that is not there — an oracle that "
+        "said yes to everything would make every path-citing rule vacuous",
+        not repo_has("no/such/path/in/this/repository.rs"),
+    )
+    check(
+        "the reading oracle reads that file rather than its name",
+        "[workspace]" in repo_text("Cargo.toml"),
+    )
+    # ★ `runner_tests` is asserted through its FAIL-CLOSED path rather than by
+    # listing the workspace's tests, and that is a cost decision stated rather
+    # than hidden: the happy path builds, which is exactly why `--check-proofs`
+    # is a flag. What the failure path buys is the half that matters — a runner
+    # that cannot answer must RAISE, because the alternative is a proof check
+    # that silently checks nothing.
+    try:
+        runner_tests(["pinion-no-such-crate-r2028"])
+        check("a runner that cannot answer raises rather than answering nothing", False)
+    except Finding as why:
+        check(
+            "a runner that cannot answer raises, naming what it could not do",
+            "no proof can be checked" in str(why),
+        )
+
     print(f"selftest: {'PASS' if not failures else 'FAIL'} ({failures} failure(s))")
     return 1 if failures else 0
 
@@ -1243,6 +1275,32 @@ def cited_crates(rows: list[dict]) -> list[str]:
             if crate not in out:
                 out.append(crate)
     return out
+
+
+def repo_has(path: str) -> bool:
+    """Whether `path` names something in this repository.
+
+    ★★★★★ R2028 — **named, because it is an ORACLE and an inline lambda cannot
+    be one.** Three checks here took this as `lambda path: (ROOT / path).exists()`
+    written out at the call site, and `tools/oracle_census.py` counts that as a
+    gap for a reason that is not style: a lambda has no name, so no assertion
+    can reach it and no mutation can be aimed at it. `ROOT` being wrong, or the
+    join being wrong, would make every path-citing rule in this file answer
+    *present* for everything, and `--selftest` would stay green — the shape
+    R1884 measured on `store_sections` and did not then count.
+    """
+    return (ROOT / path).exists()
+
+
+def repo_text(path: str) -> str:
+    """What `path` holds, for the rules that read a cited file's content.
+
+    R2028 — the peer of [`repo_has`], named for the same reason. Lossy on
+    purpose (`errors="replace"`): a rule that asks whether a file still says
+    something must not die on a byte, and the alternative is a check that stops
+    happening on one bad encoding.
+    """
+    return (ROOT / path).read_text(encoding="utf-8", errors="replace")
 
 
 def store_sections() -> dict[str, tuple[str, str]]:
@@ -1350,7 +1408,7 @@ def main() -> int:
     # R1648 — the assemblies an `app` row cites must be there. Run before the
     # report on both paths, because a citation to a deleted example is exactly
     # the drift a census exists to refuse.
-    missing = check_assemblies(rows, lambda path: (ROOT / path).exists())
+    missing = check_assemblies(rows, repo_has)
     if missing:
         for gone in missing:
             print(f"analyzer census: {gone}", file=sys.stderr)
@@ -1383,8 +1441,8 @@ def main() -> int:
     # files, builds nothing, so it runs every invocation beside the two above.
     adrift = check_rests(
         rows,
-        lambda path: (ROOT / path).exists(),
-        lambda path: (ROOT / path).read_text(encoding="utf-8", errors="replace"),
+        repo_has,
+        repo_text,
     )
     if adrift:
         for gone in adrift:
@@ -1420,7 +1478,7 @@ def main() -> int:
         except Finding as why:
             print(f"analyzer census: {why}", file=sys.stderr)
             return 1
-        broken = check_proofs(rows, proof_oracle(listed), lambda p: (ROOT / p).exists())
+        broken = check_proofs(rows, proof_oracle(listed), repo_has)
         for gone in broken:
             print(f"analyzer census: {gone}", file=sys.stderr)
         cited = sum(len(proof_names(r)) + len(proof_paths(r)) for r in rows)
