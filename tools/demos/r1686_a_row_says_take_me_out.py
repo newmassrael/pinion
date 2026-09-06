@@ -84,6 +84,15 @@ def form(tf):
     return json.loads(q(tf, "form"))
 
 
+def control(tf, key: str) -> str:
+    """The address that row's control is painted under — the SCREEN's.
+
+    ★ R2050 — asked rather than spelled: a walk cannot call the framework's own
+    composition, and a wrong letter here would aim at a mark that is not there.
+    """
+    return next(row["control"] for row in form(tf) if row["key"] == key)
+
+
 def row_value(tf, key: str) -> str:
     held = [field for field in form(tf) if field["key"] == key]
     assert held, f"the form holds {key}; it holds {[f['key'] for f in form(tf)]}"
@@ -148,8 +157,9 @@ def find_typeable_restorable(tf) -> str:
     """
     for key in json.loads(q(tf, "catalogue"))["offered"]:
         tf.invoke(f"{EXT}/add_field", key)
-        scroll_to(tf, f"lab.form.control.{key}")
-        press(tf, f"lab.form.control.{key}")
+        seat = control(tf, key)
+        scroll_to(tf, seat)
+        press(tf, seat)
         opened = json.loads(q(tf, "editing"))["target"] == f"value:{key}"
         if opened:
             # ⚠ Only when it opened: `lab.edit` is painted only while a field
@@ -324,10 +334,10 @@ def body() -> None:
         # ── (B) the seat is hittable, and hits nothing else ─────────
         row_seat = painted[f"lab.form.remove.{ROW}"]
         assert row_seat[2] > 0 and row_seat[3] > 0, "the seat has a size"
-        control = painted[f"lab.form.control.{ROW}"]
+        control_box = painted[control(tf, ROW)]
         applies = painted[f"lab.form.applies.{ROW}"]
-        assert not overlaps(row_seat, control), (
-            f"the seat {row_seat} is not on the control {control}"
+        assert not overlaps(row_seat, control_box), (
+            f"the seat {row_seat} is not on the control {control_box}"
         )
         assert not overlaps(row_seat, applies), (
             "★ the seat is not on the applies badge — the header is laid out by "
@@ -474,7 +484,7 @@ def body() -> None:
         # than the router, so the offered set wraps onto three lines and the
         # measured/estimated difference changes which line a chip is on.
         assert_chips_answer_for_themselves(tf)
-        press(tf, f"lab.form.control.{typed_row}")
+        press(tf, control(tf, typed_row))
         assert_eq(
             json.loads(q(tf, "editing"))["target"],
             f"value:{typed_row}",

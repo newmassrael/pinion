@@ -868,7 +868,7 @@ fn declared_tags(state: &LabState) -> Vec<String> {
             if field.hidden() {
                 continue;
             }
-            want.push(format!("lab.form.control.{}", field.key()));
+            want.push(super::address::form_control(field.key()));
             // ★★★ R1716 — the badges are per-axis now, and this census is
             // where the screen states which axis each row is on. A restart
             // badge on a row nobody can edit answers a question that row
@@ -938,11 +938,12 @@ fn declared_tags(state: &LabState) -> Vec<String> {
 /// `None` means the tag names something that is not pressable — a pane, a
 /// label, a wire — and is not probed.
 fn must_answer(tag: &str) -> Option<String> {
+    let control = super::address::form_control_prefix();
     for (prefix, verb) in [
         ("lab.rail.", "rail"),
         (super::address::ROLE_ROW, "role"),
         ("lab.form.add.", "add"),
-        ("lab.form.control.", "field"),
+        (control.as_str(), "field"),
         // ★ R1686 — `remove:<key>`, spelled like `add:` and `field:` rather
         // than like the control's parts: it is a seat of the ROW, not an
         // affordance inside the control, and the geometry publishes it apart
@@ -1332,7 +1333,7 @@ fn assert_disjoint(when: &str, shot: &Painted) {
     let controls: Vec<(&String, Rect)> = shot
         .tags
         .iter()
-        .filter(|(tag, _)| tag.starts_with("lab.form.control."))
+        .filter(|(tag, _)| tag.starts_with(&super::address::form_control_prefix()))
         .map(|(tag, rect)| (tag, *rect))
         .collect();
     let mut collisions = Vec::new();
@@ -3723,7 +3724,11 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
     // of the stepper, where the value's text is — opens the one field over it,
     // and what is typed is stored as typed and reported on its row.
     ("validate", |state, shot| {
-        press_tag(state, shot, "lab.form.control.transport.link.tx.batch_size");
+        press_tag(
+            state,
+            shot,
+            &super::address::form_control("transport.link.tx.batch_size"),
+        );
         type_into(state, "70000");
         press_tag(state, &painted(state), "lab.inspector.rename");
     }),
@@ -5000,7 +5005,7 @@ fn r1679_a_reset_affordance_is_painted_exactly_when_it_would_do_something() {
 ///   open the editor and a press on a switch is supposed to flip it. Asking
 ///   only about the form would call the first one dead.
 ///
-/// The population is every `lab.form.control.*` tag in the painted scene, so a
+/// The population is every form-control tag in the painted scene, so a
 /// row this test does not know about cannot escape it.
 #[test]
 fn r1684_the_centre_of_every_control_answers_a_press() {
@@ -5016,7 +5021,7 @@ fn r1684_the_centre_of_every_control_answers_a_press() {
             let controls: Vec<String> = painted(&survey)
                 .tags
                 .keys()
-                .filter_map(|tag| tag.strip_prefix("lab.form.control.").map(str::to_owned))
+                .filter_map(|tag| super::address::form_control_key(tag).map(str::to_owned))
                 .collect();
             // ★★★★★ R1909 — a folded inspector is JUDGED here, not skipped.
             //
@@ -5049,7 +5054,7 @@ fn r1684_the_centre_of_every_control_answers_a_press() {
                 // survey's: the two are built the same way, and asserting they
                 // agree is not this test's job.
                 let shot = painted(&state);
-                let Some(rect) = shot.tags.get(&format!("lab.form.control.{key}")).copied() else {
+                let Some(rect) = shot.tags.get(&super::address::form_control(&key)).copied() else {
                     dead.push(format!(
                         "{when}: {key} was painted on the survey and not on its own screen"
                     ));
@@ -5162,8 +5167,7 @@ fn r1684_the_field_stands_on_the_row_it_edits() {
                 .filter_map(|tag| {
                     // A row's own control, and — for a list — each element's
                     // row, which is a target in its own right.
-                    tag.strip_prefix("lab.form.control.")
-                        .map(|key| (key.to_owned(), tag.clone()))
+                    super::address::form_control_key(tag).map(|key| (key.to_owned(), tag.clone()))
                 })
                 .chain(painted(&survey).tags.keys().filter_map(|tag| {
                     let part = tag.strip_prefix("lab.form.item.")?;
@@ -5281,9 +5285,11 @@ fn r1684_leaving_the_field_applies_what_is_in_it() {
                 .and_then(|form| form.field(key).map(|f| f.value().into_owned()))
                 .unwrap_or_default()
         };
-        press_centre("lab.form.control.id");
+        press_centre(&super::address::form_control("id"));
         state.buffer.set_text("typed-and-left".to_owned());
-        press_centre("lab.form.control.transport.link.tx.batch_size");
+        press_centre(&super::address::form_control(
+            "transport.link.tx.batch_size",
+        ));
         assert_eq!(
             row_value("id"),
             "typed-and-left",
@@ -5310,7 +5316,7 @@ fn r1684_leaving_the_field_applies_what_is_in_it() {
             "the seat opened the box on the card's name"
         );
         state.buffer.set_text("S-01".to_owned());
-        press_centre_of(&state, "lab.form.control.id");
+        press_centre_of(&state, &super::address::form_control("id"));
         assert_eq!(
             state.editing.get().map(|what| what.wire()).as_deref(),
             Some("name"),
@@ -5348,7 +5354,7 @@ fn r1684_picking_another_card_shuts_the_field() {
         let shot = painted(&state);
         let row = *shot
             .tags
-            .get("lab.form.control.id")
+            .get(&super::address::form_control("id"))
             .expect("the opening card has a text row");
         press_at(&state, centre(row));
         assert!(
@@ -5402,7 +5408,7 @@ fn r1686_taking_a_row_away_shuts_the_field_standing_on_it() {
 
         let row = *painted(&state)
             .tags
-            .get(&format!("lab.form.control.{key}"))
+            .get(&super::address::form_control(key))
             .expect("the row is painted");
         press_at(&state, centre(row));
         assert!(
@@ -5484,7 +5490,7 @@ fn r1684_a_click_resolves_to_the_byte_whose_caret_is_under_it() {
         let at = centre(
             *shot
                 .tags
-                .get("lab.form.control.listen.endpoints")
+                .get(&super::address::form_control("listen.endpoints"))
                 .expect("the row is painted"),
         );
         press_at(&state, at);
@@ -5794,7 +5800,7 @@ fn seat_tag(target: &str) -> String {
     let named = target.strip_prefix("value:").unwrap_or(target);
     match named.split_once('[') {
         Some((key, rest)) => format!("lab.form.item.{key}.{}", rest.trim_end_matches(']')),
-        None => format!("lab.form.control.{named}"),
+        None => super::address::form_control(named),
     }
 }
 
@@ -6467,7 +6473,7 @@ fn r1691_a_rows_control_announces_the_kind_its_shape_is() {
                 // typed into.
                 _ => "textbox",
             };
-            let tag = format!("lab.form.control.{}", field.key);
+            let tag = super::address::form_control(field.key);
             assert_eq!(
                 roles.get(tag.as_str()).copied(),
                 Some(want),
@@ -6633,7 +6639,7 @@ fn r1732_the_inspector_reproduces_the_specification_or_says_where_it_does_not() 
         // Open the roster, through the row the way a hand does.
         let control = *shot
             .tags
-            .get(&format!("lab.form.control.{}", spec::ENUM_KEY))
+            .get(&super::address::form_control(spec::ENUM_KEY))
             .expect("the row is painted");
         let (px, py) = centre(control);
         super::move_cursor(&state, px, py);
@@ -6954,7 +6960,7 @@ fn r1742_an_untouched_lab_says_its_surfaces_are_away_rather_than_missing() {
         // this document cannot be fully judged at any one instant.
         let control = *frame
             .tags
-            .get(&format!("lab.form.control.{}", spec::ENUM_KEY))
+            .get(&super::address::form_control(spec::ENUM_KEY))
             .expect("the row is painted");
         let (px, py) = centre(control);
         super::move_cursor(&state, px, py);
@@ -7100,7 +7106,7 @@ fn r1742_the_roster_is_titled_by_the_words_the_frame_drew() {
         let shot = painted_at(&state, conformance_size()).0;
         let control = *shot
             .tags
-            .get(&format!("lab.form.control.{}", spec::ENUM_KEY))
+            .get(&super::address::form_control(spec::ENUM_KEY))
             .expect("the row is painted");
         let (px, py) = centre(control);
         super::move_cursor(&state, px, py);
@@ -7156,7 +7162,7 @@ fn r1732_pressing_an_option_writes_it_and_shuts_the_roster() {
         press_at(
             *shot
                 .tags
-                .get(&format!("lab.form.control.{}", spec::ENUM_KEY))
+                .get(&super::address::form_control(spec::ENUM_KEY))
                 .expect("the row is painted"),
         );
 
@@ -7303,7 +7309,7 @@ fn r1732_the_roster_is_driveable_from_the_keyboard_without_writing_as_it_moves()
         let (px, py) = centre(
             *shot
                 .tags
-                .get(&format!("lab.form.control.{}", spec::ENUM_KEY))
+                .get(&super::address::form_control(spec::ENUM_KEY))
                 .expect("the row is painted"),
         );
         super::move_cursor(&state, px, py);

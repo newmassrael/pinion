@@ -12953,7 +12953,7 @@ fn inspector_pane(
     // options landed, and where the reader is among them.
     let picking = state.picking.get();
     let painted = view_config_form_showing(
-        "lab.form",
+        address::FORM,
         &form,
         &geometry,
         theme,
@@ -14746,6 +14746,16 @@ impl ExternalIntrospect for LabOracle {
                                 };
                                 serde_json::json!({
                                     "key": f.key(),
+                                    // ★★★★★ R2050 — **the address this row's
+                                    // control is painted under**, derived from
+                                    // the framework's own composition rather
+                                    // than spelled. A walk is Python and cannot
+                                    // call that derivation, so before this
+                                    // every walk that wanted to press a row
+                                    // re-typed the prefix, and a wrong letter
+                                    // aimed at a mark that is not there — which
+                                    // reads as the screen not painting it.
+                                    "control": address::form_control(f.key()),
                                     "ty": f.ty(),
                                     "applies": f.applies().wire(),
                                     "value": f.value(),
@@ -16558,6 +16568,11 @@ fn spec_json() -> serde_json::Value {
         "fields": spec::FIELDS.iter().map(|f| serde_json::json!({
             "key": f.key, "ty": f.ty, "applies": f.applies, "value": f.value,
             "source": f.source, "aside": f.aside,
+            // ★★★★★ R2050 — the ADDRESS this row's control is painted under,
+            // derived. Published on the specification as well as on the live
+            // form because a walk checking that the screen paints what it
+            // declares has only this table to check against.
+            "control": address::form_control(f.key),
         })).collect::<Vec<_>>(),
         "addable": spec::ADDABLE,
         "gestures": spec::GESTURES.iter().map(|(g, w)| serde_json::json!([g, w])).collect::<Vec<_>>(),
@@ -22135,7 +22150,8 @@ impl WidgetCore for NodeLabView {
         if roster_key(&state, key) {
             return true;
         }
-        if let Some(row) = focused.and_then(|tag| tag.strip_prefix("lab.form.control.")) {
+        // ★★★★★ R2050 — the address's own inverse, not a prefix typed here.
+        if let Some(row) = focused.and_then(address::form_control_key) {
             if state.picking.get().is_none() && Picker::opens(key) && chooses_one(&state, row) {
                 open_roster(&state, row);
                 // A letter that opened the roster also moves in it, so the
@@ -25581,7 +25597,7 @@ fn inspector_access(state: &LabState) -> Vec<AccessNode> {
                 .with_live(AccessLive::Polite),
         );
         let geometry = inspector_geometry(state);
-        nodes.extend(row_access_nodes("lab.form", &form, &geometry));
+        nodes.extend(row_access_nodes(address::FORM, &form, &geometry));
     }
     nodes
 }

@@ -330,7 +330,8 @@ def body() -> None:
                 if tag not in painted:
                     missing.append(tag)
         for field in spec["fields"]:
-            wanted = [f"lab.form.control.{field['key']}"]
+            # ★ R2050 — the address the screen publishes, not one spelled here.
+            wanted = [field["control"]]
             # ★★★ R1716 — which regions a row HAS comes from the axis it is on,
             # and the specification carries that in two columns. A row nobody
             # wrote shows where its value came from instead of what an edit
@@ -479,7 +480,7 @@ def body() -> None:
             declared.add(f"lab.pin.{node['id']}.dial")
             declared.add(f"lab.pin.{node['id']}.accept")
         for field in spec["fields"]:
-            declared.add(f"lab.form.control.{field['key']}")
+            declared.add(field["control"])
             declared.add(f"lab.form.applies.{field['key']}")
             declared.add(f"lab.form.defect.{field['key']}")
             declared.add(f"lab.form.remove.{field['key']}")
@@ -1011,8 +1012,12 @@ def body() -> None:
             ):
                 if tag.startswith(prefix):
                     return f"{verb}:{tag[len(prefix):]}"
-            if tag.startswith("lab.form.control."):
-                return f"field:{tag[len('lab.form.control.'):]}"
+            # ★ R2050 — recovered from a published address the same way the role
+            # prefix above is: a field's control tag is its prefix followed by
+            # the row's key.
+            control_prefix = spec["fields"][0]["control"][: -len(spec["fields"][0]["key"])]
+            if tag.startswith(control_prefix):
+                return f"field:{tag[len(control_prefix):]}"
             for family in ("option", "step", "toggle", "item"):
                 if tag.startswith(f"lab.form.{family}."):
                     return tag[len("lab.form."):]
@@ -1231,7 +1236,9 @@ def body() -> None:
             "the peer the gate warned about holds the key it warned about"
         )
         painted = tags(paint(tf))
-        assert "lab.form.control.discovery.multicast.enabled" in painted
+        assert next(
+            f["control"] for f in form if f["key"] == "discovery.multicast.enabled"
+        ) in painted
         assert find_by_tag(paint(tf), "lab.inspector.id") is not None
         print("[M] selecting another node re-derives its rows, badges and degree")
 

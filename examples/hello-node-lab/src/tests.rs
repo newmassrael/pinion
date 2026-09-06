@@ -938,7 +938,8 @@ fn r2048_a_register_rows_second_line_speaks_in_both_its_renderings() {
     );
 }
 
-/// ★★★★★ R2049 — **a palette role's address is typed in ONE place, and this
+/// ★★★★★ R2049, widened R2050 — **a painted address is typed in ONE place, and
+/// this
 /// counts.**
 ///
 /// The debt this closes is that a painted mark's address had no declaring site:
@@ -962,6 +963,9 @@ fn r2048_a_register_rows_second_line_speaks_in_both_its_renderings() {
 fn r2049_a_role_address_is_typed_in_one_place() {
     const NEEDLE: &str = concat!("lab.palette.", "role.");
     const SWATCH: &str = concat!("lab.palette.", "swatch.");
+    // ★ R2050 — the second family's needle, declared beside the first because
+    // an item after a statement is a lint here and because they are one list.
+    const FORM_CONTROL: &str = concat!("lab.form.", "control.");
     // The crate's own sources, named the way the module tree names them.
     let sources: [(&str, &str); 6] = [
         ("address.rs", include_str!("address.rs")),
@@ -992,11 +996,44 @@ fn r2049_a_role_address_is_typed_in_one_place() {
         "★★★★★ a palette role's address is declared in `address.rs` and derived \
          everywhere else; these file(s) spell it themselves"
     );
+    // ★★★★★ R2050 — the second family, on the same terms. Its parts are
+    // composed by the FRAMEWORK, so what this screen declares is the prefix and
+    // what it derives is the whole address; either way nothing here spells one.
+    let form_spellers: Vec<(&str, usize)> = sources
+        .iter()
+        .map(|(name, body)| (*name, body.matches(FORM_CONTROL).count()))
+        .filter(|(name, count)| *count > 0 && *name != "address.rs")
+        .collect();
+    assert_eq!(
+        form_spellers,
+        Vec::new(),
+        "★★★★★ a form control's address is derived from the framework's own \
+         composition; these file(s) spell it themselves"
+    );
+    assert_eq!(
+        super::address::form_control("id"),
+        format!("{}id", super::address::form_control_prefix()),
+        "★ the prefix is the address with an empty key, so the two cannot drift"
+    );
+    assert_eq!(
+        super::address::form_control_key(&super::address::form_control("listen.endpoints")),
+        Some("listen.endpoints"),
+        "★★ and the address round-trips through its own inverse"
+    );
+    assert_eq!(
+        super::address::form_control_key("lab.rail.packets"),
+        None,
+        "★ a tag of another family is not a form row"
+    );
     // And the declaration's two forms agree, so a specification table taking the
     // `&'static str` template cannot drift from the runtime derivation.
     assert_eq!(
         super::address::ROLE_ROW_TEMPLATE,
         format!("{}{{}}", super::address::ROLE_ROW)
+    );
+    assert_eq!(
+        super::address::FORM_CONTROL_TEMPLATE,
+        format!("{}{{}}", super::address::form_control_prefix())
     );
     assert_eq!(
         super::address::ROLE_SWATCH_TEMPLATE,

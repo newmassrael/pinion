@@ -237,7 +237,11 @@ def c_taking_a_row_over_is_announced(tf) -> None:
 
 def d_a_derived_row_is_a_read_out(tf) -> None:
     banner("D — pressing a derived row opens nothing and says why")
-    where = rects(tf)["lab.form.control.mode"]
+    # ★ R2050 — the address the screen publishes for that row's control.
+    mode_control = next(
+        row["control"] for row in json.loads(tf.query(f"{EXT}/form")) if row["key"] == "mode"
+    )
+    where = rects(tf)[mode_control]
     centre = (where[0] + where[2] // 2, where[1] + where[3] // 2)
     tf.click(centre)
     said = tf.query(f"{EXT}/toast")
@@ -251,7 +255,7 @@ def d_a_derived_row_is_a_read_out(tf) -> None:
         "D: ★ and no field opened — a box that cannot commit is worse than none",
     )
     access = tf.request("scene/access").result
-    node = access_node_by_tag(access, "lab.form.control.mode")
+    node = access_node_by_tag(access, mode_control)
     assert node is not None, "the row's control is in the tree"
     assert_eq(
         node["state"].get("read_only"),

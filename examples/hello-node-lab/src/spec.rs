@@ -1612,7 +1612,8 @@ pub const VOICES: &[VoiceSpec] = &[
     // which is checked against [`FIELDS`]' own type words rather than listed
     // here — see the gate.
     VoiceSpec {
-        tag: "lab.form.control.{}",
+        // ★ R2050 — the address, from the one place that declares it.
+        tag: crate::address::FORM_CONTROL_TEMPLATE,
         role: "",
         population: Population::Fields,
     },

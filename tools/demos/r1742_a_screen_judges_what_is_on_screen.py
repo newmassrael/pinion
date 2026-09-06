@@ -212,6 +212,27 @@ def tag_of(app: RpcSubprocess) -> str:
     return lab_row(app)["tag"]
 
 
+def control_of(app: RpcSubprocess, key: str, at: str) -> str:
+    """The address that row's control is painted under — the SCREEN's.
+
+    ★ R2050 — asked rather than spelled. A walk cannot call the derivation the
+    framework composes these with, so it is handed the answer; a wrong letter
+    written here would aim at a mark that is not there and read as the screen
+    not painting it.
+    """
+    import json
+
+    # ⚠ The LIVE form, not the specification's static field list: a row a chip
+    # added exists on the screen and is not in that list, and this walk drives
+    # exactly such a row.
+    #
+    # ⚠ And `at` is the read path, because this walk drives the section BOTH
+    # mounted in the host and alone in its own process — the two reach the same
+    # screen by different addresses, which is the whole of section E.
+    rows = json.loads(app.query(f"{at}/form"))
+    return next(row["control"] for row in rows if row["key"] == key)
+
+
 def section_a(app: RpcSubprocess) -> None:
     banner("A — the application judges the lab, and the remainder is an equality")
     said = report(app)
@@ -442,8 +463,9 @@ def section_c(app: RpcSubprocess) -> str:
         PARTS_COMPARED += said["specified"]
 
     # The roster: press the collapsed control.
-    reveal(app, f"lab.form.control.{key}")
-    press_tag(app, f"lab.form.control.{key}")
+    control = control_of(app, key, f"/{tag_of(app)}{EXT}")
+    reveal(app, control)
+    press_tag(app, control)
     opened = lab_surfaces(app)
     said = opened["enum_roster"]
     ok(
@@ -593,8 +615,9 @@ def section_e(app: RpcSubprocess, key: str) -> None:
         press_tag(alone, "lab.node.P-01")
         reveal(alone, f"lab.form.add.{key}")
         press_tag(alone, f"lab.form.add.{key}")
-        reveal(alone, f"lab.form.control.{key}")
-        press_tag(alone, f"lab.form.control.{key}")
+        alone_control = control_of(alone, key, EXT)
+        reveal(alone, alone_control)
+        press_tag(alone, alone_control)
         # ★ R1770 — apart from the size each was read at; the two are in
         # different windows and the round that introduced the extent asserts
         # that difference separately rather than folding it in here.

@@ -648,6 +648,85 @@ const BOOL_WORD_GAP: u32 = 9;
 /// the same rule.
 const BOOL_WORD_PAD: u32 = 10;
 
+/// ★★★★★ R2050 §5.2 §5.11 — **the addresses this painter gives a form's
+/// parts**, declared where they are produced.
+///
+/// # What was missing
+///
+/// This painter composes a child's tag from the form's prefix and a row's key
+/// — and it did so with a `format!` at every producing site, while every
+/// consumer that wanted one composed the same string again in its own source:
+/// the screen's hit test, its specification tables, its gates, and the walks
+/// that check the frame from outside. Measured at this round's open, the
+/// control address alone was spelled at **53** sites across a framework crate,
+/// a screen and eight walks.
+///
+/// ⇒ one wrong letter compiles, paints, and makes every query looking for the
+/// control answer nothing — quietly, because a mark that is not found reads as
+/// a mark that was not painted.
+///
+/// # ★ The producer is the owner
+///
+/// R2049 lifted a screen's own address onto the type that owns it. This family
+/// is not the screen's: the FRAMEWORK builds these tags, so the declaration
+/// belongs here and a consumer asks. That is the same shape
+/// [`crate::toolbar::composite_item_tag`] has had since R692 — a published
+/// function that composes a child address from its parent's tag.
+///
+/// # ⚠ What a walk does instead
+///
+/// A walk is Python and cannot call this. Its answer is to read the address off
+/// the wire, which is why a screen publishing a form should publish each row's
+/// control address beside the row.
+pub mod address {
+    /// The address of the control a row's value is edited through.
+    ///
+    /// `prefix` is the tag the form was painted under and `key` is the row's.
+    #[must_use]
+    pub fn control(prefix: &str, key: &str) -> String {
+        child(prefix, "control", key)
+    }
+
+    /// The address of the roster a collapsed chooser opens onto.
+    #[must_use]
+    pub fn roster(prefix: &str, key: &str) -> String {
+        child(prefix, "roster", key)
+    }
+
+    /// The general form: one of this painter's parts, for one row.
+    ///
+    /// ★ Public because the painter names more parts than a consumer usually
+    /// addresses, and a consumer that needs one of the others should reach for
+    /// this rather than for a `format!` — which is the whole defect.
+    #[must_use]
+    pub fn child(prefix: &str, part: &str, key: &str) -> String {
+        format!("{prefix}.{part}.{key}")
+    }
+
+    /// A part of the form that belongs to no row.
+    #[must_use]
+    pub fn part(prefix: &str, part: &str) -> String {
+        format!("{prefix}.{part}")
+    }
+
+    /// The row a control address names, given the prefix it was painted under.
+    ///
+    /// ★★ The inverse, here rather than at each consumer's router. R2049's
+    /// lesson: a parse written against a separately-typed prefix is the second
+    /// speller, and its mismatch is silent in the other direction — the press
+    /// lands on nothing and the screen simply does not respond.
+    #[must_use]
+    pub fn control_key<'a>(prefix: &str, tag: &'a str) -> Option<&'a str> {
+        key_of(prefix, "control", tag)
+    }
+
+    /// The row a part's address names, or `None` when the tag is not that part.
+    #[must_use]
+    pub fn key_of<'a>(prefix: &str, part: &str, tag: &'a str) -> Option<&'a str> {
+        tag.strip_prefix(&format!("{prefix}.{part}."))
+    }
+}
+
 /// Lay a form out, giving every part a rectangle.
 ///
 /// `origin` is where the form's first row starts. The geometry is the single
@@ -1285,10 +1364,7 @@ fn view_header(
                     // tagged node that is an ADDRESS rather than a primitive
                     // swallows the press and forwards nothing.
                     .with_pointer_transparent(true)
-                    .with_silence(Silence::name_of(format!(
-                        "{tag_prefix}.control.{}",
-                        row.key
-                    ))),
+                    .with_silence(Silence::name_of(address::control(tag_prefix, &row.key))),
             ),
         )];
         header.push(badge(
@@ -1770,7 +1846,7 @@ fn picker_control(
     // skin a defect on the value behind it paints.
     crate::chooser::view_collapsed(
         &crate::chooser::ChooserTags {
-            control: format!("{tag_prefix}.control.{}", row.key),
+            control: address::control(tag_prefix, &row.key),
             shown: format!("{tag_prefix}.shown.{}", row.key),
             arrow: format!("{tag_prefix}.pick.{}", row.key),
         },
@@ -1840,7 +1916,7 @@ fn option_chips(
         .collect();
     Scene::Container(
         ContainerNode::new(chips)
-            .with_tag(format!("{tag_prefix}.control.{}", row.key))
+            .with_tag(address::control(tag_prefix, &row.key))
             .with_layout(placed(
                 LayoutStyle::new().with_focusable(true),
                 row.control,
@@ -1931,10 +2007,7 @@ fn boolean_control(
                     // turned out to leave five regions unaccounted for. The tag
                     // has to stay — the conformance census classifies this row
                     // by it — so the silence is what makes it legitimate.
-                    Some(Silence::part_of(format!(
-                        "{tag_prefix}.control.{}",
-                        row.key
-                    ))),
+                    Some(Silence::part_of(address::control(tag_prefix, &row.key))),
                 )])
                 .with_layout(
                     LayoutStyle::new()
@@ -1996,7 +2069,7 @@ fn boolean_control(
                 ),
             ),
         ])
-        .with_tag(format!("{tag_prefix}.control.{}", row.key))
+        .with_tag(address::control(tag_prefix, &row.key))
         .with_style(control_skin(worst, theme))
         .with_layout(placed(
             LayoutStyle::new().with_focusable(true),
@@ -2039,7 +2112,7 @@ fn number_control(
     }
     Scene::Container(
         ContainerNode::new(children)
-            .with_tag(format!("{tag_prefix}.control.{}", row.key))
+            .with_tag(address::control(tag_prefix, &row.key))
             .with_style(control_skin(worst, theme))
             .with_layout(placed(
                 framed(LayoutStyle::new().with_focusable(true)),
@@ -2106,7 +2179,7 @@ fn list_control(
     ));
     Scene::Container(
         ContainerNode::new(children)
-            .with_tag(format!("{tag_prefix}.control.{}", row.key))
+            .with_tag(address::control(tag_prefix, &row.key))
             .with_layout(placed(
                 LayoutStyle::new().with_focusable(true),
                 row.control,
@@ -2132,7 +2205,7 @@ fn text_control(
                 .with_size_px(12)
                 .with_fg(theme.resolve(ColorRole::OnSurface)),
         ))])
-        .with_tag(format!("{tag_prefix}.control.{}", row.key))
+        .with_tag(address::control(tag_prefix, &row.key))
         .with_style(control_skin(worst, theme))
         .with_layout(placed(
             framed(
@@ -2172,7 +2245,7 @@ fn derived_control(
                 .with_size_px(12)
                 .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
         ))])
-        .with_tag(format!("{tag_prefix}.control.{}", row.key))
+        .with_tag(address::control(tag_prefix, &row.key))
         .with_style(derived_skin(theme))
         .with_layout(placed(
             framed(
@@ -2292,7 +2365,7 @@ pub fn row_access_nodes(
         // A boolean row was announced as a text box for its whole life: a
         // reader was told to type into a control that only toggles, which is
         // the accessibility half of a defect a person reported about its ink.
-        let control_tag = format!("{tag_prefix}.control.{}", row.key);
+        let control_tag = address::control(tag_prefix, &row.key);
         let mut control = AccessNode::new(control_tag.clone(), control_role(field))
             .with_name(field.key())
             .with_bounds(row.control)
@@ -2310,7 +2383,7 @@ pub fn row_access_nodes(
                 .is_some_and(|popup| popup.key == row.key);
             control = control.with_expanded(open);
             if open {
-                control = control.with_controls(format!("{tag_prefix}.roster.{}", row.key));
+                control = control.with_controls(address::roster(tag_prefix, &row.key));
             }
         }
         nodes.extend(describedby_region(
@@ -2367,12 +2440,9 @@ pub fn row_access_nodes(
         if let Some(field) = form.field(&popup.key) {
             let shown = field.value();
             nodes.push(
-                AccessNode::new(
-                    format!("{tag_prefix}.roster.{}", popup.key),
-                    AriaRole::Listbox,
-                )
-                .with_name(format!("{} options", popup.key))
-                .with_bounds(popup.rect),
+                AccessNode::new(address::roster(tag_prefix, &popup.key), AriaRole::Listbox)
+                    .with_name(format!("{} options", popup.key))
+                    .with_bounds(popup.rect),
             );
             for (suffix, seat) in &popup.options {
                 let word = suffix.rsplit('.').next().unwrap_or_default();
@@ -2578,6 +2648,48 @@ pub fn row_description(nodes: &[AccessNode], tag_prefix: &str, key: &str) -> Opt
 
 #[cfg(test)]
 mod tests {
+    /// ★★★★★ R2050 — **this painter composes a control's address in ONE
+    /// place**, and this counts.
+    ///
+    /// The debt behind it is that an address had no declaring site: the
+    /// producing sites each spelled one and every consumer spelled it again, so
+    /// one wrong letter compiled, painted, and made every query looking for the
+    /// mark answer nothing. Eight sites in this file alone composed it.
+    ///
+    /// ⚠ The needle is assembled rather than written, because this file is the
+    /// one being read — a gate that counts by reading source has its own source
+    /// in the population, and assembling is what puts it there on the same
+    /// terms as the rest rather than excusing it by name.
+    #[test]
+    fn r2050_a_control_address_is_composed_in_one_place() {
+        const NEEDLE: &str = concat!(".control", ".{");
+        const BODY: &str = include_str!("config_form.rs");
+        assert_eq!(
+            BODY.matches(NEEDLE).count(),
+            0,
+            "★★★★★ a control's address is composed by `address::control`; this \
+             file composes one itself"
+        );
+        // ★ And the composition round-trips through its own inverse, which is
+        // the half a consumer's router would otherwise spell a second time.
+        let tag = super::address::control("lab.form", "listen.endpoints");
+        assert_eq!(tag, "lab.form.control.listen.endpoints");
+        assert_eq!(
+            super::address::control_key("lab.form", &tag),
+            Some("listen.endpoints")
+        );
+        assert_eq!(
+            super::address::control_key("other.form", &tag),
+            None,
+            "★ an address under another form's prefix is not this form's row"
+        );
+        assert_eq!(
+            super::address::roster("lab.form", "mode"),
+            "lab.form.roster.mode"
+        );
+        assert_eq!(super::address::part("lab.form", "body"), "lab.form.body");
+    }
+
     /// ★★★★★ R2020 — **which state each applies-scope is painted in, PINNED
     /// against the behaviour canon.**
     ///
@@ -3629,7 +3741,7 @@ mod tests {
         for row in &geometry.rows {
             let control = nodes
                 .iter()
-                .find(|n| n.tag == format!("insp.control.{}", row.key))
+                .find(|n| n.tag == super::address::control("insp", &row.key))
                 .unwrap_or_else(|| panic!("{} has an access node", row.key));
             assert_eq!(control.bounds, Some(row.control), "{}", row.key);
             assert_eq!(
@@ -3693,7 +3805,7 @@ mod tests {
         });
         for row in &geometry.rows {
             assert!(
-                tags.contains(&format!("insp.control.{}", row.key)),
+                tags.contains(&super::address::control("insp", &row.key)),
                 "{} has a control: {tags:?}",
                 row.key
             );
@@ -4156,7 +4268,7 @@ mod tests {
             assert!(
                 nodes
                     .iter()
-                    .any(|n| n.tag == format!("insp.control.{}", row.key)
+                    .any(|n| n.tag == super::address::control("insp", &row.key)
                         && n.name.as_deref() == Some(row.key.as_str())),
                 "{} is named for an assistive technology",
                 row.key
@@ -4297,7 +4409,7 @@ mod tests {
         let geometry = form_geometry(&form, (0, 0), &FormStyle::default());
         let scene = view_config_form("f", &form, &geometry, &theme);
         for field in &fields {
-            let tag = format!("f.control.{}", field.key());
+            let tag = super::address::control("f", field.key());
             let painted = painted_frame(&scene, &tag)
                 .unwrap_or_else(|| panic!("{tag} is painted by this form"));
             assert_eq!(

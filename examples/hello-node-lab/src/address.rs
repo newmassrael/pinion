@@ -38,6 +38,47 @@
 
 use crate::graph::Role;
 
+/// ★★★★★ R2050 — the tag this screen paints its settings form under.
+///
+/// The form's PARTS are addressed by the framework
+/// ([`pinion_widget_paint::config_form::address`]) from this prefix and a row's
+/// key; what this screen owns is the prefix, so it is declared here and
+/// everything that composes a form address — the painter, the router, the
+/// specification, the gates and the wire — is handed it.
+pub const FORM: &str = "lab.form";
+
+/// [`form_control`]'s address with the population's placeholder, for a
+/// specification table whose rows must be `&'static str`.
+///
+/// A test holds it against the derivation, the same way [`ROLE_ROW_TEMPLATE`]
+/// is held against [`ROLE_ROW`].
+pub const FORM_CONTROL_TEMPLATE: &str = "lab.form.control.{}";
+
+/// The address of the control a form row's value is edited through.
+///
+/// The framework's derivation with this screen's prefix already applied, so a
+/// caller here never spells either half.
+#[must_use]
+pub fn form_control(key: &str) -> String {
+    pinion_widget_paint::config_form::address::control(FORM, key)
+}
+
+/// The prefix every form control address carries.
+///
+/// ★ DERIVED — the address with an empty key — rather than a second literal, so
+/// a reader that classifies by prefix and one that builds a whole address
+/// cannot drift apart.
+#[must_use]
+pub fn form_control_prefix() -> String {
+    form_control("")
+}
+
+/// The row a control address names, or `None` when the tag is not one.
+#[must_use]
+pub fn form_control_key(tag: &str) -> Option<&str> {
+    pinion_widget_paint::config_form::address::control_key(FORM, tag)
+}
+
 /// The prefix every palette role row carries.
 ///
 /// Declared once. [`ROLE_ROW_TEMPLATE`] is the same address in the form the

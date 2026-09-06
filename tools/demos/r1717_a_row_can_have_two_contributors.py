@@ -403,7 +403,15 @@ def f_a_shared_row_carries_both_badges(tf) -> None:
         and "lab.form.source.connect.endpoints" in shared,
     )
     access = tf.request("scene/access").result
-    control = access_node_by_tag(access, "lab.form.control.connect.endpoints")
+    # ★ R2050 — the address the screen publishes for that row's control.
+    control = access_node_by_tag(
+        access,
+        next(
+            row["control"]
+            for row in json.loads(tf.query(f"{EXT}/form"))
+            if row["key"] == "connect.endpoints"
+        ),
+    )
     assert control is not None, "the control is in the tree"
     assert_eq(
         control.get("state", {}).get("read_only", False),

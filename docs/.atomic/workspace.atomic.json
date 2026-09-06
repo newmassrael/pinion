@@ -89048,6 +89048,56 @@
         "Cohort loop 24, unchanged — a round that proves a method without repaying the population does not move it, and saying so is the point."
       ]
     },
+    "R2050": {
+      "decision_summary": "The framework owns the address it composes, and the largest family moves onto it.\n\nThis is the address debt's second instalment. R2049 lifted a screen's own address onto the type that owns it; this family's owner turned out not to be the screen at all. The configuration form's control address is built by the FRAMEWORK — the painter composes it from the form's prefix and a row's key — and that painter was spelling it eight times in its own file while every consumer spelled it again. Measured at this round's open: 53 sites across a framework crate, a screen and eight walks.\n\n★ So the declaration went to the crate, not to the example. \"Who builds this address\" and \"who uses it\" are different questions, and the declaration belongs to the builder; what the screen owns is its own PREFIX, and it declares that. The same crate has had this shape since R692 for a toolbar's composite items — a published function that composes a child address from its parent's tag — so this is that pattern reached for a second time rather than invented.\n\n⚠ Four literals remain and each is stated rather than excused: the declaring module's prose naming the family, the `{}` template a static-string specification table needs (held against the derivation by a test), a synthetic fixture tag in a crate that cannot depend on either declaration because the dependency runs the other way, and the one place a literal SHOULD be — the test that pins what the derivation produces.",
+      "changes_bullets": [
+        "The form painter publishes the addresses it composes: a row's control, the roster a collapsed chooser opens onto, the general per-row part, a part belonging to no row, and the INVERSES. Its eleven producing sites — including its own test fixtures under two other prefixes — go through them, so the composition happens in exactly one place.",
+        "The screen declares its prefix and derives the rest, including the prefix a classifier matches on, which is the address with an empty key rather than a second literal. Its router's parse is the published inverse.",
+        "Both wire surfaces carry each row's control address: the live form, which answers for rows a chip added at runtime, and the published specification, which is what a walk checking that the screen paints what it declares has to compare against. Eight walks read them instead of spelling; the one that classifies by prefix recovers it from a published address.",
+        "Two gates count it — one in the crate, reading its own source and refusing a second composition, and one in the screen, widened from the family the previous instalment moved. Both assemble their needle so the gate's own source sits in the population rather than being excused by name."
+      ],
+      "verification_bullets": [
+        "Measured at entry and at close: 53 spelling sites became 4, all four named and argued in the debt's instalment table; the framework's own file went from eight compositions to one.",
+        "`cargo test --workspace` passes 14,398 tests, 0 failed. Workspace clippy rc=0 and `cargo fmt --all --check` clean. All eight changed walks pass, and two shell walks beyond them.",
+        "The counterfactual: the published composition put back to a format string turns the crate's gate red with the count; restored, it is green.",
+        "🟥 One walk went red twice and each time for a reason worth keeping. First the lookup read the published SPECIFICATION and the row it drives is one a chip adds at runtime, which is not in that table — so the two surfaces are not interchangeable and the live form is what answers for a live row. Then it read the live form by the host's path while that walk drives the same screen BOTH mounted in a host and alone in its own process, which reach it by different addresses — the very thing that walk exists to assert. The read path is a parameter now.",
+        "⚠ Stated rather than hidden: touching a framework crate makes the computed blast radius 704 demos, and a full sweep is not judgeable on this host — a registered debt. What ran locally is the changed walks, two more shell walks, and the whole workspace suite; the sweep is CI's, which is the standing division."
+      ],
+      "impact_refs": [
+        "5.2",
+        "5.11"
+      ],
+      "carry_forward_bullets": [
+        "The debt stays OPEN with its table updated. What is left is the rail's address at 71 sites and four smaller families between 14 and 25, and the rail one is the clause that ties this debt to the structural gap the canon exposes: it is one screen's address and it was being spelled by more than one binary.",
+        "Nothing is opened by this round.",
+        "The boundary of the two gates is what they read: one crate's file, and one screen's sources. A third crate reaching for either family is not seen from either, and the remaining instalments each need the same check where their own sources are.",
+        "Cohort loop 24, unchanged, for the reason the previous instalment gave: a round that moves a population without closing its debt does not move the count."
+      ],
+      "publishable_decision_summary": "The framework owns the address it composes, and the largest family moves onto it.\n\nThis is the address debt's second instalment. R2049 lifted a screen's own address onto the type that owns it; this family's owner turned out not to be the screen at all. The configuration form's control address is built by the FRAMEWORK — the painter composes it from the form's prefix and a row's key — and that painter was spelling it eight times in its own file while every consumer spelled it again. Measured at this round's open: 53 sites across a framework crate, a screen and eight walks.\n\n★ So the declaration went to the crate, not to the example. \"Who builds this address\" and \"who uses it\" are different questions, and the declaration belongs to the builder; what the screen owns is its own PREFIX, and it declares that. The same crate has had this shape since R692 for a toolbar's composite items — a published function that composes a child address from its parent's tag — so this is that pattern reached for a second time rather than invented.\n\n⚠ Four literals remain and each is stated rather than excused: the declaring module's prose naming the family, the `{}` template a static-string specification table needs (held against the derivation by a test), a synthetic fixture tag in a crate that cannot depend on either declaration because the dependency runs the other way, and the one place a literal SHOULD be — the test that pins what the derivation produces.",
+      "publishable_changes_bullets": [
+        "The form painter publishes the addresses it composes: a row's control, the roster a collapsed chooser opens onto, the general per-row part, a part belonging to no row, and the INVERSES. Its eleven producing sites — including its own test fixtures under two other prefixes — go through them, so the composition happens in exactly one place.",
+        "The screen declares its prefix and derives the rest, including the prefix a classifier matches on, which is the address with an empty key rather than a second literal. Its router's parse is the published inverse.",
+        "Both wire surfaces carry each row's control address: the live form, which answers for rows a chip added at runtime, and the published specification, which is what a walk checking that the screen paints what it declares has to compare against. Eight walks read them instead of spelling; the one that classifies by prefix recovers it from a published address.",
+        "Two gates count it — one in the crate, reading its own source and refusing a second composition, and one in the screen, widened from the family the previous instalment moved. Both assemble their needle so the gate's own source sits in the population rather than being excused by name."
+      ],
+      "publishable_verification_bullets": [
+        "Measured at entry and at close: 53 spelling sites became 4, all four named and argued in the debt's instalment table; the framework's own file went from eight compositions to one.",
+        "`cargo test --workspace` passes 14,398 tests, 0 failed. Workspace clippy rc=0 and `cargo fmt --all --check` clean. All eight changed walks pass, and two shell walks beyond them.",
+        "The counterfactual: the published composition put back to a format string turns the crate's gate red with the count; restored, it is green.",
+        "🟥 One walk went red twice and each time for a reason worth keeping. First the lookup read the published SPECIFICATION and the row it drives is one a chip adds at runtime, which is not in that table — so the two surfaces are not interchangeable and the live form is what answers for a live row. Then it read the live form by the host's path while that walk drives the same screen BOTH mounted in a host and alone in its own process, which reach it by different addresses — the very thing that walk exists to assert. The read path is a parameter now.",
+        "⚠ Stated rather than hidden: touching a framework crate makes the computed blast radius 704 demos, and a full sweep is not judgeable on this host — a registered debt. What ran locally is the changed walks, two more shell walks, and the whole workspace suite; the sweep is CI's, which is the standing division."
+      ],
+      "publishable_impact_refs": [
+        "5.2",
+        "5.11"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The debt stays OPEN with its table updated. What is left is the rail's address at 71 sites and four smaller families between 14 and 25, and the rail one is the clause that ties this debt to the structural gap the canon exposes: it is one screen's address and it was being spelled by more than one binary.",
+        "Nothing is opened by this round.",
+        "The boundary of the two gates is what they read: one crate's file, and one screen's sources. A third crate reaching for either family is not seen from either, and the remaining instalments each need the same check where their own sources are.",
+        "Cohort loop 24, unchanged, for the reason the previous instalment gave: a round that moves a population without closing its debt does not move the count."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

@@ -107,6 +107,16 @@ def qj(app: RpcSubprocess, path: str):
     return json.loads(q(app, path))
 
 
+def control_of(app: RpcSubprocess, key: str) -> str:
+    """The address that row's control is painted under — the SCREEN's.
+
+    ★ R2050 — asked rather than spelled: the framework composes these from the
+    form's prefix and the row's key, a walk cannot call that, and a wrong letter
+    here would aim at a mark that is not there.
+    """
+    return next(row["control"] for row in qj(app, "form") if row["key"] == key)
+
+
 def inspector_spec() -> dict:
     """The reviewed artifact, read from the repository rather than from the app."""
     return json.loads(INSPECTOR_SPEC_PATH.read_text(encoding="utf-8"))
@@ -203,7 +213,7 @@ def section_a(app: RpcSubprocess, spec: dict, key: str) -> None:
         ok(f"A: the row's {part['key']} is painted at {tag}", tag in rects)
     # ★ And the collapsed control holds them: the arrow and the word are INSIDE
     # the box, which is the property a chip row could not have at any length.
-    box = rects[f"lab.form.control.{key}"]
+    box = rects[control_of(app, key)]
     for inner in ("shown", "pick"):
         r = rects[f"lab.form.{inner}.{key}"]
         ok(
@@ -312,7 +322,7 @@ def section_c(app: RpcSubprocess, key: str) -> None:
     with driver as hand:
         held = next(r for r in qj(app, "form") if r["key"] == key)["value"]
         rects = abs_rects_of(app.snapshot(source="paint"))
-        box = rects[f"lab.form.control.{key}"]
+        box = rects[control_of(app, key)]
         hand.move((box[0] + box[2] / 2, box[1] + box[3] / 2))
         hand.press()
         hand.release()
@@ -393,7 +403,7 @@ def section_e(app: RpcSubprocess, key: str) -> None:
     app.invoke(f"{EXT}/pick", "")
     app.tick(4)
     tree = {n["tag"]: n for n in app.request("scene/access").result["nodes"]}
-    control = tree[f"lab.form.control.{key}"]
+    control = tree[control_of(app, key)]
     assert_eq(control["role"], "combobox", "E: ★★★ a collapsed roster is a COMBO BOX")
     assert_eq(
         control.get("expanded"),
@@ -410,7 +420,7 @@ def section_e(app: RpcSubprocess, key: str) -> None:
     app.tick(8)
     held = next(r for r in qj(app, "form") if r["key"] == key)["value"]
     tree = {n["tag"]: n for n in app.request("scene/access").result["nodes"]}
-    control = tree[f"lab.form.control.{key}"]
+    control = tree[control_of(app, key)]
     assert_eq(control.get("expanded"), True, "E: opening says so")
     assert_eq(
         control.get("controls"),

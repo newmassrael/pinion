@@ -332,7 +332,8 @@ def body() -> None:
             "bool": "checkbox",
         }
         for field in spec["fields"]:
-            node = access_node_by_tag(access, f"lab.form.control.{field['key']}")
+            # ★ R2050 — the address the screen publishes for that row.
+            node = access_node_by_tag(access, field["control"])
             assert node is not None, f"{field['key']} announces"
             # ★★★ R1716 — a row nobody wrote is a READ-OUT whatever its type
             # word says, because that is what it paints: no chips, no stepper,
@@ -354,7 +355,12 @@ def body() -> None:
         keys = {row["key"] for row in json.loads(q(tf, "form"))}
         assert boolean_key in keys, f"the chip added the row: {sorted(keys)}"
         access = tf.request("scene/access").result
-        node = access_node_by_tag(access, f"lab.form.control.{boolean_key}")
+        boolean_control = next(
+            row["control"]
+            for row in json.loads(q(tf, "form"))
+            if row["key"] == boolean_key
+        )
+        node = access_node_by_tag(access, boolean_control)
         assert node is not None, "the boolean row announces"
         assert_eq(
             node["role"],
@@ -381,7 +387,7 @@ def body() -> None:
             for n in (access.get("nodes") or [])
             if n.get("role") == "checkbox" and boolean_key in n.get("tag", "")
         ]
-        assert boolean_boxes == [f"lab.form.control.{boolean_key}"], (
+        assert boolean_boxes == [boolean_control], (
             "one control, one checkbox — a reader who hears it twice cannot "
             f"tell two controls from one said twice: {boolean_boxes}"
         )

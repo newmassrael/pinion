@@ -121,6 +121,15 @@ def press(tf, tag: str) -> None:
     press_painted_tag(tf, tag, VIEWPORT)
 
 
+def control_tag(tf, key: str) -> str:
+    """The address that form row's control is painted under — the SCREEN's.
+
+    ★ R2050 — asked rather than spelled, for the reason [`role_tag`] is.
+    """
+    fields = json.loads(tf.query(f"{EXT}/spec"))["fields"]
+    return next(field["control"] for field in fields if field["key"] == key)
+
+
 def role_tag(tf, name: str) -> str:
     """The address the screen publishes for that role's palette row.
 
@@ -230,7 +239,7 @@ GESTURES = {
     # why this row read `gesture: false` until the form's rows learned to be
     # typed into.
     "validate": lambda tf: type_into(
-        tf, "lab.form.control.transport.link.tx.batch_size", "70000"
+        tf, control_tag(tf, "transport.link.tx.batch_size"), "70000"
     ),
     # a link's life
     "author a link": lambda tf: drag_onto(
@@ -383,7 +392,7 @@ def body() -> None:
         was = held[row]["value"]
         assert_eq(json.loads(q(tf, "editing"))["target"], None, "the field opens shut")
 
-        press(tf, f"lab.form.control.{row}")
+        press(tf, control_tag(tf, row))
         editing = json.loads(q(tf, "editing"))
         assert_eq(
             editing["target"],
@@ -457,13 +466,13 @@ def body() -> None:
         # and throw away what has been typed. Measured here rather than
         # reasoned about, because in process there is no field external to
         # compete with and the question cannot be asked at all.
-        press(tf, "lab.form.control.id")
+        press(tf, control_tag(tf, "id"))
         assert_eq(
             json.loads(q(tf, "editing"))["target"], "value:id", "opened on the row"
         )
         type_keys(tf, "a9")
         assert_eq(json.loads(q(tf, "editing"))["text"], "a9", "holding what was typed")
-        press(tf, "lab.form.control.id")
+        press(tf, control_tag(tf, "id"))
         assert_eq(
             json.loads(q(tf, "editing"))["text"],
             "a9",
@@ -511,7 +520,7 @@ def body() -> None:
         before_escape = {
             f["key"]: f["value"] for f in json.loads(q(tf, "form"))
         }[ROW_WITH_PARTS]
-        press(tf, f"lab.form.control.{ROW_WITH_PARTS}")
+        press(tf, control_tag(tf, ROW_WITH_PARTS))
         assert_eq(
             json.loads(q(tf, "editing"))["target"],
             f"value:{ROW_WITH_PARTS}",
