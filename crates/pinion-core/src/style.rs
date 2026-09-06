@@ -4902,7 +4902,7 @@ impl LayoutStyle {
     /// Pinning only the corner leaves the size `Auto`, an absolutely
     /// placed leaf has no intrinsic content for the solver to measure,
     /// and the box written back is `0 x 0` at the right corner. Every
-    /// index built from [`absolute_rect`](crate::Scene::absolute_rect)
+    /// index built from [`NodeVisit::absolute_rect`](crate::scene::NodeVisit::absolute_rect)
     /// then drops the node, and [`crate::reach`] reports a name that
     /// nothing on the screen can be found by.
     ///
