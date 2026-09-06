@@ -1977,6 +1977,24 @@ else
     ok "the gated-doc-link gate passes its own tests" "FAIL" "pass"
 fi
 
+# ★★★★★ R2056 — the entry-document gate is wired, and its selftest apart.
+#
+# This one is the sharpest case for asserting the wiring, because the thing it
+# guards is INVISIBLE to every other mechanism here: `docs/SEED_PROMPT.md` is
+# `.gitignore`d, so no changed-path list can ever mention it and no other gate
+# reads it. If this step is dropped, nothing anywhere notices — which is exactly
+# how the file came to be 49 rounds stale, and then 32 rounds stale again after
+# a hand repair.
+hook_seed_check="$(grep -c 'seed_freshness.py" --check' "$repo_root/.githooks/pre-push")"
+hook_seed_self="$(grep -c 'seed_freshness.py" --selftest' "$repo_root/.githooks/pre-push")"
+ok "the push gate checks the entry document's freshness" "$hook_seed_check" "1"
+ok "and runs that gate's own selftest first" "$hook_seed_self" "1"
+if python3 "$repo_root/tools/seed_freshness.py" --selftest >/dev/null 2>&1; then
+    ok "the entry-document gate passes its own tests" "pass" "pass"
+else
+    ok "the entry-document gate passes its own tests" "FAIL" "pass"
+fi
+
 # ★★★★★ R2054 — the walk corpus's address ratchet is wired, and so is its own
 # selftest, asserted apart for the reason the prose gate's two are.
 #

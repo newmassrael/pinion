@@ -578,18 +578,6 @@
       ]
     },
     {
-      "name": "debt-the-entry-point-document-has-no-gate-and-went-fifty-rounds-stale",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "rank": "ordinary",
-      "why": [
-        "links analyzer-debt-repayment-loop"
-      ]
-    },
-    {
       "name": "debt-the-framework-grew-two-colour-roles-the-authored-theme-does-not-carry",
       "substituted": false,
       "blocked_by": "cross-repo",

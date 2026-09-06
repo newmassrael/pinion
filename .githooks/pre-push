@@ -412,6 +412,31 @@ fi
 # may not re-acquire a speller. R2049-R2053 converted five families behind Rust
 # tests that could not see a walk; this is what the walks' side stands on.
 # Reads source with `ast`; boots nothing.
+# R2056 — the entry-point document, held to the rounds git actually has.
+#
+# `CLAUDE.md` names `docs/SEED_PROMPT.md` as the first thing to read on entering
+# this repository, and its "next slice" section is one of the places a round is
+# chosen from. A stale one aims the next round at finished work — measured: it
+# was 49 rounds behind when the debt was registered, and 32 behind again when
+# checked 77 rounds later, because the repair had been performed by hand and
+# nothing re-performed it.
+#
+# ★ UNCONDITIONAL, and it has to be: the file is `.gitignore`d by design, so it
+# never appears in the changed-path list this hook uses to select every other
+# check. Path-gating is unavailable in principle here.
+#
+# ★★ Fails OPEN when the file is absent — a fresh clone has none, and that is
+# correct rather than broken. Prints either way, because a check that is silent
+# when it passes cannot be told from one that stopped running.
+step "entry document freshness"
+if ! python3 "$repo_root/tools/seed_freshness.py" --selftest >&2; then
+    echo "pre-push: the entry-document gate failed its own tests" >&2
+    exit 1
+fi
+if ! python3 "$repo_root/tools/seed_freshness.py" --check >&2; then
+    exit 1
+fi
+
 step "painted address spellers"
 if ! python3 "$repo_root/tools/painted_addresses.py" --selftest >&2; then
     echo "pre-push: the painted-address ratchet failed its own tests" >&2
