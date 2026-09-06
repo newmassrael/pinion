@@ -45,7 +45,14 @@ use pinion_core::widgets::destination::Required;
 use pinion_core::{Frame, Scene};
 use pinion_screen::ScreenState;
 
-use super::{Hit, ShellOracle, ShellState, WIN_H, WIN_W, spec, use_shell_state};
+use super::{Hit, ShellOracle, ShellState, WIN_H, WIN_W, spec};
+// ★★★★★ R2046 — the OFF-DISK spelling, and this module imports nothing else.
+// `use_shell_state` builds the application's real storage, which with no
+// `PINION_STORAGE_DIR` set is the person's own data directory: a gate that
+// writes there leaves its state behind for whoever next opens the application,
+// and two gates in parallel write over each other. R1908 isolated the four
+// gates it knew wrote; this module had 72 call sites and none of them.
+use super::tests::use_shell_state_off_disk;
 
 /// One swept state: what to call it, and the edit that reaches it.
 type SweptState = (&'static str, fn(&std::rc::Rc<ShellState>));
@@ -531,7 +538,7 @@ fn sweep(mut check: impl FnMut(&std::rc::Rc<ShellState>, &Painted, &Scene, Case<
         for n in 0..STATES.len() {
             let owner = Owner::new();
             owner.run(|| {
-                let state = use_shell_state();
+                let state = use_shell_state_off_disk();
                 // Accumulate: state n is state n-1 plus one edit.
                 for (_, edit) in &STATES[..=n] {
                     edit(&state);
@@ -2256,7 +2263,7 @@ fn r2022_a_body_announces_only_what_it_paints_at_every_size() {
 
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let palette = super::palette_of(&pinion_core::theme::Theme::dark(), true);
         // Every (card, size) pair, painted and announced, taken first so the
         // population can be derived from the whole grid — the sibling gate's
@@ -2942,7 +2949,7 @@ fn r1668_the_screen_paints_exactly_the_reserved_seats_it_specifies() {
 fn r1668_no_path_places_a_reserved_seat() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let before = state.placed().len();
         for entry in spec::CATALOGUE
             .iter()
@@ -3065,7 +3072,7 @@ fn r1674_the_declared_bands_are_the_placed_bands() {
 /// in this file above is a question about the dashboard and would have to learn
 /// to skip itself. What the destinations need is a different question.
 fn painted_at_destination(destination: &str) -> Painted {
-    let state = use_shell_state();
+    let state = use_shell_state_off_disk();
     if destination != state.at() {
         state
             .go(destination)
@@ -3092,7 +3099,7 @@ fn painted_at_destination(destination: &str) -> Painted {
 /// Leaves the section in pose 0, the state a reader arrives in, so a later
 /// check in the same scope is not silently asked about a pose this one chose.
 fn poses_at_destination(destination: &str) -> Vec<Painted> {
-    let state = use_shell_state();
+    let state = use_shell_state_off_disk();
     if destination != state.at() {
         state
             .go(destination)
@@ -3159,7 +3166,7 @@ fn over_slot_occupancies<T>(
 /// ★ R1867 — folded over the status slot's occupancies too, for the reason
 /// [`over_slot_occupancies`] gives.
 fn painted_over_poses(destination: &str) -> Painted {
-    let state = use_shell_state();
+    let state = use_shell_state_off_disk();
     if destination != state.at() {
         state
             .go(destination)
@@ -3233,7 +3240,7 @@ fn r1846_the_strip_draws_what_the_census_declares() {
 fn r1721_a_press_at_a_painted_chip_reaches_that_chip() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let shot = painted_at_destination("dashboard");
         let mut reached = 0;
         for n in 0..spec::FILTER_CHIPS.len() {
@@ -3277,7 +3284,7 @@ fn r1721_a_press_at_a_painted_chip_reaches_that_chip() {
 fn r1695_every_open_destination_is_a_place_you_arrive_at() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let roster = spec::destinations();
         let screens = super::screen_roster();
         let mut seen: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
@@ -3511,7 +3518,7 @@ fn r1728_the_painted_rail_is_the_rail_the_reference_draws() {
 fn r1728_every_specified_seat_answers_a_press_as_specified() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let canon = spec::canon_spec();
         let shot = painted_at((WIN_W, WIN_H)).0;
         let roster = spec::destinations();
@@ -3804,7 +3811,7 @@ fn r1696_the_keyboard_ring_is_the_one_the_specification_declares() {
 
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let roster = spec::destinations();
         let screens = super::screen_roster();
         for destination in roster.open() {
@@ -3927,7 +3934,7 @@ fn r1695_each_destination_announces_only_its_own_regions() {
 
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let roster = spec::destinations();
         for destination in roster.open() {
             let key = destination.key.as_ref();
@@ -4021,7 +4028,7 @@ fn r1695_the_settings_page_declares_its_locked_affordances() {
 fn r1695_every_settings_control_is_pressable_where_it_is_painted() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         // ★★★★★ R1864 — **frame by frame, and folded only at the end.** A press
         // is about ONE frame: the rectangle a control was painted in and the
         // scroll the hit test runs at have to be the same frame's, or this
@@ -4380,7 +4387,7 @@ fn painted() -> Painted {
 fn drive_verb(op: &spec::OperationSpec, verb: &str, arg: &str, inert: &mut Vec<String>) {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         reach_precondition(op, &state);
         let before = witness(&state, op.witness);
         let mut oracle = ShellOracle::new();
@@ -4409,7 +4416,7 @@ fn drive_gesture(
 ) {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         reach_precondition(op, &state);
         let shot = painted();
         let before = witness(&state, op.witness);
@@ -4465,7 +4472,7 @@ fn detached_onto_canvas(state: &std::rc::Rc<ShellState>, card: &str) -> super::F
 fn r1697_a_panel_cannot_be_sized_below_its_floor() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let panel = detached_onto_canvas(&state, "packet#0");
         assert_eq!(
             (panel.w, panel.h),
@@ -4512,7 +4519,7 @@ fn r1697_a_panel_cannot_be_sized_below_its_floor() {
 fn r1697_a_press_brings_the_panel_under_it_to_the_front() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let first = detached_onto_canvas(&state, "packet#0");
         let second = detached_onto_canvas(&state, "decode#1");
         assert!(second.z > first.z, "the newest panel arrives in front");
@@ -4629,7 +4636,7 @@ fn r1697_a_press_brings_the_panel_under_it_to_the_front() {
 fn r1697_a_click_on_a_panel_does_not_announce_a_move() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let panel = detached_onto_canvas(&state, "packet#0");
         let opening = state.toast.showing();
 
@@ -4728,7 +4735,7 @@ fn painted_order() -> Vec<String> {
 fn r1819_every_gesture_this_screen_advertises_does_something() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         pinion_core::test_fixtures::advertised::assert_every_advertised_gesture_acts(
             "the analysis shell",
             spec::GESTURES,
@@ -4903,7 +4910,7 @@ fn shown_word(shot: &Painted, tag: &str) -> Option<String> {
 fn r2021_a_cards_settings_control_opens_the_settings_it_declares() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let card = "alarms#6";
         let panel_tag = format!("card.{card}.config");
         let shot = painted();
@@ -5006,7 +5013,7 @@ fn r2021_a_cards_settings_control_opens_the_settings_it_declares() {
 fn r2021_a_card_with_no_settings_says_so_rather_than_opening_onto_nothing() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let card = "packet#0";
         assert!(
             spec::card_settings_of(super::kind_of(card)).is_empty(),
@@ -5061,7 +5068,7 @@ fn r2021_a_card_with_no_settings_says_so_rather_than_opening_onto_nothing() {
 fn r2021_a_cards_settings_stop_answering_when_the_reader_leaves_the_board() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let card = "alarms#6";
         let shot = painted_at_destination("dashboard");
         press_tag(&state, &shot, &format!("card.{card}.settings"));
@@ -5111,7 +5118,7 @@ fn r2021_a_cards_settings_stop_answering_when_the_reader_leaves_the_board() {
 fn r2021_the_preferences_page_announces_no_roster_it_does_not_paint() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         // Leave a CARD's roster open on the board, which is the state that
         // makes the two populations differ at all.
         let shot = painted_at_destination("dashboard");
@@ -5151,7 +5158,7 @@ fn r2021_every_declared_card_setting_names_a_verb_this_screen_publishes() {
 
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let mut oracle = ShellOracle::new();
         oracle.attach_state(std::rc::Rc::clone(&state));
         let schema = oracle.schema();
@@ -5906,7 +5913,7 @@ fn r1733_a_carry_reaches_the_rows_below_what_is_placed() {
 fn r1733_a_reserved_row_cannot_be_picked_up() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let reserved = spec::CATALOGUE
             .iter()
             .find(|w| w.tier == spec::Tier::Reserved)
@@ -5932,7 +5939,7 @@ fn r1733_a_reserved_row_cannot_be_picked_up() {
 fn r1733_the_wire_places_at_a_cell_and_refuses_half_a_cell() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let kind = first_placeable();
         let before = state.board.get().rows();
 
@@ -6172,7 +6179,7 @@ fn r1761_the_dashboard_reproduces_its_specification_or_says_why_not() {
 fn r1762_an_open_roster_hangs_off_the_control_it_belongs_to() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let mut shot = painted_at_destination("settings");
         for row in spec::VALUE_ROWS {
             let tag = format!("shell.settings.choose.{}", row.key);
@@ -6237,7 +6244,7 @@ fn r1762_the_preferences_page_reproduces_its_specification_or_says_why_not() {
         // ⚠ Not a weakening of the per-surface rule: every surface still has to
         // reconcile ENTIRELY in one frame. What is folded is which frame that
         // is, not which parts were found.
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         if state.at() != "settings" {
             state
                 .go("settings")
@@ -6361,7 +6368,7 @@ fn r1762_the_preferences_page_reproduces_its_specification_or_says_why_not() {
 fn r1775_the_host_does_not_paint_on_the_screen_it_is_showing() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let roster = super::screen_roster();
         let mounted: Vec<(String, &'static str)> = roster
             .mounted_keys()
@@ -6849,7 +6856,7 @@ fn r1784_the_boards_floor_is_derived_from_the_layout_it_opens_with() {
 fn r1776_the_hosts_toast_leaves_the_screen_it_is_showing() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let roster = super::screen_roster();
         let mounted: Vec<(String, &'static str)> = roster
             .mounted_keys()
@@ -6909,7 +6916,7 @@ fn r1776_the_hosts_toast_leaves_the_screen_it_is_showing() {
 fn r1811_a_one_run_box_is_not_far_larger_than_its_run() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         state.say(super::Utterance::done("a thing happened"));
         let mut scene = super::view(ScreenState::default(), pinion_core::Frame::default());
         let mut cache = pinion_text::LayoutCache::new();
@@ -6956,7 +6963,7 @@ fn r1811_a_one_run_box_is_not_far_larger_than_its_run() {
 fn r1811_a_longer_toast_gets_a_wider_box() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let width_of = |sentence: &str| {
             state.say(super::Utterance::done(sentence));
             let scene = painted_at((WIN_W, WIN_H)).1;
@@ -7415,7 +7422,7 @@ fn r1838_a_windows_arrangement_is_not_decided_by_another_windows_size() {
 fn r1838_the_mounted_labs_diagram_survives_maximise_and_detach() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         state.go("lab").expect("`lab` is an open destination");
         // ★ R1909 — with the lab's panes showing, which is what this gate is
         // about: it measures whether the MOUNTED screen reflows, and a folded
@@ -7518,7 +7525,7 @@ fn r1839_the_outline_role_draws_boundaries_on_every_screen() {
         use pinion_core::legibility::{Floor, StrokeCensus, stroke_census};
         use pinion_core::theme::ColorRole;
 
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let (light, dark) = super::reference_palettes();
         let outline = dark.resolve(ColorRole::Outline);
 
@@ -7703,7 +7710,7 @@ fn r1860_the_walk_reaches_a_capture_viewer_inside_the_shipping_window() {
 fn r1861_the_hosts_overlay_covers_nobodys_letters() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let roster = super::screen_roster();
         let mounted: Vec<(String, &'static str)> = roster
             .mounted_keys()
@@ -7820,7 +7827,7 @@ fn r1861_the_hosts_overlay_covers_nobodys_letters() {
 fn r1861_a_screen_with_words_under_the_overlay_says_so() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let roster = super::screen_roster();
         let mounted: Vec<(String, &'static str)> = roster
             .mounted_keys()
@@ -7925,7 +7932,7 @@ fn r1861_the_walk_reaches_a_sentence_the_overlay_leaves_alone() {
 
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         state.go("lab").expect("the node lab section is open");
         state.say(super::Utterance::done("a thing happened"));
         let (painted, _) = painted_at((WIN_W, WIN_H));
@@ -7977,7 +7984,7 @@ fn r1862_the_walk_reaches_a_legend_row_that_lines_up() {
 
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         state.go("lab").expect("the node lab section is open");
         let (painted, _) = painted_at((WIN_W, WIN_H));
 
@@ -8067,7 +8074,7 @@ fn r1864_the_status_band_is_the_hosts_at_every_destination() {
                 continue;
             }
             let key = destination.key.as_ref();
-            let state = use_shell_state();
+            let state = use_shell_state_off_disk();
             if key != state.at() {
                 state.go(key).unwrap_or_else(|why| panic!("{key}: {why:?}"));
             }
@@ -8178,7 +8185,7 @@ fn runs_over(scene: &Scene, area: Rect, owner_tag: &str) -> Vec<String> {
 fn r1864_the_gesture_sentence_is_not_short_of_its_own_face() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         for pose in ["the gesture strip", "a toast"] {
             if pose == "a toast" {
                 state.say(super::Utterance::done("a layout was loaded"));
@@ -8311,7 +8318,7 @@ fn r1864_the_palette_catalogue_clears_its_own_footer() {
 fn r1865_the_bands_sentences_are_not_elided() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         for sentence in [
             "Node Lab section",
             "a saved layout was loaded",
@@ -8377,7 +8384,7 @@ fn r1865_the_bands_sentences_are_not_elided() {
 fn r1865_a_toast_lands_in_one_place_at_every_destination() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let roster = spec::destinations();
         // Keyed by the rectangle's four numbers, because `Rect` is not `Ord`
         // and the grouping is what the report needs: which destinations agreed.
@@ -8476,7 +8483,7 @@ fn r1865_a_toast_lands_in_one_place_at_every_destination() {
 fn r1870_the_short_box_census_of_every_destination() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let roster = spec::destinations();
         let mut per_destination: Vec<(String, Vec<pinion_core::containment::ShortBox>)> =
             Vec::new();
@@ -8537,7 +8544,7 @@ fn r1870_the_short_box_census_of_every_destination() {
 fn r1956_things_placed_beside_each_other_share_their_seats_centre_line() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let roster = spec::destinations();
         let mut walked = 0usize;
         let mut offenders: Vec<String> = Vec::new();
@@ -8615,7 +8622,7 @@ fn r1956_things_placed_beside_each_other_share_their_seats_centre_line() {
 fn r1958_a_press_reaches_a_mounted_screens_control() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         state.go("lab").expect("the node lab section is open");
         let (shot, scene) = painted_at((WIN_W, WIN_H));
         let control = shot
@@ -8846,7 +8853,7 @@ fn lab_report(state: &std::rc::Rc<ShellState>, verb: &str, arg: &str) -> serde_j
 fn r1987_a_wire_let_go_over_the_canvas_is_taken_by_the_card_chosen_for_it() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         // The walk first: rule (7)'s claim is about a section of an
         // application, not about a screen standing on its own.
         let report = crate::tests::walk_the_application(&state);
@@ -9532,7 +9539,7 @@ fn r1872_no_run_in_the_message_list_sits_in_a_box_too_short_for_its_face() {
 
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         state
             .go("packets")
             .unwrap_or_else(|why| panic!("the capture section is open and refused: {why:?}"));
@@ -9591,7 +9598,7 @@ fn r1874_no_run_in_the_node_palettes_body_sits_in_a_box_too_short_for_its_face()
 
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         state
             .go("lab")
             .unwrap_or_else(|why| panic!("the lab section is open and refused: {why:?}"));
@@ -9675,7 +9682,7 @@ fn r1877_no_run_of_the_log_details_pane_sits_in_a_box_too_short_for_its_face() {
 
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         state
             .go("logs")
             .unwrap_or_else(|why| panic!("the log section is open and refused: {why:?}"));
@@ -9973,7 +9980,7 @@ fn r1880_no_run_of_the_app_bar_sits_in_a_box_too_short_for_its_face() {
 
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let roster = spec::destinations();
         let mut seen = 0usize;
         let mut walked = 0usize;
@@ -10292,7 +10299,7 @@ fn r1886_every_canon_gesture_kind_the_census_claims_is_answered() {
     {
         let owner = Owner::new();
         owner.run(|| {
-            let state = use_shell_state();
+            let state = use_shell_state_off_disk();
             let once = assembled_witness(&state);
             let twice = assembled_witness(&state);
             assert_eq!(
@@ -10312,7 +10319,7 @@ fn r1886_every_canon_gesture_kind_the_census_claims_is_answered() {
     for (id, reach, drive) in CANON_GESTURES {
         let owner = Owner::new();
         owner.run(|| {
-            let state = use_shell_state();
+            let state = use_shell_state_off_disk();
             // ★ Getting there is not the act — the witness is read AFTER the
             // section the gesture lives on is open. See [`CanonReach`].
             reach(&state);
@@ -10386,7 +10393,7 @@ const CANON_GAPS: &[(&str, CanonProbe)] = &[];
 fn r1916_a_resting_cursor_changes_the_frame() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let shot = painted();
         let once = format!("{:?}", painted_at((WIN_W, WIN_H)).1);
         let twice = format!("{:?}", painted_at((WIN_W, WIN_H)).1);
@@ -10453,7 +10460,7 @@ fn r1886_every_surface_the_canon_census_owes_is_still_owed() {
     {
         let owner = Owner::new();
         owner.run(|| {
-            let _ = use_shell_state();
+            let _ = use_shell_state_off_disk();
             let once = format!("{:?}", painted_at((WIN_W, WIN_H)).1);
             let twice = format!("{:?}", painted_at((WIN_W, WIN_H)).1);
             assert_eq!(
@@ -10468,7 +10475,7 @@ fn r1886_every_surface_the_canon_census_owes_is_still_owed() {
     for (id, probe) in CANON_GAPS {
         let owner = Owner::new();
         owner.run(|| {
-            let state = use_shell_state();
+            let state = use_shell_state_off_disk();
             if let Some(evidence) = probe(&state) {
                 answered.push(format!("{id}: {evidence}"));
             }
@@ -10521,7 +10528,7 @@ fn r1886_every_surface_the_canon_census_owes_is_still_owed() {
 fn r1911_every_open_section_paints_itself_where_it_belongs() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let screens = super::screen_roster();
 
         let unrooted: Vec<&str> = screens.unrooted_keys().collect();
@@ -10793,7 +10800,7 @@ fn press_the_focus_chip() {
 fn r1988_the_assembled_tool_says_which_cards_a_selection_is_about() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         // The walk first: rule (7)'s claim is about a section of an
         // application, not about a screen standing on its own.
         let report = crate::tests::walk_the_application(&state);
@@ -11092,7 +11099,7 @@ fn one_more_press_shows_the_graph_whole_again(state: &std::rc::Rc<ShellState>) {
 fn r1991_the_assembled_tool_frames_what_is_chosen_and_refuses_by_name() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         // The walk first: the claim is about the assembled application.
         let report = crate::tests::walk_the_application(&state);
         assert!(
@@ -11259,7 +11266,7 @@ fn camera_of(state: &std::rc::Rc<ShellState>) -> (String, String) {
 fn r2023_a_person_lets_go_of_the_canvas_and_the_screen_shows_it() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         // The walk first: the claim is about the assembled application.
         let report = crate::tests::walk_the_application(&state);
         assert!(
@@ -11524,7 +11531,7 @@ fn lab_pan(state: &std::rc::Rc<ShellState>) -> (i64, i64) {
 fn r2024_a_scenarios_verdicts_are_on_the_screen() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let report = crate::tests::walk_the_application(&state);
         assert!(
             report.conforms(),
@@ -11866,7 +11873,7 @@ fn painted_fill(scene: &Scene, tag: &str) -> Option<Color> {
 fn r2026_this_application_does_not_spell_absence_as_an_empty_box() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let report = crate::tests::walk_the_application(&state);
         assert!(
             report.conforms(),
@@ -12003,7 +12010,7 @@ fn lab_card_boxes(shot: &Painted) -> std::collections::BTreeMap<String, Rect> {
 fn r1999_a_graph_says_what_kind_it_is_and_what_it_will_take() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let report = crate::tests::walk_the_application(&state);
         assert!(
             report.conforms(),
@@ -12201,7 +12208,7 @@ fn a_person_may_re_classify_the_graph_they_are_in(state: &std::rc::Rc<ShellState
 fn r2000_a_wire_on_the_assembled_canvas_turns_round_under_its_own_name() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let report = crate::tests::walk_the_application(&state);
         assert!(
             report.conforms(),
@@ -12410,7 +12417,7 @@ fn a_wire_into_a_card_that_never_listens_says_so_before_it_is_pressed(
 fn r2001_a_card_on_the_assembled_canvas_folds_its_advanced_pins() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let report = crate::tests::walk_the_application(&state);
         assert!(
             report.conforms(),
@@ -12618,7 +12625,7 @@ fn advanced_card(state: &std::rc::Rc<ShellState>, name: &str) -> Option<serde_js
 fn r1998_a_paste_offers_a_replacement_for_what_the_graph_will_not_take() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let report = crate::tests::walk_the_application(&state);
         assert!(
             report.conforms(),
@@ -12774,7 +12781,7 @@ fn a_card_the_taxonomy_will_copy_is_simply_copied(state: &std::rc::Rc<ShellState
 fn r1997_a_graph_says_what_it_was_born_with_and_whether_anyone_has_touched_it() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let report = crate::tests::walk_the_application(&state);
         assert!(
             report.conforms(),
@@ -12900,7 +12907,7 @@ fn a_sub_graph_receives_its_content_rather_than_being_born_with_it(
 fn r1996_a_host_says_whether_it_will_take_the_card_before_the_hand_lets_go() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let report = crate::tests::walk_the_application(&state);
         assert!(
             report.conforms(),
@@ -13138,7 +13145,7 @@ fn carrying_a_card_over_a_host_says_it_would_be_taken(state: &std::rc::Rc<ShellS
 fn r1995_the_assembled_tool_says_what_nothing_reaches_before_taking_it_out() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let report = crate::tests::walk_the_application(&state);
         assert!(
             report.conforms(),
@@ -13312,7 +13319,7 @@ fn taking_them_out_removes_exactly_what_was_named(
 fn r1994_the_assembled_tool_goes_to_where_the_graph_ends_up() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let report = crate::tests::walk_the_application(&state);
         assert!(
             report.conforms(),
@@ -13632,7 +13639,7 @@ fn a_card_nobody_wired_is_an_end_but_not_home(state: &std::rc::Rc<ShellState>) {
 fn r1993_a_pins_wires_are_taken_to_another_pin_and_a_refused_one_stays() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let report = crate::tests::walk_the_application(&state);
         assert!(
             report.conforms(),
@@ -13904,7 +13911,7 @@ fn the_ask_itself_is_refused_by_name(state: &std::rc::Rc<ShellState>, busiest: &
 fn r1992_a_card_dropped_on_a_wire_is_taken_into_it_and_the_row_makes_room() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         // The walk first: the claim is about the assembled application.
         let report = crate::tests::walk_the_application(&state);
         assert!(
@@ -14429,7 +14436,7 @@ fn reach_of_mark(
 fn r2010_a_press_reaches_every_mounted_screens_controls() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let roster = super::screen_roster();
         let mounted: Vec<(String, &'static str)> = roster
             .mounted_keys()
@@ -14522,7 +14529,7 @@ fn r1875_no_run_in_the_decode_tree_sits_in_a_box_too_short_for_its_face() {
 
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         state
             .go("packets")
             .unwrap_or_else(|why| panic!("the capture section is open and refused: {why:?}"));

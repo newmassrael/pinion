@@ -88856,6 +88856,52 @@
         "Cohort loop 28 -> 27."
       ]
     },
+    "R2046": {
+      "decision_summary": "A suite stops being able to write where a person lives, and a gate counts that rather than keeping a list of exemptions.\n\nThe analyzer shell's tests build their state through a helper that also builds the application's storage, and that storage resolves — when the environment variable naming a directory is unset — to the real data directory of whoever is running the suite. An earlier round made folding a palette a WRITING act, so the path became reachable from a gate; it then isolated the handful of gates it had just written, by hand.\n\n★ The debt told the next round to count rather than believe it, and both of its numbers were wrong. It recorded four isolated gates in one file; there were seven. And the file it waved past in a single clause as \"the same population\" was the bigger half: 72 calls, every one of them on the on-disk path, none isolated.\n\nThe debt had also already measured away one of its own two candidate repairs. Making the storage resolution itself test-safe is closed by construction here: the resolver lives in another crate, so it cannot see a test configuration, and the environment override needs an unsafe setter this workspace forbids. That leaves the other — make the on-disk constructor unreachable from the tests and DERIVE the fact that it is, rather than maintaining a list of which gates were remembered.",
+      "changes_bullets": [
+        "The off-disk seam is published to the crate rather than kept private to one test module, and all 131 call sites across the shell's two test modules now build their state through it. Exactly one on-disk call remains anywhere in the example: the one inside the seam, after an in-memory store has been placed in the scope slot the builder reads.",
+        "A new gate counts that rather than listing it. It reads the two test sources and asserts three things: the painted module makes zero on-disk calls, the test module makes exactly one — the seam itself — and the two together make at least a hundred off-disk calls. The third assertion is what stops an emptied or commented-out file from passing the first two.",
+        "The needle the gate counts with is assembled from two pieces at compile time rather than written as one literal, because the gate reads its OWN source: written literally, the assertion's text is itself an occurrence, and the file that must answer one answers two."
+      ],
+      "verification_bullets": [
+        "238 tests passed and 0 failed in the shell example. Clippy on it rc=0, `cargo fmt --all --check` rc=0, and the shell's reference walk passes.",
+        "The counterfactual: one deliberate on-disk call planted in the painted module turns the new gate red, and its message names that file and both numbers. Removed, the pair is green again.",
+        "Measured at entry, and it corrected the debt twice: seven isolated gates where the debt recorded four, and 72 unisolated calls in the file the debt did not count at all. Measured after: zero on-disk calls in the painted module, one in the test module, 131 off-disk.",
+        "Two defects were made and caught during the work, both recorded because they are the class rather than the instance. The gate counted itself on its first run, answering two where one was true — caught only because the right answer was known by hand beforehand. And the bulk rename rewrote the seam's own body into infinite self-recursion, which compiles: the population of a bulk replace includes the thing being replaced with."
+      ],
+      "impact_refs": [
+        "5.14",
+        "5.29"
+      ],
+      "carry_forward_bullets": [
+        "Nothing is opened by this round. The debt is closed on the repair it named as the only open one.",
+        "The boundary is stated in the gate rather than hidden: it counts a text match over two named files, so a third test source added later would be invisible to it. The floor assertion bounds the other direction — the count cannot be satisfied by deleting the tests.",
+        "This round reaches no screen. It is test isolation and the gate that measures it; the ledger row and the round ledger both say so.",
+        "Cohort loop 27 -> 26."
+      ],
+      "publishable_decision_summary": "A suite stops being able to write where a person lives, and a gate counts that rather than keeping a list of exemptions.\n\nThe analyzer shell's tests build their state through a helper that also builds the application's storage, and that storage resolves — when the environment variable naming a directory is unset — to the real data directory of whoever is running the suite. An earlier round made folding a palette a WRITING act, so the path became reachable from a gate; it then isolated the handful of gates it had just written, by hand.\n\n★ The debt told the next round to count rather than believe it, and both of its numbers were wrong. It recorded four isolated gates in one file; there were seven. And the file it waved past in a single clause as \"the same population\" was the bigger half: 72 calls, every one of them on the on-disk path, none isolated.\n\nThe debt had also already measured away one of its own two candidate repairs. Making the storage resolution itself test-safe is closed by construction here: the resolver lives in another crate, so it cannot see a test configuration, and the environment override needs an unsafe setter this workspace forbids. That leaves the other — make the on-disk constructor unreachable from the tests and DERIVE the fact that it is, rather than maintaining a list of which gates were remembered.",
+      "publishable_changes_bullets": [
+        "The off-disk seam is published to the crate rather than kept private to one test module, and all 131 call sites across the shell's two test modules now build their state through it. Exactly one on-disk call remains anywhere in the example: the one inside the seam, after an in-memory store has been placed in the scope slot the builder reads.",
+        "A new gate counts that rather than listing it. It reads the two test sources and asserts three things: the painted module makes zero on-disk calls, the test module makes exactly one — the seam itself — and the two together make at least a hundred off-disk calls. The third assertion is what stops an emptied or commented-out file from passing the first two.",
+        "The needle the gate counts with is assembled from two pieces at compile time rather than written as one literal, because the gate reads its OWN source: written literally, the assertion's text is itself an occurrence, and the file that must answer one answers two."
+      ],
+      "publishable_verification_bullets": [
+        "238 tests passed and 0 failed in the shell example. Clippy on it rc=0, `cargo fmt --all --check` rc=0, and the shell's reference walk passes.",
+        "The counterfactual: one deliberate on-disk call planted in the painted module turns the new gate red, and its message names that file and both numbers. Removed, the pair is green again.",
+        "Measured at entry, and it corrected the debt twice: seven isolated gates where the debt recorded four, and 72 unisolated calls in the file the debt did not count at all. Measured after: zero on-disk calls in the painted module, one in the test module, 131 off-disk.",
+        "Two defects were made and caught during the work, both recorded because they are the class rather than the instance. The gate counted itself on its first run, answering two where one was true — caught only because the right answer was known by hand beforehand. And the bulk rename rewrote the seam's own body into infinite self-recursion, which compiles: the population of a bulk replace includes the thing being replaced with."
+      ],
+      "publishable_impact_refs": [
+        "5.14",
+        "5.29"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Nothing is opened by this round. The debt is closed on the repair it named as the only open one.",
+        "The boundary is stated in the gate rather than hidden: it counts a text match over two named files, so a third test source added later would be invisible to it. The floor assertion bounds the other direction — the count cannot be satisfied by deleting the tests.",
+        "This round reaches no screen. It is test isolation and the gate that measures it; the ledger row and the round ledger both say so.",
+        "Cohort loop 27 -> 26."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

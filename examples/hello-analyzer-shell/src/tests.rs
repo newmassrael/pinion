@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 use super::{
     AnalyzerShellView, BarChip, GRID_COLS, KEYMAP, SOURCES, STEPPERS, SubChip, cell_at, cell_rect,
     chrome, def_of, kind_of, kind_span, parse_state, remedy_label, remedy_word, spec,
-    state_sentence, transport_word, type_ink, use_shell_state,
+    state_sentence, transport_word, type_ink,
 };
 use pinion_a11y::WidgetA11y;
 use pinion_core::WidgetCore;
@@ -1093,7 +1093,7 @@ fn r1668_the_chrome_is_uniform_and_a_refusal_is_still_demonstrable() {
 
     let owner = Owner::new();
     owner.run(|| {
-        let state = super::use_shell_state();
+        let state = use_shell_state_off_disk();
         let reserved = spec::CATALOGUE
             .iter()
             .find(|w| w.tier == spec::Tier::Reserved)
@@ -1364,7 +1364,7 @@ fn card_to_scroll_to(o: &pinion_core::reach::OutOfSight) -> Option<(String, (i32
 fn r1662_a_board_taller_than_the_canvas_is_reachable_by_scrolling() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = super::use_shell_state();
+        let state = use_shell_state_off_disk();
         // Enough cards that the board outgrows the canvas whatever the opening
         // layout holds: the canvas is a fixed height and each row has a pitch.
         for _ in 0..12 {
@@ -1672,7 +1672,7 @@ fn a_locked_seat_is_announced_named_and_keeps_its_place_in_the_set() {
 fn r1867_no_destination_paints_a_region_with_no_declared_voice() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let roster = spec::destinations();
         let mut wrong: Vec<String> = Vec::new();
         let mut judged = 0_usize;
@@ -1791,7 +1791,7 @@ fn census_of_the_open_destination() -> pinion_core::voice::VoiceCensus {
 fn r1868_what_a_destination_paints_is_what_it_publishes_about_itself() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let roster = spec::destinations();
         let screens = super::screen_roster();
         let mut wrong: Vec<String> = Vec::new();
@@ -1922,7 +1922,7 @@ fn r1868_what_a_destination_paints_is_what_it_publishes_about_itself() {
 fn r2002_every_page_of_the_tool_says_the_words_its_captions_lend_out() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let roster = spec::destinations();
         let mut lent = 0_usize;
         let mut pages = 0_usize;
@@ -2038,7 +2038,7 @@ fn a_table_card_counts_its_header_row_in_both_the_count_and_the_indices() {
 fn r1721_the_filter_cards_chips_are_operable_and_at_most_one_is_on() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let opening = state.filter_chip.get();
         assert_eq!(
             opening,
@@ -2076,7 +2076,7 @@ fn r1721_the_filter_cards_chips_are_operable_and_at_most_one_is_on() {
 fn r1721_the_tree_reports_the_saved_filter_the_card_has_applied() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let selected = || -> Vec<bool> {
             // ★ R2022 — the body rectangle the card actually has, so the roster
             // is the one the painter placed. The card is on the board at its
@@ -2145,7 +2145,7 @@ fn press_key(focused: Option<&str>, chord: &str) -> bool {
 fn r1698_every_declared_composite_has_a_cursor_its_arrows_move() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let mut checked = 0;
         for stop in spec::FOCUS_RING {
             let Some(declared) = stop.interior.roster() else {
@@ -2233,7 +2233,7 @@ fn r1698_every_declared_composite_has_a_cursor_its_arrows_move() {
 fn r1698_an_arrow_from_inside_a_composite_does_not_reach_the_board() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let first = state.placed()[0].id().as_str().to_owned();
         state.selected.set(Some(first.clone()));
 
@@ -2281,7 +2281,7 @@ fn r1698_an_arrow_from_inside_a_composite_does_not_reach_the_board() {
 fn r1698_the_tree_publishes_the_cursor_and_the_roster_it_walks() {
     let owner = Owner::new();
     owner.run(|| {
-        let _ = use_shell_state();
+        let _ = use_shell_state_off_disk();
         let nodes = AnalyzerShellView::access_node(&ScreenState::default(), None);
         let by_tag: BTreeMap<&str, &pinion_a11y::AccessNode> =
             nodes.iter().map(|n| (n.tag.as_str(), n)).collect();
@@ -2361,7 +2361,7 @@ fn r1698_the_tree_publishes_the_cursor_and_the_roster_it_walks() {
 fn r1698_the_focus_target_names_the_member_the_cursor_is_on() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let mut checked = 0;
         for stop in spec::FOCUS_RING {
             let Some(declared) = stop.interior.roster() else {
@@ -2478,7 +2478,7 @@ fn all_cursor_members(state: &std::rc::Rc<super::ShellState>) -> Vec<(String, bo
 fn r1699_every_cursor_member_resolves_to_the_hit_its_tag_names() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let mut scene = super::view(ScreenState::default(), pinion_core::Frame::default());
         let mut cache = pinion_runtime::LayoutCache::new();
         pinion_runtime::compute_layout(&mut scene, &mut cache, super::WIN_W, super::WIN_H);
@@ -2563,7 +2563,7 @@ fn r1699_every_cursor_member_resolves_to_the_hit_its_tag_names() {
 fn r1699_choosing_a_member_from_the_keyboard_does_something() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let screen = || {
             let mut scene = super::view(ScreenState::default(), pinion_core::Frame::default());
             let mut cache = pinion_runtime::LayoutCache::new();
@@ -2662,7 +2662,7 @@ fn r1699_choosing_a_member_from_the_keyboard_does_something() {
 fn r1699_the_nested_tab_list_is_entered_walked_and_left() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let descendant = || {
             AnalyzerShellView::access_focus_target(&ScreenState::default(), Some("shell.appbar"))
                 .and_then(|t| t.active_descendant)
@@ -2737,7 +2737,7 @@ fn r1699_the_nested_tab_list_is_entered_walked_and_left() {
 fn r1699_the_nested_composite_publishes_its_roster_unentered() {
     let owner = Owner::new();
     owner.run(|| {
-        let _ = use_shell_state();
+        let _ = use_shell_state_off_disk();
         let nodes = AnalyzerShellView::access_node(&ScreenState::default(), None);
         let by_tag: BTreeMap<&str, &pinion_a11y::AccessNode> =
             nodes.iter().map(|n| (n.tag.as_str(), n)).collect();
@@ -2856,7 +2856,7 @@ fn board_layout(state: &std::rc::Rc<super::ShellState>) -> String {
 fn r1701_a_double_click_on_a_card_header_toggles_maximise_and_moves_nothing() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let mut oracle = super::ShellOracle::new();
         oracle.attach_state(state.clone());
 
@@ -2923,7 +2923,7 @@ fn r1701_a_double_click_on_a_card_header_toggles_maximise_and_moves_nothing() {
 fn r1701_a_click_on_a_header_that_moved_nothing_says_nothing() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let mut oracle = super::ShellOracle::new();
         oracle.attach_state(state.clone());
 
@@ -2993,7 +2993,7 @@ fn lab_tags(tags: &std::collections::BTreeSet<String>) -> Vec<String> {
 fn r1724_the_lab_destination_is_the_node_lab_itself() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = super::use_shell_state();
+        let state = use_shell_state_off_disk();
 
         let dashboard = painted_tags(&super::view(
             ScreenState::default(),
@@ -3054,7 +3054,7 @@ fn r1724_the_lab_destination_is_the_node_lab_itself() {
 fn r1724_a_press_inside_the_mounted_section_resolves_to_it() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = super::use_shell_state();
+        let state = use_shell_state_off_disk();
         state.go("lab").expect("the node lab seat is reachable");
         let mut scene = super::view(ScreenState::default(), pinion_core::Frame::default());
         let mut cache = pinion_runtime::LayoutCache::new();
@@ -3121,7 +3121,7 @@ fn r1724_a_press_inside_the_mounted_section_resolves_to_it() {
 fn r1724_only_the_showing_section_has_surfaces() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = super::use_shell_state();
+        let state = use_shell_state_off_disk();
         let tags = || {
             super::AnalyzerShellView::create_extra_externals()
                 .iter()
@@ -3166,7 +3166,7 @@ fn r1724_only_the_showing_section_has_surfaces() {
 fn r1726_the_dragged_card_is_above_the_slot_it_would_land_in() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = super::use_shell_state();
+        let state = use_shell_state_off_disk();
         let board = state.board.get();
         let dragged = state
             .placed()
@@ -3231,7 +3231,7 @@ fn r1726_the_dragged_card_is_above_the_slot_it_would_land_in() {
 fn r1726_a_press_after_scrolling_names_the_cell_under_it() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = super::use_shell_state();
+        let state = use_shell_state_off_disk();
         let canvas = super::canvas_rect();
         let point = (canvas.x + 40, canvas.y + super::ROW_H * 3);
 
@@ -3276,7 +3276,7 @@ fn r1726_a_press_after_scrolling_names_the_cell_under_it() {
 fn r1726_the_drop_preview_covers_nothing() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = super::use_shell_state();
+        let state = use_shell_state_off_disk();
         let dragged = state
             .placed()
             .first()
@@ -3310,7 +3310,7 @@ fn r1726_the_drop_preview_covers_nothing() {
 fn r1726_the_cursor_carries_the_name_of_what_it_holds() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = super::use_shell_state();
+        let state = use_shell_state_off_disk();
         let scene = super::view(ScreenState::default(), pinion_core::Frame::default());
         assert!(
             !scene.tags().iter().any(|t| t == "shell.carry.chip"),
@@ -3391,7 +3391,7 @@ fn find_fill(scene: &pinion_core::Scene, tag: &str) -> Option<pinion_core::style
 fn r1725_one_application_has_one_navigation() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = super::use_shell_state();
+        let state = use_shell_state_off_disk();
         state.go("lab").expect("the node lab seat is reachable");
 
         // --- the tree ---------------------------------------------------
@@ -3467,7 +3467,7 @@ fn r1725_one_application_has_one_navigation() {
 fn r1724_the_tree_holds_the_showing_section_and_only_it() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = super::use_shell_state();
+        let state = use_shell_state_off_disk();
         let announced = || {
             super::AnalyzerShellView::access_node(&ScreenState::default(), None)
                 .into_iter()
@@ -3517,7 +3517,7 @@ fn r1724_the_tree_holds_the_showing_section_and_only_it() {
 fn r1724_the_hosts_state_moves_when_the_rail_does() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = super::use_shell_state();
+        let state = use_shell_state_off_disk();
         let empty =
             pinion_core::Scene::Container(pinion_core::scene::ContainerNode::new(Vec::new()));
         let here = super::AnalyzerShellView::read_state(&empty);
@@ -4065,7 +4065,7 @@ fn r1806_every_saved_filter_has_exactly_one_rule() {
 fn r1806_choosing_a_saved_filter_fades_the_rows_it_does_not_select() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let packet = state
             .cards
             .get()
@@ -4178,7 +4178,7 @@ fn r1806_choosing_a_saved_filter_fades_the_rows_it_does_not_select() {
 fn r1824_choosing_a_saved_filter_dims_the_trend_that_is_not_of_it() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let trend_alpha = || -> u8 {
             let scene = super::view(ScreenState::default(), pinion_core::Frame::default());
             let mut found = None;
@@ -4374,7 +4374,7 @@ pub(crate) fn walk_the_application(
 fn r1808_the_application_reproduces_every_section_over_one_walk() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let report = walk_the_application(&state);
         assert!(
             report.conforms(),
@@ -4391,7 +4391,7 @@ fn r1808_the_application_reproduces_every_section_over_one_walk() {
 fn r1808_the_walk_covers_the_three_canonical_screens() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let report = walk_the_application(&state);
 
         let visited: std::collections::BTreeSet<&str> =
@@ -4417,7 +4417,7 @@ fn r1808_the_walk_covers_the_three_canonical_screens() {
 fn r1808_the_tour_takes_both_populations_from_the_roster() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let tour = pinion_screen::Tour::of(&state.screens).also_recording(super::VIEW_TAG);
 
         let open: Vec<String> = state
@@ -4607,7 +4607,7 @@ fn survey_the_application(
 fn r1812_no_caption_in_the_application_escapes_or_breaks_its_claim() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let (all, stops, report) = survey_the_application(&state);
 
         // The denominators first (R1800): a green verdict below is worth
@@ -4901,7 +4901,7 @@ fn r1973_every_role_the_reference_declares_is_reproduced_and_the_rest_is_surplus
 fn r2027_every_declared_region_is_announced_with_the_role_it_declares() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = super::use_shell_state();
+        let state = use_shell_state_off_disk();
         let canon: std::collections::BTreeSet<String> = voice_pin()["canon"]["roles"]
             .as_array()
             .expect("the pin lists the reference's roles")
@@ -5533,7 +5533,7 @@ fn r1851_the_board_is_exactly_full_and_the_alarm_card_is_what_is_left() {
 fn r1851_the_feed_builds_only_the_window_it_shows() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let rect = super::alarm_body_rect(&state);
         let columns = super::alarm_columns(rect.w).expect("the opening body holds the columns");
         let feed = super::alarm_feed("probe", rect, &columns, spec::ALARMS.len());
@@ -5715,7 +5715,7 @@ fn r1851_the_declared_vocabularies_are_their_definitions() {
 fn r1852_the_walk_reaches_a_topology_built_from_the_captures_own_hops() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         // The walk first, because what this asserts is about a section of an
         // application rather than about a screen in isolation.
         let report = walk_the_application(&state);
@@ -5807,7 +5807,7 @@ fn r2011_the_capture_section_prints_the_address_it_lights() {
 
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let report = walk_the_application(&state);
         assert!(
             report.conforms(),
@@ -5923,7 +5923,7 @@ fn r2011_the_capture_section_prints_the_address_it_lights() {
 fn r1851_the_order_the_arrow_and_the_threshold_cannot_disagree() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let rect = super::alarm_body_rect(&state);
         let columns = super::alarm_columns(rect.w).expect("the opening body holds the columns");
         let glyphs = |sort| {
@@ -6049,7 +6049,7 @@ fn r1853_the_walk_reaches_a_fault_panel_derived_from_the_targets_own_settings() 
 
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         // The walk first: the claim is about a section of an application.
         let report = walk_the_application(&state);
         assert!(
@@ -6177,7 +6177,7 @@ fn r1857_the_walk_reaches_a_fault_panel_whose_every_row_is_whole() {
 
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let report = walk_the_application(&state);
         assert!(
             report.conforms(),
@@ -6292,7 +6292,7 @@ fn r1859_the_walk_reaches_a_placeholder_that_holds_its_own_letters() {
 
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let report = walk_the_application(&state);
         assert!(
             report.conforms(),
@@ -6375,7 +6375,7 @@ fn r1866_the_walk_reaches_a_lab_that_compares_two_of_its_own_runs() {
 
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         // The walk first: the claim is about a section of an application.
         let report = walk_the_application(&state);
         assert!(
@@ -6522,7 +6522,7 @@ fn r1887_the_walk_reaches_a_lab_whose_panels_a_person_can_place() {
 
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let report = walk_the_application(&state);
         assert!(
             report.conforms(),
@@ -6636,7 +6636,7 @@ fn r1885_the_walk_reaches_a_lab_whose_peers_run_different_builds() {
 
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         // The walk first: the claim is about a section of an application.
         let report = walk_the_application(&state);
         assert!(
@@ -7013,7 +7013,7 @@ fn r1903_both_palette_gestures_go_through_the_one_verb_and_it_refuses_by_name() 
 #[test]
 fn r1905_changing_home_crosses_the_two_coordinate_spaces() {
     Owner::new().run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         // The host is somewhere a window manager put it. Through the framework's
         // own sink, so a change to how the origin is published breaks this.
         pinion_core::external::publish_window_origins([(super::MAIN_WINDOW, (300, 150))]);
@@ -7094,7 +7094,7 @@ fn r1905_changing_home_crosses_the_two_coordinate_spaces() {
 #[test]
 fn r1905_a_card_crossing_into_the_canvas_stays_reachable() {
     Owner::new().run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         pinion_core::external::publish_window_origins([(super::MAIN_WINDOW, (0, 0))]);
         super::ShellOracle::detach(&state, "packet#0").expect("a board card tears off");
         // Put its window out past the far corner of this window, which is where
@@ -7174,7 +7174,16 @@ fn r1905_a_card_crossing_into_the_canvas_stays_reachable() {
 /// one ⇒ registered as `debt-a-gate-can-write-into-the-persons-own-data-dir`.
 use pinion_core::storage::Storage as _;
 
-fn use_shell_state_off_disk() -> std::rc::Rc<super::ShellState> {
+/// ★★★★★ (R2046) `pub(crate)`, and every test module of this binary uses it —
+/// where R1908 left it private and four gates deep.
+///
+/// The limit that round stated as a fact ("only the gates that WRITE use it")
+/// is now a guarantee, and the way it became one is the opposite of an
+/// exemption list: no test builds the on-disk storage at all, so which gates
+/// may write stops being a question anybody has to keep answering.
+/// `r2046_no_test_of_this_application_builds_the_persons_own_storage` counts
+/// it, and the count is over the files rather than over a list of gates.
+pub(crate) fn use_shell_state_off_disk() -> std::rc::Rc<super::ShellState> {
     let _: std::rc::Rc<pinion_platform_storage::AppStorage> = Owner::current()
         .expect("an Owner scope, as use_shell_state itself requires")
         .cache(super::STORAGE_CACHE_KEY, || {
@@ -7182,7 +7191,77 @@ fn use_shell_state_off_disk() -> std::rc::Rc<super::ShellState> {
                 pinion_core::storage::InMemoryStorage::new(),
             ))
         });
-    use_shell_state()
+    // ⚠ The ONE call to the on-disk spelling in either test module, and the
+    // gate below counts on it being one: the slot is already seeded above, so
+    // this builds the state against in-memory storage. Spelled through
+    // `super::` deliberately — it is the application's function, and the
+    // difference between the two names is what this whole arrangement is.
+    super::use_shell_state()
+}
+
+/// ★★★★★ **(R2046) No test of this application builds the person's own
+/// storage** — counted over the test modules, not over a list of gates.
+///
+/// `use_shell_state` resolves its storage through `build_app_storage`, and with
+/// no `PINION_STORAGE_DIR` set that is `dirs::data_dir()/pinion-analyzer-shell`
+/// — the actual data directory of whoever runs the suite. R1908 made folding
+/// the palette a written act, so a gate doing it reaches there; it isolated the
+/// gates it knew about and registered the rest as a debt, because nothing
+/// counted which gates could write.
+///
+/// The count is what this is. Not an exemption list and not an audit of which
+/// gates write — those both need somebody to keep answering a question. Every
+/// test builds its state off disk, so the question does not arise, and the two
+/// modules are asked to prove it: `painted.rs` mentions the on-disk spelling
+/// nowhere at all, and this file mentions it exactly once, inside the seam that
+/// seeds the in-memory store first.
+///
+/// ⚠ It is a text count over source, and the reason that is honest here rather
+/// than a census-by-regex is what it counts: not a population being measured,
+/// but the ABSENCE of one identifier in two files, where a single occurrence is
+/// the whole finding. A parser would answer the same thing at more cost.
+#[test]
+fn r2046_no_test_of_this_application_builds_the_persons_own_storage() {
+    const PAINTED: &str = include_str!("painted.rs");
+    const TESTS: &str = include_str!("tests.rs");
+
+    // ⚠ The needle is ASSEMBLED, and that is not a flourish: this file reads
+    // ITSELF, so a literal here would be an occurrence of the thing being
+    // counted and the check would report its own source. The first draft did
+    // exactly that and answered two where one was true.
+    let needle = concat!("use_shell_state", "()");
+    let on_disk_calls = |source: &str| {
+        source
+            .match_indices(needle)
+            .filter(|(at, _)| !source[..*at].ends_with("_off_disk"))
+            .count()
+    };
+
+    assert_eq!(
+        on_disk_calls(PAINTED),
+        0,
+        "the painted sweep builds the application's real storage somewhere — \
+         every test in it must use `use_shell_state_off_disk`, or a run of this \
+         suite writes into the data directory of whoever ran it",
+    );
+    assert_eq!(
+        on_disk_calls(TESTS),
+        1,
+        "this file may name the on-disk spelling exactly once, inside \
+         `use_shell_state_off_disk`, which seeds the in-memory store before \
+         calling it",
+    );
+    // ★ And the population is not zero, so the two assertions above are about
+    // something: a suite that stopped building shell state at all would satisfy
+    // them by having no tests left.
+    let off_disk = PAINTED.matches("use_shell_state_off_disk()").count()
+        + TESTS.matches("use_shell_state_off_disk()").count();
+    assert!(
+        off_disk >= 100,
+        "only {off_disk} test(s) build shell state off disk — this suite had \
+         131 such call sites when the count was written, and a floor far below \
+         that is what keeps this from passing on an empty file",
+    );
 }
 
 /// ★★★★★ R1908 — **putting the palette away is WRITTEN**, so it can outlive the
@@ -7380,7 +7459,7 @@ fn r1908_a_stored_placement_this_build_refuses_is_replaced_and_explained() {
 #[test]
 fn r1907_the_header_control_sends_a_panel_to_the_home_the_policy_names() {
     Owner::new().run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         pinion_core::external::publish_window_origins([(super::MAIN_WINDOW, (0, 0))]);
         super::ShellOracle::detach(&state, "packet#0").expect("a board card tears off");
         let torn = state.float("packet#0").expect("it is floating");
@@ -7428,7 +7507,7 @@ fn r1907_the_header_control_sends_a_panel_to_the_home_the_policy_names() {
 #[test]
 fn r1907_every_control_a_detached_header_offers_is_drawn_and_pressable() {
     Owner::new().run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         pinion_core::external::publish_window_origins([(super::MAIN_WINDOW, (0, 0))]);
         super::ShellOracle::detach(&state, "packet#0").expect("a board card tears off");
         // On the canvas, because that is the home this screen paints; a
@@ -7531,7 +7610,7 @@ fn r1909_the_walk_reaches_a_lab_whose_panes_open_as_its_canon_does() {
 
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
 
         // ★★★★★ ORDER IS THE POINT, and it is the opposite of every other walk
         // in this file. The arrangement is read BEFORE the walk, because this
@@ -7753,7 +7832,7 @@ fn r1954_the_sort_this_screen_announces_is_the_sort_it_draws() {
     let (column, _) = spec::ALARM_OPENING_SORT;
     for ascending in [true, false] {
         Owner::new().run(|| {
-            let state = use_shell_state();
+            let state = use_shell_state_off_disk();
             state.alarm_sort.set(Some((column, ascending)));
 
             let drawn: Vec<Indicator> = pinion_widget_paint::indicator::marks_in(&super::view(
@@ -7915,7 +7994,7 @@ fn r2012_the_status_bullet_is_findable_in_both_palettes() {
 
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let report = walk_the_application(&state);
         assert!(
             report.conforms(),
@@ -8674,7 +8753,7 @@ fn r2020_the_assembled_tool_paints_its_status_badges_on_their_states_ground() {
 
     let owner = Owner::new();
     owner.run(|| {
-        let state = use_shell_state();
+        let state = use_shell_state_off_disk();
         let report = walk_the_application(&state);
         assert!(
             report.conforms(),
