@@ -432,6 +432,18 @@ fn assemble_windowed(
     slots: Vec<Scene>,
 ) -> Scene {
     let content = windowed_content(viewport.w, total_h, slots);
+    // ⚠★★★★★ R2029 — this node declares NO layout, and R2025's `unplaced`
+    // refusal says one consumer pays for it: `hello-paged-stream`'s scrolling
+    // surface comes back with no box, so the log a reader is meant to read is
+    // painted nowhere. `debt-a-windowed-list-in-a-flex-row-gets-no-box` holds
+    // the measurement.
+    //
+    // ⚠ AND THE OBVIOUS REPAIR IS NOT THE REPAIR — measured, not assumed.
+    // R2029 tried `.with_layout(… with_size(Size::px(viewport.w, viewport.h)))`
+    // here and, separately, a sized wrapper at the consumer; the demo rebuilds
+    // its example and BOTH left the box empty. So the zero is not simply an
+    // undeclared size, and a round that shipped either would have shipped a
+    // change that fixes nothing. The debt carries both disproved prescriptions.
     Scene::Scroll(ScrollNode::from_state(Rc::clone(scroll), viewport, content))
 }
 

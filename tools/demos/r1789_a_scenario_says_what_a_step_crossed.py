@@ -108,12 +108,23 @@ def body() -> None:
         plan = scenario(tf)
         assert_eq(
             sorted(plan),
-            ["acts", "checks", "conflicts", "duration", "lanes", "playhead"],
+            ["acts", "checks", "conflicts", "duration", "lanes", "playhead", "row_states"],
             # ★ R1844 added `checks`. A scenario that can ASSERT has a second
             # thing to report beside what it did — the verdicts its checkpoints
             # have reached — and this read is the one place a client learns the
             # whole shape, so a new fact belongs in it rather than only on the
             # answer to `advance`.
+            #
+            # ★★★★★ R2029 — and R2024 added `row_states`, the closed set of
+            # words the scenario BAND can show, without updating this line. This
+            # assertion is a whole-shape pin and it did exactly what it is for:
+            # the sweep went red at demo 382 of 719 with `got [… 'row_states']`.
+            #
+            # ⚠ THE LESSON IS ABOUT WHAT R2024 RAN, not about this pin. That
+            # round verified the two example walks its PUSH GATE demanded and
+            # not the demos its CHANGE REACHED — and `tools/sweep_headless.sh
+            # --radius` exists to answer the second question. A gate's demand is
+            # a floor, not a radius.
             "the whole shape in one read",
         )
         assert_eq(plan["lanes"], [], "no lanes yet")
