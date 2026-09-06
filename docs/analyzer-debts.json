@@ -649,17 +649,6 @@
       ]
     },
     {
-      "name": "debt-the-surplus-ratchet-says-non-empty-not-non-shrinking",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links analyzer-behaviour-canon-is-the-standalone-prototype, debt-canon-gui-surface-census"
-      ]
-    },
-    {
       "name": "debt-the-walks-wheel-reaches-a-mounted-screen-without-the-router",
       "substituted": false,
       "blocked_by": "buildable",

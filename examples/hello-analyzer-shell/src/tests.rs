@@ -4796,9 +4796,19 @@ fn r1973_every_role_the_reference_declares_is_reproduced_and_the_rest_is_surplus
     let owner = Owner::new();
     owner.run(|| {
         let nodes = AnalyzerShellView::access_node(&ScreenState::default(), None);
+        // ★★★★★ R2027 — `aria_name`, not the Debug spelling, and the
+        // difference is not cosmetic: `spec::VOICES` and the pin are written in
+        // W3C words, and a role's Rust name is not one — `AriaRole::TextInput`
+        // is `textbox` and `ListboxOption` is `option`. This line read
+        // `format!("{:?}", …)` and passed only because `TabList` happens to
+        // lowercase to its own W3C word. Measured at R2027: over the whole
+        // application the Debug spelling disagrees with the declaration 24
+        // times and `aria_name` zero times, so the gate below was comparing two
+        // vocabularies and would have gone red the day the reference declared
+        // any role whose two spellings differ.
         let announced: std::collections::BTreeSet<String> = nodes
             .iter()
-            .map(|node| format!("{:?}", node.role).to_ascii_lowercase())
+            .map(|node| node.role.aria_name().to_owned())
             .collect();
         assert!(
             !announced.is_empty(),
@@ -4842,6 +4852,161 @@ fn r1973_every_role_the_reference_declares_is_reproduced_and_the_rest_is_surplus
              reference lacks and we have is NOT removed",
             announced.len(),
             canon_roles.len(),
+        );
+    });
+}
+
+/// ★★★★★ R2027 — **the specification's `role` column is checked**, which is
+/// what makes the surplus a thing that cannot silently shrink.
+///
+/// # What was unguarded, measured rather than assumed
+///
+/// `debt-the-surplus-ratchet-says-non-empty-not-non-shrinking` recorded that
+/// R1973's gate asserts only *the surplus is non-empty* — floor one — so 21
+/// role kinds falling to 2 would pass. It asked for a ratchet and warned that
+/// writing our own count into the pin would be the same fact in two files, the
+/// class this repository has dozens of open debts about.
+///
+/// The round's first act was to ask WHO READS `VoiceSpec::role`. **One site:**
+/// `main.rs` publishes it on the wire as `"role": voice.role`. Nothing compared
+/// it with the tree, so a column of the specification was a published claim
+/// that no gate could falsify — and a round that changed a region's role would
+/// shrink the surplus with `r1695` (which checks tags) staying green.
+///
+/// ⇒ so the ratchet is not a number. It is this: **every region the
+/// specification declares is announced with the role it declares.** A voice
+/// kind can then only leave by an edit to `spec::VOICES`, which is the same
+/// visibility every other column of that table has, and no count lives in two
+/// places. R2020's rule, applied one axis over: what a derived gate must pin is
+/// the RULE, not the table's own numbers.
+///
+/// ⚠★★★★★ AND THE VOCABULARIES WERE DIFFERENT, which is why nobody could have
+/// compared them by accident. `spec::VOICES` writes W3C words; a role's Rust
+/// name is not one (`AriaRole::TextInput` is `textbox`, `ListboxOption` is
+/// `option`). Probed at the open, comparing the Debug spelling reported **24
+/// mismatches** across 8 destinations; comparing `AriaRole::aria_name` — the
+/// name this framework actually publishes — reports **zero**. R1973 compares
+/// the Debug spelling and passes only because `TabList` happens to lowercase to
+/// its own W3C word; see the note this round left on it.
+#[test]
+fn r2027_every_declared_region_is_announced_with_the_role_it_declares() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = super::use_shell_state();
+        let canon: std::collections::BTreeSet<String> = voice_pin()["canon"]["roles"]
+            .as_array()
+            .expect("the pin lists the reference's roles")
+            .iter()
+            .map(|r| r.as_str().expect("a role is a string").to_owned())
+            .collect();
+        let declared: std::collections::BTreeSet<String> =
+            spec::VOICES.iter().map(|v| v.role.to_owned()).collect();
+        let mut announced: std::collections::BTreeSet<String> =
+            std::collections::BTreeSet::default();
+        let mut wrong: Vec<String> = Vec::new();
+        let mut checked = 0_usize;
+
+        let destinations = spec::destinations();
+        for here in destinations.open() {
+            let key = here.key.as_ref();
+            state.go(key).expect("an open destination is reachable");
+            // ★ Both occupancies of the status slot, the reason `r1695` reads
+            // them: the tree carries whichever of the slot's two occupants is
+            // painted, so a reading taken in one state reports the other's
+            // region as unannounced. Measured — without this, eight rows of
+            // `shell.status.gesture` come back MISSING and none of them is.
+            let mut by_tag: std::collections::BTreeMap<String, String> =
+                std::collections::BTreeMap::default();
+            for _ in 0..2 {
+                for node in AnalyzerShellView::access_node(&ScreenState::default(), None) {
+                    by_tag.insert(node.tag.clone(), node.role.aria_name().to_owned());
+                }
+                pinion_core::reactive::Owner::current()
+                    .expect("a pose is taken inside an Owner scope")
+                    .tick_animations(state.toast.life() + 1.0);
+            }
+            announced.extend(by_tag.values().cloned());
+            for voice in spec::VOICES {
+                if !voice.at.shows_at(key) {
+                    continue;
+                }
+                for member in voice.population.members() {
+                    let tag = voice.tag.replace("{}", &member);
+                    checked += 1;
+                    match by_tag.get(&tag) {
+                        Some(got) if got == voice.role => {}
+                        Some(got) => wrong.push(format!(
+                            "{key}: {tag} is declared {:?} and announced {got:?}",
+                            voice.role
+                        )),
+                        // `r1695` owns *is it announced at all*; this row is
+                        // here so a missing tag cannot pass THIS gate by having
+                        // no role to disagree with.
+                        None => wrong.push(format!(
+                            "{key}: {tag} is declared {:?} and not announced",
+                            voice.role
+                        )),
+                    }
+                }
+            }
+        }
+        // ★ The floor first: an empty comparison reads as agreement.
+        assert!(
+            checked > 100,
+            "{checked} declared region(s) were compared, which is too few to \
+             have covered this specification",
+        );
+        assert!(
+            wrong.is_empty(),
+            "★★★★★ {} declared region(s) do not carry the role the \
+             specification gives them, of {checked} compared: {wrong:?}. The \
+             `role` column is published on the wire (`\"role\": voice.role`), so \
+             a region whose tree disagrees with it makes this application say \
+             two different things about one region.",
+            wrong.len(),
+        );
+
+        // ★★★★★ AND THAT IS THE RATCHET. Every role kind the specification
+        // declares is announced, so a surplus over the reference cannot shrink
+        // without an edit to `spec::VOICES` — no count is written anywhere, and
+        // the floor is the declaration rather than a remembered number.
+        let unannounced: Vec<&String> = declared.difference(&announced).collect();
+        assert!(
+            unannounced.is_empty(),
+            "the specification declares {unannounced:?} and no destination \
+             announces them, so the surplus this application claims over the \
+             reference is larger than the one a reader is handed",
+        );
+        let surplus: Vec<&String> = declared.difference(&canon).collect();
+        assert!(
+            surplus.len() > 1,
+            "the specification declares {} role kind(s) and the reference {}: a \
+             surplus of {} is the floor R1973 could already assert, and this \
+             gate exists because that floor is one — {surplus:?}",
+            declared.len(),
+            canon.len(),
+            surplus.len(),
+        );
+        // ⚠★★★★★ AND THE REFERENCE'S OWN ROLE IS NOT ONE OF THOSE — asked, and
+        // the answer is a fact about the two tables rather than a gap.
+        //
+        // A first draft asserted `canon ⊆ declared` and added a `tablist` row
+        // for `shell.appbar.tabs`. Three gates refused it in one run: this
+        // table is of regions the screen PAINTS (`r1695`: *the specification
+        // gives this destination X and the screen does not paint it*), and the
+        // strip has no box of its own — it is a grouping node whose bounds come
+        // from the tabs inside it. So the reference's single obligation is
+        // carried by a node `spec::VOICES` cannot describe, the two
+        // comparisons join on the TREE, and that is where `r1973` asks it.
+        //
+        // Asserted the other way round, which is the claim that IS true here:
+        // no role the reference declares may be one this application announces
+        // NOWHERE.
+        assert!(
+            canon.iter().all(|role| announced.contains(role)),
+            "the reference declares {canon:?} and this application announces \
+             {announced:?} across every destination: a reference role nothing \
+             announces is the reproduction obligation unmet",
         );
     });
 }

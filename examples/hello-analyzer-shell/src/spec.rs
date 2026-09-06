@@ -3420,6 +3420,21 @@ pub const VOICES: &[VoiceSpec] = &[
         population: Population::One,
         at: Where::Chrome,
     },
+    // ⚠★★★★★ R2027 — **the tab STRIP is deliberately not a row here, and that
+    // is a fact about this table rather than an omission.**
+    //
+    // `shell.appbar.tabs` is announced as a `tablist` (R1699) and it is the ONE
+    // role `docs/analyzer-voice-spec.json` says the reference declares. R2027
+    // tried to add it and three gates said no in one run: this table is of
+    // regions the screen PAINTS (`r1695`: *the specification gives this
+    // destination X and the screen does not paint it*), and the strip has no
+    // box of its own — it is a grouping node whose bounds come from the tabs
+    // inside it (`Member::new(APP_BAR_TABS).containing(…)`).
+    //
+    // ⇒ the reference's one obligation is carried by a node this table cannot
+    // describe, so the two comparisons join on the TREE and not here. That is
+    // where `r1973` asks it, which is correct, and it is why `r2027` asserts
+    // the pairing over declared regions rather than over the reference's list.
     VoiceSpec {
         tag: "shell.appbar.tab.dashboard",
         role: "tab",

@@ -51,7 +51,24 @@
       "class this repository has 63 open debts about. What IS pinned is the",
       "FLOOR: the reproduction is complete only while our surface is a strict",
       "superset of the reference's, so the gate asserts every canon role is",
-      "reproduced and that the surplus is positive."
+      "reproduced and that the surplus is positive.",
+      "",
+      "R2027 — AND THE RATCHET IS NOT A NUMBER EITHER, for the same reason.",
+      "'positive' has a floor of ONE, so 21 role kinds falling to 2 passed.",
+      "What replaces the missing count is `spec::VOICES`'s own `role` column:",
+      "r2027 asserts every declared region is ANNOUNCED WITH THE ROLE IT",
+      "DECLARES, so a voice kind can only leave by an edit to that table --",
+      "the same visibility every other column of it has, and still no count",
+      "in two files. Measured at R2027: that column had exactly one reader,",
+      "`main.rs` publishing it on the wire, and nothing had ever compared it",
+      "with the tree.",
+      "",
+      "WARNING R2027 -- the two tables do NOT join on `tablist`, and that is a",
+      "fact rather than a gap. `spec::VOICES` is of regions the screen PAINTS;",
+      "the reference's one role sits on `shell.appbar.tabs`, a grouping node",
+      "with no box of its own. So the canon list is compared against the TREE",
+      "(r1973, r2027's last assertion) and never against that table -- adding",
+      "a row for it takes three gates red, which is how this was measured."
     ],
     "surplus_must_be_positive": true
   }
