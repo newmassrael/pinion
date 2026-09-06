@@ -76,7 +76,7 @@ use pinion_core::external::{
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ObjectArgs, PointerTarget,
     ReadRefusal, RepaintOwner, SchemaArg, SchemaField, ThreadOwnership,
 };
-use pinion_core::input::PointerReading;
+use pinion_core::input::{DragLatch, PointerReading};
 use pinion_core::reactive::{Signal, Tracked};
 use pinion_core::scene::{
     ContainerNode, PathCommand, PathNode, PathPoint, Rect, ScrollAxis, ScrollNode, TextNode,
@@ -1331,10 +1331,28 @@ const fn role_ink(role: Role) -> Color {
 // ── State ───────────────────────────────────────────────────────────────────
 
 /// A drag in flight, and which kind it is.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+///
+/// ★★★★★ R2023 — NOT `Eq` any more, because [`Drag::Pan`] carries a
+/// [`DragLatch`] and a latch holds its press point in logical px. The
+/// comparison this enum is actually asked for is `matches!` on the arm, which
+/// is what every reader of it below does; a float-free `Eq` would have to be a
+/// hand-written impl restating what the derive already says, and a second
+/// spelling of equality is exactly the drift this file keeps refusing.
+#[derive(Clone, Copy, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 enum Drag {
-    /// The canvas is being panned from this cursor position.
-    Pan { from: (u32, u32), start: (i32, i32) },
+    /// The canvas is being panned: where the canvas was when the press landed,
+    /// and the press itself.
+    ///
+    /// ★★★★★ R2023 — the press point is the LATCH's ([`DragLatch::origin`])
+    /// and is not stored a second time beside it. A press on empty canvas is
+    /// two gestures until the hand moves — a pan, or a click that lets go of
+    /// the selection — and the framework already owns the determination that
+    /// tells them apart ([`pinion_core::input::DRAG_CLICK_THRESHOLD_PX`], the
+    /// predicate R880 lifted into the contract crate precisely so that no
+    /// consumer re-derives it). Keeping a `from` beside the latch would give
+    /// one press two spellings of where it began, which is the drift
+    /// `DragLatch::origin` was published to end.
+    Pan { start: (i32, i32), latch: DragLatch },
     /// A node is being placed. Held: the node, the grab offset in canvas units.
     Node {
         node: NodeId,
@@ -12989,6 +13007,23 @@ const FIELDS: &[SchemaField] = &{
             },
         ),
         SchemaField::action("select", "string"),
+        // ★★★★★ R2023 — **and let go of it**, by the same act the canvas
+        // makes when a person clicks empty ground.
+        //
+        // A verb of its own rather than an optional argument on `select`,
+        // which is this tree's settled shape for "and clear it" —
+        // `clear_breaks`, `clear_watches`, `stop_all` — and the one that keeps
+        // `select`'s grammar a single card. `Nullary` rather than
+        // [`SchemaField::action`]'s silence, because *takes nothing* is a
+        // claim an agent can act on and an undeclared argument list is not
+        // (R1638).
+        //
+        // ★ It refuses nothing. Pressing empty canvas with nothing chosen
+        // changes nothing and says nothing, so a verb that refused an empty
+        // selection would make the wire poorer than the canvas rather than
+        // equal to it — the call R2000's `reverse_link` made, for the same
+        // reason.
+        SchemaField::action_with("clear_selection", "string", ArgForm::Nullary, &[]),
         SchemaField::action("select_link", "string"),
         // ★★★★★ R2000 — turn a wire round, by the same address `select_link`
         // takes. Not scoped to the picked wire: a script repairing a topology
@@ -14600,6 +14635,15 @@ impl ExternalIntrospect for LabOracle {
                 // exists to end.
                 select_card(&state, Some(node));
                 Ok(IntrospectValue::Text(name.trim().to_owned()))
+            }
+            // ★★★★★ R2023 — the wire half of an empty-canvas click. It goes
+            // through `select_card` like every other mover, so the sentence a
+            // person reads and the one an agent gets are the one `say_selection`
+            // composes — the R1736 asymmetry, kept closed on a new verb.
+            "clear_selection" => {
+                let held = state.selection.get().len();
+                select_card(&state, None);
+                Ok(IntrospectValue::Text(format!("let go of {held} card(s)")))
             }
             // ★★ R1682 — the node's own life. Four verbs over one argument,
             // the card's name, which is the name the canvas shows and the wire
@@ -19017,6 +19061,30 @@ fn panel_width_under(state: &LabState, which: SidePanel, px: u32) -> u32 {
     }
 }
 
+/// ★★★★★ R2023 — where the canvas sits part-way through a pan: where it was
+/// when the press landed, plus how far the hand has travelled since.
+///
+/// Its own function so that the cast lives at one site instead of loosening
+/// every arm of [`move_cursor`], and so that the press point comes back out of
+/// the latch ([`DragLatch::origin`]) rather than being carried a second time in
+/// the drag.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "a pan offset is a distance between two points of one window, and \
+              the latch's origin is a `u32` cursor position widened losslessly"
+)]
+fn panned_to(start: (i32, i32), latch: &DragLatch, cursor: (u32, u32)) -> (i32, i32) {
+    let (ox, oy) = latch.origin();
+    (
+        start
+            .0
+            .saturating_add((f64::from(cursor.0) - ox).trunc() as i32),
+        start
+            .1
+            .saturating_add((f64::from(cursor.1) - oy).trunc() as i32),
+    )
+}
+
 fn move_cursor(state: &Rc<LabState>, px: u32, py: u32) {
     state.cursor.set((px, py));
     // ★ R1916 — a move is what says the pointer is here again after a leave.
@@ -19041,13 +19109,15 @@ fn move_cursor(state: &Rc<LabState>, px: u32, py: u32) {
                 }
             }
         }
-        Drag::Pan { from, start } => {
-            let dx = i64::from(px) - i64::from(from.0);
-            let dy = i64::from(py) - i64::from(from.1);
-            state.pan.set((
-                start.0 + i32::try_from(dx).unwrap_or(0),
-                start.1 + i32::try_from(dy).unwrap_or(0),
-            ));
+        // ★★★★★ R2023 — the pan follows the hand, and the same move ADVANCES
+        // the latch that decides whether this press was a pan at all. Advanced
+        // here rather than at the release, because the determination is
+        // sticky: a hand that travels and comes home is still a drag (the W3C
+        // rule `DragLatch` spells), and only a mover can see that it went.
+        Drag::Pan { start, mut latch } => {
+            latch.advance((f64::from(px), f64::from(py)));
+            state.drag.set(Some(Drag::Pan { start, latch }));
+            state.pan.set(panned_to(start, &latch, (px, py)));
         }
         Drag::Frame { frame, from } => {
             let (ux, uy) = to_canvas(state, px, py);
@@ -19244,8 +19314,8 @@ fn press(state: &Rc<LabState>) {
             // the next gesture are one press there too.
             drop_pending_wire(state);
             state.drag.set(Some(Drag::Pan {
-                from: (px, py),
                 start: state.pan.get(),
+                latch: DragLatch::new((f64::from(px), f64::from(py))),
             }));
         }
         _ => {}
@@ -19455,12 +19525,43 @@ fn finish_drag(state: &Rc<LabState>, drag: Drag, now: &Hit) {
                 });
             }
         }
+        // ★★★★★ R2023 — **a press on empty canvas that never became a drag
+        // LETS GO of the selection.**
+        //
+        // The gap this closes, measured: five sites moved the selection and
+        // every one of them named a card, so a person could swap what was
+        // chosen and never put it down. The screen therefore always had
+        // something highlighted, the inspector's own *no node selected* pane
+        // was unreachable in the assembled application, and
+        // `Fit::selection`'s refusal for an empty selection could only be
+        // proven inside `pinion-node-graph`. The floor's two node editors both
+        // deselect on an empty-canvas click; the behaviour canon draws no such
+        // gesture, so this is the second pass rather than the reproduction.
+        //
+        // ★ The discriminant is the LATCH and not a fresh comparison: a press
+        // that stayed within `DRAG_CLICK_THRESHOLD_PX` of where it landed was
+        // a click, and one that strayed past it was a pan and stays a pan even
+        // if the hand comes home. That is the framework's determination
+        // (R876/R880), the same one the runtime's router applies to every other
+        // press in this window, so the canvas and the rest of the application
+        // cannot come to mean different things by *a click*.
+        //
+        // ★ And `now` must still be the canvas, which is the house rule
+        // `release` applies to every other click on this screen (`was != now`
+        // returns): a press and a release that landed on different things is
+        // not a click on either of them. A pan can only open on `Hit::Canvas`,
+        // so this is that same test written for the arm that gets here first.
+        Drag::Pan { latch, .. } => {
+            if !latch.live() && matches!(now, Hit::Canvas) {
+                select_card(state, None);
+            }
+        }
         // ★ R1889 — a width drag commits on every move, so letting go commits
-        // nothing extra. Named beside the other two that do the same rather
-        // than added to their arm, because *this one has already committed* and
+        // nothing extra. Named beside the other one that does the same rather
+        // than added to its arm, because *this one has already committed* and
         // *this one has nothing to commit* are different facts and the next
         // reader of this match should not have to work out which it is.
-        Drag::Pan { .. } | Drag::Frame { .. } | Drag::PanelWidth { .. } => {}
+        Drag::Frame { .. } | Drag::PanelWidth { .. } => {}
     }
 }
 

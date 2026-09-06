@@ -8795,11 +8795,20 @@ fn lab_cards(state: &std::rc::Rc<ShellState>) -> Vec<String> {
         .collect()
 }
 
-/// A patch of canvas with no card on it — **computed, not picked**.
+/// A patch of canvas where **the canvas itself is what a press lands on** —
+/// computed, not picked.
 ///
-/// Inside the lab's own canvas rectangle and outside every card the frame drew,
-/// so a graph that grows a card over the chosen spot moves the spot instead of
-/// turning this red.
+/// Inside the lab's own canvas rectangle and outside every other mark the frame
+/// drew there, so a graph that grows something over the chosen spot moves the
+/// spot instead of turning this red.
+///
+/// ★★★★★ R2023 — it used to avoid CARDS alone, and that was not the same
+/// claim. This screen routes a press by TAG (`Hit::of_tag`), so a spot with no
+/// card on it can still be a host frame's rectangle, a wire, or a pin — and
+/// R2023's first run pressed one such spot and was handed a two-card selection
+/// by the host-frame arm rather than the empty canvas it had asked for. Both
+/// callers mean *the canvas itself*, so that is what this now answers and what
+/// its name now says.
 fn a_clear_patch_of_canvas(shot: &Painted) -> (u32, u32) {
     let canvas = shot
         .rect("lab.canvas")
@@ -8807,10 +8816,7 @@ fn a_clear_patch_of_canvas(shot: &Painted) -> (u32, u32) {
     let cards: Vec<Rect> = shot
         .tags
         .iter()
-        .filter(|(tag, _)| {
-            tag.strip_prefix("lab.node.")
-                .is_some_and(|rest| !rest.contains('.'))
-        })
+        .filter(|(tag, _)| tag.starts_with("lab.") && *tag != "lab.canvas")
         .map(|(_, rect)| *rect)
         .collect();
     (canvas.x + 24..canvas.x + canvas.w - 24)
@@ -11107,6 +11113,279 @@ fn camera_of(state: &std::rc::Rc<ShellState>) -> (String, String) {
     (
         lab_slot(state, "zoom").to_string(),
         lab_slot(state, "pan").to_string(),
+    )
+}
+
+/// ★★★★★ R2023 — **a person lets go of what they chose**, driven on the
+/// assembled application over one walk.
+///
+/// # What was missing, measured rather than assumed
+///
+/// Five sites moved the lab's selection and every one of them named a card, so
+/// a person could swap what was chosen and never put it down.
+///
+/// ★★★★★ The one that LOOKS like an exception is not one, and it was measured
+/// rather than read: the fallback a deletion runs passes
+/// `state.cards().first().copied()`, which is an `Option` and would be `None`
+/// for an empty graph — so on the page it reads as a way to reach an empty
+/// selection by deleting every card. Driven on the assembled application, the
+/// eighth delete is refused with *P-03 is the last card, so it stays*. The
+/// graph cannot be emptied, so that arm cannot pass `None`, so the count of
+/// movers that can put the selection down was **zero** and not one.
+///
+/// Three things followed from that, and all three are asserted below:
+///
+/// 1. the canvas always had something highlighted and the inspector always had
+///    a card in it — there was no way to reach the screen's *nothing is
+///    chosen* state at all;
+/// 2. the inspector's own **no node selected** pane was painted code no walk
+///    could ever land on;
+/// 3. `Fit::selection`'s refusal for an empty selection could be proven only
+///    inside `pinion-node-graph`. R1991 met that by keeping the assertion in
+///    the crate and writing the gap down instead of weakening it, and this is
+///    the round that pays it: the refusal is now reachable from the screen,
+///    which is where a person meets it.
+///
+/// # The discriminant, and why it is the framework's and not this screen's
+///
+/// A press on empty canvas was already a pan, so *let go* and *pan* now share
+/// one press and something has to tell them apart. That something is
+/// [`pinion_core::input::DragLatch`] over `DRAG_CLICK_THRESHOLD_PX` — the
+/// press-to-drag determination R876/R880 lifted into the contract crate
+/// precisely so that no consumer re-derives it. The last two phases are the
+/// pair that proves the screen asks it rather than guessing: a press that does
+/// not travel lets go and does not pan; a press that travels pans and does not
+/// let go.
+///
+/// ⚠ The behaviour canon draws no such gesture, so this is second-pass work
+/// rather than reproduction — the floor's two node editors both deselect on an
+/// empty-canvas click, and rule (4) is what makes that a debt.
+#[test]
+fn r2023_a_person_lets_go_of_the_canvas_and_the_screen_shows_it() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        // The walk first: the claim is about the assembled application.
+        let report = crate::tests::walk_the_application(&state);
+        assert!(
+            report.conforms(),
+            "the application did not reproduce its specification over the walk: {}",
+            report.why().unwrap_or_default()
+        );
+        assert!(
+            report.itinerary().iter().any(|key| key == "lab"),
+            "the walk must stand in the node lab: {:?}",
+            report.itinerary()
+        );
+
+        state.go("lab").expect("the node lab section is open");
+        exactly_one_card_is_chosen_when_the_lab_opens(&state);
+        a_click_on_empty_canvas_lets_go_of_the_choice(&state);
+        the_inspector_shows_the_pane_that_had_been_unreachable(&state);
+        the_empty_selection_refusal_is_reachable_from_this_screen(&state);
+        the_wire_lets_go_by_the_same_act(&state);
+        a_drag_on_empty_canvas_pans_and_keeps_the_choice(&state);
+    });
+}
+
+/// Phase 1 — a press on empty ground, let go without travelling: the selection
+/// is put down, and the canvas has NOT moved.
+///
+/// ★ Both halves, because a screen that panned as well would pass "nothing is
+/// chosen" while having done something a person did not ask for — the click
+/// and the pan are one press and the assertion has to say which of the two
+/// happened.
+fn a_click_on_empty_canvas_lets_go_of_the_choice(state: &std::rc::Rc<ShellState>) {
+    let (shot, scene) = painted_at((WIN_W, WIN_H));
+    let clear = a_clear_patch_of_canvas(&shot);
+    let before = camera_of(state);
+
+    let mut click = hand_on(scene);
+    click.cursor(clear);
+    click.press();
+    click.release();
+
+    let chosen = lab_slot(state, "selection");
+    assert_eq!(
+        chosen,
+        serde_json::json!([]),
+        "★★★★★ a click on empty canvas let go of the selection — {chosen}"
+    );
+    assert_eq!(
+        camera_of(state),
+        before,
+        "★★ and it did not pan: a press that never travelled is a click, and a \
+         screen that also moved the canvas has answered one press twice"
+    );
+    let said = lab_slot(state, "toast");
+    assert_eq!(
+        said.as_str(),
+        Some("nothing selected"),
+        "★ the person is told what the selection now is, in the sentence \
+         `say_selection` composes for every channel — {said}"
+    );
+}
+
+/// Phase 2 — and the inspector shows the pane it has always been able to draw
+/// and never been asked to.
+///
+/// ★★ Read off the PAINT, not off the state: the claim is that a person
+/// looking at the window sees the screen say so, and the state slot the phase
+/// above read cannot answer that.
+fn the_inspector_shows_the_pane_that_had_been_unreachable(state: &std::rc::Rc<ShellState>) {
+    let chosen = lab_slot(state, "selection");
+    assert_eq!(
+        chosen.as_array().map(Vec::len),
+        Some(0),
+        "phase 1 put the selection down, which is this phase's premise — {chosen}"
+    );
+    let (shot, _) = painted_at((WIN_W, WIN_H));
+    let words: Vec<&str> = shot.runs.iter().map(|(text, _, _)| text.as_str()).collect();
+    assert!(
+        words.iter().any(|text| text.contains("no node selected")),
+        "★★★★★ the inspector's empty pane is PAINTED — it is the arm this \
+         screen could not reach before this round, and a walk that never lands \
+         on it is a walk that cannot tell working code from dead code"
+    );
+}
+
+/// Phase 3 — the refusal R1991 had to leave in the crate, raised on the screen.
+///
+/// ★★★★★ This is the population repair, and it is the reason the phase exists
+/// at all: `Fit::selection` refuses an empty selection by name, and until this
+/// round no press, key or verb on this screen could produce an empty selection
+/// to refuse. The sentence is the crate's own, so what a person reads here is
+/// what every other selection verb tells them.
+fn the_empty_selection_refusal_is_reachable_from_this_screen(state: &std::rc::Rc<ShellState>) {
+    let before = camera_of(state);
+    let refused = lab_invoke(state, "frame_selection", "")
+        .expect_err("framing an empty selection has nothing to frame");
+    let reason = format!("{refused:?}");
+    assert!(
+        reason.contains("nothing is selected"),
+        "★★ refused BY NAME, in the crate's own words rather than a paraphrase \
+         written on this screen — {reason}"
+    );
+    assert_eq!(
+        camera_of(state),
+        before,
+        "★ and a refusal moved nothing: a fit that pointed the canvas somewhere \
+         and then refused would leave the person somewhere they did not ask for"
+    );
+}
+
+/// Phase 4 — the wire half, so an agent can let go of what a person can let go
+/// of.
+///
+/// ★★ A gesture-only deselect would leave the two channels unequal, which is
+/// the asymmetry this screen has repaired twice already (R1720's confirmation,
+/// R1736's sentence). The verb goes through the same mover, so the toast it
+/// leaves is the one the click left.
+fn the_wire_lets_go_by_the_same_act(state: &std::rc::Rc<ShellState>) {
+    let cards = lab_cards(state);
+    let card = cards.first().expect("the opening graph has cards");
+    lab_invoke(state, "select", card).expect("a card the wire can choose");
+    assert_eq!(
+        lab_slot(state, "selection"),
+        serde_json::json!([card]),
+        "the wire chose one, which is this phase's premise"
+    );
+
+    let said = lab_invoke(state, "clear_selection", "").expect("letting go refuses nothing");
+    assert!(
+        said.contains("let go of 1 card"),
+        "★ the verb answers what it put down — {said:?}"
+    );
+    assert_eq!(
+        lab_slot(state, "selection"),
+        serde_json::json!([]),
+        "★★★★★ and the selection is empty, by the wire as by the hand"
+    );
+
+    // ★ Nothing to let go of is not a refusal — pressing empty canvas with
+    // nothing chosen changes nothing and says nothing, and a verb that refused
+    // here would make the wire poorer than the canvas rather than equal to it.
+    let again = lab_invoke(state, "clear_selection", "")
+        .expect("letting go of nothing is answerable, not refused");
+    assert!(
+        again.contains("let go of 0 card"),
+        "★ and it says so rather than claiming work it did not do — {again:?}"
+    );
+}
+
+/// Phase 5 — the counterfactual, driven rather than argued: a press on the SAME
+/// empty ground that TRAVELS pans the canvas and keeps the choice.
+///
+/// ★★★★★ This is what makes phase 1 a claim about the discriminant instead of
+/// a claim about empty canvas. A screen that let go on every canvas press
+/// passes phases 1–4 and fails here; a screen that let go on none of them fails
+/// phase 1 and passes here. Only one that asks
+/// [`pinion_core::input::DragLatch`] passes both.
+fn a_drag_on_empty_canvas_pans_and_keeps_the_choice(state: &std::rc::Rc<ShellState>) {
+    let cards = lab_cards(state);
+    let card = cards.first().expect("the opening graph has cards");
+    lab_invoke(state, "select", card).expect("something to keep hold of");
+
+    let (shot, scene) = painted_at((WIN_W, WIN_H));
+    let clear = a_clear_patch_of_canvas(&shot);
+    let before = camera_of(state);
+    let panned_from = lab_pan(state);
+
+    // ★ The smallest travel that latches, ASKED OF the framework's own
+    // predicate rather than copied off its constant — a number written here
+    // would be a second spelling of what a click is, and it is the sharpest
+    // counterfactual besides: one pixel less is phase 1.
+    let travel = (1u32..64)
+        .find(|n| pinion_core::input::DragLatch::new((0.0, 0.0)).advance((f64::from(*n), 0.0)))
+        .expect("some travel along one axis makes a press a drag");
+    let mut drag = hand_on(scene);
+    drag.cursor(clear);
+    drag.press();
+    drag.cursor((clear.0 + travel, clear.1));
+    drag.release();
+
+    assert_ne!(
+        camera_of(state),
+        before,
+        "★★ the travelling press PANNED — the assertion a screen that quietly \
+         did nothing would pass"
+    );
+    // ★★★★★ And it panned by EXACTLY the hand's travel, on the axis the hand
+    // moved along. `assert_ne` above says *something happened*; this says
+    // *the right thing happened*, and it is the assertion that holds the pan's
+    // arithmetic now that the press point comes out of the latch rather than
+    // being carried beside it — a refactor no test in this tree measured,
+    // because nothing anywhere asserted a pan's delta.
+    let panned_to = lab_pan(state);
+    assert_eq!(
+        (panned_to.0 - panned_from.0, panned_to.1 - panned_from.1),
+        (i64::from(travel), 0),
+        "the canvas followed the hand: {panned_from:?} -> {panned_to:?} over a \
+         travel of {travel}px along x"
+    );
+    assert_eq!(
+        lab_slot(state, "selection"),
+        serde_json::json!([card]),
+        "★★★★★ and it kept the choice: a pan is not a click, and the latch is \
+         what says so"
+    );
+}
+
+/// Where the mounted lab's canvas is panned to, as the pair of whole offsets
+/// its wire publishes.
+///
+/// Beside [`camera_of`], which answers the zoom and the pan as opaque strings
+/// for comparing two moments. This one is for the caller that has to do
+/// arithmetic on the offsets themselves.
+fn lab_pan(state: &std::rc::Rc<ShellState>) -> (i64, i64) {
+    let read = lab_slot(state, "pan");
+    let spelled = read.as_str().expect("`pan` is spelled `<x>,<y>`");
+    let (x, y) = spelled
+        .split_once(',')
+        .unwrap_or_else(|| panic!("`pan` is spelled `<x>,<y>`, got {spelled:?}"));
+    (
+        x.parse().expect("`pan`'s x is a whole offset"),
+        y.parse().expect("`pan`'s y is a whole offset"),
     )
 }
 
