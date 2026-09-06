@@ -381,6 +381,10 @@ def survey(folder: pathlib.Path) -> list[dict]:
                 "closed_by": meta.get("closed_by", ""),
                 "closed_because": meta.get("closed_because", ""),
                 "priority": meta.get("priority", ""),
+                # (R2039) The one half of the chain a file has to write for
+                # itself. The other half — which debt this one descends from —
+                # is derived from the rounds; see `chain_depth`.
+                "opened": meta.get("opened", ""),
             }
         )
     return out
@@ -408,8 +412,77 @@ def all_debts(folder: pathlib.Path) -> dict[str, dict]:
             "status": meta.get("status", ""),
             "blocked_by": meta.get("blocked_by", ""),
             "closed_by": meta.get("closed_by", ""),
+            # (R2039) The two dates the CHAIN is derived from. Already written
+            # by 220 files when this began, which is why the chain needs no new
+            # field: a debt opened by the round that closed another descends
+            # from it, and both halves are here.
+            "opened": meta.get("opened", ""),
+            "closed": meta.get("closed", ""),
         }
     return out
+
+
+#: (R2039) A round's name as a debt file writes it — `R2038`, or `R1978.1` for a
+#: continuation. Anchored, because a bare number search would match a round
+#: mentioned in the same line's prose.
+ROUND = re.compile(r"^(R[0-9]+(?:\.[0-9]+)?)")
+
+
+def round_of(when: str) -> str:
+    """The round in a `opened:` / `closed:` field, or `""` when it says none.
+
+    Pure in `when`. The fields carry a date beside the round (`R2038
+    (2026-09-06)`), so this reads the head rather than the whole string.
+    """
+    found = ROUND.match(when.strip())
+    return found.group(1) if found else ""
+
+
+def chain_depth(index: dict[str, dict], cohort: set[str]) -> dict[str, int | None]:
+    """How far each debt sits from the pinned cohort, along rounds.
+
+    Pure in `index` and `cohort`. `0` is a cohort member — the origin the loop
+    was aimed at. `d + 1` is a debt opened by a round that CLOSED a debt of
+    depth `d`, which is the loop being re-aimed: it set out to close one thing
+    and found another. `1` is a debt opened by a round that closed nothing, so
+    it is its own root. `None` is a debt whose file does not say when it was
+    opened, and that absence is the only thing here anybody has to write down.
+
+    ★★★★★ Derived, not declared. The loop's standing rules ask every item to
+    carry an `@from:` chain; measured at R2039, 220 debt files already carry
+    `opened:` and 80 rounds carry a `closed:` somewhere, so the chain is a join
+    over two fields that exist. A third field would have been a hand-kept copy
+    of it — and the nine that hand-wrote one had already drifted into prose.
+    """
+    closed_in: dict[str, list[str]] = {}
+    for label, row in index.items():
+        when = round_of(row.get("closed", ""))
+        if when:
+            closed_in.setdefault(when, []).append(label)
+
+    depths: dict[str, int | None] = {}
+
+    def walk(label: str, seen: frozenset[str]) -> int | None:
+        if label in cohort:
+            return 0
+        if label in seen:
+            return None  # a cycle: two rounds each opening the other's debt
+        if label in depths and label not in seen:
+            return depths[label]
+        row = index.get(label)
+        if row is None:
+            return None
+        when = round_of(row.get("opened", ""))
+        if not when:
+            return None
+        parents = closed_in.get(when, [])
+        reached = [walk(p, seen | {label}) for p in parents if p != label]
+        known = [d for d in reached if d is not None]
+        return 1 + max(known) if known else 1
+
+    for label in index:
+        depths[label] = walk(label, frozenset())
+    return depths
 
 
 def check_standings(rows: list[dict]) -> list[str]:
@@ -728,6 +801,54 @@ def unranked_of(rows: list[dict]) -> list[str]:
     return sorted(r["public_name"] for r in rows if rank_of(r.get("priority", "")) == "unranked")
 
 
+def undated_of(rows: list[dict], members: list[str]) -> list[str]:
+    """The family's debts that can be placed in no chain at all.
+
+    Pure in its arguments, and the population is narrower than "has no
+    `opened:`" on purpose: a COHORT member is at depth 0 by being in the pin, so
+    its file saying nothing costs the derivation nothing. Measured at R2039, 11
+    family files carry no `opened:` and 5 of them are cohort members — so a
+    ratchet on the wider number would have demanded five edits that move no
+    answer, and the report and the ratchet would have printed two different
+    numbers under one name.
+    """
+    pinned = set(members)
+    return sorted(
+        r["public_name"]
+        for r in rows
+        if r["public_name"] not in pinned and not round_of(r.get("opened", ""))
+    )
+
+
+def committed_count(field: str) -> int | None:
+    """What the LAST COMMITTED snapshot said `field` was, or `None`.
+
+    The ratchet's other side, and it has to come from the previous commit:
+    `--write` rewrites the working snapshot in the same commit that changes the
+    folder, so a number compared against it is compared with itself. Fails open
+    — a shallow clone or a field this commit introduces has nothing to compare —
+    and every caller says so rather than reporting a pass.
+    """
+    try:
+        done = subprocess.run(
+            ["git", "-C", str(ROOT), "show", "HEAD:docs/analyzer-debts.json"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if done.returncode != 0:
+        return None
+    try:
+        held = json.loads(done.stdout)
+    except json.JSONDecodeError:
+        return None
+    count = held.get(field)
+    return count if isinstance(count, int) else None
+
+
 def committed_unranked() -> int | None:
     """How many the LAST COMMITTED snapshot said were unranked, or `None`.
 
@@ -996,6 +1117,30 @@ def cohort_report(
         f"  unranked  {len(loose_unranked):>3} of {len(rows)} — nobody has ranked"
         " these, and the committed snapshot carries the number so it can only fall"
     )
+    # ★★★★★ (R2039) The CHAIN, derived from `opened:` and `closed:` rather than
+    # from a field anybody writes. The loop's standing rules ask for a `deferred`
+    # count — items the loop was re-aimed onto and then put off — and this is the
+    # measurement any bound on it would have to be chosen against.
+    depths = chain_depth(index, set(members))
+    family_depth = [depths.get(r["public_name"]) for r in rows]
+    undated = sum(1 for d in family_depth if d is None)
+    seen_depths = sorted({d for d in family_depth if d is not None})
+    out.append("")
+    out.append(
+        "  chain     depth from the pin, derived from `opened:` and `closed:`: "
+        + ", ".join(
+            f"{d} → {sum(1 for x in family_depth if x == d)}" for d in seen_depths
+        )
+        + (f"; {undated} say when nothing" if undated else "")
+    )
+    deepest = max(seen_depths) if seen_depths else 0
+    out.append(
+        f"  deferred    0 — nothing sits deeper than {deepest}, so no item has been"
+        " re-aimed onto and then put off; a bound would answer zero at every depth"
+        if deepest < 2
+        else f"  deferred  {sum(1 for x in family_depth if x is not None and x >= 2):>3}"
+        " at depth 2 or more — the loop was re-aimed twice over and did not come back"
+    )
     return out
 
 
@@ -1073,6 +1218,10 @@ def snapshot_of(rows: list[dict], members: list[str]) -> dict:
         # (R2038) The ratchet's number, at the top where a reader and `--check`
         # both find it without walking the rows.
         "unranked": len(unranked_of(rows)),
+        # (R2039) The chain's, and it is the ONE half of a chain a file writes
+        # for itself: a debt that does not say when it was opened cannot be
+        # placed in one at all, and the derivation has nothing to fall back on.
+        "undated": len(undated_of(rows, members)),
     }
 
 
@@ -1201,6 +1350,65 @@ def selftest() -> int:
         == {"debt-aaa": "unranked", "debt-mmm": "critical"},
     )
     check("and the ratchet's number at the top", ranked_shot["unranked"] == 1)
+
+    # ★★★★★ (R2039) The CHAIN, derived from two fields the files already carry.
+    check("a round is read off the head of the field", round_of("R2038 (2026-09-06)") == "R2038")
+    check("a continuation keeps its suffix", round_of("R1978.1 (2026-09-03)") == "R1978.1")
+    check("and a field that names none answers none", round_of("(2026-09-06)") == "")
+    chain = {
+        "debt-pinned": {"opened": "R1000", "closed": "R2000 (x)"},
+        "debt-child": {"opened": "R2000 (x)", "closed": ""},
+        "debt-grandchild": {"opened": "R2001", "closed": ""},
+        "debt-rootless": {"opened": "R2002", "closed": ""},
+        "debt-silent": {"opened": "", "closed": ""},
+    }
+    chain["debt-child"]["closed"] = "R2001 (x)"
+    depths = chain_depth(chain, {"debt-pinned"})
+    check("a cohort member is the origin", depths["debt-pinned"] == 0)
+    check("a debt opened by the round that closed it is one step out", depths["debt-child"] == 1)
+    check(
+        "and the step after that is two — the shape a `deferred` bound is about",
+        depths["debt-grandchild"] == 2,
+    )
+    check(
+        "a debt whose round closed nothing is its own root, not a descendant",
+        depths["debt-rootless"] == 1,
+    )
+    check("a debt that says when nothing sits in no chain", depths["debt-silent"] is None)
+    cycle = {
+        "debt-a": {"opened": "R10", "closed": "R11 (x)"},
+        "debt-b": {"opened": "R11", "closed": "R10 (x)"},
+    }
+    # ⚠ The assertion is TERMINATION, not the number. Two rounds each opening
+    # the other's debt is a cycle, and a walk over it answers something
+    # arbitrary by construction — what must never happen is that it does not
+    # answer at all. Written this way after the first draft asserted a number
+    # and was wrong about which one (it answers 2: the far side stops at its own
+    # root and this side adds a step).
+    check(
+        "two rounds each opening the other's debt do not spin",
+        isinstance(chain_depth(cycle, set())["debt-a"], int),
+    )
+    check(
+        "the undated population EXCLUDES the pinned, whose depth is known anyway",
+        undated_of(
+            [
+                {"public_name": "debt-pinned", "opened": ""},
+                {"public_name": "debt-loose", "opened": ""},
+                {"public_name": "debt-dated", "opened": "R2039 (x)"},
+            ],
+            ["debt-pinned"],
+        )
+        == ["debt-loose"],
+    )
+    check(
+        "and the snapshot carries that number, not the wider one",
+        snapshot_of(
+            [{**plain, "opened": ""}, {**named, "opened": "R1 (x)"}],
+            ["debt-mmm"],
+        )["undated"]
+        == 0,
+    )
     # ★ The ratchet's oracle, exercised against this repository's real history.
     # It answers `None` before the first commit that carries the field, which is
     # the fail-open path, so both outcomes are legal and the assertion is about
@@ -1724,23 +1932,36 @@ def main() -> int:
         # compared with itself; the committed one is the only other side there
         # is. Fails open on a shallow clone or a first commit and SAYS so — an
         # absent history is not evidence that nothing regressed.
-        was = committed_unranked()
-        now = fresh["unranked"]
-        if was is None:
-            print(
-                "analysis-tool debts: no committed `unranked` to ratchet against"
-                f" (this run counts {now}) — the history could not answer",
-                file=sys.stderr,
-            )
-        elif now > was:
-            print(
-                f"analysis-tool debts: {now} unranked debt(s), up from {was}."
-                " A debt nobody ranked is in no list the loop reads, so this"
+        ratchets = {
+            "unranked": (
+                "A debt nobody ranked is in no list the loop reads, so this"
                 " number may only fall: give the new file a `priority:` (one of"
-                f" {', '.join(PRIORITIES)}).",
-                file=sys.stderr,
-            )
-            return 1
+                f" {', '.join(PRIORITIES)})."
+            ),
+            # (R2039) The chain's half. A debt with no `opened:` cannot be placed
+            # in a chain at all, and no derivation can recover it.
+            "undated": (
+                "A debt that does not say when it was opened sits in no chain,"
+                " so `deferred` cannot see it: give the new file an `opened:"
+                " R<round>`."
+            ),
+        }
+        for field, remedy in ratchets.items():
+            was = committed_count(field)
+            now = fresh[field]
+            if was is None:
+                print(
+                    f"analysis-tool debts: no committed `{field}` to ratchet"
+                    f" against (this run counts {now}) — the history could not answer",
+                    file=sys.stderr,
+                )
+            elif now > was:
+                print(
+                    f"analysis-tool debts: {now} {field} debt(s), up from {was}."
+                    f" {remedy}",
+                    file=sys.stderr,
+                )
+                return 1
         loose = unblocked(rows)
         mine = [
             name

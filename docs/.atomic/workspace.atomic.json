@@ -88542,6 +88542,54 @@
         "Cohort loop stays 34."
       ]
     },
+    "R2039": {
+      "decision_summary": "The chain was a join, not a field — and measuring the rule it serves emptied that rule.\n\nThe loop's standing rules asked every debt to carry a chain saying which round it came out of. Nine files had written one, in body prose, where no tool can read it. Measured instead: 220 debt files already carry the round they were opened in, 80 rounds carry the round something was closed in, and 47 rounds did both. A debt opened by the round that CLOSED another descends from it, so the chain is a join over two fields that already exist, and no third field is needed.\n\nThen the distribution answered the other rule. Across the family the depth from the pin is 46 at zero — the cohort, the origin — nine at one, six that say when nothing, and NOTHING at two or more. The deferred count those rules ask for, meaning items the loop was re-aimed onto and then put off, has never had a member here. A bound would have been a gate that answers zero at every setting, so the number is printed and any bound can be chosen on it later.",
+      "changes_bullets": [
+        "The debt tool derives the chain: a pure reader for the round at the head of an `opened:` or `closed:` field, and a walk that gives a cohort member depth zero, a debt opened by the round that closed another one more than that one, a debt whose round closed nothing its own root, and a debt that says when nothing no place at all. It terminates on a cycle, which is the property a cycle deserves.",
+        "The report gains the depth distribution and the deferred line, which says zero and says why: nothing sits deeper than one.",
+        "A second ratchet joins the first in one table, and it is deliberately the narrower population — the family debts that can sit in no chain, being outside the pin and undated. The five that have no `opened:` but are pinned are excluded, because their depth is known by being pinned and demanding an edit there would move no answer while making the report and the ratchet print different numbers under one name.",
+        "Both ratchets read the previous commit's snapshot and fail open loudly on a history that cannot answer."
+      ],
+      "verification_bullets": [
+        "The report prints the chain distribution — 46 at depth zero, nine at one, six that say when nothing — and the deferred line reading zero with its reason. `--write` then `--check` returns 0, with the new ratchet's fail-open spoken rather than silent, which is correct for the commit that first puts the field in the snapshot.",
+        "The selftest PASSES: the round parser on a dated field, a continuation and a field naming none; five depth cases (the origin, one step out, two steps out, a round that closed nothing, and a file that says when nothing); a cycle asserted for TERMINATION rather than for a number, after the first draft asserted the number and was wrong about it; the narrowed undated population excluding the pinned; and the snapshot's count.",
+        "The derived oracle census rc=0 and the hook libraries' 282 assertions pass.",
+        "Measured, and it is what decided the shape: 220 debt files carry `opened:`, 80 rounds carry `closed:`, 47 did both, and of the family 11 carry no `opened:` while only 6 of those are outside the pin."
+      ],
+      "impact_refs": [
+        "5.12",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "Nothing is opened by this round, and the debt closes with both halves answered — two by building the instrument and two by measuring that the prescribed form was unnecessary.",
+        "The lines live in the debt tool rather than in the north-star tool the prescription named. That is a deliberate departure: the data is here, and deriving the same answer in two places is the second copy this repository keeps finding stale. The north-star tool still answers the four end conditions, and the loop asks this one what to work on.",
+        "Two ratchets now stand on the same table and both start where this round measured them: 21 unranked of 61 in the family, and 6 that can sit in no chain. Both can only fall.",
+        "Cohort loop 34 -> 33."
+      ],
+      "publishable_decision_summary": "The chain was a join, not a field — and measuring the rule it serves emptied that rule.\n\nThe loop's standing rules asked every debt to carry a chain saying which round it came out of. Nine files had written one, in body prose, where no tool can read it. Measured instead: 220 debt files already carry the round they were opened in, 80 rounds carry the round something was closed in, and 47 rounds did both. A debt opened by the round that CLOSED another descends from it, so the chain is a join over two fields that already exist, and no third field is needed.\n\nThen the distribution answered the other rule. Across the family the depth from the pin is 46 at zero — the cohort, the origin — nine at one, six that say when nothing, and NOTHING at two or more. The deferred count those rules ask for, meaning items the loop was re-aimed onto and then put off, has never had a member here. A bound would have been a gate that answers zero at every setting, so the number is printed and any bound can be chosen on it later.",
+      "publishable_changes_bullets": [
+        "The debt tool derives the chain: a pure reader for the round at the head of an `opened:` or `closed:` field, and a walk that gives a cohort member depth zero, a debt opened by the round that closed another one more than that one, a debt whose round closed nothing its own root, and a debt that says when nothing no place at all. It terminates on a cycle, which is the property a cycle deserves.",
+        "The report gains the depth distribution and the deferred line, which says zero and says why: nothing sits deeper than one.",
+        "A second ratchet joins the first in one table, and it is deliberately the narrower population — the family debts that can sit in no chain, being outside the pin and undated. The five that have no `opened:` but are pinned are excluded, because their depth is known by being pinned and demanding an edit there would move no answer while making the report and the ratchet print different numbers under one name.",
+        "Both ratchets read the previous commit's snapshot and fail open loudly on a history that cannot answer."
+      ],
+      "publishable_verification_bullets": [
+        "The report prints the chain distribution — 46 at depth zero, nine at one, six that say when nothing — and the deferred line reading zero with its reason. `--write` then `--check` returns 0, with the new ratchet's fail-open spoken rather than silent, which is correct for the commit that first puts the field in the snapshot.",
+        "The selftest PASSES: the round parser on a dated field, a continuation and a field naming none; five depth cases (the origin, one step out, two steps out, a round that closed nothing, and a file that says when nothing); a cycle asserted for TERMINATION rather than for a number, after the first draft asserted the number and was wrong about it; the narrowed undated population excluding the pinned; and the snapshot's count.",
+        "The derived oracle census rc=0 and the hook libraries' 282 assertions pass.",
+        "Measured, and it is what decided the shape: 220 debt files carry `opened:`, 80 rounds carry `closed:`, 47 did both, and of the family 11 carry no `opened:` while only 6 of those are outside the pin."
+      ],
+      "publishable_impact_refs": [
+        "5.12",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Nothing is opened by this round, and the debt closes with both halves answered — two by building the instrument and two by measuring that the prescribed form was unnecessary.",
+        "The lines live in the debt tool rather than in the north-star tool the prescription named. That is a deliberate departure: the data is here, and deriving the same answer in two places is the second copy this repository keeps finding stale. The north-star tool still answers the four end conditions, and the loop asks this one what to work on.",
+        "Two ratchets now stand on the same table and both start where this round measured them: 21 unranked of 61 in the family, and 6 that can sit in no chain. Both can only fall.",
+        "Cohort loop 34 -> 33."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

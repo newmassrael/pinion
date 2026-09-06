@@ -663,18 +663,6 @@
       ]
     },
     {
-      "name": "debt-the-loops-standing-rules-name-instruments-that-do-not-exist",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "rank": "ordinary",
-      "why": [
-        "links analyzer-debt-repayment-loop"
-      ]
-    },
-    {
       "name": "debt-the-node-lab-reproduces-the-first-release-palette-not-the-behaviour-canon",
       "substituted": false,
       "blocked_by": "buildable",
@@ -821,5 +809,6 @@
       ]
     }
   ],
-  "unranked": 21
+  "unranked": 21,
+  "undated": 6
 }
