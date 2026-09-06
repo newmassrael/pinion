@@ -492,6 +492,21 @@ if ! python3 "$repo_root/tools/shrink_population.py" --check >&2; then
     exit 1
 fi
 
+# R2044 — and the same class collected: a section that JOINS the application
+# owes several things at once, and the five that were missing from the last two
+# sections were asked by five different files, all of them only in CI. The three
+# a file can answer are asked here, where a push can hear them; the two that
+# need the binary running stay CI's.
+step "section joins"
+if ! python3 "$repo_root/tools/section_joins.py" --selftest >&2; then
+    echo "pre-push: the section-joins computation failed its own tests" >&2
+    exit 1
+fi
+if ! python3 "$repo_root/tools/section_joins.py" >&2; then
+    echo "pre-push: a mounted section joined without something every other one has" >&2
+    exit 1
+fi
+
 # R1800 — the same class again, one question over. `short_by` asks whether a
 # run's OWN box was authored tall enough for its face, which is what a reader
 # sees as a clipped descender and is NOT what the ink gate beside it asks. A

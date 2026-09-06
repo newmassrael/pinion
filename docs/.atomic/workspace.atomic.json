@@ -88768,6 +88768,52 @@
         "Cohort loop 30 -> 29."
       ]
     },
+    "R2044": {
+      "decision_summary": "What a section owes the moment it joins the application is asked in one place now, and at the push gate.\n\nThe debt was not about the five defects it lists — those were repaid when they were found. It was about why nobody saw them: two sections were built, five properties every other section has were missing from each, and each of the five is asked by a different file, in a different round, and answered only by a demo in CI. CI was red for an unrelated reason, so four pushes landed on top of the silence.\n\nThree of the five can be answered by reading a file, so they can be asked before a push rather than after it: a row in each of the three total budget censuses, a recorded shrink expectation, and a descriptions object of the section's own. The other two need the binary running and stay CI's, which is what the debt asked for rather than moving everything.\n\nThe population is derived from the structure: the shell mounts a section by depending on its crate, so the shell's manifest is the roster and there is no list anyone has to remember to extend — which is the defect this whole file is about.",
+      "changes_bullets": [
+        "A new push step asks every mounted section the three questions a file can answer, and refuses an unclassified one rather than passing it: \"not in the map\" once read as \"concedes nothing\" for two screens that concede, for four pushes.",
+        "The tool derives its population from the shell's manifest, parses the shrink classification rather than grepping it — a name in the comment explaining the map is not a member of it — and reads each budget census as the total roster it is, so a missing row is a question nobody asked rather than a zero.",
+        "The predicate for the wire shape asks for the type's constructor rather than a function name. Its first draft asked for the name and called the oldest section a defect: that screen has published the shape since long before this round and calls its own function something else. A predicate drawn from two cases is refuted by the third, and it is finished only once it has run over the whole population.",
+        "The tool's own reader is exercised by its selftest, including against a crate that is not there — added because the derived oracle census refused the first version for exactly that omission."
+      ],
+      "verification_bullets": [
+        "The gate returns 0 over six mounted sections, each with a row in three censuses, a shrink expectation and a descriptions object, and its own selftest passes.",
+        "The refusal is driven both ways rather than argued: four fixture cases inside the selftest — a missing census row naming the census, an unclassified section, a section building no descriptions, and a section owing nothing — and once against the tree itself, by deleting a real budget row. That named the section and the file, and the row was restored byte-identical (the diff is empty).",
+        "The derived oracle census answers 34 pairs with none unexercised, one more than before, and it is the reason the reader is tested: it refused this tool's first version because the pure rule's oracle was never called by the selftest. The hook libraries' 282 assertions pass.",
+        "Measured, and it is what corrected the predicate: the shell mounts six sections; every one builds the descriptions type; and the oldest of them names its function `pin_descriptions`, which the first predicate would have called a defect."
+      ],
+      "impact_refs": [
+        "5.12",
+        "5.32"
+      ],
+      "carry_forward_bullets": [
+        "Nothing is opened by this round. The two questions that stay in CI are the ones that need the binary running, and the reason a red there can bury them is only partly repaid — the earlier round put the failing job's name on the override path, and the deeper half, that a demo sweep does not gate a push at all, is a deliberate design this repository has weighed and kept.",
+        "What the new step buys against that is narrower and worth stating plainly: a section can no longer join without the three things a file can answer, so the class of defect that took four pushes to surface now takes one.",
+        "Cohort loop 29 -> 28."
+      ],
+      "publishable_decision_summary": "What a section owes the moment it joins the application is asked in one place now, and at the push gate.\n\nThe debt was not about the five defects it lists — those were repaid when they were found. It was about why nobody saw them: two sections were built, five properties every other section has were missing from each, and each of the five is asked by a different file, in a different round, and answered only by a demo in CI. CI was red for an unrelated reason, so four pushes landed on top of the silence.\n\nThree of the five can be answered by reading a file, so they can be asked before a push rather than after it: a row in each of the three total budget censuses, a recorded shrink expectation, and a descriptions object of the section's own. The other two need the binary running and stay CI's, which is what the debt asked for rather than moving everything.\n\nThe population is derived from the structure: the shell mounts a section by depending on its crate, so the shell's manifest is the roster and there is no list anyone has to remember to extend — which is the defect this whole file is about.",
+      "publishable_changes_bullets": [
+        "A new push step asks every mounted section the three questions a file can answer, and refuses an unclassified one rather than passing it: \"not in the map\" once read as \"concedes nothing\" for two screens that concede, for four pushes.",
+        "The tool derives its population from the shell's manifest, parses the shrink classification rather than grepping it — a name in the comment explaining the map is not a member of it — and reads each budget census as the total roster it is, so a missing row is a question nobody asked rather than a zero.",
+        "The predicate for the wire shape asks for the type's constructor rather than a function name. Its first draft asked for the name and called the oldest section a defect: that screen has published the shape since long before this round and calls its own function something else. A predicate drawn from two cases is refuted by the third, and it is finished only once it has run over the whole population.",
+        "The tool's own reader is exercised by its selftest, including against a crate that is not there — added because the derived oracle census refused the first version for exactly that omission."
+      ],
+      "publishable_verification_bullets": [
+        "The gate returns 0 over six mounted sections, each with a row in three censuses, a shrink expectation and a descriptions object, and its own selftest passes.",
+        "The refusal is driven both ways rather than argued: four fixture cases inside the selftest — a missing census row naming the census, an unclassified section, a section building no descriptions, and a section owing nothing — and once against the tree itself, by deleting a real budget row. That named the section and the file, and the row was restored byte-identical (the diff is empty).",
+        "The derived oracle census answers 34 pairs with none unexercised, one more than before, and it is the reason the reader is tested: it refused this tool's first version because the pure rule's oracle was never called by the selftest. The hook libraries' 282 assertions pass.",
+        "Measured, and it is what corrected the predicate: the shell mounts six sections; every one builds the descriptions type; and the oldest of them names its function `pin_descriptions`, which the first predicate would have called a defect."
+      ],
+      "publishable_impact_refs": [
+        "5.12",
+        "5.32"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Nothing is opened by this round. The two questions that stay in CI are the ones that need the binary running, and the reason a red there can bury them is only partly repaid — the earlier round put the failing job's name on the override path, and the deeper half, that a demo sweep does not gate a push at all, is a deliberate design this repository has weighed and kept.",
+        "What the new step buys against that is narrower and worth stating plainly: a section can no longer join without the three things a file can answer, so the class of defect that took four pushes to surface now takes one.",
+        "Cohort loop 29 -> 28."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
