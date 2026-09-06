@@ -76,6 +76,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links analyzer-behaviour-canon-is-the-standalone-prototype, debt-the-canon-is-one-app-and-we-are-many-binaries",
         "names dashboard.t0.4"
@@ -88,6 +89,7 @@
       "blocked_because": "",
       "closed_by": "person",
       "closed_because": "rule:analyzer-debt-repayment-loop",
+      "rank": "unranked",
       "why": [
         "links debt-canon-gui-surface-census"
       ]
@@ -99,6 +101,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "unranked",
       "why": [
         "links analyzer-debt-repayment-loop"
       ]
@@ -110,6 +113,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links debt-canon-gui-surface-census"
       ]
@@ -121,6 +125,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links analyzer-debt-repayment-loop"
       ]
@@ -132,6 +137,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
@@ -143,6 +149,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "unranked",
       "why": [
         "links analyzer-debt-repayment-loop, debt-canon-gui-surface-census"
       ]
@@ -154,6 +161,7 @@
       "blocked_because": "",
       "closed_by": "person",
       "closed_because": "rule:analyzer-debt-repayment-loop",
+      "rank": "unranked",
       "why": [
         "links debt-canon-gui-surface-census"
       ]
@@ -165,6 +173,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links analyzer-debt-repayment-loop, screen-a-vs-canon-operation-census"
       ]
@@ -176,6 +185,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "names capture.t2.18"
       ]
@@ -187,6 +197,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links analyzer-debt-repayment-loop"
       ]
@@ -198,6 +209,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links debt-the-canon-is-one-app-and-we-are-many-binaries",
         "names dashboard.t2.9"
@@ -210,6 +222,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links analyzer-debt-repayment-loop, debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
@@ -221,6 +234,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "unranked",
       "why": [
         "links debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
@@ -232,6 +246,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links analyzer-tool-capability-spec",
         "names lab.t2.15, lab.t2.16, lab.t2.17"
@@ -244,6 +259,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
@@ -255,6 +271,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links debt-canon-gui-surface-census"
       ]
@@ -266,6 +283,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
@@ -277,6 +295,7 @@
       "blocked_because": "",
       "closed_by": "person",
       "closed_because": "rule:analyzer-debt-repayment-loop",
+      "rank": "unranked",
       "why": [
         "links debt-canon-gui-surface-census"
       ]
@@ -288,6 +307,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links screen-a-vs-canon-operation-census"
       ]
@@ -299,6 +319,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links debt-canon-gui-surface-census, debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
@@ -310,6 +331,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links debt-canon-gui-surface-census"
       ]
@@ -321,6 +343,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links debt-canon-gui-surface-census, debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
@@ -332,6 +355,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links debt-canon-gui-surface-census"
       ]
@@ -343,6 +367,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "unranked",
       "why": [
         "links debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
@@ -354,6 +379,7 @@
       "blocked_because": "",
       "closed_by": "person",
       "closed_because": "rule:analyzer-debt-repayment-loop",
+      "rank": "unranked",
       "why": [
         "links debt-canon-gui-surface-census"
       ]
@@ -365,6 +391,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "unranked",
       "why": [
         "links debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
@@ -376,6 +403,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "unranked",
       "why": [
         "links analyzer-debt-repayment-loop, debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
@@ -387,6 +415,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
@@ -398,6 +427,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "unranked",
       "why": [
         "links analyzer-debt-repayment-loop"
       ]
@@ -409,6 +439,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
@@ -420,6 +451,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links analyzer-behaviour-canon-is-the-standalone-prototype"
       ]
@@ -431,6 +463,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links analyzer-debt-repayment-loop, analyzer-tool-capability-spec",
         "names dashboard.t2.12"
@@ -443,6 +476,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "unranked",
       "why": [
         "links screen-a-vs-canon-operation-census"
       ]
@@ -454,6 +488,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links debt-canon-gui-surface-census"
       ]
@@ -465,6 +500,7 @@
       "blocked_because": "",
       "closed_by": "person",
       "closed_because": "rule:analyzer-debt-repayment-loop",
+      "rank": "unranked",
       "why": [
         "links screen-a-vs-canon-operation-census"
       ]
@@ -476,6 +512,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links debt-canon-gui-surface-census, debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
@@ -487,6 +524,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links analyzer-debt-repayment-loop"
       ]
@@ -498,6 +536,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links analyzer-tool-capability-spec, debt-canon-gui-surface-census"
       ]
@@ -509,6 +548,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
@@ -520,6 +560,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links analyzer-debt-repayment-loop, debt-canon-gui-surface-census",
         "names capture.t0.1, capture.t0.4, capture.t1.10, capture.t2.16, capture.t2.17, lab.t2.14, lab.t2.18"
@@ -532,6 +573,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "unranked",
       "why": [
         "links debt-canon-gui-surface-census"
       ]
@@ -543,6 +585,7 @@
       "blocked_because": "",
       "closed_by": "person",
       "closed_because": "rule:analyzer-debt-repayment-loop",
+      "rank": "unranked",
       "why": [
         "links debt-canon-gui-surface-census, debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
@@ -554,6 +597,7 @@
       "blocked_because": "",
       "closed_by": "person",
       "closed_because": "rule:analyzer-debt-repayment-loop",
+      "rank": "unranked",
       "why": [
         "links debt-canon-gui-surface-census"
       ]
@@ -565,6 +609,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links analyzer-behaviour-canon-is-the-standalone-prototype, debt-canon-gui-surface-census"
       ]
@@ -576,6 +621,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links analyzer-behaviour-canon-is-the-standalone-prototype, debt-canon-gui-surface-census"
       ]
@@ -587,6 +633,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links debt-canon-gui-surface-census, debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
@@ -598,6 +645,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links analyzer-debt-repayment-loop"
       ]
@@ -609,6 +657,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
@@ -620,6 +669,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links analyzer-debt-repayment-loop"
       ]
@@ -631,6 +681,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links analyzer-behaviour-canon-is-the-standalone-prototype, screen-a-vs-canon-operation-census"
       ]
@@ -642,6 +693,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links analyzer-debt-repayment-loop, screen-a-vs-canon-operation-census"
       ]
@@ -653,6 +705,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links analyzer-behaviour-canon-is-the-standalone-prototype",
         "names dashboard.t2.9"
@@ -665,6 +718,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
@@ -676,6 +730,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "unranked",
       "why": [
         "links debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
@@ -687,6 +742,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "unranked",
       "why": [
         "links screen-a-vs-canon-operation-census"
       ]
@@ -698,6 +754,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "unranked",
       "why": [
         "links analyzer-behaviour-canon-is-the-standalone-prototype"
       ]
@@ -709,6 +766,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links debt-canon-gui-surface-census"
       ]
@@ -720,6 +778,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links screen-a-vs-canon-operation-census"
       ]
@@ -731,6 +790,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "ordinary",
       "why": [
         "links analyzer-behaviour-canon-is-the-standalone-prototype, debt-canon-gui-surface-census",
         "names dashboard.t2.9"
@@ -743,6 +803,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "unranked",
       "why": [
         "links debt-canon-gui-surface-census"
       ]
@@ -754,9 +815,11 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
+      "rank": "unranked",
       "why": [
         "links protocol-analyzer-class-tool-capability-audit"
       ]
     }
-  ]
+  ],
+  "unranked": 21
 }

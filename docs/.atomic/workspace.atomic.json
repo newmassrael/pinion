@@ -88498,6 +88498,50 @@
         "Cohort loop 35 -> 34."
       ]
     },
+    "R2038": {
+      "decision_summary": "A rank is derived rather than migrated, and a number that may only fall now has somewhere to fall from.\n\nThe standing rules this loop runs under name instruments that do not exist: a critical list to take from first, a ratchet on how many debts nobody has ranked, and a chain saying which round a debt came out of. The debt that recorded that asked for the three rule-words to become legal `priority` values and for the five existing ones to be migrated into them, calling the migration half the work.\n\nMeasured before choosing, the migration is unnecessary and lossy. There are 373 open debt files; 101 carry a priority and 272 carry none. Of the 62 in the family, 41 are ranked across five shades and none is `critical`. So `critical` is its own rank and is new, the five older shades are all `ordinary` — a shade a reader may still read and no rule does — and `unranked` is the ABSENCE of the field. Not one of the 41 files is touched, the shades survive, and the half the debt called work disappears.",
+      "changes_bullets": [
+        "The debt tool derives the three words the loop's rules read from the field the files already carry, and refuses a word no rule knows — a debt ranked by one would sit in no list the loop reads, which is the silent exclusion this family's census exists against.",
+        "The report prints both new lines, including the critical one when it is empty: an empty list says the question was asked and a missing line says nobody asked. The snapshot carries the derived rank per row and the unranked count at the top, so a reader with no memory folder has the answer too.",
+        "The ratchet lives in the check the push hook runs, and its other side is the PREVIOUS commit's snapshot. It has to be: the write rewrites the working snapshot in the same commit that changes the folder, so a count compared against that one is compared with itself. It fails open on a history that cannot answer and says so out loud."
+      ],
+      "verification_bullets": [
+        "The report prints `critical 0 — take from here first` and `unranked 21 of 62`. `--write` then `--check` returns 0, with the ratchet's fail-open spoken rather than silent — which is the correct outcome for this run, since this is the commit that first puts the field in the snapshot and the previous one cannot answer.",
+        "The selftest PASSES with the derivation driven over all six words, the refusal of an unknown one (asserted to name both the offending word and the legal ones), the snapshot carrying the derived rank and the top-level count, and the git oracle exercised against this repository's real history with both of its legal outcomes admitted.",
+        "The derived oracle census answers 33 pure-rule/oracle pairs with none unexercised, and the hook libraries' 282 assertions pass.",
+        "Measured, and it is what changed the plan: 373 open debt files with 101 ranked; 62 in the family with 41 ranked across five shades — medium 13, normal 18, high 6, low 2, top 2 — and `critical` used nowhere at all."
+      ],
+      "impact_refs": [
+        "5.12",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "The debt is repaid in half and NOT closed, and the half that remains is written into it with the measurement that shapes it: the chain saying which round a debt came out of, and the deferred count that depends on it. `@from` appears in nine files as body prose and in no front matter, so no tool can read it, while nine files hand-write a `created_by:`. Unifying those two names is the decision that comes before any code, and it is stated rather than assumed.",
+        "The ratchet starts at 21 unranked of 62 in the family. It can only fall from here, and the first fall is available to any round that ranks a file it touches.",
+        "Cohort loop stays 34."
+      ],
+      "publishable_decision_summary": "A rank is derived rather than migrated, and a number that may only fall now has somewhere to fall from.\n\nThe standing rules this loop runs under name instruments that do not exist: a critical list to take from first, a ratchet on how many debts nobody has ranked, and a chain saying which round a debt came out of. The debt that recorded that asked for the three rule-words to become legal `priority` values and for the five existing ones to be migrated into them, calling the migration half the work.\n\nMeasured before choosing, the migration is unnecessary and lossy. There are 373 open debt files; 101 carry a priority and 272 carry none. Of the 62 in the family, 41 are ranked across five shades and none is `critical`. So `critical` is its own rank and is new, the five older shades are all `ordinary` — a shade a reader may still read and no rule does — and `unranked` is the ABSENCE of the field. Not one of the 41 files is touched, the shades survive, and the half the debt called work disappears.",
+      "publishable_changes_bullets": [
+        "The debt tool derives the three words the loop's rules read from the field the files already carry, and refuses a word no rule knows — a debt ranked by one would sit in no list the loop reads, which is the silent exclusion this family's census exists against.",
+        "The report prints both new lines, including the critical one when it is empty: an empty list says the question was asked and a missing line says nobody asked. The snapshot carries the derived rank per row and the unranked count at the top, so a reader with no memory folder has the answer too.",
+        "The ratchet lives in the check the push hook runs, and its other side is the PREVIOUS commit's snapshot. It has to be: the write rewrites the working snapshot in the same commit that changes the folder, so a count compared against that one is compared with itself. It fails open on a history that cannot answer and says so out loud."
+      ],
+      "publishable_verification_bullets": [
+        "The report prints `critical 0 — take from here first` and `unranked 21 of 62`. `--write` then `--check` returns 0, with the ratchet's fail-open spoken rather than silent — which is the correct outcome for this run, since this is the commit that first puts the field in the snapshot and the previous one cannot answer.",
+        "The selftest PASSES with the derivation driven over all six words, the refusal of an unknown one (asserted to name both the offending word and the legal ones), the snapshot carrying the derived rank and the top-level count, and the git oracle exercised against this repository's real history with both of its legal outcomes admitted.",
+        "The derived oracle census answers 33 pure-rule/oracle pairs with none unexercised, and the hook libraries' 282 assertions pass.",
+        "Measured, and it is what changed the plan: 373 open debt files with 101 ranked; 62 in the family with 41 ranked across five shades — medium 13, normal 18, high 6, low 2, top 2 — and `critical` used nowhere at all."
+      ],
+      "publishable_impact_refs": [
+        "5.12",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The debt is repaid in half and NOT closed, and the half that remains is written into it with the measurement that shapes it: the chain saying which round a debt came out of, and the deferred count that depends on it. `@from` appears in nine files as body prose and in no front matter, so no tool can read it, while nine files hand-write a `created_by:`. Unifying those two names is the decision that comes before any code, and it is stated rather than assumed.",
+        "The ratchet starts at 21 unranked of 62 in the family. It can only fall from here, and the first fall is available to any round that ranks a file it touches.",
+        "Cohort loop stays 34."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

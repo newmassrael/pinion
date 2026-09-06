@@ -684,6 +684,79 @@ def unblocked(rows: list[dict]) -> list[dict]:
     return [row for row in rows if row["blocked_by"] not in BLOCKED]
 
 
+#: (R2038) The words a debt's `priority:` may carry. Five of them predate any
+#: reader: they were written by hand, one per file, and NOTHING read them —
+#: `survey` carried the string through and no rule ranked anything by it.
+#: `critical` is the sixth and is new, because the standing rules the loop runs
+#: under name a critical list and this family had no word for one.
+PRIORITIES = ("critical", "top", "high", "medium", "normal", "low")
+
+#: (R2038) The three answers the loop's own rules ask for, derived from the
+#: field above rather than migrated into it.
+#:
+#: ★★★★★ The fold is 6 -> 3 and it destroys nothing: `critical` is its own rank
+#: because a rule takes from it first, the five older words are all `ordinary`
+#: (a shade a reader may still read, and no rule does), and `unranked` is the
+#: ABSENCE of the field. Measured at R2038 before choosing: 62 family debts, 41
+#: carrying one of the five and 21 carrying none, and zero carrying `critical`.
+#: Migrating the five into three would have rewritten 41 files to say something
+#: no rule asks; deriving costs nothing and leaves the shades where they are.
+RANKS = ("critical", "ordinary", "unranked")
+
+
+def rank_of(priority: str) -> str:
+    """Which of [`RANKS`] a debt's declared `priority` amounts to.
+
+    Pure in `priority`, and STRICT about a word it does not know: a value
+    nobody can rank is a debt that would sit in no list at all, which is the
+    silent-exclusion shape this family's own census exists against.
+    """
+    if not priority:
+        return "unranked"
+    if priority == "critical":
+        return "critical"
+    if priority in PRIORITIES:
+        return "ordinary"
+    raise Finding(
+        f"priority {priority!r} is not one of {', '.join(PRIORITIES)} — a debt"
+        " ranked by a word no rule knows is in no list the loop reads"
+    )
+
+
+def unranked_of(rows: list[dict]) -> list[str]:
+    """The family's debts that nobody has ranked, by name. Pure in `rows`."""
+    return sorted(r["public_name"] for r in rows if rank_of(r.get("priority", "")) == "unranked")
+
+
+def committed_unranked() -> int | None:
+    """How many the LAST COMMITTED snapshot said were unranked, or `None`.
+
+    The ratchet's other side, and it has to come from the previous commit: the
+    working snapshot is rewritten by `--write` in the same commit that changes
+    the folder, so comparing against it would compare a number with itself.
+    Fails open — a shallow clone or a first commit has nothing to compare — and
+    the caller says so rather than reporting a pass.
+    """
+    try:
+        done = subprocess.run(
+            ["git", "-C", str(ROOT), "show", "HEAD:docs/analyzer-debts.json"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if done.returncode != 0:
+        return None
+    try:
+        held = json.loads(done.stdout)
+    except json.JSONDecodeError:
+        return None
+    count = held.get("unranked")
+    return count if isinstance(count, int) else None
+
+
 def cohort_from_git() -> list[str] | None:
     """The pinned cohort, read out of this repository's own history.
 
@@ -906,6 +979,23 @@ def cohort_report(
         f"  {len(by_standing['loop'])} of {len(members)} cohort debt(s) are the "
         "loop's to close — the north star's third condition is that this is zero"
     )
+    # ★★★★★ (R2038) The rank, which the loop's standing rules read and this
+    # family had no word for. `critical` is where a rule says to take from
+    # first, so it is printed even when empty — an absent list and an empty one
+    # are different answers, and only one of them says the question was asked.
+    out.append("")
+    critical = sorted(r["public_name"] for r in rows if rank_of(r.get("priority", "")) == "critical")
+    out.append(
+        f"  critical  {len(critical):>3} — take from here first"
+        + ("" if critical else " (none: rank one `critical` to steer the loop)")
+    )
+    for name in critical:
+        out.append(f"      {name}")
+    loose_unranked = unranked_of(rows)
+    out.append(
+        f"  unranked  {len(loose_unranked):>3} of {len(rows)} — nobody has ranked"
+        " these, and the committed snapshot carries the number so it can only fall"
+    )
     return out
 
 
@@ -971,10 +1061,18 @@ def snapshot_of(rows: list[dict], members: list[str]) -> dict:
                 "blocked_because": r.get("blocked_because", ""),
                 "closed_by": r.get("closed_by", ""),
                 "closed_because": r.get("closed_because", ""),
+                # (R2038) Which of the three the loop's rules read, DERIVED from
+                # the file's `priority:` rather than restated: the snapshot
+                # carries the answer so a reader with no memory folder has one,
+                # and the shade the file wrote stays in the file.
+                "rank": rank_of(r.get("priority", "")),
                 "why": r["why"],
             }
             for r in sorted(rows, key=lambda r: r["public_name"])
         ],
+        # (R2038) The ratchet's number, at the top where a reader and `--check`
+        # both find it without walking the rows.
+        "unranked": len(unranked_of(rows)),
     }
 
 
@@ -1063,6 +1161,54 @@ def selftest() -> int:
     check(
         "the snapshot publishes the declared label",
         [d["name"] for d in shot["debts"]] == ["debt-aaa", "debt-mmm"],
+    )
+    # ★★★★★ (R2038) The rank, both directions and the refusal. The three words
+    # the loop's rules read are DERIVED from a field six words wide, and the
+    # only way that derivation can be wrong quietly is by answering something
+    # for a word it does not know — so it raises instead.
+    check("an absent priority is unranked", rank_of("") == "unranked")
+    check("`critical` is its own rank", rank_of("critical") == "critical")
+    for shade in ("top", "high", "medium", "normal", "low"):
+        check(f"`{shade}` folds to ordinary", rank_of(shade) == "ordinary")
+    try:
+        rank_of("urgent")
+        check("a word no rule knows is refused", False)
+    except Finding as why:
+        check(
+            "a word no rule knows is refused, and the message lists the ones that are",
+            "critical" in str(why) and "urgent" in str(why),
+        )
+    check(
+        "the unranked list names the files nobody ranked",
+        unranked_of(
+            [
+                {"public_name": "debt-a", "priority": ""},
+                {"public_name": "debt-b", "priority": "high"},
+            ]
+        )
+        == ["debt-a"],
+    )
+    ranked_shot = snapshot_of(
+        [
+            {**plain, "priority": "critical"},
+            {**named, "priority": ""},
+        ],
+        ["debt-aaa", "debt-mmm"],
+    )
+    check(
+        "the snapshot carries the derived rank, not the shade",
+        {d["name"]: d["rank"] for d in ranked_shot["debts"]}
+        == {"debt-aaa": "unranked", "debt-mmm": "critical"},
+    )
+    check("and the ratchet's number at the top", ranked_shot["unranked"] == 1)
+    # ★ The ratchet's oracle, exercised against this repository's real history.
+    # It answers `None` before the first commit that carries the field, which is
+    # the fail-open path, so both outcomes are legal and the assertion is about
+    # the TYPE rather than the number.
+    seen = committed_unranked()
+    check(
+        "the committed count is an integer or an honest None",
+        seen is None or isinstance(seen, int),
     )
     check(
         "and the raw name is nowhere in it",
@@ -1572,6 +1718,29 @@ def main() -> int:
                     file=sys.stderr,
                 )
                 return 1
+        # ★★★★★ (R2038) The RATCHET, and it is the only rule here that reads the
+        # PREVIOUS commit. `--write` rewrites the working snapshot in the same
+        # commit that changes the folder, so a number compared against it is
+        # compared with itself; the committed one is the only other side there
+        # is. Fails open on a shallow clone or a first commit and SAYS so — an
+        # absent history is not evidence that nothing regressed.
+        was = committed_unranked()
+        now = fresh["unranked"]
+        if was is None:
+            print(
+                "analysis-tool debts: no committed `unranked` to ratchet against"
+                f" (this run counts {now}) — the history could not answer",
+                file=sys.stderr,
+            )
+        elif now > was:
+            print(
+                f"analysis-tool debts: {now} unranked debt(s), up from {was}."
+                " A debt nobody ranked is in no list the loop reads, so this"
+                " number may only fall: give the new file a `priority:` (one of"
+                f" {', '.join(PRIORITIES)}).",
+                file=sys.stderr,
+            )
+            return 1
         loose = unblocked(rows)
         mine = [
             name
