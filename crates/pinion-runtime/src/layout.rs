@@ -3859,6 +3859,74 @@ mod tests {
         assert_eq!(b.rect.h, 30, "declared height");
     }
 
+    /// ★★★★★ (R2033) An `Auto` size on an absolute child reaches for its own
+    /// CONTENT, never for the parent — and this is pinned because the
+    /// framework's own note said the opposite for hundreds of rounds and two
+    /// screens believed it. A graph screen's five wires and a dashboard card's
+    /// eight-grip resize ring were each measured `0 x 0` inside a parent with a
+    /// perfectly definite size, so a mark a person aims at was not drawn at all
+    /// and no index could find it.
+    ///
+    /// Both halves are asserted, because the claim is a comparison: `Auto`
+    /// takes the content's extent (30 x 12 here, not the parent's 200 x 200),
+    /// and `Percent(100)` is what actually fills the parent. A sentence about
+    /// layout that no test drives is a sentence that invites the defect.
+    #[test]
+    fn r2033_an_absolute_childs_auto_size_is_its_content_not_its_parent() {
+        let content = || {
+            Scene::Box(
+                BoxNode::filled(Rect::default(), Color::default())
+                    .with_layout(LayoutStyle::new().with_size(Size::px(30, 12))),
+            )
+        };
+        // ⚠ The sized parent is one level DOWN, because `compute_layout` gives
+        // the ROOT the window whatever the root declares — measured here, a
+        // root that says `200 x 200` is laid out `320 x 240`, and a percentage
+        // read against it would have been the window's rather than the
+        // parent's. The defect being pinned lives inside a screen, so the
+        // fixture has to be a node inside one too.
+        let measure = |style: LayoutStyle| {
+            let mut scene = Scene::Container(ContainerNode::new(vec![Scene::Container(
+                ContainerNode::new(vec![Scene::Container(
+                    ContainerNode::new(vec![content()]).with_layout(style),
+                )])
+                .with_layout(LayoutStyle::new().with_size(Size::px(200, 200))),
+            )]));
+            compute_layout(&mut scene, &mut cache(), 320, 240);
+            let Scene::Container(root) = &scene else {
+                panic!("root")
+            };
+            let Scene::Container(parent) = &root.children[0] else {
+                panic!("parent")
+            };
+            assert_eq!(
+                (parent.rect.w, parent.rect.h),
+                (200, 200),
+                "the parent is the size it declared, so a share of it is a known number"
+            );
+            let Scene::Container(child) = &parent.children[0] else {
+                panic!("absolute child")
+            };
+            (child.rect.w, child.rect.h)
+        };
+        assert_eq!(
+            measure(LayoutStyle::new().with_absolute_position(0, 0)),
+            (30, 12),
+            "an `Auto` absolute child shrinks to fit its content"
+        );
+        assert_eq!(
+            measure(
+                LayoutStyle::new().with_absolute_position(0, 0).with_size(
+                    Size::auto()
+                        .with_width(SizeValue::Percent(100))
+                        .with_height(SizeValue::Percent(100))
+                )
+            ),
+            (200, 200),
+            "filling the parent is something a node has to SAY"
+        );
+    }
+
     #[test]
     fn r55_d6_absolute_child_removed_from_flex_flow() {
         // R55.D.6 — Flex Column with three children: two normal-flow

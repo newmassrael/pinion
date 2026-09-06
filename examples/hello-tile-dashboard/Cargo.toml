@@ -26,6 +26,11 @@ serde = { workspace = true }
 
 [dev-dependencies]
 pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+# R2033 — the taffy pass, so the grip ring's claim to BE the card's extent is
+# asserted against the rect layout actually produced rather than against the
+# sentence the ring's own doc makes about it.
+pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1" }
+pinion-text = { path = "../../crates/pinion-text", version = "0.0.1" }
 
 [build-dependencies]
 pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }

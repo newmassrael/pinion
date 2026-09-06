@@ -100,11 +100,22 @@ def tiles(app: RpcSubprocess) -> str:
 
 
 def cards(app: RpcSubprocess) -> dict:
+    """The card containers, and only those.
+
+    ★★★★★ R2033 — this used to say "under `dashboard#card` and not a label",
+    which counted five because the OTHER things under a card had no box: the
+    selected card's grip ring and its eight grips were measured `0 x 0` and so
+    never reached an index keyed by placement. The helper's population was
+    defined by a defect, and repairing the ring took this walk red at a count.
+    ⇒ name the thing, do not subtract the exceptions you happen to know about:
+    a card's tag has nothing after its id, and everything the card CONTAINS has.
+    """
     rects = abs_rects_of(app.snapshot(source="paint", viewport=(760, 420)))
+    prefix = "dashboard#card."
     return {
         t: r
         for t, r in rects.items()
-        if t.startswith("dashboard#card") and not t.endswith(".label")
+        if t.startswith(prefix) and "." not in t[len(prefix) :]
     }
 
 

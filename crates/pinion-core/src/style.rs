@@ -4906,12 +4906,17 @@ impl LayoutStyle {
     /// then drops the node, and [`crate::reach`] reports a name that
     /// nothing on the screen can be found by.
     ///
-    /// ⚠ [`Self::with_absolute_position`] says below that an `Auto` size
-    /// "expands to the parent's content rect". Measured at R2032 against
-    /// a leaf, it does not: five curves of a graph screen came back
-    /// `0 x 0` at their correct corners inside a parent 900 x 560. That
-    /// expansion is a container's behaviour, and the half-placement it
-    /// invites is what this constructor exists to make unspellable.
+    /// ⚠ An `Auto` size on an absolute child does **not** expand to the
+    /// parent — it shrinks to fit its own content, as CSS's shrink-to-fit
+    /// does when only `left` / `top` are given. Measured twice: five
+    /// curves of a graph screen came back `0 x 0` at their correct
+    /// corners inside a parent 900 x 560 (R2032, a leaf with no content),
+    /// and a card's resize ring came back `0 x 0` with eight children in
+    /// it, because its tracks were fractional and a fraction of an
+    /// indefinite size is nothing (R2033). ⇒ **the parent's extent is
+    /// never what `Auto` reaches for**, whatever the node holds. To fill
+    /// the parent, say so: a `Percent(100)` size, which resolves against
+    /// the parent's padding box (measured R2033, ring rect = card rect).
     ///
     /// Nine sites had written this pair by hand before it was published,
     /// eight of them byte-identical; the one screen that had no copy to
@@ -4942,9 +4947,10 @@ impl LayoutStyle {
     /// `(left, top)` outside the parent's flex / block flow. The
     /// node's [`Self::size`] declares the absolute box's dimensions —
     /// reach for [`Self::placed`], which declares both halves at once,
-    /// rather than this builder alone. ⚠ An `Auto` size expands to the
-    /// parent's content rect only for a node with content to expand
-    /// around; a leaf primitive gets `0 x 0` (measured R2032).
+    /// rather than this builder alone. ⚠ An `Auto` size here shrinks to
+    /// fit the node's own content and **never** reaches for the parent's
+    /// extent — see the note on [`Self::placed`] for the two screens that
+    /// measured it, and use a `Percent(100)` size to fill the parent.
     ///
     /// Mirrors CSS `position: absolute; left/top: <px>` plus
     /// `width/height`. The substrate's first consumer is the

@@ -88268,6 +88268,58 @@
         "Next: the three remaining screens of this red, then back to the cohort."
       ]
     },
+    "R2033": {
+      "decision_summary": "A card's eight resize grips were never drawn, and the round before had already measured why.\n\nThe fifth instalment on the red run. The grip ring is a 3x3 grid overlay whose outer tracks are fractional, so the ring IS the hit-test band at any card size — the right design, and the ring's own doc explains it well. It was placed absolutely with no size, under a comment quoting the framework's note that an `Auto` size on an absolute child resolves to the parent's content rect.\n\nIt does not. Fractional tracks against an indefinite size resolve to nothing, so the ring measured `0 x 0` and its eight grips were not painted at all: the band a person aims at to resize a card was not on the screen.\n\nR2032 wrote that the false note invites the defect. The next round found its second victim, quoting it. And R2032's own correction was also wrong — it blamed the node being a leaf, and this ring had eight children. The true rule is CSS shrink-to-fit: an `Auto` size measures the node's own content and never reaches for the parent, whatever the node holds. A correction is itself a claim to audit.",
+      "changes_bullets": [
+        "The ring now says it fills the card — a `Percent(100)` size on both axes, which resolves against the parent's padding box. Measured: ring rect equals card rect, which is the ring's whole claim and was checked by nothing before.",
+        "Both notes in the framework are rewritten to the rule that is true, with the two screens that measured it, and they name the spelling that does fill a parent.",
+        "The rule is pinned in a runtime test rather than in prose: an `Auto` absolute child takes its content's extent and a `Percent(100)` one takes its parent's, asserted as one comparison. Writing it taught a second fact worth keeping — the layout pass gives the ROOT the window whatever the root declares — so a fixture for a defect that lives inside a screen has to be one level down, and the fixture says so.",
+        "The screen gains a test that places the real view through the real taffy pass and compares the two rects. Its 28 existing tests all drive the oracle, where a handle is enumerable, named and drivable through the card's own arithmetic that never consults the painted ring.",
+        "One walk's helper is corrected: it counted the tags under a card that are not labels and expected five, which was five only because the ring and its grips had no box. It now names the card instead of subtracting the exceptions it happened to know about."
+      ],
+      "verification_bullets": [
+        "Three walks PASS — the tile board, the same board without a pointer, and the gesture that reads one fact — all three in the red run's failure list. 5,028 tests passed and 0 failed over the runtime, the core and this example. Workspace clippy on CI's own flags rc=0 with zero warnings. `cargo fmt --all --check` rc=0.",
+        "The new screen test was driven RED by reverting the extent, which is the only thing that makes it a gate: `Rect { x: 12, y: 42, w: 0, h: 0 }`. The first counterfactual died at COMPILE instead, on an unused import left behind by the subtraction — a counterfactual has to be the original, not a partial revert of the repair.",
+        "Measured rather than inferred: the ring's rect equals the card's, so a percentage on an absolutely placed child resolves against the parent's padding box; an `Auto` one measures 30x12 of content inside a 200x200 parent; a root declaring 200x200 is laid out at the window's 320x240; and of the 16 sites spelling an absolute position at the origin, exactly one relied on the false sentence, the other unsized one taking a scroll node's own already-sized layout.",
+        "Two scratch probes were removed after they answered."
+      ],
+      "impact_refs": [
+        "5.21",
+        "5.45"
+      ],
+      "carry_forward_bullets": [
+        "Two demos of the original 24 remain: a chart screen's untagged mark and a font screen's four marks. Same class is not same cause, so each is measured before it is repaired.",
+        "No fill-the-parent constructor was published, and the measurement is why: one consumer is under this repository's own three-site rule for lifting a helper. What needed repair was the sentence, not the vocabulary — which is also the answer to why this defect existed at all.",
+        "The open debt about half-placements keeps its 294 sites; this round only closed a subset of one, and says so in the debt's own file.",
+        "The larger gap this round makes concrete: a screen's tests can be entirely green while a control is not drawn, because they drive the oracle and the oracle never consults the painted geometry. The ring's test is one instance of the repair, not the general one. The general one is that a control which declares a hit-test band should be asserted to HAVE that band on the screen, and nothing in this tree derives that population yet.",
+        "Next: the two remaining screens of this red, then back to the cohort."
+      ],
+      "publishable_decision_summary": "A card's eight resize grips were never drawn, and the round before had already measured why.\n\nThe fifth instalment on the red run. The grip ring is a 3x3 grid overlay whose outer tracks are fractional, so the ring IS the hit-test band at any card size — the right design, and the ring's own doc explains it well. It was placed absolutely with no size, under a comment quoting the framework's note that an `Auto` size on an absolute child resolves to the parent's content rect.\n\nIt does not. Fractional tracks against an indefinite size resolve to nothing, so the ring measured `0 x 0` and its eight grips were not painted at all: the band a person aims at to resize a card was not on the screen.\n\nR2032 wrote that the false note invites the defect. The next round found its second victim, quoting it. And R2032's own correction was also wrong — it blamed the node being a leaf, and this ring had eight children. The true rule is CSS shrink-to-fit: an `Auto` size measures the node's own content and never reaches for the parent, whatever the node holds. A correction is itself a claim to audit.",
+      "publishable_changes_bullets": [
+        "The ring now says it fills the card — a `Percent(100)` size on both axes, which resolves against the parent's padding box. Measured: ring rect equals card rect, which is the ring's whole claim and was checked by nothing before.",
+        "Both notes in the framework are rewritten to the rule that is true, with the two screens that measured it, and they name the spelling that does fill a parent.",
+        "The rule is pinned in a runtime test rather than in prose: an `Auto` absolute child takes its content's extent and a `Percent(100)` one takes its parent's, asserted as one comparison. Writing it taught a second fact worth keeping — the layout pass gives the ROOT the window whatever the root declares — so a fixture for a defect that lives inside a screen has to be one level down, and the fixture says so.",
+        "The screen gains a test that places the real view through the real taffy pass and compares the two rects. Its 28 existing tests all drive the oracle, where a handle is enumerable, named and drivable through the card's own arithmetic that never consults the painted ring.",
+        "One walk's helper is corrected: it counted the tags under a card that are not labels and expected five, which was five only because the ring and its grips had no box. It now names the card instead of subtracting the exceptions it happened to know about."
+      ],
+      "publishable_verification_bullets": [
+        "Three walks PASS — the tile board, the same board without a pointer, and the gesture that reads one fact — all three in the red run's failure list. 5,028 tests passed and 0 failed over the runtime, the core and this example. Workspace clippy on CI's own flags rc=0 with zero warnings. `cargo fmt --all --check` rc=0.",
+        "The new screen test was driven RED by reverting the extent, which is the only thing that makes it a gate: `Rect { x: 12, y: 42, w: 0, h: 0 }`. The first counterfactual died at COMPILE instead, on an unused import left behind by the subtraction — a counterfactual has to be the original, not a partial revert of the repair.",
+        "Measured rather than inferred: the ring's rect equals the card's, so a percentage on an absolutely placed child resolves against the parent's padding box; an `Auto` one measures 30x12 of content inside a 200x200 parent; a root declaring 200x200 is laid out at the window's 320x240; and of the 16 sites spelling an absolute position at the origin, exactly one relied on the false sentence, the other unsized one taking a scroll node's own already-sized layout.",
+        "Two scratch probes were removed after they answered."
+      ],
+      "publishable_impact_refs": [
+        "5.21",
+        "5.45"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Two demos of the original 24 remain: a chart screen's untagged mark and a font screen's four marks. Same class is not same cause, so each is measured before it is repaired.",
+        "No fill-the-parent constructor was published, and the measurement is why: one consumer is under this repository's own three-site rule for lifting a helper. What needed repair was the sentence, not the vocabulary — which is also the answer to why this defect existed at all.",
+        "The open debt about half-placements keeps its 294 sites; this round only closed a subset of one, and says so in the debt's own file.",
+        "The larger gap this round makes concrete: a screen's tests can be entirely green while a control is not drawn, because they drive the oracle and the oracle never consults the painted geometry. The ring's test is one instance of the repair, not the general one. The general one is that a control which declares a hit-test band should be asserted to HAVE that band on the screen, and nothing in this tree derives that population yet.",
+        "Next: the two remaining screens of this red, then back to the cohort."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

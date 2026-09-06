@@ -94,7 +94,8 @@ use pinion_core::input::{Modifiers, PointerReading};
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
-    BoxStyle, FlexDirection, GridPlacement, GridTrack, LayoutStyle, TextStyle, TrackMax, TrackMin,
+    BoxStyle, FlexDirection, GridPlacement, GridTrack, LayoutStyle, Size, SizeValue, TextStyle,
+    TrackMax, TrackMin,
 };
 use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widgets::tile_grid::{
@@ -1228,10 +1229,20 @@ fn handle_ring(id: &TileId, ink: pinion_core::style::Color) -> Scene {
             .with_tag(sub_tag(&format!("card.{id}.handles")))
             .with_layout(
                 LayoutStyle::new()
-                    // `Auto` size on an absolute child resolves to the parent's
-                    // content rect, which is what makes the ring track the card
-                    // without anybody stating the card's size.
+                    // ★★★★★ R2033 — the ring is the CARD'S OWN EXTENT, stated
+                    // as a share rather than as a guess. What stood here relied
+                    // on a sentence that is false: an `Auto` size on an absolute
+                    // child does NOT resolve to the parent's content rect, it
+                    // shrinks to fit — and this ring's content is fractional
+                    // tracks, which resolve to nothing against an indefinite
+                    // size. So the ring was `0 x 0`, eight grips of it, and the
+                    // resize band a person aims at was not drawn at all.
                     .with_absolute_position(0, 0)
+                    .with_size(
+                        Size::auto()
+                            .with_width(SizeValue::Percent(100))
+                            .with_height(SizeValue::Percent(100)),
+                    )
                     .grid_columns(tracks())
                     .with_grid_rows(tracks()),
             ),
@@ -1408,6 +1419,66 @@ fn main() {
 mod tests {
     use super::*;
     use pinion_core::Owner;
+
+    /// The node carrying `tag`, anywhere under `scene`.
+    fn find<'a>(scene: &'a Scene, tag: &str) -> Option<&'a Scene> {
+        if scene.tag() == Some(tag) {
+            return Some(scene);
+        }
+        match scene {
+            Scene::Container(c) => c.children.iter().find_map(|ch| find(ch, tag)),
+            Scene::Scroll(s) => find(&s.content, tag),
+            _ => None,
+        }
+    }
+
+    /// ★★★★★ (R2033) The grip ring's whole claim is that it IS the card's
+    /// extent at any card size, and until this test nothing checked it — the
+    /// ring's own doc asserted it in prose while the ring was measured `0 x 0`
+    /// and its eight grips were not drawn at all. The defect survived because
+    /// every other test here drives the ORACLE: a handle is enumerable, named,
+    /// and drivable through arithmetic that never consults the painted ring, so
+    /// the resize band worked perfectly with nothing under the cursor.
+    ///
+    /// So this places the real view through the real taffy pass and compares
+    /// two rects. An `Auto` size cannot pass it: fractional tracks resolve to
+    /// nothing against an indefinite size, which is exactly how the ring came
+    /// to be a zero.
+    #[test]
+    fn r2033_the_grip_ring_is_the_card_it_rings() {
+        let (card, ring) = Owner::new().run(|| {
+            let mut oracle = DashboardOracle::new();
+            oracle.attach(use_board_state());
+            let selected = match oracle.query("current") {
+                Ok(IntrospectValue::Text(id)) => id,
+                other => panic!("current answered {other:?}"),
+            };
+            assert!(
+                !selected.is_empty(),
+                "a card must be selected for the ring to be built at all"
+            );
+            let mut scene = <DashboardView as WidgetCore>::view((), &Frame::new());
+            let mut cache = pinion_text::LayoutCache::new();
+            pinion_runtime::compute_layout(&mut scene, &mut cache, WIN_W, WIN_H);
+            let rect_of = |tag: &str| match find(&scene, tag) {
+                Some(node) => node.rect(),
+                None => panic!("{tag} is in the scene"),
+            };
+            (
+                rect_of(&sub_tag(&format!("card.{selected}"))),
+                rect_of(&sub_tag(&format!("card.{selected}.handles"))),
+            )
+        });
+        assert!(
+            ring.w > 0 && ring.h > 0,
+            "the ring must have an extent to be drawn or found at all, got {ring:?}"
+        );
+        assert_eq!(
+            (ring.w, ring.h),
+            (card.w, card.h),
+            "the ring is the card's own extent: card {card:?}, ring {ring:?}"
+        );
+    }
 
     /// An attached oracle inside a live `Owner` scope — the same binding the
     /// shell builds, so a test drives the real thing rather than a stand-in.
