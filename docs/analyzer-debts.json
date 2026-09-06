@@ -81,6 +81,18 @@
       ]
     },
     {
+      "name": "debt-a-card-declares-one-setting-where-the-canon-declares-twenty-five",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links analyzer-behaviour-canon-is-the-standalone-prototype, debt-the-canon-is-one-app-and-we-are-many-binaries",
+        "names dashboard.t0.4"
+      ]
+    },
+    {
       "name": "debt-a-card-is-coloured-by-its-wire-where-the-canon-colours-it-by-its-kind",
       "substituted": false,
       "blocked_by": "buildable",
@@ -89,17 +101,6 @@
       "closed_because": "rule:analyzer-debt-repayment-loop",
       "why": [
         "links debt-canon-gui-surface-census"
-      ]
-    },
-    {
-      "name": "debt-a-card-settings-control-opens-nothing",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "names dashboard.t1.9"
       ]
     },
     {

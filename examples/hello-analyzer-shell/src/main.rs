@@ -321,10 +321,12 @@ const ALARM_DIRECTIONS: &[&str] = &["ascending", "descending", "none"];
 
 /// ★ R1851 — the words `filter_alarms` takes.
 ///
-/// [`spec::SEVERITY`]'s vocabulary plus the word for *no floor*, which is a
-/// different statement from the least severe level: the two select the same rows
-/// today and stop doing so the moment the scale grows a word below `info`.
-const ALARM_FLOORS: &[&str] = &["all", "info", "warn", "error"];
+/// ★★★★★ R2021 — the list itself moved to [`spec::ALARM_FLOORS`], because a
+/// second surface reads it now: the card's own settings row offers exactly these
+/// words to a person, and the wire declares exactly these words to a client. A
+/// vocabulary two surfaces publish belongs with the specification rather than
+/// beside one of them.
+use spec::ALARM_FLOORS;
 
 /// ★ R1851 — the alarm feed's own scrolling viewport.
 ///
@@ -2869,6 +2871,195 @@ fn card_strip(card: &Card, cell: &Tile, inside: Rect) -> Option<card_header::Str
     ))
 }
 
+// ── R2021: a card's own settings ───────────────────────────────────────────
+//
+// ★★★★★ The measurements the behaviour prototype gives its per-card settings
+// popover, read off its own markup rather than chosen here: a 250-wide panel
+// inset from the card's right edge, hanging just under the header band, padded
+// 14, with each field a small upper-case caption over a 32-high control.
+//
+// It is anchored to the CARD and painted after every card, so it hangs over its
+// neighbours the way the prototype's does (it sets `overflow:visible` and lifts
+// the card's stacking order for exactly this). What it must not do is live
+// inside the card's own container: a popup drawn inside the thing that opens it
+// is clipped by it, which is the R1672 lesson this screen has already paid for
+// twice — once with its preset menu and once with the preferences roster.
+
+/// The width the prototype's per-card settings panel has.
+const CFG_W: u32 = 250;
+/// Its inner padding.
+const CFG_PAD: u32 = 14;
+/// The gap between the header band and the panel's top edge.
+const CFG_DROP: u32 = 6;
+/// How far the panel is inset from the card's right edge.
+const CFG_INSET: u32 = 10;
+/// The panel's heading, and the line under it.
+const CFG_HEAD_H: u32 = 18;
+const CFG_GIST_H: u32 = 16;
+/// One field: an upper-case caption over a control.
+const CFG_CAPTION_H: u32 = 14;
+const CFG_CTRL_H: u32 = 32;
+/// The space under a field, before the next one.
+const CFG_ROW_GAP: u32 = 12;
+
+/// The narrowest panel that can still say what it is.
+///
+/// Below this it is not drawn at all — the all-or-nothing clamp the health
+/// strip, the latency tiles and the alarm feed already make, and for their
+/// reason: three clipped words are worse than an honest absence. A card too
+/// small for the panel is a card whose settings are still reachable, over the
+/// wire and from the roster the keyboard reaches.
+const CFG_FLOOR: u32 = 170;
+
+/// The settings panel of a card whose gear is pressed, in the CARD's own frame.
+///
+/// `None` when the card cannot hold one, which is a real state: the board
+/// places a `4 x 1` alarm card and a person can narrow it further.
+fn card_config_rect(card: Rect, rows: usize) -> Option<Rect> {
+    let room = card.w.saturating_sub(CFG_INSET * 2);
+    let w = CFG_W.min(room);
+    if w < CFG_FLOOR {
+        return None;
+    }
+    let h = CFG_PAD
+        + CFG_HEAD_H
+        + CFG_GIST_H
+        + CFG_PAD
+        + u32::try_from(rows).unwrap_or(0) * (CFG_CAPTION_H + CFG_CTRL_H + CFG_ROW_GAP)
+        + CFG_PAD;
+    Some(Rect::new(
+        card.w.saturating_sub(CFG_INSET + w),
+        header_rect(local(card)).h + CFG_DROP,
+        w,
+        h,
+    ))
+}
+
+/// Where the `n`th field's caption and control sit, in the PANEL's own frame.
+///
+/// One derivation for the paint, the roster's anchor and the hit test — this
+/// screen's standing rule, and the class it has now paid for four times.
+fn card_config_row_rects(panel: Rect, n: usize) -> (Rect, Rect) {
+    let top = CFG_PAD
+        + CFG_HEAD_H
+        + CFG_GIST_H
+        + CFG_PAD
+        + u32::try_from(n).unwrap_or(0) * (CFG_CAPTION_H + CFG_CTRL_H + CFG_ROW_GAP);
+    let inner = panel.w.saturating_sub(CFG_PAD * 2);
+    (
+        Rect::new(CFG_PAD, top, inner, CFG_CAPTION_H),
+        Rect::new(CFG_PAD, top + CFG_CAPTION_H, inner, CFG_CTRL_H),
+    )
+}
+
+/// The card whose settings panel is up, and the panel's rectangle in the
+/// BOARD's frame — the frame every other rectangle on the canvas is stated in.
+///
+/// `None` unless a card's gear is pressed, the card is still placed, and it has
+/// room. All three are states the board reaches on its own: a card can be
+/// closed, torn off or narrowed while its panel is open, and each of those has
+/// to take the panel with it rather than leave one hanging over nothing.
+fn card_config_panel(state: &ShellState) -> Option<(Card, Rect, Rect)> {
+    // ★★★★★ The destination is part of the question. The board is painted at
+    // one seat of the rail, and a panel that stayed hit-testable while a reader
+    // was somewhere else is the class R1695 measured across this whole shell —
+    // a page you left, still answering. Asked HERE rather than at each caller
+    // because the paint, the hit test and the accessibility tree all come
+    // through this function, and a guard at two of the three is the shape this
+    // screen's standing debt is made of.
+    if state.at() != "dashboard" {
+        return None;
+    }
+    let open = state.config_open.get()?;
+    let card = state
+        .placed()
+        .into_iter()
+        .find(|c| c.id().as_str() == open)?;
+    let board = state.board.get();
+    let tile = board.tile(card.id())?;
+    // A card sharing a place shows its panel only while it is the one in front,
+    // for the reason the header does: the gear a person pressed is the front
+    // card's, and the others are not painted at all (R1900).
+    if &tile.id != card.id() {
+        return None;
+    }
+    let cell = cell_rect(tile);
+    let rows = spec::card_settings_of(kind_of(card.id().as_str())).len();
+    let panel = card_config_rect(cell, rows)?;
+    Some((
+        card,
+        cell,
+        Rect::new(cell.x + panel.x, cell.y + panel.y, panel.w, panel.h),
+    ))
+}
+
+/// A rectangle stated in the BOARD's frame, in the window's.
+///
+/// The canvas's origin, less the board's scroll — the inverse of the fold
+/// [`Hit::in_canvas`] applies on the way in, written once so the two cannot
+/// drift.
+fn board_to_window(state: &ShellState, rect: Rect) -> Rect {
+    let canvas = canvas_rect();
+    let (ox, oy) = state.canvas_scroll.offset();
+    Rect::new(
+        canvas.x + fold_by(rect.x, -ox),
+        canvas.y + fold_by(rect.y, -oy),
+        rect.w,
+        rect.h,
+    )
+}
+
+/// Where a card setting's collapsed control sits, in the BOARD's frame.
+///
+/// `None` when the panel holding it is not up, which is what makes every caller
+/// ask one question — *is this control on the screen* — instead of two.
+fn card_setting_seat(state: &ShellState, valued: &Valued) -> Option<Rect> {
+    let Valued::Card { card, setting } = valued else {
+        return None;
+    };
+    let (open, _, panel) = card_config_panel(state)?;
+    if open.id().as_str() != card {
+        return None;
+    }
+    let n = spec::card_settings_of(kind_of(card))
+        .into_iter()
+        .position(|s| s.key == setting.key)?;
+    let (_, seat) = card_config_row_rects(panel, n);
+    Some(Rect::new(
+        panel.x + seat.x,
+        panel.y + seat.y,
+        seat.w,
+        seat.h,
+    ))
+}
+
+/// ★★★★★ R2021 — the roster an open card setting lays over the board, in
+/// **window** space and bounded by the canvas.
+///
+/// Window space for the reason the preferences page's is (R1762, R1672): a
+/// roster drawn inside the panel that opens it is clipped by that panel, and a
+/// roster is exactly the thing that must be allowed to hang past its opener.
+/// The room it must stay inside is the CANVAS, handed to the framework's own
+/// geometry rather than decided here — so a card near the bottom of the board
+/// opens its roster upward instead of off the end.
+fn card_roster_box(state: &ShellState) -> Option<(Valued, Picker, chooser::RosterBox)> {
+    let picking = state.picking.borrow();
+    let (key, picker) = picking.as_ref()?;
+    let valued = Valued::from_key(key)?;
+    if !matches!(valued, Valued::Card { .. }) {
+        return None;
+    }
+    let seat = board_to_window(state, card_setting_seat(state, &valued)?);
+    let roster = chooser::lay_roster(
+        valued.roster_key(),
+        seat,
+        picker,
+        canvas_rect(),
+        SET_OPTION_H,
+    );
+    Some((valued, picker.clone(), roster))
+}
+
 /// ★★★★★ R1900 — what letting go of the carried card **here** does.
 ///
 /// The board's inner boundary, one layer in from the edge R1898 named: a
@@ -3328,7 +3519,10 @@ enum Hit {
     KeyRow(&'static str),
     /// ★ R1762 — a Settings value row's collapsed control, by its specification
     /// key. Pressing it opens the roster; pressing it again dismisses.
-    Choose(&'static str),
+    /// ★ R2021 — an owned key, because a roster is no longer only over a row
+    /// the specification names statically: a card's own setting is addressed by
+    /// the card showing it, and that id is built at run time.
+    Choose(String),
     /// ★ R1762 — one option of an open roster, by its place in it. The key
     /// travels with it because a roster is over the whole page and the row it
     /// belongs to is not derivable from where the press landed.
@@ -3458,6 +3652,19 @@ impl Hit {
             }
             return Self::Nothing;
         }
+        // ★★★★★ R2021 — an OPEN card-setting roster is over everything on the
+        // board, so it is asked before the canvas and in WINDOW space, which is
+        // the frame it was laid in. Anywhere else falls through and closes it,
+        // which is what a reader expects of a control that is collapsed until
+        // you open it — and dismissing is not choosing, so the value is left
+        // alone.
+        if let Some((valued, _, roster)) = card_roster_box(state) {
+            for (n, (_, seat)) in roster.options.iter().enumerate() {
+                if contains(*seat, px, py) {
+                    return Self::ChooseOption(valued.key(), n);
+                }
+            }
+        }
         let canvas = canvas_rect();
         Self::in_canvas(state, px - canvas.x, py - canvas.y)
     }
@@ -3555,7 +3762,14 @@ impl Hit {
         // left alone.
         {
             let picking = state.picking.borrow();
-            if let Some((key, picker)) = picking.as_ref() {
+            // ★ R2021 — a row of THIS page, for the paint's reason: the seat
+            // lookup answers `0` for a key it does not hold, so a card's roster
+            // left open on the board would be pressable over the first
+            // preferences row while nothing drew it there.
+            if let Some((key, picker)) = picking
+                .as_ref()
+                .filter(|(key, _)| matches!(Valued::from_key(key), Some(Valued::Preference(_))))
+            {
                 let roster = chooser::lay_roster(
                     key,
                     settings_control_rect(region, key),
@@ -3577,7 +3791,7 @@ impl Hit {
                 cx,
                 cy,
             ) {
-                return Self::Choose(row.key);
+                return Self::Choose(row.key.to_owned());
             }
         }
         for (n, option) in spec::OPTIONS.iter().enumerate() {
@@ -3645,6 +3859,38 @@ impl Hit {
     /// stacking order of its own — floats over cards, a card's controls over
     /// its body — and reading that order should not mean scrolling past the
     /// four chrome regions first.
+    /// ★★★★★ R2021 — what a press at a BOARD-frame point does to an open card
+    /// settings panel, or `None` when it misses one.
+    ///
+    /// Its own function rather than a branch inside [`Self::in_canvas`],
+    /// because that one is at its line budget and the compiler said so — the
+    /// R1999 repair, which is to lift a piece out rather than to raise the
+    /// number. `None` and not `Nothing`: *the panel did not answer* has to be
+    /// distinguishable from *the panel swallowed it*, and only the caller can
+    /// carry on to the cards.
+    fn in_card_config(state: &ShellState, cx: u32, cy: u32) -> Option<Self> {
+        let (card, _, panel) = card_config_panel(state)?;
+        if !contains(panel, cx, cy) {
+            return None;
+        }
+        let id = card.id().as_str().to_owned();
+        for (n, setting) in spec::card_settings_of(kind_of(&id)).into_iter().enumerate() {
+            let (_, seat) = card_config_row_rects(panel, n);
+            if contains(
+                Rect::new(panel.x + seat.x, panel.y + seat.y, seat.w, seat.h),
+                cx,
+                cy,
+            ) {
+                return Some(Self::Choose(Valued::Card { card: id, setting }.key()));
+            }
+        }
+        // The panel's own body swallows the press rather than letting it reach
+        // whatever card is under it: a person aiming at a panel and moving a
+        // card behind it is the class R1726 measured on the drag preview — the
+        // thing you can see is not the thing that answers.
+        Some(Self::Nothing)
+    }
+
     fn in_canvas(state: &ShellState, cx: u32, cy: u32) -> Self {
         // ★ R1697 — floats are over the canvas, FRONTMOST first. It was the
         // vector read backwards, which is the same answer only while nothing
@@ -3695,6 +3941,13 @@ impl Hit {
         // the two cannot drift.
         let (ox, oy) = state.canvas_scroll.offset();
         let (cx, cy) = (fold_by(cx, ox), fold_by(cy, oy));
+        // ★★★★★ R2021 — an open settings panel hangs OVER its neighbours, so it
+        // is asked before the cards. Asking it inside the card loop would test
+        // it only while the press was also inside the card that opened it, and
+        // half of this panel is deliberately outside one.
+        if let Some(hit) = Self::in_card_config(state, cx, cy) {
+            return hit;
+        }
         let board = state.board.get();
         let editing = state.editing.get();
         for card in &state.placed() {
@@ -3871,16 +4124,15 @@ fn hit_word(hit: &Hit) -> String {
         Hit::Rail(name) => format!("shell.rail.{name}"),
         Hit::Option(key) => format!("shell.settings.option.{key}"),
         Hit::KeyRow(key) => format!("shell.settings.key.{key}"),
-        Hit::Choose(key) => settings_choose_tag(key),
-        // The suffix vocabulary the framework's roster lays its options under,
-        // so a driver presses the name the paint published.
-        Hit::ChooseOption(key, n) => format!(
-            "shell.settings.option.{key}.{}",
-            settings_options_of(key)
-                .get(*n)
-                .cloned()
-                .unwrap_or_default()
-        ),
+        // ★ R2021 — both are the ROW's own tags now. They used to be built here
+        // from the preferences page's spelling, which was right while every
+        // roster was that page's; a card's setting is addressed by the card, so
+        // asking the row is what keeps the driver pressing the name the paint
+        // published rather than one this function invents.
+        Hit::Choose(key) => Valued::from_key(key).map_or_else(String::new, |v| v.control_tag()),
+        Hit::ChooseOption(key, n) => Valued::from_key(key).map_or_else(String::new, |valued| {
+            valued.option_tag(valued.options().get(*n).map_or("", String::as_str))
+        }),
         Hit::Theme(n) => format!("shell.settings.theme.{n}"),
         Hit::Palette(kind) => format!("shell.palette.{kind}"),
         Hit::Grip(id) => format!("card.{id}.grip"),
@@ -6967,7 +7219,7 @@ impl ShellOracle {
             // it is not a write: the value stays where it is until a word is
             // chosen, which is the rule `Picker` is built on and the one the
             // floor's own collapsed control breaks (it commits on every arrow).
-            Hit::Choose(key) => Self::toggle_roster(state, key),
+            Hit::Choose(key) => Self::toggle_roster(state, &key),
             Hit::ChooseOption(key, n) => Self::choose_value(state, &key, n),
             // Painted inert, so a pointer never reaches it; this is the
             // keyboard and wire path saying the same thing the seat declares.
@@ -7192,11 +7444,21 @@ impl ShellOracle {
             state.say(Utterance::new(Tone::Unchanged, "closed".to_owned()));
             return;
         }
-        let options = settings_options_of(key);
-        let chosen = settings_value_of(state, key);
+        // ★ R2021 — a key nothing declares is a REFUSAL naming the key, not a
+        // crash. The keys reaching here are built by the hit test from what is
+        // painted, so an unknown one means the paint and this file disagree —
+        // which is a thing to be told about rather than to die on.
+        let Some(valued) = Valued::from_key(key) else {
+            state.say(Utterance::refused(&InvokeError::rejected(format!(
+                "{key:?} is not a row this screen offers a roster over"
+            ))));
+            return;
+        };
+        let options = valued.options();
+        let chosen = valued.read(state);
         match Picker::over(options, &chosen) {
             Ok(picker) => {
-                let title = settings_value_title(key);
+                let title = valued.title();
                 *state.picking.borrow_mut() = Some((key.to_owned(), picker));
                 state.say(Utterance::done(format!("{title} open, {chosen}")));
             }
@@ -7222,17 +7484,14 @@ impl ShellOracle {
             picker.highlighted().to_owned()
         };
         *state.picking.borrow_mut() = None;
-        match key {
-            "interface" => state.source.set(word.clone()),
-            "retention" => state.retention.set(word.clone()),
-            other => {
-                panic!("the specification names a value row {other:?} this shell cannot answer")
-            }
+        // ★★★★★ R2021 — the write goes through the row itself, which for a
+        // card's setting means through the verb a client calls. The sentence a
+        // reader hears is the writer's too, so the two channels do not spell
+        // one outcome two ways — `filter_alarms` already says *alarms show warn
+        // and above* and this used to say it a second time in its own words.
+        if let Some(valued) = Valued::from_key(key) {
+            valued.write(state, &word);
         }
-        state.say(Utterance::done(format!(
-            "{} {word}",
-            settings_value_title(key)
-        )));
     }
 
     /// ★ R1695 — choose a theme from the Settings page's segment.
@@ -8667,6 +8926,109 @@ fn sub_bar_scene(state: &ShellState, palette: Palette) -> Scene {
 
 /// The saved-layout menu: a **top-level popup**, painted in window space — the
 /// same space [`preset_item_rect`] gives the hit test.
+/// ★★★★★ R2021 — **the panel a card's settings control opens.**
+///
+/// The defect this repays, measured before the round: pressing the gear on a
+/// card header toggled `config_open` and **nothing anywhere drew it**. Seven
+/// places touched that signal and not one was a painter, so the press moved
+/// state, a message said the settings had opened, and the screen did not
+/// change. Every gate on this board stayed green — the flag is on the wire, so
+/// it was observable — which is the shape this tree keeps meeting: the
+/// declaration is there and the pixels are not.
+///
+/// Its rows are the card's DECLARED settings ([`spec::CARD_SETTINGS`]), and each
+/// of those names the verb it drives, so a control that does nothing cannot be
+/// written down. A card with none says so in a sentence rather than opening
+/// onto an empty box, because *this card has no settings yet* and *this control
+/// is broken* are different things and a reader is owed the difference.
+fn card_config_scene(state: &ShellState, palette: Palette) -> Vec<Scene> {
+    let Some((card, _, panel)) = card_config_panel(state) else {
+        return Vec::new();
+    };
+    let theme = use_theme(THEME_TAG).theme_animated();
+    let id = card.id().as_str();
+    let settings = spec::card_settings_of(kind_of(id));
+    let inner = panel.w.saturating_sub(CFG_PAD * 2);
+    let head_h = pinion_core::containment::line_box(FONT_BODY);
+    let gist_h = pinion_core::containment::line_box(FONT_TINY);
+    let mut children = vec![
+        label(
+            "Widget settings",
+            Rect::new(CFG_PAD, CFG_PAD, inner, head_h),
+            FONT_BODY,
+            palette.ink,
+        ),
+        label(
+            // The prototype's own line: it names the scope of what is being
+            // changed, which is the fact a person needs before touching it —
+            // this is THIS card's copy of the setting, not the tool's.
+            &format!("Per-instance \u{b7} {}", card.title()),
+            Rect::new(CFG_PAD, CFG_PAD + CFG_HEAD_H, inner, gist_h),
+            FONT_TINY,
+            palette.muted,
+        ),
+    ];
+    if settings.is_empty() {
+        children.push(label(
+            "No settings yet for this widget",
+            Rect::new(
+                CFG_PAD,
+                CFG_PAD + CFG_HEAD_H + CFG_GIST_H + CFG_PAD,
+                inner,
+                gist_h,
+            ),
+            FONT_TINY,
+            palette.muted,
+        ));
+    }
+    for (n, setting) in settings.iter().enumerate() {
+        let valued = Valued::Card {
+            card: id.to_owned(),
+            setting,
+        };
+        let (caption, seat) = card_config_row_rects(panel, n);
+        children.push(label(
+            &setting.label.to_uppercase(),
+            Rect::new(
+                caption.x,
+                caption.y,
+                caption.w,
+                gist_h.min(caption.h.max(gist_h)),
+            ),
+            FONT_TINY,
+            palette.muted,
+        ));
+        // The framework's collapsed chooser, not a box with a word in it. The
+        // preferences page's rows are the first consumer and this is the
+        // second; hand-rolling it here is the class R1673 measured on a sibling
+        // screen, where a switch was drawn as a track with no knob.
+        children.push(chooser::view_collapsed(
+            &chooser::ChooserTags {
+                control: valued.control_tag(),
+                shown: format!("{}.shown.{}", valued.tag_prefix(), valued.roster_key()),
+                arrow: format!("{}.arrow.{}", valued.tag_prefix(), valued.roster_key()),
+            },
+            &valued.read(state),
+            seat,
+            (0, 0),
+            BoxStyle::filled(palette.canvas)
+                .with_corner_radius(8)
+                .with_border(Border::new(palette.outline, 1)),
+            &theme,
+        ));
+    }
+    vec![Scene::Container(
+        ContainerNode::new(children)
+            .with_tag(format!("card.{id}.config"))
+            .with_style(
+                BoxStyle::filled(palette.panel)
+                    .with_corner_radius(11)
+                    .with_border(Border::new(palette.outline, 1)),
+            )
+            .with_layout(absolute(panel)),
+    )]
+}
+
 fn preset_menu_scene(state: &ShellState, palette: Palette) -> Scene {
     let names: Vec<String> = state.presets.borrow().names();
     let rows = u(names.len()) + 1;
@@ -9101,6 +9463,204 @@ fn settings_plugin_row(palette: Palette, region: Rect) -> Vec<Scene> {
     out
 }
 
+/// ★★★★★ R2021 — **what a roster is a roster OVER.**
+///
+/// One `picking` signal holds the open roster and until this round the four
+/// things a roster needs — its title, its words, what it is holding, and where
+/// to write a chosen word — were four functions keyed by a `&str`, each ending
+/// in a `panic!` for a key it did not know. That is a partial function per
+/// question, which is three chances for a new consumer to be forgotten in one
+/// of them and answered in the others; and this round IS that new consumer,
+/// because a card's own settings row is a value row on a different page.
+///
+/// A value instead. The questions become methods, the compiler is what says a
+/// new arm answered all of them, and the key a roster is remembered by is
+/// derived from the value rather than being a string the four functions each
+/// re-interpret. The three `panic!`s are gone — not by being caught, but by
+/// there being no unparsed key left to reach one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Valued {
+    /// A row in the preferences page's capture group.
+    Preference(&'static spec::ValueRowSpec),
+    /// ★ A setting a card offers under its own header: which card is showing
+    /// it, and which of that kind's declared settings it is.
+    ///
+    /// The card travels as an id rather than as a reference, for the reason
+    /// [`Hit::Tab`] carries one: the press stores it, the release acts on it,
+    /// and in between the board can have changed.
+    Card {
+        card: String,
+        setting: &'static spec::CardSettingSpec,
+    },
+}
+
+impl Valued {
+    /// The key a roster is remembered by while it is open.
+    ///
+    /// A card's is scoped by the card, because two cards of one kind offer the
+    /// same setting and a bare `severity` could not say whose roster is up.
+    fn key(&self) -> String {
+        match self {
+            Self::Preference(row) => row.key.to_owned(),
+            Self::Card { card, setting } => format!("card.{card}.{}", setting.key),
+        }
+    }
+
+    /// Read a key back into the thing it names.
+    ///
+    /// `None` for a key nothing declares, which is what makes every caller's
+    /// handling of an unknown key a decision rather than a crash.
+    fn from_key(key: &str) -> Option<Self> {
+        if let Some(row) = spec::VALUE_ROWS.iter().find(|row| row.key == key) {
+            return Some(Self::Preference(row));
+        }
+        let rest = key.strip_prefix("card.")?;
+        // A card id carries no dot (`alarms#6`), so the LAST dot separates the
+        // card from the setting — stated rather than assumed, because the
+        // setting keys are single words and the split has to survive a card id
+        // that grows one.
+        let (card, field) = rest.rsplit_once('.')?;
+        let kind = kind_of(card);
+        let setting = spec::card_settings_of(kind)
+            .into_iter()
+            .find(|s| s.key == field)?;
+        Some(Self::Card {
+            card: card.to_owned(),
+            setting,
+        })
+    }
+
+    /// What a reader calls it — the words they hear when it moves.
+    fn title(&self) -> &'static str {
+        match self {
+            Self::Preference(row) => row.title,
+            Self::Card { setting, .. } => setting.label,
+        }
+    }
+
+    /// Which of the tool's settings this row is a control over.
+    const fn drives(&self) -> spec::Drives {
+        match self {
+            Self::Preference(row) => row.drives,
+            Self::Card { setting, .. } => setting.drives,
+        }
+    }
+
+    /// What it may be set to, in the order the roster lists them.
+    ///
+    /// ⚠ Matched on [`spec::Drives`] with **no wildcard arm**: a fallback here
+    /// would give a setting added tomorrow the capture sources, and a roster
+    /// offering the wrong words is a control that works and does the wrong
+    /// thing — which is worse than one that refuses.
+    fn options(&self) -> Vec<String> {
+        match self.drives() {
+            spec::Drives::CaptureSource => SOURCES.iter().map(|s| (*s).to_owned()).collect(),
+            spec::Drives::Retention => spec::RETENTIONS.iter().map(|s| (*s).to_owned()).collect(),
+            spec::Drives::AlarmFloor => ALARM_FLOORS.iter().map(|s| (*s).to_owned()).collect(),
+        }
+    }
+
+    /// What it is holding right now.
+    ///
+    /// Read from the state the value actually drives rather than from a store
+    /// beside it, so the row cannot show a word the tool is not using — which
+    /// is precisely the defect the behaviour prototype ships, where the chosen
+    /// severity is written into a per-card map nothing reads.
+    fn read(&self, state: &ShellState) -> String {
+        match self.drives() {
+            spec::Drives::CaptureSource => state.source.get(),
+            spec::Drives::Retention => state.retention.get(),
+            // `all` is the absence of a floor, which is the same statement the
+            // verb's own argument makes — one word, not a blank.
+            spec::Drives::AlarmFloor => state
+                .alarm_floor
+                .get()
+                .unwrap_or_else(|| ALARM_FLOORS[0].to_owned()),
+        }
+    }
+
+    /// Take `word` and put it where this row's value lives.
+    ///
+    /// ★★★★★ R2021 — **through the same function the wire calls**, never
+    /// beside it. The pointer and the client therefore cannot come to mean
+    /// different things by one setting, which is the shape R1851 gave the
+    /// alarm feed's column headers (`Hit::AlarmColumn` reaches `sort_alarms`)
+    /// and the shape this row now has: a chosen severity goes through
+    /// [`ShellOracle::filter_alarms`], refusal and announcement included.
+    ///
+    /// The two preferences write their own signals because they have no verb —
+    /// the wire reaches them by writing the slot instead, which is the split
+    /// [`spec::OPERATIONS`]' own documentation draws.
+    fn write(&self, state: &Rc<ShellState>, word: &str) {
+        match self.drives() {
+            spec::Drives::CaptureSource => {
+                state.source.set(word.to_owned());
+                state.say(Utterance::done(format!("{} {word}", self.title())));
+            }
+            spec::Drives::Retention => {
+                state.retention.set(word.to_owned());
+                state.say(Utterance::done(format!("{} {word}", self.title())));
+            }
+            spec::Drives::AlarmFloor => {
+                if let Err(why) = ShellOracle::filter_alarms(state, word) {
+                    state.say(Utterance::refused(&why));
+                }
+            }
+        }
+    }
+
+    /// Which destination this row lives on, so a roster cannot survive
+    /// navigating away from the page that opened it.
+    fn page(&self) -> &'static str {
+        match self {
+            Self::Preference(_) => "settings",
+            Self::Card { .. } => "dashboard",
+        }
+    }
+
+    /// What the row's parts are addressed UNDER.
+    ///
+    /// The chooser lays its own suffixes beneath this, so the three tags below
+    /// are the framework's spelling with this in front rather than three
+    /// strings this file composes — which is what lets a driver press the name
+    /// the paint published without either side holding a table.
+    /// ⚠ `config` and not `settings` for a card's: `card.<id>.settings` is
+    /// already taken — it is the header control that OPENS this panel, named by
+    /// [`spec::CARD_CHROME`]. Two things under one tag is the defect
+    /// [[debt-two-holders-of-one-name-are-refused-by-every-verb-and-reported-by-nothing]]
+    /// records, and the state signal these rows are shown by is `config_open`,
+    /// so this is the name the rest of the file already uses for them.
+    fn tag_prefix(&self) -> String {
+        match self {
+            Self::Preference(_) => "shell.settings".to_owned(),
+            Self::Card { card, .. } => format!("card.{card}.config"),
+        }
+    }
+
+    /// The key the chooser lays its parts under, within the prefix.
+    const fn roster_key(&self) -> &'static str {
+        match self {
+            Self::Preference(row) => row.key,
+            Self::Card { setting, .. } => setting.key,
+        }
+    }
+
+    /// The tag the collapsed control is addressed by.
+    fn control_tag(&self) -> String {
+        format!("{}.choose.{}", self.tag_prefix(), self.roster_key())
+    }
+
+    /// The tag the open roster is addressed by — the framework's own spelling.
+    fn roster_tag(&self) -> String {
+        format!("{}.roster.{}", self.tag_prefix(), self.roster_key())
+    }
+
+    /// The tag one word of the open roster is addressed by.
+    fn option_tag(&self, word: &str) -> String {
+        format!("{}.option.{}.{word}", self.tag_prefix(), self.roster_key())
+    }
+}
+
 /// The tag a value row's collapsed control is addressed by.
 fn settings_choose_tag(key: &str) -> String {
     format!("shell.settings.choose.{key}")
@@ -9125,6 +9685,15 @@ fn settings_roster_scene(state: &ShellState, at: &str) -> Scene {
     let Some((key, picker)) = picking.as_ref() else {
         return empty;
     };
+    // ★★★★★ R2021 — and it must be a row of THIS page. One signal now holds the
+    // open roster of either page, so a card's roster left open on the board and
+    // then navigated away from would otherwise be drawn here — anchored at the
+    // first preferences row, because the lookup that finds a row's seat answers
+    // `0` for a key it does not hold. A roster over a control that is not on the
+    // screen is the class R1695 measured across this whole shell.
+    if !matches!(Valued::from_key(key), Some(Valued::Preference(_))) {
+        return empty;
+    }
     let region = page_rect("settings");
     let theme = use_theme(THEME_TAG).theme_animated();
     let roster = chooser::lay_roster(
@@ -9139,6 +9708,30 @@ fn settings_roster_scene(state: &ShellState, at: &str) -> Scene {
         &roster,
         picker,
         &settings_value_of(state, key),
+        (0, 0),
+        &theme,
+    )
+}
+
+/// ★★★★★ R2021 — the open roster of a **card's** setting, in window space.
+///
+/// Empty unless the reader is on the board that holds the card, which is the
+/// same guard the preferences roster carries: a popup that survived navigating
+/// away is a page you left still on the screen.
+fn card_roster_scene(state: &ShellState, at: &str) -> Scene {
+    let empty = Scene::Container(ContainerNode::new(Vec::new()));
+    let Some((valued, picker, roster)) = card_roster_box(state) else {
+        return empty;
+    };
+    if at != valued.page() {
+        return empty;
+    }
+    let theme = use_theme(THEME_TAG).theme_animated();
+    chooser::view_roster(
+        &valued.tag_prefix(),
+        &roster,
+        &picker,
+        &valued.read(state),
         (0, 0),
         &theme,
     )
@@ -9170,12 +9763,13 @@ fn settings_control_rect(region: Rect, key: &str) -> Rect {
 /// row says what the tool is actually doing — the capture source it shows is
 /// the one the application bar shows, which is the whole reason the reference
 /// puts it on this page.
+///
+/// ★ R2021 — a thin wrapper over [`Valued::read`] now. A key nothing declares
+/// answers the empty string rather than crashing: this is called from the paint
+/// and from the wire, and a roster key that outlived its card is a state the
+/// board can genuinely reach.
 fn settings_value_of(state: &ShellState, key: &str) -> String {
-    match key {
-        "interface" => state.source.get(),
-        "retention" => state.retention.get(),
-        other => panic!("the specification names a value row {other:?} this shell cannot answer"),
-    }
+    Valued::from_key(key).map_or_else(String::new, |valued| valued.read(state))
 }
 
 /// ★★★★★ R1762 — what the preferences page's value rows publish: what each
@@ -9204,26 +9798,8 @@ fn settings_slot(state: &ShellState, path: &str) -> String {
 }
 
 /// What a value row is called — the words a reader hears when it moves.
-///
-/// # Panics
-///
-/// If asked about a key the specification does not name, which is a defect in
-/// this file rather than a state the screen can reach.
 fn settings_value_title(key: &str) -> &'static str {
-    spec::VALUE_ROWS
-        .iter()
-        .find(|row| row.key == key)
-        .map(|row| row.title)
-        .expect("the specification names every value row this shell draws")
-}
-
-/// What a value row may be set to, in the order the roster lists them.
-fn settings_options_of(key: &str) -> Vec<String> {
-    match key {
-        "interface" => SOURCES.iter().map(|s| (*s).to_owned()).collect(),
-        "retention" => spec::RETENTIONS.iter().map(|s| (*s).to_owned()).collect(),
-        other => panic!("the specification names a value row {other:?} this shell cannot answer"),
-    }
+    Valued::from_key(key).map_or("", |valued| valued.title())
 }
 
 /// The two key rows, whose affordance is booked for a later release.
@@ -13441,6 +14017,13 @@ fn view(_state: ScreenState, frame: Frame) -> Scene {
             // page it must not leave. Painted after the page so a press on it
             // resolves to the roster rather than to whatever row it covers.
             settings_roster_scene(&state, here.key.as_ref()),
+            // ★★★★★ R2021 — and the roster a CARD's setting opens, in the same
+            // place for the same reason. Two calls rather than one branch
+            // because the two are anchored in different frames — one to a row
+            // on a page, one to a panel on a board that scrolls — and folding
+            // them together would mean one of the two anchors being computed
+            // where it cannot see what it needs.
+            card_roster_scene(&state, here.key.as_ref()),
             status_band_scene(&state, palette, &theme),
             // ★★★★★ R1916 — the description a reader is resting on, over
             // everything and last, because it is content ABOUT what is under
@@ -13530,6 +14113,12 @@ fn dashboard_scene(state: &ShellState, palette: Palette) -> Vec<Scene> {
             },
         ));
     }
+    // ★★★★★ R2021 — a card's settings panel, over the cards and under the
+    // carry. A sibling of the cards rather than a child of the one that opened
+    // it, so it hangs over its neighbours the way the prototype's does — and so
+    // that the card's own container does not clip it, which is what a popup
+    // drawn inside its opener always suffers.
+    canvas_children.extend(card_config_scene(state, palette));
     // ★★★★★ R1726 — the snap preview, and then the card being HELD above it.
     //
     // The order here is three deep and every layer was measured, because two of
@@ -14524,7 +15113,14 @@ fn settings_nodes(state: &Rc<ShellState>) -> (Vec<String>, Vec<AccessNode>) {
 /// told what is chosen and never told whether the list is open.
 fn settings_value_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
     let picking = state.picking.borrow();
-    let open = picking.as_ref();
+    // ★ R2021 — this page's own row, and not whatever roster happens to be
+    // open. The signal is shared with the board's card settings now, and
+    // announcing a card's options under a preferences tag would tell a reader
+    // about a roster this page does not draw — the same guard the paint above
+    // carries, for the same reason.
+    let open = picking
+        .as_ref()
+        .filter(|(key, _)| matches!(Valued::from_key(key), Some(Valued::Preference(_))));
     let mut nodes = Vec::new();
     for row in spec::VALUE_ROWS {
         let showing = open.is_some_and(|(key, _)| key == row.key);
@@ -14717,8 +15313,72 @@ fn card_nodes(state: &Rc<ShellState>, card: &Card) -> Vec<AccessNode> {
         }
     }
     nodes.extend(body);
+    // ★★★★★ R2021 — the settings panel, and ONLY while it is painted.
+    //
+    // `card_config_panel` is the same derivation the painter and the hit test
+    // ask, so a reader is offered the rows that are on the screen and no
+    // others: announcing a panel a narrow card has no room for is the ghost
+    // class this board already carries a ratchet for
+    // ([[debt-a-card-announces-a-row-it-does-not-paint]]), and the cheapest way
+    // not to join it is to ask the painter's own question.
+    if card_config_panel(state).is_some_and(|(open, _, _)| open.id() == card.id()) {
+        let panel_tag = format!("card.{id}.config");
+        region = region.with_child(panel_tag.clone());
+        let mut group = AccessNode::new(&panel_tag, AriaRole::Group)
+            .with_name(format!("{} settings", card.title()));
+        for setting in spec::card_settings_of(kind_of(id)) {
+            let valued = Valued::Card {
+                card: id.to_owned(),
+                setting,
+            };
+            group = group.with_child(valued.control_tag());
+            nodes.extend(valued_nodes(state, &valued));
+        }
+        nodes.push(group);
+    }
     nodes.insert(0, region);
     nodes
+}
+
+/// ★★★★★ R2021 — a value row as a reader meets it: a `ComboBox` saying what it
+/// holds and whether its roster is in front of them, plus that roster's own
+/// words while it is.
+///
+/// Lifted out of the preferences page's [`settings_value_nodes`] rather than
+/// written a second time — a second copy is what this round is repaying one
+/// layer down, and the two would have differed at once: this row's tags are
+/// scoped by the card showing it and that page's are not.
+fn valued_nodes(state: &Rc<ShellState>, valued: &Valued) -> Vec<AccessNode> {
+    let picking = state.picking.borrow();
+    let open = picking
+        .as_ref()
+        .filter(|(key, _)| *key == valued.key())
+        .map(|(_, picker)| picker);
+    let chosen = valued.read(state);
+    let mut node = AccessNode::new(valued.control_tag(), AriaRole::ComboBox)
+        .with_name(valued.title())
+        .with_value(AccessValue::Text(chosen.clone()))
+        .with_expanded(open.is_some());
+    let Some(picker) = open else {
+        return vec![node];
+    };
+    node = node.with_child(valued.roster_tag());
+    let mut roster = AccessNode::new(valued.roster_tag(), AriaRole::Listbox)
+        .with_name(format!("{} options", valued.title()));
+    let mut options = Vec::new();
+    for (n, word) in picker.options().iter().enumerate() {
+        let tag = valued.option_tag(word.as_ref());
+        roster = roster.with_child(tag.clone());
+        options.push(
+            AccessNode::new(tag, AriaRole::ListBoxOption)
+                .with_name(word.as_ref())
+                .with_set_position(n, picker.len())
+                .with_selected(word.as_ref() == chosen),
+        );
+    }
+    let mut out = vec![node, roster];
+    out.extend(options);
+    out
 }
 
 /// The tag suffixes a card body's own top-level containers use — the nodes that

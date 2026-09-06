@@ -3965,6 +3965,22 @@ const OPERATION_GESTURES: &[OperationGesture] = &[
             drag_tag_to(state, shot, "float.packet#0.redock", board_top_left());
         },
     ),
+    // ★★★★★ R2021 — the two that make a card's gear mean something. Before this
+    // round the first of them moved a flag nothing painted, and the second had
+    // no pointer path at all: the alarm feed's severity threshold was reachable
+    // over the wire and by no gesture whatever.
+    ("open a card's settings", |state, shot| {
+        press_tag(state, shot, "card.alarms#6.settings");
+    }),
+    ("set a card's severity threshold", |state, shot| {
+        // The panel is already up — the table declares that as this row's
+        // precondition, and `reach_precondition` reaches it by the gesture
+        // above rather than by assignment. What is left is the two presses a
+        // person makes: open the roster, then take a word out of it.
+        press_tag(state, shot, "card.alarms#6.config.choose.severity");
+        let shot = painted();
+        press_tag(state, &shot, "card.alarms#6.config.option.severity.warn");
+    }),
 ];
 
 /// ★★★★★ R1898 — a grip the board is painting RIGHT NOW, whichever card it
@@ -4653,6 +4669,350 @@ fn r1697_every_declared_way_of_causing_an_operation_causes_it() {
         spec::OPERATIONS.len() - ABSENT_OPERATIONS,
         absent.join("\n  ")
     );
+}
+
+// ── R2021: a card's settings control opens the settings it declares ────────
+
+/// The word a chooser is currently SHOWING, read off the paint.
+///
+/// Off the paint and not off the state, because the whole class this round
+/// repays is a control whose state moved and whose pixels did not: asking the
+/// signal would have agreed with the defect.
+/// ⚠ Found by its RECTANGLE and not by its owner tag. The chooser's word is a
+/// `Scene::Text` carrying the tag itself, and [`Painted`] files a run under its
+/// nearest tagged **ancestor** — so a run that names itself is filed under
+/// whatever encloses it, and asking for the tag as an owner answers nothing.
+fn shown_word(shot: &Painted, tag: &str) -> Option<String> {
+    let seat = shot.rect(tag)?;
+    shot.runs
+        .iter()
+        .find(|(_, rect, _)| *rect == seat)
+        .map(|(text, _, _)| text.clone())
+}
+
+/// ★★★★★ R2021 — **pressing a card's settings control paints the settings that
+/// card declares, and choosing one of them moves the thing it names.**
+///
+/// The defect, measured before the round: `config_open` had SEVEN sites in this
+/// shell and not one of them was a painter. A person pressed the gear, a toast
+/// said the settings had opened, and the screen did not change — while every
+/// gate on this board stayed green, each of them correctly, because the flag is
+/// published and the flag did move.
+///
+/// So this asks the two questions those gates cannot:
+///
+/// * is the panel ON THE SCREEN, under the header of the card whose gear was
+///   pressed, and
+/// * does taking a word out of it reach the feed — read back out of the PAINT,
+///   so a threshold that moved a signal and left the control showing the old
+///   word would fail here.
+///
+/// Both directions of the row population are asserted. A declared setting with
+/// no painted control is a promise the screen does not keep; a painted control
+/// for a setting nothing declares is a control whose effect nobody wrote down,
+/// which is the defect one layer along.
+#[test]
+fn r2021_a_cards_settings_control_opens_the_settings_it_declares() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let card = "alarms#6";
+        let panel_tag = format!("card.{card}.config");
+        let shot = painted();
+        assert!(
+            shot.rect(&panel_tag).is_none(),
+            "a card that has not been asked for its settings paints no panel"
+        );
+
+        press_tag(&state, &shot, &format!("card.{card}.settings"));
+        let shot = painted();
+        let panel = shot
+            .rect(&panel_tag)
+            .expect("★ pressing the settings control paints the card's settings panel");
+        let cell = shot
+            .rect(&format!("card.{card}"))
+            .expect("the card whose gear was pressed is on the board");
+        assert!(
+            panel.y >= cell.y + super::CARD_HDR,
+            "the panel hangs BELOW the header band it was opened from: \
+             {panel:?} against a card at {cell:?}"
+        );
+        assert!(
+            panel.x >= cell.x && panel.x + panel.w <= cell.x + cell.w,
+            "the panel stays in its own card's column: {panel:?} against {cell:?}"
+        );
+
+        // ── the rows, in both directions ──────────────────────────────
+        let declared = spec::card_settings_of(super::kind_of(card));
+        assert!(
+            !declared.is_empty(),
+            "this check needs a card that declares a setting; {card} declares none"
+        );
+        let stem = format!("card.{card}.config.choose.");
+        let painted_rows: std::collections::BTreeSet<String> = shot
+            .family(&stem)
+            .iter()
+            .map(|t| t[stem.len()..].to_owned())
+            .collect();
+        let declared_rows: std::collections::BTreeSet<String> =
+            declared.iter().map(|s| s.key.to_owned()).collect();
+        assert_eq!(
+            painted_rows, declared_rows,
+            "★ the panel paints one control per declared setting and no others — \
+             a declared row with no control is a promise the screen breaks, and a \
+             control for nothing declared is an effect nobody wrote down"
+        );
+
+        // ── announced is painted ──────────────────────────────────────
+        let card_value = state.card(card).expect("the card is still placed");
+        let announced: std::collections::BTreeSet<String> = super::card_nodes(&state, &card_value)
+            .into_iter()
+            .filter_map(|node| node.tag.strip_prefix(&stem).map(str::to_owned))
+            .collect();
+        assert_eq!(
+            announced, declared_rows,
+            "★ a reader is told about exactly the rows the panel draws"
+        );
+
+        // ── the word reaches the feed ─────────────────────────────────
+        let control = format!("card.{card}.config.choose.severity");
+        let shown = format!("card.{card}.config.shown.severity");
+        assert_eq!(
+            shown_word(&shot, &shown).as_deref(),
+            Some("all"),
+            "the row opens showing the floor the feed is actually using"
+        );
+        let before = witness(&state, "alarms");
+        press_tag(&state, &shot, &control);
+        let shot = painted();
+        press_tag(
+            &state,
+            &shot,
+            &format!("card.{card}.config.option.severity.warn"),
+        );
+        let shot = painted();
+        assert_ne!(
+            before,
+            witness(&state, "alarms"),
+            "★ taking a word out of the roster reaches the feed — this is the \
+             half a wire-driven test cannot see, and the half that was missing"
+        );
+        assert_eq!(
+            shown_word(&shot, &shown).as_deref(),
+            Some("warn"),
+            "★ and the control SHOWS what it chose. A threshold that moved the \
+             state and left the word alone is the defect this round repays, one \
+             control further in"
+        );
+    });
+}
+
+/// ★★★★★ R2021 — **a card with no settings of its own says so**, rather than
+/// opening onto an empty box.
+///
+/// *This widget has nothing to configure yet* and *this control is broken* look
+/// identical when the answer is a blank panel, and a reader is owed the
+/// difference. Six of the board's seven placed cards are in that state today,
+/// which is why the sentence is the common case rather than the corner one.
+#[test]
+fn r2021_a_card_with_no_settings_says_so_rather_than_opening_onto_nothing() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let card = "packet#0";
+        assert!(
+            spec::card_settings_of(super::kind_of(card)).is_empty(),
+            "this check needs a card that declares no setting; {card} declares some"
+        );
+        let shot = painted();
+        press_tag(&state, &shot, &format!("card.{card}.settings"));
+        let shot = painted();
+        assert!(
+            shot.rect(&format!("card.{card}.config")).is_some(),
+            "★ the control opens a panel whatever the card has in it"
+        );
+        assert!(
+            shot.family(&format!("card.{card}.config.choose."))
+                .is_empty(),
+            "a card declaring no setting paints no control for one"
+        );
+        let said = shot.runs.iter().any(|(text, _, owner)| {
+            owner.as_deref() == Some(&format!("card.{card}.config"))
+                && text.contains("No settings yet")
+        });
+        assert!(
+            said,
+            "★ and it says why it is empty. The runs it painted were: {:?}",
+            shot.runs
+                .iter()
+                .filter(|(_, _, owner)| owner.as_deref() == Some(&format!("card.{card}.config")))
+                .map(|(text, _, _)| text.as_str())
+                .collect::<Vec<_>>()
+        );
+    });
+}
+
+/// ★★★★★ R2021 — **a card's settings stop answering when a reader leaves the
+/// board.**
+///
+/// The board is one seat of the rail, and its cards are painted at that seat
+/// only — so a panel that stayed pressable and announced from the preferences
+/// page would be a page you left, still answering. That is the class R1695
+/// measured across this whole shell, and this round could have added a fresh
+/// instance of it three ways at once: the paint, the hit test and the
+/// accessibility tree each reach the panel through the same derivation, and a
+/// guard at two of the three is exactly what this screen's standing debt is
+/// made of.
+///
+/// ⚠ The PAINT is not what this checks. Nothing draws the panel away from the
+/// board whatever the guard says, because the painter is only reached from the
+/// board's own scene — so a paint assertion here would be an assertion with no
+/// failing path. What can go wrong is the other two, and they are what is
+/// asked.
+#[test]
+fn r2021_a_cards_settings_stop_answering_when_the_reader_leaves_the_board() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let card = "alarms#6";
+        let shot = painted_at_destination("dashboard");
+        press_tag(&state, &shot, &format!("card.{card}.settings"));
+        let shot = painted();
+        let panel = shot
+            .rect(&format!("card.{card}.config"))
+            .expect("the panel is up on the board");
+        let aim = (panel.x + panel.w / 2, panel.y + panel.h / 2);
+
+        state.go("settings").expect("preferences is an open seat");
+        assert_ne!(
+            super::hit_word(&Hit::at(&state, aim.0, aim.1)),
+            format!("card.{card}.config.choose.severity"),
+            "★ a press where the panel WAS must not reach a control on a page \
+             the reader has left"
+        );
+        let card_value = state.card(card).expect("the card is still placed");
+        let announced: Vec<String> = super::card_nodes(&state, &card_value)
+            .into_iter()
+            .map(|node| node.tag)
+            .filter(|tag| tag.starts_with(&format!("card.{card}.config")))
+            .collect();
+        assert!(
+            announced.is_empty(),
+            "★ and a reader elsewhere is not told about it either: {announced:?}"
+        );
+    });
+}
+
+/// ★★★★★ R2021 — **the preferences page announces no roster it does not
+/// paint**, and this gate is a counterfactual's FINDING rather than a
+/// precaution.
+///
+/// CF-7 of this round broke the page's new guard — the one that keeps it from
+/// treating a card's open roster as one of its own rows — and the whole suite
+/// stayed green. So the shell had a ghost-row check for CARDS
+/// (`r1843_a_card_announces_only_the_rows_it_paints`) and none for this page,
+/// which is the same defect on a different population: a reader offered options
+/// nobody drew.
+///
+/// The round is what made it reachable. One `picking` signal now holds the open
+/// roster of either page, so *the roster that is open* and *a roster this page
+/// draws* stopped being the same thing — and the assertion that was true by
+/// construction became one that has to be made.
+#[test]
+fn r2021_the_preferences_page_announces_no_roster_it_does_not_paint() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        // Leave a CARD's roster open on the board, which is the state that
+        // makes the two populations differ at all.
+        let shot = painted_at_destination("dashboard");
+        press_tag(&state, &shot, "card.alarms#6.settings");
+        let shot = painted();
+        press_tag(&state, &shot, "card.alarms#6.config.choose.severity");
+
+        let shot = painted_at_destination("settings");
+        let ghosts: Vec<String> = super::settings_value_nodes(&state)
+            .into_iter()
+            .map(|node| node.tag)
+            .filter(|tag| shot.rect(tag).is_none())
+            .collect();
+        assert!(
+            ghosts.is_empty(),
+            "★ the preferences page announces {} node(s) it does not draw: \
+             {ghosts:?}",
+            ghosts.len()
+        );
+    });
+}
+
+/// ★★★★★ R2021 — **every declared card setting names a verb this screen
+/// actually answers.**
+///
+/// [`spec::CardSettingSpec::verb`] is what makes an inert control
+/// unrepresentable, and a column nothing checks is a column that can name a
+/// verb no client can call — which would put the declaration exactly where the
+/// behaviour prototype's is: on the screen, and connected to nothing.
+///
+/// Asked of the SCHEMA rather than of the dispatch, because the schema is what
+/// a client discovers the surface through: a verb the impl routes and the
+/// schema does not declare is a verb no client knows exists.
+#[test]
+fn r2021_every_declared_card_setting_names_a_verb_this_screen_publishes() {
+    use pinion_core::external::{ArgDomain, SchemaChannel};
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let mut oracle = ShellOracle::new();
+        oracle.attach_state(std::rc::Rc::clone(&state));
+        let schema = oracle.schema();
+        // ⚠ Counted rather than asserted on the table's length. `CARD_SETTINGS`
+        // is a `const`, so `!is_empty()` is a claim the compiler resolves — an
+        // assertion with no failing path, which is exactly what this project
+        // asks to be deleted rather than kept as reassurance. A run-time count
+        // says the same thing and can actually be zero.
+        let mut checked = 0_usize;
+        for setting in spec::CARD_SETTINGS {
+            let field = schema.field_for(setting.verb).unwrap_or_else(|| {
+                panic!(
+                    "{}.{} names the verb {:?} and this screen declares no such path",
+                    setting.kind, setting.key, setting.verb
+                )
+            });
+            assert_eq!(
+                field.channel,
+                SchemaChannel::Invoke,
+                "{}.{} names {:?}, which this screen declares as something other \
+                 than a call — a setting drives an action or it drives nothing",
+                setting.kind,
+                setting.key,
+                setting.verb
+            );
+            // The words the row offers are the words the verb takes. A roster
+            // that could hand the verb a word it refuses is a control that
+            // works until somebody uses its last option.
+            let declared: Vec<&str> = field
+                .args
+                .iter()
+                .flat_map(|arg| match arg.domain {
+                    ArgDomain::OneOf(words) => words.to_vec(),
+                    _ => Vec::new(),
+                })
+                .collect();
+            assert_eq!(
+                declared, setting.options,
+                "★ {}.{}: the roster's words and the verb's declared domain are \
+                 one list, or a person can pick something the verb refuses",
+                setting.kind, setting.key
+            );
+            checked += 1;
+        }
+        assert!(
+            checked > 0,
+            "an empty table makes this check pass vacuously, which is \
+             indistinguishable from a table that keeps every promise"
+        );
+    });
 }
 
 // ── R1733: the palette hands the board a footprint ─────────────────────────

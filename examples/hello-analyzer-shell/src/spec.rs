@@ -785,6 +785,7 @@ pub const OPTIONS: &[OptionSpec] = &[
 /// They are the rows that make the page a page rather than a switchboard — the
 /// value is a word out of a roster, so the control is the collapsed chooser
 /// R1732 built for a form and R1762 lifted out of it.
+#[derive(Debug, PartialEq, Eq)]
 pub struct ValueRowSpec {
     /// The key the wire addresses it by, and the suffix of its paint tag.
     pub key: &'static str,
@@ -792,6 +793,36 @@ pub struct ValueRowSpec {
     pub title: &'static str,
     /// The sentence under it.
     pub gist: &'static str,
+    /// Which of the tool's settings the row is a control over.
+    pub drives: Drives,
+}
+
+/// ★★★★★ R2021 — **the settings a roster can be a roster over**, as a closed
+/// set rather than as a key each reader re-interprets.
+///
+/// Until this round a row was a `&str` and four separate functions matched on
+/// it — its title, its words, what it held, where a chosen word went — each
+/// ending in a `panic!` for a key it did not know. Four partial functions over
+/// one domain is four chances to answer three of them and forget the fourth,
+/// and the forgetting is silent in every direction except the one that
+/// crashes.
+///
+/// This is that domain, written down. A row cannot exist without naming what it
+/// drives, and the compiler refuses a build where an arm added here is not
+/// answered everywhere — which is the difference between a rule and a habit.
+///
+/// ⚠ Deliberately NOT `#[non_exhaustive]` and deliberately matched without a
+/// wildcard: a fallback arm here would silently make a new setting write into
+/// an old one's state, which is the class R2013 measured two rounds ago on this
+/// same screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Drives {
+    /// Which device the capture is read from.
+    CaptureSource,
+    /// How much capture is kept in memory.
+    Retention,
+    /// The least severe alarm the feed shows.
+    AlarmFloor,
 }
 
 /// ★★★★★ R1762 — the page's own heading, and the line under it.
@@ -837,11 +868,13 @@ pub const VALUE_ROWS: &[ValueRowSpec] = &[
         key: "interface",
         title: "Interface",
         gist: "Capture source device",
+        drives: Drives::CaptureSource,
     },
     ValueRowSpec {
         key: "retention",
         title: "Ring buffer size",
         gist: "In-memory capture retention",
+        drives: Drives::Retention,
     },
 ];
 
@@ -2001,6 +2034,32 @@ pub const OPERATIONS: &[OperationSpec] = &[
         witness: "floating",
         needs: Some("put a detached panel on the canvas"),
     },
+    // ── a card's own settings (R2021) ────────────────────────────
+    //
+    // ★★★★★ The two rows that make the header's settings control mean
+    // something. Before this round it toggled a flag nothing painted: the
+    // press was counted, a message said the settings had opened, and the
+    // screen did not change — so every gate on this board stayed green while
+    // a person pressing the gear saw nothing at all.
+    //
+    // The witness for the first is `config_open`, which is the slot that says
+    // WHICH card's settings are in front of a reader. The second's is `alarms`,
+    // because what a threshold changes is the feed — the rows a client reads,
+    // not a flag beside them.
+    OperationSpec {
+        name: "open a card's settings",
+        verb: Some(("act", "alarms#6,settings")),
+        gesture: true,
+        witness: "config_open",
+        needs: None,
+    },
+    OperationSpec {
+        name: "set a card's severity threshold",
+        verb: Some(("filter_alarms", "warn")),
+        gesture: true,
+        witness: "alarms",
+        needs: Some("open a card's settings"),
+    },
 ];
 
 // ★ R1669 — the bottom two cards are TWO rows tall, and that is a measurement
@@ -2754,6 +2813,77 @@ pub fn latency_tile(n: usize) -> (&'static str, String) {
 /// uniform, and a card missing a control it should have is exactly the kind of
 /// drift a hand-maintained screen accumulates.
 pub const CARD_CHROME: &[&str] = &["settings", "tear_off", "maximize", "close"];
+
+/// The words a severity threshold may be set to, **`all` first**.
+///
+/// [`SEVERITY`]'s vocabulary plus the word for *no floor*, which is a different
+/// statement from the least severe level: the two select the same rows today and
+/// stop doing so the moment the scale grows a word below `info`.
+///
+/// ★★★★★ R2021 — it lives here rather than beside the verb that consumes it,
+/// because it is now read by TWO things — the wire's argument declaration and
+/// the card settings row a person picks from ([`CARD_SETTINGS`]) — and a list
+/// that two surfaces read is a specification statement rather than one verb's
+/// private table. `r1851_the_declared_vocabularies_are_their_definitions` still
+/// holds it to [`SEVERITY`], which is what keeps it from being a third spelling.
+pub const ALARM_FLOORS: &[&str] = &["all", "info", "warn", "error"];
+
+/// One setting a card offers under its own header's settings control.
+///
+/// ★★★★★ R2021 — **a setting that names the verb it drives**, which is what
+/// makes the pointer path and the wire path one path rather than two that agree
+/// until somebody changes one of them. The behaviour prototype has no such
+/// column and pays for it: its own per-card table declares a *minimum severity*
+/// control whose key is read nowhere in its script, so the control is on screen,
+/// the value is stored, and nothing consumes it.
+///
+/// The column is therefore not decoration — it is the thing that makes an inert
+/// row **unrepresentable**. A field with no verb cannot be written down here,
+/// so a settings surface cannot grow a control that does nothing.
+#[derive(Debug, PartialEq, Eq)]
+pub struct CardSettingSpec {
+    /// Which kind of card offers it.
+    pub kind: &'static str,
+    /// The setting's own key, and the suffix of its paint tags.
+    pub key: &'static str,
+    /// What a reader calls it.
+    pub label: &'static str,
+    /// The words it may take, in the order the roster lists them.
+    pub options: &'static [&'static str],
+    /// Which of the tool's settings it is a control over — the same closed set
+    /// the preferences page's rows name, because *a value row* is one thing
+    /// whichever page draws it.
+    pub drives: Drives,
+    /// The wire verb a press goes through. Held to the shell's own method
+    /// census by the gate, so a setting cannot name a verb no client can call.
+    pub verb: &'static str,
+}
+
+/// Every setting the board's cards offer, in the order each card lists them.
+///
+/// ★ Deliberately shorter than the prototype's own table, and the arithmetic is
+/// measured rather than guessed. That table declares **25 fields over 12 kinds**
+/// under **22 distinct keys**, and its script reads exactly **two** of those
+/// keys — `filter` and `query` — plus the panel's own title. Four of the 25
+/// fields carry a key that is read; the other **21 controls do nothing at all**.
+/// So reproducing it whole would be reproducing twenty-one inert controls, which
+/// is the exact defect this surface exists to repay. What is written here is
+/// what this build can drive today; the rest arrives with the verbs that answer
+/// them.
+pub const CARD_SETTINGS: &[CardSettingSpec] = &[CardSettingSpec {
+    kind: "alarms",
+    key: "severity",
+    label: "Min severity",
+    options: ALARM_FLOORS,
+    drives: Drives::AlarmFloor,
+    verb: "filter_alarms",
+}];
+
+/// The settings a card of `kind` offers, in declaration order.
+#[must_use]
+pub fn card_settings_of(kind: &str) -> Vec<&'static CardSettingSpec> {
+    CARD_SETTINGS.iter().filter(|s| s.kind == kind).collect()
+}
 
 // --- What reaches somebody who never sees the drawing ------------------------
 
