@@ -901,9 +901,36 @@ pub struct KeyRowSpec {
     pub gist: &'static str,
     /// What the button says.
     pub verb: &'static str,
-    /// The requirement it is booked under.
-    pub reserved_for: &'static str,
+    /// ★★★★★ R2042 — the requirement it is booked under, **or `None` when no
+    /// requirement books it at all**.
+    ///
+    /// It was `&'static str` and both rows carried a number: 22 and 23. Neither
+    /// was theirs — the deferred register books 22 to an export of a report and
+    /// 23 to capture and replay — so this screen told a reader, in the only
+    /// sentence it has about what is coming, that two other capabilities were
+    /// going to arrive here.
+    ///
+    /// Measured at R2042 against the reference's own requirement register, all
+    /// twenty-six of it: exactly one of these two rows has a source. Decoding a
+    /// payload in a format the application supplied IS booked, and that is the
+    /// end-to-end key row. A key log that decrypts the links themselves is
+    /// booked by NOTHING in the register — which makes it this build's own
+    /// idea, and the honest thing for the screen to say is that it does not
+    /// know when it arrives rather than a number that means something else.
+    ///
+    /// ⇒ `None` is not a gap in this table; it is an answer, and
+    /// `r2042_every_key_row_is_booked_by_the_register_or_by_nothing` holds both
+    /// arms to the register.
+    pub reserved_for: Option<&'static str>,
 }
+
+/// What a key row that no requirement books says instead of a number.
+///
+/// Deliberately not a release name or an invented number: this build does not
+/// know when the work arrives, and saying so is the whole repair. The seat
+/// stays `Reserved` — it is named, described and inert, which is what that arm
+/// means — and only its detail changes.
+pub const UNBOOKED: &str = "work no requirement books yet";
 
 /// The two key rows, in the reference's order.
 pub const KEY_ROWS: &[KeyRowSpec] = &[
@@ -912,14 +939,18 @@ pub const KEY_ROWS: &[KeyRowSpec] = &[
         title: "Transport key log",
         gist: "Import a key log to decrypt links",
         verb: "Import\u{2026}",
-        reserved_for: "requirement 22",
+        // R2042 — nothing in the register books a link-decrypting key store.
+        reserved_for: None,
     },
     KeyRowSpec {
         key: "e2e",
         title: "Application end-to-end key",
         gist: "Decode payloads the application encrypted end to end",
         verb: "Add key\u{2026}",
-        reserved_for: "requirement 23",
+        // R2042 — 15, where this said 23. The register books 15 to decoding a
+        // payload in a format the application supplied, which is what this row
+        // foreshadows, and books 23 to capture and replay, which is not.
+        reserved_for: Some("requirement 15"),
     },
 ];
 

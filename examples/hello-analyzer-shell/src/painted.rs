@@ -3987,7 +3987,11 @@ fn r1695_the_settings_page_declares_its_locked_affordances() {
                 .get(&tag)
                 .unwrap_or_else(|| panic!("{tag} is booked for a later release and painted live"));
             assert_eq!(*kind, UnavailableKind::Reserved);
-            assert_eq!(detail, row.reserved_for, "{tag}'s booking drifted");
+            assert_eq!(
+                detail,
+                row.reserved_for.unwrap_or(spec::UNBOOKED),
+                "{tag}'s booking drifted"
+            );
             assert_eq!(*recourse, Recourse::AwaitRelease);
         }
         // And nothing else on the page is inert, so a switch that stopped

@@ -88676,6 +88676,50 @@
         "Cohort loop 32 -> 31."
       ]
     },
+    "R2042": {
+      "decision_summary": "One row had a source and one had none, and reading the whole register is what told them apart.\n\nThe settings page's two locked key rows each cited a requirement, and the deferred register books those two numbers to an export of a report and to capture and replay. A locked seat's number is the only sentence a screen has about what will fill it, so each row was telling a reader that somebody else's capability was coming here.\n\nThe debt offered two directions — find the source, or take the citation away — and both were right, one per row. Establishing that meant reading the entire requirement list rather than looking for a number that would fit. Decoding a payload in a format the application supplied is booked, and placed inside a screen this build already has; that is what an end-to-end key row foreshadows. A key log that decrypts the links themselves is booked by nothing at all, which makes it this build's own idea.\n\nSo one row cites the requirement that is genuinely its own, and the other says it is reserved for work no requirement books yet. No number was chosen for looking free, which the debt forbade in as many words.",
+      "changes_bullets": [
+        "A key row's booking becomes optional, and the absence is an answer rather than a blank: the compiler named the three readers of that field — the paint, the spoken refusal and the description — and all three now carry one sentence for a row nobody has booked.",
+        "An empty citation is only an answer if something else vouches for it, so the register gains a block that NAMES the unbooked seat and its reason, and its owed block is emptied. The new gate holds both arms: a row that cites must cite a requirement the register defers inside a screen this build has, a row that does not must be named as unbooked, and both arms must have a member. That the owed block is empty is asserted too, so the claim that nothing is unsourced cannot rot quietly.",
+        "The wire published the raw option where the paint published the resolved sentence — one field read two ways, which a walk caught. The wire carries the same sentence now and answers whether the row is booked as its own boolean, so the fact is separate from the prose rather than parsed out of it."
+      ],
+      "verification_bullets": [
+        "236 tests passed and 0 failed on the screen's package, one of them the new gate. The counterfactual — giving the unbooked row a number back — goes red naming the row that cites a requirement and is listed as unbooked at the same time.",
+        "All 16 walks that touch a locked seat pass. One of them was red first, and that red is a finding rather than a nuisance: the wire published the raw option while the paint published the resolved sentence, so a comparison that had held by accident stopped holding the moment the field could be absent.",
+        "Clippy on the package rc=0 after three refusals paid by structure rather than by an allow, one of which is itself a measurement: the key-row table is a const, so an assertion that it is non-empty can never fail, and it is deleted rather than silenced. `cargo fmt --all --check` rc=0.",
+        "Measured, and it is what decided each row: the register runs 1 to 26; 15 books decoding a payload in a format the application supplied and places it in-place; 22 books a report export and 23 books capture and replay; nothing anywhere books a link-decrypting key store."
+      ],
+      "impact_refs": [
+        "5.39",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "Nothing is opened by this round. The register's owed list is empty for the first time since it was written, and the gate asserts that emptiness, so a future citation that cannot be sourced has to be added deliberately rather than accumulating.",
+        "The distinction the register now carries is the one worth keeping: `owed` is a citation nothing can source — a screen saying something false — and `unbooked` is a seat nobody has asked for, a screen saying it does not know. Only the first is a defect.",
+        "Cohort loop 31 -> 30."
+      ],
+      "publishable_decision_summary": "One row had a source and one had none, and reading the whole register is what told them apart.\n\nThe settings page's two locked key rows each cited a requirement, and the deferred register books those two numbers to an export of a report and to capture and replay. A locked seat's number is the only sentence a screen has about what will fill it, so each row was telling a reader that somebody else's capability was coming here.\n\nThe debt offered two directions — find the source, or take the citation away — and both were right, one per row. Establishing that meant reading the entire requirement list rather than looking for a number that would fit. Decoding a payload in a format the application supplied is booked, and placed inside a screen this build already has; that is what an end-to-end key row foreshadows. A key log that decrypts the links themselves is booked by nothing at all, which makes it this build's own idea.\n\nSo one row cites the requirement that is genuinely its own, and the other says it is reserved for work no requirement books yet. No number was chosen for looking free, which the debt forbade in as many words.",
+      "publishable_changes_bullets": [
+        "A key row's booking becomes optional, and the absence is an answer rather than a blank: the compiler named the three readers of that field — the paint, the spoken refusal and the description — and all three now carry one sentence for a row nobody has booked.",
+        "An empty citation is only an answer if something else vouches for it, so the register gains a block that NAMES the unbooked seat and its reason, and its owed block is emptied. The new gate holds both arms: a row that cites must cite a requirement the register defers inside a screen this build has, a row that does not must be named as unbooked, and both arms must have a member. That the owed block is empty is asserted too, so the claim that nothing is unsourced cannot rot quietly.",
+        "The wire published the raw option where the paint published the resolved sentence — one field read two ways, which a walk caught. The wire carries the same sentence now and answers whether the row is booked as its own boolean, so the fact is separate from the prose rather than parsed out of it."
+      ],
+      "publishable_verification_bullets": [
+        "236 tests passed and 0 failed on the screen's package, one of them the new gate. The counterfactual — giving the unbooked row a number back — goes red naming the row that cites a requirement and is listed as unbooked at the same time.",
+        "All 16 walks that touch a locked seat pass. One of them was red first, and that red is a finding rather than a nuisance: the wire published the raw option while the paint published the resolved sentence, so a comparison that had held by accident stopped holding the moment the field could be absent.",
+        "Clippy on the package rc=0 after three refusals paid by structure rather than by an allow, one of which is itself a measurement: the key-row table is a const, so an assertion that it is non-empty can never fail, and it is deleted rather than silenced. `cargo fmt --all --check` rc=0.",
+        "Measured, and it is what decided each row: the register runs 1 to 26; 15 books decoding a payload in a format the application supplied and places it in-place; 22 books a report export and 23 books capture and replay; nothing anywhere books a link-decrypting key store."
+      ],
+      "publishable_impact_refs": [
+        "5.39",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Nothing is opened by this round. The register's owed list is empty for the first time since it was written, and the gate asserts that emptiness, so a future citation that cannot be sourced has to be added deliberately rather than accumulating.",
+        "The distinction the register now carries is the one worth keeping: `owed` is a citation nothing can source — a screen saying something false — and `unbooked` is a seat nobody has asked for, a screen saying it does not know. Only the first is a defect.",
+        "Cohort loop 31 -> 30."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

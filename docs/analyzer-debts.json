@@ -748,19 +748,6 @@
       ]
     },
     {
-      "name": "debt-two-key-rows-cite-requirements-that-book-something-else",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "rank": "ordinary",
-      "why": [
-        "links analyzer-behaviour-canon-is-the-standalone-prototype, debt-canon-gui-surface-census",
-        "names dashboard.t2.9"
-      ]
-    },
-    {
       "name": "debt-two-line-box-rules-disagree-by-three-pixels",
       "substituted": false,
       "blocked_by": "buildable",

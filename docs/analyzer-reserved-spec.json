@@ -114,12 +114,28 @@
     "finding what the requirement actually books — not choosing a number that",
     "looks free."
   ],
-  "owed": [
+  "owed": [],
+
+  "$unbooked_comment": [
+    "R2042 — a seat this build draws whose capability the register books to",
+    "NOBODY, measured across the whole requirement list rather than guessed.",
+    "",
+    "Not the same as `owed` above, and the difference is what that round",
+    "found. `owed` is a citation this register cannot source: a screen saying",
+    "something false. This is a screen saying it does not know, which is true",
+    "and is the honest end state for a seat the reference never asked for —",
+    "the row stays (what this build has and the reference lacks is kept), its",
+    "number goes, and the gate holds it to having none.",
+    "",
+    "The two key rows are what emptied `owed`. One of them IS booked: 15 books",
+    "decoding a payload in a format the application supplied, which is what an",
+    "end-to-end key row foreshadows. The other is below."
+  ],
+  "unbooked": [
     {
       "surface": "settings key rows",
-      "cites": [22, 23],
-      "why": "Requirement 22 books an export of a report and 23 books capture and replay; neither is a key row. The reference draws no key rows on this screen at all, so there is nothing here to source a number from.",
-      "debt": "debt-two-key-rows-cite-requirements-that-book-something-else"
+      "seat": "keylog",
+      "why": "A key log that decrypts the links themselves is booked by no requirement in the register. This build draws the row anyway, so it declares itself reserved for work nobody has scheduled rather than for a number that books another capability."
     }
   ]
 }

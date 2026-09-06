@@ -5198,6 +5198,111 @@ fn r1832_every_locked_seat_cites_a_requirement_the_register_books_to_it() {
     );
 }
 
+/// ★★★★★ **(R2042) Every key row is booked by the register, or by nothing —
+/// and the register says which.**
+///
+/// These two rows are the settings page's only locked seats and they were the
+/// one surface `r1832` above could not cover: both cited a requirement, and
+/// neither citation was theirs. 22 books an export of a report and 23 books
+/// capture and replay, so the screen told a reader — in the only sentence it
+/// has about what is coming — that two other capabilities would arrive here.
+///
+/// Repaired by MEASUREMENT rather than by choosing a number that looked free,
+/// which is what the debt forbade in as many words. Read across the whole
+/// register: decoding a payload in a format the application supplied is booked,
+/// and that is the end-to-end key row; a key log that decrypts the links
+/// themselves is booked by nothing at all, so that row now says so.
+///
+/// Both arms are checked here, and the second is the one that matters: a row
+/// with no number must be one the register NAMES as unbooked, or "we do not
+/// know" becomes a place to put anything.
+#[test]
+fn r2042_every_key_row_is_booked_by_the_register_or_by_nothing() {
+    let pin = reserved_pin();
+    let deferred = pin["deferred"]
+        .as_array()
+        .expect("the register declares a deferred array");
+    let unbooked: std::collections::BTreeSet<&str> = pin["unbooked"]
+        .as_array()
+        .expect("the register declares an unbooked array")
+        .iter()
+        .filter_map(|row| row["seat"].as_str())
+        .collect();
+
+    // ⚠ No "the table is non-empty" assertion here, and that absence is the
+    // rule rather than an oversight: `KEY_ROWS` is a const, so clippy proves
+    // such a check can never fail and this repository deletes an assertion with
+    // no failing path. What keeps the loop below from passing over nothing is
+    // the two-armed count at the end, which no constant can satisfy.
+    let mut sourced = 0usize;
+    let mut declared_unbooked = 0usize;
+    for row in spec::KEY_ROWS {
+        if let Some(cite) = row.reserved_for {
+            {
+                let n = cited(cite).unwrap_or_else(|| {
+                    panic!(
+                        "the {:?} key row cites {cite:?}, which is not a requirement",
+                        row.key
+                    )
+                });
+                let booked = deferred
+                    .iter()
+                    .find(|d| d["requirement"].as_u64() == Some(n))
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "★ the {:?} key row cites requirement {n}, which the register \
+                             does not defer at all",
+                            row.key
+                        )
+                    });
+                // ★ A key row is foreshadowed INSIDE this screen, so the
+                // register must place it there. A number booked to a palette
+                // seat or a separate console would be the same class of wrong
+                // answer the citation itself was.
+                assert_eq!(
+                    booked["where"].as_str(),
+                    Some("in-place"),
+                    "★ the {:?} key row cites requirement {n}, which the register books \
+                     somewhere other than inside a screen this build already has",
+                    row.key,
+                );
+                assert!(
+                    !unbooked.contains(row.key),
+                    "the {:?} key row cites a requirement AND is listed as unbooked",
+                    row.key,
+                );
+                sourced += 1;
+            }
+        } else {
+            assert!(
+                unbooked.contains(row.key),
+                "★ the {:?} key row cites nothing, and the register does not name it \
+                 as unbooked — a seat with no number must say why, or `None` becomes \
+                 a place to put anything",
+                row.key,
+            );
+            declared_unbooked += 1;
+        }
+    }
+    assert_eq!(
+        sourced + declared_unbooked,
+        spec::KEY_ROWS.len(),
+        "every key row is one or the other",
+    );
+    // ★ Both arms have a member, so neither branch above is dead. If this build
+    // ever books the second row, this is the assertion that asks whether the
+    // register was told.
+    assert!(
+        sourced > 0 && declared_unbooked > 0,
+        "both arms are exercised"
+    );
+    assert!(
+        pin["owed"].as_array().is_some_and(Vec::is_empty),
+        "the register still owes a citation it cannot source, and this gate \
+         claims that population is empty",
+    );
+}
+
 /// ★★★ **Every palette requirement the register books is either reserved here
 /// or declared BUILT** — so a seat we finished and a seat we forgot cannot look
 /// the same.

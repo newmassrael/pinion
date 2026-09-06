@@ -7326,7 +7326,11 @@ impl ShellOracle {
                         format!(
                             "{} is {}",
                             row.title,
-                            Unavailable::reserved(row.reserved_for).sentence()
+                            // R2042 — a row no requirement books says so, in
+                            // place of a number that would book somebody else's
+                            // capability.
+                            Unavailable::reserved(row.reserved_for.unwrap_or(spec::UNBOOKED))
+                                .sentence()
                         ),
                     ));
                 }
@@ -9942,9 +9946,12 @@ fn settings_key_rows(palette: Palette, region: Rect) -> Vec<Scene> {
                     // from being reachable.
                     .with_focusable(false),
             )])
-            .with_layout(
-                absolute(seat).with_unavailable(Unavailable::reserved(key_row.reserved_for)),
-            ),
+            .with_layout(absolute(seat).with_unavailable(Unavailable::reserved(
+                // R2042 — the row that no requirement books says so here too,
+                // so the paint, the spoken refusal and the description all
+                // carry one sentence rather than three readings of a field.
+                key_row.reserved_for.unwrap_or(spec::UNBOOKED),
+            ))),
         ));
     }
     out
@@ -13179,7 +13186,16 @@ fn spec_json() -> serde_json::Value {
         })).collect::<Vec<_>>(),
         "key_rows": spec::KEY_ROWS.iter().map(|r| serde_json::json!({
             "key": r.key, "title": r.title, "gist": r.gist,
-            "verb": r.verb, "reserved_for": r.reserved_for,
+            "verb": r.verb,
+            // ★★★★★ R2042 — the SENTENCE the seat carries, which is what the
+            // paint and the spoken refusal carry too. Publishing the raw
+            // `Option` here would make the wire and the paint two readings of
+            // one field — the class this round repaired one layer down — and a
+            // walk comparing them would have had to know the fallback.
+            "reserved_for": r.reserved_for.unwrap_or(spec::UNBOOKED),
+            // And the fact itself, so a reader can tell "booked under a
+            // requirement" from "booked under nothing" without parsing prose.
+            "booked": r.reserved_for.is_some(),
         })).collect::<Vec<_>>(),
         "option_groups": spec::OPTION_GROUPS.iter().map(|(key, title)| serde_json::json!({
             "key": key, "title": title,
@@ -14939,7 +14955,7 @@ fn page_descriptions(state: &ShellState, at: &str) -> pinion_core::describe::Des
                     format!(
                         "{} is not in this release - booked under {}",
                         row.verb.trim_end_matches('\u{2026}').trim(),
-                        row.reserved_for
+                        row.reserved_for.unwrap_or(spec::UNBOOKED)
                     ),
                 );
             }
