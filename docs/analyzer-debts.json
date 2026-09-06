@@ -70,17 +70,6 @@
   },
   "debts": [
     {
-      "name": "debt-a-card-announces-a-row-it-does-not-paint",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "names dashboard.t1.8"
-      ]
-    },
-    {
       "name": "debt-a-card-declares-one-setting-where-the-canon-declares-twenty-five",
       "substituted": false,
       "blocked_by": "buildable",

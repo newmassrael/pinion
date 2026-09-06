@@ -112,6 +112,66 @@ pub fn grid_table_nodes(
     columns: &[GridColumn],
     rows: &[GridRow],
 ) -> Vec<AccessNode> {
+    grid_table_nodes_clamped(
+        grid_tag,
+        grid_name,
+        multiselectable,
+        header_row_tag,
+        columns,
+        rows,
+        GridExtent {
+            rows: rows.len(),
+            columns: columns.len(),
+        },
+    )
+}
+
+/// ★★★★★ R2022 — how many rows and columns the MODEL has, for a grid whose
+/// caller listed only the leading part of them it has room to show.
+///
+/// # Why a table would list less than it has
+///
+/// A body that stops at its own bottom edge shows the first `n` of its rows,
+/// and one that drops columns from the right shows the first `c` of its
+/// columns — neither is a scroll, so the rest are simply not there this frame.
+/// The rows and columns a caller passes are then what a reader can be walked
+/// through, and these two numbers are what a reader must still be told, because
+/// *five rows of eight* and *five rows* are different facts and only one of them
+/// is true.
+///
+/// This is [`windowed_grid_nodes`](crate::windowed_grid_nodes)'s `set_size`
+/// split in two and applied to a **prefix** rather than an arbitrary window: a
+/// virtualized grid scrolls, so its window starts anywhere and it owns its own
+/// derived tag scheme; a clamped one always starts at the first row, and its
+/// tags are the caller's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GridExtent {
+    /// The model's full data-row count — `aria-rowcount` less the header row.
+    pub rows: usize,
+    /// The model's full column count — `aria-colcount`.
+    pub columns: usize,
+}
+
+/// [`grid_table_nodes`] for a grid that shows the leading part of a larger
+/// model: the passed `columns` and `rows` are what the tree holds, and
+/// [`GridExtent`] is what the counts state.
+///
+/// Every other rule is the one above — the header row is counted and is row
+/// zero, data rows are numbered from one, and a cell's name comes from the
+/// paint. The extent reaches `aria-rowcount`, `aria-colcount` and each row's
+/// `aria-setsize`; it does **not** change `aria-rowindex`, which stays the row's
+/// place in the tree because a clamped table's first row is the model's first
+/// row.
+#[must_use]
+pub fn grid_table_nodes_clamped(
+    grid_tag: &str,
+    grid_name: &str,
+    multiselectable: bool,
+    header_row_tag: &str,
+    columns: &[GridColumn],
+    rows: &[GridRow],
+    extent: GridExtent,
+) -> Vec<AccessNode> {
     // grid + header row + N columnheaders + per row (1 + ncols).
     let cell_total: usize = rows.iter().map(|r| r.cells.len()).sum();
     let mut nodes: Vec<AccessNode> =
@@ -131,8 +191,10 @@ pub fn grid_table_nodes(
     // would make every consumer's number mean something slightly different.
     let mut grid = AccessNode::new(grid_tag, AriaRole::Grid)
         .with_name(grid_name)
-        .with_row_count(u32::try_from(rows.len() + 1).unwrap_or(u32::MAX))
-        .with_column_count(u32::try_from(columns.len()).unwrap_or(u32::MAX));
+        // ★★★★★ R2022 — the MODEL's counts, which are the passed slices' lengths
+        // for every caller that shows all of what it has (see [`GridExtent`]).
+        .with_row_count(u32::try_from(extent.rows + 1).unwrap_or(u32::MAX))
+        .with_column_count(u32::try_from(extent.columns).unwrap_or(u32::MAX));
     if multiselectable {
         grid = grid.with_multiselectable();
     }
@@ -180,7 +242,7 @@ pub fn grid_table_nodes(
         let mut row_node = AccessNode::new(row.tag.as_str(), AriaRole::Row)
             .with_selected(row.selected)
             .with_row(i + 1)
-            .with_set_position(i, rows.len());
+            .with_set_position(i, extent.rows);
         // ★ R1694 — WAI-ARIA gives `row` name-from-contents, and a row is
         // usually painted as an empty band with its cells as SIBLINGS, so
         // nothing under the row's own tag can be read. The cells are the
@@ -294,6 +356,71 @@ mod tests {
         assert_eq!(by_tag(&n, "g_ch0").role, AriaRole::ColumnHeader);
         assert_eq!(by_tag(&n, "g_row0").role, AriaRole::Row);
         assert_eq!(by_tag(&n, "g#0_0").role, AriaRole::GridCell);
+    }
+
+    /// ★★★★★ R2022 — **a table that shows part of its model says how much of
+    /// it there is**, and the part it shows is the only part a reader is walked
+    /// through.
+    ///
+    /// Both halves are asserted against one call, because either alone is a
+    /// defect: listing rows nobody drew tells a reader about rows that are not
+    /// there, and listing the shown rows *without* the extent tells them a
+    /// three-row table has two rows.
+    #[test]
+    fn r2022_a_clamped_table_lists_what_it_shows_and_counts_what_it_has() {
+        let all = columns();
+        let shown = &all[..1];
+        let n = grid_table_nodes_clamped(
+            "g",
+            "Catalog",
+            false,
+            "g_hrow",
+            shown,
+            &rows()[..1],
+            GridExtent {
+                rows: 8,
+                columns: 2,
+            },
+        );
+        // grid + header row + 1 columnheader + 1 row + its cells.
+        assert_eq!(n[0].row_count, Some(9), "eight data rows plus the header");
+        assert_eq!(n[0].column_count, Some(2), "two columns, one of them shown");
+        assert_eq!(
+            n.iter()
+                .filter(|node| node.role == AriaRole::Row && node.tag != "g_hrow")
+                .count(),
+            1,
+            "one data row is listed, because one is what the caller drew",
+        );
+        assert_eq!(
+            n.iter()
+                .filter(|node| node.role == AriaRole::ColumnHeader)
+                .count(),
+            1,
+        );
+        assert_eq!(
+            by_tag(&n, "g_row0").size_of_set,
+            Some(8),
+            "and the row states the set it is one of, not the set it was listed in",
+        );
+        assert_eq!(by_tag(&n, "g_row0").position_in_set, Some(1));
+        // The unclamped entry point is this one at full extent, so the two
+        // cannot answer differently about a table that shows everything.
+        assert_eq!(
+            nodes(),
+            grid_table_nodes_clamped(
+                "g",
+                "Catalog",
+                false,
+                "g_hrow",
+                &all,
+                &rows(),
+                GridExtent {
+                    rows: rows().len(),
+                    columns: all.len(),
+                },
+            ),
+        );
     }
 
     /// R1547 §5.40 — **no builder names a `columnheader`.** The name is derived from the

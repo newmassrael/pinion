@@ -2066,11 +2066,21 @@ fn r1721_the_tree_reports_the_saved_filter_the_card_has_applied() {
     owner.run(|| {
         let state = use_shell_state();
         let selected = || -> Vec<bool> {
-            super::filter_nodes(&state, "filter#3")
-                .into_iter()
-                .filter(|node| node.tag.starts_with("card.filter#3.chip."))
-                .map(|node| node.selected == Some(true))
-                .collect()
+            // ★ R2022 — the body rectangle the card actually has, so the roster
+            // is the one the painter placed. The card is on the board at its
+            // opening size here, which is wide enough for every chip.
+            super::filter_nodes(
+                &state,
+                "filter#3",
+                state
+                    .card("filter#3")
+                    .and_then(|card| super::card_body_rect(&state, &card))
+                    .expect("the filter card is on the board and ready"),
+            )
+            .into_iter()
+            .filter(|node| node.tag.starts_with("card.filter#3.chip."))
+            .map(|node| node.selected == Some(true))
+            .collect()
         };
         assert_eq!(
             selected(),
@@ -5295,14 +5305,20 @@ fn r1851_the_feed_builds_only_the_window_it_shows() {
         // ⚠ The bare ROWS, not their cells. `contains(".feed.row.")` matched
         // both and reported sixteen — a row announces three cells, so the
         // predicate has to say which of the two families it means.
-        let announced: Vec<String> = super::alarms_nodes(&state, &card)
-            .into_iter()
-            .map(|node| node.tag)
-            .filter(|tag| {
-                tag.rsplit_once(".feed.row.")
-                    .is_some_and(|(_, rest)| !rest.contains('.'))
-            })
-            .collect();
+        // ★ R2022 — through the one derivation the painter is handed, so this
+        // claim is about the rectangle the card is actually drawn in.
+        let announced: Vec<String> = super::alarms_nodes(
+            &state,
+            &card,
+            super::card_body_rect(&state, &card).expect("the alarm card is on the board"),
+        )
+        .into_iter()
+        .map(|node| node.tag)
+        .filter(|tag| {
+            tag.rsplit_once(".feed.row.")
+                .is_some_and(|(_, rest)| !rest.contains('.'))
+        })
+        .collect();
         assert_eq!(
             announced.len(),
             window.count,

@@ -1594,15 +1594,40 @@ fn r1668_every_mark_lies_inside_the_pane_its_address_names() {
 /// The bodies this round wrote are drawn row by row from a table, and a table
 /// longer than the card is the exact shape of the twenty-five-surface backlog
 /// R1656 measured. The painter stops before the edge; this is what says so.
+///
+/// # ★★★★★ R2022 — asked at the UNCLIPPED rectangle
+///
+/// It used to read [`Painted`], whose every rectangle has the canvas's clip
+/// already folded in — so for a card the board pushed partly below the viewport
+/// this question could not be asked at all: the parts outside the clip are
+/// simply absent, and a row placed past the card's bottom edge on such a card
+/// was invisible here.
+///
+/// The scene answers where a part *would be*
+/// ([`NodeVisit::offset`](pinion_core::scene::NodeVisit::offset), unclipped on
+/// purpose), which is the frame this claim belongs in: leaving one's own card is
+/// a layout fact and has nothing to do with where the board is scrolled to. It
+/// was measured before it was moved — **zero** violations across the whole
+/// sweep, so the reach is strictly new rather than a claim being relaxed to
+/// pass — and it is what lets
+/// `r1843_a_card_announces_only_the_rows_it_builds` next door ask its own
+/// question of the scene without either of them guessing at the other's unit.
 #[test]
 fn r1668_no_card_paints_its_content_outside_itself() {
-    sweep(|state, shot, _, case| {
+    sweep(|state, shot, scene, case| {
+        let placed = unclipped_rects(scene);
         for id in &shown_cards(state) {
-            let bounds = shot
-                .rect(&format!("card.{id}"))
+            // The card must be PAINTED, which is `Painted`'s question and stays
+            // there: a card the model shows and no frame ever drew is a defect
+            // this has caught before.
+            shot.rect(&format!("card.{id}"))
                 .unwrap_or_else(|| panic!("{case}: card {id} is shown and not painted"));
-            for tag in shot.family(&format!("card.{id}.")) {
-                let rect = shot.rect(tag).expect("just enumerated");
+            let stem = format!("card.{id}.");
+            let bounds = placed
+                .get(&format!("card.{id}"))
+                .copied()
+                .expect("a painted card is in the scene");
+            for (tag, rect) in placed.iter().filter(|(tag, _)| tag.starts_with(&stem)) {
                 assert!(
                     rect.y + rect.h <= bounds.y + bounds.h,
                     "{case}: {tag} at {rect:?} runs off the bottom of its card at {bounds:?}",
@@ -1614,6 +1639,30 @@ fn r1668_no_card_paints_its_content_outside_itself() {
             }
         }
     });
+}
+
+/// ★★★★★ R2022 — every tagged node's rectangle in the window's frame **with no
+/// clip folded in**: where the part would be, rather than where it can be seen.
+///
+/// [`Painted`] answers the second question, which is the right one for *is this
+/// on screen* and the wrong one for *did this leave the box that owns it* — a
+/// row placed past its card's bottom on a card the board scrolled halfway out of
+/// view is a layout defect whether or not the viewport happened to cut it off.
+fn unclipped_rects(scene: &Scene) -> BTreeMap<String, Rect> {
+    let mut out = BTreeMap::new();
+    scene.for_each_node(&mut |visit| {
+        let Some(tag) = visit.node.tag() else { return };
+        let rect = visit.node.rect();
+        let x = visit.offset.0 + i64::from(rect.x);
+        let y = visit.offset.1 + i64::from(rect.y);
+        out.entry(tag.to_owned()).or_insert(Rect::new(
+            u32::try_from(x).unwrap_or(0),
+            u32::try_from(y).unwrap_or(0),
+            rect.w,
+            rect.h,
+        ));
+    });
+    out
 }
 
 /// R1671 — nothing a card paints may cross the card's own FRAME.
@@ -2049,53 +2098,7 @@ fn r1671_the_frame_walk_finds_an_untagged_crossing() {
     );
 }
 
-/// Kinds allowed to announce a row they do not paint.
-///
-/// ★★★★★ R1843 — a RATCHET, not an exemption, on R1807's `UNASSEMBLED` model.
-/// The gate below refuses a card that tells a reader about a row nobody drew;
-/// this names the ones that already did when the rule landed, so a NEW ghost
-/// cannot join them silently and the backlog is a list a reader can shorten
-/// rather than a number in a summary line.
-///
-/// ⚠⚠ **Every card this round did not build is on it**, and each name was
-/// MEASURED — the gate was run, the card it named was added, and it was run
-/// again, five times over. Shrunk to one cell, each announces a row it does not
-/// paint: `packet` row 5 of its stream, `decode` row 6 of its tree, `keymap`
-/// row 5 of its map, `filter` row 3 of its chips, `latency` row 0 of its stat
-/// strip. Not one was guessed from the pattern, because a name here is a claim
-/// that a card HAS this defect and an unproven one would be a slander that
-/// silences a real gate.
-///
-/// ★★★★★ The card that produced this rule — `health` — is deliberately NOT on
-/// the list. It was REPAIRED rather than admitted, by giving the paint and the
-/// accessibility tree one shared count (`health_tile_count`). Admitting the
-/// defect that motivated the gate would have made the gate ornamental.
-///
-/// So this list is the shape of the finding: the ghost is not a new card's
-/// mistake, it is what every body on this screen does, and it was invisible
-/// because nothing asked. Shortening it is the repair — a body's node builder
-/// must consult whatever its painter consults.
-///
-/// ⇒ `debt-a-card-announces-a-row-it-does-not-paint`.
-/// ★★★★★ R1851 added `alarms`, and the reason is a MODEL limit rather than a
-/// card that gets a pass.
-///
-/// This gate reads *painted* off the finished frame, which is after the canvas's
-/// clip. Every other card is fully inside that clip in every swept state, so
-/// "painted" and "constructed" are the same set for them. The alarm card is the
-/// first that a swept state pushes partly OUTSIDE it: the board is exactly full,
-/// so adding a second card of a placed kind pushes the bottom row down one, and a
-/// row that exists and is scrolled away is a row the frame does not record. The
-/// gate then reads that as a row nobody drew, which is a true statement about the
-/// paint and a false one about the tree.
-///
-/// The claim is not lost — it is asserted where it can be exact, against the
-/// window the assembly actually built rather than against the clip:
-/// `r1851_the_feed_builds_only_the_window_it_shows`, and on the wire in
-/// `tools/demos/r1851_an_alarm_feed_is_graded_ordered_and_windowed.py` section F.
-const GHOSTS: &[&str] = &["packet", "decode", "keymap", "filter", "latency", "alarms"];
-
-/// ★★★★★ R1843 — **a card announces the rows it PAINTS, and no others.**
+/// ★★★★★ R1843 — **a card announces the parts it BUILDS, and no others.**
 ///
 /// This gate exists because a counterfactual found nothing holding it. The
 /// health strip narrows by dropping whole tiles, and its accessibility tree
@@ -2104,50 +2107,230 @@ const GHOSTS: &[&str] = &["packet", "decode", "keymap", "filter", "latency", "al
 /// tiles nobody drew. The demo measured it (`3 tile(s) painted, 5 announced`);
 /// the Rust suite stayed green, and a demo is not run by `cargo test`.
 ///
-/// ⚠ Written for EVERY card rather than for the one that had the defect. A
-/// ghost row is not a health-strip problem — it is what happens whenever a
-/// body's row count depends on something the node builder does not consult,
-/// and this screen now has two bodies whose row count depends on width.
+/// ⚠ Written for EVERY card rather than for the one that had the defect. A ghost
+/// row is not a health-strip problem — it is what happens whenever a part of a
+/// card is dropped by a rule the node builder does not consult.
 ///
 /// The reverse direction is deliberately NOT asserted here: a painted row that
 /// is not announced is the voice census's question, and it answers it with a
 /// vocabulary this check does not have (`silent`, `unvoiced`, `ghost`).
 ///
-/// ★★★★★ And its first run found a card this round did not touch. See
-/// [`GHOSTS`].
+/// # ★★★★★ R2022 — the population is DERIVED, and the ratchet is gone
+///
+/// This carried a `GHOSTS` list of kinds allowed to announce a row they do not
+/// paint, and a per-kind table naming ONE family to judge. Both are gone, and
+/// each was hiding something the other could not see.
+///
+/// **The list is empty because the five were repaid**, which was
+/// `debt-a-card-announces-a-row-it-does-not-paint`: every body now takes its
+/// rows from the seats its painter draws in
+/// ([`whole_rows_in`](pinion_core::containment::whole_rows_in)) and its columns
+/// from the painter's own column rule, and the header strip's affordances come
+/// from the layout that placed them.
+///
+/// **The family table is gone because a declaration of what to judge is a place
+/// for a defect to sit outside.** Measured at R2022, judging one family per kind
+/// left the two tables' heading cells and data cells, the decode card's bytes,
+/// the filter card's counts and trend, the latency card's plot and caption, and
+/// every card's header controls **all unasked** — and each of those had the
+/// defect. The population is now every address any card ever built: a tag's
+/// [`repeating_site`](pinion_core::containment::repeating_site) folds its card
+/// number and its row index away, so *"this screen paints things at
+/// `card.packet#*.cell.*`"* is a fact read off the sweep. An announced tag whose
+/// site is in that set is a part this screen draws, and it must have been drawn
+/// in THIS case. A tag whose site is nowhere in it — `…grid`, `…counts`,
+/// `…tiles` — is an accessibility group with no box of its own, and is left
+/// alone without anybody having to list it.
+///
+/// # ★★★★★ Why BUILT and not PAINTED, which is a correction
+///
+/// R1851 added `alarms` to the old list because this gate read *painted* off the
+/// finished frame, which is after the canvas's clip: the board is exactly full,
+/// a swept state pushes the bottom card partly outside the viewport, and rows
+/// that exist and are scrolled away are rows the frame does not record. That was
+/// read as rows nobody drew — a true statement about the paint and a false one
+/// about the tree, and the canvas SCROLLS, so a reader reaches them.
+///
+/// So the question is asked of the scene rather than of the clipped frame. It
+/// loses nothing: a part built OUTSIDE its own card is
+/// `r1668_no_card_paints_its_content_outside_itself`'s question, and R2022
+/// measured that gate exact at the unclipped rectangle and moved it there, so
+/// the two now cover the frame between them in units neither has to guess at.
 #[test]
-fn r1843_a_card_announces_only_the_rows_it_paints() {
-    sweep(|state, shot, _, case| {
-        for id in &shown_cards(state) {
-            let id = id.as_str();
-            let kind = super::kind_of(id);
-            if GHOSTS.contains(&kind) {
-                continue;
+fn r1843_a_card_announces_only_the_rows_it_builds() {
+    use pinion_core::containment::repeating_site;
+
+    // What each case built, and what each case said. Judged after the sweep
+    // because the population — which addresses this screen paints at all — is a
+    // fact about the whole sweep and not about one frame.
+    let mut cases: Vec<(String, BTreeSet<String>, Vec<String>)> = Vec::new();
+    sweep(|state, _, scene, case| {
+        let mut built: BTreeSet<String> = BTreeSet::new();
+        scene.for_each_node(&mut |visit| {
+            if let Some(tag) = visit.node.tag()
+                && tag.starts_with("card.")
+            {
+                built.insert(tag.to_owned());
             }
+        });
+        let mut said: Vec<String> = Vec::new();
+        for id in &shown_cards(state) {
             let Some(card) = state.card(id) else { continue };
-            let Some((family, _)) = body_family(kind) else {
-                continue;
-            };
-            let stem = format!("card.{id}.{family}.");
-            let painted: std::collections::BTreeSet<String> = shot
-                .family(&stem)
-                .iter()
-                .map(|t| t[stem.len()..].split('.').next().unwrap_or("").to_owned())
-                .collect();
-            for node in super::card_nodes(state, &card) {
-                let Some(rest) = node.tag.strip_prefix(&stem) else {
-                    continue;
-                };
-                if rest.contains('.') {
-                    continue;
-                }
-                assert!(
-                    painted.contains(rest),
-                    "{case}: {id} announces row {rest} of its {family} and paints \
-                     none — a reader is told about a row nobody drew",
-                );
+            let stem = format!("card.{id}.");
+            said.extend(
+                super::card_nodes(state, &card)
+                    .into_iter()
+                    .map(|node| node.tag)
+                    .filter(|tag| tag.starts_with(&stem)),
+            );
+        }
+        cases.push((case.to_string(), built, said));
+    });
+    let painted_sites: BTreeSet<String> = cases
+        .iter()
+        .flat_map(|(_, built, _)| built.iter().map(|tag| repeating_site(tag)))
+        .collect();
+    assert!(
+        !painted_sites.is_empty(),
+        "the sweep found no card addresses at all, so this gate weighed nothing",
+    );
+    let mut ghosts: Vec<String> = Vec::new();
+    for (case, built, said) in &cases {
+        for tag in said {
+            let site = repeating_site(tag);
+            if painted_sites.contains(&site) && !built.contains(tag) {
+                ghosts.push(format!(
+                    "{case}: {tag} is announced and nothing built it — this \
+                     screen paints at {site}, so a reader is told about a part \
+                     nobody drew",
+                ));
             }
         }
+    }
+    for line in ghosts.iter().take(20) {
+        println!("{line}");
+    }
+    assert!(
+        ghosts.is_empty(),
+        "{} announced part(s) were never built",
+        ghosts.len(),
+    );
+}
+
+/// ★★★★★ R2022 — **every body announces only what it paints, at every size**,
+/// with the two axes varied INDEPENDENTLY.
+///
+/// # This gate is a counterfactual's finding, twice over
+///
+/// `r1843_a_card_announces_only_the_rows_it_builds` next door asks the same
+/// question of the sweep, and two of this round's counterfactuals PASSED against
+/// it: breaking the byte pane's line clamp and the latency caption's condition
+/// left the whole suite green. The cause is the sweep's own population, not its
+/// assertion. Every state that narrows a card also SHORTENS it — the size
+/// steppers are driven in pairs — so no swept case is ever **wide and short**,
+/// and a body whose width refusal fires first hides its height rule behind it:
+/// the byte pane is dropped whole below `BYTES_FLOOR`, so its line clamp is
+/// never reached from the board at all.
+///
+/// ⇒ **two faults that always travel together cannot be told apart** (R1845),
+/// and the repair belongs to the population. This drives the painter and the
+/// describing function as the pair they are, over a grid of rectangles that
+/// varies width and height separately — which nothing reached through the board
+/// can do, because a card's body rectangle comes from a cell.
+///
+/// ⚠ It asserts one direction only, as its sibling does: announced ⊆ painted. A
+/// painted row nobody announces is the voice census's question.
+#[test]
+fn r2022_a_body_announces_only_what_it_paints_at_every_size() {
+    use pinion_core::containment::repeating_site;
+
+    /// One card at one size: what it drew there, and what it said there.
+    struct Weighed {
+        card: String,
+        w: u32,
+        h: u32,
+        painted: BTreeSet<String>,
+        said: Vec<String>,
+    }
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let palette = super::palette_of(&pinion_core::theme::Theme::dark(), true);
+        // Every (card, size) pair, painted and announced, taken first so the
+        // population can be derived from the whole grid — the sibling gate's
+        // rule, over a different population: an address painted at SOME size is
+        // a part, one painted at NO size is a group with no box of its own.
+        let mut weighed: Vec<Weighed> = Vec::new();
+        for card in state.placed() {
+            let id = card.id().as_str().to_owned();
+            for w in (60..=900).step_by(60) {
+                for h in (24..=440).step_by(29) {
+                    let rect = Rect::new(0, 0, w, h);
+                    let mut painted = BTreeSet::new();
+                    for scene in super::body_scene(&state, &card, rect, palette) {
+                        scene.for_each_node(&mut |visit| {
+                            if let Some(tag) = visit.node.tag() {
+                                painted.insert(tag.to_owned());
+                            }
+                        });
+                    }
+                    let said = super::card_body_nodes(&state, &card, rect)
+                        .into_iter()
+                        .map(|node| node.tag)
+                        .collect();
+                    weighed.push(Weighed {
+                        card: id.clone(),
+                        w,
+                        h,
+                        painted,
+                        said,
+                    });
+                }
+            }
+        }
+        let parts: BTreeSet<String> = weighed
+            .iter()
+            .flat_map(|row| row.painted.iter().map(|tag| repeating_site(tag)))
+            .collect();
+        let wide_and_short = weighed
+            .iter()
+            .filter(|row| row.w >= 700 && row.h <= 120)
+            .count();
+        let mut ghosts: Vec<String> = Vec::new();
+        for row in &weighed {
+            for tag in &row.said {
+                if parts.contains(&repeating_site(tag)) && !row.painted.contains(tag) {
+                    ghosts.push(format!(
+                        "{} at {}x{}: announces {tag} and this size draws none",
+                        row.card, row.w, row.h,
+                    ));
+                }
+            }
+        }
+        // The two counts this gate exists for: it weighed something, and the
+        // states the sweep cannot reach are among them.
+        assert!(
+            !weighed.is_empty() && !parts.is_empty(),
+            "no card was weighed, so this gate asked nothing",
+        );
+        assert!(
+            wide_and_short > 0,
+            "the grid contains no wide-and-short body, which is the exact state \
+             the board cannot produce and the one this gate is for",
+        );
+        for line in ghosts.iter().take(20) {
+            println!("{line}");
+        }
+        assert!(
+            ghosts.is_empty(),
+            "{} announced part(s) were not drawn at the size that announced them \
+             ({} body-size pairs weighed, {wide_and_short} of them wide and \
+             short, {} address families)",
+            ghosts.len(),
+            weighed.len(),
+            parts.len(),
+        );
     });
 }
 
@@ -4910,7 +5093,8 @@ fn r2021_a_cards_settings_stop_answering_when_the_reader_leaves_the_board() {
 /// CF-7 of this round broke the page's new guard — the one that keeps it from
 /// treating a card's open roster as one of its own rows — and the whole suite
 /// stayed green. So the shell had a ghost-row check for CARDS
-/// (`r1843_a_card_announces_only_the_rows_it_paints`) and none for this page,
+/// (`r1843_a_card_announces_only_the_rows_it_builds`, named `…it_paints` when
+/// this was written — R2022 corrected the unit) and none for this page,
 /// which is the same defect on a different population: a reader offered options
 /// nobody drew.
 ///

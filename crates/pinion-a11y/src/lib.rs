@@ -85,7 +85,9 @@ pub use assemble::{build_access_tree, resolve_access_bounds};
 pub use chip_group::{ChipFocus, chip_group_nodes, group_role, member_role};
 pub use described::describedby_region;
 pub use focus::AccessFocus;
-pub use grid::{GridCell, GridColumn, GridRow, grid_table_nodes};
+pub use grid::{
+    GridCell, GridColumn, GridExtent, GridRow, grid_table_nodes, grid_table_nodes_clamped,
+};
 pub use grouped::{
     GroupedGridSelection, GroupedGridSpec, GroupedTreeSpec, group_header_cell_tag,
     grouped_focus_target, grouped_grid_access_nodes, grouped_tree_access_nodes,

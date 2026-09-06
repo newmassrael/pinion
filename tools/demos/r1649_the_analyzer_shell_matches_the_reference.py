@@ -49,8 +49,10 @@ Run from the workspace root:
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from analyzer_spec import (  # noqa: E402
@@ -197,6 +199,49 @@ def at(tf: RpcSubprocess, tag: str) -> str:
     assert tag in rects, f"{tag} is painted"
     x, y, w, h = rects[tag]
     return centre({"x": x, "y": y, "w": w, "h": h})
+
+
+def walk_tags(node: Any) -> list[str]:
+    """Every tag in a scene tree, wherever it is nested."""
+    out: list[str] = []
+    if isinstance(node, dict):
+        tag = node.get("tag")
+        if isinstance(tag, str):
+            out.append(tag)
+        for value in node.values():
+            out.extend(walk_tags(value))
+    elif isinstance(node, list):
+        for value in node:
+            out.extend(walk_tags(value))
+    return out
+
+
+def painted_card_tags(tf: RpcSubprocess) -> set[str]:
+    """Every `card.*` address this FRAME drew, read from the paint."""
+    return {t for t in walk_tags(paint(tf)) if t.startswith("card.")}
+
+
+def announced_card_tags(tf: RpcSubprocess) -> list[str]:
+    """Every `card.*` address the accessibility tree offers a reader."""
+    return [
+        node["tag"]
+        for node in tf.request("scene/access").result["nodes"]
+        if isinstance(node.get("tag"), str) and node["tag"].startswith("card.")
+    ]
+
+
+def site(tag: str) -> str:
+    """A tag with its card number and its row indices folded away.
+
+    ★ R2022 — an INDEPENDENT spelling of
+    `pinion_core::containment::repeating_site`, deliberately, and for the reason
+    `abs_rects_of` gives for re-deriving the scroll fold: a demo that imported
+    the Rust answer could not notice the two disagreeing. Cruder than the Rust
+    one on purpose — it folds every digit run rather than only whole positional
+    segments — which can only ever merge two families into one site, i.e. weaken
+    this check. The exact question is the Rust gate's; this is the live proof.
+    """
+    return re.sub(r"\d+", "*", tag)
 
 
 def cell_of(grid: dict, cid: str) -> tuple[int, int]:
@@ -1127,6 +1172,55 @@ def body() -> None:
             (q(tf, "nav"), q(tf, "editing")),
             before,
             "N: ★ a press in the app bar's corner moves nothing",
+        )
+
+        # ── (O) ★★★★★ R2022 — a card announces the parts it BUILDS ────────
+        #
+        # `painted::r1843_a_card_announces_only_the_rows_it_builds` asks this of
+        # the in-process sweep. This asks the SHIPPED BINARY, over the wire, in
+        # the state the defect lived in: every card stepped down to one cell,
+        # which is two presses of the size steppers and which no swept case
+        # visited before R1668.
+        #
+        # The population is derived rather than declared, for the gate's reason:
+        # an address this screen paints SOMEWHERE is a part a reader can be sent
+        # to, and one it paints NOWHERE (`…grid`, `…counts`, `…tiles`) is an
+        # accessibility group with no box of its own. A list of the second kind
+        # would be a place for a defect to sit outside the question.
+        tf.intervene(f"{EXT}/nav", "dashboard")
+        tf.tick_ms(16)
+        wide_painted = painted_card_tags(tf)
+        # As many steps as the board is wide, from the board's own published
+        # metric: a number written here would stop reaching one cell the moment
+        # the grid changed shape.
+        steps = q(tf, "spec")["metrics"]["grid_cols"]
+        for tile in json.loads(q(tf, "layout"))["tiles"]:
+            for _ in range(steps):
+                inv(tf, "resize", f"{tile['id']},narrow")
+                inv(tf, "resize", f"{tile['id']},shorter")
+        tf.tick_ms(16)
+        small_painted = painted_card_tags(tf)
+        assert len(small_painted) < len(wide_painted), (
+            "O: premise — stepping every card down to one cell drops parts "
+            f"({len(wide_painted)} -> {len(small_painted)}); if it does not, "
+            "this section is asking nothing"
+        )
+        parts = {site(tag) for tag in wide_painted | small_painted}
+        ghosts = sorted(
+            {
+                tag
+                for tag in announced_card_tags(tf)
+                if site(tag) in parts and tag not in small_painted
+            }
+        )
+        assert not ghosts, (
+            f"O: ★ {len(ghosts)} part(s) are announced and nothing drew them — "
+            f"a reader is sent to {ghosts[:8]}"
+        )
+        print(
+            f"    O: {len(small_painted)} part(s) drawn at one cell "
+            f"(from {len(wide_painted)}), {len(parts)} address families, "
+            "0 announced and undrawn"
         )
 
 

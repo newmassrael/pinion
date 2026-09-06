@@ -374,6 +374,151 @@ pub const fn band_on(line: u32, x: u32, w: u32, h: u32) -> Rect {
     band_in(Rect::new(x, line, w, 0), x, w, h)
 }
 
+/// ★★★★★ R2022 — the seats a fixed-pitch stack of rows gets inside a box that
+/// **draws no partial row**, as [`whole_rows_in`] derives them.
+///
+/// The count is [`len`](Self::len) and the geometry is [`seat`](Self::seat), and
+/// that pairing is the point: a painter takes the rectangles and whoever
+/// describes the same body takes the length, so the two cannot disagree about
+/// how many rows there are. See [`whole_rows_in`] for the defect that asked for
+/// it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RowSeats {
+    /// The box the rows are laid in; `x` and `w` are every seat's.
+    outer: Rect,
+    /// How far below `outer.y` the first seat's top edge sits.
+    top_inset: u32,
+    /// One row's vertical slot, which is also its height.
+    pitch: u32,
+    /// How many rows the stack was asked for.
+    rows: usize,
+    /// How many of them fit whole.
+    shown: usize,
+}
+
+impl RowSeats {
+    /// How many rows fit whole — the number a painter draws and the number a
+    /// describing reader is told about.
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.shown
+    }
+
+    /// Whether the box has room for no row at all.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.shown == 0
+    }
+
+    /// How many of the rows asked for have no seat.
+    ///
+    /// The number a message needs: *"this box shows 5 of 8"* is what a person
+    /// repairing a layout can act on, where a bare count is not.
+    #[must_use]
+    pub const fn hidden(&self) -> usize {
+        self.rows - self.shown
+    }
+
+    /// Row `n`'s seat, or `None` when the box has no room for it.
+    ///
+    /// `None` rather than a rectangle off the bottom, for
+    /// [`NodeVisit::absolute_rect`](crate::scene::NodeVisit::absolute_rect)'s
+    /// reason: a seat that does not exist and a seat nobody can see are then one
+    /// fact instead of two a caller has to remember to check.
+    #[must_use]
+    pub fn seat(&self, n: usize) -> Option<Rect> {
+        if n >= self.shown {
+            return None;
+        }
+        let index = u32::try_from(n).ok()?;
+        Some(Rect::new(
+            self.outer.x,
+            self.outer.y + self.top_inset + index * self.pitch,
+            self.outer.w,
+            self.pitch,
+        ))
+    }
+
+    /// Every seat with its row index, top to bottom.
+    pub fn iter(&self) -> impl Iterator<Item = (usize, Rect)> + '_ {
+        (0..self.shown).filter_map(|n| self.seat(n).map(|seat| (n, seat)))
+    }
+}
+
+/// ★★★★★ R2022 — **how many rows of a fixed-pitch stack a box shows**, when a
+/// row that would not fit whole is not drawn at all — and where each of them
+/// sits.
+///
+/// # The defect this comes from
+///
+/// A body that stops at its own edge has a rule, and the rule lives in the
+/// painter's loop: *stop before the row that would cross the bottom*. Whoever
+/// **describes** the same body then counts the model's rows instead, because
+/// there is nothing else to ask — and a reader who cannot see the screen is
+/// told about rows nobody drew. Measured on one screen at R2022: five card
+/// bodies, and the announced-but-unpainted rows were `packet` 5–7, `decode` 6–7,
+/// `keymap` 5–6, `filter` 3–4, `latency` 0–2. The rule was written four times in
+/// one file and consulted by none of the four describing functions.
+///
+/// ⚠ The repair is **not** a count function per body, which is what the first
+/// prescription said. A count is a number the painter may or may not honour; the
+/// seats are what it draws in, so a painter that takes them **cannot** draw a row
+/// this says has no room, and a describing reader that takes [`RowSeats::len`]
+/// cannot announce one. The wrong state stops being representable rather than
+/// being checked for.
+///
+/// # Why not [`compute_visible_range`](crate::widgets::virtual_list::compute_visible_range)
+///
+/// That is the peer for a stack inside a **clip**: it returns every row whose
+/// slot *intersects* the viewport, because a row half-shown behind a scroll edge
+/// is a row the reader can scroll to. This is the policy for a stack with **no**
+/// clip, where a partial row is painted over whatever is beside it — measured on
+/// twenty-five surfaces at R1656 — so the last row is dropped instead. Two
+/// windowing policies, named separately, because a caller picking the wrong one
+/// gets a defect the other exists to prevent.
+///
+/// # Parameters
+///
+/// `outer` is the box the rows are laid in — every seat takes its `x` and `w`.
+/// `top_inset` is how far below `outer.y` the first row starts, which is where a
+/// column heading or a padding band goes. `pitch` is one row's slot, which is
+/// also its height. `rows` is how many the model has.
+///
+/// A `pitch` of zero shows nothing: a stack of no-height rows has no seat a
+/// reader could be pointed at, and the alternative is a division by zero.
+///
+/// ```
+/// use pinion_core::containment::whole_rows_in;
+/// use pinion_core::scene::Rect;
+///
+/// // A 100-tall body, a 20-tall heading, 20-pixel rows: four fit, not five.
+/// let seats = whole_rows_in(Rect::new(8, 40, 300, 100), 20, 20, 8);
+/// assert_eq!(seats.len(), 4);
+/// assert_eq!(seats.hidden(), 4);
+/// assert_eq!(seats.seat(0), Some(Rect::new(8, 60, 300, 20)));
+/// assert_eq!(seats.seat(3), Some(Rect::new(8, 120, 300, 20)));
+/// assert_eq!(seats.seat(4), None);
+/// // The last seat ends exactly on the box's own bottom edge.
+/// assert_eq!(seats.seat(3).map(|s| s.y + s.h), Some(140));
+/// // Fewer rows than fit is the model's count, not the room's.
+/// assert_eq!(whole_rows_in(Rect::new(8, 40, 300, 100), 20, 20, 2).len(), 2);
+/// ```
+#[must_use]
+pub const fn whole_rows_in(outer: Rect, top_inset: u32, pitch: u32, rows: usize) -> RowSeats {
+    let room = if pitch == 0 {
+        0
+    } else {
+        (outer.h.saturating_sub(top_inset) / pitch) as usize
+    };
+    RowSeats {
+        outer,
+        top_inset,
+        pitch,
+        rows,
+        shown: if room < rows { room } else { rows },
+    }
+}
+
 /// One run whose own box cannot hold it, as [`short_boxes`] reports it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShortBox {
@@ -1675,6 +1820,89 @@ mod tests {
     use super::*;
     use crate::scene::{BoxNode, ContainerNode, Rect, Scene, TextNode};
     use crate::style::{BoxStyle, TextStyle};
+
+    /// ★★★★★ R2022 — **the last seat ends on the box's edge, and the row after
+    /// it has no seat at all.**
+    ///
+    /// The boundary is the whole content of the rule, so it is asserted from
+    /// both sides at once: the same stack in a box one pixel shorter loses its
+    /// last row, and in a box one pixel taller gains nothing.
+    #[test]
+    fn r2022_a_row_that_would_cross_the_bottom_gets_no_seat() {
+        let body = Rect::new(4, 50, 200, 118);
+        let seats = whole_rows_in(body, 18, 20, 8);
+        assert_eq!(seats.len(), 5);
+        assert_eq!(seats.hidden(), 3);
+        let last = seats.seat(4).expect("five rows fit");
+        assert_eq!(
+            last.y + last.h,
+            body.y + body.h,
+            "the fifth row ends exactly on the body's bottom edge",
+        );
+        assert_eq!(seats.seat(5), None, "the sixth would cross it");
+
+        // One pixel either side of that edge, which is where an off-by-one lives.
+        assert_eq!(
+            whole_rows_in(Rect::new(4, 50, 200, 117), 18, 20, 8).len(),
+            4,
+            "a body one pixel shorter cannot hold the fifth row whole",
+        );
+        assert_eq!(
+            whole_rows_in(Rect::new(4, 50, 200, 119), 18, 20, 8).len(),
+            5,
+            "and one pixel taller is not yet room for a sixth",
+        );
+    }
+
+    /// ★★★★★ R2022 — every seat is the width and column of its box, and they
+    /// stack without gap or overlap.
+    ///
+    /// Asserted over the iterator rather than over one seat, because the
+    /// property a body needs is *of the sequence*: two rows that overlap paint
+    /// on each other, and two that do not touch leave a stripe of the card
+    /// showing through a table.
+    #[test]
+    fn r2022_the_seats_of_a_stack_tile_their_box() {
+        let body = Rect::new(12, 200, 340, 90);
+        let seats = whole_rows_in(body, 10, 16, 20);
+        let placed: Vec<(usize, Rect)> = seats.iter().collect();
+        assert_eq!(placed.len(), seats.len());
+        assert_eq!(placed.len(), 5);
+        for (n, seat) in &placed {
+            assert_eq!(seat.x, body.x);
+            assert_eq!(seat.w, body.w);
+            assert_eq!(seat.h, 16);
+            assert_eq!(*seat, seats.seat(*n).expect("enumerated from the seats"));
+        }
+        for pair in placed.windows(2) {
+            assert_eq!(
+                pair[0].1.y + pair[0].1.h,
+                pair[1].1.y,
+                "consecutive seats meet exactly once",
+            );
+        }
+        assert!(
+            placed[0].1.y >= body.y + 10,
+            "the first seat starts below the inset",
+        );
+    }
+
+    /// ★★★★★ R2022 — the degenerate boxes answer *nothing shows*, rather than
+    /// dividing by zero or handing back a seat off the bottom.
+    #[test]
+    fn r2022_a_stack_with_no_room_shows_nothing() {
+        // An inset taller than the box: `saturating_sub` rather than an underflow.
+        let none = whole_rows_in(Rect::new(0, 0, 100, 10), 40, 20, 6);
+        assert!(none.is_empty());
+        assert_eq!(none.len(), 0);
+        assert_eq!(none.hidden(), 6);
+        assert_eq!(none.seat(0), None);
+        assert_eq!(none.iter().count(), 0);
+        // A pitch of zero: no seat a reader could be pointed at.
+        assert!(whole_rows_in(Rect::new(0, 0, 100, 500), 0, 0, 6).is_empty());
+        // No rows asked for: the room is irrelevant.
+        assert!(whole_rows_in(Rect::new(0, 0, 100, 500), 0, 20, 0).is_empty());
+    }
 
     /// ★★★★★ R1870 — a position is *which one*, and folding it is what lets a
     /// table's cells read as the one mistake they are.

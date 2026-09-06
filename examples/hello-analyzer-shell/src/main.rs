@@ -94,8 +94,8 @@ use std::rc::Rc;
 
 use pinion_a11y::{
     AccessFocus, AccessLive, AccessNode, AccessState, AccessValue, AriaRole, GridCell, GridColumn,
-    GridRow, HasPopup, NavLink, SortDirection, WidgetA11y, grid_table_nodes, navigation_link_nodes,
-    page_region_node,
+    GridExtent, GridRow, HasPopup, NavLink, SortDirection, WidgetA11y, grid_table_nodes_clamped,
+    navigation_link_nodes, page_region_node,
 };
 use pinion_chart::{
     Bar, BarChart, BinEnds, Binned, ChartStyle, Mute, QuantileMethod, Quantiles, Sparkline,
@@ -257,6 +257,13 @@ const CARD_HDR: u32 = 34;
 /// is dropped rather than drawn outside the card.
 const BYTES_W: u32 = 148;
 const BYTES_FLOOR: u32 = 66;
+/// The identifier map's two fixed columns and the narrowest its resource path
+/// can be. ★ R2022 lifted them out of `map_body` so [`map_column_widths`] —
+/// which the paint and the accessibility tree both ask now — states the rule
+/// once.
+const MAP_ID_W: u32 = 34;
+const MAP_SEEN_W: u32 = 66;
+const MAP_PATH_FLOOR: u32 = 40;
 /// (R1668) A decode row's value column, and the narrowest its key can be. The
 /// key is allocated first: a row that lost its name reads as a value belonging
 /// to nothing.
@@ -271,6 +278,23 @@ const KEY_FLOOR: u32 = 30;
 /// equal, which is the only reason nobody noticed; a change to one would have
 /// staggered the bytes against the tree they annotate.
 const DECODE_ROW_H: u32 = 19;
+/// ★★★★★ R2022 — the heading strip and one data row of the STREAM card, and of
+/// the IDENTIFIER MAP card.
+///
+/// Lifted for [`DECODE_ROW_H`]'s reason one step further on: they were declared
+/// inside each painter, so the only thing that could know how many rows a body
+/// draws was that painter's own loop — and the function that tells a reader what
+/// the card says counted the specification's table instead. Five bodies did, and
+/// a reader was told about rows nobody drew (see
+/// [`whole_rows_in`](pinion_core::containment::whole_rows_in)). Out here both
+/// readers can ask.
+const STREAM_HEAD_H: u32 = 20;
+const STREAM_ROW_H: u32 = 20;
+const MAP_HEAD_H: u32 = 18;
+const MAP_ROW_H: u32 = 18;
+/// The padding band a decode card's first tree row and first byte line sit
+/// below.
+const DECODE_TOP: u32 = 4;
 /// (R1668) A filter stat tile: its height, and the narrowest it can be and
 /// still hold a number. The three go or stay together.
 const STAT_H: u32 = 46;
@@ -2114,10 +2138,12 @@ impl ShellState {
             // the chips are" is exactly the drift this round is repairing on the
             // other axis, and the cursor is the one reader that had no need of
             // which chip is on.
-            _ if stop == filter_chips_tag() => filter_row_of(FILTER_CARD, None, 0)
-                .cursor()
-                .map(|roving| roving.members().to_vec())
-                .unwrap_or_default(),
+            _ if stop == filter_chips_tag() => {
+                filter_row_of(FILTER_CARD, None, 0, spec::FILTER_CHIPS.len())
+                    .cursor()
+                    .map(|roving| roving.members().to_vec())
+                    .unwrap_or_default()
+            }
             _ => Vec::new(),
         }
     }
@@ -2768,6 +2794,72 @@ const fn body_rect(card: Rect, editing: bool) -> Rect {
         card.w.saturating_sub(CARD_FRAME * 2),
         card.h.saturating_sub(CARD_HDR + foot + CARD_FRAME),
     )
+}
+
+/// ★★★★★ R2022 — **the rectangle a card's body is painted in**, or `None` when
+/// this card paints no body at all.
+///
+/// [`body_rect`] is the arithmetic; this is *which card rectangle to run it on*,
+/// and until this round only the painter knew. `card_scene` takes the tile's
+/// cell (or the float's frame), makes it card-local, and subtracts the edit
+/// strip when the board is in layout-edit mode — three facts a describing
+/// reader had no way to reach, so [`card_nodes`]'s bodies counted the
+/// specification's tables instead and announced rows the card had no room for.
+///
+/// The `None` arms are the painter's own refusals rather than guesses at them:
+/// [`body_scene`] paints a body only for a card whose state
+/// [`is_ready`](CardState::is_ready) — a loading or failed card draws its
+/// sentence and its remedy — and a card the board does not hold is not drawn.
+///
+/// ⚠ Card-LOCAL, which is what [`body_scene`] receives. Only the width and
+/// height are read from it for the row and column derivations, but returning
+/// the painter's own argument is what keeps this one derivation rather than a
+/// second one that agrees today.
+fn card_body_rect(state: &ShellState, card: &Card) -> Option<Rect> {
+    if !card.state().is_ready() {
+        return None;
+    }
+    let (frame, editing) = card_frame(state, card)?;
+    Some(body_rect(frame, editing))
+}
+
+/// The card's own rectangle in its own space, and whether the board it is on is
+/// in layout-edit mode — the two facts every part of a card is measured from.
+///
+/// A detached card's frame is its float's and it has no edit strip, which is why
+/// the flag rides with the rectangle rather than being read separately.
+fn card_frame(state: &ShellState, card: &Card) -> Option<(Rect, bool)> {
+    let id = card.id().as_str();
+    if let Some(float) = state.floats.get().into_iter().find(|f| f.id == id) {
+        return Some((local(float_rect(&float)), false));
+    }
+    let board = state.board.get();
+    let tile = board.tile(card.id())?;
+    Some((local(cell_rect(tile)), state.editing.get()))
+}
+
+/// ★★★★★ R2022 — how a card's header band was laid out: which affordances
+/// survived it, and whether the grip did.
+///
+/// [`header_scene`] asks `card_header::lay_out` and paints what it placed; until
+/// this round [`card_nodes`] announced every affordance the chrome offers, so a
+/// card narrow enough to give one away still told a reader it was there — the
+/// same ghost the bodies had, on the strip above them.
+///
+/// `None` for a DETACHED card, and that is a statement rather than a gap: a
+/// float's header is the float's own (`float.{id}.{wire}`), laid out by
+/// [`float_affordance_rect`], so this layout does not describe it.
+fn card_header_layout(state: &ShellState, card: &Card) -> Option<card_header::HeaderLayout> {
+    if state.is_floating(card.id().as_str()) {
+        return None;
+    }
+    let (frame, _) = card_frame(state, card)?;
+    Some(card_header::lay_out(
+        header_rect(frame),
+        card.chrome().offered().len(),
+        card.state().is_ready(),
+        CARD_METRICS,
+    ))
 }
 
 /// The size-stepper strip at the foot of a card in layout-edit mode.
@@ -10401,8 +10493,8 @@ fn decode_band(x: u32, w: u32) -> Rect {
 
 /// The message stream: a header row of columns over the opening rows.
 fn stream_body(state: &ShellState, id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
-    const HEAD_H: u32 = 20;
-    const ROW_H: u32 = 20;
+    const HEAD_H: u32 = STREAM_HEAD_H;
+    const ROW_H: u32 = STREAM_ROW_H;
     // ★★★★★ R1806 — the selection this card was reached by, or `None`.
     //
     // Asked of the reach by NAME rather than read off the chip signal, and the
@@ -10444,18 +10536,17 @@ fn stream_body(state: &ShellState, id: &str, rect: Rect, palette: Palette) -> Ve
         .with_style(BoxStyle::filled(palette.raised))
         .with_layout(absolute(Rect::new(rect.x, rect.y, rect.w, HEAD_H))),
     )];
-    for (n, (time, kind, name, len)) in spec::STREAM_ROWS.iter().enumerate() {
-        let top = rect.y + HEAD_H + u(n) * ROW_H;
-        // A row whose bottom would leave the card is not painted at all. The
-        // alternative -- painting it and letting it land on the card below --
-        // is the defect R1656 measured on twenty-five surfaces.
-        if top + ROW_H > rect.y + rect.h {
-            break;
-        }
+    // ★★★★★ R2022 — the seats, from the one derivation that also tells the
+    // accessibility tree how many rows this body has. A row whose bottom would
+    // leave the card gets no seat and is not painted at all: the alternative —
+    // painting it and letting it land on the card below — is the defect R1656
+    // measured on twenty-five surfaces.
+    for (n, seat) in stream_seats(rect).iter() {
+        let (time, kind, name, len) = spec::STREAM_ROWS[n];
         // A cell per column that fits, in the specification's order, with the
         // row's own values. Zipped rather than indexed: a narrow card drops
         // columns from the right, and indexing would reach past the end.
-        let values = [*time, *kind, *name, *len];
+        let values = [time, kind, name, len];
         // ★ R1806 — a row the active saved filter does not select mutes; it is
         // not dropped. The crossfilter convention this crate documents: the
         // reader must be able to see what fell outside the filter, or narrowing
@@ -10495,33 +10586,65 @@ fn stream_body(state: &ShellState, id: &str, rect: Rect, palette: Palette) -> Ve
         out.push(Scene::Container(
             ContainerNode::new(cells)
                 .with_tag(format!("card.{id}.row.{n}"))
-                .with_layout(absolute(Rect::new(rect.x, top, rect.w, ROW_H))),
+                .with_layout(absolute(seat)),
         ));
     }
     out
 }
 
+/// ★★★★★ R2022 — where the stream card's rows sit, and therefore how many of
+/// them there are.
+///
+/// The painter draws in these and [`stream_nodes`] counts them, which is what
+/// stops the two disagreeing: a row this says has no seat is one the painter
+/// cannot place and the accessibility tree cannot mention.
+fn stream_seats(body: Rect) -> pinion_core::containment::RowSeats {
+    pinion_core::containment::whole_rows_in(
+        body,
+        STREAM_HEAD_H,
+        STREAM_ROW_H,
+        spec::STREAM_ROWS.len(),
+    )
+}
+
+/// The same, for the identifier map card.
+fn map_seats(body: Rect) -> pinion_core::containment::RowSeats {
+    pinion_core::containment::whole_rows_in(body, MAP_HEAD_H, MAP_ROW_H, spec::MAP_ROWS.len())
+}
+
+/// The decode card's TREE rows, which start under a padding band rather than
+/// under a heading strip.
+fn decode_seats(body: Rect) -> pinion_core::containment::RowSeats {
+    pinion_core::containment::whole_rows_in(body, DECODE_TOP, DECODE_ROW_H, spec::DECODE_ROWS.len())
+}
+
+/// The decode card's BYTE lines, which share the tree's rhythm and its band —
+/// they are read side by side, so a second derivation here would stagger them.
+fn byte_line_seats(body: Rect) -> pinion_core::containment::RowSeats {
+    pinion_core::containment::whole_rows_in(
+        body,
+        DECODE_TOP,
+        DECODE_ROW_H,
+        spec::DECODE_BYTES.len(),
+    )
+}
+
 /// The decode inspector: the layer tree beside the bytes it decoded.
 fn decode_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
-    const ROW_H: u32 = DECODE_ROW_H;
     // The tree keeps at least half the card; the bytes pane takes what is left,
     // and is dropped entirely when that is less than one byte's worth. A fixed
     // pane on a card narrower than the pane paints outside the card, which the
     // gate reports and a reader sees as one card's bytes on the next one.
     let bytes_w = BYTES_W.min(rect.w / 2);
-    let tree_w = if bytes_w >= BYTES_FLOOR {
-        rect.w.saturating_sub(bytes_w + 12)
-    } else {
-        rect.w
+    let tree_w = match byte_pane_w(rect.w) {
+        Some(pane) => rect.w.saturating_sub(pane + 12),
+        None => rect.w,
     };
     let mut out = Vec::new();
-    for (n, (depth, key, value)) in spec::DECODE_ROWS.iter().enumerate() {
-        let top = rect.y + 4 + u(n) * ROW_H;
-        if top + ROW_H > rect.y + rect.h {
-            break;
-        }
+    for (n, seat) in decode_seats(rect).iter() {
+        let (depth, key, value) = spec::DECODE_ROWS[n];
         let indent = (10 + depth * 12).min(tree_w);
-        let heading = *depth == 0;
+        let heading = depth == 0;
         let selected = n == spec::DECODE_SELECTED;
         // ★ The key is the identifying half, so it is allocated FIRST and the
         // value gets what is left. The first draft gave the value a fixed
@@ -10563,7 +10686,7 @@ fn decode_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
                 } else {
                     BoxStyle::default()
                 })
-                .with_layout(absolute(Rect::new(rect.x, top, tree_w, ROW_H))),
+                .with_layout(absolute(Rect::new(seat.x, seat.y, tree_w, seat.h))),
         ));
     }
     out.extend(byte_pane(
@@ -10587,25 +10710,20 @@ fn byte_pane(id: &str, pane: Rect, card: Rect, palette: Palette) -> Vec<Scene> {
         return out;
     }
     let (start, end) = spec::DECODE_SELECTED_SPAN;
-    for (line, quad) in spec::DECODE_BYTES.iter().enumerate() {
-        let top = card.y + 4 + u(line) * ROW_H;
-        if top + ROW_H > card.y + card.h {
-            break;
-        }
+    // ★★★★★ R2022 — the lines the CARD has room for, from the derivation
+    // [`byte_nodes`] also counts. The seats are the card's rather than the
+    // pane's because the pane is as tall as the card and its lines share the
+    // tree's rhythm.
+    for (line, seat) in byte_line_seats(card).iter() {
+        let quad = &spec::DECODE_BYTES[line];
         let mut cells = vec![label(
             &format!("{:04x}", line * 4),
             decode_band(6, 30),
             FONT_TINY,
             palette.muted,
         )];
-        for (col, byte) in quad.iter().enumerate() {
+        for (col, byte) in quad.iter().enumerate().take(byte_columns(pane.w)) {
             let index = line * 4 + col;
-            // A cell that would leave the pane is not painted. Its bytes are
-            // not lost -- the pane is simply narrower than four columns, and a
-            // cell drawn past the edge lands on whatever is beside the card.
-            if 40 + u(col) * 24 + 22 > pane.w {
-                break;
-            }
             let lit = index >= start && index < end;
             cells.push(Scene::Container(
                 // ★★★★★ R1904 — CENTRED in the band, which is what a person
@@ -10633,26 +10751,58 @@ fn byte_pane(id: &str, pane: Rect, card: Rect, palette: Palette) -> Vec<Scene> {
         out.push(Scene::Container(
             ContainerNode::new(cells)
                 .with_tag(format!("card.{id}.bytes.{line}"))
-                .with_layout(absolute(Rect::new(pane.x, top, pane.w, ROW_H))),
+                .with_layout(absolute(Rect::new(pane.x, seat.y, pane.w, seat.h))),
         ));
     }
     out
 }
 
+/// ★★★★★ R2022 — how many of a byte line's four columns a pane that wide shows.
+///
+/// A cell that would leave the pane is not painted — its bytes are not lost, the
+/// pane is simply narrower than four columns, and a cell drawn past the edge
+/// lands on whatever is beside the card. This was the painter's `break`, so
+/// [`byte_nodes`] announced all four whatever the pane's width.
+fn byte_columns(pane_w: u32) -> usize {
+    (0..spec::DECODE_BYTES.first().map_or(0, |quad| quad.len()))
+        .take_while(|col| 40 + u(*col) * 24 + 22 <= pane_w)
+        .count()
+}
+
+/// Whether the decode card's byte pane is drawn at all, and how wide it is.
+///
+/// The pane keeps at most half the card and is dropped entirely below
+/// [`BYTES_FLOOR`], because a fixed pane on a card narrower than the pane paints
+/// outside the card. Asked by the painter and by [`byte_nodes`].
+fn byte_pane_w(body_w: u32) -> Option<u32> {
+    let bytes_w = BYTES_W.min(body_w / 2);
+    (bytes_w >= BYTES_FLOOR).then_some(bytes_w)
+}
+
+/// ★★★★★ R2022 — the identifier map's resource-path width, and whether the
+/// timestamp column is there at all.
+///
+/// The columns are allocated left to right and a column with nothing left is
+/// dropped, so a narrowed card shows the id and the resource rather than the id
+/// and the timestamp. Same discipline as the stream's columns and the decode
+/// tree's key: the identifying half is allocated first.
+fn map_column_widths(body_w: u32) -> (u32, bool) {
+    let room = body_w.saturating_sub(12 + MAP_ID_W + 6);
+    let with_seen = room >= MAP_PATH_FLOOR + MAP_SEEN_W;
+    (if with_seen { room - MAP_SEEN_W } else { room }, with_seen)
+}
+
+/// How many of the identifier map's three columns a body that wide paints.
+fn map_columns_shown(body_w: u32) -> usize {
+    let (path_w, with_seen) = map_column_widths(body_w);
+    1 + usize::from(path_w > 0) + usize::from(with_seen)
+}
+
 /// The identifier map: numeric id to resource path, and when it was declared.
 fn map_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
-    const HEAD_H: u32 = 18;
-    const ROW_H: u32 = 18;
-    // The columns are allocated left to right and a column with nothing left is
-    // dropped, so a narrowed card shows the id and the resource rather than the
-    // id and the timestamp. Same discipline as the stream's columns and the
-    // decode tree's key: the identifying half is allocated first.
-    const ID_W: u32 = 34;
-    const SEEN_W: u32 = 66;
-    const PATH_FLOOR: u32 = 40;
-    let room = rect.w.saturating_sub(12 + ID_W + 6);
-    let with_seen = room >= PATH_FLOOR + SEEN_W;
-    let path_w = if with_seen { room - SEEN_W } else { room };
+    const HEAD_H: u32 = MAP_HEAD_H;
+    const ROW_H: u32 = MAP_ROW_H;
+    let (path_w, with_seen) = map_column_widths(rect.w);
     // `row` is `None` for the header strip and the row index otherwise, which is
     // what the cell tags are built from.
     let cells = |ink: Color, cols: [&str; 3], warn: bool, row: Option<usize>| {
@@ -10669,7 +10819,7 @@ fn map_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
         let mut out = vec![grid_cell(
             tag(0),
             cols[0],
-            seat(12, ID_W),
+            seat(12, MAP_ID_W),
             FONT_TINY,
             if warn { palette.warn } else { ink },
             TextOverflow::Ellipsis,
@@ -10678,7 +10828,7 @@ fn map_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
             out.push(grid_cell(
                 tag(1),
                 cols[1],
-                seat(12 + ID_W + 6, path_w),
+                seat(12 + MAP_ID_W + 6, path_w),
                 FONT_TINY,
                 ink,
                 TextOverflow::EllipsisStart,
@@ -10688,7 +10838,7 @@ fn map_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
             out.push(grid_cell(
                 tag(2),
                 cols[2],
-                seat(12 + ID_W + 6 + path_w, SEEN_W),
+                seat(12 + MAP_ID_W + 6 + path_w, MAP_SEEN_W),
                 FONT_TINY,
                 palette.muted,
                 TextOverflow::Ellipsis,
@@ -10711,11 +10861,8 @@ fn map_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
         .with_style(BoxStyle::filled(palette.raised))
         .with_layout(absolute(Rect::new(rect.x, rect.y, rect.w, HEAD_H))),
     )];
-    for (n, (key, path, seen)) in spec::MAP_ROWS.iter().enumerate() {
-        let top = rect.y + HEAD_H + u(n) * ROW_H;
-        if top + ROW_H > rect.y + rect.h {
-            break;
-        }
+    for (n, seat) in map_seats(rect).iter() {
+        let (key, path, seen) = spec::MAP_ROWS[n];
         let unresolved = n == spec::MAP_UNRESOLVED;
         out.push(Scene::Container(
             ContainerNode::new(cells(
@@ -10729,7 +10876,7 @@ fn map_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
                 Some(n),
             ))
             .with_tag(format!("card.{id}.map.{n}"))
-            .with_layout(absolute(Rect::new(rect.x, top, rect.w, ROW_H))),
+            .with_layout(absolute(seat)),
         ));
     }
     out
@@ -10739,6 +10886,50 @@ fn map_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
 /// whose relation is the point of the card.
 /// The height the latency card keeps for its caption.
 const LATENCY_CAPTION_H: u32 = 24;
+
+/// ★★★★★ R2022 — how wide each tile of a strip of `n` stat tiles is, or `None`
+/// when the body is too narrow for them.
+///
+/// The tiles go or stay TOGETHER — a strip showing two of three numbers whose
+/// point is their relation says something a reader would misread — so this
+/// answers about the strip and not about a tile. It was written twice, once in
+/// the latency card's painter and once in the filter card's, and neither
+/// describing function could ask either: both announced their tiles whatever the
+/// width, which is a reader being told about tiles nobody drew.
+fn stat_strip_w(body_w: u32, tiles: usize) -> Option<u32> {
+    if tiles == 0 {
+        return None;
+    }
+    let each = body_w.saturating_sub(2 * 8) / u(tiles);
+    (each >= STAT_FLOOR).then_some(each)
+}
+
+/// ★★★★★ R2022 — the y the latency card's bars start at: under the tile strip
+/// when the strip is drawn, and at the body's own top when it is not.
+fn latency_bars_top(body: Rect, tiles: usize) -> u32 {
+    if stat_strip_w(body.w, tiles).is_some() {
+        body.y + STAT_H + 10
+    } else {
+        body.y
+    }
+}
+
+/// The box the latency card's distribution is plotted in, or `None` when the
+/// body has no room for one. Asked by the painter and by [`latency_nodes`].
+fn latency_plot_rect(body: Rect, tiles: usize, bins: usize) -> Option<Rect> {
+    distribution_box(
+        body,
+        latency_bars_top(body, tiles),
+        bins,
+        &ChartStyle::default(),
+    )
+}
+
+/// Whether the latency card's caption band is drawn — it needs its own height
+/// clear of wherever the bars begin.
+fn latency_caption_shown(body: Rect, tiles: usize) -> bool {
+    (body.y + body.h).saturating_sub(LATENCY_CAPTION_H) > latency_bars_top(body, tiles)
+}
 
 /// The shortest plot the latency card will draw a distribution into.
 ///
@@ -10961,10 +11152,7 @@ fn latency_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
 
     // --- the three tiles ---------------------------------------------------
     let stats = latency_stats(&quantiles);
-    let stat_w = rect.w.saturating_sub(2 * 8) / u(stats.len());
-    let bars_top = if stat_w < STAT_FLOOR {
-        rect.y
-    } else {
+    if let Some(stat_w) = stat_strip_w(rect.w, stats.len()) {
         for (n, (key, value)) in stats.iter().enumerate() {
             out.push(Scene::Container(
                 ContainerNode::new(stat_lines(
@@ -10986,8 +11174,7 @@ fn latency_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
                 ))),
             ));
         }
-        rect.y + STAT_H + 10
-    };
+    }
 
     // --- the bars ----------------------------------------------------------
     //
@@ -11016,7 +11203,7 @@ fn latency_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
         .collect();
 
     let style = ChartStyle::default();
-    if let Some(box_) = distribution_box(rect, bars_top, bars.len(), &style) {
+    if let Some(box_) = latency_plot_rect(rect, stats.len(), bars.len()) {
         out.push(Scene::Container(
             ContainerNode::new(vec![
                 // ★★★★★ The chart's prefix must be neither EQUAL TO nor a
@@ -11052,7 +11239,7 @@ fn latency_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
 
     // --- the caption -------------------------------------------------------
     let caption_y = (rect.y + rect.h).saturating_sub(LATENCY_CAPTION_H);
-    if caption_y > bars_top {
+    if latency_caption_shown(rect, stats.len()) {
         out.push(Scene::Container(
             // ★ The run is INSET. Written flush at `x: 0` first, and the ink
             // gate caught it: a glyph's ink can start a pixel left of its
@@ -11164,20 +11351,42 @@ fn filter_body(state: &ShellState, id: &str, rect: Rect, palette: Palette) -> Ve
         )
         .with_focusable(row.is_a_stop(row.tag())),
     );
-    let last_line = placed.last().map_or(rect.y + 34, |(_, at)| at.y);
     out.extend(filter_counts(
         state,
         id,
-        Rect::new(
-            rect.x,
-            last_line + 30,
-            rect.w,
-            rect.y + rect.h - (last_line + 30).min(rect.y + rect.h),
-        ),
+        filter_counts_area(rect),
         rect,
         palette,
     ));
     out
+}
+
+/// ★★★★★ R2022 — the band the filter card's three counts and its trend go in,
+/// which starts below whatever line the chips wrapped to.
+///
+/// It was spelled inside the painter, so [`filter_nodes`] could not know whether
+/// there was room for the tiles at all — and announced all three whatever the
+/// card's size.
+fn filter_counts_area(body: Rect) -> Rect {
+    let last_line = filter_chip_rects(body)
+        .last()
+        .map_or(body.y + 34, |(_, at)| at.y);
+    Rect::new(
+        body.x,
+        last_line + 30,
+        body.w,
+        body.y + body.h - (last_line + 30).min(body.y + body.h),
+    )
+}
+
+/// Whether the filter card's three counts are painted, and whether the trend
+/// under them is. The counts go or stay together (see [`filter_counts`]), and
+/// the trend needs its own thirty pixels below them.
+fn filter_counts_shown(body: Rect) -> (bool, bool) {
+    let area = filter_counts_area(body);
+    let counts = stat_strip_w(area.w, spec::FILTER_STATS.len()).is_some()
+        && area.y + STAT_H <= body.y + body.h;
+    (counts, counts && area.y + 52 + 30 <= body.y + body.h)
 }
 
 /// ★★★★★ R1721 — the filter card's saved-filter bar, as the widget it is.
@@ -11197,20 +11406,43 @@ fn filter_row(state: &ShellState, id: &str) -> ChipGroup {
         .cursor_of(&filter_chips_tag())
         .and_then(|roving| roving.cursor())
         .unwrap_or(0);
-    filter_row_of(id, state.filter_chip.get(), seat)
+    filter_row_of(id, state.filter_chip.get(), seat, spec::FILTER_CHIPS.len())
+}
+
+/// [`filter_row`] holding only the chips a body that size has room to paint —
+/// what a describing reader is walked through (R2022).
+fn filter_row_shown(state: &ShellState, id: &str, body: Rect) -> ChipGroup {
+    let seat = state
+        .cursor_of(&filter_chips_tag())
+        .and_then(|roving| roving.cursor())
+        .unwrap_or(0);
+    filter_row_of(
+        id,
+        state.filter_chip.get(),
+        seat,
+        filter_chip_rects(body).len(),
+    )
 }
 
 /// The bar built from a choice and a cursor, so the roster and the rule are
 /// readable without a running screen — the ring's roster is asked for from
 /// `cursor_members`, which has no state to read and must not grow a second copy
 /// of what the chips are.
-fn filter_row_of(id: &str, chosen: Option<usize>, cursor: usize) -> ChipGroup {
+/// ★★★★★ R2022 — `shown` is how many of the chips the card has ROOM for.
+///
+/// The bar wraps and a chip that would wrap past the card's bottom is not
+/// painted ([`filter_chip_rects`]), so a roster of five on a one-cell card is a
+/// roster of toggles two of which are not there. Every caller that is not
+/// describing the paint passes the whole set; [`filter_nodes`] passes what the
+/// geometry placed.
+fn filter_row_of(id: &str, chosen: Option<usize>, cursor: usize, shown: usize) -> ChipGroup {
     ChipGroup::new(
         format!("card.{id}.chips"),
         "Saved filters",
         spec::FILTER_CHIPS
             .iter()
             .enumerate()
+            .take(shown)
             .map(|(n, (name, _))| {
                 Chip::new(format!("card.{id}.chip.{n}"), *name, chosen == Some(n))
             })
@@ -11300,8 +11532,10 @@ fn filter_counts(
     palette: Palette,
 ) -> Vec<Scene> {
     let mut out = Vec::new();
-    let stat_w = area.w.saturating_sub(2 * 8) / u(spec::FILTER_STATS.len());
-    if stat_w < STAT_FLOOR || area.y + STAT_H > card.y + card.h {
+    let Some(stat_w) = stat_strip_w(area.w, spec::FILTER_STATS.len()) else {
+        return out;
+    };
+    if area.y + STAT_H > card.y + card.h {
         return out;
     }
     for (n, (value, what)) in spec::FILTER_STATS.iter().enumerate() {
@@ -11518,9 +11752,16 @@ fn health_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
     //
     // ⚠ Fewer tiles is fewer FACTS on screen, so it is not free. What makes it
     // honest here is that the tiles are ordered and the ones dropped are the
-    // last of them, and that the a11y tree still announces all five: a reader
-    // asking the card what it knows gets every quantity, whatever the width
-    // let it draw.
+    // last of them.
+    //
+    // ⚠⚠ R2022 — this used to end *"and the a11y tree still announces all five:
+    // a reader asking the card what it knows gets every quantity, whatever the
+    // width let it draw"*, and that is the sentence R1843 recorded as its own
+    // finding and R1846 repaired. It was repaired in `health_nodes`, thirty
+    // lines away, and left standing HERE — so the round that named the defect
+    // fixed one of the sentence's two copies. A reader is told about the tiles
+    // this strip DRAWS; announcing the others is the ghost region this board
+    // carries a gate for.
     let Some(count) = health_tile_count(rect.w) else {
         return Vec::new();
     };
@@ -11896,8 +12137,15 @@ fn alarms_wire(state: &ShellState) -> serde_json::Value {
 /// The rectangle the alarm card's body occupies, or an empty one when the board
 /// does not hold that card.
 ///
-/// One helper because three readers need it and none of them should re-derive
-/// it: the wire, the accessibility walk and the gates.
+/// One helper because the readers that need it should not re-derive it: the
+/// wire and this card's own gates.
+///
+/// ⚠ R2022 — this said *"three readers … the wire, the accessibility walk and
+/// the gates"*, and the walk stopped being one: [`alarms_nodes`] is handed the
+/// rectangle the PAINTER was given ([`card_body_rect`]), which is card-local
+/// where this is canvas-space. They agree in width and height on the board, so
+/// nothing moved — but a sentence naming its readers goes stale the moment one
+/// of them leaves, which is why the count is gone from it.
 fn alarm_body_rect(state: &ShellState) -> Rect {
     let board = state.board.get();
     spec::card_of("alarms")
@@ -11917,7 +12165,7 @@ fn alarm_body_width(state: &ShellState) -> u32 {
 /// ([`alarm_feed`]), so a reader cannot be told about a row nobody constructed —
 /// which is the exact defect R1843 shipped on the health strip (three tiles
 /// painted, five announced) and R1846 had to repair.
-fn alarms_nodes(state: &ShellState, card: &Card) -> Vec<AccessNode> {
+fn alarms_nodes(state: &ShellState, card: &Card, rect: Rect) -> Vec<AccessNode> {
     let id = card.id().as_str();
     if state.board.get().tile(card.id()).is_none() {
         return Vec::new();
@@ -11925,7 +12173,11 @@ fn alarms_nodes(state: &ShellState, card: &Card) -> Vec<AccessNode> {
     let Ok(ranks) = alarm_ranks() else {
         return Vec::new();
     };
-    let rect = alarm_body_rect(state);
+    // ★ R2022 — the rectangle the PAINTER was handed, rather than
+    // [`alarm_body_rect`]'s own re-derivation from the tile. The two agree in
+    // width and height on the board and disagree in ORIGIN (the wire's is
+    // canvas-space, the painter's is card-local), and this one is the painter's,
+    // which is what makes the pair drivable at a size of a test's choosing.
     // ⚠ The SAME refusal the painter makes. A card too narrow for the feed paints
     // nothing, so it announces nothing — a reader told about rows nobody drew is
     // exactly the defect R1846 had to repair on the health strip.
@@ -12048,17 +12300,14 @@ fn alarms_nodes(state: &ShellState, card: &Card) -> Vec<AccessNode> {
 /// shape the latency card's strip already uses, so the two read alike. A series
 /// nobody can be read out is announced as the value it ends at, which is the
 /// fact rather than the picture.
-fn health_nodes(state: &ShellState, card: &Card) -> Vec<AccessNode> {
+fn health_nodes(card: &Card, body: Rect) -> Vec<AccessNode> {
     let id = card.id().as_str();
-    // ⚠ The SAME rule the painter runs, over the same width. `body_rect`
-    // narrows only in height when the board is editing, and the count depends
-    // on width alone, so `false` here is exact rather than approximate.
-    let board = state.board.get();
-    let Some(tile) = board.tile(card.id()) else {
-        return Vec::new();
-    };
-    let width = body_rect(cell_rect(tile), false).w;
-    let Some(count) = health_tile_count(width) else {
+    // ⚠ The SAME rule the painter runs, over the same rectangle. ★ R2022 — the
+    // rectangle now comes from [`card_body_rect`] rather than being re-derived
+    // here from the tile: this function's own copy read the board's cell even
+    // for a card that had been maximised or torn off, and answered about a size
+    // the card no longer had.
+    let Some(count) = health_tile_count(body.w) else {
         return Vec::new();
     };
     let mut nodes = Vec::new();
@@ -15236,15 +15485,25 @@ fn card_nodes(state: &Rc<ShellState>, card: &Card) -> Vec<AccessNode> {
             remedy_label(remedy)
         ),
     };
+    // ★★★★★ R2022 — how the header actually came out, so what is announced is
+    // what was drawn. `None` is a detached card, whose header is its float's;
+    // there the offered set is what the tree states, as it did for every card
+    // before this round.
+    let header = card_header_layout(state, card);
     let mut region = AccessNode::new(format!("card.{id}"), AriaRole::Group)
         .with_name(card.title())
         .with_value(AccessValue::Text(announce))
-        .with_state(AccessState::default())
-        .with_child(format!("card.{id}.grip"));
-    let mut nodes = vec![
-        AccessNode::new(format!("card.{id}.grip"), AriaRole::Button)
-            .with_name(format!("Move {}", card.title())),
-    ];
+        .with_state(AccessState::default());
+    let mut nodes = Vec::new();
+    // The grip gives way LAST rather than never (`HeaderLayout::grip`), so a
+    // card dragged to nothing has none and a reader is not offered one.
+    if header.as_ref().is_none_or(|h| h.grip().is_some()) {
+        region = region.with_child(format!("card.{id}.grip"));
+        nodes.push(
+            AccessNode::new(format!("card.{id}.grip"), AriaRole::Button)
+                .with_name(format!("Move {}", card.title())),
+        );
+    }
     // ★★★★★ R1900 — a shared place's strip, as a reader meets it: a `TabList`
     // whose tabs say which one is selected.
     //
@@ -15274,34 +15533,16 @@ fn card_nodes(state: &Rc<ShellState>, card: &Card) -> Vec<AccessNode> {
             nodes.push(strip);
         }
     }
-    for control in spec::CARD_CHROME {
-        let tag = format!("card.{id}.{control}");
-        region = region.with_child(tag.clone());
-        nodes.push(
-            AccessNode::new(tag, AriaRole::Button).with_name(match *control {
-                "settings" => "Configure".to_owned(),
-                "tear_off" => {
-                    if state.is_floating(id) {
-                        "Redock".to_owned()
-                    } else {
-                        "Detach".to_owned()
-                    }
-                }
-                "maximize" => "Maximize".to_owned(),
-                _ => format!("Remove {}", card.title()),
-            }),
-        );
+    for control in card_chrome_nodes(state, card, header.as_ref()) {
+        region = region.with_child(control.tag.clone());
+        nodes.push(control);
     }
-    let body = match def_for_card(id).map(|def| def.kind) {
-        Some("packet") => stream_nodes(id),
-        Some("decode") => decode_nodes(id),
-        Some("keymap") => map_nodes(id),
-        Some("filter") => filter_nodes(state, id),
-        Some("latency") => latency_nodes(id),
-        Some("health") => health_nodes(state, card),
-        Some("alarms") => alarms_nodes(state, card),
-        _ => Vec::new(),
-    };
+    // ★★★★★ R2022 — the body's rows come from the rectangle the PAINTER draws
+    // them in. A body that cannot be painted at all — a card the board does not
+    // hold, or one whose state puts a sentence there instead — has no rows to
+    // announce, which is the same refusal `body_scene` makes.
+    let body = card_body_rect(state, card)
+        .map_or_else(Vec::new, |rect| card_body_nodes(state, card, rect));
     for node in &body {
         // The body's own containers are the card's children; everything under
         // them is reached through them.
@@ -15396,6 +15637,81 @@ const BODY_ROOTS: &[&str] = &[
     "bins",
 ];
 
+/// ★★★★★ R2022 — the header affordances a card offers a reader: the ones its
+/// strip had ROOM for, in the order it gives way (from the left, so what
+/// survives is a suffix).
+///
+/// The population is the card's own chrome rather than [`spec::CARD_CHROME`],
+/// because that is what the painter asked — a card that stopped offering one
+/// would otherwise still be announced as having it, and the two vocabularies are
+/// held equal by `r1668_every_named_header_control_is_one_the_shell_has`.
+///
+/// `None` for `header` is a DETACHED card, whose strip is its float's; there the
+/// offered set is what the tree states, as it did for every card before R2022.
+fn card_chrome_nodes(
+    state: &ShellState,
+    card: &Card,
+    header: Option<&card_header::HeaderLayout>,
+) -> Vec<AccessNode> {
+    let id = card.id().as_str();
+    let offered = card.chrome().offered();
+    let surviving: Vec<&'static str> = match header {
+        Some(layout) => layout
+            .slots()
+            .iter()
+            .filter_map(|(n, _)| offered.get(*n).map(|a| a.wire()))
+            .collect(),
+        None => offered.iter().map(|a| a.wire()).collect(),
+    };
+    surviving
+        .into_iter()
+        .map(|control| {
+            AccessNode::new(format!("card.{id}.{control}"), AriaRole::Button).with_name(
+                match control {
+                    "settings" => "Configure".to_owned(),
+                    "tear_off" => {
+                        if state.is_floating(id) {
+                            "Redock".to_owned()
+                        } else {
+                            "Detach".to_owned()
+                        }
+                    }
+                    "maximize" => "Maximize".to_owned(),
+                    _ => format!("Remove {}", card.title()),
+                },
+            )
+        })
+        .collect()
+}
+
+/// ★★★★★ R2022 — **what a card's body says, given the rectangle it is drawn
+/// in** — the describing twin of [`ready_body`], which dispatches the same kinds
+/// on the same rectangle.
+///
+/// It is a function rather than an arm inside [`card_nodes`] so that a test can
+/// hold the pair to each other AT A SIZE OF ITS OWN CHOOSING, and that is a
+/// repair rather than a tidy-up. Two counterfactuals PASSED at R2022 — the byte
+/// pane's line clamp and the latency caption's — because the sweep narrows and
+/// shortens every card in one step, so no swept case is ever WIDE AND SHORT, and
+/// a body whose width refusal fires first can hide a height rule behind it. The
+/// two faults always travelled together (R1845's class), and the repair belongs
+/// to the population rather than to an assertion:
+/// `r2022_a_body_announces_only_what_it_paints_at_every_size` varies the two
+/// independently, which nothing that goes through the board can do.
+fn card_body_nodes(state: &ShellState, card: &Card, body: Rect) -> Vec<AccessNode> {
+    let id = card.id().as_str();
+    match def_for_card(id).map(|def| def.kind) {
+        Some("packet") => stream_nodes(id, body),
+        Some("decode") => decode_nodes(id, body),
+        Some("keymap") => map_nodes(id, body),
+        Some("filter") => filter_nodes(state, id, body),
+        Some("latency") => latency_nodes(id, body),
+        Some("health") => health_nodes(card, body),
+        Some("alarms") => alarms_nodes(state, card, body),
+        _ => Vec::new(),
+    }
+}
+
 /// The message stream, as a **grid**: a header row of column headers, then one
 /// row per message holding one cell per column.
 ///
@@ -15403,19 +15719,34 @@ const BODY_ROOTS: &[&str] = &[
 /// measured at 6.11.1, its cell query answers the cell's name, its row, its
 /// column and its column header — and the shape a hand-painted table has to
 /// build or it has none at all.
-fn stream_nodes(id: &str) -> Vec<AccessNode> {
-    let rows: Vec<Vec<String>> = spec::STREAM_ROWS
+///
+/// ★★★★★ R2022 — the rows and the columns are the ones the PAINTER has room
+/// for, asked of [`stream_seats`] and [`stream_columns`] rather than counted off
+/// the specification. The extent still states what the model holds, so a reader
+/// is told *five rows of eight* rather than either lie.
+fn stream_nodes(id: &str, body: Rect) -> Vec<AccessNode> {
+    let columns = stream_columns(body.w).len();
+    let rows: Vec<Vec<String>> = stream_seats(body)
         .iter()
-        .map(|(time, kind, name, len)| {
-            vec![
-                (*time).to_owned(),
-                (*kind).to_owned(),
-                (*name).to_owned(),
-                (*len).to_owned(),
-            ]
+        .map(|(n, _)| {
+            let (time, kind, name, len) = spec::STREAM_ROWS[n];
+            [time, kind, name, len]
+                .into_iter()
+                .take(columns)
+                .map(str::to_owned)
+                .collect()
         })
         .collect();
-    table_nodes(id, "Message stream", spec::STREAM_COLUMNS.len(), &rows)
+    table_nodes(
+        id,
+        "Message stream",
+        columns,
+        &rows,
+        GridExtent {
+            rows: spec::STREAM_ROWS.len(),
+            columns: spec::STREAM_COLUMNS.len(),
+        },
+    )
 }
 
 /// The identifier map, as a grid on the same shape as the stream.
@@ -15425,24 +15756,42 @@ fn stream_nodes(id: &str) -> Vec<AccessNode> {
 /// reading rather than looking it is a punctuation mark. The cell announces the
 /// meaning instead, which the voice census is what asked for: a name with no
 /// word in it is a hole.
-fn map_nodes(id: &str) -> Vec<AccessNode> {
-    let rows: Vec<Vec<String>> = spec::MAP_ROWS
+///
+/// ★★★★★ R2022 — the rows and columns the painter has room for, for
+/// [`stream_nodes`]'s reason and by the same means.
+fn map_nodes(id: &str, body: Rect) -> Vec<AccessNode> {
+    let columns = map_columns_shown(body.w);
+    let rows: Vec<Vec<String>> = map_seats(body)
         .iter()
-        .map(|(key, path, seen)| {
+        .map(|(n, _)| {
+            let (key, path, seen) = spec::MAP_ROWS[n];
             let when = if seen.chars().all(|c| !c.is_alphanumeric()) {
-                "not known".to_owned()
+                "not known"
             } else {
-                (*seen).to_owned()
+                seen
             };
-            vec![(*key).to_owned(), (*path).to_owned(), when]
+            [key, path, when]
+                .into_iter()
+                .take(columns)
+                .map(str::to_owned)
+                .collect()
         })
         .collect();
-    table_nodes(id, "Identifier map", spec::MAP_COLUMNS.len(), &rows)
+    table_nodes(
+        id,
+        "Identifier map",
+        columns,
+        &rows,
+        GridExtent {
+            rows: spec::MAP_ROWS.len(),
+            columns: spec::MAP_COLUMNS.len(),
+        },
+    )
 }
 
 /// A card body that is a table.
 ///
-/// ★★★★★ Built by [`grid_table_nodes`] rather than by hand. The first draft of
+/// ★★★★★ Built by [`grid_table_nodes_clamped`] rather than by hand. The first draft of
 /// this screen hand-rolled the shape — as the sibling capture screen already
 /// did — and the two disagreed about where the header row sits: WAI-ARIA counts
 /// it in `aria-rowcount`, so it has to be counted in `aria-rowindex` too, and a
@@ -15452,7 +15801,17 @@ fn map_nodes(id: &str) -> Vec<AccessNode> {
 ///
 /// The column headers are deliberately left unnamed here: they are painted with
 /// their own tags, so the name comes from the paint and the two cannot drift.
-fn table_nodes(id: &str, name: &str, columns: usize, rows: &[Vec<String>]) -> Vec<AccessNode> {
+///
+/// ★★★★★ R2022 — `columns` and `rows` are what the card has ROOM for and
+/// `extent` is what its model holds. They were the same thing until this round,
+/// and that is why both table cards announced rows and columns nobody drew.
+fn table_nodes(
+    id: &str,
+    name: &str,
+    columns: usize,
+    rows: &[Vec<String>],
+    extent: GridExtent,
+) -> Vec<AccessNode> {
     let grid_columns: Vec<GridColumn> = (0..columns)
         .map(|c| GridColumn {
             tag: head_cell_tag(id, c),
@@ -15478,13 +15837,14 @@ fn table_nodes(id: &str, name: &str, columns: usize, rows: &[Vec<String>]) -> Ve
                 .collect(),
         })
         .collect();
-    grid_table_nodes(
+    grid_table_nodes_clamped(
         &format!("card.{id}.grid"),
         name,
         false,
         &format!("card.{id}.head"),
         &grid_columns,
         &grid_rows,
+        extent,
     )
 }
 
@@ -15505,31 +15865,38 @@ fn row_suffix(id: &str) -> &'static str {
 /// the hierarchy is gone: every item is a direct child whatever its depth. Here
 /// a field is one item, its value is its value, and the level carries the depth
 /// the paint indents by.
-fn decode_nodes(id: &str) -> Vec<AccessNode> {
+///
+/// ★★★★★ R2022 — the rows the card has ROOM for, from [`decode_seats`]. The
+/// tree's own `aria-setsize` stays the whole layer set, and each item keeps its
+/// place among its real siblings: a reader is told *this card shows six of
+/// eight*, which is a fact, rather than being walked through two rows nobody
+/// drew.
+fn decode_nodes(id: &str, body: Rect) -> Vec<AccessNode> {
     let mut tree = AccessNode::new(format!("card.{id}.tree"), AriaRole::Tree)
         .with_name("Decoded layers")
         .with_size_of_set(u32::try_from(spec::DECODE_ROWS.len()).unwrap_or(u32::MAX));
     let mut nodes = Vec::new();
-    for (n, (depth, key, value)) in spec::DECODE_ROWS.iter().enumerate() {
+    for (n, _) in decode_seats(body).iter() {
+        let (depth, key, value) = spec::DECODE_ROWS[n];
         let tag = format!("card.{id}.tree.{n}");
         tree = tree.with_child(tag.clone());
         let (place, siblings) = sibling_place(n);
         let mut item = AccessNode::new(tag, AriaRole::TreeItem)
-            .with_name(*key)
-            .with_level(*depth + 1)
+            .with_name(key)
+            .with_level(depth + 1)
             .with_set_position(place, siblings)
             .with_selected(n == spec::DECODE_SELECTED);
         if !value.is_empty() {
-            item = item.with_value(AccessValue::Text((*value).to_owned()));
+            item = item.with_value(AccessValue::Text(value.to_owned()));
         }
         // A layer heading is what folds; a field under it does not.
-        if *depth == 0 {
+        if depth == 0 {
             item = item.with_expanded(true);
         }
         nodes.push(item);
     }
     nodes.insert(0, tree);
-    nodes.extend(byte_nodes(id));
+    nodes.extend(byte_nodes(id, body));
     nodes
 }
 
@@ -15558,16 +15925,25 @@ fn same_parent(a: usize, b: usize) -> bool {
 
 /// The captured frame as a grid: one row per painted line, one cell per byte,
 /// and the bytes the selected field was read from announced as selected.
-fn byte_nodes(id: &str) -> Vec<AccessNode> {
+fn byte_nodes(id: &str, body: Rect) -> Vec<AccessNode> {
     let per_line = 4;
     let lines = spec::DECODE_BYTES.len();
+    // ★★★★★ R2022 — the pane's own refusal, first: below its floor the painter
+    // drops the pane entirely rather than draw it outside the card, so there is
+    // no grid to be walked and announcing one is a region a reader is sent to
+    // and finds nothing in.
+    let Some(pane_w) = byte_pane_w(body.w) else {
+        return Vec::new();
+    };
+    let columns = byte_columns(pane_w);
     let mut grid = AccessNode::new(format!("card.{id}.bytegrid"), AriaRole::Grid)
         .with_name("Captured bytes")
         .with_row_count(u32::try_from(lines).unwrap_or(u32::MAX))
         .with_column_count(u32::try_from(per_line).unwrap_or(u32::MAX));
     let mut nodes = Vec::new();
     let (from, to) = spec::DECODE_SELECTED_SPAN;
-    for (line, bytes) in spec::DECODE_BYTES.iter().enumerate() {
+    for (line, _) in byte_line_seats(body).iter() {
+        let bytes = &spec::DECODE_BYTES[line];
         let row_tag = format!("card.{id}.bytes.{line}");
         grid = grid.with_child(row_tag.clone());
         // The row is named by the offset it starts at, which is what the strip
@@ -15575,7 +15951,7 @@ fn byte_nodes(id: &str) -> Vec<AccessNode> {
         let mut row = AccessNode::new(row_tag, AriaRole::Row)
             .with_name(format!("{:04x}", line * per_line))
             .with_row(line);
-        for (column, byte) in bytes.iter().enumerate() {
+        for (column, byte) in bytes.iter().enumerate().take(columns) {
             let index = line * per_line + column;
             let tag = format!("card.{id}.byte.{index}");
             row = row.with_child(tag.clone());
@@ -15595,7 +15971,7 @@ fn byte_nodes(id: &str) -> Vec<AccessNode> {
 
 /// The search and filter card: the query, the saved chips, and the three counts
 /// whose **relation** is the point of the card.
-fn filter_nodes(state: &ShellState, id: &str) -> Vec<AccessNode> {
+fn filter_nodes(state: &ShellState, id: &str, body: Rect) -> Vec<AccessNode> {
     let mut nodes = vec![
         AccessNode::new(format!("card.{id}.query"), AriaRole::TextInput)
             .with_name("Query")
@@ -15605,28 +15981,39 @@ fn filter_nodes(state: &ShellState, id: &str) -> Vec<AccessNode> {
     // `button`s with `aria-pressed`, hand-written here, over a set that can never
     // have two on — and nothing at all could change one of them. `spec::FILTER_ROW`
     // is the declaration; this call is the only thing that reads it into a tree.
-    let chips =
-        pinion_a11y::chip_group_nodes(&filter_row(state, id), focus_state::focused().as_deref());
+    // ★★★★★ R2022 — the chips the card has ROOM for. `filter_chip_rects` is the
+    // geometry the paint and the hit test already shared; the tree is its third
+    // reader, so a chip that wrapped off the bottom of a shrunken card stops
+    // being a toggle a reader is offered and cannot reach.
+    let chips = pinion_a11y::chip_group_nodes(
+        &filter_row_shown(state, id, body),
+        focus_state::focused().as_deref(),
+    );
+    let (with_counts, with_trend) = filter_counts_shown(body);
     let mut counts =
         AccessNode::new(format!("card.{id}.counts"), AriaRole::Group).with_name("Match counts");
-    for (n, (value, what)) in spec::FILTER_STATS.iter().enumerate() {
-        let tag = format!("card.{id}.stat.{n}");
-        counts = counts.with_child(tag.clone());
-        // The word is the name and the number is the value: a reader told only
-        // "12,418" has been told which of three numbers it is by position, and
-        // position is exactly what somebody not looking at the card does not
-        // have.
+    if with_counts {
+        for (n, (value, what)) in spec::FILTER_STATS.iter().enumerate() {
+            let tag = format!("card.{id}.stat.{n}");
+            counts = counts.with_child(tag.clone());
+            // The word is the name and the number is the value: a reader told
+            // only "12,418" has been told which of three numbers it is by
+            // position, and position is exactly what somebody not looking at the
+            // card does not have.
+            nodes.push(
+                AccessNode::new(tag, AriaRole::Status)
+                    .with_name(*what)
+                    .with_value(AccessValue::Text((*value).to_owned())),
+            );
+        }
+    }
+    if with_trend {
         nodes.push(
-            AccessNode::new(tag, AriaRole::Status)
-                .with_name(*what)
-                .with_value(AccessValue::Text((*value).to_owned())),
+            AccessNode::new(format!("card.{id}.sparkline"), AriaRole::Group)
+                .with_name("Matched over time")
+                .with_value(AccessValue::Text(series_reading(&MATCH_SERIES))),
         );
     }
-    nodes.push(
-        AccessNode::new(format!("card.{id}.sparkline"), AriaRole::Group)
-            .with_name("Matched over time")
-            .with_value(AccessValue::Text(series_reading(&MATCH_SERIES))),
-    );
     nodes.extend(chips);
     nodes.push(counts);
     nodes
@@ -15646,7 +16033,13 @@ fn filter_nodes(state: &ShellState, id: &str) -> Vec<AccessNode> {
 /// is a promise that X speaks for these marks. Tagging X is not that promise —
 /// the sparkline next door has had both since R1648 and this card had only the
 /// tag, so the chart was silent AND claiming to be covered.
-fn latency_nodes(id: &str) -> Vec<AccessNode> {
+///
+/// ★★★★★ R2022 — the tile strip, the plot and the caption are announced only
+/// where the painter has room to draw them, from the painter's own derivations
+/// ([`stat_strip_w`], [`distribution_box`], [`latency_caption_shown`]). On a
+/// one-cell card the strip is dropped whole, and three tiles were announced into
+/// a card that had drawn none of them.
+fn latency_nodes(id: &str, body: Rect) -> Vec<AccessNode> {
     let Some((binned, quantiles)) = latency_binned() else {
         return Vec::new();
     };
@@ -15654,14 +16047,16 @@ fn latency_nodes(id: &str) -> Vec<AccessNode> {
     let tiles = latency_stats(&quantiles);
     let strip = format!("card.{id}.tiles");
     let mut group = AccessNode::new(strip.clone(), AriaRole::Group).with_name("Round trip");
-    for (n, (key, value)) in tiles.iter().enumerate() {
-        let tag = format!("card.{id}.stat.{n}");
-        group = group.with_child(tag.clone());
-        nodes.push(
-            AccessNode::new(tag, AriaRole::Status)
-                .with_name(*key)
-                .with_value(AccessValue::Text(value.clone())),
-        );
+    if stat_strip_w(body.w, tiles.len()).is_some() {
+        for (n, (key, value)) in tiles.iter().enumerate() {
+            let tag = format!("card.{id}.stat.{n}");
+            group = group.with_child(tag.clone());
+            nodes.push(
+                AccessNode::new(tag, AriaRole::Status)
+                    .with_name(*key)
+                    .with_value(AccessValue::Text(value.clone())),
+            );
+        }
     }
     nodes.insert(0, group);
     let cut = quantiles.at(0.95).unwrap_or(f64::INFINITY);
@@ -15681,22 +16076,26 @@ fn latency_nodes(id: &str) -> Vec<AccessNode> {
                 .join(", ")
         )
     };
-    nodes.push(
-        AccessNode::new(format!("card.{id}.bins"), AriaRole::Group)
-            .with_name("Round trip distribution")
-            .with_value(AccessValue::Text(format!(
-                "{} samples in {} buckets, {} — {}: {buckets}; {emphasised}",
-                binned.basis().n,
-                binned.bins(),
-                spec::LATENCY_UNIT,
-                binned.rule().name(),
-            ))),
-    );
-    nodes.push(
-        AccessNode::new(format!("card.{id}.caption"), AriaRole::Status)
-            .with_name("About this chart")
-            .with_value(AccessValue::Text(spec::LATENCY_CAPTION.to_owned())),
-    );
+    if latency_plot_rect(body, tiles.len(), binned.bins()).is_some() {
+        nodes.push(
+            AccessNode::new(format!("card.{id}.bins"), AriaRole::Group)
+                .with_name("Round trip distribution")
+                .with_value(AccessValue::Text(format!(
+                    "{} samples in {} buckets, {} — {}: {buckets}; {emphasised}",
+                    binned.basis().n,
+                    binned.bins(),
+                    spec::LATENCY_UNIT,
+                    binned.rule().name(),
+                ))),
+        );
+    }
+    if latency_caption_shown(body, tiles.len()) {
+        nodes.push(
+            AccessNode::new(format!("card.{id}.caption"), AriaRole::Status)
+                .with_name("About this chart")
+                .with_value(AccessValue::Text(spec::LATENCY_CAPTION.to_owned())),
+        );
+    }
     nodes
 }
 
