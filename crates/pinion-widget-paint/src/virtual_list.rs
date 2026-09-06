@@ -415,7 +415,33 @@ fn windowed_content(width: u32, total_h: u32, slots: Vec<Scene>) -> Scene {
         ContainerNode::new(slots)
             .with_layout(LayoutStyle::new().with_size(Size::px(width, total_h))),
     );
-    Scene::Container(ContainerNode::new(vec![sizer]))
+    // ★★★★★ R2031 — **the content root declares the extent its sizer does**,
+    // and until this round it declared nothing at all.
+    //
+    // A list with NO ROWS YET makes `total_h` zero, so this wrapper's box came
+    // back `w x 0` — and with no declaration on it, nothing could tell that
+    // zero from a denied placement. R2025's `unplaced` refusal therefore called
+    // it a defect on three examples (`hello-paged-stream`,
+    // `hello-streaming-log`, `hello-asset-browser`), which is a convention
+    // being reported as a fault: an empty list has nothing to show, and saying
+    // so is not the same as being given no room.
+    //
+    // ⚠ FOUR EARLIER DIAGNOSES WERE WRONG and each was driven before this one:
+    // re-declaring the scroll node's size (a no-op — `ScrollNode::new` sets
+    // it), a sized wrapper at the consumer, `flex_shrink(0.0)` on the scroll,
+    // and a minimal Column/Row fixture that did not reproduce at all. What
+    // settled it was the WIRE, once R2030 made the refusal carry its box:
+    // `"tag": null, "path": "pagedstream/pagedstream_scroll"` — a null tag on a
+    // path segment named for the scroll, so the boxless mark was never the
+    // scroll node but the unnamed wrapper inside it.
+    //
+    // Declaring the size makes the zero a DECLARED one, which is the arm R2025
+    // built for exactly this: an author's zero is reported as `unjudged` and a
+    // denied box is still refused.
+    Scene::Container(
+        ContainerNode::new(vec![sizer])
+            .with_layout(LayoutStyle::new().with_size(Size::px(width, total_h))),
+    )
 }
 
 /// Wrap windowed `slots` in the canonical "sizer + content-root inside a
