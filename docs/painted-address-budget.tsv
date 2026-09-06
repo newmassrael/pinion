@@ -82,7 +82,7 @@ lv.list	1
 lv.severity	1
 modified.elem	7
 name.elem	1
-no.such	6
+no.such	8
 nodegroups.frame	3
 nodegroups.node	6
 nodegroups.wire	1
@@ -104,6 +104,7 @@ shell.carry	13
 shell.palette	33
 shell.preset	1
 shell.settings	16
+shell.status	1
 shell.subbar	6
 struct_modified.struct	4
 struct_summary.struct	1
