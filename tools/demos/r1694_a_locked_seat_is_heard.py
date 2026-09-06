@@ -241,6 +241,31 @@ def body() -> None:
         # ── (C) every painted region is classified, and the split is the
         #        specification's ─────────────────────────────────────────────
         banner("C — voice: every addressable region is classified")
+        # ★★★★★ R2055 — the occupied state is REACHED, not inherited.
+        #
+        # This census needs the status band's slot holding a toast, because the
+        # reading below compares the slot's two occupants. It used to get that
+        # for free: the shell said a sentence on arrival, so every census this
+        # demo ever took happened to be taken with a toast up. R2055 removed
+        # that opening sentence — the behaviour reference raises a toast only
+        # for a verb a person invoked, and ours was hiding the gesture help for
+        # the first 2.6 seconds of every session — so the state has to be asked
+        # for.
+        #
+        # ⚠ Asked for with a REFUSAL, deliberately: a refused action makes the
+        # screen speak and changes nothing else, so the region census either
+        # side of it is about the same screen. A verb that did something would
+        # move the population this section is counting.
+        #
+        # ★ And this is the better shape regardless of which round removed what:
+        # a demo that inherits a state cannot say which of its assertions needed
+        # that state, and R1684's rule has a dual — the state a demo INHERITS
+        # may be one that should not exist.
+        try:
+            app.invoke(f"{EXT}/title", "no.such.card,x")
+        except Exception:  # noqa: BLE001 - the refusal IS the affordance here
+            pass
+        app.tick_ms(16)
         voice = app.request("scene/voice").result
         counts = voice["counts"]
         assert_eq(counts["unvoiced"], 0, "C: nothing is left undecided")

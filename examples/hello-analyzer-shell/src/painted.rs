@@ -3125,27 +3125,42 @@ fn poses_at_destination(destination: &str) -> Vec<Painted> {
 /// ★★★★★ R1867 — **the host's status slot has two occupants, and a census of
 /// what a destination shows has to see both.**
 ///
-/// Navigating says a sentence, so every frame these gates take is a frame with
-/// a toast in the band — which is why `shell.toast` has always satisfied a
-/// `Where::Chrome` row and why the gesture sentence beside it could not. The
-/// slot is one place with two things in it, exactly as a section is one place
-/// with several poses, and this is that second axis made explicit rather than
-/// left to whichever state the test happened to be in.
+/// The slot is one place with two things in it, exactly as a section is one
+/// place with several poses, and this is that second axis made explicit rather
+/// than left to whichever state the test happened to be in.
 ///
-/// Runs `f` with a toast up (the state navigation leaves behind) and again with
-/// the toast's whole life spent. ⚠ Seconds, not milliseconds (R1783), and taken
-/// from [`Saying::life`](pinion_core::utterance::Saying::life) rather than
-/// written here — a test that pins that number pins a fact the type owns.
+/// Runs `f` with a toast up and again with the toast's whole life spent.
+/// ⚠ Seconds, not milliseconds (R1783), and taken from
+/// [`Saying::life`](pinion_core::utterance::Saying::life) rather than written
+/// here — a test that pins that number pins a fact the type owns.
+///
+/// # ★★★★★ R2055 — the occupied state is MADE, not inherited
+///
+/// This used to open by asserting a toast was already up, on the stated ground
+/// that *"navigating says a sentence, so every frame these gates take is a
+/// frame with a toast in the band"*. Navigating does say one — measured, all
+/// four destinations tried. **But the caller does not always navigate**:
+/// `poses_at_destination` skips `go` when the section asked for is the one
+/// already open, which is exactly the case for the destination the shell opens
+/// on. So for that destination the sentence in the band was the OPENING toast,
+/// and the moment R2055 removed that — the behaviour reference raises a toast
+/// only for a verb a person invoked — this gate had nothing.
+///
+/// ⇒ two occupancies are a property of the SLOT, so reaching them must not
+/// depend on how the caller got here. Saying something outright costs one line
+/// and makes the gate true for the opening destination as well, which is the
+/// one it was silently weakest on.
 fn over_slot_occupancies<T>(
     state: &std::rc::Rc<super::ShellState>,
     mut f: impl FnMut() -> T,
 ) -> Vec<T> {
     let owner = Owner::current().expect("a pose is taken inside an Owner scope");
     let mut out = Vec::with_capacity(2);
+    state.say(super::Utterance::done("a thing happened"));
     assert!(
         state.toast.showing().is_some(),
-        "navigation says a sentence, so a frame taken right after it must have \
-         one — if this fails the two occupancies below are one",
+        "the band was just given a sentence and is not holding one — if this \
+         fails the two occupancies below are one",
     );
     out.push(f());
     owner.tick_animations(state.toast.life() + 1.0);

@@ -2380,13 +2380,37 @@ fn use_shell_state() -> Rc<ShellState> {
     // documentation gives: this hook re-runs on every view pass, and a second
     // registration would count the sentence's life down twice per frame.
     //
-    // The opening sentence is said INSIDE the factory, so it runs once and
-    // "this screen opens having already spoken" is an act rather than a
-    // different type from its two siblings.
+    // ★★★★★ R2055 — **and it opens SAYING NOTHING.** An opening sentence used
+    // to be said inside this factory, so that "this screen opens having already
+    // spoken" was an act; measured, that act was costing the thing the band is
+    // for.
+    //
+    // The band has ONE slot (R1865, and for a measured reason — see
+    // `status_slot_rect`). A toast takes it and hands it back. So an opening
+    // toast means the slot's idle occupant — the gesture sentence, the one line
+    // telling a reader what the pointer does here — is absent from the paint AND
+    // has no accessibility node at all for the first 2.6 seconds of EVERY
+    // session: exactly when somebody who has just arrived would look for it, and
+    // before they have done anything at all.
+    //
+    // Three measurements, and each on its own would have been enough:
+    //
+    // * the behaviour reference raises a toast from **46 call sites and every
+    //   one of them is a verb a person invoked** — rename, add, delete, detach,
+    //   redock, open the palette. None runs at start-up. A toast there is the
+    //   answer to something you did.
+    // * the sentence it said named the layout preset, which this application
+    //   ALREADY says permanently and announces permanently, one strip up
+    //   (`shell.subbar.preset`, "Layout preset" / its name). The opening toast
+    //   was a second, expiring account of a fact that never expires.
+    // * so what it bought was nothing, and what it cost was the whole of a
+    //   reader's arrival.
+    //
+    // ⚠ This does NOT touch the slot's own trade-off, which is about WHERE a
+    // toast sits and is settled where that is decided. This is the other axis:
+    // WHEN one is raised. Predictability and not-covering-content are unchanged.
     let toast = owner.register_animation_once(TOAST_LIFE_KEY, || {
-        let said = pinion_core::utterance::Saying::new(TOAST_SECONDS);
-        said.say(Utterance::done(format!("{} loaded", spec::PRESET)));
-        said
+        pinion_core::utterance::Saying::new(TOAST_SECONDS)
     });
     // ★★★★★ R1897 — a person's own arrangements are laid over the shipped ones
     // INSIDE the cache factory, so the restore runs exactly once per process
