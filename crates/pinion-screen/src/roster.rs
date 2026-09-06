@@ -41,7 +41,7 @@ use crate::journey::{JourneyConformance, JourneySection, JourneyStanding, Walk};
 /// Everything outside the page and on that side: a navigation rail on the
 /// left, an application bar (and any sub-bar) above, a palette on the right, a
 /// status band below. A side with nothing on it is zero, which is a statement
-/// rather than an omission — [`Destinations::ungranted_keys`] is what catches
+/// rather than an omission — [`ScreenRoster::ungranted_keys`] is what catches
 /// a section nobody made the statement about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct PageInset {
@@ -68,7 +68,7 @@ impl PageInset {
     }
 
     /// The horizontal total — what R1830's grant carried on its own, and what
-    /// [`Destinations::granted_of`] still subtracts from a window's width.
+    /// [`ScreenRoster::granted_of`] still subtracts from a window's width.
     #[must_use]
     pub const fn beside(self) -> u32 {
         self.left.saturating_add(self.right)
