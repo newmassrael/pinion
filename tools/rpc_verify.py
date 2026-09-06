@@ -1774,8 +1774,20 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
             # was untagged, so a message that stopped at tag-or-content printed
             # `'<a mark>'` six times and told the reader nothing about WHICH.
             # `scene/locate` answers on this address, so the reader can go there.
+            # ★★★★★ R2030 — AND THE BOX IT SAW, which this line did not carry.
+            #
+            # R2025 wrote this refusal and named the mark; R2030 tried to repair
+            # one of its findings and could not even ask what the rectangle was,
+            # because the gate raises inside `__enter__` and the answer it had
+            # measured never reached the reader. Two wrong repairs were shipped
+            # and reverted before that was noticed. A refusal that names a mark
+            # and withholds the measurement makes every reader re-derive it —
+            # and here the axis IS the diagnosis: a zero width and a zero height
+            # come from different halves of a layout.
             rows = "; ".join(
                 f"{(o.get('tag') or o.get('content') or o.get('path') or '<a mark>')!r}"
+                f" (rect {o.get('rect')}, in viewport {o.get('viewport', {}).get('name')!r}"
+                f" {o.get('viewport', {}).get('w')}x{o.get('viewport', {}).get('h')})"
                 for o in unplaced[:6]
             )
             # ★★★★★ R2025 — REFUSED, and this line is the whole of
