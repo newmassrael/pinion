@@ -4637,6 +4637,15 @@ enum Hit {
     /// test graph is built to perform: change one peer's build and read what
     /// the launch gate then says about the wires it is on.
     Build(Stack),
+    /// ★★★★★ R2047 — a verb of the definitions register, pressed on the
+    /// definition it names.
+    ///
+    /// Carries the NAME rather than a tree id, because the register is painted
+    /// from the document and a person presses what they can see; the screen's
+    /// own `definition_addressed` is what turns that name into one definition
+    /// or into a refusal that says why it addresses none — the guard R1986
+    /// built after `definitions().find` picked whichever came first.
+    Definition(String, PartVerb),
     DiscoveryToggle,
     Zoom(bool),
     /// ★★ R1688 — point the canvas at the whole graph.
@@ -5053,6 +5062,30 @@ impl Hit {
             if contains(discovery_rect(), px, py) {
                 return Self::DiscoveryToggle;
             }
+            // ★★★★★ R2047 — the definitions register's controls, in the same
+            // unscrolled frame the rows above are asked in.
+            //
+            // 🟥 The first draft of this round painted the register and its
+            // `of_tag` arm and stopped there, and the walk read as a passing
+            // press: `of_tag` is the BY-NAME half that `scene/pointer_target`
+            // holds against the paint, and a real press arrives here, as a
+            // point. So the control was drawn, declared, announced — and inert
+            // to a cursor for a reason nobody had declared. ⇒ a control needs
+            // BOTH halves, and the walk is what said so.
+            let names: Vec<String> = state
+                .doc
+                .borrow()
+                .definitions()
+                .map(|held| held.name.clone())
+                .collect();
+            for (n, name) in names.into_iter().enumerate() {
+                let row = part_row(n);
+                for (nth, verb) in PartVerb::ALL.into_iter().enumerate() {
+                    if contains(part_control(row, nth), px, py) {
+                        return Self::Definition(name, verb);
+                    }
+                }
+            }
             return Self::Nothing;
         }
         if contains(toolbar_rect(), px, py) {
@@ -5227,6 +5260,17 @@ impl Hit {
         {
             return Self::Role(role);
         }
+        // ★★★★★ R2047 — a control of the definitions register. The VERB is the
+        // discriminator and the definition's name is the remainder, so a name
+        // holding a dot cannot be read as a verb (see the tag's own note).
+        if let Some(rest) = tag.strip_prefix("lab.palette.verb.")
+            && let Some((verb, name)) = PartVerb::ALL.into_iter().find_map(|verb| {
+                rest.strip_prefix(&format!("{}.", verb.word()))
+                    .map(|n| (verb, n))
+            })
+        {
+            return Self::Definition(name.to_owned(), verb);
+        }
         // R1885 — read BEFORE the `lab.node.` prefix below, which would
         // otherwise swallow `lab.node.build.reference` and look for a card of
         // that name. The longer prefix wins, which is the rule this router
@@ -5335,6 +5379,7 @@ impl Hit {
             Self::Nothing => "nothing".into(),
             Self::Rail(name) => format!("rail:{name}"),
             Self::Role(role) => format!("role:{}", role.name()),
+            Self::Definition(name, verb) => format!("definition:{}:{name}", verb.word()),
             Self::Build(stack) => format!("build:{}", stack.word()),
             Self::DiscoveryToggle => "discovery".into(),
             Self::Zoom(up) => format!("zoom:{}", if *up { "in" } else { "out" }),
@@ -6111,6 +6156,110 @@ fn discovery_rect() -> Rect {
         legend_top() + PAL_HEAD_H + 3 * 20 + 6 + 18 + 20 + PAL_HEAD_H,
         palette_body_w(),
         58,
+    )
+}
+
+/// ★★★★★ R2047 — a verb the register offers on one definition.
+///
+/// Two and not the three the document decides, and the reason is a
+/// measurement rather than a saving. The third — giving a definition another
+/// name — needs a place to type, and every editing seat on this screen belongs
+/// to the pane next door; the register would have to grow one. What is here is
+/// what a press can complete on its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PartVerb {
+    /// Copy the definition on its own, with nothing standing for the copy.
+    Copy,
+    /// Take the definition out of the document, refusing while cards stand for
+    /// it. Drawn last because it is the one that cannot be undone by pressing
+    /// the other.
+    Remove,
+}
+
+impl PartVerb {
+    /// Both of them, left to right as they are drawn.
+    const ALL: [Self; 2] = [Self::Copy, Self::Remove];
+
+    /// The word this verb is addressed by, in a tag and on the wire alike.
+    const fn word(self) -> &'static str {
+        match self {
+            Self::Copy => "copy",
+            Self::Remove => "remove",
+        }
+    }
+
+    /// The act the document is asked to decide for this verb.
+    ///
+    /// ⚠ The removal is asked with the SAFE arm, for the reason
+    /// [`definitions_wire`] already records: a row reporting the destructive
+    /// answer would say yes for every definition, which is true and useless.
+    fn act(self) -> pinion_node_graph::DefinitionAct<'static> {
+        match self {
+            Self::Copy => pinion_node_graph::DefinitionAct::Duplicate,
+            Self::Remove => {
+                pinion_node_graph::DefinitionAct::Remove(pinion_node_graph::Used::Refuse)
+            }
+        }
+    }
+}
+
+/// The width of one control on a register row.
+const PART_CTRL_W: u32 = 46;
+
+/// The air between two of them, and to the right of the last.
+const PART_CTRL_GAP: u32 = 4;
+
+/// ★★★★★ R2047 — where the definitions register's heading strip starts.
+///
+/// Under the determinism block, which is the last thing the palette declares.
+/// Placed at the END rather than between the role groups on purpose: the
+/// legend, the chips and the switch are all placed from
+/// [`legend_top`], which is derived from the group roster, so a group of
+/// DOCUMENT-sized rows in the middle would make four static rectangles move
+/// with the document. The pane scrolls (R1662), so the bottom is not a worse
+/// place to be — it is the place a growing list can live without moving
+/// anything that is not it.
+fn parts_top() -> u32 {
+    let toggle = discovery_rect();
+    toggle.y + toggle.h + PAL_GROUP_GAP
+}
+
+/// One row of the definitions register.
+fn part_row(n: usize) -> Rect {
+    Rect::new(
+        palette_body_origin().0 + PAD,
+        parts_top() + PAL_HEAD_H + u32::try_from(n).unwrap_or(0) * PAL_ROW_H,
+        palette_body_w(),
+        PAL_ROW_H - 5,
+    )
+}
+
+/// The seat the `nth` verb's control takes on a register row.
+///
+/// Laid from the row's RIGHT edge, and the count is the verb roster's rather
+/// than a number written here: adding a third verb moves the two that are
+/// already drawn, which is what should happen, instead of drawing the third one
+/// off the row.
+fn part_control(row: Rect, nth: usize) -> Rect {
+    let all = u32::try_from(PartVerb::ALL.len()).unwrap_or(0);
+    let from_right = all - u32::try_from(nth).unwrap_or(0);
+    Rect::new(
+        row.x + row.w - from_right * (PART_CTRL_W + PART_CTRL_GAP),
+        row.y + PAL_ROW_INSET,
+        PART_CTRL_W,
+        row.h.saturating_sub(PAL_ROW_INSET * 2),
+    )
+}
+
+/// The room a register row's own words have, once the controls have theirs.
+fn part_words(row: Rect) -> Rect {
+    let all = u32::try_from(PartVerb::ALL.len()).unwrap_or(0);
+    Rect::new(
+        row.x + 9,
+        row.y + PAL_ROW_INSET,
+        row.w
+            .saturating_sub(9 + all * (PART_CTRL_W + PART_CTRL_GAP) + PART_CTRL_GAP),
+        row.h.saturating_sub(PAL_ROW_INSET * 2),
     )
 }
 
@@ -8943,6 +9092,7 @@ fn palette_body(state: &LabState, ink: Ink, rect: Rect) -> Scene {
 
     children.extend(palette_legend(ink));
     children.extend(palette_determinism(state, ink));
+    children.extend(palette_parts(state, ink));
     // ★ R1662 — the pane scrolls. Its content is taller than any window this
     // screen declares a floor for, and before this the overflow was simply
     // painted past the bottom edge: `scene/scroll_reach` reported the last
@@ -9402,6 +9552,136 @@ fn palette_determinism(state: &LabState, ink: Ink) -> Vec<Scene> {
         ink.text_2,
     ));
 
+    children
+}
+
+/// ★★★★★ R2047 — **the definitions register**: what this document holds, and
+/// what may be done to each one, said before anybody presses.
+///
+/// R1986 built the deciding half and published it: `may_definition` is the
+/// document's ONE permission surface, three verbs come out of it, and the
+/// register on the wire carries the refusal's own SENTENCE rather than a bool.
+/// Nothing on the frame read any of it, so the only way to learn that a verb
+/// was refused was to press and be refused — which is the defect that debt
+/// registered, and this is its painted half. `copy_definition`'s own note
+/// already said where this belonged: *reached from a palette listing the
+/// document's definitions*.
+///
+/// ★★★★★ **The refused control is DECLARED unavailable, not dimmed.** R1669
+/// wrote that distinction down one pane over: the declaration is what fades the
+/// ink, makes the region inert, announces the reason to a screen reader and
+/// puts it on `scene/disabled`; choosing a dimmer colour here does the first of
+/// those four and leaves nothing for a gate to read. So this function picks ONE
+/// pair of inks for a control and the cascade decides how it is painted —
+/// a second ink chosen here would be a second statement of the same fact, free
+/// to disagree with the first.
+fn palette_parts(state: &LabState, ink: Ink) -> Vec<Scene> {
+    let local = in_palette_body;
+    let doc = state.doc.borrow();
+    let mut children: Vec<Scene> = vec![palette_heading(
+        "lab.palette.parts",
+        "definitions",
+        parts_top().saturating_sub(palette_body_origin().1),
+        palette_body_w(),
+        ink,
+    )];
+    // ★★★★★ R2026's rule, here: an empty register is a SENTENCE and not an
+    // empty band. A heading over nothing tells a reader the screen is broken;
+    // a heading over "nothing is folded yet" tells them what would put
+    // something here. Untagged deliberately — it is prose, not a region to
+    // address, and the count a machine reads is on the heading's own node.
+    if doc.definitions().next().is_none() {
+        let seat = local(part_row(0));
+        children.push(label(
+            "nothing is folded yet — fold a selection to make one",
+            pinion_core::containment::line_rect_in(seat, seat.x + 9, seat.w.saturating_sub(18), 10),
+            10,
+            ink.text_3,
+        ));
+    }
+    for (n, held) in doc.definitions().enumerate() {
+        let seat = part_row(n);
+        // A band and not a card: the role rows above are drawn raised because
+        // pressing one adds a card, and a register row is a LISTING whose
+        // pressable parts are the two controls on it. Painting it like its
+        // neighbours would be an affordance that lies — the fault R1889 named
+        // for a grip that could not be dragged.
+        children.push(quiet(
+            box_at(
+                &format!("lab.palette.part.{}", held.name),
+                local(seat),
+                ink.surface,
+                None,
+                8,
+            ),
+            Silence::decorative("the row's ground, whose name the run on it says"),
+        ));
+        // The name over what KIND of graph it is — the same two-line stack the
+        // role rows use, in the room the controls leave rather than in the row,
+        // which is R1874's rule and the reason the seat is `part_words`.
+        let words = local(part_words(seat));
+        let [name_band, kind_band] = pinion_core::containment::stacked_line_rects(
+            words,
+            words.x,
+            words.w,
+            [FONT_SMALL + 1, 10],
+        );
+        children.push(tagged_label(
+            &format!("lab.palette.part.{}.name", held.name),
+            held.name.clone(),
+            name_band,
+            FONT_SMALL + 1,
+            ink.text,
+        ));
+        children.push(label(
+            doc.graph_kind(held.id).copied().unwrap_or_default().word(),
+            kind_band,
+            10,
+            ink.text_3,
+        ));
+        for (nth, verb) in PartVerb::ALL.into_iter().enumerate() {
+            let slot = local(part_control(seat, nth));
+            let inside = box_content(slot);
+            let mut control = box_holding(
+                // ★ A prefix of its own rather than a suffix on the row's tag,
+                // which is this router's standing rule (R1885, R2001): a suffix
+                // would make `lab.palette.part.<name>.<verb>` and the row of a
+                // definition CALLED `<name>.<verb>` the same string, and the
+                // router would answer whichever arm it read first.
+                &format!("lab.palette.verb.{}.{}", verb.word(), held.name),
+                slot,
+                ink.raised,
+                Some(ink.outline),
+                6,
+                vec![label(
+                    verb.word(),
+                    pinion_core::containment::line_rect_in(
+                        inside,
+                        inside.x + PART_CTRL_GAP,
+                        inside.w.saturating_sub(PART_CTRL_GAP * 2),
+                        10,
+                    ),
+                    10,
+                    ink.text_2,
+                )],
+            );
+            // ★★★★★ R2047 — the document's own refusal, carried as the reason
+            // the control is unavailable. `Precondition` and not `Permission`
+            // is the document speaking: what stands in the way is a condition
+            // of this session — cards standing for the definition — and taking
+            // them off the canvas makes the verb available. `Permission` would
+            // say the viewer's authority does not extend here, which is a
+            // different thing to do about it.
+            if let Some(why) = doc.may_definition(held.id, verb.act()).err()
+                && let Some(layout) = control.layout_style_mut()
+            {
+                *layout = layout
+                    .clone()
+                    .with_unavailable(Unavailable::precondition(why.to_string()));
+            }
+            children.push(control);
+        }
+    }
     children
 }
 
@@ -16087,6 +16367,16 @@ fn spec_json() -> serde_json::Value {
         "card_seats": NodeAct::ALL.iter().map(|act| serde_json::json!({
             "tag": act.tag(), "action": act.wire(),
         })).collect::<Vec<_>>(),
+        // ★★★★★ R2047 — the definitions register's verb roster, published for
+        // the same reason `card_seats` is: it is a CLOSED vocabulary this
+        // screen owns (`PartVerb::ALL`), a walk counting the register's controls
+        // needs it per row, and the paragraph above is the record of what a
+        // constant costs when the vocabulary grows. The register's ROWS are the
+        // document's, so nothing is published for them — a reader asks
+        // `definitions` for that.
+        "definition_seats": PartVerb::ALL.iter().map(|verb| serde_json::json!({
+            "verb": verb.word(),
+        })).collect::<Vec<_>>(),
         "protocols": spec::PROTOCOLS,
         "frames": spec::FRAMES.iter().map(|f| serde_json::json!({
             "name": f.name, "gist": f.gist, "rect": [f.rect.0, f.rect.1, f.rect.2, f.rect.3],
@@ -19929,6 +20219,16 @@ fn release(state: &Rc<LabState>) {
             Tone::Refused,
             format!("{name} is not this screen"),
         )),
+        // ★★★★★ R2047 — through the SAME function the wire calls, which is
+        // this screen's standing rule for a seat on a row (R1716): the press
+        // and the wire verb are one path, so a refusal reaches the toast once
+        // and cannot say two different things.
+        Hit::Definition(name, verb) => {
+            let _ = match verb {
+                PartVerb::Copy => copy_definition(state, &name),
+                PartVerb::Remove => drop_definition(state, &format!("{name},keep")),
+            };
+        }
         // ★ R1889 — `Hit::PanelGrip` belongs here, and the compiler is what
         // decided that rather than a preference. It was written as its own
         // named arm with an empty body — a grip press starts a DRAG, so it is
@@ -21987,6 +22287,77 @@ fn palette_access(state: &LabState) -> Vec<AccessNode> {
     nodes.push(
         AccessNode::new(discovery_caption_tag(), AriaRole::Status).with_name(discovery_caption(on)),
     );
+    nodes.extend(parts_access(state));
+    nodes
+}
+
+/// ★★★★★ R2047 — the definitions register, announced.
+///
+/// The population is `definitions()`, which is what [`palette_parts`] PAINTS —
+/// R1999's rule, and the reason its own note is worth re-reading: a roster
+/// walked over a second list and matched by name is a population free to
+/// disagree with the paint's.
+///
+/// ★ A refused control is announced disabled AND its name carries the
+/// document's own sentence, so a reader who never sees the fade is told the
+/// same thing the fade says, out of the same decision. The available removal
+/// carries what pressing would COST — the count R1986 published and nothing
+/// read — because a person deciding whether to press needs the price, not only
+/// the permission.
+fn parts_access(state: &LabState) -> Vec<AccessNode> {
+    let doc = state.doc.borrow();
+    // ★ The heading carries the COUNT, which is what makes an empty register
+    // audible: the painted line saying nothing is folded yet is prose with no
+    // tag, so without this a reader who never sees it would meet a heading and
+    // then silence.
+    let mut nodes = vec![
+        AccessNode::new("lab.palette.parts", AriaRole::Heading)
+            .with_name("definitions")
+            .with_value(AccessValue::Text(format!(
+                "{} held",
+                doc.definitions().count()
+            ))),
+    ];
+    for held in doc.definitions() {
+        nodes.push(
+            AccessNode::new(
+                format!("lab.palette.part.{}.name", held.name),
+                AriaRole::Status,
+            )
+            .with_name(format!(
+                "{} — {}",
+                held.name,
+                doc.graph_kind(held.id).copied().unwrap_or_default().word()
+            )),
+        );
+        for verb in PartVerb::ALL {
+            let refused = doc.may_definition(held.id, verb.act()).err();
+            let mut node = AccessNode::new(
+                format!("lab.palette.verb.{}.{}", verb.word(), held.name),
+                AriaRole::Button,
+            )
+            .with_name(match &refused {
+                Some(why) => format!("{} {} — {why}", verb.word(), held.name),
+                None => format!("{} {}", verb.word(), held.name),
+            })
+            .with_state(AccessState {
+                disabled: refused.is_some(),
+                ..AccessState::default()
+            });
+            if verb == PartVerb::Remove
+                && refused.is_none()
+                && let Ok(going) =
+                    doc.would_remove_definition(held.id, pinion_node_graph::Used::TakeThemToo)
+            {
+                node = node.with_value(AccessValue::Text(format!(
+                    "{} definition(s) and {} card(s) would go",
+                    going.definitions.len(),
+                    going.instances.len() + going.nodes.len(),
+                )));
+            }
+            nodes.push(node);
+        }
+    }
     nodes
 }
 

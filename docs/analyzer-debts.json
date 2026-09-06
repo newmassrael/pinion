@@ -143,6 +143,18 @@
       ]
     },
     {
+      "name": "debt-a-definition-can-be-renamed-from-the-wire-and-from-no-control",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "rank": "ordinary",
+      "why": [
+        "links analyzer-debt-repayment-loop"
+      ]
+    },
+    {
       "name": "debt-a-described-mark-is-out-of-a-keyboard-readers-reach",
       "substituted": false,
       "blocked_by": "buildable",
@@ -252,7 +264,7 @@
       ]
     },
     {
-      "name": "debt-a-permission-is-published-and-no-control-is-greyed-by-it",
+      "name": "debt-a-pinned-font-tree-is-made-per-demo-and-never-removed",
       "substituted": false,
       "blocked_by": "buildable",
       "blocked_because": "",
@@ -260,7 +272,7 @@
       "closed_because": "",
       "rank": "ordinary",
       "why": [
-        "links screen-a-vs-canon-operation-census"
+        "links analyzer-behaviour-canon-is-the-standalone-prototype"
       ]
     },
     {
@@ -345,6 +357,18 @@
       "rank": "unranked",
       "why": [
         "links analyzer-debt-repayment-loop, debt-the-canon-is-one-app-and-we-are-many-binaries"
+      ]
+    },
+    {
+      "name": "debt-a-screen-announces-inert-where-it-could-declare-it",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "rank": "ordinary",
+      "why": [
+        "links analyzer-debt-repayment-loop, screen-a-vs-canon-operation-census"
       ]
     },
     {
@@ -724,5 +748,5 @@
     }
   ],
   "unranked": 19,
-  "undated": 6
+  "undated": 7
 }

@@ -581,6 +581,13 @@ def body() -> None:
         # nodes, so its pin is DERIVED from the specification rather than
         # written down — a family whose size is a function of the graph must
         # not be pinned to a constant, or adding a link fails the wrong check.
+        # ★ R2047 — what the document holds RIGHT NOW, for the register's two
+        # document-sized families below. Asked here rather than earlier because
+        # the sections above drive declared actions, and a definition made by
+        # one of them is a member this table has to count.
+        # ⚠ Not `json.loads`: this read answers a JSON value where `spec` above
+        # answers a string holding one, so the helper hands back a dict already.
+        registered = q(tf, "definitions")["definitions"]
         FAMILIES = {
             "node_lab": 1,
             "lab.appbar": 3,
@@ -771,6 +778,21 @@ def body() -> None:
             # Three, and each is a mark: the box, the tone-coloured bullet
             # (R1719) and the run of text.
             "lab.toast": 3,
+            # ★★★★★ R2047 — the definitions register, in three families rather
+            # than one prefix. One prefix would sweep the heading in with the
+            # rows and hide a heading that stopped being painted, which is the
+            # fault this file already names for a family holding chrome and
+            # seats alike.
+            #
+            # The heading is always painted; the rows and their controls are the
+            # DOCUMENT's, so they are ASKED rather than pinned — two tags per
+            # definition (its band and the run naming it), and one control per
+            # verb of the roster the screen publishes. The `card_seats`
+            # paragraph above is the record of what a constant costs when a
+            # closed vocabulary grows, and this is the same shape.
+            "lab.palette.parts": 1,
+            "lab.palette.part": 2 * len(registered),
+            "lab.palette.verb": len(spec["definition_seats"]) * len(registered),
         }
         # ★★★★★ R1792 — a CAPTION is part of its box, not an element beside it.
         # `pinion_widget_paint::caption::captioned` gives a caption its box's tag

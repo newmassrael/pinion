@@ -2102,6 +2102,26 @@ fn r1653_the_painted_screen_invented_nothing() {
             ("lab.hint.", None),
             ("lab.crumb", None),
             ("lab.palette.discovery", None),
+            // ★★★★★ R2047 — the definitions register. THREE entries and not one
+            // prefix, because one prefix would sweep the heading in with the
+            // rows and hide a heading that stopped being painted — the fault
+            // this file already names for a rail prefix holding seats and
+            // chrome alike.
+            //
+            // ★ Sized from the DOCUMENT rather than pinned, which is what
+            // R1970's note asks for: a register that painted rows on a document
+            // holding no definitions fails here, and so does one that stopped
+            // painting them for a document that does. Two tags per definition
+            // (its band and the run that names it) and one control per verb.
+            ("lab.palette.parts", Some(1)),
+            (
+                "lab.palette.part.",
+                Some(state.doc.borrow().definitions().count() * 2),
+            ),
+            (
+                "lab.palette.verb.",
+                Some(state.doc.borrow().definitions().count() * super::PartVerb::ALL.len()),
+            ),
         ];
         let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
         let mut unaccounted = Vec::new();
@@ -3441,9 +3461,17 @@ fn r1669_every_reserved_rail_seat_is_declared_with_its_booking() {
         assert_eq!(reserved, 2, "the reference locks two seats on this rail");
         // And nothing ELSE on this screen is inert, which is the direction that
         // catches a region declared unavailable by accident.
+        //
+        // ⚠ R2047 — the definitions register is the screen's SECOND declaring
+        // site, so it is named here rather than left to widen this filter into
+        // one that catches nothing. The two are not interchangeable: a rail
+        // seat is booked for a release and a register control is refused by
+        // this document today, which is why they carry different kinds — and
+        // `r2047_the_register_greys_a_verb_the_document_refuses` is what holds
+        // the second site to its own.
         let unexpected: Vec<&String> = census
             .keys()
-            .filter(|t| !t.starts_with("lab.rail."))
+            .filter(|t| !t.starts_with("lab.rail.") && !t.starts_with("lab.palette.verb."))
             .collect();
         assert!(
             unexpected.is_empty(),
@@ -8590,6 +8618,129 @@ fn palette_row_disabled(tag: &str) -> Option<bool> {
         .iter()
         .find(|node| node.tag == tag)
         .map(|node| node.state.disabled)
+}
+
+/// ★★★★★ R2047 — **the register greys a verb the document refuses, and says
+/// why in the same breath.**
+///
+/// R1986 published `may_definition`'s three answers on the wire, refusal
+/// sentence and all, and measured at this round's open NOTHING PAINTED READ
+/// THEM: the one call site in this screen was the wire's own closure, and the
+/// only way a person learned a verb was refused was to press it. The register
+/// this round paints is that half, and this is what holds it.
+///
+/// ★ The assertion is about the DECLARATION and not about a colour. Choosing a
+/// dimmer ink here would have been a second statement of the permission, free
+/// to drift from the first; declaring makes the cascade fade it, announce it
+/// and publish it, and this reads the census that publication comes from —
+/// which is the same shape `r1669_every_reserved_rail_seat_is_declared_with_its_booking`
+/// holds one pane over, and a law two sites hold identically is a law.
+///
+/// ⚠ The pair is made in ONE document rather than by editing between two
+/// paints: a fold leaves a card standing for the definition it made, and
+/// copying a definition leaves NOTHING standing for the copy. So one paint
+/// holds a refused removal and an allowed one, and the two answers cannot be an
+/// artefact of when the screen was drawn.
+#[test]
+fn r2047_the_register_greys_a_verb_the_document_refuses() {
+    use pinion_a11y::WidgetA11y;
+    use pinion_core::availability::{Recourse, UnavailableKind};
+
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = use_lab_state();
+        let pair: Vec<_> = state.cards().into_iter().take(2).collect();
+        state
+            .selection
+            .set(pinion_core::selection::Selection::group(pair));
+        super::group_selection(&state, "part").expect("two cards make a subgraph");
+        let copy = super::copy_definition(&state, "part").expect("a definition may be copied");
+
+        // What the document says, asked here so the screen is held to the
+        // decision rather than to a sentence this test wrote down.
+        let (held, spare) = {
+            let doc = state.doc.borrow();
+            let of = |name: &str| {
+                doc.definitions()
+                    .find(|d| d.name == name)
+                    .unwrap_or_else(|| panic!("the register lists {name}"))
+                    .id
+            };
+            (of("part"), of(&copy))
+        };
+        let refusal = {
+            let doc = state.doc.borrow();
+            doc.may_definition(held, super::PartVerb::Remove.act())
+                .expect_err("a card stands for the folded definition")
+                .to_string()
+        };
+        assert!(
+            state
+                .doc
+                .borrow()
+                .may_definition(spare, super::PartVerb::Remove.act())
+                .is_ok(),
+            "★ nothing stands for a copied definition, which is what makes the \
+             pair in one document possible at all"
+        );
+
+        let (_, mut scene) = painted_and_scene(&state, (super::WIN_W, super::WIN_H));
+        pinion_core::scene_disabled::resolve_disabled(&mut scene);
+        let census: std::collections::BTreeMap<String, _> =
+            pinion_core::scene_disabled::disabled_census(&scene)
+                .into_iter()
+                .map(|row| (row.tag.clone(), row))
+                .collect();
+
+        let refused = census
+            .get("lab.palette.verb.remove.part")
+            .expect("★★★★★ the register paints a removal the document refuses as live");
+        assert_eq!(
+            refused.reason.detail(),
+            refusal,
+            "★★★★★ the control carries the DOCUMENT's sentence — a reason \
+             written on the screen would be a second permission surface"
+        );
+        assert_eq!(
+            refused.reason.kind(),
+            UnavailableKind::Precondition,
+            "★ what stands in the way is a condition of this session"
+        );
+        assert_eq!(
+            refused.reason.recourse(),
+            Recourse::Satisfy,
+            "★ and the recourse is derived from the kind, so a person is told \
+             there is something to do about it"
+        );
+
+        for open in [
+            format!("lab.palette.verb.remove.{copy}"),
+            "lab.palette.verb.copy.part".to_owned(),
+        ] {
+            assert!(
+                !census.contains_key(&open),
+                "★★★★★ {open} is a verb the document ALLOWS and the screen \
+                 paints it inert — a control greyed for no reason is the \
+                 mirror of the defect this round repairs",
+            );
+        }
+
+        // And the reader who never sees the fade is told the same thing, out of
+        // the same decision.
+        let tree = super::NodeLabView::access_node(&(TextFieldState::Idle, 0), None);
+        let node = tree
+            .iter()
+            .find(|n| n.tag == "lab.palette.verb.remove.part")
+            .expect("the register is announced");
+        assert!(node.state.disabled, "★ announced disabled as well as faded");
+        assert!(
+            node.name.as_deref().is_some_and(|it| it.contains(&refusal)),
+            "★★★★★ and the announcement carries the reason, which is the half \
+             the reference cannot say at all: {:?}",
+            node.name,
+        );
+    });
 }
 
 /// The second line painted inside one palette row — the role's blurb, or the
