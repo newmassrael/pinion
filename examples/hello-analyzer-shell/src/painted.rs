@@ -11758,6 +11758,95 @@ fn painted_fill(scene: &Scene, tag: &str) -> Option<Color> {
     found
 }
 
+/// ★★★★★ R2026 — **this application does not spell absence as an empty box.**
+///
+/// # What this is about
+///
+/// `debt-absence-is-spelled-as-an-empty-container-everywhere` recorded that
+/// *this surface is not open right now* was written as
+/// `Scene::Container(ContainerNode::new(Vec::new()))`, and that the cost lands
+/// on every reader of the scene: R1971's reach walk had to grow the inference
+/// *a container that holds nothing draws nothing* to keep from reporting four
+/// of these per frame as boxless defects. That inference was wrong on its first
+/// attempt — narrowed to "empty" alone it also excused empty containers that DO
+/// have a box, and three gates went red — which is what an idiom read back
+/// through a guess keeps costing.
+///
+/// # ⚠ The population is measured, and it is NOT "no empty container"
+///
+/// Driven over every destination before the repair, this walk found **481**
+/// empty containers and only **32** of them were the class the debt names. The
+/// other 449 have a BOX: a container with no children and a 2x2 rectangle is a
+/// painted dot, and a gate that refused those would be refusing decoration. The
+/// 32 were `w x 0` and every one was a top-level child of this screen — four
+/// per destination across all eight, which is exactly the four optional
+/// surfaces this file builds.
+///
+/// So the assertion is the intersection: **empty AND boxless**. That is the
+/// shape whose only meaning is absence, and it is the shape the reach walk has
+/// to guess about.
+#[test]
+fn r2026_this_application_does_not_spell_absence_as_an_empty_box() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let report = crate::tests::walk_the_application(&state);
+        assert!(
+            report.conforms(),
+            "the application did not reproduce its specification over the walk: {}",
+            report.why().unwrap_or_default()
+        );
+
+        let mut seen = 0_usize;
+        let mut absent_as_empty: Vec<String> = Vec::new();
+        let destinations = spec::destinations();
+        for here in destinations.open() {
+            let key = here.key.as_ref();
+            state.go(key).expect("an open destination is reachable");
+            let (_, scene) = painted_at((WIN_W, WIN_H));
+            scene.for_each_node(&mut |visit| {
+                seen += 1;
+                let Scene::Container(node) = visit.node else {
+                    return;
+                };
+                if !node.children.is_empty() {
+                    return;
+                }
+                let rect = visit.node.rect();
+                if rect.w != 0 && rect.h != 0 {
+                    // A container with no children and a real box is a painted
+                    // decoration — 449 of them on this screen, and refusing
+                    // them would be refusing the drawing.
+                    return;
+                }
+                absent_as_empty.push(format!(
+                    "{key}: {} tag={:?} rect={rect:?}",
+                    visit.path.join("/"),
+                    node.tag,
+                ));
+            });
+        }
+        // ★ The floor first: an empty report on a walk that painted nothing
+        // would read as clean.
+        assert!(
+            seen > 1_000,
+            "the walk examined {seen} node(s), which is too few to have covered \
+             this application",
+        );
+        assert!(
+            absent_as_empty.is_empty(),
+            "★★★★★ {} node(s) say *this surface is absent* by being an empty \
+             container with no box: {absent_as_empty:?}. An absent surface is \
+             one that is NOT IN THE SCENE — R1776's own rule for a mark this \
+             screen chooses not to paint, and `Option<Scene>` plus `.flatten()` \
+             at the assembly is how the node lab has spelled it since R1688. A \
+             node whose only content is its own absence makes every reader of \
+             the scene infer what it means.",
+            absent_as_empty.len(),
+        );
+    });
+}
+
 /// The mounted lab's wires, as the pairs of card names they join.
 fn lab_links(state: &std::rc::Rc<ShellState>) -> Vec<(String, String)> {
     lab_slot(state, "links")

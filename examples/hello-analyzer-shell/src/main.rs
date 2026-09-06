@@ -9768,15 +9768,24 @@ fn settings_choose_tag(key: &str) -> String {
 /// own geometry rather than decided here. That is the rule
 /// `pinion_widget_paint::chooser` keeps from R1732: a surface laid into a
 /// region it cannot see the bottom of would open a roster off the end of it.
-fn settings_roster_scene(state: &ShellState, at: &str) -> Scene {
-    let empty = Scene::Container(ContainerNode::new(Vec::new()));
+/// ★★★★★ R2026 — `None` when there is no roster, not an empty container.
+///
+/// An absent surface is one that is NOT IN THE SCENE, which is the answer this
+/// screen already gave for a mark it chose not to paint (R1776: *absent rather
+/// than transparent — a mark that is painted invisibly is still in the scene,
+/// still in the accessibility tree*). Spelling it as an empty container puts a
+/// node in the tree whose only content is its own absence, and every reader
+/// then has to INFER what it means: measured at R1971, the reach walk had to
+/// grow *a container that holds nothing draws nothing* to keep from reporting
+/// four of these per frame as defects, and that inference was wrong on its
+/// first try — narrowed to "empty" alone it also excused empty containers that
+/// DO have a box, taking three gates red.
+fn settings_roster_scene(state: &ShellState, at: &str) -> Option<Scene> {
     if at != "settings" {
-        return empty;
+        return None;
     }
     let picking = state.picking.borrow();
-    let Some((key, picker)) = picking.as_ref() else {
-        return empty;
-    };
+    let (key, picker) = picking.as_ref()?;
     // ★★★★★ R2021 — and it must be a row of THIS page. One signal now holds the
     // open roster of either page, so a card's roster left open on the board and
     // then navigated away from would otherwise be drawn here — anchored at the
@@ -9784,7 +9793,7 @@ fn settings_roster_scene(state: &ShellState, at: &str) -> Scene {
     // `0` for a key it does not hold. A roster over a control that is not on the
     // screen is the class R1695 measured across this whole shell.
     if !matches!(Valued::from_key(key), Some(Valued::Preference(_))) {
-        return empty;
+        return None;
     }
     let region = page_rect("settings");
     let theme = use_theme(THEME_TAG).theme_animated();
@@ -9795,14 +9804,14 @@ fn settings_roster_scene(state: &ShellState, at: &str) -> Scene {
         region,
         SET_OPTION_H,
     );
-    chooser::view_roster(
+    Some(chooser::view_roster(
         "shell.settings",
         &roster,
         picker,
         &settings_value_of(state, key),
         (0, 0),
         &theme,
-    )
+    ))
 }
 
 /// ★★★★★ R2021 — the open roster of a **card's** setting, in window space.
@@ -9810,23 +9819,20 @@ fn settings_roster_scene(state: &ShellState, at: &str) -> Scene {
 /// Empty unless the reader is on the board that holds the card, which is the
 /// same guard the preferences roster carries: a popup that survived navigating
 /// away is a page you left still on the screen.
-fn card_roster_scene(state: &ShellState, at: &str) -> Scene {
-    let empty = Scene::Container(ContainerNode::new(Vec::new()));
-    let Some((valued, picker, roster)) = card_roster_box(state) else {
-        return empty;
-    };
+fn card_roster_scene(state: &ShellState, at: &str) -> Option<Scene> {
+    let (valued, picker, roster) = card_roster_box(state)?;
     if at != valued.page() {
-        return empty;
+        return None;
     }
     let theme = use_theme(THEME_TAG).theme_animated();
-    chooser::view_roster(
+    Some(chooser::view_roster(
         &valued.tag_prefix(),
         &roster,
         &picker,
         &valued.read(state),
         (0, 0),
         &theme,
-    )
+    ))
 }
 
 /// Where a value row's collapsed control is, in **window** space.
@@ -13972,24 +13978,19 @@ const TOAST_DOT_TAG: &str = "shell.toast.tone";
 /// mark over there has a sentence*, which its own module docs named as a future
 /// axis. `pinion_core::describe` is that, and this is its second consumer.
 ///
-/// Empty when nothing is being rested on, which is what makes the frame CHANGE
-/// under a resting cursor — the canon surface the census calls
-/// `affordance.hover`, whose probe compares two painted frames.
-fn shell_tip_scene(state: &Rc<ShellState>, palette: Palette) -> Scene {
-    let Some((tag, sentence)) =
-        shell_description_shown(state, pinion_core::focus_state::focused().as_deref())
-    else {
-        return Scene::Container(ContainerNode::new(Vec::new()));
-    };
-    let Some(anchor) =
-        pinion_core::painted::painted_regions(VIEW_TAG).and_then(|marks| marks.rect_of(&tag))
-    else {
-        return Scene::Container(ContainerNode::new(Vec::new()));
-    };
+/// ★ R2026 — `None` when nothing is being rested on, which is what makes the
+/// frame CHANGE under a resting cursor — the canon surface the census calls
+/// `affordance.hover`, whose probe compares two painted frames. Absent rather
+/// than empty, for the reason [`settings_roster_scene`] carries.
+fn shell_tip_scene(state: &Rc<ShellState>, palette: Palette) -> Option<Scene> {
+    let (tag, sentence) =
+        shell_description_shown(state, pinion_core::focus_state::focused().as_deref())?;
+    let anchor =
+        pinion_core::painted::painted_regions(VIEW_TAG).and_then(|marks| marks.rect_of(&tag))?;
     // ★★★★★ R1918 — WHERE it goes and WHAT IT LOOKS LIKE are both the
     // substrate's. What stays here is the palette a description has to sit
     // legibly on, and the window it is clamped inside.
-    Scene::Container(
+    Some(Scene::Container(
         ContainerNode::new(vec![pinion_widget_paint::described::view_description(
             SHELL_TIP,
             &sentence,
@@ -14007,7 +14008,7 @@ fn shell_tip_scene(state: &Rc<ShellState>, palette: Palette) -> Scene {
             },
         )])
         .with_layout(absolute(Rect::new(0, 0, win_w(), win_h()))),
-    )
+    ))
 }
 
 fn status_band_scene(state: &ShellState, palette: Palette, theme: &Theme) -> Scene {
@@ -14249,36 +14250,58 @@ fn view(_state: ScreenState, frame: Frame) -> Scene {
         } else {
             Vec::new()
         })
-        .chain([
-            // ★★ R1672 — the preset menu is a POPUP: anchored to the sub bar's
-            // chip, bounded by the window. It used to be a child of the bar and
-            // hung 81 pixels below it, which is an escape and was invisible
-            // until the ink gate reached this screen. A sibling here also puts
-            // it over everything it opens across, which a child of one bar can
-            // never be.
-            if state.preset_open.get() && spec::shows_board_chrome(here.key.as_ref()) {
-                preset_menu_scene(&state, palette)
-            } else {
-                Scene::Container(ContainerNode::new(Vec::new()))
-            },
-            // ★★★★★ R1762 — an open value roster, for the same reason and in
-            // the same place: over everything, in window space, bounded by the
-            // page it must not leave. Painted after the page so a press on it
-            // resolves to the roster rather than to whatever row it covers.
-            settings_roster_scene(&state, here.key.as_ref()),
-            // ★★★★★ R2021 — and the roster a CARD's setting opens, in the same
-            // place for the same reason. Two calls rather than one branch
-            // because the two are anchored in different frames — one to a row
-            // on a page, one to a panel on a board that scrolls — and folding
-            // them together would mean one of the two anchors being computed
-            // where it cannot see what it needs.
-            card_roster_scene(&state, here.key.as_ref()),
-            status_band_scene(&state, palette, &theme),
-            // ★★★★★ R1916 — the description a reader is resting on, over
-            // everything and last, because it is content ABOUT what is under
-            // it. The canon's own `title` tooltips draw the same way.
-            shell_tip_scene(&state, palette),
-        ])
+        // ★★★★★ R2026 — **an absent surface is not in this list**, rather than
+        // in it as an empty container.
+        //
+        // Four of these were built per frame and every one of them meant *this
+        // surface is not open right now*. Measured over the whole walk before
+        // the repair: 32 boxless empty containers, 4 per destination across all
+        // 8, every one a top-level child of this node — and nothing else in the
+        // assembled scene spelled absence that way. They cost a reader of the
+        // scene an INFERENCE: R1971's reach walk had to grow *a container that
+        // holds nothing draws nothing* to keep from reporting them as defects,
+        // and that inference was wrong on its first attempt (narrowed to
+        // "empty" alone it also excused empty containers that DO have a box,
+        // taking three gates red).
+        //
+        // `Option<Scene>` and `.flatten()` is the same shape `hello-node-lab`
+        // has used for its toast and its pin tip since R1688 — this screen was
+        // the one spelling it the other way.
+        .chain(
+            [
+                // ★★ R1672 — the preset menu is a POPUP: anchored to the sub
+                // bar's chip, bounded by the window. It used to be a child of
+                // the bar and hung 81 pixels below it, which is an escape and
+                // was invisible until the ink gate reached this screen. A
+                // sibling here also puts it over everything it opens across,
+                // which a child of one bar can never be.
+                (state.preset_open.get() && spec::shows_board_chrome(here.key.as_ref()))
+                    .then(|| preset_menu_scene(&state, palette)),
+                // ★★★★★ R1762 — an open value roster, for the same reason and in
+                // the same place: over everything, in window space, bounded by the
+                // page it must not leave. Painted after the page so a press on it
+                // resolves to the roster rather than to whatever row it covers.
+                settings_roster_scene(&state, here.key.as_ref()),
+                // ★★★★★ R2021 — and the roster a CARD's setting opens, in the same
+                // place for the same reason. Two calls rather than one branch
+                // because the two are anchored in different frames — one to a row
+                // on a page, one to a panel on a board that scrolls — and folding
+                // them together would mean one of the two anchors being computed
+                // where it cannot see what it needs.
+                card_roster_scene(&state, here.key.as_ref()),
+                // ★ The band is always there, so it says `Some` rather than
+                // being chained separately: the ORDER of these five is what
+                // decides what covers what, and splitting the always-present
+                // one out would put that order in two places.
+                Some(status_band_scene(&state, palette, &theme)),
+                // ★★★★★ R1916 — the description a reader is resting on, over
+                // everything and last, because it is content ABOUT what is
+                // under it. The canon's own `title` tooltips draw the same way.
+                shell_tip_scene(&state, palette),
+            ]
+            .into_iter()
+            .flatten(),
+        )
         .collect::<Vec<_>>();
 
     Scene::Container(

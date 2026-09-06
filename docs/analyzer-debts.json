@@ -449,17 +449,6 @@
       ]
     },
     {
-      "name": "debt-absence-is-spelled-as-an-empty-container-everywhere",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links debt-canon-gui-surface-census, debt-the-canon-is-one-app-and-we-are-many-binaries"
-      ]
-    },
-    {
       "name": "debt-every-card-on-the-opening-graph-speaks-one-transport",
       "substituted": false,
       "blocked_by": "buildable",
@@ -701,6 +690,17 @@
       "closed_because": "",
       "why": [
         "links analyzer-behaviour-canon-is-the-standalone-prototype"
+      ]
+    },
+    {
+      "name": "debt-two-dock-examples-still-spell-absence-as-an-empty-box",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links debt-canon-gui-surface-census"
       ]
     },
     {
