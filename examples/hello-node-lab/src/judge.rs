@@ -76,11 +76,11 @@ use crate::VIEW_TAG;
 use crate::spec;
 
 /// The tag every inspector row's parts are addressed under.
-const FORM: &str = "lab.form.";
-
-/// The family that every shown row has exactly one of — which is what makes it
-/// the roster of rows the paint can be asked for.
-const KEY_FAMILY: &str = "lab.form.key.";
+///
+/// ★ R2053 — derived from the screen's declaration rather than spelled here.
+fn form_stem() -> &'static str {
+    crate::address::FORM_STEM
+}
 
 /// How much of `docs/analyzer-inspector-spec.json` this build is showing.
 ///
@@ -138,12 +138,12 @@ pub fn built(regions: &PaintedRegions, surface: &str) -> Built {
     }
     match surface {
         "enum_row" => {
-            let parts = regions.parts_of(FORM, spec::ENUM_KEY);
+            let parts = regions.parts_of(form_stem(), spec::ENUM_KEY);
             // ★★★★★ The row exists on screen exactly when its `key` part does,
             // and testing THAT rather than "any part at all" is load-bearing.
             // Measured by running the standalone binary: with no such row on
             // the card, the palette still paints the chip that would ADD it,
-            // and that chip is tagged `lab.form.add.<key>` — the row's own
+            // and that chip is tagged under the ADD part with the row's own
             // address. Reading "any part" therefore found the palette's chip,
             // called the row present, and reported all seven specified parts
             // absent. The chip is painted exactly when the row is NOT, so a
@@ -276,7 +276,7 @@ fn below_the_width_this_screen_lays_out_at(regions: &PaintedRegions) -> Option<S
 
 /// Where the roster's option boxes are addressed.
 fn roster_stem() -> String {
-    format!("{FORM}option.{}.", spec::ENUM_KEY)
+    crate::address::form_part_prefix("option") + spec::ENUM_KEY + "."
 }
 
 /// The tag a folded inspector paints, derived from the pane's own name rather
@@ -446,7 +446,7 @@ fn control_kinds(regions: &PaintedRegions) -> Built {
 pub(crate) fn shown_rows(regions: &PaintedRegions) -> Vec<String> {
     let mut found: Vec<(String, pinion_core::scene::Rect)> = Vec::new();
     for (tag, rect) in regions.marks() {
-        let Some(address) = tag.strip_prefix(KEY_FAMILY) else {
+        let Some(address) = crate::address::form_part_key("key", tag) else {
             continue;
         };
         if address.is_empty() || found.iter().any(|(seen, _)| seen == address) {
@@ -478,7 +478,7 @@ pub(crate) fn shown_rows(regions: &PaintedRegions) -> Vec<String> {
 fn row_families(regions: &PaintedRegions, address: &str) -> BTreeSet<String> {
     let mut found = BTreeSet::new();
     for (tag, _) in regions.marks() {
-        let Some(rest) = tag.strip_prefix(FORM) else {
+        let Some(rest) = tag.strip_prefix(form_stem()) else {
             continue;
         };
         let Some((family, drawn)) = rest.split_once('.') else {

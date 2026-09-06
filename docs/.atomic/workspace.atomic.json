@@ -89194,6 +89194,56 @@
         "Cohort loop 24, unchanged."
       ]
     },
+    "R2053": {
+      "decision_summary": "The screen's own readers stop spelling the form's addresses, and the gate that counts them finds its own population was short.\n\nThe address debt's fifth instalment. R2052 finished the painter's side — every part of a form composed in one place — and this is the reader's: forty-one sites across the screen's own Rust, in twenty-one part families, now none.\n\n★★★★★ THE GATE'S POPULATION WAS A HAND-WRITTEN LIST, which is the shape this whole debt is about one level up. It named six of the crate's eleven modules, so a module the two previous instalments never looked at was spelling a form address the whole time — found by widening the needle and measuring, not by reading. The repair is not a longer list: the module roster is derived from the crate's own `mod` declarations now, and a module the source list does not carry is a build failure.\n\n★ And the needle widened with it. A gate keyed on the control family was true of a twenty-first of what this screen reads; keyed on the form's whole stem, a reader that spells ANY part is refused.\n\n⚠ Two modules are legitimately outside the population and are named rather than skipped: one is declared behind a configuration this build does not take, and the other is the binary's entry point, which the library cannot include.",
+      "changes_bullets": [
+        "The screen's address module gains the general part derivation, its prefix and its inverse, all delegating to the framework's composition with this screen's own prefix applied — so a reader here spells neither the prefix, the separator, nor the key's position.",
+        "Every reader derives: the router's three parses, the census that says what a tag MEANS, the paint gates, the conformance module's row scan and roster stem, and the specification tables through templates the gate drives against the derivation.",
+        "The wire publishes the prefix per part rather than an address per part per row — a form row has twenty-one parts, so a table of them all would be the size of the form. A walk names the part and appends the key, which is the shape the role and rail rosters already hand over.",
+        "The counting gate is split in two, one family each, and its module roster is derived from the crate's `mod` lines with a test that refuses a module the list does not carry."
+      ],
+      "verification_bullets": [
+        "Measured at entry and at close: 41 spelling sites across the screen's Rust became none outside the declaration.",
+        "The node lab passes 212 tests, 0 failed. `cargo test --workspace` exits 0 with 14,398 passing lines and 82 ignored — the same ignored count as the run before, so nothing stopped running.",
+        "Nine walks that drive the settings form and the conformance report pass.",
+        "The counterfactual: one derived reader put back to a format string turns the widened gate red and names the file; restored, it is green. The widened needle ALSO went red on first run against three files nobody had converted — including the module the population did not hold — which is the finding, not a false alarm.",
+        "Workspace clippy rc=0 after paying three refusals by structure: a specification function past its line limit had two published rosters extracted, the counting gate past its own limit was split into the two questions it was asking, and a doc comment left orphaned by a deleted constant was removed. `cargo fmt --all --check` clean."
+      ],
+      "impact_refs": [
+        "5.2",
+        "5.11"
+      ],
+      "carry_forward_bullets": [
+        "The debt stays OPEN. What is left in this family is the WALKS: 93 sites, which the prefixes published this round are what they will read.",
+        "Nothing is opened by this round. The incomplete gate population is repaired here rather than registered, because the repair is one derivation and leaving it would mean the next instalment inherits a check it cannot trust.",
+        "The two modules outside the population are named in the test that derives it, so their absence is a decision a reader meets rather than an oversight they have to notice.",
+        "Cohort loop 24, unchanged."
+      ],
+      "publishable_decision_summary": "The screen's own readers stop spelling the form's addresses, and the gate that counts them finds its own population was short.\n\nThe address debt's fifth instalment. R2052 finished the painter's side — every part of a form composed in one place — and this is the reader's: forty-one sites across the screen's own Rust, in twenty-one part families, now none.\n\n★★★★★ THE GATE'S POPULATION WAS A HAND-WRITTEN LIST, which is the shape this whole debt is about one level up. It named six of the crate's eleven modules, so a module the two previous instalments never looked at was spelling a form address the whole time — found by widening the needle and measuring, not by reading. The repair is not a longer list: the module roster is derived from the crate's own `mod` declarations now, and a module the source list does not carry is a build failure.\n\n★ And the needle widened with it. A gate keyed on the control family was true of a twenty-first of what this screen reads; keyed on the form's whole stem, a reader that spells ANY part is refused.\n\n⚠ Two modules are legitimately outside the population and are named rather than skipped: one is declared behind a configuration this build does not take, and the other is the binary's entry point, which the library cannot include.",
+      "publishable_changes_bullets": [
+        "The screen's address module gains the general part derivation, its prefix and its inverse, all delegating to the framework's composition with this screen's own prefix applied — so a reader here spells neither the prefix, the separator, nor the key's position.",
+        "Every reader derives: the router's three parses, the census that says what a tag MEANS, the paint gates, the conformance module's row scan and roster stem, and the specification tables through templates the gate drives against the derivation.",
+        "The wire publishes the prefix per part rather than an address per part per row — a form row has twenty-one parts, so a table of them all would be the size of the form. A walk names the part and appends the key, which is the shape the role and rail rosters already hand over.",
+        "The counting gate is split in two, one family each, and its module roster is derived from the crate's `mod` lines with a test that refuses a module the list does not carry."
+      ],
+      "publishable_verification_bullets": [
+        "Measured at entry and at close: 41 spelling sites across the screen's Rust became none outside the declaration.",
+        "The node lab passes 212 tests, 0 failed. `cargo test --workspace` exits 0 with 14,398 passing lines and 82 ignored — the same ignored count as the run before, so nothing stopped running.",
+        "Nine walks that drive the settings form and the conformance report pass.",
+        "The counterfactual: one derived reader put back to a format string turns the widened gate red and names the file; restored, it is green. The widened needle ALSO went red on first run against three files nobody had converted — including the module the population did not hold — which is the finding, not a false alarm.",
+        "Workspace clippy rc=0 after paying three refusals by structure: a specification function past its line limit had two published rosters extracted, the counting gate past its own limit was split into the two questions it was asking, and a doc comment left orphaned by a deleted constant was removed. `cargo fmt --all --check` clean."
+      ],
+      "publishable_impact_refs": [
+        "5.2",
+        "5.11"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The debt stays OPEN. What is left in this family is the WALKS: 93 sites, which the prefixes published this round are what they will read.",
+        "Nothing is opened by this round. The incomplete gate population is repaired here rather than registered, because the repair is one derivation and leaving it would mean the next instalment inherits a check it cannot trust.",
+        "The two modules outside the population are named in the test that derives it, so their absence is a decision a reader meets rather than an oversight they have to notice.",
+        "Cohort loop 24, unchanged."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

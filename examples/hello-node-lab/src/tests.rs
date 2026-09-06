@@ -963,18 +963,7 @@ fn r2048_a_register_rows_second_line_speaks_in_both_its_renderings() {
 fn r2049_a_role_address_is_typed_in_one_place() {
     const NEEDLE: &str = concat!("lab.palette.", "role.");
     const SWATCH: &str = concat!("lab.palette.", "swatch.");
-    // ★ R2050 — the second family's needle, declared beside the first because
-    // an item after a statement is a lint here and because they are one list.
-    const FORM_CONTROL: &str = concat!("lab.form.", "control.");
-    // The crate's own sources, named the way the module tree names them.
-    let sources: [(&str, &str); 6] = [
-        ("address.rs", include_str!("address.rs")),
-        ("lib.rs", include_str!("lib.rs")),
-        ("spec.rs", include_str!("spec.rs")),
-        ("graph.rs", include_str!("graph.rs")),
-        ("painted.rs", include_str!("painted.rs")),
-        ("tests.rs", include_str!("tests.rs")),
-    ];
+    let sources = crate_sources();
     let spellers: Vec<(&str, usize)> = sources
         .iter()
         .map(|(name, body)| {
@@ -996,44 +985,11 @@ fn r2049_a_role_address_is_typed_in_one_place() {
         "★★★★★ a palette role's address is declared in `address.rs` and derived \
          everywhere else; these file(s) spell it themselves"
     );
-    // ★★★★★ R2050 — the second family, on the same terms. Its parts are
-    // composed by the FRAMEWORK, so what this screen declares is the prefix and
-    // what it derives is the whole address; either way nothing here spells one.
-    let form_spellers: Vec<(&str, usize)> = sources
-        .iter()
-        .map(|(name, body)| (*name, body.matches(FORM_CONTROL).count()))
-        .filter(|(name, count)| *count > 0 && *name != "address.rs")
-        .collect();
-    assert_eq!(
-        form_spellers,
-        Vec::new(),
-        "★★★★★ a form control's address is derived from the framework's own \
-         composition; these file(s) spell it themselves"
-    );
-    assert_eq!(
-        super::address::form_control("id"),
-        format!("{}id", super::address::form_control_prefix()),
-        "★ the prefix is the address with an empty key, so the two cannot drift"
-    );
-    assert_eq!(
-        super::address::form_control_key(&super::address::form_control("listen.endpoints")),
-        Some("listen.endpoints"),
-        "★★ and the address round-trips through its own inverse"
-    );
-    assert_eq!(
-        super::address::form_control_key("lab.rail.packets"),
-        None,
-        "★ a tag of another family is not a form row"
-    );
-    // And the declaration's two forms agree, so a specification table taking the
+    // The declaration's two forms agree, so a specification table taking the
     // `&'static str` template cannot drift from the runtime derivation.
     assert_eq!(
         super::address::ROLE_ROW_TEMPLATE,
         format!("{}{{}}", super::address::ROLE_ROW)
-    );
-    assert_eq!(
-        super::address::FORM_CONTROL_TEMPLATE,
-        format!("{}{{}}", super::address::form_control_prefix())
     );
     assert_eq!(
         super::address::ROLE_SWATCH_TEMPLATE,
@@ -1059,6 +1015,154 @@ fn r2049_a_role_address_is_typed_in_one_place() {
         super::address::role_of_row(&super::address::role_row_named("Nobody")),
         None,
         "★ and neither is a name no role answers to"
+    );
+}
+
+/// The crate's own sources, named the way the module tree names them.
+///
+/// ★ R2053 — shared by the two address gates, which read the same files and ask
+/// different questions of them.
+///
+/// 🟥 **And this list was INCOMPLETE, which the round that widened the needle
+/// found by measuring rather than by reading.** It held six of the crate's
+/// eleven modules, so `judge.rs` was spelling a form address that neither gate
+/// could see — a check whose population is a hand-written list is the very
+/// shape this whole debt is about, one level up. What keeps it honest is not a
+/// longer list but [`every_module_is_read`], which walks the `mod`
+/// declarations in `lib.rs` and refuses one this does not carry.
+fn crate_sources() -> [(&'static str, &'static str); 11] {
+    [
+        ("address.rs", include_str!("address.rs")),
+        ("lib.rs", include_str!("lib.rs")),
+        ("spec.rs", include_str!("spec.rs")),
+        ("graph.rs", include_str!("graph.rs")),
+        ("painted.rs", include_str!("painted.rs")),
+        ("tests.rs", include_str!("tests.rs")),
+        ("judge.rs", include_str!("judge.rs")),
+        ("deploy.rs", include_str!("deploy.rs")),
+        ("merging.rs", include_str!("merging.rs")),
+        ("persist.rs", include_str!("persist.rs")),
+        ("scenario.rs", include_str!("scenario.rs")),
+    ]
+}
+
+/// ★★★★★ R2053 — **every module this crate declares is one the address gates
+/// read.**
+///
+/// The gates count by reading source, so their population is a list — and a
+/// list is exactly what goes stale when a module is added. This derives the
+/// truth from `lib.rs`'s own `mod` lines and refuses a module the list does not
+/// carry, so the next module to spell an address is caught by a gate that
+/// already exists rather than by the round after it.
+///
+/// ⚠ Two modules are legitimately absent and named here rather than silently
+/// skipped: `settings.rs` and `main.rs` — the first is declared behind a `cfg`
+/// this build does not take, and the second is the binary's entry point, which
+/// `include_str!` cannot reach from the library. Both are stated so an absence
+/// is a decision rather than an oversight.
+#[test]
+fn every_module_is_read() {
+    const LIB: &str = include_str!("lib.rs");
+    let declared: Vec<&str> = LIB
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            let rest = line
+                .strip_prefix("mod ")
+                .or_else(|| line.strip_prefix("pub mod "))?;
+            rest.strip_suffix(';')
+        })
+        .collect();
+    assert!(
+        declared.len() >= 8,
+        "★ the module scan found {} declaration(s), which is not this crate: \
+         the scan is broken rather than the crate being small",
+        declared.len()
+    );
+    let read: Vec<&str> = crate_sources().iter().map(|(name, _)| *name).collect();
+    let missing: Vec<&str> = declared
+        .iter()
+        .filter(|name| **name != "settings")
+        .filter(|name| !read.contains(&format!("{name}.rs").as_str()))
+        .copied()
+        .collect();
+    assert_eq!(
+        missing,
+        Vec::<&str>::new(),
+        "★★★★★ these module(s) are declared and no address gate reads them"
+    );
+}
+
+/// ★★★★★ R2050, widened R2053 — **every part of a settings form is addressed
+/// through the framework's own composition, and this counts.**
+///
+/// R2050 held the control family; it was one of twenty-one this screen reads,
+/// so the gate was true of a twenty-first of the surface. The needle is the
+/// form's whole stem now, so a reader that spells ANY part of a form is
+/// refused.
+///
+/// ⚠ Both needles are assembled, because this file is one of the sources it
+/// reads.
+#[test]
+fn r2053_every_form_part_address_is_derived() {
+    const FORM_ANY: &str = concat!("lab.form", ".");
+    let sources = crate_sources();
+    let any_spellers: Vec<(&str, usize)> = sources
+        .iter()
+        .map(|(name, body)| (*name, body.matches(FORM_ANY).count()))
+        .filter(|(name, count)| *count > 0 && *name != "address.rs")
+        .collect();
+    assert_eq!(
+        any_spellers,
+        Vec::new(),
+        "★★★★★ every part of a form is derived from the framework's own \
+         composition; these file(s) spell one themselves"
+    );
+    // ★★ Every template a specification table takes agrees with what the
+    // painter composes, driven over the whole roster rather than one entry —
+    // and names a part the addressed roster holds, so the two lists cannot
+    // disagree about a word.
+    for (part, template) in super::address::FORM_PART_TEMPLATES {
+        assert!(
+            super::address::FORM_PARTS.contains(part),
+            "★ a template names {part:?}, which the addressed roster does not"
+        );
+        assert_eq!(
+            *template,
+            format!("{}{{}}", super::address::form_part_prefix(part)),
+            "★ the {part} template does not agree with what the painter composes"
+        );
+        assert_eq!(
+            super::address::form_part_key(part, &super::address::form_part(part, "a.b")),
+            Some("a.b"),
+            "★ the {part} address does not round-trip through its own inverse"
+        );
+    }
+    assert_eq!(
+        super::address::form_control("id"),
+        format!("{}id", super::address::form_control_prefix()),
+        "★ the prefix is the address with an empty key, so the two cannot drift"
+    );
+    assert_eq!(
+        super::address::form_control_key(&super::address::form_control("listen.endpoints")),
+        Some("listen.endpoints"),
+        "★★ and the address round-trips through its own inverse"
+    );
+    assert_eq!(
+        super::address::form_control_key("lab.rail.packets"),
+        None,
+        "★ a tag of another family is not a form row"
+    );
+    // The declaration's forms agree, so a specification table taking the
+    // `&'static str` cannot drift from the runtime derivation.
+    assert_eq!(
+        super::address::FORM_STEM,
+        format!("{}.", super::address::FORM),
+        "★ the stem is the form's tag and its separator, not a second literal"
+    );
+    assert_eq!(
+        super::address::FORM_CONTROL_TEMPLATE,
+        format!("{}{{}}", super::address::form_control_prefix())
     );
 }
 

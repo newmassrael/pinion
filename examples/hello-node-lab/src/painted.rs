@@ -883,20 +883,20 @@ fn declared_tags(state: &LabState) -> Vec<String> {
             // reads that; a screen cannot quietly drop a badge by putting a row
             // on a different one.
             match field.source() {
-                Source::Authored => want.push(format!("lab.form.applies.{}", field.key())),
+                Source::Authored => want.push(super::address::form_part("applies", field.key())),
                 Source::Derived(_) => {
-                    want.push(format!("lab.form.source.{}", field.key()));
+                    want.push(super::address::form_part("source", field.key()));
                     if field.applies() == Applies::Hot {
-                        want.push(format!("lab.form.applies.{}", field.key()));
+                        want.push(super::address::form_part("applies", field.key()));
                     }
                 }
                 Source::Shared(_) => {
-                    want.push(format!("lab.form.applies.{}", field.key()));
-                    want.push(format!("lab.form.source.{}", field.key()));
+                    want.push(super::address::form_part("applies", field.key()));
+                    want.push(super::address::form_part("source", field.key()));
                 }
             }
             if field.goes().instead().is_some() {
-                want.push(format!("lab.form.aside.{}", field.key()));
+                want.push(super::address::form_part("aside", field.key()));
             }
             // ★★ R1686 — every row that is shown offers ONE seat, so the census
             // demands one per shown row rather than one somewhere. ★ R1716 —
@@ -911,18 +911,17 @@ fn declared_tags(state: &LabState) -> Vec<String> {
             // it draws from the same form by its own route. Asking the painter
             // would make the census self-comparing — the failure R1684's own
             // comment records — so the two spellings meeting is the check.
-            want.push(format!(
-                "lab.form.{}.{}",
+            want.push(super::address::form_part(
                 match field.source() {
                     Source::Authored => "remove",
                     Source::Derived(_) => "author",
                     Source::Shared(_) => "disown",
                 },
-                field.key()
+                field.key(),
             ));
         }
         for field in form.addable() {
-            want.push(format!("lab.form.add.{}", field.key()));
+            want.push(super::address::form_part("add", field.key()));
         }
     }
     want
@@ -938,25 +937,32 @@ fn declared_tags(state: &LabState) -> Vec<String> {
 /// `None` means the tag names something that is not pressable — a pane, a
 /// label, a wire — and is not probed.
 fn must_answer(tag: &str) -> Option<String> {
+    // ★ R2053 — the form's part prefixes, derived. This table says what a tag
+    // MEANS, and it was saying it against prefixes typed here beside a screen
+    // that composes them somewhere else.
     let control = super::address::form_control_prefix();
+    let add = super::address::form_part_prefix("add");
+    let remove = super::address::form_part_prefix("remove");
+    let author = super::address::form_part_prefix("author");
+    let disown = super::address::form_part_prefix("disown");
     for (prefix, verb) in [
         ("lab.rail.", "rail"),
         (super::address::ROLE_ROW, "role"),
-        ("lab.form.add.", "add"),
+        (add.as_str(), "add"),
         (control.as_str(), "field"),
         // ★ R1686 — `remove:<key>`, spelled like `add:` and `field:` rather
         // than like the control's parts: it is a seat of the ROW, not an
         // affordance inside the control, and the geometry publishes it apart
         // from `parts` for the same reason.
-        ("lab.form.remove.", "remove"),
+        (remove.as_str(), "remove"),
         // ★★ R1716 — the same seat, the other act. Written here beside its
         // twin because this function is the one place that says what a tag
         // MEANS, and two acts sharing one rectangle is exactly the shape that
         // needs saying out loud.
-        ("lab.form.author.", "author"),
+        (author.as_str(), "author"),
         // ★★ R1717 — and the third act on that one rectangle: give the written
         // half back. Named apart from `remove` because the row does not leave.
-        ("lab.form.disown.", "disown"),
+        (disown.as_str(), "disown"),
         // ★★★★★ R1791 — the reset seats, which this map has never held. Found
         // by a narrower canvas: the gate panel FLOATS over the canvas (R1678
         // taught the hit test exactly that), so a card under it legitimately
@@ -972,14 +978,14 @@ fn must_answer(tag: &str) -> Option<String> {
             return Some(format!("{verb}:{rest}"));
         }
     }
-    // ★★★★★ R1837 — `toggle` left with the affordance it named: a boolean row
-    // publishes no part now, so no `lab.form.toggle.*` tag is painted. Its
-    // successor `lab.form.switch.*` is deliberately NOT here — it is an address
-    // a census reads, not a press target, and it is pointer-transparent for
+    // ★★★★★ R1837 — the `toggle` part left with the affordance it named: a
+    // boolean row publishes no part now, so no tag of that family is painted.
+    // Its successor, the switch, is deliberately NOT here — it is an address a
+    // census reads, not a press target, and it is pointer-transparent for
     // exactly that reason. The control it sits in is what answers a press, and
     // `r1684_the_centre_of_every_control_answers_a_press` is what demands it.
     for family in ["option", "step", "item"] {
-        if let Some(rest) = tag.strip_prefix(&format!("lab.form.{family}.")) {
+        if let Some(rest) = super::address::form_part_key(family, tag) {
             return Some(format!("{family}.{rest}"));
         }
     }
@@ -2069,6 +2075,9 @@ fn r1653_the_painted_screen_invented_nothing() {
         );
         let declared: BTreeSet<String> = declared_tags(&state).into_iter().collect();
 
+        // ★ R2053 — the settings form's stem, derived: it is the tag the form
+        // is painted under with the separator its parts hang off.
+        let form_stem = format!("{}.", super::address::FORM);
         // family prefix -> how many members the specification fixes it at, or
         // `None` where the count is a function of the live model rather than of
         // the specification.
@@ -2096,7 +2105,7 @@ fn r1653_the_painted_screen_invented_nothing() {
             ("lab.node.", None),
             ("lab.pin.", None),
             ("lab.frame.", None),
-            ("lab.form.", None),
+            (form_stem.as_str(), None),
             ("lab.inspector.", None),
             ("lab.toolbar.", None),
             ("lab.appbar.", None),
@@ -3696,26 +3705,38 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
         // then made precise, and the two failed apart — the R1688 lesson, that
         // a gate holding its own copy of a list measures the screen of the day
         // it was written, in a place small enough to have looked harmless.
-        press_tag(state, shot, &format!("lab.form.add.{}", catalogue_key()));
+        press_tag(
+            state,
+            shot,
+            &super::address::form_part("add", catalogue_key()),
+        );
     }),
     ("edit a field", |state, shot| {
         // Growing a list field by one element: an edit a person performs with
         // the pointer alone. NOT the integer stepper, which the gate's first
         // run showed is already at its field's ceiling on the opening screen —
         // a driver that clamps causes nothing and would have read as a defect.
-        press_tag(state, shot, "lab.form.item.listen.endpoints.add");
+        press_tag(
+            state,
+            shot,
+            &super::address::form_part("item", "listen.endpoints.add"),
+        );
     }),
     // ★★ R1686 — the seat at the trailing edge of a row's key line. This row
     // carried `gesture: false` since R1677 as the table's own record that the
     // wire could take a row out and nothing on the screen could.
     ("remove a field", |state, shot| {
-        press_tag(state, shot, "lab.form.remove.admin.permissions.write");
+        press_tag(
+            state,
+            shot,
+            &super::address::form_part("remove", "admin.permissions.write"),
+        );
     }),
     // ★★★ R1716 — the same edge of the same row, on a row nobody wrote: the
     // seat takes the value OVER. `mode` is worked out from the role on every
     // card, so it is the row this is always available on.
     ("take a derived field over", |state, shot| {
-        press_tag(state, shot, "lab.form.author.mode");
+        press_tag(state, shot, &super::address::form_part("author", "mode"));
     }),
     // ★★★ R1684 — the launch gate, closed the way a PERSON closes it. The
     // stepper cannot: it clamps at the field's ceiling, which is right, and is
@@ -5170,7 +5191,7 @@ fn r1684_the_field_stands_on_the_row_it_edits() {
                     super::address::form_control_key(tag).map(|key| (key.to_owned(), tag.clone()))
                 })
                 .chain(painted(&survey).tags.keys().filter_map(|tag| {
-                    let part = tag.strip_prefix("lab.form.item.")?;
+                    let part = super::address::form_part_key("item", tag)?;
                     let (key, n) = part.rsplit_once('.')?;
                     n.parse::<usize>().ok()?;
                     Some((key.to_owned(), tag.clone()))
@@ -5419,7 +5440,7 @@ fn r1686_taking_a_row_away_shuts_the_field_standing_on_it() {
 
         let seat = *painted(&state)
             .tags
-            .get(&format!("lab.form.remove.{key}"))
+            .get(&super::address::form_part("remove", key))
             .expect("and the row offers to be taken away");
         press_at(&state, centre(seat));
 
@@ -5799,7 +5820,9 @@ fn pressed_element(part: &str) -> Option<usize> {
 fn seat_tag(target: &str) -> String {
     let named = target.strip_prefix("value:").unwrap_or(target);
     match named.split_once('[') {
-        Some((key, rest)) => format!("lab.form.item.{key}.{}", rest.trim_end_matches(']')),
+        Some((key, rest)) => {
+            super::address::form_part("item", &format!("{key}.{}", rest.trim_end_matches(']')))
+        }
         None => super::address::form_control(named),
     }
 }
@@ -6118,7 +6141,10 @@ fn r1690_reach_follows_the_palette_and_not_the_screen() {
         let before = run_under(&painted(&state), "lab.inspector.reach.text");
 
         // Take a row out through the affordance a person presses.
-        press_centre_of(&state, "lab.form.remove.transport.link.tx.batch_size");
+        press_centre_of(
+            &state,
+            &super::address::form_part("remove", "transport.link.tx.batch_size"),
+        );
         assert!(
             super::selected_form(&state)
                 .is_some_and(|form| form.field("transport.link.tx.batch_size").is_none()),
@@ -6486,11 +6512,15 @@ fn r1691_a_rows_control_announces_the_kind_its_shape_is() {
         // are decided per shape and where a fallback would otherwise let a
         // wrong one pass unseen: a named node satisfies the census whatever it
         // calls itself.
+        let step_up = super::address::form_part("step", "transport.link.tx.batch_size.up");
+        let step_down = super::address::form_part("step", "transport.link.tx.batch_size.down");
+        let item_first = super::address::form_part("item", "listen.endpoints.0");
+        let item_add = super::address::form_part("item", "listen.endpoints.add");
         let want_part = [
-            ("lab.form.step.transport.link.tx.batch_size.up", "button"),
-            ("lab.form.step.transport.link.tx.batch_size.down", "button"),
-            ("lab.form.item.listen.endpoints.0", "textbox"),
-            ("lab.form.item.listen.endpoints.add", "button"),
+            (step_up.as_str(), "button"),
+            (step_down.as_str(), "button"),
+            (item_first.as_str(), "textbox"),
+            (item_add.as_str(), "button"),
             // ★ R1842 — the two `perm` option checkboxes that stood here are
             // gone with the row: the target declares the two permissions as
             // separate boolean leaves, so this screen has no set-valued field
@@ -6557,7 +6587,7 @@ fn card_with_enum_row(state: &std::rc::Rc<LabState>) {
     let shot = painted_at(state, conformance_size()).0;
     let chip = *shot
         .tags
-        .get(&format!("lab.form.add.{}", spec::ENUM_KEY))
+        .get(&super::address::form_part("add", spec::ENUM_KEY))
         .unwrap_or_else(|| panic!("the palette offers {}", spec::ENUM_KEY));
     let (px, py) = centre(chip);
     super::move_cursor(state, px, py);
@@ -7181,7 +7211,10 @@ fn r1732_pressing_an_option_writes_it_and_shuts_the_roster() {
             .expect("the roster offers more than the word already held");
         let option = *shot
             .tags
-            .get(&format!("lab.form.option.{}.{wanted}", spec::ENUM_KEY))
+            .get(&super::address::form_part(
+                "option",
+                &format!("{}.{wanted}", spec::ENUM_KEY),
+            ))
             .unwrap_or_else(|| panic!("the roster paints {wanted}"));
         press_at(option);
 
@@ -7192,14 +7225,15 @@ fn r1732_pressing_an_option_writes_it_and_shuts_the_roster() {
         );
         let shot = painted_at(&state, conformance_size()).0;
         assert!(
-            !shot
-                .tags
-                .contains_key(&format!("lab.form.option.{}.{wanted}", spec::ENUM_KEY)),
+            !shot.tags.contains_key(&super::address::form_part(
+                "option",
+                &format!("{}.{wanted}", spec::ENUM_KEY)
+            )),
             "★★★ the roster is gone from the PAINT too, not only from the state",
         );
         assert_eq!(
             shot.said
-                .get(&format!("lab.form.shown.{}", spec::ENUM_KEY))
+                .get(&super::address::form_part("shown", spec::ENUM_KEY))
                 .map(String::as_str),
             Some(wanted.as_str()),
             "★★★★ and the collapsed control shows the new word",

@@ -231,12 +231,12 @@ pub const PANES: &[PaneSpec] = &[
         opens: EdgePlacement::open(ChromeEdge::Right, 312),
         // ★★★★★ R1909 — THREE prefixes, and that is the finding this field
         // exists to record: the inspector's contents are not all named after
-        // it. The settings form is `lab.form.*` and the fault panel is
+        // it. The settings form has a stem of its own and the fault panel is
         // `lab.faults*`, both drawn inside this pane, so a reader asking "what
         // goes away when the inspector folds" could not have answered it from
         // the tag alone — which is why this is declared rather than derived
         // from a prefix match on `tag`.
-        holds: &["lab.inspector", "lab.faults", "lab.form."],
+        holds: &["lab.inspector", "lab.faults", crate::address::FORM_STEM],
     },
 ];
 
@@ -1618,7 +1618,7 @@ pub const VOICES: &[VoiceSpec] = &[
         population: Population::Fields,
     },
     VoiceSpec {
-        tag: "lab.form.remove.{}",
+        tag: crate::address::FORM_REMOVE_TEMPLATE,
         role: "button",
         population: Population::AuthoredFields,
     },
@@ -1626,7 +1626,7 @@ pub const VOICES: &[VoiceSpec] = &[
     // rather than one with a wildcard, because they are two acts and a reader
     // is told which one they are on.
     VoiceSpec {
-        tag: "lab.form.author.{}",
+        tag: crate::address::FORM_AUTHOR_TEMPLATE,
         role: "button",
         population: Population::DerivedFields,
     },
@@ -1675,13 +1675,25 @@ pub const SILENCES: &[(&str, Population, &str)] = &[
     ("lab.inspector.reach.text", Population::One, "name_of"),
     ("lab.inspector.note.text", Population::One, "name_of"),
     // The applies badge: its words are already the row's description.
-    ("lab.form.applies.{}", Population::BadgedFields, "name_of"),
+    (
+        crate::address::FORM_APPLIES_TEMPLATE,
+        Population::BadgedFields,
+        "name_of",
+    ),
     // ★★★ R1716 — and so are these two. A derived row's description says
     // "worked out from the role" and a row that goes aside says what it is
     // instead, so the badges are the same words a second time: part of the row
     // rather than stops of their own.
-    ("lab.form.source.{}", Population::DerivedFields, "name_of"),
-    ("lab.form.aside.{}", Population::AsideFields, "name_of"),
+    (
+        crate::address::FORM_SOURCE_TEMPLATE,
+        Population::DerivedFields,
+        "name_of",
+    ),
+    (
+        crate::address::FORM_ASIDE_TEMPLATE,
+        Population::AsideFields,
+        "name_of",
+    ),
 ];
 
 /// Whether a save carries what an operation moved.

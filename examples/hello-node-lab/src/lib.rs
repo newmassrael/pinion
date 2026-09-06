@@ -5359,13 +5359,14 @@ impl Hit {
         if tag == "lab.inspector.addkey" {
             return Self::AddKey;
         }
-        if let Some(key) = tag.strip_prefix("lab.form.row.") {
+        // ★★★★★ R2053 — the framework's own inverses, not prefixes typed here.
+        if let Some(key) = address::form_part_key("row", tag) {
             return Self::Field(key.to_owned());
         }
-        if let Some(key) = tag.strip_prefix("lab.form.remove.") {
+        if let Some(key) = address::form_part_key("remove", tag) {
             return Self::RemoveField(key.to_owned());
         }
-        if let Some(key) = tag.strip_prefix("lab.form.disown.") {
+        if let Some(key) = address::form_part_key("disown", tag) {
             return Self::DisownField(key.to_owned());
         }
         if tag == "lab.canvas" {
@@ -16401,6 +16402,44 @@ fn card_seats_wire() -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// The settings rows the specification declares, with the address each one's
+/// control is painted under.
+///
+/// ★ R2050 — the address is published on the SPECIFICATION as well as on the
+/// live form, because a walk checking that the screen paints what it declares
+/// has only this table to compare against.
+fn fields_wire() -> Vec<serde_json::Value> {
+    spec::FIELDS
+        .iter()
+        .map(|f| {
+            serde_json::json!({
+                "key": f.key, "ty": f.ty, "applies": f.applies, "value": f.value,
+                "source": f.source, "aside": f.aside,
+                "control": address::form_control(f.key),
+            })
+        })
+        .collect()
+}
+
+/// ★★★★★ R2053 — the prefix each part of a form row is addressed under.
+///
+/// Its own function for the reason the rosters beside it have one — the
+/// specification is at its line budget — and because this is a different
+/// question from the tables around it: not what the screen declares, but what
+/// its parts are CALLED, which only the painter's composition can answer.
+fn form_parts_wire() -> serde_json::Value {
+    address::FORM_PARTS
+        .iter()
+        .map(|part| {
+            (
+                (*part).to_owned(),
+                serde_json::Value::String(address::form_part_prefix(part)),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>()
+        .into()
+}
+
 /// The definitions register's verbs — see [`card_seats_wire`].
 fn definition_seats_wire() -> Vec<serde_json::Value> {
     PartVerb::ALL
@@ -16565,15 +16604,17 @@ fn spec_json() -> serde_json::Value {
         // `fields.derived` or `fields.aside` reads them from here, the same way
         // the local gate does, so the two cannot come to disagree about which
         // population a voice family stands over.
-        "fields": spec::FIELDS.iter().map(|f| serde_json::json!({
-            "key": f.key, "ty": f.ty, "applies": f.applies, "value": f.value,
-            "source": f.source, "aside": f.aside,
-            // ★★★★★ R2050 — the ADDRESS this row's control is painted under,
-            // derived. Published on the specification as well as on the live
-            // form because a walk checking that the screen paints what it
-            // declares has only this table to check against.
-            "control": address::form_control(f.key),
-        })).collect::<Vec<_>>(),
+        "fields": fields_wire(),
+        // ★★★★★ R2053 — **the prefix each part of a form row is addressed
+        // under**, derived from the one place that composes them.
+        //
+        // A walk is Python and cannot call that composition, and a form row has
+        // twenty-one parts rather than one — publishing every part of every row
+        // would be a table the size of the form. So what is published is the
+        // PREFIX per part: a walk names the part and appends the row's key,
+        // which is the same shape the role and rail rosters hand over, and
+        // spells neither the screen's tag nor the painter's separator.
+        "form_parts": form_parts_wire(),
         "addable": spec::ADDABLE,
         "gestures": spec::GESTURES.iter().map(|(g, w)| serde_json::json!([g, w])).collect::<Vec<_>>(),
         // ★ R1678 — the reset affordances, and which of them are CONDITIONAL.
