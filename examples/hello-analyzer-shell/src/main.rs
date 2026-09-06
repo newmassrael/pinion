@@ -150,7 +150,7 @@ use pinion_core::{Frame, Scene, WidgetCore};
 // screen: a destination's page can be another binding, mounted whole.
 use pinion_core::chrome::{HostChrome, Part as ChromePart};
 use pinion_core::widgets::picker::Picker;
-use pinion_screen::{Mount, Screen, ScreenRoster, ScreenState};
+use pinion_screen::{Mount, PageInset, Screen, ScreenRoster, ScreenState};
 use pinion_shell::{SizeStrategy, WidgetView, WindowSpec, vello_renderer_impl};
 use pinion_widget_paint::button::{self, ButtonColors, ButtonStyle};
 use pinion_widget_paint::card_header;
@@ -558,17 +558,60 @@ fn canvas_rect() -> Rect {
 /// collision waiting for the guest to paint something there — which is exactly
 /// what three of the six destinations were doing.
 fn page_rect(at: &str) -> Rect {
-    if at == "dashboard" {
-        return canvas_rect();
-    }
+    // ★★★★★ R2045 — DERIVED from the roster's own declaration, where this
+    // computed a second answer beside it. R1830 moved the grant into the roster
+    // and left this function as the host's private arithmetic, so what held the
+    // two together was one assertion, about one destination, in this host: the
+    // same mistake anywhere else was green, and its counterfactual proved it by
+    // being caught in exactly one place.
+    //
+    // Deriving is what this repository prefers over a wider cross-check — the
+    // rule is not repaired, it is made unnecessary. What stays checkable is the
+    // declaration against the chrome actually painted, which is a different
+    // question and the one `r2045` now asks.
+    // ⚠ NOT by asking the roster, and that is R1830's measurement rather than a
+    // preference: the roster is built inside an `Owner::cache` factory, and a
+    // factory closure may not call `Owner::cache` — which `win_w` does. So the
+    // shared account is the INSET, which needs no window, and both readers take
+    // it from `page_inset` below. The roster grants what this function insets
+    // by; the host insets by what the roster grants; there is one number.
+    let inset = page_inset(at);
     Rect::new(
-        RAIL_W,
-        APP_BAR_H,
-        win_w() - RAIL_W,
+        inset.left,
+        inset.top,
+        win_w().saturating_sub(inset.beside()),
         win_h()
-            .saturating_sub(APP_BAR_H)
-            .saturating_sub(status_band_h()),
+            .saturating_sub(inset.top)
+            .saturating_sub(inset.bottom),
     )
+}
+
+/// ★★★★★ (R2045) What this shell paints around one destination's page — the
+/// one account of it, read by the roster's grant and by [`page_rect`].
+///
+/// R1830 put the grant in the roster and left the page rectangle here, so the
+/// same fact had two accounts and what held them together was a single
+/// assertion, about a single destination, in this application's own tests. Its
+/// counterfactual is the evidence: collapsing the inset to one value for every
+/// section was caught by that assertion and by nothing else, so the same
+/// mistake at any other destination was green.
+///
+/// Deriving both from here is the repair this repository prefers over widening
+/// the check — the two numbers become one, and there is no drift for a gate to
+/// find. What is still worth asking, and what `r2045` asks, is whether this
+/// declaration matches the chrome the host actually paints.
+fn page_inset(at: &str) -> PageInset {
+    if at == "dashboard" {
+        // The dashboard paints a sub-bar above its page and a palette beside
+        // it; no other destination paints either.
+        return PageInset::new(
+            RAIL_W,
+            APP_BAR_H + SUB_BAR_H,
+            palette_room(),
+            status_band_h(),
+        );
+    }
+    PageInset::new(RAIL_W, APP_BAR_H, 0, status_band_h())
 }
 
 /// The opening value of each Settings switch, from the specification.
@@ -1755,13 +1798,17 @@ fn screen_roster() -> ScreenRoster {
         .map(str::to_owned)
         .collect();
     for key in open {
-        let beside = if key == "dashboard" {
-            RAIL_W + palette_room()
-        } else {
-            RAIL_W
-        };
+        // ★★★★★ R2045 — all four sides, where this declared a width. The host
+        // used to compute its page rectangle beside this declaration, so one
+        // fact had two accounts and a single assertion about a single
+        // destination held them together; `page_rect` DERIVES from here now,
+        // and the two cannot disagree because there is only one of them.
+        //
+        // The dashboard is the arm that makes this per-key rather than one
+        // constant: it paints a sub-bar above its page and a palette beside it,
+        // and no other destination does either.
         roster = roster
-            .granting(&key, beside)
+            .granting(&key, page_inset(&key))
             .expect("every key came from this roster's own open destinations");
     }
     roster

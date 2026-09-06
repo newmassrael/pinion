@@ -112,7 +112,7 @@ pub use conformance::{
 };
 pub use journey::{JourneyConformance, JourneySection, JourneyStanding, SurfaceVisit};
 pub use mount::Mount;
-pub use roster::{RosterDefect, ScreenRoster, ScreenState};
+pub use roster::{PageInset, RosterDefect, ScreenRoster, ScreenState};
 pub use tour::{Tour, TourReport};
 
 /// One destination's page, when the page is a whole binding.

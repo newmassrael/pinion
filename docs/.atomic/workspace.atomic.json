@@ -88814,6 +88814,48 @@
         "Cohort loop 29 -> 28."
       ]
     },
+    "R2045": {
+      "decision_summary": "Two accounts of one fact become one, and the assertion that held them apart is replaced by the question it stopped asking.\n\nThe roster carried what the host draws beside each section, and the host separately computed the page rectangle it draws there. One fact, two accounts, and what held them together was a single assertion about a single destination in one host's tests — whose own counterfactual proves the risk: collapsing the inset to one value for every section was caught there and nowhere else.\n\nThe debt demanded a measurement before the choice, and it decided the round. Both arms of the host's page function are exactly a four-sided inset — the dashboard adds a sub-bar above and a palette beside, no other destination has either — so the grant grew from a width to a four-sided inset and the roster can answer a whole page.\n\n⚠ The first implementation was wrong in the way the earlier round had already written down: having the host ask the roster for its page reintroduces a re-entrancy panic, because the roster is built inside a cache factory and the window width is read through that same cache. So the shared account is the thing that needs no window — the inset — read by the roster's grant and by the host's page function alike.",
+      "changes_bullets": [
+        "The roster's grant is a four-sided inset now, with a type that says what each side means and why four numbers rather than a rectangle: a rectangle would be the page at one window size, and the page moves with the window while the inset does not. The roster can answer a whole page from it.",
+        "The host declares that inset once, and both its page rectangle and the roster's grant read the same function. The two numbers are one by construction, so there is nothing left for a cross-check to find — which also means the assertion that used to hold them together can no longer fail.",
+        "That assertion's question is asked properly in its place, at every open destination rather than at one: does the declared inset match the chrome the host actually paints? The page's left edge must meet the rail's right edge and its bottom must meet the status band's top. Two edges and not four, and the reason is written beside them — the other two are per-destination chrome that each destination's own gates ask about."
+      ],
+      "verification_bullets": [
+        "314 tests passed and 0 failed across the shell and the screen crate. The new gate was driven red by declaring eight pixels more inset than the rail draws, and its message names the destination and both numbers; restoring returns the pair to green.",
+        "Clippy on both crates rc=0. One refusal was paid by structure rather than by an allow: the host test had grown past its line limit, and the new question was extracted into its own test — which is what it should have been, being a different question. `cargo fmt --all --check` rc=0, and three shell walks pass.",
+        "Measured, and it is what chose the shape: the host's page function is a four-sided inset at both of its arms; the dashboard's adds a sub-bar above and a palette beside; and the roster is built inside a cache factory whose closure may not read the window, which is why the shared account is the inset rather than the rectangle."
+      ],
+      "impact_refs": [
+        "5.32",
+        "5.21"
+      ],
+      "carry_forward_bullets": [
+        "Nothing is opened by this round. The portability the earlier round bought is unchanged — a roster can still answer what a section is granted for any host — and what it lacked, a guarantee that the declaration is honest, is now a question every host can be asked in its own terms rather than a single line in this one.",
+        "The boundary of the new gate is stated in it: two of the four edges are checked here, because those two are painted with tags a walk finds at every destination, and the other two are per-destination chrome.",
+        "Cohort loop 28 -> 27."
+      ],
+      "publishable_decision_summary": "Two accounts of one fact become one, and the assertion that held them apart is replaced by the question it stopped asking.\n\nThe roster carried what the host draws beside each section, and the host separately computed the page rectangle it draws there. One fact, two accounts, and what held them together was a single assertion about a single destination in one host's tests — whose own counterfactual proves the risk: collapsing the inset to one value for every section was caught there and nowhere else.\n\nThe debt demanded a measurement before the choice, and it decided the round. Both arms of the host's page function are exactly a four-sided inset — the dashboard adds a sub-bar above and a palette beside, no other destination has either — so the grant grew from a width to a four-sided inset and the roster can answer a whole page.\n\n⚠ The first implementation was wrong in the way the earlier round had already written down: having the host ask the roster for its page reintroduces a re-entrancy panic, because the roster is built inside a cache factory and the window width is read through that same cache. So the shared account is the thing that needs no window — the inset — read by the roster's grant and by the host's page function alike.",
+      "publishable_changes_bullets": [
+        "The roster's grant is a four-sided inset now, with a type that says what each side means and why four numbers rather than a rectangle: a rectangle would be the page at one window size, and the page moves with the window while the inset does not. The roster can answer a whole page from it.",
+        "The host declares that inset once, and both its page rectangle and the roster's grant read the same function. The two numbers are one by construction, so there is nothing left for a cross-check to find — which also means the assertion that used to hold them together can no longer fail.",
+        "That assertion's question is asked properly in its place, at every open destination rather than at one: does the declared inset match the chrome the host actually paints? The page's left edge must meet the rail's right edge and its bottom must meet the status band's top. Two edges and not four, and the reason is written beside them — the other two are per-destination chrome that each destination's own gates ask about."
+      ],
+      "publishable_verification_bullets": [
+        "314 tests passed and 0 failed across the shell and the screen crate. The new gate was driven red by declaring eight pixels more inset than the rail draws, and its message names the destination and both numbers; restoring returns the pair to green.",
+        "Clippy on both crates rc=0. One refusal was paid by structure rather than by an allow: the host test had grown past its line limit, and the new question was extracted into its own test — which is what it should have been, being a different question. `cargo fmt --all --check` rc=0, and three shell walks pass.",
+        "Measured, and it is what chose the shape: the host's page function is a four-sided inset at both of its arms; the dashboard's adds a sub-bar above and a palette beside; and the roster is built inside a cache factory whose closure may not read the window, which is why the shared account is the inset rather than the rectangle."
+      ],
+      "publishable_impact_refs": [
+        "5.32",
+        "5.21"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Nothing is opened by this round. The portability the earlier round bought is unchanged — a roster can still answer what a section is granted for any host — and what it lacked, a guarantee that the declaration is honest, is now a question every host can be asked in its own terms rather than a single line in this one.",
+        "The boundary of the new gate is stated in it: two of the four edges are checked here, because those two are painted with tags a walk finds at every destination, and the other two are per-destination chrome.",
+        "Cohort loop 28 -> 27."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

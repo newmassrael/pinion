@@ -6709,6 +6709,79 @@ fn r1781_the_shipping_window_cannot_give_every_screen_what_it_declares() {
 /// narrowest and no gate would move: the floor would come out smaller and the
 /// shipping window would still satisfy it. A derivation nothing can be wrong
 /// about is a number written down with extra steps.
+/// ★★★★★ **(R2045) The declared inset is the chrome the host actually paints —
+/// at every open destination, not at one.**
+///
+/// R1830 moved the grant into the roster and left this host computing its page
+/// rectangle beside it, so one fact had two accounts and what held them
+/// together was a single assertion, about the dashboard, in this file. Its own
+/// counterfactual measured the cost: collapsing the inset to one value for
+/// every section was caught there and nowhere else, so the same mistake at any
+/// other destination was green.
+///
+/// R2045 made the two accounts ONE — `page_inset` is read by the roster's grant
+/// and by `page_rect` alike — which retires that assertion rather than widening
+/// it, and leaves this as the question that can still fail: a shell may declare
+/// a comfortable inset and paint a rail of another width, and deriving one
+/// number from the other would not notice. It would be wrong twice.
+///
+/// ⚠ Two edges, not four: the rail's and the status band's are painted with
+/// tags this walk can find at every destination, and the top and right are the
+/// application bar and the palette, which are per-destination and are asked by
+/// the destination's own gates. Written down rather than left as a silence.
+#[test]
+fn r2045_the_declared_inset_is_the_chrome_the_host_paints() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let roster = super::screen_roster();
+        let open: Vec<String> = roster
+            .destinations()
+            .keys()
+            .filter(|key| {
+                roster
+                    .destinations()
+                    .get(key)
+                    .is_some_and(|d| d.standing.is_open())
+            })
+            .map(str::to_owned)
+            .collect();
+        assert!(
+            open.len() >= 6,
+            "this shell opens {} destination(s); the loop below is the whole population",
+            open.len(),
+        );
+        for key in &open {
+            let painted = painted_at_destination(key);
+            let rail = painted
+                .tags
+                .get("shell.rail")
+                .copied()
+                .expect("the rail is painted at every destination");
+            let status = painted
+                .tags
+                .get("shell.status")
+                .copied()
+                .expect("the status band is painted at every destination");
+            let page = super::page_rect(key);
+            assert_eq!(
+                page.x,
+                rail.x + rail.w,
+                "{key}: the page starts at {} and the rail the host paints ends at {} \
+                 — the declared inset and the drawn chrome disagree",
+                page.x,
+                rail.x + rail.w,
+            );
+            assert_eq!(
+                page.y + page.h,
+                status.y,
+                "{key}: the page ends at {} and the status band the host paints starts at {}",
+                page.y + page.h,
+                status.y,
+            );
+        }
+    });
+}
+
 #[test]
 fn r1784_the_boards_floor_is_derived_from_the_layout_it_opens_with() {
     // The span the floor rests on, computed the other way round — over the

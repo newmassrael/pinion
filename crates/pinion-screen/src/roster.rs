@@ -25,6 +25,56 @@ use crate::conformance::{
 };
 use crate::journey::{JourneyConformance, JourneySection, JourneyStanding, Walk};
 
+/// ★★★★★ (R2045) What a host paints AROUND one section's page, on each of the
+/// four sides, in a window of any size.
+///
+/// # Why four numbers and not a rectangle
+///
+/// A rectangle would be the page at one window size, and the page moves with
+/// the window; the inset does not. R1830 recorded that argument for the
+/// horizontal half — the width is per-frame and the registration is not — and
+/// this is the same argument carried to the other three sides, which is what
+/// lets the host stop computing a page rectangle of its own.
+///
+/// # What each side means
+///
+/// Everything outside the page and on that side: a navigation rail on the
+/// left, an application bar (and any sub-bar) above, a palette on the right, a
+/// status band below. A side with nothing on it is zero, which is a statement
+/// rather than an omission — [`Destinations::ungranted_keys`] is what catches
+/// a section nobody made the statement about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PageInset {
+    /// What the host paints to the left of the page.
+    pub left: u32,
+    /// What it paints above.
+    pub top: u32,
+    /// What it paints to the right.
+    pub right: u32,
+    /// What it paints below.
+    pub bottom: u32,
+}
+
+impl PageInset {
+    /// An inset with every side declared.
+    #[must_use]
+    pub const fn new(left: u32, top: u32, right: u32, bottom: u32) -> Self {
+        Self {
+            left,
+            top,
+            right,
+            bottom,
+        }
+    }
+
+    /// The horizontal total — what R1830's grant carried on its own, and what
+    /// [`Destinations::granted_of`] still subtracts from a window's width.
+    #[must_use]
+    pub const fn beside(self) -> u32 {
+        self.left.saturating_add(self.right)
+    }
+}
+
 /// A host's cached projection: where it is, and how far the screen it is
 /// showing has moved.
 ///
@@ -326,7 +376,12 @@ pub struct ScreenRoster {
     /// accounts on one fact — the failure this crate is shaped to make
     /// unrepresentable, and the one [`laying_out`](Self::laying_out)'s own
     /// documentation warns about.
-    grants: BTreeMap<String, u32>,
+    /// ★ (R2045) A four-sided inset, where this held a width. The host used to
+    /// derive its page rectangle beside this declaration rather than from it,
+    /// so the same fact had two accounts and one assertion in one host held
+    /// them together; carrying all four sides is what lets `page_of` be the
+    /// host's own answer.
+    grants: BTreeMap<String, PageInset>,
     /// ★★★★★ R1864 — how many frames a page the host paints itself needs, and
     /// how to put it in each.
     ///
@@ -887,9 +942,9 @@ impl ScreenRoster {
     /// is legal and is the point: a host puts chrome beside a guest exactly as
     /// it puts chrome beside a page it paints itself, and a screen stating its
     /// own want does not state what it is given.
-    pub fn granting(mut self, key: &str, beside: u32) -> Result<Self, RosterDefect> {
+    pub fn granting(mut self, key: &str, inset: PageInset) -> Result<Self, RosterDefect> {
         Self::placeable(&self.destinations, key)?;
-        if self.grants.insert(key.to_owned(), beside).is_some() {
+        if self.grants.insert(key.to_owned(), inset).is_some() {
             return Err(RosterDefect::DuplicateGrant {
                 key: key.to_owned(),
             });
@@ -908,7 +963,40 @@ impl ScreenRoster {
     pub fn granted_of(&self, key: &str, window_w: u32) -> Option<u32> {
         self.grants
             .get(key)
-            .map(|beside| window_w.saturating_sub(*beside))
+            .map(|inset| window_w.saturating_sub(inset.beside()))
+    }
+
+    /// ★★★★★ (R2045) The whole rectangle `key`'s page occupies in a window
+    /// this size, or `None` when the host never declared what it draws around
+    /// that section.
+    ///
+    /// # Why this exists rather than a second number beside the host's
+    ///
+    /// R1830 moved the GRANT into the roster and left the host still computing
+    /// its own page rectangle, so two numbers described one thing and what held
+    /// them together was a single assertion, in one host, about one
+    /// destination. The counterfactual that round ran proves the shape of the
+    /// risk: collapsing the inset to one value for every section was caught by
+    /// that assertion and by nothing else, so the same mistake anywhere but the
+    /// dashboard was green.
+    ///
+    /// A cross-check over every destination would have been the cheap answer.
+    /// This is the other one, and it is the one this repository prefers: the
+    /// host DERIVES its page from the declaration, so the two numbers are one
+    /// by construction and there is no drift for a check to find. What remains
+    /// checkable is the declaration against the chrome the host actually
+    /// paints, which is a different question and a real one.
+    #[must_use]
+    pub fn page_of(&self, key: &str, window: (u32, u32)) -> Option<pinion_core::scene::Rect> {
+        let inset = self.grants.get(key)?;
+        Some(pinion_core::scene::Rect::new(
+            inset.left,
+            inset.top,
+            window.0.saturating_sub(inset.beside()),
+            window
+                .1
+                .saturating_sub(inset.top.saturating_add(inset.bottom)),
+        ))
     }
 
     /// ★★★★★ R1830 — the open destinations the host never granted a width, in

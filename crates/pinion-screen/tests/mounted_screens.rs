@@ -18,7 +18,7 @@ use pinion_core::shrink::ShrinkPolicy;
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::destination::{Destination, Destinations, Journey};
 use pinion_core::{Frame, Modifiers, Scene, WidgetCore};
-use pinion_screen::{Mount, Screen, ScreenRoster, SectionStanding};
+use pinion_screen::{Mount, PageInset, Screen, ScreenRoster, SectionStanding};
 use pinion_shell::test_fixtures::TestRenderer;
 use pinion_shell::{SizeStrategy, WidgetView, WindowSpec};
 
@@ -2243,9 +2243,9 @@ fn r1830_the_roster_holds_what_a_section_is_granted_as_well_as_what_it_wants() {
     // built: a host computes it from the window, and the roster is constructed
     // inside a reactive cache factory that must not read one.
     let granted = sized
-        .granting("catalog", 52)
+        .granting("catalog", PageInset::new(52, 0, 0, 0))
         .expect("a mounted section has chrome beside it like any other")
-        .granting("dashboard", 52 + 292)
+        .granting("dashboard", PageInset::new(52, 0, 292, 0))
         .expect("`dashboard` is open");
 
     assert_eq!(
@@ -2281,7 +2281,9 @@ fn r1830_the_roster_holds_what_a_section_is_granted_as_well_as_what_it_wants() {
         "declaring a grant overwrote what the section wants",
     );
     assert_eq!(
-        granted.granting("dashboard", 901).err(),
+        granted
+            .granting("dashboard", PageInset::new(901, 0, 0, 0))
+            .err(),
         Some(RosterDefect::DuplicateGrant {
             key: "dashboard".to_owned()
         }),
@@ -2289,7 +2291,9 @@ fn r1830_the_roster_holds_what_a_section_is_granted_as_well_as_what_it_wants() {
          depends on which registration a lookup reached first",
     );
     assert_eq!(
-        roster().granting("topology", 900).err(),
+        roster()
+            .granting("topology", PageInset::new(900, 0, 0, 0))
+            .err(),
         Some(RosterDefect::DestinationIsClosed {
             key: "topology".to_owned()
         }),
@@ -2297,7 +2301,9 @@ fn r1830_the_roster_holds_what_a_section_is_granted_as_well_as_what_it_wants() {
          arrive at",
     );
     assert_eq!(
-        roster().granting("sessions", 900).err(),
+        roster()
+            .granting("sessions", PageInset::new(900, 0, 0, 0))
+            .err(),
         Some(RosterDefect::NoSuchDestination {
             key: "sessions".to_owned()
         }),
@@ -2333,11 +2339,11 @@ fn r1830_a_section_that_wants_more_than_its_grant_is_named_by_the_roster() {
     // over.
     let arranged = |dashboard_beside: u32| {
         sized()
-            .granting("catalog", 0)
+            .granting("catalog", PageInset::default())
             .expect("open")
-            .granting("stream", 0)
+            .granting("stream", PageInset::default())
             .expect("open")
-            .granting("dashboard", dashboard_beside)
+            .granting("dashboard", PageInset::new(dashboard_beside, 0, 0, 0))
             .expect("open")
     };
 
@@ -2373,7 +2379,9 @@ fn r1830_a_section_that_wants_more_than_its_grant_is_named_by_the_roster() {
     // width, has not been checked -- and reporting it as fitting would be a
     // gate going green over a question nobody put. It is named by the two
     // census methods instead, which is where an unanswerable question belongs.
-    let half = sized().granting("dashboard", 999).expect("open");
+    let half = sized()
+        .granting("dashboard", PageInset::new(999, 0, 0, 0))
+        .expect("open");
     assert_eq!(
         half.sections_short_of_their_grant(1000),
         vec![("dashboard", 820u32, 1u32)],
