@@ -89148,6 +89148,52 @@
         "Cohort loop 24, unchanged."
       ]
     },
+    "R2052": {
+      "decision_summary": "The form painter composes every one of its addresses in one place, and the gate widens from one family to the namespace.\n\nThe address debt's fourth instalment, and it finishes a LAYER rather than a family. R2050 gave this painter a declaration and moved the control family onto it, leaving twenty-two compositions of exactly the same shape beside it — each free to spell a separator or a part its own way, and each a place a wrong letter compiles and paints and makes every query looking for the mark answer nothing.\n\n★★★★★ The needle is the prefix interpolation itself now, not one family's word. A gate keyed on `.control.` was true of one twenty-third of what this file does; keyed on the interpolation, every part of a form is composed through the declaration or the gate refuses. That is the difference between a check that holds a family and one that holds the namespace it belongs to.\n\n⚠ This does not close the debt, and what is left is measured rather than estimated: the CONSUMERS of these families — the screen's own readers and the walks — still spell them, about 125 sites across twenty-one families, the largest being the add and remove seats at 25 and 23. The declaration they will move onto is now total, which is what this instalment is for.",
+      "changes_bullets": [
+        "Every address this painter composes goes through its published derivations: twenty-three sites across seventeen part families — the row's key, its type, aside and defect badges, its applies and source badges, its seat, the chooser's shown word and arrow, the switch, the add chip, the step and item parts, and the sentence a row announces.",
+        "The general derivation takes a part that reads as a string, because some parts are literals and some are built from a row's own vocabulary, and a caller should not have to convert just to spell an address.",
+        "The gate is widened accordingly and renamed for what it now holds: the file is read and must contain no prefix interpolation at all. Its needle is assembled, so the gate's own source is in the population on the same terms as the rest."
+      ],
+      "verification_bullets": [
+        "The framework crate passes 1,002 tests, 0 failed. `cargo test --workspace` exits 0 with 0 failed.",
+        "The counterfactual: one composition put back to a prefix interpolation turns the widened gate red with the count; restored, it is green.",
+        "Workspace clippy rc=0 and `cargo fmt --all --check` clean.",
+        "⚠ THE WORKSPACE TOTAL WAS CHECKED RATHER THAN QUOTED, and the check corrected it. Summing the per-binary summary lines answered 14,380 where the run before this answered 14,399, which reads as nineteen tests lost; counting the passing test LINES answers 14,396 against 14,398, and the ignored count is 82 in both — so nothing stopped running, and the two-line difference is this round's rename plus one test name that exists in two crates and collapses in a set. The per-binary sums interleave in a captured log and are not a reliable count; the line count is."
+      ],
+      "impact_refs": [
+        "5.2",
+        "5.11"
+      ],
+      "carry_forward_bullets": [
+        "The debt stays OPEN. Its table now separates the two halves of a framework-composed family: the painter's own compositions, which this instalment finished, and the consumers, which it did not. About 125 consumer sites remain across twenty-one families.",
+        "Nothing is opened by this round.",
+        "The gate's boundary is unchanged and still worth stating: it reads one file, so a second painter composing addresses of its own is not seen from here.",
+        "Cohort loop 24, unchanged."
+      ],
+      "publishable_decision_summary": "The form painter composes every one of its addresses in one place, and the gate widens from one family to the namespace.\n\nThe address debt's fourth instalment, and it finishes a LAYER rather than a family. R2050 gave this painter a declaration and moved the control family onto it, leaving twenty-two compositions of exactly the same shape beside it — each free to spell a separator or a part its own way, and each a place a wrong letter compiles and paints and makes every query looking for the mark answer nothing.\n\n★★★★★ The needle is the prefix interpolation itself now, not one family's word. A gate keyed on `.control.` was true of one twenty-third of what this file does; keyed on the interpolation, every part of a form is composed through the declaration or the gate refuses. That is the difference between a check that holds a family and one that holds the namespace it belongs to.\n\n⚠ This does not close the debt, and what is left is measured rather than estimated: the CONSUMERS of these families — the screen's own readers and the walks — still spell them, about 125 sites across twenty-one families, the largest being the add and remove seats at 25 and 23. The declaration they will move onto is now total, which is what this instalment is for.",
+      "publishable_changes_bullets": [
+        "Every address this painter composes goes through its published derivations: twenty-three sites across seventeen part families — the row's key, its type, aside and defect badges, its applies and source badges, its seat, the chooser's shown word and arrow, the switch, the add chip, the step and item parts, and the sentence a row announces.",
+        "The general derivation takes a part that reads as a string, because some parts are literals and some are built from a row's own vocabulary, and a caller should not have to convert just to spell an address.",
+        "The gate is widened accordingly and renamed for what it now holds: the file is read and must contain no prefix interpolation at all. Its needle is assembled, so the gate's own source is in the population on the same terms as the rest."
+      ],
+      "publishable_verification_bullets": [
+        "The framework crate passes 1,002 tests, 0 failed. `cargo test --workspace` exits 0 with 0 failed.",
+        "The counterfactual: one composition put back to a prefix interpolation turns the widened gate red with the count; restored, it is green.",
+        "Workspace clippy rc=0 and `cargo fmt --all --check` clean.",
+        "⚠ THE WORKSPACE TOTAL WAS CHECKED RATHER THAN QUOTED, and the check corrected it. Summing the per-binary summary lines answered 14,380 where the run before this answered 14,399, which reads as nineteen tests lost; counting the passing test LINES answers 14,396 against 14,398, and the ignored count is 82 in both — so nothing stopped running, and the two-line difference is this round's rename plus one test name that exists in two crates and collapses in a set. The per-binary sums interleave in a captured log and are not a reliable count; the line count is."
+      ],
+      "publishable_impact_refs": [
+        "5.2",
+        "5.11"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The debt stays OPEN. Its table now separates the two halves of a framework-composed family: the painter's own compositions, which this instalment finished, and the consumers, which it did not. About 125 consumer sites remain across twenty-one families.",
+        "Nothing is opened by this round.",
+        "The gate's boundary is unchanged and still worth stating: it reads one file, so a second painter composing addresses of its own is not seen from here.",
+        "Cohort loop 24, unchanged."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

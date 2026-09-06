@@ -704,9 +704,14 @@ pub mod address {
     }
 
     /// A part of the form that belongs to no row.
+    ///
+    /// ★ Takes anything that reads as a string, because the parts this composes
+    /// arrive differently at different sites — some are literals and some are
+    /// built from a row's own vocabulary — and a caller should not have to
+    /// convert just to spell an address.
     #[must_use]
-    pub fn part(prefix: &str, part: &str) -> String {
-        format!("{prefix}.{part}")
+    pub fn part(prefix: &str, part: impl AsRef<str>) -> String {
+        format!("{prefix}.{}", part.as_ref())
     }
 
     /// The row a control address names, given the prefix it was painted under.
@@ -1339,7 +1344,7 @@ fn view_header(
         // what shrinking one costs), the key is allowed to shrink below its
         // content, and the shaper then elides it to the width it was actually
         // given. No number in this file has to be right.
-        let said = format!("{tag_prefix}.said.{}", row.key);
+        let said = address::child(tag_prefix, "said", &row.key);
         // ★★★★ R1732 — the key run is ADDRESSED now, and declares its silence.
         // It was an untagged run for its whole life, which meant the one thing
         // on the row that says what the row is about could not be found by a
@@ -1355,7 +1360,7 @@ fn view_header(
                     .with_size_px(11)
                     .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
             )
-            .with_tag(format!("{tag_prefix}.key.{}", row.key))
+            .with_tag(address::child(tag_prefix, "key", &row.key))
             .with_layout(
                 LayoutStyle::new()
                     .with_min_size(Size::px(0, 0))
@@ -1372,7 +1377,7 @@ fn view_header(
             ColorRole::OnSurfaceMuted,
             theme,
             Some((
-                format!("{tag_prefix}.type.{}", row.key),
+                address::child(tag_prefix, "type", &row.key),
                 Silence::name_of(said.clone()),
             )),
         ));
@@ -1388,7 +1393,7 @@ fn view_header(
                 ColorRole::OnSurfaceMuted,
                 theme,
                 Some((
-                    format!("{tag_prefix}.aside.{}", row.key),
+                    address::child(tag_prefix, "aside", &row.key),
                     Silence::name_of(said.clone()),
                 )),
             ));
@@ -1407,7 +1412,7 @@ fn view_header(
                 BadgeTone::State(tone),
                 theme,
                 Some((
-                    format!("{tag_prefix}.defect.{}", row.key),
+                    address::child(tag_prefix, "defect", &row.key),
                     Silence::name_of(said),
                 )),
             ));
@@ -1475,7 +1480,7 @@ fn provenance_badges(
             BadgeTone::State(applies_state(field.applies())),
             theme,
             Some((
-                format!("{tag_prefix}.applies.{key}"),
+                address::child(tag_prefix, "applies", key),
                 Silence::name_of(said.to_owned()),
             )),
         )
@@ -1486,7 +1491,7 @@ fn provenance_badges(
             ColorRole::OnSurfaceMuted,
             theme,
             Some((
-                format!("{tag_prefix}.source.{key}"),
+                address::child(tag_prefix, "source", key),
                 Silence::name_of(said.to_owned()),
             )),
         )
@@ -1594,7 +1599,7 @@ fn view_remove_seat(tag_prefix: &str, row: &RowBox, origin: (u32, u32), theme: &
         Seat::GiveBack(_) => Indicator::GiveBack,
     };
     let seat = row.seat.rect();
-    let tag = format!("{tag_prefix}.{}.{}", row.seat.act(), row.key);
+    let tag = address::child(tag_prefix, row.seat.act(), &row.key);
     Scene::Container(
         ContainerNode::new(vec![crate::indicator::inline(
             mark,
@@ -1847,8 +1852,8 @@ fn picker_control(
     crate::chooser::view_collapsed(
         &crate::chooser::ChooserTags {
             control: address::control(tag_prefix, &row.key),
-            shown: format!("{tag_prefix}.shown.{}", row.key),
-            arrow: format!("{tag_prefix}.pick.{}", row.key),
+            shown: address::child(tag_prefix, "shown", &row.key),
+            arrow: address::child(tag_prefix, "pick", &row.key),
         },
         &field.value(),
         row.control,
@@ -1905,7 +1910,7 @@ fn option_chips(
             // Relative to the CONTROL, which is this chip's parent — an
             // absolutely-placed child is positioned against its own container.
             Some(part_pill(
-                format!("{tag_prefix}.{suffix}"),
+                address::part(tag_prefix, suffix),
                 word,
                 ink,
                 *seat,
@@ -1991,7 +1996,7 @@ fn boolean_control(
             // says where it sits.
             Scene::Container(
                 ContainerNode::new(vec![crate::switch::view_switch(
-                    format!("{tag_prefix}.switch.{}", row.key),
+                    address::child(tag_prefix, "switch", &row.key),
                     ToggleState::Idle,
                     on,
                     theme,
@@ -2102,7 +2107,7 @@ fn number_control(
     for (suffix, glyph) in [("down", "-"), ("up", "+")] {
         let name = format!("step.{}.{suffix}", row.key);
         children.push(part_pill(
-            format!("{tag_prefix}.{name}"),
+            address::part(tag_prefix, &name),
             glyph,
             muted,
             part_seat(row, &name),
@@ -2155,7 +2160,7 @@ fn list_control(
                     theme.resolve(ColorRole::OnSurfaceMuted)
                 }),
             ))])
-            .with_tag(format!("{tag_prefix}.{name}"))
+            .with_tag(address::part(tag_prefix, name))
             .with_style(if mine {
                 control_skin(None, theme)
             } else {
@@ -2170,7 +2175,7 @@ fn list_control(
     }
     let add = format!("item.{}.add", row.key);
     children.push(part_pill(
-        format!("{tag_prefix}.{add}"),
+        address::part(tag_prefix, &add),
         "+ one more",
         muted,
         part_seat(row, &add),
@@ -2278,7 +2283,7 @@ fn view_add_chip(
                     .with_size_px(10)
                     .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
             ))])
-            .with_tag(format!("{tag_prefix}.add.{key}"))
+            .with_tag(address::child(tag_prefix, "add", key))
             .with_style(
                 BoxStyle::filled(Color::rgba(0, 0, 0, 0))
                     .with_corner_radius(6)
@@ -2388,7 +2393,7 @@ pub fn row_access_nodes(
         }
         nodes.extend(describedby_region(
             control,
-            format!("{tag_prefix}.said.{}", row.key),
+            address::child(tag_prefix, "said", &row.key),
             AriaRole::Status,
             Some(said.join("; ")),
             true,
@@ -2401,7 +2406,7 @@ pub fn row_access_nodes(
         // ★★ R1716 — and WHICH act, from the seat itself. A seat that takes a
         // row over announced as "remove" would be the same failure one step
         // later: the name is what a reader decides by.
-        let seat_tag = format!("{tag_prefix}.{}.{}", row.seat.act(), row.key);
+        let seat_tag = address::child(tag_prefix, row.seat.act(), &row.key);
         nodes.push(
             AccessNode::new(seat_tag, AriaRole::Button)
                 .with_name(format!("{} {}", row.seat.verb(), field.key()))
@@ -2447,7 +2452,7 @@ pub fn row_access_nodes(
             for (suffix, seat) in &popup.options {
                 let word = suffix.rsplit('.').next().unwrap_or_default();
                 nodes.push(
-                    AccessNode::new(format!("{tag_prefix}.{suffix}"), AriaRole::ListBoxOption)
+                    AccessNode::new(address::part(tag_prefix, suffix), AriaRole::ListBoxOption)
                         .with_name(format!("{word}, {}", popup.key))
                         .with_bounds(*seat)
                         .with_selected(shown.trim() == word),
@@ -2458,7 +2463,7 @@ pub fn row_access_nodes(
     // The chips that offer a key the form does not hold yet.
     for (key, seat) in &geometry.chips {
         nodes.push(
-            AccessNode::new(format!("{tag_prefix}.add.{key}"), AriaRole::Button)
+            AccessNode::new(address::child(tag_prefix, "add", key), AriaRole::Button)
                 .with_name(format!("add {key}"))
                 .with_bounds(*seat),
         );
@@ -2543,7 +2548,7 @@ fn control_state(field: &ConfigField) -> AccessState {
 /// is matched on its LEADING word so a key containing a dot (which every
 /// configuration path does) cannot be mistaken for a shape.
 fn part_access_node(tag_prefix: &str, field: &ConfigField, suffix: &str, seat: Rect) -> AccessNode {
-    let tag = format!("{tag_prefix}.{suffix}");
+    let tag = address::part(tag_prefix, suffix);
     let key = field.key();
     let last = suffix.rsplit('.').next().unwrap_or(suffix);
     let (role, name, checked) = match suffix.split('.').next().unwrap_or("") {
@@ -2639,7 +2644,7 @@ fn element_ordinal(index: &str) -> usize {
 /// what a reader is told rather than about what is on screen.
 #[must_use]
 pub fn row_description(nodes: &[AccessNode], tag_prefix: &str, key: &str) -> Option<String> {
-    let tag = format!("{tag_prefix}.said.{key}");
+    let tag = address::child(tag_prefix, "said", key);
     nodes
         .iter()
         .find(|n| n.tag == tag)
@@ -2661,14 +2666,19 @@ mod tests {
     /// in the population, and assembling is what puts it there on the same
     /// terms as the rest rather than excusing it by name.
     #[test]
-    fn r2050_a_control_address_is_composed_in_one_place() {
-        const NEEDLE: &str = concat!(".control", ".{");
+    fn r2050_a_form_part_address_is_composed_in_one_place() {
+        // ★★★★★ R2052 — WIDENED from the control family to the whole
+        // namespace. R2050 moved one family and left twenty-two compositions of
+        // the same shape beside it, each free to spell a separator or a part
+        // its own way; the needle is the prefix interpolation itself now, so
+        // every part of a form is composed in one place or this refuses.
+        const NEEDLE: &str = concat!("{tag_", "prefix}.");
         const BODY: &str = include_str!("config_form.rs");
         assert_eq!(
             BODY.matches(NEEDLE).count(),
             0,
-            "★★★★★ a control's address is composed by `address::control`; this \
-             file composes one itself"
+            "★★★★★ a form part's address is composed by `address::child` and \
+             `address::part`; this file composes one itself"
         );
         // ★ And the composition round-trips through its own inverse, which is
         // the half a consumer's router would otherwise spell a second time.
