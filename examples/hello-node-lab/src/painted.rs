@@ -813,8 +813,8 @@ fn declared_tags(state: &LabState) -> Vec<String> {
         }
         want.push("lab.palette.legend".to_owned());
         for role in spec::ROLES {
-            want.push(format!("lab.palette.role.{}", role.name));
-            want.push(format!("lab.palette.swatch.{}", role.name));
+            want.push(super::address::role_row_named(role.name));
+            want.push(super::address::role_swatch_named(role.name));
         }
         for (kind, _) in spec::PIN_LEGEND {
             want.push(format!("lab.palette.pin.{kind}"));
@@ -940,7 +940,7 @@ fn declared_tags(state: &LabState) -> Vec<String> {
 fn must_answer(tag: &str) -> Option<String> {
     for (prefix, verb) in [
         ("lab.rail.", "rail"),
-        ("lab.palette.role.", "role"),
+        (super::address::ROLE_ROW, "role"),
         ("lab.form.add.", "add"),
         ("lab.form.control.", "field"),
         // ★ R1686 — `remove:<key>`, spelled like `add:` and `field:` rather
@@ -2073,8 +2073,8 @@ fn r1653_the_painted_screen_invented_nothing() {
         // the specification.
         let families: &[(&str, Option<usize>)] = &[
             ("lab.rail.", Some(spec::RAIL.len())),
-            ("lab.palette.role.", Some(spec::ROLES.len())),
-            ("lab.palette.swatch.", Some(spec::ROLES.len())),
+            (super::address::ROLE_ROW, Some(spec::ROLES.len())),
+            (super::address::ROLE_SWATCH, Some(spec::ROLES.len())),
             // ★ R1968 — a group heading per RUN of the roster, so a palette
             // that grew a group grows a heading and one that lost one loses it.
             ("lab.palette.group.", Some(spec::palette_groups().len())),
@@ -2561,7 +2561,7 @@ fn r1968_every_palette_row_is_under_the_heading_its_role_declares() {
              true of any arrangement and this check would be vacuous",
         );
         for role in spec::ROLES {
-            let tag = format!("lab.palette.role.{}", role.name);
+            let tag = super::address::role_row_named(role.name);
             let row = shot
                 .tags
                 .get(&tag)
@@ -2590,7 +2590,7 @@ fn r1968_every_palette_row_is_under_the_heading_its_role_declares() {
             .get("lab.palette.legend")
             .expect("the pin legend's heading is painted");
         for role in spec::ROLES {
-            let row = shot.tags[&format!("lab.palette.role.{}", role.name)];
+            let row = shot.tags[&super::address::role_row_named(role.name)];
             assert!(
                 row.y + row.h <= legend.y,
                 "★ the {} row is painted over the pin legend, so the legend's \
@@ -3636,7 +3636,11 @@ type OperationDriver = (&'static str, fn(&std::rc::Rc<LabState>, &Painted));
 
 const OPERATION_GESTURES: &[OperationDriver] = &[
     ("add a node", |state, shot| {
-        press_tag(state, shot, "lab.palette.role.Responder");
+        press_tag(
+            state,
+            shot,
+            &super::address::role_row(crate::graph::Role::Responder),
+        );
     }),
     ("move a node", |state, shot| {
         drag_tag(state, shot, "lab.node.P-03", (40, 24));
@@ -8605,9 +8609,10 @@ fn r1999_a_role_this_graph_will_not_take_is_drawn_as_one_that_cannot_be_pressed(
     });
 }
 
-/// The `lab.palette.role.<name>` node the screen publishes right now.
+/// The palette-row node the screen publishes right now for the role of that
+/// name.
 fn role_named(name: &str) -> String {
-    format!("lab.palette.role.{name}")
+    super::address::role_row_named(name)
 }
 
 /// Whether that row announces itself disabled, or `None` when the tree has no
@@ -8876,7 +8881,7 @@ fn palette_row_second_line(shot: &Painted, role: &str) -> Option<String> {
     // rather than into it — so `runs`' "nearest tagged ancestor" column names
     // the pane and not the row. Measured, not assumed: the first draft filtered
     // on the owner and found nothing at all.
-    let row = *shot.tags.get(&format!("lab.palette.role.{role}"))?;
+    let row = *shot.tags.get(&super::address::role_row_named(role))?;
     let mut lines: Vec<(u32, String)> = shot
         .runs
         .iter()

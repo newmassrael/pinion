@@ -218,7 +218,8 @@ def body() -> None:
             f"★★ every arm of the relay vocabulary is populated: {sorted(relays)} "
             f"— a partition with one arm in use is a bool with extra words"
         )
-        swatch = rows[f"lab.palette.swatch.{spec['roles'][0]['name']}"]
+        # ★ R2049 — the address the screen publishes, not one spelled here.
+        swatch = rows[spec["roles"][0]["swatch"]]
         assert_eq(swatch["reason"], "decorative")
         assert_eq(
             swatch["relay"],
@@ -462,7 +463,7 @@ def body() -> None:
         #      them is classified in the same act. Nobody edits a number.
         before = tf.voice()
         before_names = set(q(tf, "nodes").split(","))
-        press(tf, f"lab.palette.role.{spec['roles'][0]['name']}")
+        press(tf, spec["roles"][0]["tag"])
         added = set(q(tf, "nodes").split(",")) - before_names
         assert len(added) == 1, f"the press added one card: {sorted(added)}"
         made = added.pop()

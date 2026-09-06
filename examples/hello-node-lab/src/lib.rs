@@ -50,6 +50,7 @@
 //!
 //! See `tools/demos/r1651_the_node_lab_matches_the_reference.py`.
 
+pub mod address;
 mod deploy;
 mod graph;
 mod judge;
@@ -5258,9 +5259,9 @@ impl Hit {
         {
             return Self::Rail(name);
         }
-        if let Some(name) = tag.strip_prefix("lab.palette.role.")
-            && let Some(role) = Role::ALL.into_iter().find(|r| r.name() == name)
-        {
+        // ★★★★★ R2049 — the address's own inverse, not a prefix typed here.
+        // See `address` for why the two halves live together.
+        if let Some(role) = address::role_of_row(tag) {
             return Self::Role(role);
         }
         // ★★★★★ R2047 — a control of the definitions register. The VERB is the
@@ -9038,7 +9039,7 @@ fn palette_body(state: &LabState, ink: Ink, rect: Rect) -> Scene {
         // with no pixel reading it, and this is that axis closed for this one.
         let welcome = role_at_home(state, role);
         children.push(box_at(
-            &format!("lab.palette.role.{}", role.name()),
+            &address::role_row(role),
             row,
             if welcome { ink.raised } else { ink.surface },
             Some(if welcome { ink.outline } else { ink.outline_2 }),
@@ -9055,7 +9056,7 @@ fn palette_body(state: &LabState, ink: Ink, rect: Rect) -> Scene {
         );
         children.push(quiet(
             box_at(
-                &format!("lab.palette.swatch.{}", role.name()),
+                &address::role_swatch(role),
                 Rect::new(row.x + 9, inside.y, 3, inside.h),
                 role_ink(role),
                 None,
@@ -16455,6 +16456,16 @@ fn spec_json() -> serde_json::Value {
         "roles": spec::ROLES.iter().map(|r| serde_json::json!({
             "name": r.name, "gist": r.gist, "group": r.group, "accepts": r.accepts,
             "carries": r.carries.iter().map(|p| p.key()).collect::<Vec<_>>(),
+            // ★★★★★ R2049 — **the ADDRESSES this role's marks are painted
+            // under**, derived from the one place that declares them.
+            //
+            // A walk is Python and cannot call that declaration, so before this
+            // every walk that wanted a role's row re-typed the prefix and a
+            // wrong letter made it look for a mark that is not there — which
+            // reads as *the screen did not paint it* rather than as a typo. Now
+            // a walk names a role and is handed the address the paint used.
+            "tag": address::role_row_named(r.name),
+            "swatch": address::role_swatch_named(r.name),
             // ★★★★★ R1967 — **where this role's words come from**, published
             // rather than left as a judgement only the source carries.
             //
@@ -22372,24 +22383,21 @@ fn palette_access(state: &LabState) -> Vec<AccessNode> {
         // branches here are the paint's two branches.
         let welcome = role_at_home(state, role);
         nodes.push(
-            AccessNode::new(
-                format!("lab.palette.role.{}", role.name()),
-                AriaRole::Button,
-            )
-            .with_name(if welcome {
-                format!("add a {} — {}", role.name(), role.gist())
-            } else {
-                format!(
-                    "add a {} — not in a {}, {}",
-                    role.name(),
-                    here_kind(state).word(),
-                    here_kind(state).gist()
-                )
-            })
-            .with_state(AccessState {
-                disabled: !welcome,
-                ..AccessState::default()
-            }),
+            AccessNode::new(address::role_row(role), AriaRole::Button)
+                .with_name(if welcome {
+                    format!("add a {} — {}", role.name(), role.gist())
+                } else {
+                    format!(
+                        "add a {} — not in a {}, {}",
+                        role.name(),
+                        here_kind(state).word(),
+                        here_kind(state).gist()
+                    )
+                })
+                .with_state(AccessState {
+                    disabled: !welcome,
+                    ..AccessState::default()
+                }),
         );
     }
     nodes.push(AccessNode::new("lab.palette.legend", AriaRole::Heading).with_name("pins"));

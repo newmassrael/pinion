@@ -1449,7 +1449,8 @@ pub const VOICES: &[VoiceSpec] = &[
         population: Population::RoleGroups,
     },
     VoiceSpec {
-        tag: "lab.palette.role.{}",
+        // ★ R2049 — the address, from the one place that declares it.
+        tag: crate::address::ROLE_ROW_TEMPLATE,
         role: "button",
         population: Population::Roles,
     },
@@ -1646,7 +1647,11 @@ pub const SILENCES: &[(&str, Population, &str)] = &[
     // Colour keys. A reader who never sees the colours loses the membership of
     // the transport set, which the palette announces as its value — so the
     // chips are part of that rather than five stops saying one word each.
-    ("lab.palette.swatch.{}", Population::Roles, "decorative"),
+    (
+        crate::address::ROLE_SWATCH_TEMPLATE,
+        Population::Roles,
+        "decorative",
+    ),
     ("lab.palette.protocol.{}", Population::Protocols, "part_of"),
     ("lab.palette.discovery.track", Population::One, "decorative"),
     // The scrolling bodies. Their panes are what a reader lands on.

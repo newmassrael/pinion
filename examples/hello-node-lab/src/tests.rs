@@ -938,6 +938,93 @@ fn r2048_a_register_rows_second_line_speaks_in_both_its_renderings() {
     );
 }
 
+/// ★★★★★ R2049 — **a palette role's address is typed in ONE place, and this
+/// counts.**
+///
+/// The debt this closes is that a painted mark's address had no declaring site:
+/// every reader re-typed the prefix, so one wrong letter compiled, painted, and
+/// made every query looking for the mark answer nothing — quietly. The repair
+/// is a declaration and a derivation; what makes it stay repaired is counting,
+/// because the next round to want a role's address will reach for `format!`
+/// unless something refuses.
+///
+/// ★ It reads the SOURCES of this crate rather than a list of files somebody
+/// maintains, so a new file spelling the prefix is caught by existing.
+///
+/// ⚠ The needle is assembled rather than written, because this file is one of
+/// the sources it reads — R2046's lesson, met again: a gate that counts by
+/// reading source has its own source in the population.
+///
+/// ⚠ And the walks are NOT in this population. They are Python and cannot call
+/// the declaration; their answer is to read the address off the wire, which is
+/// what `spec.roles[].tag` is for, and `r1651` is what holds them to it.
+#[test]
+fn r2049_a_role_address_is_typed_in_one_place() {
+    const NEEDLE: &str = concat!("lab.palette.", "role.");
+    const SWATCH: &str = concat!("lab.palette.", "swatch.");
+    // The crate's own sources, named the way the module tree names them.
+    let sources: [(&str, &str); 6] = [
+        ("address.rs", include_str!("address.rs")),
+        ("lib.rs", include_str!("lib.rs")),
+        ("spec.rs", include_str!("spec.rs")),
+        ("graph.rs", include_str!("graph.rs")),
+        ("painted.rs", include_str!("painted.rs")),
+        ("tests.rs", include_str!("tests.rs")),
+    ];
+    let spellers: Vec<(&str, usize)> = sources
+        .iter()
+        .map(|(name, body)| {
+            (
+                *name,
+                body.matches(NEEDLE).count() + body.matches(SWATCH).count(),
+            )
+        })
+        .filter(|(name, count)| *count > 0 && *name != "address.rs")
+        .collect();
+    // ★ ZERO, including this file: assembling the needle means this gate's own
+    // source does not carry the joined literal, so it is in the population on
+    // the same terms as every other file rather than excused by name — which is
+    // what an exemption list would be, and an exemption list is the shape this
+    // whole debt is about.
+    assert_eq!(
+        spellers,
+        Vec::new(),
+        "★★★★★ a palette role's address is declared in `address.rs` and derived \
+         everywhere else; these file(s) spell it themselves"
+    );
+    // And the declaration's two forms agree, so a specification table taking the
+    // `&'static str` template cannot drift from the runtime derivation.
+    assert_eq!(
+        super::address::ROLE_ROW_TEMPLATE,
+        format!("{}{{}}", super::address::ROLE_ROW)
+    );
+    assert_eq!(
+        super::address::ROLE_SWATCH_TEMPLATE,
+        format!("{}{{}}", super::address::ROLE_SWATCH)
+    );
+    // ★★ The address and its inverse are one pair, driven over every role: a
+    // parse written against a different prefix is a press that lands on nothing
+    // and a screen that simply does not respond.
+    for role in crate::graph::Role::ALL {
+        assert_eq!(
+            super::address::role_of_row(&super::address::role_row(role)),
+            Some(role),
+            "★ {} does not round-trip",
+            role.name()
+        );
+    }
+    assert_eq!(
+        super::address::role_of_row("lab.rail.packets"),
+        None,
+        "★ a tag of another family is not a role"
+    );
+    assert_eq!(
+        super::address::role_of_row(&super::address::role_row_named("Nobody")),
+        None,
+        "★ and neither is a name no role answers to"
+    );
+}
+
 /// The card the speech drives above are about — a subject that could not occur
 /// inside any of those clauses by accident.
 const CARD_UNDER_TEST: &str = "R-01";

@@ -123,9 +123,15 @@ def body() -> None:
                 tf.drag(from_at=at, to_at=(at[0] + 40, at[1] + 24), steps=6)
                 assert q(tf, "layout") != before, "the drag moved the card"
             elif scope == "nodes":
+                # ★ R2049 — the address the screen publishes for that role,
+                # rather than one spelled here.
                 assert_router_press_moves(
                     tf,
-                    "lab.palette.role.Responder",
+                    next(
+                        role["tag"]
+                        for role in json.loads(q(tf, "spec"))["roles"]
+                        if role["name"] == "Responder"
+                    ),
                     lambda: q(tf, "nodes"),
                     "the palette adds a card",
                 )

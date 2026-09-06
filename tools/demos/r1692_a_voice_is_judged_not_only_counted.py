@@ -335,7 +335,8 @@ def body() -> None:
         # ── (F) it holds through a real press ───────────────────────
         spec = json.loads(q(tf, "spec"))
         before_names = set(q(tf, "nodes").split(","))
-        press(tf, f"lab.palette.role.{spec['roles'][0]['name']}")
+        # ★ R2049 — the address the screen publishes, not one spelled here.
+        press(tf, spec["roles"][0]["tag"])
         added = set(q(tf, "nodes").split(",")) - before_names
         assert len(added) == 1, f"the press added one card: {sorted(added)}"
         made = added.pop()

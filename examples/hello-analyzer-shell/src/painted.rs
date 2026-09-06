@@ -9033,7 +9033,12 @@ fn a_press_on_that_role_brings_a_card_in_already_wired(
     taker: &str,
 ) {
     let (shot, scene) = painted_at((WIN_W, WIN_H));
-    let row = format!("lab.palette.role.{taker}");
+    // ★★★★★ R2049 — the address from the screen that OWNS it. This host paints
+    // none of the palette; it mounts the section that does, and typing the
+    // section's prefix here is the same defect one binary further out — a wrong
+    // letter would look for a mark the guest paints and report that the guest
+    // did not paint it.
+    let row = hello_node_lab::address::role_row_named(taker);
     let mut press = hand_on(scene);
     press.cursor(aim(&shot, &row));
     press.press();
@@ -12946,7 +12951,10 @@ fn a_card_sitting_over_a_host_it_is_not_in_is_still_not_offered(state: &std::rc:
     let (shot, scene) = painted_at((WIN_W, WIN_H));
     let opening = lab_cards(state);
     let mut press = hand_on(scene);
-    press.cursor(aim(&shot, "lab.palette.role.Router"));
+    press.cursor(aim(
+        &shot,
+        &hello_node_lab::address::role_row_named("Router"),
+    ));
     press.press();
     press.release();
     let arrived = lab_cards(state)
@@ -13583,7 +13591,10 @@ fn a_card_nobody_wired_is_an_end_but_not_home(state: &std::rc::Rc<ShellState>) {
     let (shot, scene) = painted_at((WIN_W, WIN_H));
     let opening = lab_cards(state);
     let mut press = hand_on(scene);
-    press.cursor(aim(&shot, "lab.palette.role.Router"));
+    press.cursor(aim(
+        &shot,
+        &hello_node_lab::address::role_row_named("Router"),
+    ));
     press.press();
     press.release();
     let stray = lab_cards(state)
@@ -13957,7 +13968,10 @@ fn a_card_arrives_from_the_palette_with_no_wires(state: &std::rc::Rc<ShellState>
     let (shot, scene) = painted_at((WIN_W, WIN_H));
     let opening = lab_cards(state);
     let mut press = hand_on(scene);
-    press.cursor(aim(&shot, "lab.palette.role.Router"));
+    press.cursor(aim(
+        &shot,
+        &hello_node_lab::address::role_row_named("Router"),
+    ));
     press.press();
     press.release();
 
@@ -14160,7 +14174,10 @@ fn a_card_that_cannot_listen_is_aimed_and_says_it_would_not_be_taken(
     // A role that depends on a router rather than being dialled: it has a dial
     // pin, like every role here, and no accept pin at all.
     let mut press = hand_on(scene);
-    press.cursor(aim(&shot, "lab.palette.role.Client"));
+    press.cursor(aim(
+        &shot,
+        &hello_node_lab::address::role_row_named("Client"),
+    ));
     press.press();
     press.release();
     let now = lab_cards(state);

@@ -189,7 +189,11 @@ def body() -> None:
         # person can put a cursor on refuses — a greying that were only a colour
         # would take the card anyway.
         held = cards(app, surface)
-        app.click(path="lab.palette.role.Router")
+        # ★ R2049 — the addresses the screen publishes, not ones spelled here.
+        row_of = {
+            role["name"]: role["tag"] for role in js(app.query(f"{surface}/spec"))["roles"]
+        }
+        app.click(path=row_of["Router"])
         app.tick_ms(16)
         ok(
             f"E: ★★★★★ nothing was added, whatever the row looked like — "
@@ -214,7 +218,7 @@ def body() -> None:
         )
         # ★ And a role the pattern DOES take still lands, so (E) is not a screen
         # that stopped taking cards on descent.
-        app.click(path="lab.palette.role.Peer")
+        app.click(path=row_of["Peer"])
         app.tick_ms(16)
         ok(
             f"E: ★★★★★ while a peer still lands — {len(cards(app, surface))} "

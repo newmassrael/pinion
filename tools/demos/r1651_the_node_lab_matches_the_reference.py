@@ -289,11 +289,12 @@ def body() -> None:
             tag = f"lab.palette.group.{run['label']}"
             if tag not in painted:
                 missing.append(tag)
+        # ★★★★★ R2049 — the ADDRESSES the screen publishes, not ones spelled
+        # here. A walk cannot call the declaration those come from, so it is
+        # handed them: before this round a wrong letter here looked for a mark
+        # that is not there, which reads as *the screen did not paint it*.
         for role in spec["roles"]:
-            for tag in (
-                f"lab.palette.role.{role['name']}",
-                f"lab.palette.swatch.{role['name']}",
-            ):
+            for tag in (role["tag"], role["swatch"]):
                 if tag not in painted:
                     missing.append(tag)
         for tag in ("lab.palette.legend", "lab.palette.discovery.head"):
@@ -450,8 +451,8 @@ def body() -> None:
         # the `lab.palette.discovery` family below, whose member count is the
         # thing that has to move for it.
         for role in spec["roles"]:
-            declared.add(f"lab.palette.role.{role['name']}")
-            declared.add(f"lab.palette.swatch.{role['name']}")
+            declared.add(role["tag"])
+            declared.add(role["swatch"])
         for kind in spec["pin_legend"]:
             declared.add(f"lab.palette.pin.{kind['kind']}")
         for word in spec["protocols"]:
@@ -998,9 +999,14 @@ def body() -> None:
             is what `same_row` below checks and what all three R1651.1 defects
             violated.
             """
+            # ★ R2049 — the role prefix is DERIVED from an address the screen
+            # published rather than spelled here: a role's tag is its prefix
+            # followed by its name, so taking the name off the end recovers the
+            # prefix the paint actually used.
+            role_prefix = spec["roles"][0]["tag"][: -len(spec["roles"][0]["name"])]
             for prefix, verb in (
                 ("lab.rail.", "rail"),
-                ("lab.palette.role.", "role"),
+                (role_prefix, "role"),
                 ("lab.form.add.", "add"),
             ):
                 if tag.startswith(prefix):

@@ -113,9 +113,19 @@ def links_of(app: RpcSubprocess, surface: str) -> list:
 
 
 def add_card(app: RpcSubprocess, surface: str, role: str) -> str:
-    """Press the palette's row for `role` and answer the card it put down."""
+    """Press the palette's row for `role` and answer the card it put down.
+
+    ★ R2049 — the row's address is ASKED of the screen, not spelled here: a
+    walk cannot call the declaration it comes from, and a wrong letter would
+    raise a `KeyError` about a mark the screen is in fact painting.
+    """
     before = set(cards(app, surface))
-    seat = boxes(app)[f"lab.palette.role.{role}"]
+    tag = next(
+        row["tag"]
+        for row in js(app.query(f"{surface}/spec"))["roles"]
+        if row["name"] == role
+    )
+    seat = boxes(app)[tag]
     app.click(at=centre(seat))
     app.tick_ms(16)
     return next(name for name in cards(app, surface) if name not in before)

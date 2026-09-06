@@ -185,12 +185,15 @@ def body() -> None:
         # ⚠ PRESSED, not invoked. Adding a card from the palette is not a wire
         # verb on this screen — it is a row a person presses — so driving it any
         # other way would be asserting about a path a person does not have.
+        # ★ R2049 — the addresses the screen publishes, not a prefix spelled
+        # here. Asked once rather than per tag.
+        offered = {row["tag"] for row in js(app.query(f"{surface}/spec"))["roles"]}
         rows = {
             tag: rect
             for tag, rect in abs_rects_of(
                 app.snapshot(source="paint", viewport=VIEWPORT)
             ).items()
-            if tag.startswith("lab.palette.role.")
+            if tag in offered
         }
         ok(f"E: ★ the palette offers rows to press — {sorted(rows)}", rows)
         press(app, rows[sorted(rows)[0]])

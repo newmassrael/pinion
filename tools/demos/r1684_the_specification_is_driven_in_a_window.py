@@ -121,6 +121,17 @@ def press(tf, tag: str) -> None:
     press_painted_tag(tf, tag, VIEWPORT)
 
 
+def role_tag(tf, name: str) -> str:
+    """The address the screen publishes for that role's palette row.
+
+    ★ R2049 — asked rather than spelled. A walk cannot call the declaration
+    these come from, so it is handed them; a wrong letter written here would aim
+    at a mark that is not there and read as the screen not painting it.
+    """
+    roles = json.loads(tf.query(f"{EXT}/spec"))["roles"]
+    return next(role["tag"] for role in roles if role["name"] == name)
+
+
 def press_wire(tf, frm: str, to: str) -> None:
     """Press the middle of the wire between two cards.
 
@@ -166,7 +177,7 @@ def type_into(tf, tag: str, text: str) -> None:
 
 GESTURES = {
     # a node's life
-    "add a node": lambda tf: press(tf, "lab.palette.role.Responder"),
+    "add a node": lambda tf: press(tf, role_tag(tf, "Responder")),
     "delete a node": lambda tf: (
         press(tf, "lab.node.P-03"),
         press(tf, "lab.inspector.delete"),

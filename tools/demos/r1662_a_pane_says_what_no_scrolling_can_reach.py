@@ -215,10 +215,14 @@ def run(tf: RpcSubprocess) -> None:
     # ── 7. drive the published offset and the mark arrives ───────────────────
     #      The whole point: an offset that has never been scrolled to is a
     #      claim, not a capability.
+    # ★ R2049 — the addresses the screen publishes, not a prefix spelled here.
+    # A walk cannot call the declaration they come from, so it is handed them:
+    # a wrong letter here would find no target and read as *the pane holds no
+    # role row past the fold*.
+    rows = {role["tag"] for role in json.loads(tf.query(f"{EXT}/spec"))["roles"]}
     target = next(
         o for o in away
-        if o["viewport"]["name"] == "lab.palette.body" and o["tag"]
-        and o["tag"].startswith("lab.palette.role.")
+        if o["viewport"]["name"] == "lab.palette.body" and o["tag"] in rows
     )
     # ★ R1714 — the recipe's step for the pane this target is judged against.
     # At this size the window shows the whole layout, so that step is the whole
