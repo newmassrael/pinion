@@ -116,6 +116,17 @@
       ]
     },
     {
+      "name": "debt-a-check-whose-two-sides-share-one-derivation",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links debt-canon-gui-surface-census"
+      ]
+    },
+    {
       "name": "debt-a-checkers-verdict-is-unreadable-more-often-than-it-is-wrong",
       "substituted": false,
       "blocked_by": "cross-repo",
@@ -190,17 +201,6 @@
       "closed_because": "",
       "why": [
         "links analyzer-debt-repayment-loop"
-      ]
-    },
-    {
-      "name": "debt-a-gate-computes-its-expectation-from-the-code-it-checks",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links debt-canon-gui-surface-census"
       ]
     },
     {

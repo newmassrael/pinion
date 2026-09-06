@@ -602,104 +602,160 @@ fn r1663_the_fixed_families_are_the_size_the_specification_gives_them() {
 
 // ── 3. Reachable: a control answers for itself where it was painted ─────────
 
+/// ★★★★★ (R2036) Where a swept control's expected answer COMES FROM.
+///
+/// R1815 found this sweep asserting `LAYERS.position(..).map_or_else(..)` — the
+/// implementation restated as a requirement — so the very defect it existed to
+/// catch was written inside it and it ran green for sixty-odd rounds. The
+/// repair was to move that one expectation to the behaviour canon; what was
+/// missing afterwards is the thing that keeps the class from coming back, which
+/// is that **every** class of control names its source and the count of
+/// [`Self::Code`] is asserted to be zero.
+///
+/// ⚠ The distinction that matters is not "hand-written or derived" — it is
+/// WHICH derivation. Two derivations that can disagree make a check; one
+/// derivation read twice makes a tautology.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Expectation {
+    /// The behaviour canon — what the reference prototype does with this
+    /// control. The strongest source: it is outside this repository entirely.
+    Canon,
+    /// This screen's own published specification table, which the painter and
+    /// the hit test both read but neither one writes.
+    Spec,
+    /// The tag the PAINTER wrote, pressed at the rectangle the LAYOUT produced,
+    /// and compared against what the hit test answers from its own geometry.
+    ///
+    /// Two derivations that can disagree — measured at R2036 by reading both:
+    /// `Hit::at` resolves a message from `contains(list_row(visual), ..)` over
+    /// the kept rows and a byte from `byte_cell(byte)`, never from a tag. So
+    /// this is a cross-check and not the tautology R1815 met, which is the
+    /// measurement that disproved this debt's own claim that "the other loops
+    /// are the same shape".
+    Painter,
+    /// The function under test, restated. A gate like this cannot fail, and the
+    /// assertion below is that nothing here carries it.
+    Code,
+}
+
+/// One class of painted control: the population, the answer each member owes,
+/// where that answer comes from, and how many of them must be on screen.
+///
+/// A table rather than five loops, so that a class added later cannot skip the
+/// declaration — there is nowhere to put it except a row.
+struct Plan {
+    what: &'static str,
+    source: Expectation,
+    /// The tag to press and the answer it owes, for every member on screen.
+    members: Vec<(String, Hit)>,
+    /// The anti-vacuity floor: every loop skips a tag it cannot find, and a
+    /// population of zero passes silently. R1815 added this for the chevrons
+    /// after finding them in no check at all; it is a column now because the
+    /// question is every class's, not that one's.
+    least: usize,
+}
+
 #[test]
 fn r1663_every_painted_control_answers_at_the_centre_of_its_own_rectangle() {
     sweep(|state, shot, _, _, case| {
-        let mut checked = 0;
-        // Message rows.
-        for n in 0..spec::ROWS.len() {
-            let tag = format!("pv.list.row.{n}");
-            let Some(rect) = shot.tags.get(&tag) else {
-                continue;
-            };
-            let (px, py) = centre(*rect);
-            assert_eq!(
-                Hit::at(state, px, py),
-                Hit::Message(n),
-                "{case}: pressing the middle of `{tag}` ({rect:?}) did not answer as itself"
-            );
-            checked += 1;
-        }
-        // Saved-filter chips.
-        for n in 0..spec::SAVED_FILTERS.len() {
-            let tag = format!("pv.filter.saved.{n}");
-            let Some(rect) = shot.tags.get(&tag) else {
-                continue;
-            };
-            let (px, py) = centre(*rect);
-            assert_eq!(
-                Hit::at(state, px, py),
-                Hit::Saved(n),
-                "{case}: pressing the middle of `{tag}` ({rect:?}) did not answer as itself"
-            );
-            checked += 1;
-        }
-        // Decode rows — EVERY one of which selects, layer headings included.
-        //
-        // ★★★★★ R1815 — this expectation used to be
-        // `LAYERS.position(..).map_or_else(|| Hit::Field(path), Hit::Layer)`,
-        // which is the implementation restated as a requirement: it asserted
-        // that a layer heading answers `Layer`, so the very defect this round
-        // repairs was written into the gate meant to catch it. That is why a
-        // sweep pressing the centre of every painted control ran green for
-        // sixty-odd rounds over a row a pointer could not select.
-        //
-        // The contract now comes from the behaviour canon instead of from the
-        // code: the canon selects on every row of the decode tree. A gate whose
-        // expectation is derived from the thing it is checking cannot fail.
-        for (path, ..) in visible_fields(state) {
-            let tag = format!("pv.tree.field.{path}");
-            let Some(rect) = shot.tags.get(&tag) else {
-                continue;
-            };
-            let (px, py) = centre(*rect);
-            assert_eq!(
-                Hit::at(state, px, py),
-                Hit::Field(path.clone()),
-                "{case}: pressing the middle of `{tag}` ({rect:?}) did not answer as itself \
-                 — every row of the decode tree selects, which is what the behaviour canon does"
-            );
-            checked += 1;
-        }
-        // ★★★★★ R1815 — and the fold chevrons, which were painted with a tag of
-        // their own since R1693 and were in NO check here. A control absent
-        // from the swept population is one the sweep's own headline — *every
-        // painted control answers for itself* — is silently false about.
-        let mut chevrons = 0;
-        for (index, (id, _)) in spec::LAYERS.iter().enumerate() {
-            let tag = format!("pv.tree.layer.{id}");
-            let Some(rect) = shot.tags.get(&tag) else {
-                continue;
-            };
-            let (px, py) = centre(*rect);
-            assert_eq!(
-                Hit::at(state, px, py),
-                Hit::Layer(index),
-                "{case}: pressing the middle of `{tag}` ({rect:?}) did not fold its layer"
-            );
-            chevrons += 1;
-            checked += 1;
-        }
-        // ★ Anti-vacuity, because every loop above it skips a tag it cannot
-        // find and a population of zero passes each one. The decode tree is on
-        // screen in every case this sweep runs, so its chevrons are too.
+        let plans = vec![
+            Plan {
+                what: "message rows",
+                source: Expectation::Painter,
+                members: (0..spec::ROWS.len())
+                    .map(|n| (format!("pv.list.row.{n}"), Hit::Message(n)))
+                    .collect(),
+                // A filter can leave the list empty, and that is a case this
+                // sweep drives on purpose.
+                least: 0,
+            },
+            Plan {
+                what: "saved-filter chips",
+                source: Expectation::Painter,
+                members: (0..spec::SAVED_FILTERS.len())
+                    .map(|n| (format!("pv.filter.saved.{n}"), Hit::Saved(n)))
+                    .collect(),
+                least: 1,
+            },
+            Plan {
+                // ★★★★★ R1815 — EVERY row of the decode tree selects, layer
+                // headings included, because that is what the behaviour canon
+                // does. The expectation used to come from `Hit::at`'s own
+                // expression, which asserted that a layer heading answers
+                // `Layer` — the defect, written into its own gate.
+                what: "decode-tree rows",
+                source: Expectation::Canon,
+                members: visible_fields(state)
+                    .into_iter()
+                    .map(|(path, ..)| (format!("pv.tree.field.{path}"), Hit::Field(path)))
+                    .collect(),
+                least: 1,
+            },
+            Plan {
+                // ★ R1815 — the fold chevrons, painted with a tag of their own
+                // since R1693 and in NO check here. A control absent from the
+                // swept population is one the sweep's own headline is silently
+                // false about.
+                what: "fold chevrons",
+                source: Expectation::Spec,
+                members: spec::LAYERS
+                    .iter()
+                    .enumerate()
+                    .map(|(index, (id, _))| (format!("pv.tree.layer.{id}"), Hit::Layer(index)))
+                    .collect(),
+                least: 1,
+            },
+            Plan {
+                what: "byte cells",
+                source: Expectation::Painter,
+                members: (0..spec::SOURCES[0].1)
+                    .map(|byte| (format!("pv.bytes.cell.{byte}"), Hit::Byte(byte)))
+                    .collect(),
+                least: 1,
+            },
+        ];
+
+        // ★★★★★ The assertion this debt closes on: no class takes its answer
+        // from the code the press runs. It is checked per case rather than once
+        // because the table is built inside the sweep, and a table that varied
+        // by case would be a fact worth failing on.
         assert!(
-            chevrons > 0,
-            "{case}: no fold chevron was pressed — the check above is vacuous"
+            plans.iter().all(|p| p.source != Expectation::Code),
+            "{case}: a class whose expected answer is the implementation restated \
+             cannot fail — {:?}",
+            plans
+                .iter()
+                .filter(|p| p.source == Expectation::Code)
+                .map(|p| p.what)
+                .collect::<Vec<_>>()
         );
-        // Byte cells.
-        for byte in 0..spec::SOURCES[0].1 {
-            let tag = format!("pv.bytes.cell.{byte}");
-            let Some(rect) = shot.tags.get(&tag) else {
-                continue;
-            };
-            let (px, py) = centre(*rect);
-            assert_eq!(
-                Hit::at(state, px, py),
-                Hit::Byte(byte),
-                "{case}: pressing the middle of `{tag}` ({rect:?}) did not answer as itself"
+
+        let mut checked = 0;
+        for plan in &plans {
+            let mut pressed = 0;
+            for (tag, want) in &plan.members {
+                let Some(rect) = shot.tags.get(tag) else {
+                    continue;
+                };
+                let (px, py) = centre(*rect);
+                assert_eq!(
+                    Hit::at(state, px, py),
+                    *want,
+                    "{case}: pressing the middle of `{tag}` ({rect:?}) did not answer as \
+                     itself — the expectation comes from {:?}",
+                    plan.source
+                );
+                pressed += 1;
+            }
+            assert!(
+                pressed >= plan.least,
+                "{case}: only {pressed} of the {} {} were on screen, and this class \
+                 owes at least {} — a population of zero passes every assertion above",
+                plan.members.len(),
+                plan.what,
+                plan.least
             );
-            checked += 1;
+            checked += pressed;
         }
         assert!(
             checked >= 20,

@@ -88412,6 +88412,48 @@
         "Cohort loop unchanged at 36. Next: back to the cohort."
       ]
     },
+    "R2036": {
+      "decision_summary": "A gate that will not say where its answer came from can be the defect it was built to catch.\n\nR1815 found this sweep asserting the implementation's own expression as its requirement — a layer heading answers `Layer`, which is exactly the defect the sweep existed to catch — so it ran green for sixty-odd rounds over a row a pointer could not select. That one expectation moved to the behaviour canon. What was missing afterwards is the thing that keeps the class from returning: every class of control naming its source, and the count of code-derived ones asserted to be zero.\n\nThe debt's own broader sentence did not survive being measured. It said the sweep's other four loops are the same shape and right by accident. Reading both sides shows otherwise: the hit test resolves a message from the geometry of the kept rows, a chip from its own rectangle and a byte from its cell, and never consults a tag, while the sweep presses the rectangle the layout produced for the tag the painter wrote. Two derivations that can disagree are a check; the tautology was the single expectation already repaired.",
+      "changes_bullets": [
+        "The sweep's five hand-written loops become one table. Each row carries the population, the answer each member owes, where that answer comes from — the behaviour canon, this screen's specification, the painter's own tag, or the code under test — and an anti-vacuity floor. A class added later cannot skip the declaration, there being nowhere to put it except a row.",
+        "The debt's closing condition was prose and is now an assertion: no class may declare the code under test as its source. R1815's vacuity check, added for one class, becomes a column, because the question belongs to every class rather than to the one that was caught; only the message rows carry a floor of zero, and the reason is written beside it — a filter can legitimately empty that list.",
+        "The type that names the sources carries the distinction it exists for: not hand-written against derived, but WHICH derivation, since two that can disagree make a check and one read twice makes a tautology."
+      ],
+      "verification_bullets": [
+        "89 tests passed and 0 failed on the screen's own package. The new assertion was driven RED by flipping one class to the code-derived source, and it names the class it caught. Clippy on the changed package rc=0, `cargo fmt --all --check` rc=0, and the screen's walk PASSES at 63.24s.",
+        "Measured rather than inferred, by opening both sides: the hit test resolves a message through the geometry of the kept rows, a saved chip through its own rectangle and a byte through its cell, so no tag enters its answer; the fold chevrons share the specification table with the sweep but reach it by a different key, the row's path against the tag's id. That is what disproves this debt's claim that the remaining loops repeat the one it was opened for."
+      ],
+      "impact_refs": [
+        "5.35",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "The debt's later and wider section is carried rather than closed. R1816 widened it to the general class — a check whose two sides move together cannot see the shared thing move — with three measured sightings: this sweep's expectation, an equality between two implementations that were identically wrong, and one implementation read from two call sites where a two-pixel move satisfied both containment and agreement. The stated closing condition covered one sweep, so closing on it would have deleted those sightings along with the property nobody asserts yet: that a row's wire action and its press do the same thing.",
+        "They move to a new debt in the family, with the first measurement named — how many such sites there are, which is a count nobody has taken and which decides whether the repair is a tool or a property.",
+        "⚠ And the source column is itself a hand-written claim. That is written into the new debt too: the declaration is visible and reviewable, and it is not derived.",
+        "Cohort loop 36 -> 35."
+      ],
+      "publishable_decision_summary": "A gate that will not say where its answer came from can be the defect it was built to catch.\n\nR1815 found this sweep asserting the implementation's own expression as its requirement — a layer heading answers `Layer`, which is exactly the defect the sweep existed to catch — so it ran green for sixty-odd rounds over a row a pointer could not select. That one expectation moved to the behaviour canon. What was missing afterwards is the thing that keeps the class from returning: every class of control naming its source, and the count of code-derived ones asserted to be zero.\n\nThe debt's own broader sentence did not survive being measured. It said the sweep's other four loops are the same shape and right by accident. Reading both sides shows otherwise: the hit test resolves a message from the geometry of the kept rows, a chip from its own rectangle and a byte from its cell, and never consults a tag, while the sweep presses the rectangle the layout produced for the tag the painter wrote. Two derivations that can disagree are a check; the tautology was the single expectation already repaired.",
+      "publishable_changes_bullets": [
+        "The sweep's five hand-written loops become one table. Each row carries the population, the answer each member owes, where that answer comes from — the behaviour canon, this screen's specification, the painter's own tag, or the code under test — and an anti-vacuity floor. A class added later cannot skip the declaration, there being nowhere to put it except a row.",
+        "The debt's closing condition was prose and is now an assertion: no class may declare the code under test as its source. R1815's vacuity check, added for one class, becomes a column, because the question belongs to every class rather than to the one that was caught; only the message rows carry a floor of zero, and the reason is written beside it — a filter can legitimately empty that list.",
+        "The type that names the sources carries the distinction it exists for: not hand-written against derived, but WHICH derivation, since two that can disagree make a check and one read twice makes a tautology."
+      ],
+      "publishable_verification_bullets": [
+        "89 tests passed and 0 failed on the screen's own package. The new assertion was driven RED by flipping one class to the code-derived source, and it names the class it caught. Clippy on the changed package rc=0, `cargo fmt --all --check` rc=0, and the screen's walk PASSES at 63.24s.",
+        "Measured rather than inferred, by opening both sides: the hit test resolves a message through the geometry of the kept rows, a saved chip through its own rectangle and a byte through its cell, so no tag enters its answer; the fold chevrons share the specification table with the sweep but reach it by a different key, the row's path against the tag's id. That is what disproves this debt's claim that the remaining loops repeat the one it was opened for."
+      ],
+      "publishable_impact_refs": [
+        "5.35",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The debt's later and wider section is carried rather than closed. R1816 widened it to the general class — a check whose two sides move together cannot see the shared thing move — with three measured sightings: this sweep's expectation, an equality between two implementations that were identically wrong, and one implementation read from two call sites where a two-pixel move satisfied both containment and agreement. The stated closing condition covered one sweep, so closing on it would have deleted those sightings along with the property nobody asserts yet: that a row's wire action and its press do the same thing.",
+        "They move to a new debt in the family, with the first measurement named — how many such sites there are, which is a count nobody has taken and which decides whether the repair is a tool or a property.",
+        "⚠ And the source column is itself a hand-written claim. That is written into the new debt too: the declaration is visible and reviewable, and it is not derived.",
+        "Cohort loop 36 -> 35."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
