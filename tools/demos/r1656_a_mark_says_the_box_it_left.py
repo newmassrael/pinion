@@ -36,6 +36,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     assert_eq,
     call,
+    form_part_prefixes,
     resize_and_settle,
     run_demo,
     walk_nodes,
@@ -116,10 +117,14 @@ def run(tf: RpcSubprocess) -> None:
     #      the sweep that only visits the opening screen visits the one state
     #      nobody works in.
     tf.invoke(f"{EXT}/select", "R-01")
+    # ★ R2054 — the screen says where its form parts are addressed; this walk
+    # does not spell that address, because a wrong letter here would look for a
+    # mark that is not there and read as the screen failing to paint it.
+    item = form_part_prefixes(tf, ext=EXT)["item"]
     for _ in range(6):
         # Through the affordance the screen offers, not through a back door: a
         # state a demo invents can be one the screen cannot reach.
-        tf.click(path="lab.form.item.listen.endpoints.add")
+        tf.click(path=f"{item}listen.endpoints.add")
     tf.invoke(f"{EXT}/set_field", "id=a-considerably-longer-identifier-than-fits")
     grown = containment(tf)
     assert grown["marks"] >= out["marks"], (

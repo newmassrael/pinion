@@ -4786,6 +4786,59 @@ def address_prefix(rows: Any, *, key: str = "key", tag: str = "tag") -> str:
     return address[: len(address) - len(own)]
 
 
+def form_part_prefixes(tf, *, ext: str = "/external") -> dict:
+    """The prefix each PART of a settings-form row is addressed under.
+
+    ★★★★★ R2054 — the walks' half of the address declaration. A form row is not
+    one mark: the framework's painter puts the value's control, the removal
+    seat, the applies badge, the source badge, the roster's items and a dozen
+    more under `<the screen's form prefix>.<part>.<row key>`. A walk is Python
+    and cannot call that composition, so it asks the screen, which derives the
+    map from the one declaring site the paint itself composes from.
+
+    ⚠ This is what a walk needs and [`address_prefix`] is not: that recovers a
+    prefix from a roster of rows that EXIST, and most of what a walk about a
+    form part does is build the address of a mark to assert is *absent*, or one
+    for a row a chip is about to add. There is no published row to take a key
+    off the end of, so the prefix has to come as a prefix.
+
+    Returns the screen's map as published — part word to prefix. A part the
+    screen does not address is a `KeyError` naming the word, which is the answer
+    worth having: the previous shape was a spelled literal, and a wrong letter
+    there composed an address nothing carries, so the walk read "the screen did
+    not paint it" and said so.
+
+    ⚠ Goes through [`screen_spec`] rather than reading the path itself, because
+    a screen's `spec` comes back as a mapping from one screen and as a string
+    holding one from another. R2050 and R2051 each wrote a bare parse and each
+    was wrong on one of the two screens; that difference belongs to one place,
+    and this is a caller of it rather than a second copy of the rule.
+    """
+    return screen_spec(tf, ext)["form_parts"]
+
+
+def form_part_tag(tf, part: str, key: str, *, ext: str = "/external") -> str:
+    """The address one part of one form row is painted under — the SCREEN's.
+
+    [`form_part_prefixes`] with the row's key already appended, which is what
+    almost every caller wants: a walk asserting about a row's removal seat, its
+    provenance badge, an element of its list or the seat that grows that list
+    names the part and the row and never the shape of the address between them.
+
+    ⚠ Lifted at FOUR copies written in one round (R2054's own closing audit
+    found them). Each was the same one-line body under a different local name,
+    which is mechanical wiring with no per-demo opinion in it — the case this
+    workspace lifts unconditionally, and the case a round is most likely to
+    create because each copy looks like one line at the time.
+
+    `ext` is a keyword because one walk drives a section BOTH mounted in the
+    host application and alone in its own process: the two reach the same screen
+    by different addresses, so the read path is that walk's parameter and cannot
+    be a constant here.
+    """
+    return f"{form_part_prefixes(tf, ext=ext)[part]}{key}"
+
+
 def access_node_by_tag(result: Any, tag: str) -> Optional[dict]:
     """The `scene/access` node carrying this `tag`, or `None` when absent.
 

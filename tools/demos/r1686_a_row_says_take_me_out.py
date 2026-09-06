@@ -55,6 +55,7 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     assert_router_press_moves,
     find_by_tag,
+    form_part_prefixes,
     run_demo,
 )
 
@@ -82,6 +83,20 @@ def rects(tf):
 
 def form(tf):
     return json.loads(q(tf, "form"))
+
+
+def parts(tf) -> dict:
+    """The prefix each part of a form row is addressed under — the SCREEN's.
+
+    ★ R2054 — asked rather than spelled. A walk cannot call the composition the
+    framework's painter uses, and a wrong letter written here looks for a mark
+    that is not there, which reads as the screen not painting it.
+
+    Through the harness, because a screen's `spec` comes back as a mapping from
+    one screen and as a string holding one from another, and that difference
+    belongs in one place rather than in each walk that reads it.
+    """
+    return form_part_prefixes(tf, ext=EXT)
 
 
 def control(tf, key: str) -> str:
@@ -225,10 +240,11 @@ def assert_chips_answer_for_themselves(tf) -> None:
     lesson: a gate placed where the last defect was finds only the last defect.
     """
     painted = rects(tf)
+    add = parts(tf)["add"]
     for tag, box in sorted(painted.items()):
-        if not tag.startswith("lab.form.add."):
+        if not tag.startswith(add):
             continue
-        key = tag[len("lab.form.add.") :]
+        key = tag[len(add) :]
         at = (box[0] + box[2] // 2, box[1] + box[3] // 2)
         assert_eq(
             resolves(tf, at),
@@ -306,15 +322,16 @@ def body() -> None:
         # row with neither seat is the failure and a row with the wrong one is a
         # press the form refuses.
         derived = {field["key"] for field in form(tf) if field["source"]}
+        seat_of = parts(tf)
         for key in opening:
             want = "author" if key in derived else "remove"
             other = "remove" if key in derived else "author"
-            assert f"lab.form.{want}.{key}" in painted, (
+            assert f"{seat_of[want]}{key}" in painted, (
                 f"★★ every shown row offers a seat, and {key} has no {want} seat — "
                 "a seat on some rows is a screen that decides for itself which "
                 "configuration a person is allowed to shrink"
             )
-            assert f"lab.form.{other}.{key}" not in painted, (
+            assert f"{seat_of[other]}{key}" not in painted, (
                 f"★★ and only ONE — {key} offers both acts at the same edge, so "
                 "a press there means whichever the painter drew last"
             )
@@ -323,7 +340,7 @@ def body() -> None:
         seats = [
             t.split(".", 3)[3]
             for t in painted
-            if t.startswith("lab.form.remove.") or t.startswith("lab.form.author.")
+            if t.startswith(seat_of["remove"]) or t.startswith(seat_of["author"])
         ]
         assert_eq(
             sorted(seats),
@@ -332,10 +349,10 @@ def body() -> None:
         )
 
         # ── (B) the seat is hittable, and hits nothing else ─────────
-        row_seat = painted[f"lab.form.remove.{ROW}"]
+        row_seat = painted[f"{seat_of['remove']}{ROW}"]
         assert row_seat[2] > 0 and row_seat[3] > 0, "the seat has a size"
         control_box = painted[control(tf, ROW)]
-        applies = painted[f"lab.form.applies.{ROW}"]
+        applies = painted[f"{seat_of['applies']}{ROW}"]
         assert not overlaps(row_seat, control_box), (
             f"the seat {row_seat} is not on the control {control_box}"
         )
@@ -362,7 +379,7 @@ def body() -> None:
         # ── (C) press it ───────────────────────────────────────────
         before = form(tf)
         assert_router_press_moves(
-            tf, f"lab.form.remove.{ROW}", lambda: q(tf, "form"), "the row goes"
+            tf, f"{seat_of['remove']}{ROW}", lambda: q(tf, "form"), "the row goes"
         )
         after = keys(tf)
         assert ROW not in after, "★★ the row is gone, caused by a pointer press"
@@ -372,17 +389,17 @@ def body() -> None:
             [f["key"] for f in before if f["key"] != ROW],
             "and the rest kept their order",
         )
-        assert f"lab.form.remove.{ROW}" not in rects(tf), "its seat went with it"
+        assert f"{seat_of['remove']}{ROW}" not in rects(tf), "its seat went with it"
         assert ROW in set(json.loads(q(tf, "catalogue"))["offered"]), (
             "★ and the chip that puts it back is offered — the key is one this "
             "kind can have, which is why it opened holding it"
         )
-        scroll_to(tf, f"lab.form.add.{ROW}")
-        assert f"lab.form.add.{ROW}" in rects(tf), "and it is painted, in reach"
+        scroll_to(tf, f"{seat_of['add']}{ROW}")
+        assert f"{seat_of['add']}{ROW}" in rects(tf), "and it is painted, in reach"
         assert_chips_answer_for_themselves(tf)
 
         # ── (D) put it back ────────────────────────────────────────
-        press(tf, f"lab.form.add.{ROW}")
+        press(tf, f"{seat_of['add']}{ROW}")
         assert_eq(
             keys(tf),
             opening,
@@ -409,9 +426,9 @@ def body() -> None:
         moved = "false" if held == "true" else "true"
         tf.invoke(f"{EXT}/set_field", f"{ROW}={moved}")
         assert row_value(tf, ROW) != held, "the value moved"
-        press(tf, f"lab.form.remove.{ROW}")
-        scroll_to(tf, f"lab.form.add.{ROW}")
-        press(tf, f"lab.form.add.{ROW}")
+        press(tf, f"{seat_of['remove']}{ROW}")
+        scroll_to(tf, f"{seat_of['add']}{ROW}")
+        press(tf, f"{seat_of['add']}{ROW}")
         assert_eq(
             row_value(tf, ROW),
             held,
@@ -428,10 +445,10 @@ def body() -> None:
         type_keys(tf, typed)
         press(tf, "lab.inspector.rename")
         assert typed in keys(tf), "the typed path is a row"
-        assert f"lab.form.remove.{typed}" in rects(tf), "with a seat like any other"
-        press(tf, f"lab.form.remove.{typed}")
+        assert f"{seat_of['remove']}{typed}" in rects(tf), "with a seat like any other"
+        press(tf, f"{seat_of['remove']}{typed}")
         assert typed not in keys(tf), "and the seat takes it away"
-        assert f"lab.form.add.{typed}" not in rects(tf), (
+        assert f"{seat_of['add']}{typed}" not in rects(tf), (
             "★★★ and it leaves NO chip. The offered set is a fact about the "
             "node's kind — the keys worth reaching for — not a record of what "
             "this one node has been through; a form that started offering a "
@@ -451,7 +468,7 @@ def body() -> None:
         tf.invoke(f"{EXT}/select", "P-03")
         ring_before = pin_ring(tf, "P-03")
         assert ring_before is not None, "a listening card's accept pin has a ring"
-        press(tf, "lab.form.remove.listen.endpoints")
+        press(tf, f"{seat_of['remove']}listen.endpoints")
         assert "listen.endpoints" not in keys(tf), "the row went"
         assert "listen.endpoints" not in q(tf, "document"), (
             "★★ and it left the deployable document — taking a row out is a "
@@ -491,7 +508,7 @@ def body() -> None:
             "the field is open on the row",
         )
         type_keys(tf, "x")
-        press(tf, f"lab.form.remove.{typed_row}")
+        press(tf, f"{seat_of['remove']}{typed_row}")
         assert_eq(
             json.loads(q(tf, "editing"))["target"],
             None,
@@ -499,8 +516,8 @@ def body() -> None:
             "row that is gone is a box aimed at nothing",
         )
         assert typed_row not in keys(tf), "and the row went"
-        scroll_to(tf, f"lab.form.add.{typed_row}")
-        press(tf, f"lab.form.add.{typed_row}")
+        scroll_to(tf, f"{seat_of['add']}{typed_row}")
+        press(tf, f"{seat_of['add']}{typed_row}")
         assert_eq(
             row_value(tf, typed_row),
             opened_as,
@@ -509,7 +526,7 @@ def body() -> None:
 
         # ── (I) a screen reader is told what the seat does ─────────
         nodes = {n["tag"]: n for n in access(tf) if n.get("tag")}
-        seat = nodes.get(f"lab.form.remove.{ROW}")
+        seat = nodes.get(f"{seat_of['remove']}{ROW}")
         assert seat is not None, "the seat is in the access tree"
         assert_eq(seat["role"], "button", "as a button")
         assert_eq(

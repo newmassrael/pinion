@@ -1,0 +1,123 @@
+# R2054 — how many sites in the walk corpus SPELL a painted address
+# instead of asking the screen for it, by family stem.
+#
+# The gate allows a count to FALL or hold, refuses a rise, and refuses a
+# family stem it has never seen. A family at 0 is PINNED there: it was
+# converted, and a speller reappearing in it is a regression.
+#
+# The fix at a site is to read the address off the wire — a screen
+# publishes its roles' rows, its form rows' controls, the prefix each
+# part of a form row is addressed under, and its rail's seats.
+#
+# Rewritten by `tools/painted_addresses.py --write-budget`; do not
+# hand-edit.
+admin.permissions	1
+bars.bar	2
+bars.xlabel	2
+card.alarms	2
+chart.area	3
+chart.axis	9
+chart.bar	1
+chart.box	16
+chart.candle	15
+chart.cap	6
+chart.colorbar	8
+chart.grid	14
+chart.inspect	53
+chart.label	19
+chart.legend	13
+chart.median	9
+chart.ohlc	9
+chart.outlier	9
+chart.point	13
+chart.ring	2
+chart.series	43
+chart.slice	7
+chart.spoke	3
+chart.tile	7
+chart.violin	8
+chart.whisker	5
+chart.wick	6
+chart.xlabel	3
+connect.endpoints	2
+detail.input_default	2
+detail.resolved_input	1
+dev.cell	1
+discovery.multicast	3
+expanded.struct	3
+hist.bar	3
+histogram.axis	6
+histogram.bar	14
+histogram.inspect	12
+item.bake	1
+item.dark	2
+item.ship	1
+item.toggle_window	2
+kind.elem	1
+kp.column	2
+kp.detail	1
+kp.list	1
+lab.crumb	6
+lab.faults	4
+lab.form	0
+lab.frame	10
+lab.gate	4
+lab.hint	2
+lab.inspector	41
+lab.link	12
+lab.node	112
+lab.palette	44
+lab.pin	39
+lab.rail	9
+lab.reset	22
+lab.toast	4
+lab.toolbar	73
+line.area	1
+line.focus	7
+line.series	7
+listen.endpoints	5
+lv.column	2
+lv.detail	2
+lv.list	1
+lv.severity	1
+modified.elem	7
+name.elem	1
+no.such	6
+nodegroups.frame	3
+nodegroups.node	6
+nodegroups.wire	1
+origin.l3	1
+profile.series	2
+pv.appbar	2
+pv.bytes	6
+pv.context	4
+pv.filter	34
+pv.list	30
+pv.reassembly	2
+pv.tree	19
+records.row	2
+scatter.legend	1
+scatter.point	6
+share.slice	5
+shell.appbar	3
+shell.carry	13
+shell.palette	33
+shell.preset	1
+shell.settings	16
+shell.subbar	6
+struct_modified.struct	4
+struct_summary.struct	1
+throughput.series	3
+timeline.axis	3
+timeline.grid	1
+timeline.lane	6
+timeline.playhead	4
+timeline.tick	1
+topology.node	3
+topology.wire	1
+transport.link	8
+transport.unicast	8
+trend.label	1
+value.elem	10
+vn.sprite	2
+zoom.block	1

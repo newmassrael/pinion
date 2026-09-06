@@ -1977,6 +1977,30 @@ else
     ok "the gated-doc-link gate passes its own tests" "FAIL" "pass"
 fi
 
+# ★★★★★ R2054 — the walk corpus's address ratchet is wired, and so is its own
+# selftest, asserted apart for the reason the prose gate's two are.
+#
+# This is the gate that covers what every OTHER address gate in this tree cannot
+# see. The five instalments before R2054 each left one, and every one of them was
+# a Rust test reading Rust sources with a compile-time include — so 93 sites in
+# Python stood behind no gate at all while five rounds recorded that the family
+# was gated. A gate that covers other gates' blind spot is exactly the one whose
+# removal nobody would notice, which is what this assertion is for.
+#
+# ⚠ Its `--selftest` carries a property `--check` cannot: that a family pinned at
+# zero is spelled nowhere. Dropping just that line would leave a step that still
+# prints and still exits 0 while a converted family quietly re-acquired one.
+hook_addr_check="$(grep -c 'painted_addresses.py" --check' "$repo_root/.githooks/pre-push")"
+hook_addr_self="$(grep -c 'painted_addresses.py" --selftest' "$repo_root/.githooks/pre-push")"
+ok "the push gate refuses a walk that spells a painted address" \
+   "$hook_addr_check" "1"
+ok "and runs that ratchet's own selftest first" "$hook_addr_self" "1"
+if python3 "$repo_root/tools/painted_addresses.py" --selftest >/dev/null 2>&1; then
+    ok "the painted-address ratchet passes its own tests" "pass" "pass"
+else
+    ok "the painted-address ratchet passes its own tests" "FAIL" "pass"
+fi
+
 # ── R1791: the impact-ref guard is itself guarded ───────────────────────────
 #
 # ★ `tools/impact_refs.py` exists because a prescription nobody executes is not

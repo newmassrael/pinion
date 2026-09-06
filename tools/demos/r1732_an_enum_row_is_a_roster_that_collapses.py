@@ -78,6 +78,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    form_part_tag,
     run_demo,
 )
 
@@ -115,6 +116,20 @@ def control_of(app: RpcSubprocess, key: str) -> str:
     here would aim at a mark that is not there.
     """
     return next(row["control"] for row in qj(app, "form") if row["key"] == key)
+
+
+def part_tag(app: RpcSubprocess, part: str, key: str) -> str:
+    """The address that PART of a form row is painted under — the SCREEN's.
+
+    ★★★★★ R2054 — [`control_of`]'s sibling for everything a row is besides its
+    control. An enum row is four marks (the read-out, the arrow, the roster and
+    an option per word), and this walk asserts about all of them; it now names
+    the part and is handed the prefix the paint composed from.
+
+    ⚠ Named `part_tag` and not `part` on purpose: `part` is a loop variable in
+    section A, over the reviewed specification's own list of a row's parts.
+    """
+    return form_part_tag(app, part, key, ext=EXT)
 
 
 def inspector_spec() -> dict:
@@ -209,13 +224,13 @@ def section_a(app: RpcSubprocess, spec: dict, key: str) -> None:
 
     rects = abs_rects_of(app.snapshot(source="paint"))
     for part in spec["enum_row"]["canon"]:
-        tag = f"lab.form.{part['key']}.{key}"
+        tag = part_tag(app, part["key"], key)
         ok(f"A: the row's {part['key']} is painted at {tag}", tag in rects)
     # ★ And the collapsed control holds them: the arrow and the word are INSIDE
     # the box, which is the property a chip row could not have at any length.
     box = rects[control_of(app, key)]
     for inner in ("shown", "pick"):
-        r = rects[f"lab.form.{inner}.{key}"]
+        r = rects[part_tag(app, inner, key)]
         ok(
             f"A: ★★ the {inner} lies inside the control's own box",
             r[0] >= box[0] and r[0] + r[2] <= box[0] + box[2],
@@ -336,9 +351,9 @@ def section_c(app: RpcSubprocess, key: str) -> None:
 
         rects = abs_rects_of(app.snapshot(source="paint"))
         for word in picking["options"]:
-            ok(f"C: the roster paints {word}", f"lab.form.option.{key}.{word}" in rects)
+            ok(f"C: the roster paints {word}", part_tag(app, "option", f"{key}.{word}") in rects)
         wanted = next(w for w in picking["options"] if w != held)
-        rect = rects[f"lab.form.option.{key}.{wanted}"]
+        rect = rects[part_tag(app, "option", f"{key}.{wanted}")]
         hand.move((rect[0] + rect[2] / 2, rect[1] + rect[3] / 2))
         hand.press()
         hand.release()
@@ -353,11 +368,11 @@ def section_c(app: RpcSubprocess, key: str) -> None:
         ok(
             "C: ★★ the roster is gone from the PAINT too, not only from the "
             "state -- an option nobody can see must not still take a press",
-            f"lab.form.option.{key}.{wanted}" not in rects,
+            part_tag(app, "option", f"{key}.{wanted}") not in rects,
         )
         ok(
             "C: ★ and the row still shows exactly one control, collapsed",
-            f"lab.form.pick.{key}" in rects and f"lab.form.shown.{key}" in rects,
+            part_tag(app, "pick", key) in rects and part_tag(app, "shown", key) in rects,
         )
 
 
@@ -413,7 +428,7 @@ def section_e(app: RpcSubprocess, key: str) -> None:
     ok(
         "E: ★ the arrow is NOT announced separately -- it is the control's own, "
         "and a node for it would read the same act out twice on every focus move",
-        f"lab.form.pick.{key}" not in tree,
+        part_tag(app, "pick", key) not in tree,
     )
 
     app.invoke(f"{EXT}/pick", key)
@@ -424,13 +439,13 @@ def section_e(app: RpcSubprocess, key: str) -> None:
     assert_eq(control.get("expanded"), True, "E: opening says so")
     assert_eq(
         control.get("controls"),
-        f"lab.form.roster.{key}",
+        part_tag(app, "roster", key),
         "E: ★★ and NAMES the roster it opened, so a reader can go to it",
     )
-    roster = tree[f"lab.form.roster.{key}"]
+    roster = tree[part_tag(app, "roster", key)]
     assert_eq(roster["role"], "listbox", "E: the roster is a listbox")
     for word in qj(app, "picking")["options"]:
-        option = tree[f"lab.form.option.{key}.{word}"]
+        option = tree[part_tag(app, "option", f"{key}.{word}")]
         assert_eq(option["role"], "option", f"E: {word} announces as an option")
         assert_eq(
             option.get("selected"),

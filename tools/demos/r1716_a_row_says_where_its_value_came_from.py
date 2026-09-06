@@ -80,6 +80,8 @@ from rpc_verify import (  # noqa: E402
     access_node_by_tag,
     assert_action_refused,
     assert_eq,
+    form_part_prefixes,
+    form_part_tag,
     run_demo,
     screen_spec,
 )
@@ -206,14 +208,19 @@ def c_taking_a_row_over_is_announced(tf) -> None:
         "C: and it reads as edited, which a derived row never can",
     )
     seats = rects(tf)
+    # ★ R2054 — the screen says where each part of a row is addressed. These
+    # three readings are about a mark being ABSENT, which is the case a spelled
+    # address is worst at: a wrong letter makes the absence true for a reason
+    # that has nothing to do with the screen.
+    part = form_part_prefixes(tf, ext=EXT)
     ok(
         "C: the seat on the row changed act — it offers to remove now, not to "
         "take over",
-        "lab.form.remove.mode" in seats and "lab.form.author.mode" not in seats,
+        f"{part['remove']}mode" in seats and f"{part['author']}mode" not in seats,
     )
     ok(
         "C: and the source badge is gone with it",
-        "lab.form.source.mode" not in seats,
+        f"{part['source']}mode" not in seats,
     )
     assert_action_refused(
         lambda: tf.invoke(f"{EXT}/author_field", "mode"),
@@ -398,7 +405,7 @@ def f_the_document_carries_what_belongs_in_it(tf) -> None:
 
 def g_the_seat_answers_a_real_press(tf) -> None:
     banner("G — the seat at the row's edge, through the router")
-    seat = rects(tf)["lab.form.author.host"]
+    seat = rects(tf)[form_part_tag(tf, "author", "host", ext=EXT)]
     centre = (seat[0] + seat[2] // 2, seat[1] + seat[3] // 2)
     resolved = tf.invoke(f"{EXT}/point", f"{centre[0]},{centre[1]}")
     assert_eq(

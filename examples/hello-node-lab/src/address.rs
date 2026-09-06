@@ -95,9 +95,15 @@ pub const FORM_ASIDE_TEMPLATE: &str = "lab.form.aside.{}";
 /// cannot ask it without re-spelling its vocabulary. What the gate holds is
 /// that every template below names a part in this roster, so the two cannot
 /// disagree about a word.
+/// ⚠ `toggle` is in this roster and the painter no longer paints it — R1837
+/// took the part with the affordance it named. It stays because the screen's
+/// own reference walk still DECLARES it, and this roster is what is addressed
+/// rather than what is drawn; dropping it would leave that walk spelling a
+/// prefix nothing hands it, which is the defect this list exists to remove.
 pub const FORM_PARTS: &[&str] = &[
     "control", "row", "key", "type", "said", "applies", "source", "aside", "defect", "remove",
     "author", "disown", "add", "item", "option", "step", "shown", "pick", "switch", "roster",
+    "toggle",
 ];
 
 /// Every declared template beside the part word it is for.

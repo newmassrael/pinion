@@ -58,6 +58,8 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     access_node_by_tag,
     assert_eq,
+    form_part_prefixes,
+    form_part_tag,
     run_demo,
     voice_defects,
     voice_partition_sum,
@@ -289,9 +291,12 @@ def body() -> None:
         #      The form's description regions are exactly that case, and the
         #      census must NOT report them.
         access = tf.request("scene/access").result
-        described = [
-            n for n in access["nodes"] if n["tag"].startswith("lab.form.said.")
-        ]
+        # ★ R2054 — the prefix comes from the screen. This reading is a FILTER,
+        # which is where a spelled prefix fails most quietly: a wrong letter
+        # selects nothing and the assertion below has no population to be true
+        # or false about.
+        said = form_part_prefixes(tf, ext=EXT)["said"]
+        described = [n for n in access["nodes"] if n["tag"].startswith(said)]
         assert described, "the form publishes description regions"
         for node in described:
             assert node["tag"] not in rows, (
@@ -351,7 +356,7 @@ def body() -> None:
         # toggle — was caught by nothing, because none of the five opening rows
         # is a boolean. So the row is ADDED, from the chip that offers it.
         boolean_key = "timestamping.enabled"
-        press(tf, f"lab.form.add.{boolean_key}")
+        press(tf, form_part_tag(tf, "add", boolean_key, ext=EXT))
         keys = {row["key"] for row in json.loads(q(tf, "form"))}
         assert boolean_key in keys, f"the chip added the row: {sorted(keys)}"
         access = tf.request("scene/access").result

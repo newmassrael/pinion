@@ -47,6 +47,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    form_part_tag,
     press_painted_tag,
     run_demo,
 )
@@ -128,6 +129,19 @@ def control_tag(tf, key: str) -> str:
     """
     fields = json.loads(tf.query(f"{EXT}/spec"))["fields"]
     return next(field["control"] for field in fields if field["key"] == key)
+
+
+def part_tag(tf, part: str, key: str) -> str:
+    """The address that PART of a form row is painted under — the SCREEN's.
+
+    ★★★★★ R2054 — the other half of [`control_tag`]. A row is not one mark: the
+    seat that removes it, the seat that takes it over, an element of its list
+    and the seat that grows that list are all separately addressed, and this
+    table drove four of them by spelling the address out. The screen composes
+    them from one declaration and publishes the prefix each part is addressed
+    under, so an operation names the part and the key and never the shape.
+    """
+    return form_part_tag(tf, part, key, ext=EXT)
 
 
 def role_tag(tf, name: str) -> str:
@@ -217,23 +231,27 @@ GESTURES = {
     # made that key precise, and the copy went stale: the same shape as R1688's
     # hand-held seat list, one level out in the demo.
     "add a field from the catalogue": lambda tf: press(
-        tf, "lab.form.add." + catalogue_key(tf)
+        tf, part_tag(tf, "add", catalogue_key(tf))
     ),
     "add a field by typing its key": lambda tf: type_into(
         tf, "lab.inspector.addkey", "transport.unicast.lowlatency"
     ),
-    "edit a field": lambda tf: press(tf, "lab.form.item.listen.endpoints.add"),
+    "edit a field": lambda tf: press(
+        tf, part_tag(tf, "item", "listen.endpoints.add")
+    ),
     # ★★ R1686 — the seat at the trailing edge of a row's key line. This row
     # read `gesture: false` from R1677 until now: the wire could take a row out
     # and the screen offered no way to, which the table was written to make
     # impossible to forget.
     "remove a field": lambda tf: press(
-        tf, "lab.form.remove.admin.permissions.write"
+        tf, part_tag(tf, "remove", "admin.permissions.write")
     ),
     # ★★★ R1716 — the same edge of a row nobody wrote: the seat takes the value
     # OVER. `mode` is worked out from the role on every card, so it is the row
     # this is always available on.
-    "take a derived field over": lambda tf: press(tf, "lab.form.author.mode"),
+    "take a derived field over": lambda tf: press(
+        tf, part_tag(tf, "author", "mode")
+    ),
     # ★★★ R1684 — the launch gate, closed by a person. The stepper clamps at the
     # field's ceiling, correctly, so the only way past it is to type — which is
     # why this row read `gesture: false` until the form's rows learned to be
@@ -433,7 +451,7 @@ def body() -> None:
         )
 
         # The same field, a different row, a different shape: a list ELEMENT.
-        press(tf, "lab.form.item.listen.endpoints.0")
+        press(tf, part_tag(tf, "item", "listen.endpoints.0"))
         editing = json.loads(q(tf, "editing"))
         assert_eq(
             editing["target"],

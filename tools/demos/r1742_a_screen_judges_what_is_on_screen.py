@@ -102,6 +102,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     address_prefix,
     assert_eq,
+    form_part_tag,
     resize_and_settle,
     run_demo,
     without_extent,
@@ -232,6 +233,19 @@ def control_of(app: RpcSubprocess, key: str, at: str) -> str:
     # screen by different addresses, which is the whole of section E.
     rows = json.loads(app.query(f"{at}/form"))
     return next(row["control"] for row in rows if row["key"] == key)
+
+
+def part_tag(app: RpcSubprocess, part: str, key: str, at: str) -> str:
+    """The address that PART of a form row is painted under — the SCREEN's.
+
+    ★★★★★ R2054 — [`control_of`]'s sibling for a row's other parts: the chip
+    that offers a configuration path, and the marks the reviewed specification
+    fixes for an enumeration row and its roster. `at` is the read path for the
+    same reason it is there — this walk drives the section mounted in the host
+    AND alone in its own process, and the two reach the same screen by
+    different addresses.
+    """
+    return form_part_tag(app, part, key, ext=at)
 
 
 def section_a(app: RpcSubprocess) -> None:
@@ -396,8 +410,9 @@ def section_c(app: RpcSubprocess) -> str:
 
     # The row: reach the palette chip that offers this configuration path — it
     # is below the fold on the page the tool gives the lab — and press it.
-    reveal(app, f"lab.form.add.{key}")
-    press_tag(app, f"lab.form.add.{key}")
+    chip = part_tag(app, "add", key, f"/{tag_of(app)}{EXT}")
+    reveal(app, chip)
+    press_tag(app, chip)
     surfaces = lab_surfaces(app)
     ok(
         f"C: ★★ pressing the chip that offers `{key}` puts the specified row "
@@ -538,9 +553,9 @@ def section_d(app: RpcSubprocess, key: str) -> None:
     for surface, said in published.items():
         for part in said["canon"]:
             if surface == "enum_row":
-                wanted = f"lab.form.{part['key']}.{key}"
+                wanted = part_tag(app, part["key"], key, f"/{tag}{EXT}")
             elif surface == "enum_roster":
-                wanted = f"lab.form.option.{key}.{part['key']}"
+                wanted = part_tag(app, "option", f"{key}.{part['key']}", f"/{tag}{EXT}")
             else:
                 # The control kinds are not one tag each -- they are a
                 # classification OF the rows, so the row that carries each kind
@@ -616,8 +631,9 @@ def section_e(app: RpcSubprocess, key: str) -> None:
         # The SAME gestures, over the same painted rectangles, in a process
         # that has never seen the shell.
         press_tag(alone, "lab.node.P-01")
-        reveal(alone, f"lab.form.add.{key}")
-        press_tag(alone, f"lab.form.add.{key}")
+        alone_chip = part_tag(alone, "add", key, EXT)
+        reveal(alone, alone_chip)
+        press_tag(alone, alone_chip)
         alone_control = control_of(alone, key, EXT)
         reveal(alone, alone_control)
         press_tag(alone, alone_control)

@@ -178,6 +178,12 @@ def body() -> None:
 
         # ── (B) The specification is on the wire, and it is what was built ──
         spec = json.loads(q(tf, "spec"))
+        # ★★★★★ R2054 — the prefix each part of a form row is addressed under,
+        # from the screen rather than spelled here. A walk cannot call the
+        # composition the framework's painter uses, so it is handed the answer;
+        # a wrong letter written here looks for a mark that is not there, which
+        # reads as the screen not painting it.
+        parts = spec["form_parts"]
         assert_eq(q(tf, "graph"), spec["graph"], "the graph is the one declared")
         assert_eq(q(tf, "zoom"), spec["zoom"], "and it opens at the declared zoom")
         assert_eq(
@@ -340,15 +346,15 @@ def body() -> None:
             # grew a row with no seat at all is a configuration a person can
             # only add to.
             if field["source"]:
-                wanted.append(f"lab.form.source.{field['key']}")
-                wanted.append(f"lab.form.author.{field['key']}")
+                wanted.append(f"{parts['source']}{field['key']}")
+                wanted.append(f"{parts['author']}{field['key']}")
                 if field["applies"] == "hot":
-                    wanted.append(f"lab.form.applies.{field['key']}")
+                    wanted.append(f"{parts['applies']}{field['key']}")
             else:
-                wanted.append(f"lab.form.applies.{field['key']}")
-                wanted.append(f"lab.form.remove.{field['key']}")
+                wanted.append(f"{parts['applies']}{field['key']}")
+                wanted.append(f"{parts['remove']}{field['key']}")
             if field["aside"]:
-                wanted.append(f"lab.form.aside.{field['key']}")
+                wanted.append(f"{parts['aside']}{field['key']}")
             for tag in wanted:
                 if tag not in painted:
                     missing.append(tag)
@@ -360,7 +366,7 @@ def body() -> None:
             # opening card has two.
             if key in held:
                 continue
-            tag = f"lab.form.add.{key}"
+            tag = f"{parts['add']}{key}"
             if tag not in painted:
                 missing.append(tag)
         for tag in (
@@ -481,16 +487,16 @@ def body() -> None:
             declared.add(f"lab.pin.{node['id']}.accept")
         for field in spec["fields"]:
             declared.add(field["control"])
-            declared.add(f"lab.form.applies.{field['key']}")
-            declared.add(f"lab.form.defect.{field['key']}")
-            declared.add(f"lab.form.remove.{field['key']}")
+            declared.add(f"{parts['applies']}{field['key']}")
+            declared.add(f"{parts['defect']}{field['key']}")
+            declared.add(f"{parts['remove']}{field['key']}")
             # ★★ R1732 — the row's own two read-outs, which had never carried
             # tags at all: the configuration path, and the type word with how
             # many words are on offer. This backward check is what said so —
             # fourteen tags the specification did not declare, on the first run
             # after they were given names.
-            declared.add(f"lab.form.key.{field['key']}")
-            declared.add(f"lab.form.type.{field['key']}")
+            declared.add(f"{parts['key']}{field['key']}")
+            declared.add(f"{parts['type']}{field['key']}")
             # ★★★★★ R1850 — and a BOOLEAN row's switch. R1837 gave the boolean
             # control the catalogue's switch and tagged it, and this list never
             # learned the tag because no card on the opening graph had a
@@ -503,37 +509,37 @@ def body() -> None:
             # Keyed off the field's own declared type, so the declaration
             # follows the row rather than being a second list to keep.
             if field.get("ty") == "bool":
-                declared.add(f"lab.form.switch.{field['key']}")
+                declared.add(f"{parts['switch']}{field['key']}")
             # ★★★★★ R1732 — a collapsed roster: the word it holds and the arrow
             # that opens it. The roster's own options are `option.<key>.<word>`
             # below, which is the vocabulary the expanded row already used — a
             # driver that could press an option before this round presses the
             # same name now.
-            declared.add(f"lab.form.shown.{field['key']}")
-            declared.add(f"lab.form.pick.{field['key']}")
-            declared.add(f"lab.form.roster.{field['key']}")
+            declared.add(f"{parts['shown']}{field['key']}")
+            declared.add(f"{parts['pick']}{field['key']}")
+            declared.add(f"{parts['roster']}{field['key']}")
             # ★★ R1716 — the regions a row nobody wrote has: where its value
             # came from, whether it is configuration at all, and the seat that
             # takes it over. Declared per family here for the same reason the
             # affordances below are — which of them a row has is a fact about
             # the row, and the forward pass above is what demands the right ones.
-            declared.add(f"lab.form.source.{field['key']}")
-            declared.add(f"lab.form.aside.{field['key']}")
-            declared.add(f"lab.form.author.{field['key']}")
+            declared.add(f"{parts['source']}{field['key']}")
+            declared.add(f"{parts['aside']}{field['key']}")
+            declared.add(f"{parts['author']}{field['key']}")
             # Every affordance a shape can put inside its control. Declared per
             # family rather than per instance because how many a row has is a
             # function of its VALUE (a list grows), and the count pin below is
             # what keeps that from being a hole.
             for word in ("read", "write"):
-                declared.add(f"lab.form.option.{field['key']}.{word}")
+                declared.add(f"{parts['option']}{field['key']}.{word}")
             for part in ("up", "down"):
-                declared.add(f"lab.form.step.{field['key']}.{part}")
-            declared.add(f"lab.form.toggle.{field['key']}")
-            declared.add(f"lab.form.item.{field['key']}.add")
+                declared.add(f"{parts['step']}{field['key']}.{part}")
+            declared.add(f"{parts['toggle']}{field['key']}")
+            declared.add(f"{parts['item']}{field['key']}.add")
             for n in range(8):
-                declared.add(f"lab.form.item.{field['key']}.{n}")
+                declared.add(f"{parts['item']}{field['key']}.{n}")
         for key in spec["addable"]:
-            declared.add(f"lab.form.add.{key}")
+            declared.add(f"{parts['add']}{key}")
         # ★ R1678 — every reset affordance is a permitted tag; only the
         # UNGATED one is demanded above, because the other four are painted
         # exactly when their scope has something to put back and the screen
@@ -964,12 +970,12 @@ def body() -> None:
         why = refused(tf, "run", True)
         assert "gate is closed" in why, why
         painted = tags(paint(tf))
-        assert "lab.form.defect.transport.link.tx.batch_size" in painted, (
+        assert f"{parts['defect']}transport.link.tx.batch_size" in painted, (
             "★ and the defect is painted ON the row it is about, not only in a "
             "list at the bottom"
         )
         assert not any(
-            t.startswith("lab.form.defect.") and "batch_size" not in t for t in painted
+            t.startswith(parts["defect"]) and "batch_size" not in t for t in painted
         ), "and on no other row"
         document = json.loads(q(tf, "document"))
         assert "refused" in document, (
@@ -1008,7 +1014,7 @@ def body() -> None:
             for prefix, verb in (
                 ("lab.rail.", "rail"),
                 (role_prefix, "role"),
-                ("lab.form.add.", "add"),
+                (parts["add"], "add"),
             ):
                 if tag.startswith(prefix):
                     return f"{verb}:{tag[len(prefix):]}"
@@ -1018,9 +1024,12 @@ def body() -> None:
             control_prefix = spec["fields"][0]["control"][: -len(spec["fields"][0]["key"])]
             if tag.startswith(control_prefix):
                 return f"field:{tag[len(control_prefix):]}"
+            # ★ R2054 — the prefixes the screen publishes, and the answer is the
+            # family word plus what follows it, recovered from that prefix
+            # rather than from a stem written here.
             for family in ("option", "step", "toggle", "item"):
-                if tag.startswith(f"lab.form.{family}."):
-                    return tag[len("lab.form."):]
+                if tag.startswith(parts[family]):
+                    return f"{family}.{tag[len(parts[family]):]}"
             if tag.startswith("lab.pin."):
                 node, _, side = tag[len("lab.pin."):].rpartition(".")
                 return f"pin:{node}:{side}"
@@ -1122,7 +1131,7 @@ def body() -> None:
         # cheapest thing that changes a control's SIZE, and size is what a
         # single-state sweep cannot see.
         for _ in range(6):
-            click(tf, at(tf, "lab.form.item.listen.endpoints.add"))
+            click(tf, at(tf, f"{parts['item']}listen.endpoints.add"))
         used = sweep("after growing a list to seven elements")
         assert used > opening, (
             f"the used screen must paint MORE than the opening one, or growing "
@@ -1205,15 +1214,15 @@ def body() -> None:
         # key on any card the canvas draws a link out of.
         held = {f["key"] for f in json.loads(q(tf, "form"))}
         offered = next(key for key in spec["addable"] if key not in held)
-        click(tf, at(tf, f"lab.form.add.{offered}"))
+        click(tf, at(tf, f"{parts['add']}{offered}"))
         form = json.loads(q(tf, "form"))
         assert offered in [f["key"] for f in form], f"{offered} is now a row"
         painted = tags(paint(tf))
-        assert f"lab.form.add.{offered}" not in painted, (
+        assert f"{parts['add']}{offered}" not in painted, (
             "★ and it is no longer offered — two rows for one path is a "
             "configuration with no single value"
         )
-        assert f"lab.form.applies.{offered}" in painted, "with its own applies badge"
+        assert f"{parts['applies']}{offered}" in painted, "with its own applies badge"
         print(f"[K] adding {offered!r} made it a row and retired its chip")
 
         # ── (L) A declared read cannot be written ───────────────────────────
@@ -1322,7 +1331,7 @@ def body() -> None:
         assert_eq(before_seats, before_addresses if before_addresses > 1 else 0,
                   "★ one seat per address, and none at all when there is one "
                   "address — a choice between one thing is not a choice")
-        click(tf, at(tf, "lab.form.item.listen.endpoints.add"))
+        click(tf, at(tf, f"{parts['item']}listen.endpoints.add"))
         assert_eq(len(addresses()), before_addresses + 1, "the list grew by one")
         assert_eq(len(seats()), before_addresses + 1,
                   "★ and the wire that was ALREADY DRAWN grew a seat, with "

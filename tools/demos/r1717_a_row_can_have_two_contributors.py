@@ -78,6 +78,7 @@ from rpc_verify import (  # noqa: E402
     access_node_by_tag,
     assert_action_refused,
     assert_eq,
+    form_part_tag,
     run_demo,
 )
 
@@ -117,6 +118,17 @@ def parts(text: str) -> list[str]:
 
 def rects(tf) -> dict:
     return abs_rects_of(tf.snapshot(source="paint", viewport=VIEWPORT))
+
+
+def part(tf, part_word: str, key: str) -> str:
+    """The address that part of a form row is painted under — the SCREEN's.
+
+    ★★★★★ R2054 — asked rather than spelled. This walk is almost entirely about
+    which of a row's SEATS is there, and half its readings assert one is
+    ABSENT — the case a spelled address is worst at, because a wrong letter
+    makes the absence true for a reason that has nothing to do with the screen.
+    """
+    return form_part_tag(tf, part_word, key, ext=EXT)
 
 
 def document(tf) -> dict:
@@ -332,11 +344,11 @@ def e_the_seat_gives_the_written_half_back(tf) -> None:
     seats = rects(tf)
     ok(
         "E: ★★ the seat on a shared row is neither of the other two acts",
-        "lab.form.disown.connect.endpoints" in seats
-        and "lab.form.remove.connect.endpoints" not in seats
-        and "lab.form.author.connect.endpoints" not in seats,
+        part(tf, "disown", "connect.endpoints") in seats
+        and part(tf, "remove", "connect.endpoints") not in seats
+        and part(tf, "author", "connect.endpoints") not in seats,
     )
-    seat = seats["lab.form.disown.connect.endpoints"]
+    seat = seats[part(tf, "disown", "connect.endpoints")]
     centre = (seat[0] + seat[2] // 2, seat[1] + seat[3] // 2)
     assert_eq(
         tf.invoke(f"{EXT}/point", f"{centre[0]},{centre[1]}"),
@@ -346,7 +358,7 @@ def e_the_seat_gives_the_written_half_back(tf) -> None:
         "that ignored it",
     )
     node = access_node_by_tag(
-        tf.request("scene/access").result, "lab.form.disown.connect.endpoints"
+        tf.request("scene/access").result, part(tf, "disown", "connect.endpoints")
     )
     assert node is not None, "the seat is in the accessibility tree"
     ok(
@@ -391,7 +403,7 @@ def f_a_shared_row_carries_both_badges(tf) -> None:
     derived_only = rects(tf)
     ok(
         "F: a row with one contributor that nobody can edit shows its source",
-        "lab.form.source.connect.endpoints" in derived_only,
+        part(tf, "source", "connect.endpoints") in derived_only,
     )
     drawn = share_the_connect_row(tf)
     shared = rects(tf)
@@ -399,8 +411,8 @@ def f_a_shared_row_carries_both_badges(tf) -> None:
         "F: ★★★★★ a shared row shows BOTH — a reader may still type here, so "
         "what an edit costs is news, and part of what they read is not theirs, "
         "so where it came from is news too",
-        "lab.form.applies.connect.endpoints" in shared
-        and "lab.form.source.connect.endpoints" in shared,
+        part(tf, "applies", "connect.endpoints") in shared
+        and part(tf, "source", "connect.endpoints") in shared,
     )
     access = tf.request("scene/access").result
     # ★ R2050 — the address the screen publishes for that row's control.
@@ -425,8 +437,8 @@ def f_a_shared_row_carries_both_badges(tf) -> None:
     # this one line will not take an edit.
     # One address was written, so line 0 is theirs and every line after it is
     # the canvas's.
-    mine = access_node_by_tag(access, "lab.form.item.connect.endpoints.0")
-    theirs = access_node_by_tag(access, "lab.form.item.connect.endpoints.1")
+    mine = access_node_by_tag(access, part(tf, "item", "connect.endpoints.0"))
+    theirs = access_node_by_tag(access, part(tf, "item", "connect.endpoints.1"))
     assert mine is not None and theirs is not None, "both lines are in the tree"
     assert_eq(
         mine.get("state", {}).get("read_only", False),
@@ -529,7 +541,8 @@ def h_a_single_valued_row_refuses_two_contributors(tf) -> None:
     ok(
         "H: ★★ and its seat is the remove, not the give-back — there is nobody "
         "to give it back to",
-        "lab.form.remove.mode" in seats and "lab.form.disown.mode" not in seats,
+        part(tf, "remove", "mode") in seats
+        and part(tf, "disown", "mode") not in seats,
     )
     tf.invoke(f"{EXT}/remove_field", "mode")
     assert_eq(

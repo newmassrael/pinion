@@ -399,6 +399,28 @@ if ! python3 "$repo_root/tools/tick_units.py" --check >&2; then
     exit 1
 fi
 
+# R2054 — a walk that SPELLS a painted address instead of asking for it.
+#
+# A screen composes each mark's dotted address in ONE place now and publishes
+# the result; a walk is Python, cannot call that, and its answer is to ask. A
+# walk that spells one carries a second, unchecked copy of the composition, and
+# a wrong letter there does not fail loudly — it looks for a mark that is not
+# there, so the walk reports that the SCREEN did not paint it.
+#
+# Pins rather than demanding zero: a family's count may fall or hold, a family
+# it has never seen is refused, and a family PINNED at zero was converted and
+# may not re-acquire a speller. R2049-R2053 converted five families behind Rust
+# tests that could not see a walk; this is what the walks' side stands on.
+# Reads source with `ast`; boots nothing.
+step "painted address spellers"
+if ! python3 "$repo_root/tools/painted_addresses.py" --selftest >&2; then
+    echo "pre-push: the painted-address ratchet failed its own tests" >&2
+    exit 1
+fi
+if ! python3 "$repo_root/tools/painted_addresses.py" --check >&2; then
+    exit 1
+fi
+
 # R2000 — a `Type::member` this tree's prose CITES must be a name this tree HAS.
 #
 # Found by that round auditing its own new prose: three citations named a verb's

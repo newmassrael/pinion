@@ -8574,7 +8574,7 @@ fn status_badges_painted(
     // The applies badges: every row of the inspector that has one, found by its
     // address rather than listed here.
     let mut here = Vec::new();
-    for tag in painted_under(scene, "lab.form.applies.") {
+    for tag in painted_under(scene, &hello_node_lab::address::form_part_prefix("applies")) {
         let (_, _, said) = badge_paint(scene, &tag)
             .unwrap_or_else(|| panic!("{tag} is painted and is not a badge"));
         let applies = Applies::from_wire(&said).unwrap_or_else(|| {
@@ -8593,7 +8593,7 @@ fn status_badges_painted(
     );
     // The defect badges the injections put on the screen.
     for (key, blocks) in injected {
-        let tag = format!("lab.form.defect.{key}");
+        let tag = hello_node_lab::address::form_part("defect", key);
         let (_, _, said) = badge_paint(scene, &tag).unwrap_or_else(|| {
             panic!(
                 "the tool took a fault at {key} and paints no badge at {tag} — \
