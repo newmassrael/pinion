@@ -364,7 +364,7 @@ fn r1948_every_rail_seat_says_where_it_goes_and_none_pleads_absence() {
     let mut checked = 0_usize;
     for seat in spec::RAIL {
         let sentence = described
-            .of(&format!("shell.rail.{}", seat.key))
+            .of(&crate::address::rail_seat(seat.key))
             .unwrap_or_else(|| panic!("{} carries no description", seat.key));
         assert!(
             !sentence.contains(BEHIND),
@@ -1524,7 +1524,9 @@ fn the_locked_table_is_derived_from_the_tier_and_the_reservation() {
         spec::reserved_count(),
     );
     assert_eq!(
-        tags.iter().filter(|t| t.starts_with("shell.rail.")).count(),
+        tags.iter()
+            .filter(|t| t.starts_with(crate::address::RAIL))
+            .count(),
         spec::destinations().closed().count(),
     );
     assert_eq!(
@@ -3099,7 +3101,7 @@ fn r1724_a_press_inside_the_mounted_section_resolves_to_it() {
         );
 
         // And the host still owns its own chrome, so the two do not fight.
-        let seat = pinion_runtime::rect_for_tag(&scene, "shell.rail.dashboard")
+        let seat = pinion_runtime::rect_for_tag(&scene, &crate::address::rail_seat("dashboard"))
             .expect("the rail is painted");
         assert_eq!(
             resolves_at(seat.x + seat.w / 2, seat.y + seat.h / 2).as_deref(),
@@ -8875,4 +8877,73 @@ fn r2020_the_assembled_tool_paints_its_status_badges_on_their_states_ground() {
             judged.len(),
         );
     });
+}
+
+/// ★★★★★ R2051 — **a rail seat's address is typed in ONE place, and this
+/// counts.**
+///
+/// The third instalment of an address debt whose shape the two before it
+/// settled: a painted address had no declaring site, so every reader re-typed
+/// the prefix and one wrong letter compiled, painted, and made every query
+/// looking for the seat answer nothing.
+///
+/// ⚠ The needle is assembled rather than written, because this file is one of
+/// the sources it reads — a gate that counts by reading source has its own
+/// source in the population, and assembling puts it there on the same terms as
+/// the rest instead of excusing it by name.
+///
+/// ⚠ The walks are NOT in this population: they are Python and cannot call the
+/// declaration, so the application publishes each seat's address beside the
+/// seat and they read it.
+#[test]
+fn r2051_a_rail_seat_address_is_typed_in_one_place() {
+    const NEEDLE: &str = concat!("shell.", "rail.");
+    let sources: [(&str, &str); 5] = [
+        ("address.rs", include_str!("address.rs")),
+        ("main.rs", include_str!("main.rs")),
+        ("spec.rs", include_str!("spec.rs")),
+        ("painted.rs", include_str!("painted.rs")),
+        ("tests.rs", include_str!("tests.rs")),
+    ];
+    let spellers: Vec<(&str, usize)> = sources
+        .iter()
+        .map(|(name, body)| (*name, body.matches(NEEDLE).count()))
+        .filter(|(name, count)| *count > 0 && *name != "address.rs")
+        .collect();
+    assert_eq!(
+        spellers,
+        Vec::new(),
+        "★★★★★ a rail seat's address is declared in `address.rs` and derived \
+         everywhere else; these file(s) spell it themselves"
+    );
+    // The declaration's forms agree, so a specification table taking the
+    // `&'static str` cannot drift from the runtime derivation.
+    assert_eq!(
+        crate::address::RAIL_TEMPLATE,
+        format!("{}{{}}", crate::address::RAIL)
+    );
+    assert_eq!(crate::address::RAIL_ACCOUNT, crate::address::rail_account());
+    // ★★ The address and its inverse are one pair, driven over every seat the
+    // specification declares.
+    for seat in spec::RAIL {
+        assert_eq!(
+            crate::address::rail_seat_key(&crate::address::rail_seat(seat.key)),
+            Some(seat.key),
+            "★ {} does not round-trip",
+            seat.key
+        );
+    }
+    assert_eq!(
+        crate::address::rail_seat_key("shell.palette.filter"),
+        None,
+        "★ a tag of another family is not a rail seat"
+    );
+    // ★★★★★ And the account block is NOT a seat, which is why it has a
+    // function of its own: a reader that reached for `rail_seat("account")`
+    // would be spelling a seat the roster does not hold, and every count of the
+    // rail's seats would be one too many.
+    assert!(
+        !spec::RAIL.iter().any(|seat| seat.key == "account"),
+        "★ the roster does not hold the account block"
+    );
 }

@@ -86,6 +86,10 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         assert_eq(app.query(f"{EXT}/nav"), "lab", "A: the journey reached the node lab")
 
         rects = abs_rects_of(app.snapshot(source="paint"))
+        # ★ R2051 — the address a rail seat is painted under, recovered from one
+        # the application publishes rather than spelled here.
+        published = app.query(f"{EXT}/spec")["rail"]
+        seat_tag = published[0]["tag"][: -len(published[0]["key"])]
         rails = sorted(t for t in rects if t in ("shell.rail", "lab.rail"))
         assert_eq(
             rails,
@@ -108,7 +112,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
             "sessions",
             "settings",
         ):
-            ok(f"A: the host's {seat} seat is painted", f"shell.rail.{seat}" in rects)
+            ok(f"A: the host's {seat} seat is painted", f"{seat_tag}{seat}" in rects)
         ok(
             "A: none of the guest's rail seats is painted",
             not [t for t in rects if t.startswith("lab.rail.")],
@@ -227,7 +231,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
 
         # ── (C) the host's navigation still navigates ─────────────────────
         banner("C — the application's own rail still works")
-        seat = rects["shell.rail.dashboard"]
+        seat = rects[f"{seat_tag}dashboard"]
         app.request(
             "scene/click",
             {"button": "left", "at": {"x": seat[0] + seat[2] // 2, "y": seat[1] + seat[3] // 2}},

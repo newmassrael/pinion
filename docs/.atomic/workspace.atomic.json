@@ -89098,6 +89098,56 @@
         "Cohort loop 24, unchanged, for the reason the previous instalment gave: a round that moves a population without closing its debt does not move the count."
       ]
     },
+    "R2051": {
+      "decision_summary": "An application stops spelling its own address, and the recovery a walk needs is lifted to the harness.\n\nThe address debt's third instalment. The family is the rail's seats — this application's own chrome — and it was spelled at 74 sites: 28 in one binary's own source and 44 across thirteen walks.\n\n⚠ Entry re-measurement corrected the debt's table again, and again upward: it recorded 71 and the count is 74. Every instalment so far has done this — the role family was recorded at 19 and measured 24 — so the table's remaining numbers are ones the next instalment has to re-measure rather than read.\n\n★★★★★ THIRTEEN WALKS WERE WRITING THE SAME THREE LINES. The two instalments before this had each walk recover the address for itself, which was right at two and three; one family needing it in thirteen files is far past what this workspace lifts at. So the recovery is in the harness now: given a published roster it takes the first row's own key off the end of that row's address and hands back the prefix. It REFUSES an empty roster and one whose first address does not end with its own key, because a prefix worked out from a roster of the wrong shape is a plausible string that addresses nothing — which is the defect this whole debt is about.\n\n★ And one member of the family is not a member. The account block sits in the rail's namespace and is not a seat: nothing navigates to it and the roster does not hold it. It gets a function of its own rather than being reachable through the seat one, because a reader that spelled it as a seat would make every count of the rail's seats one too many — and the gate asserts the roster does not hold it.",
+      "changes_bullets": [
+        "The application declares its rail prefix, the `{}` form a specification table needs, the seat derivation, the account block, and the INVERSE. Its painter, router, description index, accessibility roster, specification tables and gates all derive; the router's parse is the published inverse.",
+        "The wire publishes each seat's address beside the seat, so the walks are handed it.",
+        "`rpc_verify` gains `address_prefix`, which recovers a family's prefix from any published roster of `{key, tag}` rows. Thirteen rail walks use it, and it is the shape the two previous instalments' walks were each writing by hand.",
+        "A gate counts it: the application's five sources are read and no file outside the declaration carries the literal; the template agrees with the derivation; every declared seat round-trips through the inverse; and the account block is asserted NOT to be in the seat roster, which is why it has a function of its own."
+      ],
+      "verification_bullets": [
+        "Measured at entry and at close: 74 spelling sites became none outside the declaration — 28 in the application's own Rust and 44 across thirteen walks.",
+        "`cargo test --workspace` passes 14,399 tests, 0 failed. All thirteen rail walks pass. Workspace clippy rc=0 and `cargo fmt --all --check` clean.",
+        "The counterfactual: the router's answer put back to a format string turns the gate red and names the file and the count; restored, it is green.",
+        "🟥 Two walks went red on the same misreading and it is worth keeping: the same read name answers a JSON VALUE on one path and a string holding one on another, so wrapping it in a parse is right in one place and wrong in the other. Look at what the path answers before wrapping it.",
+        "⚠ Stated rather than hidden: the gate reads one application's sources, so another crate reaching for this prefix is not seen from here — the same boundary the two previous instalments' gates have, and the reason each family needs its check where its own sources are."
+      ],
+      "impact_refs": [
+        "5.2",
+        "5.11"
+      ],
+      "carry_forward_bullets": [
+        "The debt stays OPEN with its table updated and its next candidates measured: four families between 14 and 25 sites, of which three are composed by the FRAMEWORK and so belong on the declaration the second instalment built rather than on a new one.",
+        "Nothing is opened by this round.",
+        "The table now carries the instruction its own history earned: every instalment's entry measurement has corrected it, twice upward, so the remaining numbers are to be re-measured rather than read.",
+        "Cohort loop 24, unchanged."
+      ],
+      "publishable_decision_summary": "An application stops spelling its own address, and the recovery a walk needs is lifted to the harness.\n\nThe address debt's third instalment. The family is the rail's seats — this application's own chrome — and it was spelled at 74 sites: 28 in one binary's own source and 44 across thirteen walks.\n\n⚠ Entry re-measurement corrected the debt's table again, and again upward: it recorded 71 and the count is 74. Every instalment so far has done this — the role family was recorded at 19 and measured 24 — so the table's remaining numbers are ones the next instalment has to re-measure rather than read.\n\n★★★★★ THIRTEEN WALKS WERE WRITING THE SAME THREE LINES. The two instalments before this had each walk recover the address for itself, which was right at two and three; one family needing it in thirteen files is far past what this workspace lifts at. So the recovery is in the harness now: given a published roster it takes the first row's own key off the end of that row's address and hands back the prefix. It REFUSES an empty roster and one whose first address does not end with its own key, because a prefix worked out from a roster of the wrong shape is a plausible string that addresses nothing — which is the defect this whole debt is about.\n\n★ And one member of the family is not a member. The account block sits in the rail's namespace and is not a seat: nothing navigates to it and the roster does not hold it. It gets a function of its own rather than being reachable through the seat one, because a reader that spelled it as a seat would make every count of the rail's seats one too many — and the gate asserts the roster does not hold it.",
+      "publishable_changes_bullets": [
+        "The application declares its rail prefix, the `{}` form a specification table needs, the seat derivation, the account block, and the INVERSE. Its painter, router, description index, accessibility roster, specification tables and gates all derive; the router's parse is the published inverse.",
+        "The wire publishes each seat's address beside the seat, so the walks are handed it.",
+        "`rpc_verify` gains `address_prefix`, which recovers a family's prefix from any published roster of `{key, tag}` rows. Thirteen rail walks use it, and it is the shape the two previous instalments' walks were each writing by hand.",
+        "A gate counts it: the application's five sources are read and no file outside the declaration carries the literal; the template agrees with the derivation; every declared seat round-trips through the inverse; and the account block is asserted NOT to be in the seat roster, which is why it has a function of its own."
+      ],
+      "publishable_verification_bullets": [
+        "Measured at entry and at close: 74 spelling sites became none outside the declaration — 28 in the application's own Rust and 44 across thirteen walks.",
+        "`cargo test --workspace` passes 14,399 tests, 0 failed. All thirteen rail walks pass. Workspace clippy rc=0 and `cargo fmt --all --check` clean.",
+        "The counterfactual: the router's answer put back to a format string turns the gate red and names the file and the count; restored, it is green.",
+        "🟥 Two walks went red on the same misreading and it is worth keeping: the same read name answers a JSON VALUE on one path and a string holding one on another, so wrapping it in a parse is right in one place and wrong in the other. Look at what the path answers before wrapping it.",
+        "⚠ Stated rather than hidden: the gate reads one application's sources, so another crate reaching for this prefix is not seen from here — the same boundary the two previous instalments' gates have, and the reason each family needs its check where its own sources are."
+      ],
+      "publishable_impact_refs": [
+        "5.2",
+        "5.11"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The debt stays OPEN with its table updated and its next candidates measured: four families between 14 and 25 sites, of which three are composed by the FRAMEWORK and so belong on the declaration the second instalment built rather than on a new one.",
+        "Nothing is opened by this round.",
+        "The table now carries the instruction its own history earned: every instalment's entry measurement has corrected it, twice upward, so the remaining numbers are to be re-measured rather than read.",
+        "Cohort loop 24, unchanged."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

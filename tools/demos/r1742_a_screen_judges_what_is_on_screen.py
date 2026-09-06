@@ -100,6 +100,7 @@ from analyzer_spec import unjudged_sections  # noqa: E402
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
+    address_prefix,
     assert_eq,
     resize_and_settle,
     run_demo,
@@ -516,7 +517,9 @@ def section_d(app: RpcSubprocess, key: str) -> None:
     tag = row["tag"]
 
     # The host is still there. A page, not a takeover.
-    for chrome in ("shell.appbar", "shell.rail", f"shell.rail.{SEAT}"):
+    # ★ R2051 — the address, recovered from one the application publishes.
+    seat_tag = address_prefix(app.query(f"{EXT}/spec")["rail"])
+    for chrome in ("shell.appbar", "shell.rail", f"{seat_tag}{SEAT}"):
         ok(f"D: the host's {chrome} survives the lab being on it", chrome in rects)
     ok("D: and the section is addressed by the tag the report names", tag == "node_lab")
 

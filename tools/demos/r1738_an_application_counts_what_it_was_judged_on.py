@@ -88,6 +88,7 @@ from analyzer_spec import reserved_keys as reserved_rail_keys  # noqa: E402
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
+    address_prefix,
     assert_eq,
     resize_and_settle,
     run_demo,
@@ -397,6 +398,9 @@ def section_d(app: RpcSubprocess) -> None:
     global PARTS_COMPARED
     said = report(app)
     judged = [row for row in said["rows"] if row["standing"] == "judged"]
+    # ★ R2051 — the address a rail seat is painted under, recovered from one the
+    # application publishes rather than spelled here.
+    seat_tag = address_prefix(app.query(f"{EXT}/spec")["rail"])
     for row in judged:
         # ★ R1761 — the frame, not the tick: the verdict read next is a fact
         # about the last PAINTED frame.
@@ -420,7 +424,7 @@ def section_d(app: RpcSubprocess) -> None:
             if "tag" in row
             else any(tag.startswith("shell.canvas") for tag in rects),
         )
-        for chrome in ("shell.appbar", "shell.rail", f"shell.rail.{row['key']}"):
+        for chrome in ("shell.appbar", "shell.rail", f"{seat_tag}{row['key']}"):
             ok(f"D: and the host's {chrome} survives it -- a page, not a takeover", chrome in rects)
 
         # ★★★★★ R1742 — the rule is ALL OR NONE per surface, and it is a

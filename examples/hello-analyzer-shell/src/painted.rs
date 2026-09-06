@@ -603,7 +603,7 @@ fn r1668_every_declared_element_of_the_screen_is_painted() {
         // The rail's seats and the palette's rows come from the specification's
         // own tables rather than from that list.
         for seat in spec::RAIL {
-            wanted.push(format!("shell.rail.{}", seat.key));
+            wanted.push(crate::address::rail_seat(seat.key));
         }
         for entry in spec::CATALOGUE {
             wanted.push(format!("shell.palette.{}", entry.kind));
@@ -1214,8 +1214,10 @@ fn r1668_the_screen_invents_no_seat_and_states_the_counts_it_specifies() {
         );
 
         let declared_seats: BTreeSet<&str> = spec::RAIL.iter().map(|s| s.key).collect();
-        for tag in shot.family("shell.rail.") {
-            let key = tag.trim_start_matches("shell.rail.");
+        for tag in shot.family(crate::address::RAIL) {
+            let Some(key) = crate::address::rail_seat_key(tag) else {
+                continue;
+            };
             // The account chip is chrome, not a destination.
             if key == "account" {
                 continue;
@@ -1271,7 +1273,7 @@ fn r1668_every_painted_control_answers_for_itself() {
         // and this is what holds them there.
         let mut probes: Vec<String> = Vec::new();
         for seat in spec::RAIL {
-            probes.push(format!("shell.rail.{}", seat.key));
+            probes.push(crate::address::rail_seat(seat.key));
         }
         for entry in spec::CATALOGUE {
             probes.push(format!("shell.palette.{}", entry.kind));
@@ -1578,7 +1580,7 @@ fn r1668_every_mark_lies_inside_the_pane_its_address_names() {
     sweep(|_, shot, _, case| {
         for (stem, pane) in [
             ("shell.palette.", "shell.palette"),
-            ("shell.rail.", "shell.rail"),
+            (crate::address::RAIL, "shell.rail"),
         ] {
             let Some(bounds) = shot.rect(pane) else {
                 continue;
@@ -2866,7 +2868,7 @@ fn r1668_every_reserved_seat_is_declared_with_the_booking_it_states() {
         // node cannot say three different things.
         let roster = spec::destinations();
         for seat in spec::RAIL {
-            let tag = format!("shell.rail.{}", seat.key);
+            let tag = crate::address::rail_seat(seat.key);
             let inert = shot.inert.get(&tag);
             match roster.get(seat.key).and_then(|d| d.standing.why()) {
                 Some(why) => {
@@ -2930,7 +2932,7 @@ fn r1668_the_screen_paints_exactly_the_reserved_seats_it_specifies() {
         let inert_seats = shot
             .inert
             .keys()
-            .filter(|t| t.starts_with("shell.rail."))
+            .filter(|t| t.starts_with(crate::address::RAIL))
             .count();
         assert_eq!(
             inert_seats,
@@ -3434,7 +3436,7 @@ fn r1728_the_painted_rail_is_the_rail_the_reference_draws() {
         // 1 + 2. Painted, in the specified order, top to bottom.
         let mut previous: Option<(String, Rect)> = None;
         for seat in canon.seats() {
-            let tag = format!("shell.rail.{}", seat.key);
+            let tag = crate::address::rail_seat(&seat.key);
             let rect = shot.rect(&tag).unwrap_or_else(|| {
                 panic!(
                     "the specification declares seat {:?} and the screen paints no {tag}",
@@ -3458,14 +3460,14 @@ fn r1728_the_painted_rail_is_the_rail_the_reference_draws() {
         let painted: Vec<&String> = shot
             .tags
             .keys()
-            .filter(|tag| tag.starts_with("shell.rail."))
+            .filter(|tag| tag.starts_with(crate::address::RAIL))
             .collect();
         let specified: BTreeSet<String> = canon
             .seats()
             .iter()
-            .map(|seat| format!("shell.rail.{}", seat.key))
+            .map(|seat| crate::address::rail_seat(&seat.key))
             .collect();
-        // ★★★ Not every tag under `shell.rail.` is a seat: the reference draws
+        // ★★★ Not every tag in the rail's namespace is a seat: the reference draws
         // an avatar at the foot of its rail, as `avatar` rather than as one of
         // its `ri` items, and this shell paints it inside the same tag
         // namespace. So the leftovers are checked rather than skipped — each
@@ -3525,7 +3527,7 @@ fn r1728_every_specified_seat_answers_a_press_as_specified() {
         let mut arrived = 0_usize;
         let mut refused = 0_usize;
         for seat in canon.seats() {
-            let tag = format!("shell.rail.{}", seat.key);
+            let tag = crate::address::rail_seat(&seat.key);
             let rect = shot.rect(&tag).unwrap_or_else(|| {
                 panic!("the specification declares {tag} and it is not painted")
             });
@@ -3730,7 +3732,7 @@ fn r1695_each_destination_paints_the_regions_the_specification_gives_it() {
             // screen. An arm with no path to being taken is a rule nothing
             // performs.
             for other in spec::RAIL {
-                let seat_tag = format!("shell.rail.{}", other.key);
+                let seat_tag = crate::address::rail_seat(other.key);
                 assert!(
                     shot.rect(&seat_tag).is_some(),
                     "standing at {key}, the rail paints nothing at {seat_tag:?} \
@@ -10603,7 +10605,11 @@ fn r1911_the_claims_at(screens: &pinion_screen::ScreenRoster, key: &str, open: &
                 screens.paint_stems_of(key),
             );
             // The host is still the host.
-            for chrome in ["shell.appbar", "shell.rail", &format!("shell.rail.{key}")] {
+            for chrome in [
+                "shell.appbar",
+                "shell.rail",
+                &crate::address::rail_seat(key),
+            ] {
                 assert!(
                     shot.rect(chrome).is_some(),
                     "at {key}: the host's {chrome} stopped being painted",

@@ -74,6 +74,7 @@ from analyzer_spec import (  # noqa: E402
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
+    address_prefix,
     assert_eq,
     run_demo,
     settle_saying,
@@ -119,6 +120,9 @@ def body() -> None:
         banner("A — the screen publishes the specification it is built against")
         spec = q(app, "spec")
         ok("the screen publishes a specification", isinstance(spec, dict))
+        # ★ R2051 — the address a rail seat is painted under, recovered from one
+        # the application publishes rather than spelled here.
+        seat_tag = address_prefix(spec["rail"])
         voices = spec["voices"]
         silences = spec["silences"]
         locked = spec["locked"]
@@ -139,10 +143,10 @@ def body() -> None:
         # (sixteen, then fifteen, each edited by hand in the round that moved
         # it), and the round that built the key-pattern section broke it: a
         # number in a demo goes stale exactly like a number in prose.
-        rail_locked = sorted(r["tag"] for r in locked if r["tag"].startswith("shell.rail."))
+        rail_locked = sorted(r["tag"] for r in locked if r["tag"].startswith(seat_tag))
         assert_eq(
             rail_locked,
-            sorted(f"shell.rail.{k}" for k in closed_rail_keys()),
+            sorted(f"{seat_tag}{k}" for k in closed_rail_keys()),
             "A: the rail seats declared unavailable are the ones the "
             "specification says are shut, and no others",
         )
@@ -156,7 +160,7 @@ def body() -> None:
         # to: the palette's reserved widgets, and the settings page's booked key
         # affordances. Asserting the halves separately also says WHICH one moved
         # when one does, which the single total could not.
-        others = [r for r in locked if not r["tag"].startswith("shell.rail.")]
+        others = [r for r in locked if not r["tag"].startswith(seat_tag)]
         palette_locked = [r for r in others if r["tag"].startswith("shell.palette.")]
         assert_eq(
             len(palette_locked),
@@ -510,24 +514,24 @@ def body() -> None:
 
         # ── (H) a real press moves what is announced ───────────────────────
         banner("H — driven: a press through the router moves the announcement")
-        before = access["shell.rail.dashboard"].get("current")
+        before = access[f"{seat_tag}dashboard"].get("current")
         assert_eq(before, "page", "H: the dashboard seat is the current one")
         # ★ R1695 — `settings` rather than `stream`, because `stream` is now a
         # destination this application cannot take you to. The swap is forced,
         # and what forced it is the round's finding: this assertion used to be
         # satisfied by a rail that moved the highlight and arrived nowhere.
         app.request(
-            "scene/click", {"button": "left", "at": center(rects["shell.rail.settings"])}
+            "scene/click", {"button": "left", "at": center(rects[f"{seat_tag}settings"])}
         )
         app.tick(16)
         after = nodes_by_tag(app)
         assert_eq(
-            after["shell.rail.settings"].get("current"),
+            after[f"{seat_tag}settings"].get("current"),
             "page",
             "H: the seat pressed is now the current one",
         )
         assert_eq(
-            after["shell.rail.dashboard"].get("current"),
+            after[f"{seat_tag}dashboard"].get("current"),
             None,
             "H: and the one it left is not",
         )
@@ -535,7 +539,7 @@ def body() -> None:
         # says so; the router agrees.
         #
         # ★★★★★ R1953 — WHICH seat is locked is derived. This pressed
-        # `shell.rail.topology` by name, and R1947 opened that seat: the press
+        # the topology seat by name, and R1947 opened that seat: the press
         # arrived, the reader moved, and the assertion read a screen behaving
         # correctly as a defect.
         #
@@ -545,15 +549,15 @@ def body() -> None:
         # would let this leg report green for having no population (R1651.1).
         # What is asserted instead is the fact that makes it empty: the live
         # rail declares no seat unavailable at all.
-        locked_seats = [k for k in closed_rail_keys() if f"shell.rail.{k}" in rects]
+        locked_seats = [k for k in closed_rail_keys() if f"{seat_tag}{k}" in rects]
         if locked_seats:
             app.request(
                 "scene/click",
-                {"button": "left", "at": center(rects[f"shell.rail.{locked_seats[0]}"])},
+                {"button": "left", "at": center(rects[f"{seat_tag}{locked_seats[0]}"])},
             )
             app.tick(16)
             assert_eq(
-                nodes_by_tag(app)["shell.rail.settings"].get("current"),
+                nodes_by_tag(app)[f"{seat_tag}settings"].get("current"),
                 "page",
                 f"H: ★ pressing the locked {locked_seats[0]} does not move the reader",
             )
@@ -561,7 +565,7 @@ def body() -> None:
             live_shut = [
                 row["tag"]
                 for row in app.request("scene/disabled", {}).result["disabled"]
-                if row["tag"].startswith("shell.rail.")
+                if row["tag"].startswith(seat_tag)
             ]
             assert_eq(
                 live_shut,
@@ -580,7 +584,7 @@ def body() -> None:
         # rectangle read before that press is a rectangle of a screen that is no
         # longer there.
         app.request(
-            "scene/click", {"button": "left", "at": center(rects["shell.rail.dashboard"])}
+            "scene/click", {"button": "left", "at": center(rects[f"{seat_tag}dashboard"])}
         )
         app.tick(16)
         rects = abs_rects_of(app.snapshot(source="paint"))

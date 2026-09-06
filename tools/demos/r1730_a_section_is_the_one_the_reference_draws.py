@@ -74,6 +74,7 @@ from rpc_verify import (  # noqa: E402
     RealPointerUnavailable,
     RpcSubprocess,
     abs_rects_of,
+    address_prefix,
     assert_eq,
     run_demo,
 )
@@ -373,7 +374,12 @@ def section_e(spec: dict) -> None:
             "E: arriving paints the section inside the host",
             any(tag.startswith("kp.") for tag in rects),
         )
-        for chrome in ("shell.appbar", "shell.rail", "shell.rail.keys"):
+        # ★ R2051 — the address, recovered from one the application publishes.
+        for chrome in (
+            "shell.appbar",
+            "shell.rail",
+            f"{address_prefix(q(shell, 'spec')['rail'])}keys",
+        ):
             ok(f"E: and the host's {chrome} survives -- a page, not a takeover", chrome in rects)
         ok(
             "E: ★ every column of the specified list is painted in the host too",

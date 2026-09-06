@@ -56,6 +56,7 @@ from analyzer_spec import open_keys, owed_keys  # noqa: E402
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
+    address_prefix,
     assert_eq,
     run_demo,
 )
@@ -189,7 +190,9 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
 
         # The shell's own chrome is still there — this is a section of an
         # application, not a second window.
-        for chrome in ("shell.appbar", "shell.rail", REGION, "shell.rail.lab"):
+        # ★ R2051 — the address, recovered from one the application publishes.
+        seat_tag = address_prefix(q(app, "spec")["rail"])
+        for chrome in ("shell.appbar", "shell.rail", REGION, f"{seat_tag}lab"):
             ok(f"B: the shell's {chrome} is still painted", chrome in at_lab)
 
         # ── (C) the lab lays out in the REGION, not the window ────────────
@@ -274,7 +277,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
 
         # The shell's own rail still answers its own presses while a whole
         # other screen is showing.
-        press_at(app, rects["shell.rail.dashboard"])
+        press_at(app, rects[f"{seat_tag}dashboard"])
         assert_eq(q(app, "nav"), "dashboard", "E: the shell's rail is still the shell's")
 
         # ── (F) the tree follows the rail ─────────────────────────────────
@@ -287,7 +290,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         ok(f"F: the lab announces {len(announced)} nodes of its own", len(announced) > 20)
         assert_eq(tree[REGION]["name"], "Node Lab", "F: the region names its destination")
         assert_eq(
-            tree["shell.rail.lab"]["current"],
+            tree[f"{seat_tag}lab"]["current"],
             "page",
             "F: and the seat is the current one",
         )

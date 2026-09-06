@@ -4753,6 +4753,39 @@ def find_by_tag(snap: Any, tag: str) -> Optional[dict]:
     return None
 
 
+def address_prefix(rows: Any, *, key: str = "key", tag: str = "tag") -> str:
+    """The common prefix the addresses in a published roster carry.
+
+    ★★★★★ R2051 — a walk is Python and cannot call the declaration a screen
+    composes its painted addresses from, so a screen that publishes them hands
+    the walk the answer. Some readings need the whole address and some need only
+    the PREFIX — to classify a tag by family, or to build an address for a key
+    the roster does not have because the point of the check is that it should.
+    This recovers the prefix from a published address by taking that row's own
+    key off the end, so the prefix a walk classifies by is the one the paint
+    used.
+
+    Lifted here at the third walk family to need it (R2049's role rows, R2050's
+    form controls, R2051's rail seats) and after thirteen walks in one family
+    alone had been spelling it — well past the rule of three this workspace
+    lifts at.
+
+    Raises rather than guessing when the roster is empty or its first row does
+    not end with its own key: both mean the roster is not the shape this is
+    reading, and a prefix worked out from one that is not would be a plausible
+    string that addresses nothing.
+    """
+    rows = list(rows)
+    assert rows, "an empty roster publishes no address to recover a prefix from"
+    first = rows[0]
+    address, own = first[tag], first[key]
+    assert address.endswith(own), (
+        f"{address!r} does not end with its own key {own!r}, so this roster's "
+        "addresses are not its prefix followed by its key"
+    )
+    return address[: len(address) - len(own)]
+
+
 def access_node_by_tag(result: Any, tag: str) -> Optional[dict]:
     """The `scene/access` node carrying this `tag`, or `None` when absent.
 

@@ -45,7 +45,12 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from rpc_verify import RpcSubprocess, assert_eq, run_demo  # noqa: E402
+from rpc_verify import (  # noqa: E402
+    RpcSubprocess,
+    address_prefix,
+    assert_eq,
+    run_demo,
+)
 
 EXT = "/external"
 CHECKS: list[str] = []
@@ -295,15 +300,17 @@ def dashboard(app: RpcSubprocess) -> None:
 
     banner("G — the account chip is a group, and it is not a keyboard destination")
     nodes, _ = tree(app)
+    # ★ R2051 — the address, recovered from one the application publishes.
+    account = f"{address_prefix(app.query(f'{EXT}/spec')['rail'])}account"
     assert_eq(
-        nodes["shell.rail.account"]["role"],
+        nodes[account]["role"],
         "group",
         "G: ★ nothing presses it from either channel, so it does not announce an action",
     )
     rail = nodes["shell.rail"]["navigation"]
     ok(
         "G: and the rail's cursor walks destinations only",
-        all(m["tag"] != "shell.rail.account" for m in rail["members"]),
+        all(m["tag"] != account for m in rail["members"]),
     )
 
 

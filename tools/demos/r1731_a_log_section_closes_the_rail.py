@@ -64,6 +64,7 @@ from rpc_verify import (  # noqa: E402
     RealPointerUnavailable,
     RpcSubprocess,
     abs_rects_of,
+    address_prefix,
     assert_eq,
     run_demo,
 )
@@ -314,10 +315,12 @@ def section_e(spec: dict) -> None:
             for s in rail["canon"]
             if s["standing"] == "closed" and s["key"] not in ahead_keys()
         ]
+        # ★ R2051 — the address, recovered from one the application publishes.
+        seat_tag = address_prefix(q(shell, "spec")["rail"])
         rows = {
             row["tag"].rsplit(".", 1)[1]: row
             for row in shell.request("scene/disabled", {}).result["disabled"]
-            if row["tag"].startswith("shell.rail.")
+            if row["tag"].startswith(seat_tag)
         }
         assert_eq(
             sorted(rows),
@@ -351,7 +354,11 @@ def section_e(spec: dict) -> None:
             "E: arriving paints the section inside the host",
             any(tag.startswith("lv.") for tag in rects),
         )
-        for chrome in ("shell.appbar", "shell.rail", "shell.rail.logs"):
+        for chrome in (
+            "shell.appbar",
+            "shell.rail",
+            f"{address_prefix(q(shell, 'spec')['rail'])}logs",
+        ):
             ok(f"E: and the host's {chrome} survives -- a page, not a takeover", chrome in rects)
         ok(
             "E: ★ every column of the specified list is painted in the host too",

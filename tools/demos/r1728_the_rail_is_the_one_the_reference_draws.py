@@ -148,6 +148,18 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
     )
 
     with RpcSubprocess(SHELL, boot_grace=1.5, visible_window=True) as app:
+        # ★★★★★ R2049/R2051 — the address a rail seat is painted under, from
+        # the application rather than spelled here. A walk cannot call the
+        # declaration it comes from, and a wrong letter written here looks for a
+        # mark that is not there — which reads as the rail not painting it. The
+        # PREFIX is recovered from a published address by taking the seat's own
+        # key off the end, so a seat the canon has and this build does not still
+        # fails as "not painted" rather than as a lookup error.
+        # ⚠ Not `json.loads`: this read answers a JSON value where others answer
+        # a string holding one, so the helper hands back a dict already.
+        published = q(app, "spec")["rail"]
+        seat_tag = published[0]["tag"][: -len(published[0]["key"])]
+
         # ── (A) the application reports its own conformance ───────────────
         banner("A — the application says how much of its specification it is")
         rail = q(app, "rail").split(",")
@@ -222,7 +234,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         rects = abs_rects_of(app.snapshot(source="paint"))
         seats = []
         for seat in canon:
-            tag = f"shell.rail.{seat['key']}"
+            tag = f"{seat_tag}{seat['key']}"
             ok(f"B: the {seat['key']} seat is painted", tag in rects)
             seats.append((seat, rects[tag]))
         tops = [rect[1] for _, rect in seats]
@@ -273,7 +285,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         disabled = {
             row["tag"]: row
             for row in app.request("scene/disabled", {}).result["disabled"]
-            if row["tag"].startswith("shell.rail.")
+            if row["tag"].startswith(seat_tag)
         }
         by_reason: dict[str, list[str]] = {}
         for tag, row in disabled.items():
@@ -336,7 +348,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         # recourse do not share a SENTENCE — so its population is one seat per
         # kind, whatever kinds there are, and it says how many that was.
         one_each = [keys[0] for keys in wanted.values()]
-        sentences = {disabled[f"shell.rail.{k}"]["detail"] for k in one_each}
+        sentences = {disabled[f"{seat_tag}{k}"]["detail"] for k in one_each}
         ok(
             f"C: ★ the {len(one_each)} kind(s) of shut this rail spells give "
             "as many distinct sentences, so a reader is not told to wait for "
@@ -348,14 +360,14 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         banner("D — the difference reaches somebody who cannot see the rail")
         tree = {n["tag"]: n for n in app.request("scene/access").result["nodes"]}
         for seat in canon:
-            tag = f"shell.rail.{seat['key']}"
+            tag = f"{seat_tag}{seat['key']}"
             ok(f"D: the {seat['key']} seat is in the tree", tag in tree)
         # ★ R1953 — the seats that are actually shut FOR THAT REASON, not every
         # key on the divergence list. An `ahead` divergence names an OPEN seat,
         # and asking an open seat to announce itself unavailable is asking for
         # the opposite of what it is.
         for key in wanted.get("unbuilt", []):
-            node = tree[f"shell.rail.{key}"]
+            node = tree[f"{seat_tag}{key}"]
             reason = node.get("unavailable")
             ok(
                 f"D: the {key} seat is announced unavailable rather than merely "
@@ -380,7 +392,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         # ★ R1730 — one seat of each kind, derived. ★ R1731 — and the KINDS are
         # derived too, because the round that built the last owed section left
         # this reading one seat that no longer exists.
-        heard = {tree[f"shell.rail.{k}"]["unavailable"]["kind"] for k in one_each}
+        heard = {tree[f"{seat_tag}{k}"]["unavailable"]["kind"] for k in one_each}
         assert_eq(
             sorted(heard),
             sorted(wanted),
@@ -393,7 +405,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         ok(
             "D: the capture seat is announced as somewhere you go, not as a "
             "reason you cannot",
-            tree["shell.rail.packets"].get("unavailable") is None,
+            tree[f"{seat_tag}packets"].get("unavailable") is None,
         )
 
     # ★★★★★ The demo's own coverage, said out loud. Section B is the only one

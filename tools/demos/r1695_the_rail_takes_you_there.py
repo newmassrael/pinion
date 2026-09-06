@@ -181,10 +181,14 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
 
         # ── (B) the law, driven through the router ─────────────────────────
         banner("B — every open destination is a place you arrive at")
+        # ★ R2051 — the address a rail seat is painted under, recovered from one
+        # the application publishes rather than spelled here.
+        published = q(app, "spec")["rail"]
+        seat_tag = published[0]["tag"][: -len(published[0]["key"])]
         assert_every_destination_arrives(
             app,
             roster_path=f"{EXT}/destinations",
-            seat=lambda key: f"shell.rail.{key}",
+            seat=lambda key: f"{seat_tag}{key}",
             region="shell.canvas",
         )
         ok("B: every destination was driven through the router", True)
@@ -192,7 +196,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         # Pressing the seat you are already on is not a refusal and not a move.
         go(app, "dashboard")
         before = abs_rects_of(app.snapshot(source="paint"))
-        seat = before["shell.rail.dashboard"]
+        seat = before[f"{seat_tag}dashboard"]
         app.request(
             "scene/click",
             {"button": "left", "at": {"x": seat[0] + seat[2] // 2, "y": seat[1] + seat[3] // 2}},
@@ -220,13 +224,13 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
             region = nodes_by_tag(app)["shell.canvas"]
             assert_eq(region["role"], "region", f"C: {key} region role")
             assert_eq(region["name"], title, f"C: {key} region name")
-            rail_seat = nodes_by_tag(app)[f"shell.rail.{key}"]
+            rail_seat = nodes_by_tag(app)[f"{seat_tag}{key}"]
             assert_eq(rail_seat["current"], "page", f"C: {key} seat is current")
             assert_eq(rail_seat["name"], title, "C: the seat and the region agree")
         # And the seats you cannot reach say why, in the tree.
         tree = nodes_by_tag(app)
         for key in closed:
-            node = tree[f"shell.rail.{key}"]
+            node = tree[f"{seat_tag}{key}"]
             un = node.get("unavailable")
             ok(f"C: the {key} seat carries its reason", isinstance(un, dict))
             assert_eq(un["kind"], rows[key]["kind"], f"C: {key} kind in the tree")

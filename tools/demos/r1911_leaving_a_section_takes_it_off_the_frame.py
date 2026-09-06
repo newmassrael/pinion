@@ -103,6 +103,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
+    address_prefix,
     run_demo,
     walk_nodes,
 )
@@ -146,6 +147,9 @@ def painted_tags(app: RpcSubprocess) -> set[str]:
 def body() -> None:
     with RpcSubprocess(SHELL, boot_grace=1.5) as app:
         start = roster(app)
+        # ★ R2051 — the address a rail seat is painted under, recovered from one
+        # the application publishes rather than spelled here.
+        seat_tag = address_prefix(app.query(f"{EXT}/spec")["rail"])
 
         banner("A — every open section says where its marks are")
         rows = start["destinations"]
@@ -222,7 +226,7 @@ def body() -> None:
                     not trespass,
                 )
 
-            for band in ("shell.appbar", "shell.rail", f"shell.rail.{key}"):
+            for band in ("shell.appbar", "shell.rail", f"{seat_tag}{key}"):
                 ok(f"D: at {key}, the host still paints {band}", band in tags)
 
             orphans = sorted(

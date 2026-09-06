@@ -166,6 +166,7 @@ use pinion_widget_paint::run::text_run;
 use pinion_widget_paint::stat_tile::StatTile;
 use pinion_widget_paint::switch::{self, SwitchStyle};
 
+mod address;
 mod judge;
 mod spec;
 
@@ -2161,10 +2162,7 @@ impl ShellState {
             "shell.rail" => spec::RAIL
                 .iter()
                 .map(|seat| {
-                    Member::maybe(
-                        format!("shell.rail.{}", seat.key),
-                        seat.reserved_for().is_none(),
-                    )
+                    Member::maybe(address::rail_seat(seat.key), seat.reserved_for().is_none())
                 })
                 .collect(),
             "shell.subbar" => SubChip::ALL
@@ -3831,7 +3829,8 @@ impl Hit {
         if let Some(chip) = SubChip::ALL.into_iter().find(|c| c.tag() == tag) {
             return Self::Sub(chip);
         }
-        if let Some(key) = tag.strip_prefix("shell.rail.")
+        // ★★★★★ R2051 — the address's own inverse, not a prefix typed here.
+        if let Some(key) = address::rail_seat_key(tag)
             && let Some(seat) = spec::RAIL.iter().find(|seat| seat.key == key)
         {
             return Self::Rail(seat.key);
@@ -4260,7 +4259,7 @@ fn hit_word(hit: &Hit) -> String {
         Hit::Chip(chip) => chip.tag().to_string(),
         Hit::Sub(chip) => chip.tag().to_string(),
         Hit::PresetItem(n) => format!("shell.preset.item.{n}"),
-        Hit::Rail(name) => format!("shell.rail.{name}"),
+        Hit::Rail(name) => address::rail_seat(name),
         Hit::Option(key) => format!("shell.settings.option.{key}"),
         Hit::KeyRow(key) => format!("shell.settings.key.{key}"),
         // ★ R2021 — both are the ROW's own tags now. They used to be built here
@@ -9261,7 +9260,7 @@ fn rail_scene(state: &ShellState, palette: Palette) -> Scene {
             );
         entries.push(Scene::Container(
             ContainerNode::new(rail_mark(key, local(rect), ink))
-                .with_tag(format!("shell.rail.{key}"))
+                .with_tag(address::rail_seat(key))
                 .with_style(
                     BoxStyle::filled(if on { palette.high } else { palette.panel })
                         .with_corner_radius(8),
@@ -9276,7 +9275,7 @@ fn rail_scene(state: &ShellState, palette: Palette) -> Scene {
             FONT_TINY,
             palette.on_accent,
         )])
-        .with_tag("shell.rail.account")
+        .with_tag(address::rail_account())
         .with_style(BoxStyle::filled(palette.accent).with_corner_radius(16))
         // ★ R1864 — anchored to the RAIL's own bottom rather than to the
         // window's. The two were the same number until the status band took a
@@ -13222,6 +13221,12 @@ fn spec_json() -> serde_json::Value {
         "rail": spec::RAIL.iter().map(|seat| serde_json::json!({
             "key": seat.key,
             "title": seat.title,
+            // ★★★★★ R2051 — **the address this seat is painted under**,
+            // derived from the one place that declares it. A walk is Python and
+            // cannot call that, so before this thirteen walks re-typed the
+            // prefix and a wrong letter aimed at a mark that is not there —
+            // which reads as the rail not painting the seat.
+            "tag": address::rail_seat(seat.key),
             "reserved_for": seat.reserved_for(),
             "open": seat.reserved_for().is_none(),
         })).collect::<Vec<_>>(),
@@ -14960,7 +14965,7 @@ fn chrome_descriptions() -> pinion_core::describe::Descriptions {
             Some(why) => format!("{} is not in this release - booked under {why}", seat.title),
             None => format!("Go to {}", seat.title),
         };
-        described.describe(format!("shell.rail.{}", seat.key), sentence);
+        described.describe(address::rail_seat(seat.key), sentence);
     }
     described
 }
@@ -15186,7 +15191,7 @@ fn app_bar_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
 /// frames the innermost thing, and a description has to be about the same
 /// thing. Measured this round on the running shell — a keyboard reader on the
 /// rail is focused on `shell.rail`, and every mark this application describes
-/// there is a `shell.rail.<seat>` INSIDE it, so a description keyed on the raw
+/// there is a rail SEAT node inside it, so a description keyed on the raw
 /// focus answered nothing for a keyboard reader on any page. The walk found it:
 /// `focus/set` on a described mark was refused `tag_not_focusable`, which is
 /// the honest report that a described mark is not itself a stop.
@@ -15254,7 +15259,7 @@ fn rail_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
     let here = state.at();
     let tags: Vec<String> = spec::RAIL
         .iter()
-        .map(|seat| format!("shell.rail.{}", seat.key))
+        .map(|seat| address::rail_seat(seat.key))
         .collect();
     let links: Vec<NavLink<'_>> = spec::RAIL
         .iter()
@@ -15270,7 +15275,7 @@ fn rail_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
         .collect();
     let mut nodes = navigation_link_nodes("shell.rail", "Destinations", &links);
     if let Some(rail) = nodes.first_mut() {
-        rail.children.push("shell.rail.account".to_owned());
+        rail.children.push(address::rail_account());
         *rail = with_cursor_declared(rail.clone(), state);
     }
     // ★★★★★ R1699 — a `group`, not a `button`, and NOT a member of the rail's
@@ -15286,7 +15291,7 @@ fn rail_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
     // have been inventing a product decision; making it honest costs nothing
     // and removes two lies.
     nodes.push(
-        AccessNode::new("shell.rail.account", AriaRole::Group)
+        AccessNode::new(address::rail_account(), AriaRole::Group)
             .with_name("Account")
             .with_value(AccessValue::Text(ACCOUNT_INITIALS.to_owned())),
     );

@@ -256,6 +256,10 @@ def body() -> None:
     with RpcSubprocess("hello-analyzer-shell", boot_grace=1.5) as tf:
         counted = assert_declared_channels_are_true(tf)
         assert counted["read"] >= 25, f"the walk reaches the surface: {counted}"
+        # ★ R2051 — the address a rail seat is painted under, recovered from one
+        # the application publishes rather than spelled here.
+        published = q(tf, "spec")["rail"]
+        seat_tag = published[0]["tag"][: -len(published[0]["key"])]
 
         # ── (A) the shell is assembled: a catalogue, a board, and a count ─
         assert_eq(q(tf, "catalogue"), ",".join(CATALOGUE), "A: thirteen kinds offered")
@@ -404,11 +408,11 @@ def body() -> None:
         # here, so a screen doing exactly what its specification says read as a
         # defect.
         for seat in closed_rail_keys():
-            row = inert.get(f"shell.rail.{seat}")
+            row = inert.get(f"{seat_tag}{seat}")
             assert row is not None, f"B2: the {seat} rail seat is reserved and reported live"
             ok(f"B2: and {seat} names what it waits for", len(row["detail"]) > 8)
         for seat in ahead_keys():
-            assert f"shell.rail.{seat}" not in inert, (
+            assert f"{seat_tag}{seat}" not in inert, (
                 f"B2: ★ {seat} is declared AHEAD of the reference — the mockup "
                 f"draws it locked and this build opens it — so it must not be "
                 f"reported inert. A divergence that is declared and not "
@@ -458,7 +462,7 @@ def body() -> None:
         # this demo asserting the build was worse than it is.
         assert_eq(
             sorted(unbuilt),
-            [f"shell.rail.{key}" for key in owed_keys()],
+            [f"{seat_tag}{key}" for key in owed_keys()],
             "B2: the sections specified and not built say so, and they are "
             "exactly the ones the specification declares owed",
         )
@@ -879,7 +883,7 @@ def body() -> None:
             for tag, rect in tagged
             # A badge is an address, not a control (R1613), so the account chip
             # and the DETACHED badge are not in this population.
-            if tag != "shell.rail.account"
+            if tag != f"{seat_tag}account"
             and not tag.endswith(".badge")
             and tag not in quiet
             # ★ R1694 — the palette's section headings and its two counts are
@@ -890,7 +894,7 @@ def body() -> None:
             and tag not in ("shell.palette.placed", "shell.palette.reserved")
             and (
                 tag.startswith(
-                    ("shell.appbar.", "shell.subbar.", "shell.rail.", "shell.palette.")
+                    ("shell.appbar.", "shell.subbar.", seat_tag, "shell.palette.")
                 )
                 or any(tag.endswith(f".{word}") for word in words)
             )
@@ -1155,7 +1159,7 @@ def body() -> None:
         # arrived anywhere, so this assertion was true of a rail that navigated
         # nothing at all.
         assert_router_press_moves(
-            tf, "shell.rail.settings", lambda: q(tf, "nav"), "N: a rail seat"
+            tf, f"{seat_tag}settings", lambda: q(tf, "nav"), "N: a rail seat"
         )
         tf.intervene(f"{EXT}/nav", "dashboard")
         tf.tick_ms(16)

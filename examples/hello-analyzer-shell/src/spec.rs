@@ -3309,7 +3309,11 @@ impl Population {
 /// as ordinary destinations, and the Settings page has two affordances of its
 /// own that are booked for a later release.
 pub const LOCKED: &[(&str, Population, Where)] = &[
-    ("shell.rail.{}", Population::ReservedRail, Where::Chrome),
+    (
+        crate::address::RAIL_TEMPLATE,
+        Population::ReservedRail,
+        Where::Chrome,
+    ),
     (
         "shell.palette.{}",
         Population::Reserved,
@@ -3506,7 +3510,8 @@ pub const VOICES: &[VoiceSpec] = &[
         at: Where::Chrome,
     },
     VoiceSpec {
-        tag: "shell.rail.{}",
+        // ★ R2051 — the address, from the one place that declares it.
+        tag: crate::address::RAIL_TEMPLATE,
         role: "link",
         population: Population::Rail,
         at: Where::Chrome,
@@ -3515,7 +3520,7 @@ pub const VOICES: &[VoiceSpec] = &[
     // channel and the reference's avatar has no handler at all, so announcing an
     // action it does not have was a claim the round's own gate refused.
     VoiceSpec {
-        tag: "shell.rail.account",
+        tag: crate::address::RAIL_ACCOUNT,
         role: "group",
         population: Population::One,
         at: Where::Chrome,
