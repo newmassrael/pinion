@@ -16272,6 +16272,42 @@ fn panes_json() -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// ★ R2047 — the three rosters [`spec_json`] publishes verbatim, each in a
+/// function of its own.
+///
+/// Extracted because the specification grew past the line limit when the
+/// definitions register's roster joined it, and paid by structure rather than
+/// by an allow: a roster is a different question from the document that carries
+/// it, and each of these three is one closed list rendered for the wire.
+fn card_seats_wire() -> Vec<serde_json::Value> {
+    NodeAct::ALL
+        .iter()
+        .map(|act| serde_json::json!({ "tag": act.tag(), "action": act.wire() }))
+        .collect()
+}
+
+/// The definitions register's verbs — see [`card_seats_wire`].
+fn definition_seats_wire() -> Vec<serde_json::Value> {
+    PartVerb::ALL
+        .iter()
+        .map(|verb| serde_json::json!({ "verb": verb.word() }))
+        .collect()
+}
+
+/// The host frames the specification declares — see [`card_seats_wire`].
+fn frames_wire() -> Vec<serde_json::Value> {
+    spec::FRAMES
+        .iter()
+        .map(|f| {
+            serde_json::json!({
+                "name": f.name,
+                "gist": f.gist,
+                "rect": [f.rect.0, f.rect.1, f.rect.2, f.rect.3],
+            })
+        })
+        .collect()
+}
+
 fn spec_json() -> serde_json::Value {
     serde_json::json!({
         // ★ R1664 — `body` is published too. R1662 added the column to the
@@ -16364,9 +16400,7 @@ fn spec_json() -> serde_json::Value {
         // (`NodeAct::ALL`), so a count of them is a derivation and a constant
         // was never the honest statement of that part. What stays pinned is the
         // rest of the pane, which no declaration composes.
-        "card_seats": NodeAct::ALL.iter().map(|act| serde_json::json!({
-            "tag": act.tag(), "action": act.wire(),
-        })).collect::<Vec<_>>(),
+        "card_seats": card_seats_wire(),
         // ★★★★★ R2047 — the definitions register's verb roster, published for
         // the same reason `card_seats` is: it is a CLOSED vocabulary this
         // screen owns (`PartVerb::ALL`), a walk counting the register's controls
@@ -16374,13 +16408,9 @@ fn spec_json() -> serde_json::Value {
         // constant costs when the vocabulary grows. The register's ROWS are the
         // document's, so nothing is published for them — a reader asks
         // `definitions` for that.
-        "definition_seats": PartVerb::ALL.iter().map(|verb| serde_json::json!({
-            "verb": verb.word(),
-        })).collect::<Vec<_>>(),
+        "definition_seats": definition_seats_wire(),
         "protocols": spec::PROTOCOLS,
-        "frames": spec::FRAMES.iter().map(|f| serde_json::json!({
-            "name": f.name, "gist": f.gist, "rect": [f.rect.0, f.rect.1, f.rect.2, f.rect.3],
-        })).collect::<Vec<_>>(),
+        "frames": frames_wire(),
         "nodes": spec::NODES.iter().map(|n| serde_json::json!({
             "id": n.id, "role": n.role, "badge": n.badge, "frame": n.frame,
             "rect": [n.rect.0, n.rect.1, n.rect.2],
