@@ -222,7 +222,14 @@ impl Painted {
         let mut tags = BTreeMap::new();
         let mut runs = Vec::new();
         let mut reachable = std::collections::BTreeSet::new();
-        for out in pinion_core::reach::out_of_sight(scene, window, &mut stand_in_ink) {
+        for out in pinion_core::reach::out_of_sight(
+            scene,
+            window,
+            &mut stand_in_ink,
+            // R2035 — a stand-in measurer judging placement: the process's own
+            // faces are not consulted, so the arm that excuses nothing is right.
+            pinion_core::reach::Faces::Unproven,
+        ) {
             // ★ R1714 — a set: the one question asked of this index is whether a
             // tag is one gesture away (see `shows`), and the offset beside it
             // had no reader.

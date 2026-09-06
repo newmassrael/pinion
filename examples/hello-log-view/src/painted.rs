@@ -109,7 +109,14 @@ impl Painted {
         let mut tags = BTreeMap::new();
         let mut runs = Vec::new();
         let mut reachable = BTreeSet::new();
-        for out in pinion_core::reach::out_of_sight(scene, window, &mut stand_in_ink) {
+        for out in pinion_core::reach::out_of_sight(
+            scene,
+            window,
+            &mut stand_in_ink,
+            // R2035 — a stand-in measurer judging placement: the process's own
+            // faces are not consulted, so the arm that excuses nothing is right.
+            pinion_core::reach::Faces::Unproven,
+        ) {
             if let (Some(tag), pinion_core::reach::Reach::Scrollable { .. }) = (out.tag, &out.reach)
             {
                 reachable.insert(tag);

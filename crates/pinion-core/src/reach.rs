@@ -426,6 +426,45 @@ pub enum NoExtent {
     /// there was anything to draw — a foreign surface, an immediate-mode node,
     /// or an effect, which carries no layout style at all.
     Opaque,
+    /// (R2035) The node is text with something to say, and this process
+    /// **proved** it holds no face to say it with — the platform database was
+    /// probed and was unreachable, and the application supplied none.
+    ///
+    /// ★★★★★ The zero is the font stack's, not the layout's: an empty stack
+    /// shapes every string to nothing, so on such a host EVERY run in the scene
+    /// is a zero and none of them is a placement defect. Reporting them as one
+    /// would bury the single fact that matters — the process cannot draw text —
+    /// under a list of marks that are all innocent.
+    ///
+    /// The guard is that the process PROVED it (see
+    /// [`FontSourceReport::proved_faceless`](crate::reactive::FontSourceReport::proved_faceless)):
+    /// an unprobed process grants nothing, so this cannot quietly excuse a
+    /// zero-width run on a host that has fonts — which is the only way this arm
+    /// could hide a real defect.
+    Unshaped,
+}
+
+/// (R2035) What the caller can PROVE about this process's faces — the one fact
+/// the walk needs and cannot read off the scene.
+///
+/// Passed in rather than read from ambient state, for the reason `ink_of` is:
+/// the walk judges a scene and does not go looking for the world. The
+/// authoritative answer lives with the thing that does the measuring (the
+/// layout cache's own `system_font_status` and registered families), and a
+/// reader that consulted a reactive slot instead would get the process-wide
+/// default in any scope the shell did not seed — which is every unit test.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Faces {
+    /// Either this process holds a face or nobody has asked. In both cases a
+    /// run that measures nothing is a defect, so nothing is excused.
+    #[default]
+    Unproven,
+    /// The platform database was probed and was unreachable, and the
+    /// application supplied none — see
+    /// [`FontSourceReport::proved_faceless`](crate::reactive::FontSourceReport::proved_faceless).
+    /// Every run in the scene measures nothing, for one reason that is not
+    /// about placement.
+    ProvedNone,
 }
 
 impl NoExtent {
@@ -435,6 +474,7 @@ impl NoExtent {
         match self {
             Self::Declared => "declared",
             Self::Opaque => "opaque",
+            Self::Unshaped => "unshaped",
         }
     }
 }
@@ -600,9 +640,14 @@ pub struct OutOfSight {
 /// [`crate::containment`] gives: a run's promise and its paint are different
 /// rectangles, and the paint is the one a reader sees.
 #[must_use]
-pub fn out_of_sight(scene: &Scene, window: (u32, u32), ink_of: InkOf<'_>) -> Vec<OutOfSight> {
+pub fn out_of_sight(
+    scene: &Scene,
+    window: (u32, u32),
+    ink_of: InkOf<'_>,
+    faces: Faces,
+) -> Vec<OutOfSight> {
     let mut found = Vec::new();
-    walk_marks(scene, window, ink_of, &mut |mark| {
+    walk_marks(scene, window, ink_of, faces, &mut |mark| {
         if mark.on_screen {
             return; // some of it is on screen: the reader has it
         }
@@ -693,8 +738,10 @@ fn walk_marks(
     scene: &Scene,
     window: (u32, u32),
     ink_of: InkOf<'_>,
+    faces: Faces,
     visit_mark: &mut dyn FnMut(Mark),
 ) {
+    let faceless = faces == Faces::ProvedNone;
     let window_rect = Rect::new(0, 0, window.0, window.1);
     let window_viewport = Viewport {
         name: WINDOW.to_owned(),
@@ -794,7 +841,7 @@ fn walk_marks(
                 .is_some(),
             rect,
             chain,
-            no_extent: no_extent_of(visit.node),
+            no_extent: no_extent_of(visit.node, faceless),
         });
     });
 }
@@ -948,7 +995,11 @@ pub struct Cut {
 #[must_use]
 pub fn cut(scene: &Scene, window: (u32, u32), ink_of: InkOf<'_>) -> Vec<Cut> {
     let mut found = Vec::new();
-    walk_marks(scene, window, ink_of, &mut |mark| {
+    // (R2035) `Unproven` deliberately: a cut is judged on OVERHANG, and this
+    // function never reads a mark's `no_extent` — the face question changes
+    // which zeros are called defects, and a cut is not one of them. Passing the
+    // process's real answer here would be a parameter nothing consults.
+    walk_marks(scene, window, ink_of, Faces::Unproven, &mut |mark| {
         // ★ R1971 — the skip `walk_marks` used to perform for everybody, kept
         // HERE because it is right for THIS question. A cut is "some of it lies
         // outside what the viewport can ever show"; a mark with no box shows
@@ -1014,7 +1065,7 @@ struct Mark {
 /// zero*: a ratio child with `min_size: Px(0)` has said it may shrink, not
 /// that it should vanish, and treating a permission as a request would excuse
 /// exactly the marks a gate exists to catch.
-fn no_extent_of(node: &Scene) -> Option<NoExtent> {
+fn no_extent_of(node: &Scene, faceless: bool) -> Option<NoExtent> {
     // An effect carries no layout style at all, which is the same admission the
     // opaque arm makes for the other three: there is nothing here to read.
     let Some(layout) = node.layout_style() else {
@@ -1036,6 +1087,11 @@ fn no_extent_of(node: &Scene) -> Option<NoExtent> {
         // is ever built; every other kind carries what it draws where this walk
         // can see it — a path's points, an image's source, a grid's cells.
         Scene::External(_) | Scene::ImmediateModeNode(_) => Some(NoExtent::Opaque),
+        // (R2035) A run with something to say on a host that proved it holds no
+        // face. The content check is what keeps this an answer about THIS node:
+        // an empty string is a zero for its own reason, and `walk_marks` has
+        // already excused that one before a mark is built.
+        Scene::Text(t) if faceless && !t.content.is_empty() => Some(NoExtent::Unshaped),
         _ => None,
     }
 }
@@ -1191,6 +1247,15 @@ mod tests {
         )]
         let w = (t.content.chars().count() as u32) * 8;
         (w, 12)
+    }
+
+    /// (R2035) The walk, on a process whose faces are UNPROVEN — the arm that
+    /// excuses nothing, and so the arm every test about placement wants. The
+    /// one test that is about the other arm calls [`super::out_of_sight`] and
+    /// names it, which is what keeps this shadow from quietly deciding an
+    /// answer on behalf of a test that never mentioned fonts.
+    fn out_of_sight(scene: &Scene, window: (u32, u32), ink_of: InkOf<'_>) -> Vec<OutOfSight> {
+        super::out_of_sight(scene, window, ink_of, Faces::Unproven)
     }
 
     fn text(content: &str, rect: Rect, tag: &'static str) -> Scene {
@@ -1680,6 +1745,62 @@ mod tests {
         // ★ The placed mark is still not in the report, so the walk
         // discriminates rather than reporting everything it visits.
         assert!(by_tag(&found, "mark.placed").is_none(), "{found:?}");
+    }
+
+    /// ★★★★★ (R2035) On a host that PROVED it holds no face, a run with
+    /// something to say is a zero the font stack made, not one the layout
+    /// denied — and the same scene on an unprobed process gets no exemption.
+    ///
+    /// Both directions are driven because only the pair proves anything: an
+    /// arm that answered `Unshaped` unconditionally would be a gate excusing
+    /// every zero-width run on every host, which is the one way this could hide
+    /// a real defect. The unprobed case is the default a unit test carries, so
+    /// it is also the case a careless implementation would have granted first.
+    #[test]
+    fn r2035_a_run_no_face_could_shape_is_not_a_placement_defect() {
+        // ★ The ink is NOTHING in both arms, because that is what an empty font
+        // stack returns: the zero enters through the MEASUREMENT, and the walk
+        // replaces a run's rect with it. Holding the ink fixed is what makes
+        // the face answer the only variable — with two variables the pair would
+        // prove nothing.
+        fn no_ink(_: &TextNode) -> (u32, u32) {
+            (0, 0)
+        }
+        let scene = boxed(
+            Rect::new(0, 0, 200, 200),
+            "screen",
+            vec![text(
+                "something to say",
+                Rect::new(10, 10, 0, 0),
+                "mark.run",
+            )],
+        );
+        let arm_under = |faces: Faces| {
+            let found = super::out_of_sight(&scene, (200, 200), &mut no_ink, faces);
+            by_tag(&found, "mark.run")
+                .expect("a boxless run is reported either way")
+                .reach
+                .clone()
+        };
+
+        assert_eq!(
+            arm_under(Faces::ProvedNone),
+            Reach::Unjudged {
+                why: NoExtent::Unshaped
+            },
+            "a probed host with no face makes every run a zero, and none of \
+             them is a placement defect",
+        );
+        assert_eq!(
+            arm_under(Faces::Unproven),
+            Reach::Unplaced,
+            "not knowing whether there is a face is not knowing there is none",
+        );
+        assert_eq!(
+            Faces::default(),
+            Faces::Unproven,
+            "and the arm a caller gets by saying nothing is the strict one",
+        );
     }
 
     /// ★ Half two: a mark past the content extent is lost, and says by how

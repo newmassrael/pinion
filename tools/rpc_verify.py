@@ -1853,7 +1853,9 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
                 + ", ".join(f"{n} {why}" for why, n in sorted(causes.items()))
                 + ". `declared` is the author's own zero; `opaque` is a node "
                 "whose content the framework cannot see into, and a defect can "
-                "hide there."
+                "hide there. `unshaped` is a run on a process that PROVED it "
+                "holds no face — every run measures nothing there, which is one "
+                "fact about the host and not a placement defect per mark."
             )
         if lost or allowed or out.get("scrollable") or out.get("clipped"):
             print(

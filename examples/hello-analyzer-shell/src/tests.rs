@@ -1221,6 +1221,10 @@ fn r1971_this_screen_paints_nothing_it_cannot_place() {
             &scene,
             window,
             &mut pinion_core::test_fixtures::screen_ink::stand_in_ink,
+            // R2035 — a stand-in measurer judging placement: this gate asks
+            // nothing about the process's faces, and the arm that excuses
+            // nothing is what keeps it strict.
+            pinion_core::reach::Faces::Unproven,
         );
         let unplaced: Vec<String> = out
             .iter()
@@ -1381,7 +1385,12 @@ fn r1662_a_board_taller_than_the_canvas_is_reachable_by_scrolling() {
             let chars = t.content.chars().count() as u32;
             (chars * t.style.font_size_px.max(1), t.rect.h)
         };
-        let out = pinion_core::reach::out_of_sight(&scene, (super::WIN_W, super::WIN_H), ink);
+        let out = pinion_core::reach::out_of_sight(
+            &scene,
+            (super::WIN_W, super::WIN_H),
+            ink,
+            pinion_core::reach::Faces::Unproven,
+        );
         let lost: Vec<String> = out
             .iter()
             .filter(|o| o.reach.is_lost())

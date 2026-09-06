@@ -88364,6 +88364,54 @@
         "Cohort loop unchanged at 36. Next: the font debt's decision, then back to the cohort."
       ]
     },
+    "R2035": {
+      "decision_summary": "A zero the font stack made is not a zero the layout denied, and the walk now has a word for it.\n\nThe last instalment on the red run. The font screen's four rows carry real sentences and measure nothing, in a run the demo builds on purpose with an empty font database and no application face. R2025 split a zero's cause in two — the author asked for it, or the walk cannot see inside the node — and there is a third: an empty font stack shapes every string to nothing, so on such a host every run in the scene is a zero and none of them is about placement.\n\nThe exemption is designed around what it could hide, which is R2025's own lesson: a permission read as a request excuses exactly what the gate was built for. So the predicate is that the process PROVED it holds no face — a probed database that was unreachable and no application family — and not the looser \"has no face\", which is also true when nobody asked. That looser form would have granted the exemption to every scene nobody probed for, which is every unit test.\n\nAnd the fact is a parameter rather than something the walk goes looking for. That is not a style preference: the first implementation read it from ambient reactive state, compiled, passed a three-way unit test, and did nothing at all in the real application.",
+      "changes_bullets": [
+        "The reach walk carries a third cause for a boxless mark: a run with something to say on a process that proved it holds no face. Such marks stay visible in the unjudged line, counted by cause, rather than being refused as placement defects or disappearing.",
+        "The font-source report gains the predicate that decides it, named for what it asserts: the platform database was probed and was unreachable, and the application supplied none. Its own note says why it is not the negation of \"has any face\" — an absence of knowledge must not be read as knowledge of absence — and a test drives all four states.",
+        "The walk takes the answer as an argument, the way it already takes the ink function, and the RPC read derives it from the layout cache: the object that shapes the text is the one that knows whether it can. The two other callers pass the arm that excuses nothing and say why they do not consult the question.",
+        "The test module keeps a shadow of the entry point pinned to that strict arm so twenty existing tests read unchanged, and the one test about the other arm calls through `super::` and names it."
+      ],
+      "verification_bullets": [
+        "The font walk PASSES, and the four marks are still reported — `4 unshaped` on the unjudged line, which is the difference between a distinction and a silence. Before the change it is the failure the run names.",
+        "Five edited examples' walks PASS: the node lab, the analyzer shell, the log view, the packet view and the key patterns screen. 5,996 tests passed and 0 failed across the core, the RPC crate, the shell and the lab. Workspace clippy on CI's own flags rc=0 with zero warnings, after one refusal repaired by moving an item above the statements rather than allowing it. `cargo fmt --all --check` rc=0.",
+        "The finding that changed the design was caught by running the demo and by nothing else: the first implementation read the process's font report from ambient reactive state, and it compiled, and its three-way unit test passed, and the real application excused nothing — the RPC dispatch is not inside the owner scope the shell seeded, so the walk saw the process-wide default. A unit test cannot see that defect, because a unit test has an empty ambient scope too.",
+        "The predicate's own test drives all four states it must tell apart: probed and empty, unprobed, probed-empty with an application face, and a host with fonts."
+      ],
+      "impact_refs": [
+        "5.36",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "This does not close the debt it repairs the symptom of, and the debt file says so in its own words: a person still cannot read that screen's diagnosis. What changed is that the framework stops calling it a placement defect. The capability gap is unchanged and measured — no production build of this tree carries any face, because every inclusion of one sits under a test configuration — and the first act on it is still a decision rather than a repair: how a last-resort face could never silently serve a screen that has a real one available.",
+        "With this the red run's every named screen is green here, and the arc that began when R2025 armed the refusal is finished: seven rounds, five screens, four debts opened and one closed.",
+        "The two debts from R2032 stay open and unblocked — the half-placement is still spellable at 294 sites, and no reader can ask where a curve is actually drawn.",
+        "Cohort loop unchanged at 36. Next: back to the cohort."
+      ],
+      "publishable_decision_summary": "A zero the font stack made is not a zero the layout denied, and the walk now has a word for it.\n\nThe last instalment on the red run. The font screen's four rows carry real sentences and measure nothing, in a run the demo builds on purpose with an empty font database and no application face. R2025 split a zero's cause in two — the author asked for it, or the walk cannot see inside the node — and there is a third: an empty font stack shapes every string to nothing, so on such a host every run in the scene is a zero and none of them is about placement.\n\nThe exemption is designed around what it could hide, which is R2025's own lesson: a permission read as a request excuses exactly what the gate was built for. So the predicate is that the process PROVED it holds no face — a probed database that was unreachable and no application family — and not the looser \"has no face\", which is also true when nobody asked. That looser form would have granted the exemption to every scene nobody probed for, which is every unit test.\n\nAnd the fact is a parameter rather than something the walk goes looking for. That is not a style preference: the first implementation read it from ambient reactive state, compiled, passed a three-way unit test, and did nothing at all in the real application.",
+      "publishable_changes_bullets": [
+        "The reach walk carries a third cause for a boxless mark: a run with something to say on a process that proved it holds no face. Such marks stay visible in the unjudged line, counted by cause, rather than being refused as placement defects or disappearing.",
+        "The font-source report gains the predicate that decides it, named for what it asserts: the platform database was probed and was unreachable, and the application supplied none. Its own note says why it is not the negation of \"has any face\" — an absence of knowledge must not be read as knowledge of absence — and a test drives all four states.",
+        "The walk takes the answer as an argument, the way it already takes the ink function, and the RPC read derives it from the layout cache: the object that shapes the text is the one that knows whether it can. The two other callers pass the arm that excuses nothing and say why they do not consult the question.",
+        "The test module keeps a shadow of the entry point pinned to that strict arm so twenty existing tests read unchanged, and the one test about the other arm calls through `super::` and names it."
+      ],
+      "publishable_verification_bullets": [
+        "The font walk PASSES, and the four marks are still reported — `4 unshaped` on the unjudged line, which is the difference between a distinction and a silence. Before the change it is the failure the run names.",
+        "Five edited examples' walks PASS: the node lab, the analyzer shell, the log view, the packet view and the key patterns screen. 5,996 tests passed and 0 failed across the core, the RPC crate, the shell and the lab. Workspace clippy on CI's own flags rc=0 with zero warnings, after one refusal repaired by moving an item above the statements rather than allowing it. `cargo fmt --all --check` rc=0.",
+        "The finding that changed the design was caught by running the demo and by nothing else: the first implementation read the process's font report from ambient reactive state, and it compiled, and its three-way unit test passed, and the real application excused nothing — the RPC dispatch is not inside the owner scope the shell seeded, so the walk saw the process-wide default. A unit test cannot see that defect, because a unit test has an empty ambient scope too.",
+        "The predicate's own test drives all four states it must tell apart: probed and empty, unprobed, probed-empty with an application face, and a host with fonts."
+      ],
+      "publishable_impact_refs": [
+        "5.36",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "This does not close the debt it repairs the symptom of, and the debt file says so in its own words: a person still cannot read that screen's diagnosis. What changed is that the framework stops calling it a placement defect. The capability gap is unchanged and measured — no production build of this tree carries any face, because every inclusion of one sits under a test configuration — and the first act on it is still a decision rather than a repair: how a last-resort face could never silently serve a screen that has a real one available.",
+        "With this the red run's every named screen is green here, and the arc that began when R2025 armed the refusal is finished: seven rounds, five screens, four debts opened and one closed.",
+        "The two debts from R2032 stay open and unblocked — the half-placement is still spellable at 294 sites, and no reader can ask where a curve is actually drawn.",
+        "Cohort loop unchanged at 36. Next: back to the cohort."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

@@ -137,8 +137,10 @@ pub struct OutOfSightReport {
     /// edge, in `left, top, right, bottom` order.
     pub short_by: Option<[u32; 4]>,
     /// ★★★★★ (R2025) For `unjudged`: WHY the walk declined — `declared` (the
-    /// layout style asked for zero on an axis) or `opaque` (the node's content
-    /// is the author's own).
+    /// layout style asked for zero on an axis), `opaque` (the node's content is
+    /// the author's own) or, since R2035, `unshaped` (the node is a run with
+    /// something to say and this process proved it holds no face to say it
+    /// with, so the zero is the font stack's and every run in the scene has it).
     ///
     /// `None` on every other arm, the shape [`Self::short_by`] and
     /// [`Self::moves`] already have: a field that is only sometimes an answer
@@ -346,8 +348,33 @@ pub fn collect(scene: &Scene, cache: &mut LayoutCache) -> ScrollReachOutcome {
     let root = scene.rect();
     let mut marks = 0usize;
     scene.for_each_node(&mut |_| marks += 1);
-    let out = pinion_core::reach::out_of_sight(scene, (root.w, root.h), &mut crate::ink_of(cache));
+    // (R2035) Asked of the CACHE, which is the thing that does the measuring:
+    // if it has no database and no registered family, every run it shapes comes
+    // back nothing, and that is one fact about the process rather than a
+    // placement defect per run. Read before the borrow the walk takes.
+    let faces = faces_of(cache);
+    let out =
+        pinion_core::reach::out_of_sight(scene, (root.w, root.h), &mut crate::ink_of(cache), faces);
     report((root.w, root.h), &out, marks)
+}
+
+/// (R2035) What this process can PROVE about its faces, from the cache that
+/// shapes the text rather than from a reactive slot.
+///
+/// The same predicate
+/// [`FontSourceReport::proved_faceless`](pinion_core::reactive::FontSourceReport::proved_faceless)
+/// states, asked of the object that answers it first-hand: a probed database
+/// that was unreachable AND no family the application registered. `NotProbed`
+/// grants nothing, which is what keeps this from excusing a zero-width run on a
+/// host nobody asked about.
+fn faces_of(cache: &LayoutCache) -> pinion_core::reach::Faces {
+    let probed_empty =
+        cache.system_font_status() == pinion_core::reactive::SystemFontStatus::Unavailable;
+    if probed_empty && cache.application_font_families().is_empty() {
+        pinion_core::reach::Faces::ProvedNone
+    } else {
+        pinion_core::reach::Faces::Unproven
+    }
 }
 
 /// `scene/scroll_reach` dispatcher entry.

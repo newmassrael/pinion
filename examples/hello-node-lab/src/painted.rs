@@ -502,7 +502,14 @@ impl Painted {
         let mut runs = Vec::new();
         let mut reachable = BTreeMap::new();
         let mut said = BTreeMap::new();
-        for out in pinion_core::reach::out_of_sight(scene, window, &mut stand_in_ink) {
+        for out in pinion_core::reach::out_of_sight(
+            scene,
+            window,
+            &mut stand_in_ink,
+            // R2035 — a stand-in measurer judging placement: the process's own
+            // faces are not consulted, so the arm that excuses nothing is right.
+            pinion_core::reach::Faces::Unproven,
+        ) {
             if let (Some(tag), pinion_core::reach::Reach::Scrollable { moves }) =
                 (out.tag, out.reach)
             {
@@ -3251,7 +3258,12 @@ fn r1662_every_mark_is_shown_or_reachable_in_every_state_and_size() {
                 let mut counted = 0usize;
                 scene.for_each_node(&mut |_| counted += 1);
                 marks += counted;
-                for out in pinion_core::reach::out_of_sight(&scene, *size, &mut stand_in_ink) {
+                for out in pinion_core::reach::out_of_sight(
+                    &scene,
+                    *size,
+                    &mut stand_in_ink,
+                    pinion_core::reach::Faces::Unproven,
+                ) {
                     match out.reach {
                         pinion_core::reach::Reach::Scrollable { .. } => scrollable += 1,
                         // ★ R1713 — a mark the range reaches all but an edge of is

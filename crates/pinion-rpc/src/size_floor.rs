@@ -155,8 +155,16 @@ pub fn audit_at(
 ) -> ConcessionReport {
     let root = scene.rect();
     let cuts = pinion_core::reach::cut(scene, (root.w, root.h), &mut crate::ink_of(cache));
-    let sightings =
-        pinion_core::reach::out_of_sight(scene, (root.w, root.h), &mut crate::ink_of(cache));
+    // (R2035) The shrink audit reads OVERHANG and reachability, never a mark's
+    // extent cause, so the face question changes nothing it decides — and
+    // `Unproven` is the arm that excuses nothing, which is the right default
+    // for a reader that does not consult the distinction.
+    let sightings = pinion_core::reach::out_of_sight(
+        scene,
+        (root.w, root.h),
+        &mut crate::ink_of(cache),
+        pinion_core::reach::Faces::Unproven,
+    );
     let audit = pinion_core::shrink::audit(policy, &cuts, &sightings);
     ConcessionReport {
         comfortable: policy.comfortable().into(),

@@ -175,6 +175,24 @@ impl FontSourceReport {
     pub fn has_any_face(&self) -> bool {
         self.system == SystemFontStatus::Available || !self.application_families.is_empty()
     }
+
+    /// R2035 §5.36 — this process **proved** it can shape no text: the platform
+    /// database was probed and was unreachable, and the application supplied no
+    /// face either.
+    ///
+    /// ★★★★★ Deliberately not `!has_any_face()`, and the difference is the
+    /// whole point of the method existing. That predicate is also false when
+    /// nobody has probed yet — an absence of knowledge, which must never be
+    /// read as knowledge of absence. A reader that acts on "there is no face"
+    /// (excusing a zero-width run, warning a person, skipping a pixel
+    /// assertion) is making a claim about the world, and only the `Unavailable`
+    /// verdict is a measurement; `NotProbed` is the default a unit test with no
+    /// shell installed carries, so the loose form would grant the claim to
+    /// every scene nobody probed for.
+    #[must_use]
+    pub fn proved_faceless(&self) -> bool {
+        self.system == SystemFontStatus::Unavailable && self.application_families.is_empty()
+    }
 }
 
 /// R1448 §5.36 — the font-source slot: key, default and inherit verdict as one
@@ -230,6 +248,45 @@ mod tests {
         super::FONT_SOURCES,
         || -> FontSourceReport { seeded() }
     );
+
+    /// ★★★★★ (R2035) The two absences a reader must not confuse: a probed host
+    /// with nothing on it, and a host nobody asked. Both answer `false` to
+    /// [`FontSourceReport::has_any_face`]; only the first is a MEASUREMENT, and
+    /// only it may license a reader to act on "there is no face".
+    #[test]
+    fn r2035_only_a_probed_absence_is_proof_of_one() {
+        let probed = FontSourceReport {
+            system: SystemFontStatus::Unavailable,
+            ..FontSourceReport::default()
+        };
+        assert!(probed.proved_faceless(), "probed, and it had none");
+        assert!(!probed.has_any_face());
+
+        let unprobed = FontSourceReport::default();
+        assert!(!unprobed.has_any_face(), "nothing is claimed either way");
+        assert!(
+            !unprobed.proved_faceless(),
+            "an absence of knowledge is not knowledge of absence",
+        );
+
+        let supplied = FontSourceReport {
+            system: SystemFontStatus::Unavailable,
+            application_families: vec!["Fixture Sans".to_owned()],
+            ..FontSourceReport::default()
+        };
+        assert!(
+            !supplied.proved_faceless(),
+            "a host with no database still has the face the application shipped",
+        );
+        assert!(supplied.has_any_face());
+
+        let served = FontSourceReport {
+            system: SystemFontStatus::Available,
+            ..FontSourceReport::default()
+        };
+        assert!(!served.proved_faceless());
+        assert!(served.has_any_face());
+    }
 
     /// R1448 — off the shell the reader answers `NotProbed` with no families.
     /// Honest, not optimistic: nobody probed, so nothing is claimed.
