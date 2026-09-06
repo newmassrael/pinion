@@ -136,6 +136,15 @@ pub struct OutOfSightReport {
     /// For `clipped` and `lost`: how far past the reachable box it reaches, per
     /// edge, in `left, top, right, bottom` order.
     pub short_by: Option<[u32; 4]>,
+    /// ★★★★★ (R2025) For `unjudged`: WHY the walk declined — `declared` (the
+    /// layout style asked for zero on an axis) or `opaque` (the node's content
+    /// is the author's own).
+    ///
+    /// `None` on every other arm, the shape [`Self::short_by`] and
+    /// [`Self::moves`] already have: a field that is only sometimes an answer
+    /// says so by being absent, rather than by carrying a word that means "not
+    /// applicable" and which a client then has to know to skip.
+    pub why: Option<&'static str>,
 }
 
 /// The `scene/scroll_reach` result.
@@ -168,6 +177,18 @@ pub struct ScrollReachOutcome {
     /// R1971 this class reached no report at all, and a demo printing
     /// `0 lost ... of 435 marks` passed while eight marks were painted nowhere.
     pub unplaced: usize,
+    /// ★★★★★ (R2025) And how many are boxless in a way this walk **declined to
+    /// judge**: the author declared the zero, or the node's content is opaque
+    /// to the framework.
+    ///
+    /// Counted apart from [`Self::unplaced`] for the reason that one is counted
+    /// apart from [`Self::lost`], and it is what turned a print into a
+    /// refusal: R1971 measured thirteen examples reporting boxless marks and
+    /// found every one of them an idiom, so a gate over that number could only
+    /// ever have been advisory. Splitting the count lets a gate refuse
+    /// `unplaced` and keep reporting this — which leaves the owed number
+    /// visible instead of silent.
+    pub unjudged: usize,
     /// Every mark that is off screen, in paint order.
     pub out_of_sight: Vec<OutOfSightReport>,
 }
@@ -259,6 +280,7 @@ pub fn report(window: (u32, u32), out: &[OutOfSight], marks: usize) -> ScrollRea
             .count(),
         lost: out.iter().filter(|o| o.reach.is_lost()).count(),
         unplaced: out.iter().filter(|o| o.reach.is_unplaced()).count(),
+        unjudged: out.iter().filter(|o| o.reach.is_unjudged()).count(),
         out_of_sight: out
             .iter()
             .map(|o| {
@@ -299,6 +321,10 @@ pub fn report(window: (u32, u32), out: &[OutOfSight], marks: usize) -> ScrollRea
                     reach: o.reach.wire_word(),
                     moves,
                     short_by,
+                    why: o
+                        .reach
+                        .no_extent()
+                        .map(pinion_core::reach::NoExtent::wire_word),
                 }
             })
             .collect(),

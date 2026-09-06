@@ -26,6 +26,7 @@ root so `cargo run -p <example>` resolves.
 
 from __future__ import annotations
 
+import collections
 import json
 import queue
 import shutil
@@ -1777,36 +1778,58 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
                 f"{(o.get('tag') or o.get('content') or o.get('path') or '<a mark>')!r}"
                 for o in unplaced[:6]
             )
-            # ★★★★★ R1971 — REPORTED, not judged, and the census is what
-            # demoted it. The first draft raised here with "there is
-            # deliberately no budget row for this class", on the measured claim
-            # that the population was zero. Run over ONE DEMO PER EXAMPLE — 113
-            # of them, derived from the demos' own `EXAMPLE` declarations — it
-            # was not zero: 13 examples reported marks, and reading them split
-            # into idioms rather than defects. Whitespace runs (`\xa0` for a
-            # blank line, nine in one example and twelve in another) moved into
-            # the substrate's own "nothing to draw"; what REMAINED were boxes
-            # the author DECLARED zero — `Size::px(LINE_W, 0)` on a row that
-            # lets its text's ink overflow, and `Scene::External` nodes that
-            # exist to answer queries rather than to paint.
+            # ★★★★★ R2025 — REFUSED, and this line is the whole of
+            # `debt-a-zero-box-does-not-say-who-made-it-zero`.
             #
-            # ⇒ after the layout pass, a box the author declared zero and one
-            # the pass DENIED are the SAME RECTANGLE, and nothing on this wire
-            # tells them apart. A gate that cannot make that distinction and
-            # fails anyway is a gate that reports a convention as a defect, so
-            # this prints — the idiom this file already uses for a check that
-            # can measure but not yet judge, and which keeps the owed number
-            # visible instead of silent.
-            print(
+            # R1971 could only PRINT here. Its first draft raised, on the
+            # measured claim that the population was zero; run over ONE DEMO
+            # PER EXAMPLE — 113 of them, derived from the demos' own `EXAMPLE`
+            # declarations — it was not zero, and reading the thirteen split
+            # into idioms rather than defects. After the layout pass a box the
+            # author DECLARED zero and one the pass DENIED were the same
+            # rectangle, and nothing on this wire told them apart, so a gate
+            # that failed anyway would have reported a convention as a defect.
+            #
+            # R2025 put the difference where it can be read — on the NODE,
+            # before the rectangle is all that is left — and `reach` now
+            # carries two words. `unplaced` is the arm the walk is willing to
+            # call a defect; `unjudged` below is the one it is not. So this
+            # refuses, and the class stops being advisory.
+            raise AssertionError(
                 f"[unplaced] {self.example}: {len(unplaced)} mark(s) carry a "
-                f"name and NO BOX — {rows}. REPORTED, not judged: a declared "
-                f"zero and a denied box are one rectangle after layout "
-                f"(debt-a-zero-box-does-not-say-who-made-it-zero)."
+                f"name and NO BOX that nobody asked to have none — {rows}. A "
+                f"primitive whose own `rect` holds its geometry must be placed "
+                f"with `absolute(rect)`; put in flow, the layout pass "
+                f"overwrites that rect with the flow box and every index built "
+                f"from `absolute_rect` drops it. A zero the author DECLARED, or "
+                f"a node this walk cannot see inside, is reported as "
+                f"`unjudged` instead and does not reach here."
+            )
+        # ★★★★★ R2025 — the half the walk DECLINED to judge, kept visible.
+        #
+        # An admission rather than an excuse: `opaque` says the framework could
+        # not ask a foreign surface whether it had anything to draw, so a real
+        # defect can sit in this list. Printing it is what keeps that owed
+        # number in front of a reader instead of turning the split into a
+        # silence — which is the failure mode a class getting its own arm
+        # invites, and the one R1971's own report was written against.
+        unjudged = [
+            o for o in out.get("out_of_sight", []) if o.get("reach") == "unjudged"
+        ]
+        if unjudged:
+            causes = collections.Counter(o.get("why") or "?" for o in unjudged)
+            print(
+                f"[unjudged] {self.example}: {len(unjudged)} boxless mark(s) "
+                f"this walk did not judge — "
+                + ", ".join(f"{n} {why}" for why, n in sorted(causes.items()))
+                + ". `declared` is the author's own zero; `opaque` is a node "
+                "whose content the framework cannot see into, and a defect can "
+                "hide there."
             )
         if lost or allowed or out.get("scrollable") or out.get("clipped"):
             print(
                 f"[scroll-reach] {self.example}: {len(lost)} lost, "
-                f"{len(unplaced)} unplaced, "
+                f"{len(unplaced)} unplaced, {len(unjudged)} unjudged, "
                 f"{out.get('clipped', 0)} reachable in part, "
                 f"{out.get('scrollable', 0)} one scroll away, of "
                 f"{out.get('marks', 0)} marks, budget {allowed}"

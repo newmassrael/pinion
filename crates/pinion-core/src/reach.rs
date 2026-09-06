@@ -366,7 +366,77 @@ pub enum Reach {
     /// was never taken. Two facts, two arms, and [`Self::is_lost`] stays true to
     /// its name — [`Self::nothing_reaches_it`] is the union, for the gates whose
     /// question is *can the reader get to this at all*.
+    ///
+    /// ★★★★★ (R2025) **NARROWED to the marks this walk can call a defect.** A
+    /// mark with no box that the author ASKED to have none, or one whose
+    /// content the framework cannot see into, is [`Self::Unjudged`] — see
+    /// [`NoExtent`] for what those two are and why the split is what turns a
+    /// print into a refusal.
     Unplaced,
+    /// ★★★★★ (R2025) The mark has no box, and whether that is a defect is not
+    /// a question this walk can answer.
+    ///
+    /// # Why a fourth arm rather than a flag on the third
+    ///
+    /// R1971 built [`Self::Unplaced`] and then could not make a gate out of
+    /// it: after the layout pass a box the author DECLARED zero and one the
+    /// pass DENIED are the same rectangle, so a demo gate over 113 examples
+    /// PRINTED thirteen reports and refused none of them — the whole content
+    /// of `debt-a-zero-box-does-not-say-who-made-it-zero`. The arm that cannot
+    /// be judged has to be a different arm, or every consumer re-derives the
+    /// distinction from a screen it does not know.
+    ///
+    /// ⚠ It is deliberately NOT "the idiom arm". [`NoExtent::Opaque`] is an
+    /// admission rather than an excuse: the framework cannot ask a foreign
+    /// surface whether it had anything to draw, so a real defect can sit here.
+    /// Keeping it a REPORT rather than a silence is what leaves that owed
+    /// number visible.
+    Unjudged {
+        /// What this walk was able to say about the zero.
+        why: NoExtent,
+    },
+}
+
+/// ★★★★★ (R2025) Why a boxless mark is not something this walk will call a
+/// defect.
+///
+/// Two arms because the round that built it measured three idioms and could
+/// separate exactly two things — and the measuring is the point, because the
+/// debt's own prescription assumed one predicate would separate all of them:
+///
+/// * a run of whitespace and an empty container never reach here at all —
+///   the walk excuses them on their CONTENT, which R1971 already built;
+/// * a box the author declared zero is [`Self::Declared`], read off
+///   [`crate::style::LayoutStyle::size`];
+/// * a sizeless [`crate::Scene::External`] is
+///   [`Self::Opaque`] — and it took a measurement to find that, because the
+///   obvious answer is wrong. `hello-answer-origin`'s query probe carries no
+///   `with_layout` at all, so its size is `Auto` and its declaration is
+///   indistinguishable from that of R1970's genuine defect (a `Scene::Path`
+///   put in flow); and asking `External::backends()` does not help either,
+///   because `query_proxy_external_impl!` declares BOTH `Gui` and `Rpc`. What
+///   separates them is that this walk can see a path's points and cannot see
+///   inside an external.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoExtent {
+    /// The layout style asked for zero on an axis, so the box the pass produced
+    /// is the box that was requested.
+    Declared,
+    /// The node's content is the author's own and this walk cannot ask whether
+    /// there was anything to draw — a foreign surface, an immediate-mode node,
+    /// or an effect, which carries no layout style at all.
+    Opaque,
+}
+
+impl NoExtent {
+    /// The word that rides on the wire.
+    #[must_use]
+    pub const fn wire_word(self) -> &'static str {
+        match self {
+            Self::Declared => "declared",
+            Self::Opaque => "opaque",
+        }
+    }
 }
 
 impl Reach {
@@ -378,6 +448,22 @@ impl Reach {
             Self::Clipped { .. } => "clipped",
             Self::Lost { .. } => "lost",
             Self::Unplaced => "unplaced",
+            // ★ (R2025) One word per arm and the CAUSE inside it, rather than
+            // two top-level words: a client filtering on `reach` asks *is this
+            // judged* first and *why not* second, and folding the cause into
+            // the word would make a filter for the unjudged class enumerate its
+            // arms — the shape R1971 measured on `lost` vs `unplaced`, where a
+            // filter on one word could not see the other.
+            Self::Unjudged { .. } => "unjudged",
+        }
+    }
+
+    /// ★ (R2025) The cause carried by the one arm that has one.
+    #[must_use]
+    pub const fn no_extent(&self) -> Option<NoExtent> {
+        match self {
+            Self::Unjudged { why } => Some(*why),
+            _ => None,
         }
     }
 
@@ -394,9 +480,33 @@ impl Reach {
     }
 
     /// (R1971) True for the mark that was never given a box to be drawn in.
+    ///
+    /// ★★★★★ (R2025) **And that nobody asked to have none.** This is the
+    /// question a gate refuses on, and it is narrower than *has no box* by
+    /// exactly the two causes [`NoExtent`] names — which is what makes it
+    /// answerable at all. Ask [`Self::has_no_box`] for the wider one.
     #[must_use]
     pub const fn is_unplaced(&self) -> bool {
         matches!(self, Self::Unplaced)
+    }
+
+    /// ★ (R2025) True for a mark with no box, judged or not — the question a
+    /// reader asking about EXTENT has, as against the one a gate refusing has.
+    ///
+    /// Both are published because both are asked, and R1971's own lesson is
+    /// what says they must be different names: a predicate whose name is wider
+    /// than its population is how `is_lost` came to answer `false` for the one
+    /// case every refusal in this workspace most needed a `true` for.
+    #[must_use]
+    pub const fn has_no_box(&self) -> bool {
+        matches!(self, Self::Unplaced | Self::Unjudged { .. })
+    }
+
+    /// ★ (R2025) True for a boxless mark this walk declined to judge, with the
+    /// reason it gave.
+    #[must_use]
+    pub const fn is_unjudged(&self) -> bool {
+        matches!(self, Self::Unjudged { .. })
     }
 
     /// ★ (R1971) True when **no offset and no scroll reaches any part of this
@@ -407,6 +517,12 @@ impl Reach {
     /// apart must still be able to. Every refusal in this workspace that read
     /// `is_lost` was, on the evidence of R1970, asking THIS question and getting
     /// a `false` for the one case it most needed a `true` for.
+    ///
+    /// ⚠ (R2025) [`Self::Unjudged`] is deliberately NOT in this union, and the
+    /// reason is the name: a caller reading this is about to REFUSE, and a
+    /// walk that has just said it cannot judge a mark must not hand that
+    /// caller a `true`. Nothing reaches an unjudged mark either — ask
+    /// [`Self::has_no_box`] where that is the question.
     #[must_use]
     pub const fn nothing_reaches_it(&self) -> bool {
         matches!(self, Self::Lost { .. } | Self::Unplaced)
@@ -421,7 +537,9 @@ impl Reach {
     pub fn moves(&self) -> &[Move] {
         match self {
             Self::Scrollable { moves } => moves,
-            Self::Clipped { .. } | Self::Lost { .. } | Self::Unplaced => &[],
+            Self::Clipped { .. } | Self::Lost { .. } | Self::Unplaced | Self::Unjudged { .. } => {
+                &[]
+            }
         }
     }
 
@@ -435,10 +553,12 @@ impl Reach {
     /// that mark has no rectangle, so there is nothing for an overhang to be
     /// measured from. Two reasons for one `None`, which is why the arms are
     /// asked by name — [`Self::is_unplaced`] — rather than inferred from it.
+    /// (R2025) And a third for [`Self::Unjudged`], which is the same reason as
+    /// the second.
     #[must_use]
     pub const fn short_by(&self) -> Option<Overhang> {
         match self {
-            Self::Scrollable { .. } | Self::Unplaced => None,
+            Self::Scrollable { .. } | Self::Unplaced | Self::Unjudged { .. } => None,
             Self::Clipped { short_by } | Self::Lost { short_by } => Some(*short_by),
         }
     }
@@ -499,7 +619,16 @@ pub fn out_of_sight(scene: &Scene, window: (u32, u32), ink_of: InkOf<'_>) -> Vec
             // empty rect answers "contained", so without this line a boxless
             // mark would come back `Scrollable` with an empty move list — a row
             // that says "scroll to reach it" and names nothing to scroll.
-            Reach::Unplaced
+            //
+            // ★★★★★ R2025 — and it is now TWO answers, because R1971 built one
+            // and then could not make a gate out of it. A box the author
+            // declared zero and one the pass denied are the same rectangle
+            // here; the difference lives on the node, so the walk reads it
+            // there and carries it.
+            match mark.no_extent {
+                Some(why) => Reach::Unjudged { why },
+                None => Reach::Unplaced,
+            }
         } else if short_by.is_contained() {
             Reach::Scrollable {
                 moves: chain_moves(mark.rect, &mark.chain),
@@ -665,6 +794,7 @@ fn walk_marks(
                 .is_some(),
             rect,
             chain,
+            no_extent: no_extent_of(visit.node),
         });
     });
 }
@@ -859,6 +989,55 @@ struct Mark {
     /// nearest is what it is *judged* against, and the rest is what has to move
     /// for it to be seen.
     chain: Chain,
+    /// ★★★★★ (R2025) What the walk can say about a zero box, asked at the node
+    /// rather than inferred from the rectangle afterwards.
+    ///
+    /// Carried on the mark because this is the ONE fact the classification
+    /// needs that the rectangle cannot hold: after the layout pass a declared
+    /// zero and a denied one are the same `Rect`, which is the whole of
+    /// `debt-a-zero-box-does-not-say-who-made-it-zero`. `None` means the walk
+    /// found nothing excusing — which, for a zero box, is the defect.
+    no_extent: Option<NoExtent>,
+}
+
+/// ★★★★★ (R2025) What this walk can say about a mark whose box came back
+/// zero, read off the node.
+///
+/// Asked of every node rather than only of the zero ones, because it is a
+/// property of the DECLARATION and the caller is what knows whether the
+/// rectangle made it a question.
+///
+/// ⚠ The `Declared` half reads [`crate::style::LayoutStyle::size`] and NOT the
+/// other four fields that can also end in a zero box — `min_size`,
+/// `flex_basis`, `flex_shrink` and `display`. That is deliberate and it is the
+/// difference between *the author asked for zero* and *the author permitted
+/// zero*: a ratio child with `min_size: Px(0)` has said it may shrink, not
+/// that it should vanish, and treating a permission as a request would excuse
+/// exactly the marks a gate exists to catch.
+fn no_extent_of(node: &Scene) -> Option<NoExtent> {
+    // An effect carries no layout style at all, which is the same admission the
+    // opaque arm makes for the other three: there is nothing here to read.
+    let Some(layout) = node.layout_style() else {
+        return Some(NoExtent::Opaque);
+    };
+    let asked_zero = |v: crate::style::SizeValue| {
+        matches!(
+            v,
+            crate::style::SizeValue::Px(0) | crate::style::SizeValue::Percent(0)
+        )
+    };
+    if asked_zero(layout.size.width) || asked_zero(layout.size.height) {
+        return Some(NoExtent::Declared);
+    }
+    match node {
+        // The framework cannot ask a foreign surface whether it had anything to
+        // draw. `Scene::Text` and `Scene::Container` are the two it CAN ask,
+        // and `walk_marks` already excuses them on their content before a mark
+        // is ever built; every other kind carries what it draws where this walk
+        // can see it — a path's points, an image's source, a grid's cells.
+        Scene::External(_) | Scene::ImmediateModeNode(_) => Some(NoExtent::Opaque),
+        _ => None,
+    }
 }
 
 /// Read a clipping node as a viewport, given what the chain above it can ever
@@ -1382,6 +1561,125 @@ mod tests {
                 .any(|c| c.tag.as_deref() == Some("mark.unplaced")),
             "a boxless mark is not a cut: {cuts:?}",
         );
+    }
+
+    /// ★★★★★ R2025 — **a boxless mark says who made it zero**, and the three
+    /// answers are three different rows of one report.
+    ///
+    /// # What this closes
+    ///
+    /// R1971 built [`Reach::Unplaced`] and then could not make a gate out of
+    /// it. Measured over one demo per example — 113 of them — thirteen
+    /// reported boxless marks and every one was an idiom, so the demo gate
+    /// PRINTED and refused nothing: after the layout pass a box the author
+    /// declared zero and one the pass denied are the same rectangle.
+    ///
+    /// The difference is on the NODE, so the walk reads it there. This fixture
+    /// stands all three side by side in one scene, which is what makes it a
+    /// test of the discrimination rather than of any one arm:
+    ///
+    /// * a container that holds something and got no box — **judged**;
+    /// * one whose layout asked for `Size::px(_, 0)` — **declared**;
+    /// * a [`Scene::External`] with no layout at all — **opaque**, and this is
+    ///   the one that took a measurement rather than a guess. Its declaration
+    ///   is `Auto`, exactly like the judged case's, and `External::backends()`
+    ///   does not separate them either, because `query_proxy_external_impl!`
+    ///   claims both `Gui` and `Rpc`.
+    #[test]
+    fn r2025_a_boxless_mark_says_who_made_it_zero() {
+        let mut declared = ContainerNode::new(vec![text(
+            "over",
+            Rect::new(0, 0, 48, 12),
+            "declared.inside",
+        )]);
+        declared.rect = Rect::new(0, 0, 0, 0);
+        declared.tag = Some("mark.declared".into());
+        declared.layout = crate::style::LayoutStyle::new().with_size(crate::style::Size::px(40, 0));
+
+        let opaque = Scene::External(
+            crate::scene::ExternalNode::new(Box::new(crate::external::StubExternal::new()))
+                .with_tag("mark.opaque"),
+        );
+
+        let screen = boxed(
+            Rect::new(0, 0, 200, 200),
+            "screen",
+            vec![
+                text("here", Rect::new(10, 10, 40, 12), "mark.placed"),
+                boxed(
+                    Rect::new(0, 0, 0, 0),
+                    "mark.denied",
+                    vec![text("inside", Rect::new(0, 0, 48, 12), "mark.inside")],
+                ),
+                Scene::Container(declared),
+                opaque,
+            ],
+        );
+        let found = out_of_sight(&screen, (200, 200), &mut stub_ink);
+
+        let arm = |tag: &str| {
+            by_tag(&found, tag)
+                .unwrap_or_else(|| panic!("{tag} is boxless and must be REPORTED: {found:?}"))
+                .reach
+                .clone()
+        };
+
+        // ★ The one a gate refuses on: nobody asked for this zero.
+        assert_eq!(arm("mark.denied"), Reach::Unplaced);
+        assert_eq!(arm("mark.denied").wire_word(), "unplaced");
+        assert!(arm("mark.denied").nothing_reaches_it());
+
+        // ★ The author's own zero, and the walk says so instead of judging it.
+        assert_eq!(
+            arm("mark.declared"),
+            Reach::Unjudged {
+                why: NoExtent::Declared
+            },
+        );
+        // ★ A node this walk cannot see inside. It has no size declaration at
+        // all — the assertion that keeps the fixture from proving the wrong
+        // thing, because a declared zero here would make `Declared` the answer
+        // and the test would pass for the other reason.
+        assert_eq!(
+            arm("mark.opaque"),
+            Reach::Unjudged {
+                why: NoExtent::Opaque
+            },
+        );
+
+        for tag in ["mark.declared", "mark.opaque"] {
+            let reach = arm(tag);
+            assert_eq!(reach.wire_word(), "unjudged", "{tag}");
+            assert!(reach.is_unjudged(), "{tag}");
+            // ★★★★★ The whole point of the split, asserted as the pair it is:
+            // a gate refusing `is_unplaced` does not see these, and a reader
+            // asking about EXTENT does.
+            assert!(
+                !reach.is_unplaced(),
+                "{tag}: a gate must not refuse a zero the author asked for or \
+                 one this walk admitted it cannot judge",
+            );
+            assert!(
+                !reach.nothing_reaches_it(),
+                "{tag}: the predicate a refusal reads must not be true here",
+            );
+            assert!(reach.has_no_box(), "{tag}: and yet it has no box");
+            assert_eq!(reach.short_by(), None, "{tag}: no rectangle, no overhang");
+            assert!(reach.moves().is_empty(), "{tag}: nothing to scroll");
+        }
+        assert_eq!(
+            arm("mark.denied").no_extent(),
+            None,
+            "the judged arm carries no cause — there was nothing excusing it",
+        );
+        assert!(
+            arm("mark.denied").has_no_box(),
+            "and the wider predicate covers all three",
+        );
+
+        // ★ The placed mark is still not in the report, so the walk
+        // discriminates rather than reporting everything it visits.
+        assert!(by_tag(&found, "mark.placed").is_none(), "{found:?}");
     }
 
     /// ★ Half two: a mark past the content extent is lost, and says by how

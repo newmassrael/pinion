@@ -327,6 +327,17 @@
       ]
     },
     {
+      "name": "debt-a-query-only-surface-claims-the-painting-backend",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links debt-canon-gui-surface-census"
+      ]
+    },
+    {
       "name": "debt-a-remainder-list-in-the-same-file-has-no-gate",
       "substituted": false,
       "blocked_by": "buildable",
@@ -435,17 +446,6 @@
       "closed_because": "",
       "why": [
         "links screen-a-vs-canon-operation-census"
-      ]
-    },
-    {
-      "name": "debt-a-zero-box-does-not-say-who-made-it-zero",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links debt-canon-gui-surface-census, debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
     },
     {

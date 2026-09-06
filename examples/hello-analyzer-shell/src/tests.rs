@@ -1347,9 +1347,12 @@ fn card_to_scroll_to(o: &pinion_core::reach::OutOfSight) -> Option<(String, (i32
         // scroll to*; that it is a defect is reported where the class is
         // judged, and the caller's own population floor below refuses a sweep
         // that found no card to scroll to at all.
+        // ★ R2025 — and the arm the walk declined to judge answers `None` for
+        // the same reason the two above it do: it has no rectangle either.
         pinion_core::reach::Reach::Clipped { .. }
         | pinion_core::reach::Reach::Lost { .. }
-        | pinion_core::reach::Reach::Unplaced => None,
+        | pinion_core::reach::Reach::Unplaced
+        | pinion_core::reach::Reach::Unjudged { .. } => None,
     }
 }
 

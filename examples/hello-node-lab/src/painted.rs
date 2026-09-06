@@ -3292,6 +3292,14 @@ fn r1662_every_mark_is_shown_or_reachable_in_every_state_and_size() {
                             out.viewport.size.0,
                             out.viewport.size.1,
                         )),
+                        // ★★★★★ R2025 — NOT counted with the losses, and this
+                        // arm is what makes the one above it a judgement. A
+                        // box the author declared zero and one whose content
+                        // this walk cannot see into are both boxless and
+                        // neither is a defect this screen can be refused for;
+                        // before the split they arrived as `Unplaced` and
+                        // would have been counted here.
+                        pinion_core::reach::Reach::Unjudged { .. } => {}
                     }
                 }
             }

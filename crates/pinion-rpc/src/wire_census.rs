@@ -1679,6 +1679,9 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("reach", WireTy::String, None),
                 WireField::new("moves", WireTy::Array, Some("MoveReport")),
                 WireField::new("short_by", WireTy::Array, None).nullable(),
+                // R2025 — why an `unjudged` row was not judged, and absent on
+                // every other arm.
+                WireField::new("why", WireTy::String, None).nullable(),
             ],
         },
     },
@@ -2025,6 +2028,10 @@ pub const WIRE_TYPES: &[WireType] = &[
                 // R1971 — a fourth answer, and the one nothing could report
                 // before: a mark carrying a name and no box at all.
                 WireField::new("unplaced", WireTy::Integer, None),
+                // R2025 — a fifth: boxless, and the walk said so rather than
+                // judging it. Splitting this out of `unplaced` is what let the
+                // gate over that number stop being advisory.
+                WireField::new("unjudged", WireTy::Integer, None),
                 WireField::new("out_of_sight", WireTy::Array, Some("OutOfSightReport")),
             ],
         },
