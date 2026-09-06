@@ -2115,8 +2115,10 @@ fn r1653_the_painted_screen_invented_nothing() {
             // (its band and the run that names it) and one control per verb.
             ("lab.palette.parts", Some(1)),
             (
+                // ★ R2048 — three: the row's band, the run naming it, and the
+                // run saying what it is or that its name reaches nothing.
                 "lab.palette.part.",
-                Some(state.doc.borrow().definitions().count() * 2),
+                Some(state.doc.borrow().definitions().count() * 3),
             ),
             (
                 "lab.palette.verb.",
@@ -8693,8 +8695,10 @@ fn r2047_the_register_greys_a_verb_the_document_refuses() {
                 .map(|row| (row.tag.clone(), row))
                 .collect();
 
+        // ★ R2048 — addressed by the definition's ID; see `Hit::Definition` for
+        // what keying these on the name cost.
         let refused = census
-            .get("lab.palette.verb.remove.part")
+            .get(&format!("lab.palette.verb.remove.{}", held.0))
             .expect("★★★★★ the register paints a removal the document refuses as live");
         assert_eq!(
             refused.reason.detail(),
@@ -8715,8 +8719,8 @@ fn r2047_the_register_greys_a_verb_the_document_refuses() {
         );
 
         for open in [
-            format!("lab.palette.verb.remove.{copy}"),
-            "lab.palette.verb.copy.part".to_owned(),
+            format!("lab.palette.verb.remove.{}", spare.0),
+            format!("lab.palette.verb.copy.{}", held.0),
         ] {
             assert!(
                 !census.contains_key(&open),
@@ -8731,7 +8735,7 @@ fn r2047_the_register_greys_a_verb_the_document_refuses() {
         let tree = super::NodeLabView::access_node(&(TextFieldState::Idle, 0), None);
         let node = tree
             .iter()
-            .find(|n| n.tag == "lab.palette.verb.remove.part")
+            .find(|n| n.tag == format!("lab.palette.verb.remove.{}", held.0))
             .expect("the register is announced");
         assert!(node.state.disabled, "★ announced disabled as well as faded");
         assert!(
@@ -8739,6 +8743,123 @@ fn r2047_the_register_greys_a_verb_the_document_refuses() {
             "★★★★★ and the announcement carries the reason, which is the half \
              the reference cannot say at all: {:?}",
             node.name,
+        );
+    });
+}
+
+/// ★★★★★ R2048 — **a register row whose name reaches nothing says so**, on the
+/// row and to a reader who never sees it.
+///
+/// Two definitions may answer to one name here on purpose — a fragment's
+/// definitions land under the names they arrive with, and renaming into a taken
+/// name is admitted for that reason — and the price the crate pays for it is
+/// that the name then addresses NEITHER. Until this round the only way to learn
+/// that was to press a verb and be refused, which is the same defect R1986
+/// registered one axis over: the model knew and no pixel read it.
+///
+/// ⚠ The state is reached the way a PERSON reaches it — fold, copy, rename the
+/// copy back — rather than by writing the model, because what is being asserted
+/// is that a person who did that is told.
+#[test]
+fn r2048_a_register_row_says_its_name_reaches_nothing() {
+    use pinion_a11y::WidgetA11y;
+
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = use_lab_state();
+        let pair: Vec<_> = state.cards().into_iter().take(2).collect();
+        state
+            .selection
+            .set(pinion_core::selection::Selection::group(pair));
+        super::group_selection(&state, "part").expect("two cards make a subgraph");
+        let copy = super::copy_definition(&state, "part").expect("a definition may be copied");
+
+        let announced = |tag: &str| -> Option<String> {
+            super::NodeLabView::access_node(&(TextFieldState::Idle, 0), None)
+                .iter()
+                .find(|node| node.tag == tag)
+                .and_then(|node| node.name.clone())
+        };
+        // ★ R2048 — addressed by the definition's ID, which is this round's own
+        // repair: two rows may carry one NAME, so a name-keyed tag would be two
+        // nodes under one address exactly in the state being asserted.
+        let id_of = |name: &str| -> u64 {
+            super::definitions_wire(&state)["definitions"]
+                .as_array()
+                .expect("rows")
+                .iter()
+                .find(|row| row["definition"] == name)
+                .and_then(|row| row["id"].as_u64())
+                .expect("the register lists it")
+        };
+        let row = format!("lab.palette.part.{}.name", id_of(&copy));
+        assert!(
+            announced(&row).is_some_and(|it| !it.contains("answer to this name")),
+            "★ distinct names say nothing about sharing: {:?}",
+            announced(&row)
+        );
+        assert!(
+            super::definitions_wire(&state)["names_held_by_more_than_one"]
+                .as_array()
+                .is_some_and(std::vec::Vec::is_empty),
+            "★ and the document holds no such pair yet"
+        );
+
+        // The two presses a person makes, and the state they leave behind.
+        super::rename_definition(&state, &format!("{copy},part")).expect(
+            "renaming back is
+             admitted, which is the whole reason this state exists",
+        );
+
+        let shared = super::definitions_wire(&state)["names_held_by_more_than_one"].clone();
+        assert_eq!(
+            shared[0]["name"], "part",
+            "★★★★★ the document can be ASKED which names are held twice: {shared}"
+        );
+        assert_eq!(
+            shared[0]["holders"].as_array().map(Vec::len),
+            Some(2),
+            "★ and by how many"
+        );
+
+        // ★★★★★ And the row a person is looking at says it, before any verb has
+        // refused them.
+        let said = announced(&row).expect("the register announces the row");
+        assert!(
+            said.contains("2 answer to this name"),
+            "★★★★★ the row says the name reaches nothing: {said:?}"
+        );
+        // ★★★★★ And BOTH rows are still addressable, which is what keying on the
+        // id bought: a name-keyed register would have painted one tag twice
+        // here, so the second row could not be pressed at all.
+        let addresses: Vec<String> = super::definitions_wire(&state)["definitions"]
+            .as_array()
+            .expect("rows")
+            .iter()
+            .map(|held| format!("lab.palette.part.{}.name", held["id"].as_u64().unwrap_or(0)))
+            .collect();
+        assert_eq!(
+            addresses
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            addresses.len(),
+            "★★★★★ two rows sharing a name still have two addresses: {addresses:?}"
+        );
+        for tag in &addresses {
+            assert!(
+                announced(tag).is_some(),
+                "★ and each is announced on its own: {tag}"
+            );
+        }
+        assert!(
+            super::definitions_wire(&state)["definitions"]
+                .as_array()
+                .expect("rows")
+                .iter()
+                .all(|row| row["name_addresses_it"] == false),
+            "★ and both rows publish that their own name does not reach them"
         );
     });
 }

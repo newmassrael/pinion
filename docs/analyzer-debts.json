@@ -711,18 +711,6 @@
       ]
     },
     {
-      "name": "debt-two-holders-of-one-name-are-refused-by-every-verb-and-reported-by-nothing",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "rank": "ordinary",
-      "why": [
-        "links screen-a-vs-canon-operation-census"
-      ]
-    },
-    {
       "name": "debt-two-line-box-rules-disagree-by-three-pixels",
       "substituted": false,
       "blocked_by": "buildable",

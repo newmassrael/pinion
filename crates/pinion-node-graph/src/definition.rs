@@ -97,6 +97,7 @@
 //! does not identify addresses nothing rather than addressing whichever came
 //! first.
 
+use std::collections::BTreeMap;
 use std::fmt;
 
 use crate::model::{Document, NodeBody, NodeId, NodeKind, ROOT, TreeId};
@@ -516,6 +517,40 @@ impl<K: NodeKind> Document<K> {
             [only] => Some(*only),
             _ => None,
         }
+    }
+
+    /// ★★★★★ R2048 — **every definition name more than one definition holds.**
+    ///
+    /// The reading this axis had no way to ask for. [`Self::definition_named`]
+    /// answers `None` in that state and [`Self::definitions_named`] counts the
+    /// holders of ONE name, so a caller could learn the answer for a name it
+    /// already suspected and could not ask the document *does it hold any such
+    /// pair* — which is the question a person has when a verb has just refused
+    /// them and they do not know why.
+    ///
+    /// ⚠★★★★★ **This is deliberately NOT a [`Violation`](crate::Violation).**
+    /// That vocabulary is documented as invariants *nothing this crate's own
+    /// edits can produce*, and this state is produced by them on purpose:
+    /// carrying a fragment's definitions in under the names they arrive with,
+    /// and [`Self::rename_definition`], which does not carry the node axis's
+    /// uniqueness half (see this module's header for why it cannot). Reporting
+    /// a legal document as broken would make `validate` non-empty for a
+    /// document this crate just built — so this is a READING, and the node
+    /// axis's twin, where the state really is unreachable, is the violation.
+    ///
+    /// The name comes first in each pair because that is what a person is told
+    /// and what they will retype; the holders are every tree answering to it,
+    /// in document order.
+    #[must_use]
+    pub fn definition_names_held_by_more_than_one(&self) -> Vec<(String, Vec<TreeId>)> {
+        let mut by_name: BTreeMap<String, Vec<TreeId>> = BTreeMap::new();
+        for held in self.definitions() {
+            by_name.entry(held.name.clone()).or_default().push(held.id);
+        }
+        by_name
+            .into_iter()
+            .filter(|(_, holders)| holders.len() > 1)
+            .collect()
     }
 
     /// The first `{stem}-NN` no definition answers to, the stem being `was`

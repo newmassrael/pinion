@@ -4640,12 +4640,17 @@ enum Hit {
     /// ★★★★★ R2047 — a verb of the definitions register, pressed on the
     /// definition it names.
     ///
-    /// Carries the NAME rather than a tree id, because the register is painted
-    /// from the document and a person presses what they can see; the screen's
-    /// own `definition_addressed` is what turns that name into one definition
-    /// or into a refusal that says why it addresses none — the guard R1986
-    /// built after `definitions().find` picked whichever came first.
-    Definition(String, PartVerb),
+    /// ★★★★★ R2048 — carries the definition's IDENTITY.
+    ///
+    /// R2047 carried the name, on the reasoning that a person presses what they
+    /// can see and the screen's `definition_addressed` would resolve it. This
+    /// round measured what that costs: two definitions may answer to one name
+    /// on purpose, and `definition_addressed` then refuses — so the row a
+    /// person pressed became unpressable exactly when the register was telling
+    /// them the name reaches neither. A row IS a definition, and the verbs it
+    /// drives take an id (`drop_definition_by_id`, `copy_definition_by_id`)
+    /// while the wire's name-taking verbs are unchanged.
+    Definition(pinion_node_graph::TreeId, PartVerb),
     DiscoveryToggle,
     Zoom(bool),
     /// ★★ R1688 — point the canvas at the whole graph.
@@ -5072,17 +5077,15 @@ impl Hit {
             // point. So the control was drawn, declared, announced — and inert
             // to a cursor for a reason nobody had declared. ⇒ a control needs
             // BOTH halves, and the walk is what said so.
-            let names: Vec<String> = state
-                .doc
-                .borrow()
-                .definitions()
-                .map(|held| held.name.clone())
-                .collect();
-            for (n, name) in names.into_iter().enumerate() {
+            // ★ R2048 — the ids, in the order the register paints them. It was
+            // the names; see `Hit::Definition` for what that cost.
+            let held: Vec<pinion_node_graph::TreeId> =
+                state.doc.borrow().definitions().map(|d| d.id).collect();
+            for (n, id) in held.into_iter().enumerate() {
                 let row = part_row(n);
                 for (nth, verb) in PartVerb::ALL.into_iter().enumerate() {
                     if contains(part_control(row, nth), px, py) {
-                        return Self::Definition(name, verb);
+                        return Self::Definition(id, verb);
                     }
                 }
             }
@@ -5261,15 +5264,23 @@ impl Hit {
             return Self::Role(role);
         }
         // ★★★★★ R2047 — a control of the definitions register. The VERB is the
-        // discriminator and the definition's name is the remainder, so a name
-        // holding a dot cannot be read as a verb (see the tag's own note).
+        // discriminator and the definition is the remainder.
+        // ★★★★★ R2048 — and the remainder is an ID. This round is what found
+        // the cost of the name: two definitions may answer to one on purpose,
+        // so a name-keyed control could not say which row was pressed —
+        // precisely when the screen is telling a person the name reaches
+        // neither. The parse is checked against the document, which is this
+        // router's own rule for every parametric family.
         if let Some(rest) = tag.strip_prefix("lab.palette.verb.")
-            && let Some((verb, name)) = PartVerb::ALL.into_iter().find_map(|verb| {
+            && let Some((verb, id)) = PartVerb::ALL.into_iter().find_map(|verb| {
                 rest.strip_prefix(&format!("{}.", verb.word()))
-                    .map(|n| (verb, n))
+                    .map(|id| (verb, id))
             })
+            && let Ok(id) = id.parse::<u32>()
+            && let held = pinion_node_graph::TreeId(id)
+            && state.doc.borrow().tree(held).is_some()
         {
-            return Self::Definition(name.to_owned(), verb);
+            return Self::Definition(held, verb);
         }
         // R1885 — read BEFORE the `lab.node.` prefix below, which would
         // otherwise swallow `lab.node.build.reference` and look for a card of
@@ -5379,7 +5390,7 @@ impl Hit {
             Self::Nothing => "nothing".into(),
             Self::Rail(name) => format!("rail:{name}"),
             Self::Role(role) => format!("role:{}", role.name()),
-            Self::Definition(name, verb) => format!("definition:{}:{name}", verb.word()),
+            Self::Definition(held, verb) => format!("definition:{}:{}", verb.word(), held.0),
             Self::Build(stack) => format!("build:{}", stack.word()),
             Self::DiscoveryToggle => "discovery".into(),
             Self::Zoom(up) => format!("zoom:{}", if *up { "in" } else { "out" }),
@@ -9555,6 +9566,76 @@ fn palette_determinism(state: &LabState, ink: Ink) -> Vec<Scene> {
     children
 }
 
+/// ★★★★★ R2048 — what a register row's second line says, decided ONCE.
+///
+/// 🟥 The first draft let the painter and the accessibility roster each make
+/// this decision from the same count, and the counterfactual said so: neutering
+/// the painter's branch left the round's own test GREEN, because that test read
+/// the announcement and the announcement had its own copy. Two consumers
+/// deriving one rule are already out of step — R1963's rule is that what
+/// matters is not how many places spell a property but what is holding them
+/// together, and this is what holds these two.
+///
+/// The two RENDER it differently on purpose: a reader who never sees the row
+/// needs the name and the kind in the same breath, and the row has them above
+/// already. What is shared is the decision and the count.
+#[derive(pinion_derive::VariantCensus)]
+enum PartLine {
+    /// What kind of graph this definition is — the ordinary answer.
+    Kind(&'static str),
+    /// Its name is held by more than one definition, so the name addresses
+    /// none of them. This is what the row says INSTEAD of the kind: a row whose
+    /// name reaches nothing reads as an ordinary row until a verb refuses, and
+    /// the refusal should not be the first a person hears of it.
+    NameReachesNone {
+        /// How many definitions answer to the name.
+        holders: usize,
+        /// The kind, kept because the announcement says both.
+        kind: &'static str,
+    },
+}
+
+impl PartLine {
+    /// The words the ROW paints.
+    fn sentence(&self) -> String {
+        match self {
+            Self::Kind(kind) => (*kind).to_owned(),
+            Self::NameReachesNone { holders, .. } => {
+                format!("{holders} answer to this name, so it reaches none")
+            }
+        }
+    }
+
+    /// Whether the row draws it in the warning tone.
+    const fn is_warning(&self) -> bool {
+        matches!(self, Self::NameReachesNone { .. })
+    }
+
+    /// The words a reader who never sees the row is given, after its name.
+    fn announcement(&self) -> String {
+        match self {
+            Self::Kind(kind) => (*kind).to_owned(),
+            Self::NameReachesNone { holders, kind } => {
+                format!("{kind}, and {holders} answer to this name, so it reaches none")
+            }
+        }
+    }
+}
+
+/// The one decision behind [`PartLine`], asked of the document.
+fn part_line(
+    doc: &pinion_node_graph::Document<crate::graph::LabNode>,
+    held: &pinion_node_graph::Tree<crate::graph::LabNode>,
+) -> PartLine {
+    let kind = doc.graph_kind(held.id).copied().unwrap_or_default().word();
+    let holders = doc.definitions_named(&held.name).len();
+    if holders > 1 {
+        PartLine::NameReachesNone { holders, kind }
+    } else {
+        PartLine::Kind(kind)
+    }
+}
+
 /// ★★★★★ R2047 — **the definitions register**: what this document holds, and
 /// what may be done to each one, said before anybody presses.
 ///
@@ -9608,7 +9689,13 @@ fn palette_parts(state: &LabState, ink: Ink) -> Vec<Scene> {
         // for a grip that could not be dragged.
         children.push(quiet(
             box_at(
-                &format!("lab.palette.part.{}", held.name),
+                // ★★★★★ R2048 — keyed by the definition's IDENTITY and not by
+                // its name. R2047 keyed these by name, and this round is what
+                // found the cost: two definitions may answer to one name on
+                // purpose, so a name-keyed row painted TWO nodes under one tag
+                // exactly when the screen is telling a person that the name
+                // reaches neither. A tag is an address; a name here is not.
+                &format!("lab.palette.part.{}", held.id.0),
                 local(seat),
                 ink.surface,
                 None,
@@ -9627,17 +9714,33 @@ fn palette_parts(state: &LabState, ink: Ink) -> Vec<Scene> {
             [FONT_SMALL + 1, 10],
         );
         children.push(tagged_label(
-            &format!("lab.palette.part.{}.name", held.name),
+            &format!("lab.palette.part.{}.name", held.id.0),
             held.name.clone(),
             name_band,
             FONT_SMALL + 1,
             ink.text,
         ));
-        children.push(label(
-            doc.graph_kind(held.id).copied().unwrap_or_default().word(),
+        // ★★★★★ R2048 — the second line says what KIND of graph it is, and
+        // where the name does not ADDRESS it, that instead. A row whose name is
+        // shared reads as an ordinary row until a verb refuses, and the refusal
+        // is the first a person hears of it; the kind is the thing worth giving
+        // up for that, because a person who wants it can read it from the card
+        // and the ambiguity has nowhere else to appear.
+        // ★ R2048 — TAGGED, unlike the role rows' second line beside it. A run
+        // nobody can address is a run no walk can read, and what this one says
+        // is the round's whole claim; the role row's blurb is checked by
+        // rectangle instead, which its own helper had to explain.
+        let says = part_line(&doc, held);
+        children.push(tagged_label(
+            &format!("lab.palette.part.{}.line", held.id.0),
+            says.sentence(),
             kind_band,
             10,
-            ink.text_3,
+            if says.is_warning() {
+                ink.warn
+            } else {
+                ink.text_3
+            },
         ));
         for (nth, verb) in PartVerb::ALL.into_iter().enumerate() {
             let slot = local(part_control(seat, nth));
@@ -9645,10 +9748,11 @@ fn palette_parts(state: &LabState, ink: Ink) -> Vec<Scene> {
             let mut control = box_holding(
                 // ★ A prefix of its own rather than a suffix on the row's tag,
                 // which is this router's standing rule (R1885, R2001): a suffix
-                // would make `lab.palette.part.<name>.<verb>` and the row of a
-                // definition CALLED `<name>.<verb>` the same string, and the
-                // router would answer whichever arm it read first.
-                &format!("lab.palette.verb.{}.{}", verb.word(), held.name),
+                // would make `lab.palette.part.<id>.<verb>` and a row's own
+                // suffixed runs the same shape, and the router would answer
+                // whichever arm it read first.
+                // ★★★★★ R2048 — and the ID, for the reason on the row above.
+                &format!("lab.palette.verb.{}.{}", verb.word(), held.id.0),
                 slot,
                 ink.raised,
                 Some(ink.outline),
@@ -20253,10 +20357,12 @@ fn release(state: &Rc<LabState>) {
         // this screen's standing rule for a seat on a row (R1716): the press
         // and the wire verb are one path, so a refusal reaches the toast once
         // and cannot say two different things.
-        Hit::Definition(name, verb) => {
+        Hit::Definition(held, verb) => {
             let _ = match verb {
-                PartVerb::Copy => copy_definition(state, &name),
-                PartVerb::Remove => drop_definition(state, &format!("{name},keep")),
+                PartVerb::Copy => copy_definition_by_id(state, held),
+                PartVerb::Remove => {
+                    drop_definition_by_id(state, held, pinion_node_graph::Used::Refuse)
+                }
             };
         }
         // ★ R1889 — `Hit::PanelGrip` belongs here, and the compiler is what
@@ -22351,19 +22457,22 @@ fn parts_access(state: &LabState) -> Vec<AccessNode> {
     for held in doc.definitions() {
         nodes.push(
             AccessNode::new(
-                format!("lab.palette.part.{}.name", held.name),
+                format!("lab.palette.part.{}.name", held.id.0),
                 AriaRole::Status,
             )
+            // ★ R2048 — the SAME decision the row paints, rendered for a reader
+            // who never sees it. See `PartLine` for what the counterfactual
+            // said about letting these two decide separately.
             .with_name(format!(
                 "{} — {}",
                 held.name,
-                doc.graph_kind(held.id).copied().unwrap_or_default().word()
+                part_line(&doc, held).announcement()
             )),
         );
         for verb in PartVerb::ALL {
             let refused = doc.may_definition(held.id, verb.act()).err();
             let mut node = AccessNode::new(
-                format!("lab.palette.verb.{}.{}", verb.word(), held.name),
+                format!("lab.palette.verb.{}.{}", verb.word(), held.id.0),
                 AriaRole::Button,
             )
             .with_name(match &refused {
@@ -24344,6 +24453,13 @@ fn definitions_wire(state: &Rc<LabState>) -> serde_json::Value {
                     .unwrap_or_default()
                     .word(),
                 "used_by": used,
+                // ★★★★★ R2048 — whether this definition's own name ADDRESSES
+                // it. `definition_named` answers `None` when more than one
+                // holds the name, so this is the row's half of the document
+                // reading below: a person looking at one row is told that the
+                // name in front of them will not reach it, which is the fact
+                // every refusal on this row derives from.
+                "name_addresses_it": doc.definition_named(&held.name) == Some(held.id),
                 "may": {
                     "remove": refusal(DefinitionAct::Remove(pinion_node_graph::Used::Refuse)),
                     "rename": refusal(DefinitionAct::Rename(&held.name)),
@@ -24365,7 +24481,23 @@ fn definitions_wire(state: &Rc<LabState>) -> serde_json::Value {
             })
         })
         .collect();
-    serde_json::json!({ "definitions": rows })
+    // ★★★★★ R2048 — and the names this document holds MORE THAN ONE of, asked
+    // of the crate's own reading rather than counted here. Two definitions may
+    // answer to one name on purpose — the fragment path lands a carried
+    // definition under the name it arrives with — and the price is that the
+    // name then addresses NEITHER, so every verb taking a name refuses. Until
+    // this the only way to learn that was to be refused by one of them.
+    let shared: Vec<serde_json::Value> = doc
+        .definition_names_held_by_more_than_one()
+        .into_iter()
+        .map(|(name, holders)| {
+            serde_json::json!({
+                "name": name,
+                "holders": holders.into_iter().map(|tree| tree.0).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    serde_json::json!({ "definitions": rows, "names_held_by_more_than_one": shared })
 }
 
 /// ★★★★★ R1986 — the definition a name addresses, or why it addresses none.
@@ -24412,13 +24544,35 @@ fn drop_definition(state: &Rc<LabState>, raw: &str) -> Result<String, InvokeErro
             )));
         }
     };
-    let wanted = name.trim();
+    let id = definition_addressed(&state.doc.borrow(), name.trim())?;
+    drop_definition_by_id(state, id, used)
+}
+
+/// ★★★★★ R2048 — the same removal, addressed by IDENTITY.
+///
+/// The register's controls take this path and the wire verb above takes the
+/// other, and the split is the round's own finding rather than a tidy-up: two
+/// definitions may answer to one name on purpose, so a control that carried the
+/// name would be *unable to say which row was pressed* exactly when the screen
+/// is showing a person that the name reaches neither. A row is a definition,
+/// and a definition has an id.
+///
+/// One home so the two cannot disagree about what a removal does or says —
+/// R1716's rule for a seat on a row, which is why the press and the wire verb
+/// have always shared a function here.
+fn drop_definition_by_id(
+    state: &Rc<LabState>,
+    id: pinion_node_graph::TreeId,
+    used: pinion_node_graph::Used,
+) -> Result<String, InvokeError> {
     let mut doc = state.doc.borrow_mut();
-    let id = definition_addressed(&doc, wanted)?;
+    let named = doc
+        .tree(id)
+        .map_or_else(|| format!("tree {}", id.0), |held| held.name.clone());
     match doc.remove_definition(id, used) {
         Ok(went) => {
             let said = format!(
-                "{wanted} removed, with {} card(s) and {} definition(s)",
+                "{named} removed, with {} card(s) and {} definition(s)",
                 went.instances.len(),
                 went.definitions.len()
             );
@@ -24478,15 +24632,27 @@ fn rename_definition(state: &Rc<LabState>, raw: &str) -> Result<String, InvokeEr
 /// *duplicate a graph as a graph*, reached from a palette listing the
 /// document's definitions, where there is no instance in the picture at all.
 fn copy_definition(state: &Rc<LabState>, raw: &str) -> Result<String, InvokeError> {
+    let id = definition_addressed(&state.doc.borrow(), raw.trim())?;
+    copy_definition_by_id(state, id)
+}
+
+/// ★★★★★ R2048 — the same copy, addressed by IDENTITY. See
+/// [`drop_definition_by_id`] for why the register cannot use the name.
+fn copy_definition_by_id(
+    state: &Rc<LabState>,
+    id: pinion_node_graph::TreeId,
+) -> Result<String, InvokeError> {
     let mut doc = state.doc.borrow_mut();
-    let id = definition_addressed(&doc, raw.trim())?;
+    let was = doc
+        .tree(id)
+        .map_or_else(|| format!("tree {}", id.0), |held| held.name.clone());
     match doc.duplicate_definition(id) {
         Ok(copy) => {
             let said = doc
                 .tree(copy)
                 .map_or_else(|| format!("tree {}", copy.0), |held| held.name.clone());
             drop(doc);
-            state.say(Utterance::done(format!("{} copied to {said}", raw.trim())));
+            state.say(Utterance::done(format!("{was} copied to {said}")));
             Ok(said)
         }
         Err(why) => {

@@ -215,6 +215,45 @@ impl<K: NodeKind> Document<K> {
         }
     }
 
+    /// ★★★★★ R2048 — **every authored name that its own scope says must
+    /// identify one node, and which more than one node holds.**
+    ///
+    /// The document-wide reading behind [`Violation::LabelNotUnique`], and the
+    /// half this crate had only as a *refusal*: [`Document::may`] declines to
+    /// create the state and [`Document::node_labelled`] answers `None` once it
+    /// exists, so a person met it as one sentence about one lookup and could
+    /// not ask the document whether it held any such pair at all.
+    ///
+    /// ★ The scope is [`Self::holders_of`]'s, called rather than re-walked.
+    /// That is what keeps this from reporting the states the crate ALLOWS: a
+    /// [`Naming::Free`] body — a frame, a reroute, an echo — answers no holders
+    /// at all, so two frames sharing a caption is not a finding here, which is
+    /// exactly the deliberate permission R1932 measured off the reference's
+    /// four suppressing overriders. A gate that re-spelled "two nodes, one
+    /// name" would have called that a defect.
+    ///
+    /// Keyed on the holder SET and not on the name: two trees may each hold
+    /// their own `InTree` collision on one label, and those are two facts with
+    /// two repairs, while one [`Naming::InDocument`] collision seen from each
+    /// of its holders is one fact seen twice.
+    #[must_use]
+    pub fn labels_held_by_more_than_one(&self) -> Vec<(String, Vec<(TreeId, NodeId)>)> {
+        let mut found: BTreeSet<(String, Vec<(TreeId, NodeId)>)> = BTreeSet::new();
+        for tree in self.trees() {
+            for node in tree.nodes() {
+                let Some(label) = node.label.as_deref() else {
+                    continue;
+                };
+                let mut holders = self.holders_of(tree.id, &node.body, label);
+                if holders.len() > 1 {
+                    holders.sort_unstable();
+                    found.insert((label.to_owned(), holders));
+                }
+            }
+        }
+        found.into_iter().collect()
+    }
+
     /// ★★★★★ R1985 — **the first `{stem}-NN` nobody in this body's scope
     /// holds.**
     ///

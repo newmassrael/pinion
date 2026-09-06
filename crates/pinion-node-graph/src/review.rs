@@ -507,6 +507,18 @@ impl<K: NodeKind> Document<K> {
             // of them: a person has to delete one and cannot be shown only the
             // survivor.
             Violation::DuplicateInterfaceNode { tree, side } => self.interface_sites(*tree, *side),
+            // ★★★★★ R2048 — every holder, for the same reason, and FILTERED TO
+            // THIS FINDING'S TREE. A review's cards are one tree's, and a name
+            // whose scope is the whole document may be held in another — so the
+            // sites are the ones a person standing here can be taken to, and
+            // the sentence is what names the rest. Returning a node id from
+            // another tree would send a screen looking for a card that is not
+            // in the graph it is showing.
+            Violation::LabelNotUnique { tree, holders, .. } => holders
+                .iter()
+                .filter(|(held, _)| held == tree)
+                .map(|(_, node)| *node)
+                .collect(),
             // The chain is between DEFINITIONS. Its direct case has cards — the
             // instances of the definition standing inside the definition itself
             // — and an indirect chain has none in any one tree, which is why
@@ -609,7 +621,10 @@ const fn violation_tree(violation: &Violation) -> TreeId {
         | Violation::TooManyItems { tree, .. }
         | Violation::NotAtHome { tree, .. }
         | Violation::StandInLostMember { tree, .. }
-        | Violation::StandInCrowds { tree, .. } => *tree,
+        | Violation::StandInCrowds { tree, .. }
+        // ★ R2048 — the seat the finding is filed under. See the arm's own doc
+        // for why that is not always "the tree the collision is in".
+        | Violation::LabelNotUnique { tree, .. } => *tree,
         Violation::Recursion { definition } => *definition,
     }
 }

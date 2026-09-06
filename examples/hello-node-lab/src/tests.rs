@@ -890,6 +890,54 @@ fn r2024_every_scenario_row_reads_as_the_thing_it_is() {
     }
 }
 
+/// ★★★★★ R2048 — **both renderings of a register row's second line are
+/// driven**, arm by arm.
+///
+/// The speech census demanded this the moment the type existed, which is the
+/// gate working: a type that can put a sentence in front of a person and drives
+/// none of its arms can say anything.
+///
+/// ★ Each row drives BOTH renderings, because there are two and they are
+/// deliberately different — the row has the definition's name printed above it
+/// and a reader who never sees the row does not. A drive of one would leave the
+/// other free to say the wrong thing, which is exactly this census's own
+/// argument one level down.
+#[test]
+fn r2048_a_register_rows_second_line_speaks_in_both_its_renderings() {
+    use pinion_core::test_fixtures::speech::assert_speaks;
+
+    let both = |line: &super::PartLine| format!("{} / {}", line.sentence(), line.announcement());
+    let lines = [
+        super::PartLine::Kind("pattern"),
+        super::PartLine::NameReachesNone {
+            holders: 2,
+            kind: "pattern",
+        },
+    ];
+    // ★ The arm names come from the DERIVE rather than from a `word` this file
+    // would have to keep in step: a hand-written vocabulary beside a derived
+    // count is the second copy this workspace keeps paying for.
+    let said: Vec<(&str, String)> = super::PartLine::ARM_NAMES
+        .into_iter()
+        .zip(lines.iter())
+        .map(|(arm, line)| (arm, both(line)))
+        .collect();
+    assert_speaks("PartLine", super::PartLine::ARMS, &said, &[]);
+
+    // ★ And the two renderings are not the same sentence, which is the whole
+    // reason both are driven: a reader who never sees the row is given the
+    // kind as well, because the row has it printed above.
+    assert_ne!(
+        lines[1].sentence(),
+        lines[1].announcement(),
+        "★ the announcement carries the kind the row shows separately"
+    );
+    assert!(
+        lines[1].is_warning() && !lines[0].is_warning(),
+        "★ and only the shared-name arm is drawn as a warning"
+    );
+}
+
 /// The card the speech drives above are about — a subject that could not occur
 /// inside any of those clauses by accident.
 const CARD_UNDER_TEST: &str = "R-01";

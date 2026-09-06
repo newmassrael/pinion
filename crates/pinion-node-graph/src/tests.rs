@@ -21196,3 +21196,133 @@ fn r2008_a_tree_says_which_of_the_three_hold_it() {
          carry it"
     );
 }
+
+/// ★★★★★ R2048 — **a name that has to identify one node, and does not, is
+/// reported by the document about itself.**
+///
+/// R1985 shut the last path this crate's own verbs had into that state, and
+/// left the document unable to SAY it was in one: `may` refused to create it,
+/// `node_labelled` answered `None` once it existed, and `validate` reported
+/// nothing — so a person met it as one sentence about one failed lookup and a
+/// document arriving from a file could hold a dozen and report none.
+///
+/// ★ The third clause is the one that decides the shape: the states this crate
+/// deliberately ALLOWS must not be findings. A gate re-spelling *two nodes,
+/// one name* would call two frames sharing a caption a defect, and that
+/// permission is measured off the reference's four suppressing overriders
+/// (R1932). The reading asks the SCOPE, so they are not.
+#[test]
+fn r2048_a_name_that_must_identify_one_node_and_does_not_is_reported() {
+    let mut doc: Document<LOp> = Document::new("lattice");
+    let first = doc.add_node(ROOT, NodeBody::Beacon, 0, 0).unwrap();
+    let second = doc.add_node(ROOT, NodeBody::Beacon, 100, 0).unwrap();
+    doc.relabel(ROOT, first, Some("Total")).unwrap();
+
+    // (1) The half that already existed: the permission surface refuses to
+    // CREATE the state, and the document says nothing about itself.
+    assert!(
+        matches!(
+            doc.may(ROOT, Act::Rename(second, Some("Total"))),
+            Err(EditError::LabelTaken { .. })
+        ),
+        "★ the state may not be made through the verbs"
+    );
+    assert!(doc.validate().is_empty(), "sound to begin with");
+
+    // (2) And a document that arrived from somewhere else holds it anyway. The
+    // label is a public field, which is the one way in this crate leaves open
+    // and the reason this belongs in `validate` at all.
+    doc.tree_mut(ROOT).unwrap().node_mut(second).unwrap().label = Some("Total".to_owned());
+    assert_eq!(
+        doc.node_labelled(ROOT, "Total"),
+        None,
+        "★ the lookup goes ambiguous, which is all a caller could learn before"
+    );
+    assert_eq!(
+        doc.validate(),
+        vec![Violation::LabelNotUnique {
+            tree: ROOT,
+            label: "Total".to_owned(),
+            holders: vec![(ROOT, first), (ROOT, second)],
+        }],
+        "★★★★★ and NOW the document says it, with every holder named"
+    );
+    let said = doc.validate()[0].to_string();
+    assert!(
+        said.contains("Total")
+            && said.contains(&format!("node {}", first.0))
+            && said.contains(&format!("node {}", second.0)),
+        "★★★★★ the sentence names both, because a person told only that a name \
+         is not unique has to go and find the other one: {said}"
+    );
+
+    // (3) ★★★★★ The counterfactual that decides the predicate: a body whose
+    // naming is `Free` may share its caption on purpose, and this is not a
+    // finding. Two frames, one name, and the permission surface agrees.
+    let one = doc.add_node(ROOT, NodeBody::Frame, 0, 200).unwrap();
+    let other = doc.add_node(ROOT, NodeBody::Frame, 100, 200).unwrap();
+    doc.relabel(ROOT, one, Some("scratch")).unwrap();
+    assert_eq!(
+        doc.may(ROOT, Act::Rename(other, Some("scratch"))),
+        Ok(()),
+        "★ a caption is not an address, so the rule is off for it"
+    );
+    doc.relabel(ROOT, other, Some("scratch")).unwrap();
+    assert_eq!(
+        doc.validate().len(),
+        1,
+        "★★★★★ still ONE finding — a check that counted holders without asking \
+         the scope would report three: {:?}",
+        doc.validate()
+    );
+}
+
+/// ★★★★★ R2048 — **two definitions answering to one name is a READING, and
+/// deliberately not a violation.**
+///
+/// `Violation` is documented as invariants *nothing this crate's own edits can
+/// produce*, and this state is produced by them on purpose: a fragment's
+/// definitions arrive under the names they carry, and `rename_definition` does
+/// not take the node axis's uniqueness half because a rule there would break
+/// the fork path. Reporting it would make `validate` non-empty for a document
+/// this crate had just built.
+///
+/// ⚠ So the debt that asked for one `Fault` covering both layers asked for the
+/// wrong shape on this one, and the measurement is what said so. What was
+/// missing here is a way to ASK — `definitions_named` counts the holders of a
+/// name a caller already suspects, and nothing answered *does this document
+/// hold any such pair*, which is the question a person has when a verb has
+/// just refused them.
+#[test]
+fn r2048_two_definitions_of_one_name_are_read_and_not_called_broken() {
+    let mut doc: Document<LOp> = Document::new("lattice");
+    let held = doc.add_definition("part");
+    let spare = doc.add_definition("spare");
+    assert!(
+        doc.definition_names_held_by_more_than_one().is_empty(),
+        "★ nothing to report while the names are distinct"
+    );
+
+    assert_eq!(
+        doc.rename_definition(spare, "part"),
+        Ok("spare".to_owned()),
+        "★ admitted, because the fork path creates this state anyway"
+    );
+    assert_eq!(
+        doc.definition_names_held_by_more_than_one(),
+        vec![("part".to_owned(), vec![held, spare])],
+        "★★★★★ the document can be ASKED now, rather than only told about a \
+         name somebody already suspected"
+    );
+    assert_eq!(
+        doc.definition_named("part"),
+        None,
+        "★ the price, unchanged: the name addresses neither"
+    );
+    assert!(
+        doc.validate().is_empty(),
+        "★★★★★ and it is NOT a breach — a legal document this crate built \
+         itself: {:?}",
+        doc.validate()
+    );
+}

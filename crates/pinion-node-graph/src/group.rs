@@ -1025,6 +1025,43 @@ pub enum Violation {
         /// The far end left naming nothing.
         node: NodeId,
     },
+    /// ★★★★★ R2048 — a name that its own scope says must identify one node,
+    /// and which more than one node holds.
+    ///
+    /// The document could not say this about itself. [`Document::may`] refuses
+    /// to CREATE the state and [`Document::node_labelled`] answers `None` once
+    /// it exists, so it reached a person as one sentence about one failed
+    /// lookup; a document arriving from a file could hold a dozen and report
+    /// none. R1985 closed the last path this crate's own verbs had into it —
+    /// [`Copying`](crate::Copying) — which is what makes it belong in this
+    /// vocabulary at all.
+    ///
+    /// ⚠ **The scope decides, so this is not "two nodes share a name".** A
+    /// [`Naming::Free`](crate::Naming::Free) body — a frame, a reroute, an echo
+    /// — may share its caption on purpose, and
+    /// [`Document::labels_held_by_more_than_one`] reads the scope rather than
+    /// re-spelling the rule, so those are not findings.
+    ///
+    /// ⚠ **The definition axis is deliberately NOT here.** Two definitions may
+    /// answer to one name, by a decision this crate made and documented; that
+    /// state has a reading of its own
+    /// ([`Document::definition_names_held_by_more_than_one`]) and is not a
+    /// breach.
+    LabelNotUnique {
+        /// The tree this finding is FILED under — the first holder's, in
+        /// document order.
+        ///
+        /// ⚠ Not "the tree the collision is in", and the difference is real for
+        /// a [`Naming::InDocument`](crate::Naming::InDocument) scope, whose
+        /// holders may sit in different trees. `holders` is the fact; this is
+        /// where a review that organises by tree starts a person off, and the
+        /// sentence names the rest so they are not hidden.
+        tree: TreeId,
+        /// The name more than one node authored.
+        label: String,
+        /// Every node holding it, and the tree each is in, in document order.
+        holders: Vec<(TreeId, NodeId)>,
+    },
     /// ★★★★★ R2004 — a stand-in naming a member the tree no longer holds.
     ///
     /// The same shape as [`Self::DanglingEcho`] and reported for the same
@@ -1310,6 +1347,26 @@ const fn side_word(side: Side) -> &'static str {
 ///
 /// Beside [`side_word`] rather than inline in the arm that reads it: a match
 /// spelled inside a `write!` argument is a rule with nowhere to be cited from.
+/// ★★★★★ R2048 — the sentence for a name more than one node authored.
+///
+/// Its own function for the reason the other fault phrases here have one — the
+/// `Display` impl is at its length limit — and it NAMES EVERY HOLDER, which is
+/// the half the refusal already had and the document did not: `LabelTaken` says
+/// which node answers to the name, and a reader of this needs the same thing to
+/// act. A person told only that a name is not unique has to go and find the
+/// other one.
+fn name_not_unique(label: &str, holders: &[(TreeId, NodeId)]) -> String {
+    format!(
+        "{} node(s) authored the name {label:?}, which has to identify one: {}",
+        holders.len(),
+        holders
+            .iter()
+            .map(|(tree, node)| format!("node {} in tree {}", node.0, tree.0))
+            .collect::<Vec<_>>()
+            .join(", "),
+    )
+}
+
 const fn interface_word(side: InterfaceSide) -> &'static str {
     match side {
         InterfaceSide::Input => "input",
@@ -1341,6 +1398,14 @@ impl fmt::Display for Violation {
                 socket,
                 would_be,
             } => node_fault(f, *tree, *node, crowds_socket(*socket, *would_be)),
+            // ★★★★★ R2048 — the sentence NAMES EVERY HOLDER, which is the half
+            // the refusal already had and the document did not: `LabelTaken`
+            // says which node answers to the name, and a reader of this needs
+            // the same thing to act — a person told only that a name is not
+            // unique has to go and find the other one.
+            Self::LabelNotUnique { label, holders, .. } => {
+                f.write_str(&name_not_unique(label, holders))
+            }
             // R1999 — names the node and the tree and stops there: what KIND of
             // graph this is, and what that kind is called, are the taxonomy's
             // words and a screen renders them from `Document::graph_kind`.
@@ -1608,6 +1673,33 @@ impl<K: NodeKind> Document<K> {
             .collect()
     }
 
+    /// ★★★★★ R2048 — the names more than one node holds where the scope says
+    /// one must.
+    ///
+    /// Its own function for the reason every other section of
+    /// [`validate`](Self::validate) has one — that check is at its length limit
+    /// — and because this is the one pass that is NOT per tree: see the call
+    /// site for why a name's scope decides that and not the loop.
+    #[must_use]
+    fn name_collisions(&self) -> Vec<Violation> {
+        self.labels_held_by_more_than_one()
+            .into_iter()
+            .filter_map(|(label, holders)| {
+                // The seat, not a guess: `holders` is sorted, so the first is
+                // the first in document order. `filter_map` rather than an
+                // `expect` because a reading that answered an empty holder list
+                // would be a defect in the reading, and a panic here would
+                // report it as a crash in `validate`.
+                let (tree, _) = *holders.first()?;
+                Some(Violation::LabelNotUnique {
+                    tree,
+                    label,
+                    holders,
+                })
+            })
+            .collect()
+    }
+
     /// ★★★★★ R2004 — the breaches a walk over links cannot see because they
     /// are about **who a node stands in for**.
     ///
@@ -1784,6 +1876,14 @@ impl<K: NodeKind> Document<K> {
                 found.extend(Self::over_long_runs(tree, node));
             }
         }
+        // ★★★★★ R2048 — the names that must identify one node and do not.
+        // OUTSIDE the per-tree loop, because the scope of a name is not always
+        // the tree it is in: a `Naming::InDocument` collision seen from each of
+        // its holders is one fact, and reporting it once per tree would say a
+        // document holds two defects where it holds one. The reading is called
+        // rather than re-walked, so the scope this reports on is the same one
+        // `may` refuses against (R1884).
+        found.extend(self.name_collisions());
         // `Nesting::cycle(_, t, t)` answers the question "may `t` be placed in
         // `t`", which is trivially no; the question HERE is whether the
         // relation as it stands already lets a tree reach itself.

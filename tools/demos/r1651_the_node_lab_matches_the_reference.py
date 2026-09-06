@@ -790,8 +790,12 @@ def body() -> None:
             # verb of the roster the screen publishes. The `card_seats`
             # paragraph above is the record of what a constant costs when a
             # closed vocabulary grows, and this is the same shape.
+            #
+            # ★ R2048 — three tags per definition, not two: the second line took
+            # a tag of its own, because what it says is a claim and an untagged
+            # run is one no walk can read.
             "lab.palette.parts": 1,
-            "lab.palette.part": 2 * len(registered),
+            "lab.palette.part": 3 * len(registered),
             "lab.palette.verb": len(spec["definition_seats"]) * len(registered),
         }
         # ★★★★★ R1792 — a CAPTION is part of its box, not an element beside it.

@@ -117,7 +117,15 @@ def announced(app: RpcSubprocess, tag: str) -> dict | None:
     return next((n for n in resp.result["nodes"] if n.get("tag") == tag), None)
 
 
-def verb_tag(verb: str, definition: str) -> str:
+def verb_tag(verb: str, definition: int) -> str:
+    """The tag of one verb's control on one definition's row.
+
+    ⚠ R2048 — keyed on the definition's ID and not on its name. This walk was
+    written against the name, and the round after it measured what that costs:
+    two definitions may answer to one name on purpose, so a name-keyed control
+    is two nodes under one address exactly when the register is telling a person
+    that the name reaches neither.
+    """
     return f"lab.palette.verb.{verb}.{definition}"
 
 
@@ -154,13 +162,15 @@ def body() -> None:
         app.tick_ms(16)
         rows = definitions(app, surface)
         held = named(rows, PART)
+        # ★ R2048 — the register is addressed by identity now; see `verb_tag`.
+        PART_ID = held["id"]
         ok(
             f"C: ★ the wire has said this all along: removal refused, with the "
             f"reason — {held['may']}",
             held["may"]["remove"] is not None,
         )
         census = inert(app)
-        control = census.get(verb_tag("remove", PART))
+        control = census.get(verb_tag("remove", PART_ID))
         ok(
             f"C: ★★★★★ and NOW a control on the frame is inert for it, which is "
             f"the half nothing painted before this round — "
@@ -192,9 +202,9 @@ def body() -> None:
         )
         census = inert(app)
         open_verbs = [
-            verb_tag("remove", copy),
-            verb_tag("copy", copy),
-            verb_tag("copy", PART),
+            verb_tag("remove", spare["id"]),
+            verb_tag("copy", spare["id"]),
+            verb_tag("copy", PART_ID),
         ]
         ok(
             f"D: ★★★★★ every verb the document ALLOWS is live — a register that "
@@ -204,12 +214,12 @@ def body() -> None:
         )
         ok(
             f"D: ★ while the one it refuses is still inert — "
-            f"{verb_tag('remove', PART) in census}",
-            verb_tag("remove", PART) in census,
+            f"{verb_tag('remove', PART_ID) in census}",
+            verb_tag("remove", PART_ID) in census,
         )
 
         banner("E — ★★★★★ the announcement carries the reason")
-        node = announced(app, verb_tag("remove", PART))
+        node = announced(app, verb_tag("remove", PART_ID))
         ok(f"E: ★ the control is announced at all — {node}", node is not None)
         ok(
             f"E: ★ and announced disabled — {node['state']}",
@@ -220,7 +230,7 @@ def body() -> None:
             f"hold — {node['name']}",
             held["may"]["remove"] in node["name"],
         )
-        allowed = announced(app, verb_tag("remove", copy))
+        allowed = announced(app, verb_tag("remove", spare["id"]))
         ok(
             f"E: ★★★★★ and the allowed removal states its COST instead, counted "
             f"before anybody presses — {allowed}",
@@ -240,7 +250,7 @@ def body() -> None:
         app.scroll("lab.palette.body", to=(0, 4_000))
         app.tick_ms(16)
         before = [row["definition"] for row in definitions(app, surface)]
-        app.click(path=verb_tag("remove", PART))
+        app.click(path=verb_tag("remove", PART_ID))
         app.tick_ms(16)
         after = [row["definition"] for row in definitions(app, surface)]
         ok(
@@ -258,7 +268,7 @@ def body() -> None:
             f"F: ★ framed as a refusal — {said['tone']}",
             said["tone"] == "refused",
         )
-        app.click(path=verb_tag("copy", copy))
+        app.click(path=verb_tag("copy", spare["id"]))
         app.tick_ms(16)
         grown = [row["definition"] for row in definitions(app, surface)]
         ok(
