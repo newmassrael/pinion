@@ -369,7 +369,16 @@ fn chip_row(
 
 /// The records readout: a header line plus one tagged line per record, so the
 /// reader (and the demo) can see the data the chart is drawn from.
-fn records_readout(cells: &[CellValue], theme: &Theme) -> Scene {
+///
+/// ★★★★★ R2034 — the LINES, not a container holding them. Every line here is
+/// placed absolutely, so a wrapper around them is out of flow content in a box
+/// that measures nothing: the walk found a full-width, zero-height node with no
+/// tag, no style and nothing to draw, sitting between the chart and the chips.
+/// It was structure that carried no meaning — no reader addressed it, no
+/// painter used it — and a node that means nothing is deleted rather than given
+/// a size it has no reason to have. R2026's rule, one screen over: absence
+/// leaves the scene instead of sitting in it.
+fn records_readout(cells: &[CellValue], theme: &Theme) -> Vec<Scene> {
     let table = CellTable::new(cells, NCOLS);
     let muted = theme.resolve(ColorRole::OnSurfaceMuted);
     let ink = theme.resolve(ColorRole::OnSurface);
@@ -399,7 +408,7 @@ fn records_readout(cells: &[CellValue], theme: &Theme) -> Scene {
             )),
         ));
     }
-    Scene::Container(ContainerNode::new(lines))
+    lines
 }
 
 /// view-fn (§6.3): pure sync `PickerState -> Scene`. The mapping is re-run
@@ -465,14 +474,21 @@ fn view(state: PickerState, _frame: &Frame) -> Scene {
     );
 
     Scene::Container(
-        ContainerNode::new(vec![
-            chart,
-            records_readout(&cells, &theme),
-            chip_row("x field", 400, Some(X_TAG), true, x_chips, &theme),
-            chip_row("measures", 448, Some(Y_GROUP_TAG), false, y_chips, &theme),
-            title,
-            status,
-        ])
+        ContainerNode::new(
+            [
+                vec![chart],
+                records_readout(&cells, &theme),
+                vec![
+                    chip_row("x field", 400, Some(X_TAG), true, x_chips, &theme),
+                    chip_row("measures", 448, Some(Y_GROUP_TAG), false, y_chips, &theme),
+                    title,
+                    status,
+                ],
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
+        )
         .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
         .with_layout(LayoutStyle::new().with_size(Size::px(WIN_W, WIN_H))),
     )

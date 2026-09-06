@@ -1784,8 +1784,25 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
             # and withholds the measurement makes every reader re-derive it —
             # and here the axis IS the diagnosis: a zero width and a zero height
             # come from different halves of a layout.
+            # ★★★★★ R2034 — and the NAME says which FIELD it came from.
+            #
+            # The first draft folded tag / content / path into one `or` chain,
+            # so a mark printed as `'1'` could be a node tagged "1", a text run
+            # reading "1", or the second child of something — three different
+            # repairs. R2031 lost three rounds to exactly that ambiguity one
+            # field over (`"tag": null` on a path named after a scroll), and
+            # the round that read this line next had to neuter the gate to find
+            # out which it was. A refusal that hides which question it answered
+            # sends its reader to re-measure what the gate already knew.
+            def named(o: dict) -> str:
+                parts = [f"tag {o['tag']!r}" if o.get("tag") else "UNTAGGED"]
+                if o.get("content"):
+                    parts.append(f"reading {o['content']!r}")
+                parts.append(f"at path {o.get('path')!r}")
+                return " ".join(parts)
+
             rows = "; ".join(
-                f"{(o.get('tag') or o.get('content') or o.get('path') or '<a mark>')!r}"
+                f"{named(o)}"
                 f" (rect {o.get('rect')}, in viewport {o.get('viewport', {}).get('name')!r}"
                 f" {o.get('viewport', {}).get('w')}x{o.get('viewport', {}).get('h')})"
                 for o in unplaced[:6]

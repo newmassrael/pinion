@@ -316,6 +316,17 @@
       ]
     },
     {
+      "name": "debt-a-process-with-no-face-paints-its-own-diagnosis-as-nothing",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links debt-canon-gui-surface-census"
+      ]
+    },
+    {
       "name": "debt-a-push-dies-after-the-gates-with-the-keepalive-already-set",
       "substituted": false,
       "blocked_by": "buildable",

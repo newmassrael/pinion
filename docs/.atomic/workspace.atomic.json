@@ -88320,6 +88320,50 @@
         "Next: the two remaining screens of this red, then back to the cohort."
       ]
     },
+    "R2034": {
+      "decision_summary": "A refusal that will not say which field it read a name from sends its reader to re-measure what the gate already knew.\n\nThe sixth instalment on the red run, and the instrument came first. The `unplaced` refusal folded tag, content and path into one fallback chain, so a mark printed as `'1'` could be a node tagged \"1\", a text run reading \"1\", or the second child of something — three different repairs, and no way to tell from the message. R2031 spent three rounds on exactly that ambiguity one field over.\n\nOne line later the two remaining screens separated instantly: one is an untagged node at a path, the other is four tagged text rows carrying real sentences. Same symptom, unrelated causes.\n\n⇒ a refusal must say not only what is wrong but what it looked at to say so.",
+      "changes_bullets": [
+        "The walk's refusal now names the field: a tagged mark says so and prints its content, an untagged one says UNTAGGED, and every row carries the path it lives at beside the rectangle the walk measured.",
+        "The chart screen's records readout returns its lines instead of a container holding them. Every line is placed absolutely, so a wrapper around them is out-of-flow content in a box that measures nothing — full width, zero height, no tag, no style, nothing drawn and nobody addressing it. It was structure carrying no meaning, so it is deleted rather than given a size it has no reason to have. That is not the opposite of the round that gave a wrapper an extent: that one had a job, this one has none, and what decides between declaring and deleting is what the node does.",
+        "The font screen is registered as a debt rather than repaired, with the measurement that decides its shape: the faces are already compiled into this tree, but every one of those inclusions sits under a test configuration, so a production build has no face at all. The easy prescription is written down as false — giving a faceless text node a box the width of its string passes the gate and leaves a person unable to read it."
+      ],
+      "verification_bullets": [
+        "The chart walk PASSES at 11.14s, and before the repair it is the exact failure the run names. The second walk that reaches that screen drove 70 examples with `unplaced` zero before this host's 900-second cap stopped it — it walks 99 bindings, so it did not complete, and it is not claimed as a pass; what it does establish is that the screen in question and 69 others carry none of this defect.",
+        "15 tests passed and 0 failed on the changed example. Workspace clippy on CI's own flags rc=0 with zero warnings. `cargo fmt --all --check` rc=0. The derived oracle census rc=0 and the hook libraries' own 282 assertions pass, which is what covers the change to the walk tool itself.",
+        "Measured rather than inferred: every `include_bytes!` of a face in this tree sits under a test configuration, so a production build carries none; the fallback module resolves within a stack its caller supplies and its own header says OS font enumeration is deferred; and the count of demos still failing was read off the newest COMPLETED run's job log, where the chart screen fails three boots rather than the one an earlier run had shown."
+      ],
+      "impact_refs": [
+        "5.36",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "One screen of the red remains, and it is a framework debt rather than a screen defect: a process with no face at all paints its own diagnosis as nothing. The first act on it is not a repair but a decision — how to make it impossible for a screen to be drawn in the last-resort face while a real one is available, because without that answer the debt only changes shape into \"nobody knows which face anything was drawn in\".",
+        "The count that matters is read from the run, not from here: the newest completed sweep is the authority, and this round found the previous round's carried number stale in the direction that under-reports.",
+        "Two debts from R2032 stay open — the half-placement is still spellable at 294 sites, and no reader can ask where a curve is actually drawn. Both are measured and neither is blocked.",
+        "Cohort loop unchanged at 36. Next: the font debt's decision, then back to the cohort."
+      ],
+      "publishable_decision_summary": "A refusal that will not say which field it read a name from sends its reader to re-measure what the gate already knew.\n\nThe sixth instalment on the red run, and the instrument came first. The `unplaced` refusal folded tag, content and path into one fallback chain, so a mark printed as `'1'` could be a node tagged \"1\", a text run reading \"1\", or the second child of something — three different repairs, and no way to tell from the message. R2031 spent three rounds on exactly that ambiguity one field over.\n\nOne line later the two remaining screens separated instantly: one is an untagged node at a path, the other is four tagged text rows carrying real sentences. Same symptom, unrelated causes.\n\n⇒ a refusal must say not only what is wrong but what it looked at to say so.",
+      "publishable_changes_bullets": [
+        "The walk's refusal now names the field: a tagged mark says so and prints its content, an untagged one says UNTAGGED, and every row carries the path it lives at beside the rectangle the walk measured.",
+        "The chart screen's records readout returns its lines instead of a container holding them. Every line is placed absolutely, so a wrapper around them is out-of-flow content in a box that measures nothing — full width, zero height, no tag, no style, nothing drawn and nobody addressing it. It was structure carrying no meaning, so it is deleted rather than given a size it has no reason to have. That is not the opposite of the round that gave a wrapper an extent: that one had a job, this one has none, and what decides between declaring and deleting is what the node does.",
+        "The font screen is registered as a debt rather than repaired, with the measurement that decides its shape: the faces are already compiled into this tree, but every one of those inclusions sits under a test configuration, so a production build has no face at all. The easy prescription is written down as false — giving a faceless text node a box the width of its string passes the gate and leaves a person unable to read it."
+      ],
+      "publishable_verification_bullets": [
+        "The chart walk PASSES at 11.14s, and before the repair it is the exact failure the run names. The second walk that reaches that screen drove 70 examples with `unplaced` zero before this host's 900-second cap stopped it — it walks 99 bindings, so it did not complete, and it is not claimed as a pass; what it does establish is that the screen in question and 69 others carry none of this defect.",
+        "15 tests passed and 0 failed on the changed example. Workspace clippy on CI's own flags rc=0 with zero warnings. `cargo fmt --all --check` rc=0. The derived oracle census rc=0 and the hook libraries' own 282 assertions pass, which is what covers the change to the walk tool itself.",
+        "Measured rather than inferred: every `include_bytes!` of a face in this tree sits under a test configuration, so a production build carries none; the fallback module resolves within a stack its caller supplies and its own header says OS font enumeration is deferred; and the count of demos still failing was read off the newest COMPLETED run's job log, where the chart screen fails three boots rather than the one an earlier run had shown."
+      ],
+      "publishable_impact_refs": [
+        "5.36",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "One screen of the red remains, and it is a framework debt rather than a screen defect: a process with no face at all paints its own diagnosis as nothing. The first act on it is not a repair but a decision — how to make it impossible for a screen to be drawn in the last-resort face while a real one is available, because without that answer the debt only changes shape into \"nobody knows which face anything was drawn in\".",
+        "The count that matters is read from the run, not from here: the newest completed sweep is the authority, and this round found the previous round's carried number stale in the direction that under-reports.",
+        "Two debts from R2032 stay open — the half-placement is still spellable at 294 sites, and no reader can ask where a curve is actually drawn. Both are measured and neither is blocked.",
+        "Cohort loop unchanged at 36. Next: the font debt's decision, then back to the cohort."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
