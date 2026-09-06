@@ -179,18 +179,6 @@
       ]
     },
     {
-      "name": "debt-a-fragment-run-arrives-backwards-in-the-capture",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "rank": "ordinary",
-      "why": [
-        "names capture.t2.18"
-      ]
-    },
-    {
       "name": "debt-a-gate-can-write-into-the-persons-own-data-dir",
       "substituted": false,
       "blocked_by": "buildable",

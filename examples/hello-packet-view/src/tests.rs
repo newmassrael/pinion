@@ -39,6 +39,73 @@ fn with_state(body: impl FnOnce(&std::rc::Rc<super::ViewState>)) {
 /// whether the table is a *dissection* — a field escaping its layer, two fields
 /// sharing a byte, a run past the end of the frame are all things a table can
 /// say and a decode cannot mean.
+/// ★★★★★ (R2041) A fragment run arrives in the order a clock allows, and the
+/// row the screen opens on is the one that completes it.
+///
+/// This table is newest-first, and until this round the run's three rows had
+/// `First` at the top: the first fragment of a message arriving after its last
+/// one. The sequence numbers agreed with the times and both disagreed with the
+/// markers, so it was the RUN that was upside down rather than the numbering —
+/// and nothing could notice, because no gate had ever asked a marker when it
+/// arrived. The next derivation over fragments (how far a reassembly has got,
+/// where a run broke off, the canon's re-ordering view) all rest on `First`
+/// being the oldest row of its run, and each would have been built on a
+/// capture that says otherwise.
+///
+/// The opening row is asserted through its MEANING rather than its number: the
+/// specification says it is "the reassembled one", and this round moved it
+/// because the payload moved.
+#[test]
+fn r2041_a_fragment_run_arrives_in_the_order_a_clock_allows() {
+    let run: Vec<(usize, &str, &str)> = spec::ROWS
+        .iter()
+        .enumerate()
+        .filter_map(|(n, row)| row.fragment.as_ref().map(|f| (n, row.time, f.marker)))
+        .collect();
+    // The one run this capture carries, plus the lone dropped fragment that
+    // belongs to no run — the population is asserted so a capture that grows
+    // another run does not pass this by having fewer rows to check.
+    assert!(
+        run.len() >= 4,
+        "the capture carries {} fragment row(s); the run this checks is three of them",
+        run.len()
+    );
+    let pieces: Vec<(usize, &str, &str)> = run
+        .iter()
+        .copied()
+        .filter(|(_, _, marker)| *marker != "Drop")
+        .collect();
+    assert_eq!(
+        pieces.iter().map(|(_, _, m)| *m).collect::<Vec<_>>(),
+        vec!["Last", "More", "First"],
+        "newest first: the piece that completes the message is the newest row \
+         of the run and the first piece is the oldest"
+    );
+    for pair in pieces.windows(2) {
+        let (upper, upper_time, _) = pair[0];
+        let (lower, lower_time, _) = pair[1];
+        assert!(
+            upper_time > lower_time,
+            "row {upper} ({upper_time}) is above row {lower} ({lower_time}) and \
+             must therefore be later — the table is newest-first"
+        );
+    }
+    let completing = pieces
+        .iter()
+        .find(|(_, _, marker)| *marker == "Last")
+        .expect("the run completes");
+    assert_eq!(
+        spec::OPENING_ROW,
+        completing.0,
+        "the specification says the screen opens on the reassembled row, and \
+         that is the row whose fragment completes the run"
+    );
+    assert!(
+        !spec::ROWS[spec::OPENING_ROW].note.is_empty(),
+        "the completing row is the one that reports the reassembled size"
+    );
+}
+
 #[test]
 fn r1663_the_reference_decode_table_is_a_well_formed_dissection() {
     let map = decode(spec::OPENING_ROW);

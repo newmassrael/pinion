@@ -88632,6 +88632,50 @@
         "Cohort loop 33 -> 32."
       ]
     },
+    "R2041": {
+      "decision_summary": "A fragment run that arrived backwards, and the prescription pointed at the wrong field.\n\nThe capture viewer's table is newest-first, and one reassembly run carried `First` at the top and `Last` at the bottom: the first fragment of a message arriving after the last one. Re-running the debt's own reproduction confirms it.\n\nThe prescription said to rewrite the times so the first piece is oldest, and to renumber the sequence numbers to match. Measured first, those two ALREADY agree — the numbers fall with the clock — so what is written upside down is neither of them. It is which piece arrived when.\n\nSo the payload moved instead: the name, the length, the marker, the piece number and the note, with each row keeping its own time and sequence number. Every derivation standing on those two — the per-channel series, the regression detector, a lane's reached number — is untouched, where rewriting the clock would have re-measured all three for nothing. What to rewrite is decided by what disagrees, not by the field a prescription names.",
+      "changes_bullets": [
+        "The run's three rows now read the way a clock allows: the piece that completes the message is the newest, the first piece is the oldest, and the reassembled size is reported on the row that completes it. The arithmetic is unchanged and still adds up.",
+        "The opening row follows the meaning its own documentation gives it — \"the reassembled one\" — and is now held to that sentence rather than left to drift from it. The new gate asserts both halves: the markers arrive in an order the times permit, and the opening row is the row whose fragment completes the run.",
+        "Two walks carried hand-written positions and get different repairs. The export walk asserted a cell by its row and column number, which is a position standing in for a relationship, and now derives it: exactly one comma-bearing cell, in the column the row's own text is written in, on a body line rather than the header. The filter walk's expected set moves with the message it names and stays worked out from the specification, because an expectation read back off the screen checks nothing — which is that constant's whole design."
+      ],
+      "verification_bullets": [
+        "90 tests passed and 0 failed on the screen's package, one of them the new gate. Both counterfactuals go red and each names a different assertion: putting the opening constant back reports that the specification says the screen opens on the reassembled row, and flipping a marker reports the order as `First, More, First`. Restoring returns the package to green.",
+        "All 27 walks that drive this screen were run, not only the one the push gate demands. Two went red, and both named exactly what this round had to fix: an export assertion pinned to a row and column number, and a filter walk's expected row set. Both were repaired and all 27 pass.",
+        "Clippy on the package rc=0 and `cargo fmt --all --check` rc=0.",
+        "Measured, and it is what changed the plan: the three rows' times fall .902, .901, .900 and their sequence numbers fall 3417, 3415, 3414 — agreeing with each other and disagreeing only with the markers."
+      ],
+      "impact_refs": [
+        "5.12",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "Nothing is opened by this round. What the debt was blocking is now clear to build: a derivation over fragments — how far a reassembly has got, where a run broke off, the re-ordering view the canon names — can rest on the first piece being the oldest row of its run, which it now is.",
+        "The canon mockup puts its reassembly result in the same place this capture used to, and that stays recorded as the mockup not keeping its own table's time rather than as a divergence we introduced.",
+        "Cohort loop 32 -> 31."
+      ],
+      "publishable_decision_summary": "A fragment run that arrived backwards, and the prescription pointed at the wrong field.\n\nThe capture viewer's table is newest-first, and one reassembly run carried `First` at the top and `Last` at the bottom: the first fragment of a message arriving after the last one. Re-running the debt's own reproduction confirms it.\n\nThe prescription said to rewrite the times so the first piece is oldest, and to renumber the sequence numbers to match. Measured first, those two ALREADY agree — the numbers fall with the clock — so what is written upside down is neither of them. It is which piece arrived when.\n\nSo the payload moved instead: the name, the length, the marker, the piece number and the note, with each row keeping its own time and sequence number. Every derivation standing on those two — the per-channel series, the regression detector, a lane's reached number — is untouched, where rewriting the clock would have re-measured all three for nothing. What to rewrite is decided by what disagrees, not by the field a prescription names.",
+      "publishable_changes_bullets": [
+        "The run's three rows now read the way a clock allows: the piece that completes the message is the newest, the first piece is the oldest, and the reassembled size is reported on the row that completes it. The arithmetic is unchanged and still adds up.",
+        "The opening row follows the meaning its own documentation gives it — \"the reassembled one\" — and is now held to that sentence rather than left to drift from it. The new gate asserts both halves: the markers arrive in an order the times permit, and the opening row is the row whose fragment completes the run.",
+        "Two walks carried hand-written positions and get different repairs. The export walk asserted a cell by its row and column number, which is a position standing in for a relationship, and now derives it: exactly one comma-bearing cell, in the column the row's own text is written in, on a body line rather than the header. The filter walk's expected set moves with the message it names and stays worked out from the specification, because an expectation read back off the screen checks nothing — which is that constant's whole design."
+      ],
+      "publishable_verification_bullets": [
+        "90 tests passed and 0 failed on the screen's package, one of them the new gate. Both counterfactuals go red and each names a different assertion: putting the opening constant back reports that the specification says the screen opens on the reassembled row, and flipping a marker reports the order as `First, More, First`. Restoring returns the package to green.",
+        "All 27 walks that drive this screen were run, not only the one the push gate demands. Two went red, and both named exactly what this round had to fix: an export assertion pinned to a row and column number, and a filter walk's expected row set. Both were repaired and all 27 pass.",
+        "Clippy on the package rc=0 and `cargo fmt --all --check` rc=0.",
+        "Measured, and it is what changed the plan: the three rows' times fall .902, .901, .900 and their sequence numbers fall 3417, 3415, 3414 — agreeing with each other and disagreeing only with the markers."
+      ],
+      "publishable_impact_refs": [
+        "5.12",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Nothing is opened by this round. What the debt was blocking is now clear to build: a derivation over fragments — how far a reassembly has got, where a run broke off, the re-ordering view the canon names — can rest on the first piece being the oldest row of its run, which it now is.",
+        "The canon mockup puts its reassembly result in the same place this capture used to, and that stays recorded as the mockup not keeping its own table's time rather than as a divergence we introduced.",
+        "Cohort loop 32 -> 31."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

@@ -201,9 +201,37 @@ def body() -> None:
             "and the writer actually quoted it rather than getting lucky",
             '"' in every["text"],
         )
+        # ★★★★★ R2041 — DERIVED, where this said `block[7][5]`. That index was
+        # where the reassembled row happened to sit, and R2041 moved it: the
+        # capture's fragment run had been written upside down (`First` arriving
+        # after `Last` in a newest-first table) and putting it right moved the
+        # completing row two places up. A hand-written index encodes a position
+        # and claims a relationship — so it fails when the data is corrected,
+        # which is the direction that punishes a repair.
+        #
+        # The relationship is what this asks now: the note column of the row the
+        # LIST shows that cell on is the cell the export wrote.
+        # The relationship this asks now: the quoted cell is in the NOTE column
+        # of exactly one line, and that line is a body line rather than the
+        # header — so the quoting did not shift a cell into a neighbour's column
+        # or fold two lines into one, which is what a naive writer does here.
+        where = [
+            (n, c)
+            for n, line in enumerate(block)
+            for c, cell in enumerate(line)
+            if "," in cell
+        ]
+        assert_eq(len(where), 1, "exactly one cell in the block holds a comma")
+        line_no, column = where[0]
+        assert_eq(
+            block[0][column],
+            "name",
+            "and it is in the column the row's own text is written in — the "
+            "note rides inside that cell rather than in a column of its own",
+        )
         ok(
-            "the quoted cell is on the row the list shows it on",
-            block[7][5] == comma_cells[0],
+            "the quoted cell is on a row line, not the header",
+            0 < line_no <= len(rows_all),
         )
 
         # ── (C) the header line is the screen's own column titles ────

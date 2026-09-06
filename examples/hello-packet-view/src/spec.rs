@@ -935,19 +935,32 @@ pub const ROWS: &[RowSpec] = &[
         fragment: None,
         note: "",
     },
+    // ★★★★★ R2041 — the LAST piece, and it is at the top because this table is
+    // newest-first. Until this round the three rows of this run carried their
+    // markers the other way up: `First` sat here at `.902` and `Last` at `.900`
+    // below it, which reads as the first fragment of a message arriving after
+    // the last one. The sequence numbers agreed with the times and both
+    // disagreed with the markers, so it was not a mis-numbering — the run was
+    // written upside down.
+    //
+    // What moved is the PAYLOAD, not the clock: each row keeps its own time and
+    // `sn`, so every derivation over those two (`series`, `regressions`, the
+    // lane's reached `sn`) is untouched, and what changes is which piece
+    // arrived when. The reassembly's own arithmetic is unchanged and still
+    // adds up: 1280 + 1280 + 584 = 3,144 B.
     RowSpec {
         time: "12:04:37.902",
         hop: "n1 -> r1",
         channel: "data/rel",
         sn: 3417,
         kind: "Data",
-        name: "piece 1 of 3",
-        len: 1280,
+        name: "sensors/unit-1/depth",
+        len: 584,
         fragment: Some(FragmentSpec {
-            marker: "First",
-            piece: "1/3",
+            marker: "Last",
+            piece: "3/3",
         }),
-        note: "",
+        note: "reassembled 3,144 B",
     },
     RowSpec {
         time: "12:04:37.901",
@@ -963,19 +976,21 @@ pub const ROWS: &[RowSpec] = &[
         }),
         note: "",
     },
+    // R2041 — and the FIRST piece is the oldest of the three, at the bottom of
+    // the run. See the note on the `Last` row above.
     RowSpec {
         time: "12:04:37.900",
         hop: "n1 -> r1",
         channel: "data/rel",
         sn: 3414,
         kind: "Data",
-        name: "sensors/unit-1/depth",
-        len: 584,
+        name: "piece 1 of 3",
+        len: 1280,
         fragment: Some(FragmentSpec {
-            marker: "Last",
-            piece: "3/3",
+            marker: "First",
+            piece: "1/3",
         }),
-        note: "reassembled 3,144 B",
+        note: "",
     },
     RowSpec {
         time: "12:04:37.771",
@@ -1083,7 +1098,14 @@ pub const ROWS: &[RowSpec] = &[
 
 /// The row the screen opens with selected — the reassembled one, because it is
 /// the row whose decode exercises every layer and a second byte source.
-pub const OPENING_ROW: usize = 6;
+///
+/// ★ R2041 — 4, where this said 6. The constant names a MEANING ("the
+/// reassembled one") and the row that carries that meaning moved when the
+/// fragment run was written the right way up. A constant that names a meaning
+/// and is checked against nothing drifts from it silently, so
+/// `r2041_the_opening_row_is_the_one_that_completes_the_reassembly` holds this
+/// number to the sentence above it.
+pub const OPENING_ROW: usize = 4;
 
 // ── The decode tree ────────────────────────────────────────────────────────
 

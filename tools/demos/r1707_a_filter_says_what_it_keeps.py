@@ -90,7 +90,14 @@ HELD = 16
 
 #: Which messages the reference's own opening query keeps — worked out from the
 #: capture the specification states, not read back.
-EXPECTED_KEPT = [0, 6, 10, 11]
+#:
+#: ★ R2041 — 4, where this said 6, and the row is the same message. That round
+#: put the capture's fragment run the right way up: `First` had been arriving
+#: after `Last` in a newest-first table, so righting it moved the reassembled
+#: message (`sensors/unit-1/depth`, the one this query matches) two rows up.
+#: Still worked out from the specification rather than read back, which is what
+#: makes this list an expectation instead of an echo.
+EXPECTED_KEPT = [0, 4, 10, 11]
 
 
 def centre(rect: tuple[int, int, int, int]) -> tuple[int, int]:
