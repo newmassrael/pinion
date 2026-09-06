@@ -831,6 +831,69 @@ fn r1718_every_gate_finding_is_said_distinctly_and_never_names_its_card() {
     assert_speaks_of("Finding", CARD, super::Finding::ARMS, &said, &[]);
 }
 
+/// ★★★★★ R2024 — **the scenario band says a different thing for each of the
+/// five things one of its rows can be**, and the census is what demanded this.
+///
+/// The band was written with a `Raised(Option<bool>)` arm mirroring the model's
+/// tri-state, and `r1718_every_speaking_type_on_this_screen_is_driven` refused
+/// the tree the moment `StripRow` gained a `sentence`. That refusal is worth
+/// more than the drive it asked for: `assert_speaks` counts ARMS, so a
+/// tri-state folded into one arm would have let two of the three verdict words
+/// go undriven while this gate read as satisfied. The vocabulary is five unit
+/// arms because of it.
+///
+/// ★ Every row here shares one moment, one card and one deadline, so the only
+/// thing that can make two sentences differ is the ARM — which is what the
+/// distinctness half of `assert_speaks` is for. Rows that differed by their
+/// times would pass it while saying the same thing about five different states.
+#[test]
+fn r2024_every_scenario_row_reads_as_the_thing_it_is() {
+    use pinion_core::scene::Rect;
+    use pinion_core::test_fixtures::speech::assert_speaks;
+
+    let row = |kind: super::scenario::MarkKind| super::scenario::StripRow {
+        tag: "lab.scenario.main.2".to_owned(),
+        lane: "main".to_owned(),
+        at: 2.0,
+        act: "check",
+        target: CARD_UNDER_TEST.to_owned(),
+        // ★ An interval on every arm INCLUDING `Act`, so the sentences differ
+        // by the arm and never by the shape of the row they were built from.
+        until: Some(5.0),
+        kind,
+        row: Rect::default(),
+        words: Rect::default(),
+        bar: Rect::default(),
+    };
+    let said: Vec<(&str, String)> = super::scenario::MarkKind::ALL
+        .into_iter()
+        .map(|kind| (kind.word(), row(kind).sentence(1)))
+        .collect();
+    assert_speaks("StripRow", super::scenario::MarkKind::ARMS, &said, &[]);
+
+    // ★★★★★ And the wire's word IS this word. `Checkpoint::verdict` delegates
+    // to `MarkKind::word`, and this is what would go red if a later round gave
+    // either side a `match` of its own — the shape that had a screen painting
+    // one verdict while the wire announced another.
+    for (met, arm) in [
+        (Some(true), super::scenario::MarkKind::Met),
+        (Some(false), super::scenario::MarkKind::Failed),
+        (None, super::scenario::MarkKind::Waiting),
+    ] {
+        assert_eq!(
+            super::scenario::MarkKind::raised(met).word(),
+            arm.word(),
+            "the model's tri-state and the band's vocabulary cross at one \
+             function, so {met:?} is {}",
+            arm.word()
+        );
+    }
+}
+
+/// The card the speech drives above are about — a subject that could not occur
+/// inside any of those clauses by accident.
+const CARD_UNDER_TEST: &str = "R-01";
+
 /// ★★★★★ R1941 — **the weight of a framework answer is REPORTED here, not
 /// decided here.**
 ///

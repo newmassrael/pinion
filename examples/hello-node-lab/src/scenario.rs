@@ -35,6 +35,8 @@ use std::rc::Rc;
 
 use pinion_core::external::{ArgCase, InvokeError, SchemaArg};
 use pinion_core::regression::{Mark, Regression, Timeline};
+use pinion_core::scene::Rect;
+use pinion_core::theme::StateTone;
 use pinion_core::widgets::track::{Misplaced, Schedule, Seconds};
 use serde_json::Value;
 
@@ -210,13 +212,14 @@ pub struct Checkpoint {
 
 impl Checkpoint {
     /// The word the wire reports this verdict as.
+    ///
+    /// ★★★★★ R2024 — [`MarkKind`]'s, not a second list. The band paints this
+    /// verdict and names it in the accessibility tree, and a screen whose word
+    /// and a wire whose word came from two `match`es is this project's
+    /// commonest defect. One function, two readers.
     #[must_use]
     pub const fn verdict(&self) -> &'static str {
-        match self.met {
-            Some(true) => "met",
-            Some(false) => "failed",
-            None => "waiting",
-        }
+        MarkKind::raised(self.met).word()
     }
 }
 
@@ -646,6 +649,14 @@ pub fn wire(state: &LabState) -> Value {
         "playhead": state.playhead.get(),
         "duration": plan.duration().secs(),
         "acts": Act::WIRE_NAMES,
+        // ★★★★★ R2024 — the closed set of words the BAND can show, built from
+        // the enum rather than written here, so what an agent is told the
+        // screen can say cannot drift from what it says. R2001's rule for
+        // `classify_pin`'s classes, applied to a read: it is wider than
+        // `checks[].verdict` on purpose, because two of the five are states a
+        // checkpoint is in before it is raised or is not a checkpoint at all,
+        // and a client rendering this band needs the whole vocabulary.
+        "row_states": MarkKind::ALL.map(MarkKind::word),
         "lanes": lanes,
         "conflicts": conflicts(&plan),
         "checks": checks_wire(state),
@@ -757,4 +768,372 @@ fn distribution_wire(shifts: &[f64]) -> Value {
 /// A track's refusal, as a sentence on the invoke channel.
 fn refusal(why: Misplaced) -> InvokeError {
     InvokeError::rejected(why.to_string())
+}
+
+// ── The strip ───────────────────────────────────────────────────────────────
+//
+// ★★★★★ R2024 — **what a person watching this screen can see of all of the
+// above**, which until this round was nothing at all.
+//
+// R1844 gave the scenario an assertion whose verdict is three-valued, and every
+// one of the three rides `scenario` and `advance`. R1844's own debt recorded
+// that none of it is painted; re-measured at the open of R2024, the finding is
+// larger than the debt's sentence — `state.checks` had exactly three readers
+// and `state.playhead` two, all of them in this file, and NOT ONE PAINTER. The
+// lanes, the entries, the playhead and the verdicts were all wire-only, so the
+// debt's own prescription (*draw the checkpoints on the scenario lane*)
+// presumed a lane that did not exist.
+//
+// ⚠ And the behaviour canon has no scenario at all: measured against it,
+// `scenario`, `playhead`, `checkpoint` and `deadline` appear ZERO times, and
+// its five *timeline* matches are a sequence-gap sparkline and a handshake
+// list on two other screens. So this is second-pass work under rule (4) — the
+// floor's editors show a transport — and NOT reproduction, which the debt's
+// justification claimed it was.
+
+/// What one scheduled entry has come to, as a reader of the band meets it.
+///
+/// ★★★★★ FIVE UNIT ARMS and not three-with-a-payload. The first draft was
+/// `Raised(Option<bool>)`, mirroring [`Checkpoint::met`] — and the speech
+/// census refused it, correctly: `assert_speaks` counts ARMS, so a tri-state
+/// hidden inside one arm would have let two of the three verdict words go
+/// undriven while the gate read as satisfied. It is also this tree's own rule
+/// (*when the answer is one of three, it is a type*) applied to the view's
+/// vocabulary, which is wider than the model's: the model has three verdicts
+/// and the band has five things to say, because *the playhead has not reached
+/// this yet* and *this is still waiting* are different states and *this act
+/// happened* is neither.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, pinion_derive::VariantCensus)]
+#[variant_census(all)]
+pub enum MarkKind {
+    /// An act that happens at its moment and is over.
+    Act,
+    /// A checkpoint the playhead has not raised. Its interval is known from the
+    /// plan, so the deadline is visible BEFORE the run — which is what lets a
+    /// person read what a scenario is going to assert.
+    Pending,
+    /// A raised checkpoint whose card came up before its deadline.
+    Met,
+    /// A raised checkpoint whose deadline passed with its card still down.
+    Failed,
+    /// A raised checkpoint whose card is not up yet and whose deadline has not
+    /// passed. R1844's third value, and the reason the timeout exists.
+    Waiting,
+}
+
+impl MarkKind {
+    /// Every arm, in the order a reader meets them.
+    pub const ALL: [Self; 5] = [
+        Self::Act,
+        Self::Pending,
+        Self::Met,
+        Self::Failed,
+        Self::Waiting,
+    ];
+
+    /// What a checkpoint the playhead HAS raised has decided.
+    ///
+    /// The one crossing between the model's tri-state and the view's
+    /// vocabulary, so nothing else has to know that `Some(true)` is *met*.
+    #[must_use]
+    pub const fn raised(met: Option<bool>) -> Self {
+        match met {
+            Some(true) => Self::Met,
+            Some(false) => Self::Failed,
+            None => Self::Waiting,
+        }
+    }
+
+    /// The state this mark is in, on the framework's own scale, or [`None`] for
+    /// a mark that is not in a state at all.
+    ///
+    /// ★★★★★ The one place a verdict becomes a colour. The word a reader is
+    /// told ([`Self::word`]) and the ground the mark is painted on come off two
+    /// `match`es over one closed set, so a screen cannot paint *met* and
+    /// announce *failed* — this tree's recurring defect, and the reason R2020
+    /// put the four states behind [`StateTone`] rather than leaving them as
+    /// colours a painter picks.
+    #[must_use]
+    pub const fn tone(self) -> Option<StateTone> {
+        match self {
+            // Not a state: an act is a thing that happened, and a checkpoint
+            // nothing has reached has decided nothing. Painting either in a
+            // state colour would tell a reader something the model does not
+            // know.
+            Self::Act | Self::Pending => None,
+            Self::Met => Some(StateTone::Success),
+            Self::Failed => Some(StateTone::Error),
+            // ★ `Info` and not `Warning`: a checkpoint still inside its
+            // deadline is a fact the reader is being told and asks nothing of
+            // them, which is what `StateTone::Info` is for. Warning would say
+            // *this wants care*, and a deadline that has not passed does not.
+            // ⚠ It is also this vocabulary's FIRST painter — R2020 landed
+            // `info` / `on_info` / `info_container` / `on_info_container` and
+            // recorded that no screen drew them.
+            Self::Waiting => Some(StateTone::Info),
+        }
+    }
+
+    /// The word this mark is announced and labelled with.
+    ///
+    /// ★★★★★ [`Checkpoint::verdict`] — the WIRE's word — is this function, so
+    /// the sentence an agent reads off `checks` and the sentence painted into
+    /// the band are the same string rather than two lists that agree today.
+    #[must_use]
+    pub const fn word(self) -> &'static str {
+        match self {
+            Self::Act => "done",
+            Self::Pending => "not reached",
+            Self::Met => "met",
+            Self::Failed => "failed",
+            Self::Waiting => "waiting",
+        }
+    }
+}
+
+/// One row of the strip: one scheduled entry, what it decided, and where the
+/// three parts of its row go.
+///
+/// ★★★★★ ONE ROW PER ENTRY, which is a decision the smear gate made rather
+/// than a preference. Packing several entries onto one lane row is the natural
+/// first draft and it cannot be made safe: a track refuses two entries at one
+/// MOMENT but a checkpoint's interval reaches past the next entry's moment, so
+/// two marks on a shared row can overlap — and once a word rides a mark, two
+/// overlapping marks are two words painted over each other, which is
+/// `r1653_no_two_text_runs_are_painted_on_top_of_each_other`. A row apiece
+/// makes that unrepresentable instead of checked for, and it is also the right
+/// picture: an assertion over an interval is a bar, and bars that mean
+/// different things belong on different lines.
+#[derive(Clone, PartialEq, Debug)]
+pub struct StripRow {
+    /// The paint tag, `lab.scenario.<lane>.<at>`.
+    pub tag: String,
+    /// Which lane the entry is on.
+    pub lane: String,
+    /// The moment it happens at.
+    pub at: f32,
+    /// What it does.
+    pub act: &'static str,
+    /// The card it is about, empty for an act about the whole graph.
+    pub target: String,
+    /// Where waiting stops, and [`None`] for every act that does not wait.
+    pub until: Option<f32>,
+    /// What it has decided.
+    pub kind: MarkKind,
+    /// The whole row, in the band's own space.
+    pub row: Rect,
+    /// Where the row's words go.
+    pub words: Rect,
+    /// The bar: a checkpoint's interval, or an act's moment.
+    pub bar: Rect,
+}
+
+impl StripRow {
+    /// What the row reads, on the screen and in the tree — one string, so a
+    /// reader who sees the band and one who does not are told the same thing.
+    ///
+    /// ★ The verdict is IN THE WORDS and not only in the colour. A band that
+    /// carried the three verdicts as three fills alone would be telling a
+    /// reader who cannot distinguish them nothing at all, and this screen's
+    /// own inks are what the colour would have to come from — so the word is
+    /// the carrier and the fill is the reinforcement.
+    #[must_use]
+    pub fn reads(&self, lanes: usize) -> String {
+        let mut out = String::new();
+        if lanes > 1 {
+            out.push_str(&self.lane);
+            out.push_str(" · ");
+        }
+        out.push_str(self.act);
+        if !self.target.is_empty() {
+            out.push(' ');
+            out.push_str(&self.target);
+        }
+        if self.until.is_some() {
+            out.push_str(" — ");
+            out.push_str(self.kind.word());
+        }
+        out
+    }
+
+    /// The sentence a reader who cannot see the band is told, which says the
+    /// moments the drawing shows as positions.
+    #[must_use]
+    pub fn sentence(&self, lanes: usize) -> String {
+        match self.until {
+            Some(until) => format!("{}, {}s to {until}s", self.reads(lanes), self.at),
+            None => format!("{}, at {}s", self.reads(lanes), self.at),
+        }
+    }
+}
+
+/// The strip, as one derivation both the painter and the describing reader ask.
+///
+/// ★★★★★ R2022's rule, applied at the moment a surface is BUILT rather than
+/// after a gate catches it: the marks a reader is told about are the marks a
+/// painter was given seats for, because they are the same `Vec`. A count each
+/// side keeps is what produced thirteen announced-and-undrawn rows one screen
+/// over.
+#[derive(Clone, PartialEq, Debug)]
+pub struct Strip {
+    /// The whole band, in the band's own space (origin at its top-left).
+    pub band: Rect,
+    /// Every row that fits, in the order they happen.
+    pub rows: Vec<StripRow>,
+    /// The entries there was no room for, counted rather than dropped (R1690).
+    pub hidden: usize,
+    /// How many lanes the plan holds, which is what decides whether a row names
+    /// its own.
+    pub lanes: usize,
+    /// The playhead's rule, spanning the rows.
+    pub playhead: Rect,
+    /// The last moment the band spans.
+    pub span: f32,
+}
+
+/// The band's inner padding.
+const STRIP_PAD: u32 = 8;
+/// The height of one row.
+pub const STRIP_ROW_H: u32 = 18;
+/// The width a row's words are given at the band's left edge.
+pub const STRIP_GUTTER: u32 = 150;
+/// The narrowest a bar is drawn, so an act that takes no time is still
+/// something a person can see.
+const STRIP_BAR_MIN_W: u32 = 5;
+/// The type size the band is set at.
+pub const STRIP_TEXT_PX: u32 = 9;
+/// What a row's word-run adds to its row's tag.
+///
+/// ★ Published rather than spelled at the painter, because the walk that
+/// judges the band has to be able to tell a row's BAR from a row's WORDS and a
+/// second spelling of the suffix is how the two come to disagree.
+pub const ROW_WORDS: &str = ".reads";
+
+/// Where every part of the strip goes, or [`None`] when there is nothing to
+/// show.
+///
+/// `room` is the rectangle the band may occupy; every rectangle answered is
+/// relative to `room`'s origin.
+///
+/// ★ [`None`] rather than an empty band: a transport with no plan on it is
+/// chrome that says nothing, and this screen's opening frame — the one the
+/// reference comparison judges — is left exactly as it was.
+#[must_use]
+pub fn strip(state: &LabState, room: Rect) -> Option<Strip> {
+    let plan = state.scenario.borrow();
+    let lane_names = plan.lanes();
+    if lane_names.is_empty() {
+        return None;
+    }
+    let checks = state.checks.borrow();
+    let now = state.playhead.get();
+    // ★ The span is the whole plan OR wherever the playhead has got to,
+    // whichever is further: a scrub past the end must not push the playhead off
+    // the right-hand edge of the picture of it. Floored at one second so a plan
+    // whose entries all sit at zero still has a track to sit on.
+    let span = plan.duration().secs().max(now).max(1.0);
+
+    // Every entry, in the order they happen — a lane is where an author put an
+    // entry, and the picture is of the run rather than of the authoring.
+    let mut entries: Vec<(&str, f32, &Entry)> = Vec::new();
+    for lane in &lane_names {
+        let Some(track) = plan.get(lane) else {
+            continue;
+        };
+        for key in track.keys() {
+            entries.push((lane, key.at().secs(), key.value()));
+        }
+    }
+    entries.sort_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(b.0)));
+
+    let room_rows =
+        usize::try_from(room.h.saturating_sub(STRIP_PAD * 2) / STRIP_ROW_H).unwrap_or(0);
+    let shown = entries.len().min(room_rows);
+    if shown == 0 {
+        return None;
+    }
+    let band_h = STRIP_PAD * 2 + u32::try_from(shown).unwrap_or(1) * STRIP_ROW_H;
+    let band = Rect::new(0, 0, room.w, band_h);
+    let track_x = STRIP_GUTTER;
+    let track_w = room.w.saturating_sub(STRIP_GUTTER + STRIP_PAD).max(1);
+    // A moment as an x inside the track. Clamped rather than wrapped: a plan
+    // whose duration is the span puts its last entry exactly at the right edge.
+    let at_x = |secs: f32| -> u32 { track_x + seat_offset((secs / span).clamp(0.0, 1.0), track_w) };
+
+    let rows = entries
+        .iter()
+        .take(shown)
+        .enumerate()
+        .map(|(n, (lane, at, entry))| {
+            let until = entry.timeout.map(|wait| at + wait.secs());
+            let kind = if entry.act == Act::Check {
+                // ★ Matched on the pair the checkpoint was RAISED with, which is
+                // the pair `advance` pushes: a plan may hold two checks about
+                // one card at different moments, and matching on the card alone
+                // would give the second one the first one's verdict.
+                match checks
+                    .iter()
+                    .find(|c| c.target == entry.target && (c.at.secs() - at).abs() < f32::EPSILON)
+                {
+                    Some(check) => MarkKind::raised(check.met),
+                    None => MarkKind::Pending,
+                }
+            } else {
+                MarkKind::Act
+            };
+            let top = STRIP_PAD + u32::try_from(n).unwrap_or(0) * STRIP_ROW_H;
+            let left = at_x(*at);
+            let right = until.map_or(left, at_x);
+            StripRow {
+                tag: format!("lab.scenario.{lane}.{at}"),
+                lane: (*lane).to_owned(),
+                at: *at,
+                act: entry.act.as_wire_name(),
+                target: entry.target.clone(),
+                until,
+                kind,
+                row: Rect::new(0, top, room.w, STRIP_ROW_H),
+                words: Rect::new(
+                    STRIP_PAD,
+                    top + 2,
+                    STRIP_GUTTER.saturating_sub(STRIP_PAD * 2).max(1),
+                    STRIP_ROW_H.saturating_sub(4),
+                ),
+                bar: Rect::new(
+                    left,
+                    top + 4,
+                    right.saturating_sub(left).max(STRIP_BAR_MIN_W),
+                    STRIP_ROW_H.saturating_sub(8),
+                ),
+            }
+        })
+        .collect();
+
+    Some(Strip {
+        band,
+        rows,
+        hidden: entries.len() - shown,
+        lanes: lane_names.len(),
+        playhead: Rect::new(
+            at_x(now),
+            STRIP_PAD,
+            1,
+            band_h.saturating_sub(STRIP_PAD * 2),
+        ),
+        span,
+    })
+}
+
+/// A ratio of a width, as whole pixels.
+///
+/// Its own function so the one cast lives at one site: a ratio the caller has
+/// already clamped into `0.0..=1.0` times a `u32` width cannot leave `u32`.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "a clamped ratio of a window-bounded width is a window-bounded offset"
+)]
+fn seat_offset(ratio: f32, width: u32) -> u32 {
+    (ratio * width as f32) as u32
 }

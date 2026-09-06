@@ -40,6 +40,7 @@ use pinion_core::availability::{Recourse, UnavailableKind};
 use pinion_core::external::{ExternalIntrospect, IntrospectValue};
 use pinion_core::reactive::Owner;
 use pinion_core::scene::Rect;
+use pinion_core::style::Color;
 use pinion_core::widgets::destination::Required;
 use pinion_core::{Frame, Scene};
 use pinion_screen::ScreenState;
@@ -8689,13 +8690,30 @@ fn lab_invoke_value(
     verb: &str,
     arg: &str,
 ) -> Result<IntrospectValue, pinion_core::external::InvokeError> {
+    lab_call(state, verb, IntrospectValue::Text(arg.to_owned()))
+}
+
+/// ★★★★★ R2024 — the same call, for a verb whose arguments are not a string.
+///
+/// The two above both spell `IntrospectValue::Text`, which is right for the
+/// twenty-odd verbs that take a card's name and cannot reach the ones that
+/// declare `ArgForm::Object` or a number — `schedule` takes four named
+/// arguments and `advance` takes seconds. Extracted rather than written beside
+/// them so every one of the three reaches the mounted lab the one way, which is
+/// what rule (7) is about: a helper that found the guest differently would pass
+/// on a build that never mounted the section.
+fn lab_call(
+    state: &std::rc::Rc<ShellState>,
+    verb: &str,
+    args: IntrospectValue,
+) -> Result<IntrospectValue, pinion_core::external::InvokeError> {
     let mut externals = state.screens.externals(&state.journey.get());
     let lab = externals
         .iter_mut()
         .filter_map(|e| e.handle.introspect_mut())
         .find(|it| it.query("waiting").is_ok())
         .expect("the lab section publishes `waiting`, which is how it is found");
-    lab.invoke(verb, IntrospectValue::Text(arg.to_owned()))
+    lab.invoke(verb, args)
 }
 
 /// A count out of a report, as a count.
@@ -11387,6 +11405,357 @@ fn lab_pan(state: &std::rc::Rc<ShellState>) -> (i64, i64) {
         x.parse().expect("`pan`'s x is a whole offset"),
         y.parse().expect("`pan`'s y is a whole offset"),
     )
+}
+
+/// ★★★★★ R2024 — **a scenario's verdicts are on the screen**, driven on the
+/// assembled application over one walk.
+///
+/// # What was missing, measured rather than assumed
+///
+/// R1844 gave the node lab's scenario a fifth act — `check`, with a timeout —
+/// whose verdict is three-valued (`met` / `failed` / `waiting`) and rides both
+/// the `scenario` read and the `advance` answer. Its debt recorded that none
+/// of it is painted. Re-measured at the open of this round the finding is
+/// **larger than the debt's sentence**: `state.checks` had exactly three
+/// readers and `state.playhead` two, every one of them inside `scenario.rs`,
+/// and NOT ONE PAINTER. Nothing about the scenario reached the screen — not
+/// the lanes, not the entries, not the playhead — so the debt's own
+/// prescription (*draw the checkpoints on the scenario lane*) named a lane
+/// that did not exist.
+///
+/// ⚠ And this is second-pass work rather than reproduction, which the debt
+/// claimed it was: measured against the behaviour canon, `scenario`,
+/// `playhead`, `checkpoint` and `deadline` appear **zero** times in it, and its
+/// five *timeline* matches are a sequence-gap sparkline and a handshake list on
+/// two other screens. Rule (4) is what makes it owed — the floor's editors show
+/// a transport — and the canon comparison is untouched, because a screen whose
+/// plan is empty paints no band at all.
+///
+/// # The three things the debt asked for, and where each is asserted
+///
+/// 1. **the three verdicts must be distinguishable** — phase 3 reads the three
+///    fills off the paint and asserts they are three different colours, and
+///    phase 4 asserts the WORD is on the screen too, so the distinction does
+///    not rest on colour alone;
+/// 2. **the deadline must be visible** — phase 3 asserts a checkpoint's bar is
+///    wider than the minimum a zero-length act gets, and that a longer deadline
+///    draws a longer bar;
+/// 3. **the painted marks must be announced in the same number** — phase 5,
+///    which is `debt-a-card-announces-a-row-it-does-not-paint`'s class asked at
+///    the moment this surface is built rather than after a gate catches it.
+#[test]
+fn r2024_a_scenarios_verdicts_are_on_the_screen() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let report = crate::tests::walk_the_application(&state);
+        assert!(
+            report.conforms(),
+            "the application did not reproduce its specification over the walk: {}",
+            report.why().unwrap_or_default()
+        );
+        assert!(
+            report.itinerary().iter().any(|key| key == "lab"),
+            "the walk must stand in the node lab: {:?}",
+            report.itinerary()
+        );
+
+        state.go("lab").expect("the node lab section is open");
+        the_band_is_absent_until_there_is_a_plan(&state);
+        let plan = a_plan_is_authored_and_run(&state);
+        the_three_verdicts_are_three_different_grounds(&plan);
+        the_verdict_is_in_the_words_and_not_only_in_the_colour(&plan);
+        every_painted_row_is_announced_once(&state, &plan);
+    });
+}
+
+/// Phase 0 — the premise: a screen with no scenario on it paints no band.
+///
+/// ★★ Not a nicety. It is what keeps this round out of the reference
+/// comparison: the canon has no scenario, so the frame that comparison judges
+/// must be the frame it judged before. A band that drew an empty transport
+/// would be an element the screen invented, which `r1651` refuses in both
+/// directions.
+fn the_band_is_absent_until_there_is_a_plan(state: &std::rc::Rc<ShellState>) {
+    let scenario = lab_slot(state, "scenario");
+    assert_eq!(
+        scenario["lanes"].as_array().map(Vec::len),
+        Some(0),
+        "this screen opens with no scenario, which is this phase's premise — {scenario}"
+    );
+    let (shot, _) = painted_at((WIN_W, WIN_H));
+    assert!(
+        !shot.tags.keys().any(|tag| tag.starts_with("lab.scenario")),
+        "a screen with nothing scheduled paints no band: {:?}",
+        shot.tags
+            .keys()
+            .filter(|tag| tag.starts_with("lab.scenario"))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// What phase 1 authored, so the phases after it name rows rather than guess at
+/// them.
+struct RunPlan {
+    /// The tag of the checkpoint that was met, failed, and still waiting.
+    met: String,
+    failed: String,
+    waiting: String,
+    /// Every `lab.scenario.*` tag the frame painted, with its rectangle.
+    marks: BTreeMap<String, Rect>,
+    /// What each bar was filled with.
+    fills: BTreeMap<String, Color>,
+    /// Every word the band painted.
+    words: Vec<String>,
+}
+
+/// Phase 1 — a plan is authored through the wire and run, so that all three
+/// verdicts stand at once.
+///
+/// ★★★★★ All three in ONE frame, deliberately. A walk that produced them one
+/// after another could not tell three distinguishable states from one state
+/// drawn three times, which is what the debt's first requirement is actually
+/// about. The plan is built to force them:
+///
+/// * a card is stopped at 0.5s, so two checkpoints about it can fail or wait;
+/// * a checkpoint at 1.0s about a card that IS up — met when it is raised;
+/// * a checkpoint at 1.5s about the stopped card with a 0.5s deadline — failed
+///   once the playhead is past 2.0s;
+/// * a checkpoint at 2.0s about the same stopped card with a long deadline —
+///   still waiting at 4.0s, which is the third value R1844's timeout exists for.
+///
+/// ⚠ Two of them are about the SAME card at different moments, which is the
+/// case `scenario::strip` matches a checkpoint to its entry by the pair rather
+/// than by the card: matching on the card alone gives the second one the
+/// first's verdict, and this plan is what would catch it.
+fn a_plan_is_authored_and_run(state: &std::rc::Rc<ShellState>) -> RunPlan {
+    let cards = lab_cards(state);
+    let up = cards.first().expect("the opening graph has cards").clone();
+    let down = cards.get(1).expect("and more than one").clone();
+
+    let schedule = |at: f64, act: &str, target: &str, timeout: Option<f64>| {
+        let mut args = serde_json::json!({"at": at, "act": act, "target": target});
+        if let Some(secs) = timeout {
+            args["timeout"] = serde_json::json!(secs);
+        }
+        lab_call(state, "schedule", IntrospectValue::Json(args))
+            .unwrap_or_else(|why| panic!("{act} at {at}s on {target} is schedulable: {why:?}"))
+    };
+    schedule(0.5, "stop", &down, None);
+    schedule(1.0, "check", &up, Some(1.0));
+    schedule(1.5, "check", &down, Some(0.5));
+    schedule(2.0, "check", &down, Some(100.0));
+
+    let answered = lab_call(state, "advance", IntrospectValue::Float(4.0))
+        .expect("four seconds is a number of seconds");
+    let IntrospectValue::Json(answered) = answered else {
+        panic!("advance answers the run it made: {answered:?}");
+    };
+    let verdicts: Vec<&str> = answered["checks"]
+        .as_array()
+        .expect("`checks` is an array")
+        .iter()
+        .filter_map(|check| check["verdict"].as_str())
+        .collect();
+    assert_eq!(
+        verdicts,
+        vec!["met", "failed", "waiting"],
+        "the plan was built to stand all three verdicts up at once, which is \
+         what makes *distinguishable* a claim about one frame — {answered}"
+    );
+
+    let (shot, scene) = painted_at((WIN_W, WIN_H));
+    let marks: BTreeMap<String, Rect> = shot
+        .tags
+        .iter()
+        .filter(|(tag, _)| tag.starts_with("lab.scenario"))
+        .map(|(tag, rect)| (tag.clone(), *rect))
+        .collect();
+    assert!(
+        !marks.is_empty(),
+        "★★★★★ the band is PAINTED — until this round the whole scenario was \
+         wire-only, and this is the assertion that says a person can see it"
+    );
+    let fills: BTreeMap<String, Color> = marks
+        .keys()
+        .filter_map(|tag| painted_fill(&scene, tag).map(|fill| (tag.clone(), fill)))
+        .collect();
+    // ★★★★★ The band's words are collected by the ROW TAG each one carries,
+    // and both simpler answers are wrong in a way this round measured.
+    //
+    // *By owner* is wrong because `text_run` tags the text node ITSELF, so a
+    // run's nearest tagged ancestor is the canvas the band floats over — the
+    // filter comes back empty and the phase below passes on nothing.
+    //
+    // *By rectangle* is wrong for the opposite reason, and this is the one that
+    // would have gone unnoticed: the band floats over the canvas, so the cards
+    // UNDER it are inside its rectangle too. Measured while driving the
+    // counterfactual, that filter returned 31 words of which 27 were card
+    // fields — so a card whose configuration value happened to read `met` would
+    // have satisfied the assertion below with the band saying nothing.
+    let words: Vec<String> = marks
+        .iter()
+        // ⚠ `strip_suffix` and not `ends_with`: clippy reads a trailing
+        // `.reads` as a FILE EXTENSION and asks for `Path::extension`, which
+        // would make a screen's address book answer to the file system's
+        // grammar. The suffix itself is the lab's, published so the two sides
+        // cannot spell it differently.
+        .filter(|(tag, _)| tag.strip_suffix(hello_node_lab::ROW_WORDS).is_some())
+        .filter_map(|(_, rect)| {
+            shot.runs
+                .iter()
+                .find(|(_, at, _)| at == rect)
+                .map(|(text, _, _)| text.clone())
+        })
+        .collect();
+    RunPlan {
+        met: format!("lab.scenario.main.{}", 1.0_f32),
+        failed: format!("lab.scenario.main.{}", 1.5_f32),
+        waiting: format!("lab.scenario.main.{}", 2.0_f32),
+        marks,
+        fills,
+        words,
+    }
+}
+
+/// Phase 2 — the debt's first requirement: the three verdicts are three
+/// different grounds, and the deadline is a length rather than a point.
+fn the_three_verdicts_are_three_different_grounds(plan: &RunPlan) {
+    let ground = |tag: &String| {
+        *plan
+            .fills
+            .get(tag)
+            .unwrap_or_else(|| panic!("{tag} is a painted bar: {:?}", plan.fills.keys()))
+    };
+    let (met, failed, waiting) = (
+        ground(&plan.met),
+        ground(&plan.failed),
+        ground(&plan.waiting),
+    );
+    assert!(
+        met != failed && failed != waiting && met != waiting,
+        "★★★★★ met, failed and waiting are three different grounds — a band \
+         that drew *waiting* as *failed* would be telling a reader a deadline \
+         had passed when it has not: {met:?} / {failed:?} / {waiting:?}"
+    );
+
+    // ★★ And the DEADLINE is drawn: a checkpoint's bar spans its interval, so
+    // the one that waits a hundred seconds is wider than the one that waits
+    // half a second, and both are wider than the mark an act with no duration
+    // gets. Without this the band would be a row of dots and the interval —
+    // the whole reason R1844's checkpoint is an assertion rather than a sample
+    // — would be invisible.
+    let width = |tag: &String| plan.marks.get(tag).map_or(0, |rect| rect.w);
+    assert!(
+        width(&plan.waiting) > width(&plan.failed),
+        "a hundred-second deadline draws a longer bar than a half-second one: \
+         {} vs {}",
+        width(&plan.waiting),
+        width(&plan.failed),
+    );
+    let act = format!("lab.scenario.main.{}", 0.5_f32);
+    assert!(
+        width(&plan.failed) > width(&act),
+        "and a checkpoint's interval is longer than the moment an act happens \
+         at: {} vs {}",
+        width(&plan.failed),
+        width(&act),
+    );
+}
+
+/// Phase 3 — and the verdict is in the WORDS, so a reader who cannot tell the
+/// three grounds apart is still told which is which.
+///
+/// ★ WCAG 1.4.1 read honestly rather than quoted: the colour is the
+/// reinforcement and the word is the carrier. A band that said it three ways in
+/// colour and no way in text would satisfy the debt's sentence and fail its
+/// purpose.
+fn the_verdict_is_in_the_words_and_not_only_in_the_colour(plan: &RunPlan) {
+    for verdict in ["met", "failed", "waiting"] {
+        assert!(
+            plan.words.iter().any(|said| said.contains(verdict)),
+            "★★ the band says {verdict:?} in words — painted: {:?}",
+            plan.words
+        );
+    }
+}
+
+/// Phase 4 — every row the band painted is announced exactly once, and nothing
+/// is announced that was not painted.
+///
+/// ★★★★★ `debt-a-card-announces-a-row-it-does-not-paint`'s class, asked while
+/// this surface is new instead of after a ratchet collects thirteen of them.
+/// It can be asked cheaply here because the painter and the describing reader
+/// call one function (`scenario::strip`) and iterate one `Vec` — so what this
+/// checks is that they still do.
+fn every_painted_row_is_announced_once(_state: &std::rc::Rc<ShellState>, plan: &RunPlan) {
+    use pinion_a11y::WidgetA11y;
+
+    let announced: BTreeSet<String> =
+        super::AnalyzerShellView::access_node(&ScreenState::default(), None)
+            .into_iter()
+            .map(|node| node.tag)
+            .filter(|tag| tag.starts_with("lab.scenario"))
+            .collect();
+    let bars: BTreeSet<String> = plan
+        .marks
+        .keys()
+        .filter(|tag| {
+            // The bars, which are the rows: the band itself, its playhead and
+            // the runs inside a row are parts rather than stops.
+            *tag != "lab.scenario"
+                && *tag != "lab.scenario.playhead"
+                && tag.strip_suffix(hello_node_lab::ROW_WORDS).is_none()
+        })
+        .cloned()
+        .collect();
+    assert!(
+        !bars.is_empty(),
+        "phase 1 painted the band, so there are rows to compare"
+    );
+    assert!(
+        announced.is_superset(&bars),
+        "★★★★★ every painted row is announced — undescribed: {:?}",
+        bars.difference(&announced).collect::<Vec<_>>()
+    );
+    // ★★ And the other direction, which is the one the ghost class is about: a
+    // tree that named a row the band had no room for would be offering a
+    // reader something nobody drew.
+    let ghosts: Vec<&String> = announced
+        .iter()
+        .filter(|tag| {
+            **tag != "lab.scenario"
+                && **tag != "lab.scenario.more"
+                && !plan.marks.contains_key(*tag)
+        })
+        .collect();
+    assert!(
+        ghosts.is_empty(),
+        "★★★★★ and nothing is announced that was not painted: {ghosts:?}"
+    );
+}
+
+/// What a tagged box is filled with, or [`None`] when the tag names no box.
+///
+/// The peer of [`painted_alpha`], which answers one channel of the same fact
+/// and could not tell two opaque grounds apart — which is exactly what a
+/// verdict's colour has to be judged on.
+fn painted_fill(scene: &Scene, tag: &str) -> Option<Color> {
+    let mut found = None;
+    scene.for_each_node(&mut |visit| {
+        if visit.node.tag() != Some(tag) {
+            return;
+        }
+        let fill = match visit.node {
+            Scene::Box(node) => Some(node.style.fill),
+            Scene::Container(node) => Some(node.style.fill),
+            _ => None,
+        };
+        if let Some(fill) = fill {
+            found = found.or(Some(fill));
+        }
+    });
+    found
 }
 
 /// The mounted lab's wires, as the pairs of card names they join.

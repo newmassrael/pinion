@@ -56,6 +56,13 @@ mod judge;
 mod merging;
 mod persist;
 mod scenario;
+
+/// ★ R2024 — what a scenario row's word-run adds to its row's tag, published
+/// for the same reason [`in_toolbar_overflow`] is: the ASSEMBLED tool's walk
+/// has to tell a row's BAR from a row's WORDS, and the only alternative is for
+/// that walk to spell the suffix a second time — the class of defect this
+/// repository counts by the dozen.
+pub use scenario::ROW_WORDS;
 mod settings;
 mod spec;
 
@@ -7551,6 +7558,13 @@ fn hint_rect() -> Rect {
 /// Each entry is `(depth, name, rect)`, and `depth` is the number of descents
 /// that step stands at — which is what [`EditPath`] can be walked back to
 /// without this screen searching for a tree id it might not hold.
+/// How far below the canvas's top edge the breadcrumb sits.
+///
+/// ★ R2024 — named because it has a second reader: [`scenario_room`] puts its
+/// band UNDER the crumb, and a number written there would be a second spelling
+/// of where the crumb is.
+const CRUMB_TOP: u32 = 10;
+
 fn crumb_steps(state: &LabState) -> Vec<(usize, String, Rect)> {
     let canvas = canvas_rect();
     let room = gate_panel_x().saturating_sub(canvas.x + 24);
@@ -7565,7 +7579,7 @@ fn crumb_steps(state: &LabState) -> Vec<(usize, String, Rect)> {
         if x + w > canvas.x + 12 + room {
             break;
         }
-        out.push((depth, name, Rect::new(x, canvas.y + 10, w, 24)));
+        out.push((depth, name, Rect::new(x, canvas.y + CRUMB_TOP, w, 24)));
         x += w + CRUMB_GAP;
     }
     out
@@ -11187,8 +11201,43 @@ fn member_pin_rect(state: &LabState, card: Rect, dial: bool, ordinal: usize) -> 
 
 /// The two things that float over the canvas: the launch gate and the gesture
 /// hint.
-fn canvas_overlays(state: &LabState, ink: Ink) -> Vec<Scene> {
+fn canvas_overlays(state: &LabState, theme: &Theme, ink: Ink) -> Vec<Scene> {
     let rect = canvas_rect();
+    let local = |r: Rect| Rect::new(r.x - rect.x, r.y - rect.y, r.w, r.h);
+    let mut children: Vec<Scene> = launch_gate_panel(state, ink, rect);
+    children.extend(canvas_crumb(state, ink, rect));
+
+    let hint = local(hint_rect());
+    children.push(box_at("lab.hint", hint, ink.surface, Some(ink.outline), 8));
+    children.push(quiet(
+        tagged_label(
+            "lab.hint.text",
+            hint_text(),
+            Rect::new(hint.x + 10, hint.y + 6, hint.w - 20, 13),
+            9,
+            ink.text_3,
+        ),
+        // The strip's whole content is the run inside it, and the strip is what
+        // announces it — this screen's only statement of what the pointer can
+        // do, which a reader needs most and could not hear at all.
+        Silence::name_of("lab.hint"),
+    ));
+
+    children.extend(canvas_toast(state, ink));
+    children.extend(pin_tip(state, ink, rect));
+    children.extend(scenario_strip(state, theme, ink));
+
+    children
+}
+
+/// The launch gate's panel, its findings, and the reset buttons beside them.
+///
+/// ★ R2024 — lifted out of [`canvas_overlays`] when that function passed the
+/// hundred-line bound, and lifted rather than allowed: this is a whole overlay
+/// with a rectangle of its own, and the three that remain beside it — the
+/// breadcrumb, the hint strip, the toast — were already functions. It was the
+/// odd one out.
+fn launch_gate_panel(state: &LabState, ink: Ink, rect: Rect) -> Vec<Scene> {
     let local = |r: Rect| Rect::new(r.x - rect.x, r.y - rect.y, r.w, r.h);
     let mut children: Vec<Scene> = Vec::new();
     let gate = local(gate_rect(state));
@@ -11288,30 +11337,156 @@ fn canvas_overlays(state: &LabState, ink: Ink) -> Vec<Scene> {
             ink.text_2,
         ));
     }
-
-    children.extend(canvas_crumb(state, ink, rect));
-
-    let hint = local(hint_rect());
-    children.push(box_at("lab.hint", hint, ink.surface, Some(ink.outline), 8));
-    children.push(quiet(
-        tagged_label(
-            "lab.hint.text",
-            hint_text(),
-            Rect::new(hint.x + 10, hint.y + 6, hint.w - 20, 13),
-            9,
-            ink.text_3,
-        ),
-        // The strip's whole content is the run inside it, and the strip is what
-        // announces it — this screen's only statement of what the pointer can
-        // do, which a reader needs most and could not hear at all.
-        Silence::name_of("lab.hint"),
-    ));
-
-    children.extend(canvas_toast(state, ink));
-    children.extend(pin_tip(state, ink, rect));
-
     children
 }
+
+/// ★★★★★ R2024 — the room the scenario strip may take: the band across the
+/// top of the canvas, under the breadcrumb.
+///
+/// The top and not the bottom, measured rather than chosen: `gate_rect`, the
+/// hint strip and the toast all sit against the canvas's lower edge, and a
+/// fourth overlay there would be painted over one of them. The band's floor is
+/// the hint strip's own top, so a plan long enough to fill the canvas stops
+/// before it reaches the three that were there first.
+///
+/// ★ Its ceiling is derived from the breadcrumb's own seat rather than from a
+/// number written here, because the band goes UNDER it and a constant would be
+/// a second spelling of where the crumb is.
+fn scenario_room(state: &LabState) -> Rect {
+    let canvas = canvas_rect();
+    let top = crumb_steps(state)
+        .first()
+        .map_or(canvas.y + CRUMB_TOP, |(_, _, seat)| seat.y + seat.h)
+        + STRIP_GAP;
+    let floor = hint_rect().y.saturating_sub(STRIP_GAP);
+    Rect::new(
+        canvas.x + STRIP_GAP,
+        top,
+        canvas.w.saturating_sub(STRIP_GAP * 2),
+        floor.saturating_sub(top),
+    )
+}
+
+/// The gap the strip keeps from the marks above and below it.
+const STRIP_GAP: u32 = 10;
+
+/// ★★★★★ R2024 — **the scenario, drawn.**
+///
+/// R1844 gave this screen an assertion with a three-valued verdict and every
+/// one of the three went out on the wire; measured at the open of R2024,
+/// `state.checks` had three readers and `state.playhead` two, all of them in
+/// `scenario.rs`, and not one painter. An agent could ask what a scenario had
+/// decided and a person could not see it.
+///
+/// The band is chrome: it floats over the canvas beside the launch panel, the
+/// hint strip and the toast, and does not pan with the world — a scenario is a
+/// fact about the graph rather than a thing at a place in it.
+///
+/// ★★ The geometry comes from [`scenario::strip`], which the describing reader
+/// asks too ([`scenario_access`]). One derivation and one `Vec`, so the rows a
+/// reader is told about are the rows a painter was given seats for — R2022's
+/// rule applied while the surface is being built rather than after a gate
+/// catches thirteen of them.
+fn scenario_strip(state: &LabState, theme: &Theme, ink: Ink) -> Vec<Scene> {
+    let canvas = canvas_rect();
+    let room = scenario_room(state);
+    let Some(strip) = scenario::strip(state, room) else {
+        return Vec::new();
+    };
+    let origin = |r: Rect| {
+        Rect::new(
+            r.x + room.x - canvas.x,
+            r.y + room.y - canvas.y,
+            r.w.max(1),
+            r.h.max(1),
+        )
+    };
+    // ★ SIBLINGS in the canvas's own space, which is how every other overlay
+    // here is built (`lab.gate` and its lines, `lab.reset.*`, `lab.hint`). A
+    // nested band would have to know whether this framework resolves an
+    // absolute child against its parent or against the pane, and the three
+    // overlays that were here first have already answered that question by
+    // construction.
+    let mut kids: Vec<Scene> = vec![
+        box_at(
+            "lab.scenario",
+            origin(strip.band),
+            ink.surface,
+            Some(ink.outline),
+            8,
+        ),
+        quiet(
+            box_at(
+                "lab.scenario.playhead",
+                origin(strip.playhead),
+                ink.accent,
+                None,
+                0,
+            ),
+            // Where the run has got to. It is the band's own value rather than
+            // a stop of its own — `scenario_access` puts the number in the
+            // group's value, where a reader meets it once.
+            Silence::part_of("lab.scenario"),
+        ),
+    ];
+    for row in &strip.rows {
+        // The bar: an act's moment, or a checkpoint's whole interval — which is
+        // the ONE thing that makes this a picture of an assertion rather than
+        // of a sample. R1844's timeout is what turns a checkpoint into a claim
+        // about a stretch of time, and a band that drew only the moment it was
+        // raised at would be drawing the sample.
+        let (fill, border) = match row.kind.tone() {
+            // ★★★★★ Straight off `StateTone`, which is where a verdict's four
+            // roles live since R2020, and NOT out of this screen's own `Ink`:
+            // the inks here are hand-written hex (this screen's own standing
+            // debt) and a fourth copy of *what success looks like* is the
+            // defect that debt is about. A filled state carries no outline —
+            // the badge's rule, for the badge's reason: the tint is already the
+            // boundary.
+            Some(tone) => (theme.resolve(tone.container()), None),
+            // Not a state, so not a state colour. A checkpoint the playhead has
+            // not reached is drawn as an OUTLINE over its interval, which is
+            // the honest picture: the claim is there and nothing has judged it.
+            None if row.until.is_some() => (Color::TRANSPARENT, Some(ink.outline_2)),
+            None => (ink.text_3, None),
+        };
+        kids.push(box_at(&row.tag, origin(row.bar), fill, border, 3));
+        kids.push(quiet(
+            tagged_label(
+                &format!("{}{}", row.tag, scenario::ROW_WORDS),
+                row.reads(strip.lanes),
+                origin(row.words),
+                scenario::STRIP_TEXT_PX,
+                match row.kind.tone() {
+                    Some(tone) => theme.resolve(tone.on_container()),
+                    None => ink.text_2,
+                },
+            ),
+            Silence::name_of(row.tag.clone()),
+        ));
+    }
+    // ★ R1690's idiom — what the band has no room for, counted rather than
+    // dropped, so a plan longer than the canvas does not quietly become a
+    // shorter plan.
+    if strip.hidden > 0 {
+        kids.push(tagged_label(
+            "lab.scenario.more",
+            format!("+{} more entr(y/ies) below the band", strip.hidden),
+            origin(Rect::new(
+                scenario::STRIP_GUTTER,
+                strip.band.h.saturating_sub(STRIP_ROW_HALF),
+                strip.band.w.saturating_sub(scenario::STRIP_GUTTER),
+                line_box(scenario::STRIP_TEXT_PX),
+            )),
+            scenario::STRIP_TEXT_PX,
+            ink.text_3,
+        ));
+    }
+    kids
+}
+
+/// Half a row, which is where the overflow note sits under the last one drawn.
+const STRIP_ROW_HALF: u32 = scenario::STRIP_ROW_H / 2;
 
 /// ★★★★★ R1916 — the description of the pin a reader is resting on, drawn
 /// beside it.
@@ -11416,7 +11591,7 @@ fn canvas_toast(state: &LabState, ink: Ink) -> Option<Scene> {
 /// The canvas pane: its layers, in the order a reader meets them — the surface,
 /// the host frames, the wires, the node cards, then the two things that float
 /// over all of it.
-fn canvas(state: &LabState, ink: Ink) -> Scene {
+fn canvas(state: &LabState, theme: &Theme, ink: Ink) -> Scene {
     let rect = canvas_rect();
     // ★ R1653 — the world surface, and the viewport the pan slides over it.
     // The alternative the screen shipped with was to add the pan to every
@@ -11467,7 +11642,7 @@ fn canvas(state: &LabState, ink: Ink) -> Scene {
     let mut children = vec![viewport];
     // The gate panel and the hint strip are chrome: they float over the canvas
     // and do not pan with it.
-    children.extend(canvas_overlays(state, ink));
+    children.extend(canvas_overlays(state, theme, ink));
     Scene::Container(
         ContainerNode::new(children)
             .with_tag("lab.canvas")
@@ -12488,7 +12663,7 @@ fn view(field: (TextFieldState, u32), _frame: Frame) -> Scene {
     panes.extend([
         palette(&state, ink),
         toolbar(&state, ink),
-        canvas(&state, ink),
+        canvas(&state, &theme, ink),
         inspector(&state, field, &theme, ink),
     ]);
     // ★★★★★ R1957 — **the overflow menu is painted last**, because a scene is
@@ -21934,6 +22109,47 @@ fn canvas_access(state: &LabState) -> Vec<AccessNode> {
     }
     nodes.extend(wire_access(state));
     nodes.extend(link_chrome_access(state));
+    nodes.extend(scenario_access(state));
+    nodes
+}
+
+/// ★★★★★ R2024 — the scenario band, for a reader who does not see it.
+///
+/// ★★ It asks [`scenario::strip`], which is the SAME call
+/// [`scenario_strip`] paints from — so the rows announced here are the rows
+/// that were given seats, and an announcement cannot outlive the room the band
+/// had. R2022's finding one screen over was thirteen rows announced and never
+/// drawn, produced by exactly the arrangement this avoids: two readers each
+/// deriving the count.
+///
+/// ★ A row is a `Status` rather than a `Group`: a checkpoint's verdict is a
+/// value that changes as the playhead moves, and a reader resting on one wants
+/// to be told when it does.
+fn scenario_access(state: &LabState) -> Vec<AccessNode> {
+    let Some(strip) = scenario::strip(state, scenario_room(state)) else {
+        return Vec::new();
+    };
+    let mut nodes = vec![
+        AccessNode::new("lab.scenario", AriaRole::Group)
+            .with_name("scenario")
+            .with_value(AccessValue::Text(format!(
+                "{} entr(y/ies) over {}s, playhead at {}s",
+                strip.rows.len() + strip.hidden,
+                strip.span,
+                state.playhead.get(),
+            ))),
+    ];
+    nodes.extend(strip.rows.iter().map(|row| {
+        AccessNode::new(row.tag.clone(), AriaRole::Status).with_name(row.sentence(strip.lanes))
+    }));
+    if strip.hidden > 0 {
+        nodes.push(
+            AccessNode::new("lab.scenario.more", AriaRole::Status).with_name(format!(
+                "{} more entr(y/ies) than the band has room for",
+                strip.hidden
+            )),
+        );
+    }
     nodes
 }
 
