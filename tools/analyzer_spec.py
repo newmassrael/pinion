@@ -32,9 +32,12 @@ hands, which is the whole point of the specifications being separate artifacts.
 from __future__ import annotations
 
 import json
+import re
+from collections.abc import Callable
 from pathlib import Path
 
-DOCS = Path(__file__).resolve().parent.parent / "docs"
+ROOT = Path(__file__).resolve().parent.parent
+DOCS = ROOT / "docs"
 RAIL_SPEC_PATH = DOCS / "analyzer-rail-spec.json"
 KEYS_SPEC_PATH = DOCS / "analyzer-keys-spec.json"
 PACKETS_SPEC_PATH = DOCS / "analyzer-packets-spec.json"
@@ -104,6 +107,41 @@ def unjudged_sections() -> dict[str, str]:
     return {
         entry["key"]: entry["sentence"] for entry in sections_spec()["unjudged"]["owed"]
     }
+
+
+def mechanism_remainders() -> list[dict]:
+    """★★★★★ (R2043) The remainders about the APPLICATION's own machinery.
+
+    The sibling list `unjudged.owed` is read by six files and asserted equal to
+    what the running application publishes, so it shrinks when the work is done
+    and fails loudly when an entry is left behind. This one had NO reader at
+    all — measured at R1888 and again at R2043, zero files mentioned it — and
+    what that cost is on the record: an entry was deleted from it while the
+    thing it describes was still true.
+
+    A remainder here is not about a section, so there is nothing in the running
+    application to compare it against. What it carries instead is `refuted_by`:
+    a needle that will APPEAR in the tree once the work is done. `paid_off`
+    below runs it, which is what turns this list from prose into a ratchet.
+    """
+    return list(sections_spec()["it_is_the_application"]["owed"])
+
+
+def paid_off(entry: dict, read: Callable[[Path], str]) -> list[str]:
+    """Where `entry`'s refutation needle is FOUND — the places that say it is
+    paid and the entry must be deleted.
+
+    Pure in `entry` and `read`: the oracle is the caller's, so the rule is
+    testable against a fixture rather than only against this tree.
+    """
+    needle = entry["refuted_by"]["pattern"]
+    found: list[str] = []
+    for where in entry["refuted_by"]["in"]:
+        here = ROOT / where
+        for path in sorted(here.rglob("*.rs")) if here.is_dir() else [here]:
+            if re.search(needle, read(path)):
+                found.append(str(path.relative_to(ROOT)))
+    return found
 
 
 def rail_keys() -> list[str]:
@@ -440,6 +478,48 @@ def selftest() -> int:
             "accepted — an unrecognised divergence kind must be RED, because "
             "falling through treats it as *not a divergence* and drops it"
         )
+
+    # ★★★★★ (R2043) The machinery remainders, and the rule that makes the list
+    # a ratchet: an entry declares a needle that will appear when the work is
+    # done, and finding it is a REFUSAL — the entry has to go.
+    def source_of(path: Path) -> str:
+        return path.read_text(encoding="utf-8", errors="replace")
+
+    mechanisms = mechanism_remainders()
+    for entry in mechanisms:
+        for field in ("key", "sentence", "since", "why", "refuted_by"):
+            if field not in entry:
+                problems.append(
+                    f"the machinery remainder {entry.get('key', '?')!r} carries no "
+                    f"{field!r} — an entry nothing can refute is prose again"
+                )
+        if "refuted_by" not in entry:
+            continue
+        where = paid_off(entry, source_of)
+        if where:
+            problems.append(
+                f"the machinery remainder {entry['key']!r} is PAID: its refutation "
+                f"appears in {', '.join(where)} — delete the entry rather than "
+                "leaving a paid remainder that reads like an unpaid one"
+            )
+    # ★ Both directions of `paid_off`, against fixtures, because this tree's
+    # own answer is one-sided: today every entry is unpaid, so a rule that only
+    # ran here would never have seen the refusal arm at all.
+    # ⚠ A FILE, not a directory: the directory arm globs `*.rs`, so a fixture
+    # pointed at a folder with none reads nothing and the needle can never be
+    # found. The first draft did exactly that and the refusal arm reported
+    # itself dead — which is the assertion working.
+    fixture = {
+        "key": "fixture",
+        "refuted_by": {
+            "pattern": "MEMOISED",
+            "in": ["crates/pinion-core/src/conformance.rs"],
+        },
+    }
+    if paid_off(fixture, lambda _p: "nothing here"):
+        problems.append("a needle absent everywhere must answer nothing")
+    if not paid_off(fixture, lambda _p: "a MEMOISED thing"):
+        problems.append("a needle present must be FOUND — the refusal arm is dead")
 
     for problem in problems:
         print(f"analyzer_spec: {problem}")

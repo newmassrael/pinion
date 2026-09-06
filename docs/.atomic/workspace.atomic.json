@@ -88720,6 +88720,54 @@
         "Cohort loop 31 -> 30."
       ]
     },
+    "R2043": {
+      "decision_summary": "A remainder list nobody read did not go stale — it lost a live entry, and the round that came to gate it caught the loss.\n\nOne specification pin carries two remainder lists. The sibling is read by six files and asserted equal to what the running application publishes, so it shrinks when work is done and fails loudly when an entry is left behind. This one had no readers at all.\n\nCounted on entry, the ungated list is empty — and the single entry it used to hold is still true. The pinned document parses its text on every call, and the verdict path calls it per read; no memoising cell exists on any verdict path in the tree. So a live remainder was deleted and nothing noticed. That is worse than going stale: a stale entry is visible when it is read, and a deleted one leaves no trace at all.",
+      "changes_bullets": [
+        "The entry is restored, with the fact of its deletion written into it, and the list gains the reader it never had.",
+        "A machinery remainder has no counterpart in the running application to be compared against, which is why the sibling list's treatment does not transfer. So each entry declares what will APPEAR in the tree once the work is done — a needle and the places to look — and the spec tool's selftest, which the push hook runs, refuses an entry whose needle it finds: paid means delete the entry, not keep it. An entry missing any of its five fields is refused too, because an entry nothing can refute is prose again.",
+        "Both arms are exercised against fixtures rather than only against this tree, since every entry here is unpaid today and the refusal arm would otherwise never run."
+      ],
+      "verification_bullets": [
+        "The spec tool's selftest returns 0 with the restored entry standing as unpaid, and the refusal is driven twice rather than argued: through fixtures in both directions, and by planting the needle in a real verdict file, where the refusal named the file it found it in. The planted line was removed and the selftest returns 0 again.",
+        "The fixture's own first draft was wrong in the useful direction and the assertion caught it: the needle was pointed at a directory holding no Rust, so nothing was read, and the check that the refusal arm must find something reported itself dead. A non-vacuity assertion checks its own fixture.",
+        "The derived oracle census answers 33 pairs with none unexercised and the hook libraries' 282 assertions pass.",
+        "Measured, and it is what the round turned on: the pinned document's constructor calls parse unconditionally; the capture screen's verdict path calls that constructor per read; and the four memoising cells in the screens all belong to one screen's settings module, none of them on a verdict path."
+      ],
+      "impact_refs": [
+        "5.12",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "Two properties of this gate are stated rather than left to be discovered.",
+        "The needle is a text match, so prose mentioning it satisfies it. The false direction is a refusal, which a person then reads, so it is the safe way round — but it is a substring predicate and this repository has a rule about those.",
+        "And the gate catches paid-and-kept, not paid-and-deleted. The second is why the list exists at all, and it is what happened here once; catching it would need the entry's EXISTENCE to be derived from something else, and a machinery remainder has nothing to derive it from. That is the honest boundary of this repair, and the restored entry is the evidence for why the boundary matters.",
+        "The remainder itself is now owed out loud: the verdict path rebuilds a parsed document per read, and the entry says what paying it would look like.",
+        "Cohort loop 30 -> 29."
+      ],
+      "publishable_decision_summary": "A remainder list nobody read did not go stale — it lost a live entry, and the round that came to gate it caught the loss.\n\nOne specification pin carries two remainder lists. The sibling is read by six files and asserted equal to what the running application publishes, so it shrinks when work is done and fails loudly when an entry is left behind. This one had no readers at all.\n\nCounted on entry, the ungated list is empty — and the single entry it used to hold is still true. The pinned document parses its text on every call, and the verdict path calls it per read; no memoising cell exists on any verdict path in the tree. So a live remainder was deleted and nothing noticed. That is worse than going stale: a stale entry is visible when it is read, and a deleted one leaves no trace at all.",
+      "publishable_changes_bullets": [
+        "The entry is restored, with the fact of its deletion written into it, and the list gains the reader it never had.",
+        "A machinery remainder has no counterpart in the running application to be compared against, which is why the sibling list's treatment does not transfer. So each entry declares what will APPEAR in the tree once the work is done — a needle and the places to look — and the spec tool's selftest, which the push hook runs, refuses an entry whose needle it finds: paid means delete the entry, not keep it. An entry missing any of its five fields is refused too, because an entry nothing can refute is prose again.",
+        "Both arms are exercised against fixtures rather than only against this tree, since every entry here is unpaid today and the refusal arm would otherwise never run."
+      ],
+      "publishable_verification_bullets": [
+        "The spec tool's selftest returns 0 with the restored entry standing as unpaid, and the refusal is driven twice rather than argued: through fixtures in both directions, and by planting the needle in a real verdict file, where the refusal named the file it found it in. The planted line was removed and the selftest returns 0 again.",
+        "The fixture's own first draft was wrong in the useful direction and the assertion caught it: the needle was pointed at a directory holding no Rust, so nothing was read, and the check that the refusal arm must find something reported itself dead. A non-vacuity assertion checks its own fixture.",
+        "The derived oracle census answers 33 pairs with none unexercised and the hook libraries' 282 assertions pass.",
+        "Measured, and it is what the round turned on: the pinned document's constructor calls parse unconditionally; the capture screen's verdict path calls that constructor per read; and the four memoising cells in the screens all belong to one screen's settings module, none of them on a verdict path."
+      ],
+      "publishable_impact_refs": [
+        "5.12",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Two properties of this gate are stated rather than left to be discovered.",
+        "The needle is a text match, so prose mentioning it satisfies it. The false direction is a refusal, which a person then reads, so it is the safe way round — but it is a substring predicate and this repository has a rule about those.",
+        "And the gate catches paid-and-kept, not paid-and-deleted. The second is why the list exists at all, and it is what happened here once; catching it would need the entry's EXISTENCE to be derived from something else, and a machinery remainder has nothing to derive it from. That is the honest boundary of this repair, and the restored entry is the evidence for why the boundary matters.",
+        "The remainder itself is now owed out loud: the verdict path rebuilds a parsed document per read, and the entry says what paying it would look like.",
+        "Cohort loop 30 -> 29."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

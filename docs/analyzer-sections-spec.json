@@ -216,6 +216,62 @@
       "unlike `unjudged.owed`, which six files assert equality against. That is",
       "registered as its own open debt rather than left as a sentence here."
     ],
-    "owed": []
+    "$owed_comment": [
+      "★★★★★ R2043 — every entry here now carries `refuted_by`, and",
+      "`analyzer_spec.py --selftest` RUNS it. Until this round nothing in the",
+      "tree read this list at all: measured, zero files mentioned it, while",
+      "the sibling list above is read by six and asserted equal to what the",
+      "running application publishes.",
+      "",
+      "What an ungated list costs, measured the same round: the entry below",
+      "was DELETED from this file while the thing it describes was still",
+      "true. `SpecDocument::pinned` parses its text on every call and the",
+      "verdict path calls it per read, exactly as the entry says — so a live",
+      "remainder left silently, which is the whole failure mode of a list",
+      "nobody checks.",
+      "",
+      "`refuted_by` is the shape that fixes it: a needle that will APPEAR in",
+      "the tree when the remainder is paid. The gate refuses an entry whose",
+      "needle is present — meaning the work is done and the entry must be",
+      "deleted — so this list can only shrink, and it cannot shrink quietly."
+    ],
+    "owed": [
+      {
+        "key": "a-verdict-is-not-recomputed-per-frame",
+        "sentence": "the report is built on demand and nothing caches or invalidates it",
+        "since": "R1738",
+        "restored": "R2043",
+        "why": [
+          "Every read walks the roster and asks each mounted screen, and each",
+          "one builds its document by PARSING its pinned text again:",
+          "`SpecDocument::pinned` calls `parse` with no memoisation, and the",
+          "verdict path calls it per read. It is a wire read at an agent's",
+          "cadence rather than a paint-time cost, so it is not on any frame",
+          "budget measured so far — but that is an argument from where it is",
+          "called, not a measurement of what it costs.",
+          "",
+          "R2043 re-measured both halves before restoring this: the parse is",
+          "still per call, and no memoising cell exists anywhere on a verdict",
+          "path (the four in this tree all belong to one screen's settings",
+          "module). The entry was deleted while both were still true."
+        ],
+        "refuted_by": {
+          "$comment": [
+            "Paid when a parsed specification document is held behind a cell",
+            "instead of rebuilt: the needle is a memoising static holding one.",
+            "Present anywhere below means this entry is done and must go."
+          ],
+          "pattern": "(OnceLock|OnceCell|LazyLock)<[^>]*SpecDocument",
+          "in": [
+            "examples/hello-analyzer-shell/src",
+            "examples/hello-packet-view/src",
+            "examples/hello-node-lab/src",
+            "examples/hello-log-view/src",
+            "examples/hello-key-patterns/src",
+            "crates/pinion-core/src/conformance.rs"
+          ]
+        }
+      }
+    ]
   }
 }
