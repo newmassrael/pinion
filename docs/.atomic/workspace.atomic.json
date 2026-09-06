@@ -88590,6 +88590,48 @@
         "Cohort loop 34 -> 33."
       ]
     },
+    "R2040": {
+      "decision_summary": "A branch published four hundred rounds ago that no gate had ever entered, found by adding the state that enters it.\n\nThe graph lab's sweep held one folded state, for one of its two panels. The debt named three that were missing; counting first found that one of the three had arrived since, from the opposite direction — a later round made the screen open folded, so what it needed was a state that unfolds. Two were genuinely absent: both panels folded at once, and both stacked on one edge.\n\nThe second one paid immediately. The inspector's rectangle insets by the palette's thickness only when the two share an edge, and no sweep state had ever produced that arrangement — so the arithmetic that stacks one panel behind another was written, published and never once run by a gate. Killing that branch now takes a general check red, and its message names the new state: with both panels on the left edge, twenty-six of four and a half thousand corners are answered by something not painted there, and the palette's own control answers as the inspector's field.\n\n⇒ code that exists, tests that are green, and a state nobody makes are indistinguishable from correctness.",
+      "changes_bullets": [
+        "Two states join the sweep, both driven through the same function a press goes through so they are states a person can reach: both panels folded to their strips, and both stacked on the left edge. Each carries a comment saying what it newly asks, because the sweep's cost multiplies by every state and one that asks nothing is only time.",
+        "The sweep's own floors are raised to just under what it measures: the state count from 8 to 16, and the probed-control total from 510 to 3,000 against an actual 3,134. Those floors exist so that deleting a state trips something — a deleted state takes its own assertions away with it — and at a sixth of the real number half the states could have gone silently. The number's source is written beside it."
+      ],
+      "verification_bullets": [
+        "206 tests passed and 0 failed on the screen's package, with the two states in the sweep and the floors raised. Clippy on the package rc=0, `cargo fmt --all --check` rc=0, and the screen's own walk PASSES.",
+        "The new state's worth was driven rather than argued: neutering the shared-edge inset takes `r1684_a_control_answers_at_its_edges_not_only_its_middle` red, naming the state and the control — with both panels stacked on the left edge, the palette's discovery control is answered as the inspector's host field, 26 of 4,552 corners. Restoring the branch returns the package to green.",
+        "⚠ The first counterfactual proved the wrong thing and is recorded as such: neutering the band arithmetic went red at the BASE window size, which says the screen breaks and says nothing about whether the new states add coverage. A counterfactual has to break only what the round added.",
+        "The floors were read off the sweep itself by tripping them once: 3,134 controls across 16 states."
+      ],
+      "impact_refs": [
+        "5.35",
+        "5.32"
+      ],
+      "carry_forward_bullets": [
+        "Nothing is opened by this round. The sentence the debt existed to falsify — that the fold branch is checked on one panel only — is false now, and so is the wider one it implied: that a state built into the screen is a state some gate visits.",
+        "What the raised floors leave standing is a question worth naming rather than a debt: the floors are hand-set numbers read off one measurement, which is the shape this loop keeps finding stale. They are correct today and they say where they came from; a later round that wants them derived would have to decide what a sweep's population IS, and that decision is the same one the census debts keep circling.",
+        "Cohort loop 33 -> 32."
+      ],
+      "publishable_decision_summary": "A branch published four hundred rounds ago that no gate had ever entered, found by adding the state that enters it.\n\nThe graph lab's sweep held one folded state, for one of its two panels. The debt named three that were missing; counting first found that one of the three had arrived since, from the opposite direction — a later round made the screen open folded, so what it needed was a state that unfolds. Two were genuinely absent: both panels folded at once, and both stacked on one edge.\n\nThe second one paid immediately. The inspector's rectangle insets by the palette's thickness only when the two share an edge, and no sweep state had ever produced that arrangement — so the arithmetic that stacks one panel behind another was written, published and never once run by a gate. Killing that branch now takes a general check red, and its message names the new state: with both panels on the left edge, twenty-six of four and a half thousand corners are answered by something not painted there, and the palette's own control answers as the inspector's field.\n\n⇒ code that exists, tests that are green, and a state nobody makes are indistinguishable from correctness.",
+      "publishable_changes_bullets": [
+        "Two states join the sweep, both driven through the same function a press goes through so they are states a person can reach: both panels folded to their strips, and both stacked on the left edge. Each carries a comment saying what it newly asks, because the sweep's cost multiplies by every state and one that asks nothing is only time.",
+        "The sweep's own floors are raised to just under what it measures: the state count from 8 to 16, and the probed-control total from 510 to 3,000 against an actual 3,134. Those floors exist so that deleting a state trips something — a deleted state takes its own assertions away with it — and at a sixth of the real number half the states could have gone silently. The number's source is written beside it."
+      ],
+      "publishable_verification_bullets": [
+        "206 tests passed and 0 failed on the screen's package, with the two states in the sweep and the floors raised. Clippy on the package rc=0, `cargo fmt --all --check` rc=0, and the screen's own walk PASSES.",
+        "The new state's worth was driven rather than argued: neutering the shared-edge inset takes `r1684_a_control_answers_at_its_edges_not_only_its_middle` red, naming the state and the control — with both panels stacked on the left edge, the palette's discovery control is answered as the inspector's host field, 26 of 4,552 corners. Restoring the branch returns the package to green.",
+        "⚠ The first counterfactual proved the wrong thing and is recorded as such: neutering the band arithmetic went red at the BASE window size, which says the screen breaks and says nothing about whether the new states add coverage. A counterfactual has to break only what the round added.",
+        "The floors were read off the sweep itself by tripping them once: 3,134 controls across 16 states."
+      ],
+      "publishable_impact_refs": [
+        "5.35",
+        "5.32"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Nothing is opened by this round. The sentence the debt existed to falsify — that the fold branch is checked on one panel only — is false now, and so is the wider one it implied: that a state built into the screen is a state some gate visits.",
+        "What the raised floors leave standing is a question worth naming rather than a debt: the floors are hand-set numbers read off one measurement, which is the shape this loop keeps finding stale. They are correct today and they say where they came from; a later round that wants them derived would have to decide what a sweep's population IS, and that decision is the same one the census debts keep circling.",
+        "Cohort loop 33 -> 32."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

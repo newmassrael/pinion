@@ -406,6 +406,40 @@ const STATES: &[SweptState] = &[
         )
         .expect("the inspector declares that it folds");
     }),
+    // ★★★★★ R2040 — **both strips at once**, which is a path neither single
+    // fold reaches: `side_bands` adds a strip on the left AND on the right, so
+    // the canvas is narrowed from both sides in one frame. Each single-fold
+    // entry above leaves the other side at its full width, and a canvas that
+    // mis-subtracts one band would still look right there.
+    //
+    // What it newly asks — the sweep's cost is multiplied by every state, so a
+    // state that asks nothing new is only time: whether the canvas, the marks
+    // inside it and the two strips' own boxes stay contained and unoverlapped
+    // when BOTH bands are the folded thickness rather than one.
+    ("with both panels folded to their strips", |state| {
+        for panel in [super::SidePanel::Palette, super::SidePanel::Inspector] {
+            super::place_panel(state, panel, super::PlaceAsk::Fold(true))
+                .expect("both panels declare that they fold");
+        }
+    }),
+    // ★★★★★ R2040 — **both panels on ONE edge**, the branch R1802 built and
+    // nothing had ever entered: `inspector_rect` insets by the palette's
+    // thickness only when the two share an edge, and `side_bands` puts both
+    // widths on the same side. Until this entry the `before` in that function
+    // was always zero, so the arithmetic that stacks one panel behind another
+    // was written, published and never run by a gate.
+    //
+    // What it newly asks: whether a panel placed behind another still lands
+    // inside the window, whether the canvas gets the whole other side, and
+    // whether the far edge — now empty — leaves nothing painted outside it.
+    ("with both panels stacked on the left edge", |state| {
+        super::place_panel(
+            state,
+            super::SidePanel::Inspector,
+            super::PlaceAsk::Edge(pinion_core::style::ChromeEdge::Left),
+        )
+        .expect("the inspector declares that it moves between the sides");
+    }),
 ];
 
 // ⚠⚠★★★★★ R1982 — **THIS SWEEP DOES NOT VISIT A DESCENDED SCREEN, AND THAT IS
@@ -1896,7 +1930,10 @@ fn r1653_the_painted_screen_is_the_specification_in_every_state() {
         // removed the grown-list state left every remaining assertion green,
         // which made that state decoration; these are what it trips.
         assert!(
-            STATES.len() >= 8,
+            // ★ R2040 — 16, where this said 8. Same reason as the probe floor
+            // below: the sweep visits sixteen states and a floor at eight let
+            // half of them be deleted silently.
+            STATES.len() >= 16,
             "the sweep visits {} state(s)",
             STATES.len()
         );
@@ -1965,7 +2002,14 @@ fn r1653_the_painted_screen_is_the_specification_in_every_state() {
              lived in"
         );
         assert!(
-            probed_total >= 510,
+            // ★★★★★ R2040 — 3,000, where this said 510. Measured this round:
+            // 3,134 controls across 16 states, so the old floor sat SIX TIMES
+            // below the real number and a deleted state could not trip it —
+            // which is the one thing a floor on the sweep exists to do. Set
+            // just under the measurement, not at it: a state that paints one
+            // control fewer is not a regression, and a state DELETED is about
+            // two hundred.
+            probed_total >= 3_000,
             "the sweep probed {probed_total} control(s) across {} states",
             STATES.len()
         );

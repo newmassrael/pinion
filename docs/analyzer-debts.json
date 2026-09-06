@@ -542,18 +542,6 @@
       ]
     },
     {
-      "name": "debt-only-one-of-two-panels-is-swept-folded",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "rank": "ordinary",
-      "why": [
-        "links debt-the-canon-is-one-app-and-we-are-many-binaries"
-      ]
-    },
-    {
       "name": "debt-seven-capabilities-were-excluded-by-an-unratified-boundary",
       "substituted": false,
       "blocked_by": "buildable",
