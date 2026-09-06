@@ -88454,6 +88454,50 @@
         "Cohort loop 36 -> 35."
       ]
     },
+    "R2037": {
+      "decision_summary": "The numbers were the specification's all along, and opening it was the whole round.\n\nThe debt recorded two numbering rules inside one census pin and said neither was written down anywhere, so a missing number and a number that never existed could not be told apart. Its measurements were exactly right — 68 rows, no id/field disagreement, the three planes numbered as it tabulated — and its diagnosis was half wrong.\n\nThe specification numbers planes A and B continuously across their tiers, and the pin's numbers ARE those numbers. Plane C it writes as prose with no numbered list at all, so the pin numbers that plane per tier itself, having nothing to mirror.\n\n⇒ there is one rule, not two: the specification's number where it gives one, the pin's own where it does not. And it needs writing down nowhere, because two files already hold the answer between them and a tool can derive it. A declaration added here would have been the second copy this repository keeps finding stale.",
+      "changes_bullets": [
+        "The census tool gains the address rule it never had. A pure parser reads the specification's own item numbers per plane and tier; its oracle reads that untracked working document through the same door the debt tool opens, and fails open loudly — naming what is no longer checked instead of reporting a pass.",
+        "The check asserts that a row's id and its plane and tier fields are one fact rather than two spellings, and, for a plane the specification numbers, set equality between the pin's numbers and the specification's. That one comparison refuses a deleted row, an invented one and a renumbered one alike. Where the specification numbers nothing, the pin owes only its own shape: one of the two arrangements, with no holes.",
+        "A third function prints, per plane, where that plane's numbers came from — which is what the debt asked for in its own closing condition, and it is printed rather than stored so a plane the specification starts numbering changes the line by itself.",
+        "The selftest mutates the REAL pin four ways: a row deleted, a row renumbered inside its tier, a row addressed by one plane and counted by another, and a hole in the plane the specification does not number."
+      ],
+      "verification_bullets": [
+        "The census runs rc=0 and prints the new section, which reports the capture and lab planes numbered by the specification and the dashboard plane numbered by the pin, with the reason on each line. Its selftest PASSES, including the four mutations of the real pin — each asserted to produce the fault that names it, so the rule has a driven failing path rather than an argued one.",
+        "The derived oracle census answers 33 pure-rule/oracle pairs over 22 tools with none unexercised, which is one pair more than before and counts the new parser against the reader that feeds it. Its own selftest rc=0. The hook libraries' 282 assertions pass.",
+        "Measured rather than inferred, and it is what turned the round: the specification's item numbers are 1..7, 8..13 and 14..18 for the capture plane and 1..7, 8..12 and 13..19 for the lab plane — the pin's numbers exactly — while a parse of the dashboard section finds no numbered item at all."
+      ],
+      "impact_refs": [
+        "5.12",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "Completeness is answerable for the 37 rows the specification numbers and not for the 31 the dashboard plane carries. Those were derived by a person reading prose, and nothing can be compared against them: a capability that section implies and the pin lacks is neither a gap nor unmeasured, it is invisible — the direction this repository has repeatedly recorded as the expensive one. It is registered as its own debt with the first measurement named: how many candidate items that prose actually yields, which decides whether the repair is to number the specification or to move that plane's source to the behaviour canon the extraction tool already reads.",
+        "The other property of this arrangement stays true and stays stated: the specification is an untracked working document, so on a fresh clone the address check degrades to shape alone and says so on stderr.",
+        "Cohort loop 35 -> 34."
+      ],
+      "publishable_decision_summary": "The numbers were the specification's all along, and opening it was the whole round.\n\nThe debt recorded two numbering rules inside one census pin and said neither was written down anywhere, so a missing number and a number that never existed could not be told apart. Its measurements were exactly right — 68 rows, no id/field disagreement, the three planes numbered as it tabulated — and its diagnosis was half wrong.\n\nThe specification numbers planes A and B continuously across their tiers, and the pin's numbers ARE those numbers. Plane C it writes as prose with no numbered list at all, so the pin numbers that plane per tier itself, having nothing to mirror.\n\n⇒ there is one rule, not two: the specification's number where it gives one, the pin's own where it does not. And it needs writing down nowhere, because two files already hold the answer between them and a tool can derive it. A declaration added here would have been the second copy this repository keeps finding stale.",
+      "publishable_changes_bullets": [
+        "The census tool gains the address rule it never had. A pure parser reads the specification's own item numbers per plane and tier; its oracle reads that untracked working document through the same door the debt tool opens, and fails open loudly — naming what is no longer checked instead of reporting a pass.",
+        "The check asserts that a row's id and its plane and tier fields are one fact rather than two spellings, and, for a plane the specification numbers, set equality between the pin's numbers and the specification's. That one comparison refuses a deleted row, an invented one and a renumbered one alike. Where the specification numbers nothing, the pin owes only its own shape: one of the two arrangements, with no holes.",
+        "A third function prints, per plane, where that plane's numbers came from — which is what the debt asked for in its own closing condition, and it is printed rather than stored so a plane the specification starts numbering changes the line by itself.",
+        "The selftest mutates the REAL pin four ways: a row deleted, a row renumbered inside its tier, a row addressed by one plane and counted by another, and a hole in the plane the specification does not number."
+      ],
+      "publishable_verification_bullets": [
+        "The census runs rc=0 and prints the new section, which reports the capture and lab planes numbered by the specification and the dashboard plane numbered by the pin, with the reason on each line. Its selftest PASSES, including the four mutations of the real pin — each asserted to produce the fault that names it, so the rule has a driven failing path rather than an argued one.",
+        "The derived oracle census answers 33 pure-rule/oracle pairs over 22 tools with none unexercised, which is one pair more than before and counts the new parser against the reader that feeds it. Its own selftest rc=0. The hook libraries' 282 assertions pass.",
+        "Measured rather than inferred, and it is what turned the round: the specification's item numbers are 1..7, 8..13 and 14..18 for the capture plane and 1..7, 8..12 and 13..19 for the lab plane — the pin's numbers exactly — while a parse of the dashboard section finds no numbered item at all."
+      ],
+      "publishable_impact_refs": [
+        "5.12",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Completeness is answerable for the 37 rows the specification numbers and not for the 31 the dashboard plane carries. Those were derived by a person reading prose, and nothing can be compared against them: a capability that section implies and the pin lacks is neither a gap nor unmeasured, it is invisible — the direction this repository has repeatedly recorded as the expensive one. It is registered as its own debt with the first measurement named: how many candidate items that prose actually yields, which decides whether the repair is to number the specification or to move that plane's source to the behaviour canon the extraction tool already reads.",
+        "The other property of this arrangement stays true and stays stated: the specification is an untracked working document, so on a fresh clone the address check degrades to shape alone and says so on stderr.",
+        "Cohort loop 35 -> 34."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

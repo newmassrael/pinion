@@ -120,6 +120,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -143,6 +144,18 @@ PLANES = ("capture", "lab", "dashboard")
 
 #: The tiers, from "the tool does not exist without it" outward.
 TIERS = ("t0", "t1", "t2")
+
+
+#: (R2037) The capability specification's own file name, under the agent's
+#: memory folder. Untracked by construction — it is a working document — which
+#: is why every rule that reads it degrades to a LOUD skip rather than to a
+#: pass; see `spec_numbers` for what is still checked without it.
+SPEC_FILE = "analyzer-tool-capability-spec.md"
+
+#: (R2037) The specification's plane headings, mapped to this pin's plane names.
+#: The spec is written in the reader's language and the pin in the tool's; this
+#: is the only place the two vocabularies meet.
+SPEC_PLANES = {"A": "capture", "B": "lab", "C": "dashboard"}
 
 
 class Finding(Exception):
@@ -741,6 +754,137 @@ def check_proofs(rows: list[dict], known, exists) -> list[str]:
     return out
 
 
+def spec_numbers(text: str) -> dict[tuple[str, str], list[int]]:
+    """The item numbers the specification itself declares, per plane and tier.
+
+    Pure in `text`. A plane the spec writes as prose answers with nothing, and
+    that absence is an answer rather than a failure — see `check_addresses`.
+    """
+    out: dict[tuple[str, str], list[int]] = {}
+    plane: str | None = None
+    tier: str | None = None
+    for line in text.splitlines():
+        heading = re.match(r"^##\s+평면\s+([ABC])", line)
+        if heading:
+            plane = SPEC_PLANES[heading.group(1)]
+            tier = None
+            continue
+        if line.startswith("## "):
+            plane = None
+            tier = None
+            continue
+        rung = re.match(r"^\*\*T([012])\b", line)
+        if rung and plane:
+            tier = f"t{rung.group(1)}"
+            continue
+        item = re.match(r"^(\d+)\.\s", line)
+        if item and plane and tier:
+            out.setdefault((plane, tier), []).append(int(item.group(1)))
+    return out
+
+
+def check_addresses(rows: list[dict], spec: dict[tuple[str, str], list[int]] | None) -> list[str]:
+    """★★★★★ (R2037) Every row's address, against the rule its plane actually
+    follows — and against the specification's own numbering where there is one.
+
+    R1883 measured two numbering rules inside one pin and recorded that neither
+    was written down anywhere, so *a missing number* and *a number that never
+    existed* could not be told apart. Measured again here by reading the source:
+    there are not two rules, there is ONE with two cases. The specification
+    numbers planes A and B continuously across their tiers — `1..7`, `8..13`,
+    `14..18` — and the pin's numbers ARE those numbers. Plane C the spec writes
+    as prose with no numbered list at all, so the pin numbers it per tier
+    itself, having nothing to mirror.
+
+    ⇒ the rule is not declared anywhere because it does not need to be: it is
+    *derived* here and compared, which is the only form that cannot go stale.
+
+    Without the specification (it is an untracked working document) the
+    comparison degrades to what the tracked pin can answer alone: the id and the
+    fields agree, and each plane's numbers are contiguous under exactly one of
+    the two shapes. That is strictly less than the full check and the caller
+    says so out loud rather than reporting a pass.
+    """
+    faults: list[str] = []
+    seen: dict[tuple[str, str], list[int]] = {}
+    for row in rows:
+        parsed = re.match(r"^([a-z]+)\.(t\d+)\.(\d+)$", row["id"])
+        if not parsed:
+            faults.append(f"{row['id']}: an address is `<plane>.<tier>.<n>`")
+            continue
+        plane, tier, number = parsed.group(1), parsed.group(2), int(parsed.group(3))
+        # The id and the fields are two spellings of one fact, and a row where
+        # they disagree is addressed by one and counted by the other.
+        if plane != row["plane"] or tier != row["tier"]:
+            faults.append(
+                f"{row['id']}: addressed as {plane}/{tier} and counted as"
+                f" {row['plane']}/{row['tier']}"
+            )
+            continue
+        seen.setdefault((plane, tier), []).append(number)
+    for plane in PLANES:
+        tiers = [(t, sorted(seen.get((plane, t), []))) for t in TIERS]
+        rungs = [(t, ns) for t, ns in tiers if ns]
+        if not rungs:
+            continue
+        declared = {t: spec.get((plane, t), []) for t, _ in rungs} if spec is not None else None
+        if declared and any(declared.values()):
+            for tier, numbers in rungs:
+                want = sorted(declared.get(tier, []))
+                if numbers != want:
+                    faults.append(
+                        f"{plane}.{tier}: the pin numbers {numbers} and the"
+                        f" specification numbers {want} — a row is missing,"
+                        " invented, or renumbered"
+                    )
+            continue
+        # No specification numbering for this plane: the pin owes only its own
+        # shape, which must be one of the two and must have no holes.
+        flat = sorted(n for _, ns in rungs for n in ns)
+        per_tier = all(ns == list(range(1, len(ns) + 1)) for _, ns in rungs)
+        continuous = flat == list(range(1, len(flat) + 1))
+        if not (per_tier or continuous):
+            faults.append(
+                f"{plane}: the numbers {flat} follow neither rule — they are"
+                " neither 1..N across the plane nor 1..M inside each tier, so a"
+                " hole in them cannot be told from a number that never existed"
+            )
+    return faults
+
+
+def address_rules(rows: list[dict], spec: dict[tuple[str, str], list[int]] | None) -> list[str]:
+    """(R2037) One line per plane saying WHERE its numbers come from.
+
+    The debt this closes asked for exactly this: the rule stops living in a
+    reader's head. It is printed rather than stored, so it cannot go stale — a
+    plane the specification starts numbering changes this line by itself.
+    """
+    out = ["  address rule, per plane — derived, not declared:"]
+    for plane in PLANES:
+        here = sorted(int(r["id"].rsplit(".", 1)[1]) for r in rows if r["plane"] == plane)
+        if not here:
+            continue
+        numbered = spec is not None and any(k[0] == plane for k in spec)
+        if numbered:
+            out.append(
+                f"    {plane:<10} {len(here):>2} row(s), numbered {here[0]}..{here[-1]}"
+                " BY THE SPECIFICATION — the pin mirrors its item numbers, so a"
+                " hole here is a missing capability"
+            )
+        elif spec is None:
+            out.append(
+                f"    {plane:<10} {len(here):>2} row(s), numbered {here[0]}..{here[-1]}"
+                " — shape only; the specification is not on this machine"
+            )
+        else:
+            out.append(
+                f"    {plane:<10} {len(here):>2} row(s), numbered per tier BY THIS PIN"
+                " — the specification writes this plane as prose and numbers"
+                " nothing, so there is nothing to be missing FROM"
+            )
+    return out
+
+
 def report(rows: list[dict]) -> list[str]:
     """The report, as lines. Pure in `rows`."""
     out: list[str] = []
@@ -1256,6 +1400,60 @@ def selftest() -> int:
             "no proof can be checked" in str(why),
         )
 
+    # ★★★★★ R2037 — the ADDRESS rule, and its oracle. Every case here is a
+    # mutation of the REAL pin, because the rule's whole claim is about that
+    # pin's numbers: a fixture would prove the arithmetic and say nothing about
+    # whether the file this tool guards obeys it.
+    real = load(PIN.read_text(encoding="utf-8"))
+    text = spec_text()
+    if text is None:
+        print(f"SKIP: {SPEC_FILE} is not on this machine — the spec half is unexercised")
+        check("the pin's own shape is still checked without the spec", not check_addresses(real, None))
+    else:
+        numbers = spec_numbers(text)
+        check(
+            "the specification numbers plane A continuously across its tiers",
+            numbers[("capture", "t0")] == list(range(1, 8))
+            and numbers[("capture", "t1")] == list(range(8, 14)),
+        )
+        check(
+            "and writes plane C as prose, with no numbered list to mirror",
+            not any(k[0] == "dashboard" for k in numbers),
+        )
+        check("the real pin's addresses answer to it", not check_addresses(real, numbers))
+
+        def refused(name: str, rows: list[dict], says: str) -> None:
+            faults = check_addresses(rows, numbers)
+            check(name, any(says in f for f in faults))
+
+        # A row DELETED — the case the debt opened on: "a missing number and a
+        # number that never existed cannot be told apart". They can now.
+        refused(
+            "a row removed from a spec-numbered tier is refused",
+            [r for r in real if r["id"] != "capture.t1.9"],
+            "a row is missing",
+        )
+        # A row RENUMBERED consistently, id and fields together, which every
+        # other rule in this file accepts.
+        moved = [
+            {**r, "id": "capture.t1.99"} if r["id"] == "capture.t1.9" else r for r in real
+        ]
+        refused("a row renumbered inside its own tier is refused", moved, "a row is missing")
+        # The id and the fields disagreeing — two spellings of one fact.
+        crossed = [
+            {**r, "plane": "lab"} if r["id"] == "capture.t1.9" else r for r in real
+        ]
+        refused("a row addressed by one plane and counted by another is refused", crossed, "counted as")
+        # And the shape rule, which is all the spec-less path has: a hole in the
+        # plane the specification does not number.
+        refused_shape = check_addresses(
+            [r for r in real if r["id"] != "dashboard.t1.6"], None
+        )
+        check(
+            "without the spec, a hole in the unnumbered plane is still refused",
+            any("neither rule" in f for f in refused_shape),
+        )
+
     print(f"selftest: {'PASS' if not failures else 'FAIL'} ({failures} failure(s))")
     return 1 if failures else 0
 
@@ -1264,6 +1462,25 @@ def selftest() -> int:
 #: Deriving it is what keeps the oracle honest: a citation into a crate this
 #: never asks about would be checked against a set that cannot contain it, and
 #: would fail for the wrong reason.
+def spec_text() -> str | None:
+    """The capability specification, or `None` when it is not on this machine.
+
+    The oracle for [`spec_numbers`], and it FAILS OPEN by design: the spec is a
+    working document under the agent's memory folder, so a fresh clone does not
+    have it. `PINION_MEMORY_DIR` overrides — the same door
+    `analyzer_debts.memory_dir` opens, and for the same reason, which is that a
+    rule reading an untracked file must be testable against a fixture.
+    """
+    override = os.environ.get("PINION_MEMORY_DIR")
+    home = (
+        Path(override)
+        if override
+        else Path.home() / ".claude" / "projects" / str(ROOT).replace("/", "-") / "memory"
+    )
+    here = home / SPEC_FILE
+    return here.read_text(encoding="utf-8") if here.is_file() else None
+
+
 def cited_crates(rows: list[dict]) -> list[str]:
     """The crate each `::` citation names, in the order the pin declares them."""
     out: list[str] = []
@@ -1423,6 +1640,28 @@ def main() -> int:
         for gap in unevidenced:
             print(f"analyzer census: {gap}", file=sys.stderr)
         return 1
+    # ★★★★★ R2037 — and the ADDRESS, which nothing checked at all. R1883 found
+    # two numbering rules in one pin and no statement of either; measured again
+    # against the source, the pin's numbers for two planes ARE the
+    # specification's own, and the third plane has no numbered list to mirror.
+    # So the rule is derived and compared rather than written down twice.
+    text = spec_text()
+    misaddressed = check_addresses(rows, spec_numbers(text) if text is not None else None)
+    if misaddressed:
+        for wrong in misaddressed:
+            print(f"analyzer census: {wrong}", file=sys.stderr)
+        return 1
+    if text is None:
+        # Loud, because a check that quietly stopped happening is the failure
+        # this whole file exists against: without the spec the addresses are
+        # checked for SHAPE and not for completeness, and a capability the spec
+        # counts and the pin lacks is invisible again.
+        print(
+            f"analyzer census: {SPEC_FILE} is not on this machine — addresses"
+            " checked for shape only, NOT against the specification's own"
+            " numbering (set PINION_MEMORY_DIR to restore the full check)",
+            file=sys.stderr,
+        )
     # ★★★★★ R1883 — and the verdict that earns the MOST by claiming the least.
     # `outside` takes a row out of the population entirely, and it was the only
     # verdict here with nothing to cite. Runs on every invocation beside the
@@ -1491,6 +1730,7 @@ def main() -> int:
         print(f"analyzer census: {len(rows)} capability(ies), pin well-formed")
         return 0
     print("\n".join(report(rows)))
+    print("\n".join(address_rules(rows, spec_numbers(text) if text is not None else None)))
     return 0
 
 

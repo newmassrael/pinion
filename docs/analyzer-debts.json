@@ -104,18 +104,6 @@
       ]
     },
     {
-      "name": "debt-a-census-row-is-addressed-by-two-different-numbering-rules",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "why": [
-        "links analyzer-debt-repayment-loop, analyzer-tool-capability-spec",
-        "names capture.t1.1"
-      ]
-    },
-    {
       "name": "debt-a-check-whose-two-sides-share-one-derivation",
       "substituted": false,
       "blocked_by": "buildable",
@@ -501,6 +489,17 @@
       "closed_because": "",
       "why": [
         "links analyzer-debt-repayment-loop"
+      ]
+    },
+    {
+      "name": "debt-one-planes-census-population-has-no-source-to-check-against",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "why": [
+        "links analyzer-tool-capability-spec, debt-canon-gui-surface-census"
       ]
     },
     {
