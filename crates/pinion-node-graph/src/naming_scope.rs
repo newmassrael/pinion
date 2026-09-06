@@ -218,7 +218,8 @@ impl<K: NodeKind> Document<K> {
     /// ★★★★★ R2048 — **every authored name that its own scope says must
     /// identify one node, and which more than one node holds.**
     ///
-    /// The document-wide reading behind [`Violation::LabelNotUnique`], and the
+    /// The document-wide reading behind
+    /// [`Violation::LabelNotUnique`](crate::Violation::LabelNotUnique), and the
     /// half this crate had only as a *refusal*: [`Document::may`] declines to
     /// create the state and [`Document::node_labelled`] answers `None` once it
     /// exists, so a person met it as one sentence about one lookup and could
