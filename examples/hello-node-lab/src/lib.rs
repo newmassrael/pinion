@@ -1685,15 +1685,20 @@ struct LabState {
     /// subgraph shortens the trail under the cursor and every write that can do
     /// that is a write somewhere else.
     crumb_cursor: Signal<usize>,
-    /// ★★★★★ R2066 — which PIN of the card under the canvas cursor a reader has
-    /// gone into, or `None` while they are still on the card itself.
+    /// ★★★★★ R2066 — which STOP of the card under the canvas cursor a reader
+    /// has gone into, or `None` while they are still on the card itself.
     ///
     /// `Option`, because the descent is a fact and not a default: a reader who
     /// has not entered a card should hear the card, and a cursor that always
-    /// addressed a pin could not say "the whole card" — which is what this
-    /// screen's selection means. The same shape the capture list's cell cursor
-    /// has, for the same reason.
-    pin_descent: Signal<Option<usize>>,
+    /// addressed something inside it could not say "the whole card" — which is
+    /// what this screen's selection means. The same shape the capture list's
+    /// cell cursor has, for the same reason.
+    ///
+    /// ★ R2067 — an index into [`card_stops`], which was a card's pins for one
+    /// round and is now its pins and its controls. An index rather than a tag,
+    /// so nothing here has to be kept valid as a card's contents change: it is
+    /// resolved against that one enumeration wherever it is read.
+    inner_descent: Signal<Option<usize>>,
     /// ★★★★★ R1802 — where the palette sits, as a VALUE.
     ///
     /// R1801 gave this screen's specification a placement POLICY — the palette
@@ -2213,7 +2218,7 @@ impl LabState {
             crumb_cursor: Signal::new(0),
             // R2066 — the canvas opens ON a card, not inside one. A screen that
             // started with a pin addressed would announce a port nobody chose.
-            pin_descent: Signal::new(None),
+            inner_descent: Signal::new(None),
             palette_at: Signal::new(palette_opens_at()),
             inspector_at: Signal::new(inspector_opens_at()),
             playhead: Signal::new(0.0),
@@ -4253,6 +4258,23 @@ struct CardShape {
     /// `rect.h` is the union of the parts, so a card that grows this is taller
     /// by derivation and the paint sweep's containment still holds.
     advanced: Option<Rect>,
+    /// ★★★★★ R2067 — the WAY IN's seat, relative to `rect`, or `None` on a card
+    /// that stands for nothing.
+    ///
+    /// Beside `advanced` and for the same reasons: asked of the MODEL — and of
+    /// the *same call the descent makes*, so this seat exists exactly where a
+    /// descent would be taken — not reserved, and the card's height grows by
+    /// derivation so the paint sweep's containment still holds.
+    ///
+    /// ⚠ Why a CONTROL and not a key, measured at R2066: the canvas's cursor
+    /// already publishes `Enter` as its way into a card's pins and `Space` runs
+    /// the graph, so a keyboard-only route would need a binding invented with
+    /// nothing to derive it from — the behaviour reference has zero key
+    /// bindings, re-measured. A control on the card is reached by the card's
+    /// own inner roster for free, and it repays a second absence at the same
+    /// time: before this, NO input could enter a subgraph, a pointer included.
+    /// R1982 solved the way OUT in exactly this shape.
+    inside: Option<Rect>,
     /// The face the identity label is drawn at — scaled, so it shrinks with
     /// the diagram it belongs to.
     id_font: u32,
@@ -4425,6 +4447,27 @@ fn card_shape_at(state: &LabState, node: NodeId, zoom: u32) -> Option<CardShape>
         )
     });
     let content_bottom = advanced.map_or(content_bottom, |seat| seat.y + seat.h);
+    // ★★★★★ R2067 — the way in, present only on a card that STANDS FOR a tree.
+    // Asked of the model through the very call the descent makes
+    // (`EditPath::may_enter`), so the control cannot be drawn over a card the
+    // descent would refuse, nor withheld from one it would take. `detailed`
+    // gates it for `advanced`'s reason: a card a person collapsed is showing
+    // its identity band alone.
+    let inside = (detailed
+        && state
+            .path
+            .borrow()
+            .may_enter(&state.doc.borrow(), node)
+            .is_ok())
+    .then(|| {
+        Rect::new(
+            pad,
+            content_bottom + gap,
+            w.saturating_sub(pad * 2).max(8),
+            row_line,
+        )
+    });
+    let content_bottom = inside.map_or(content_bottom, |seat| seat.y + seat.h);
     let badge_w = scaled(38).max(10);
     let badge_font = canvas_font_by(8, zoom);
     let badge_line = line_box(badge_font);
@@ -4458,6 +4501,7 @@ fn card_shape_at(state: &LabState, node: NodeId, zoom: u32) -> Option<CardShape>
             badge_line,
         ),
         advanced,
+        inside,
         id_font,
         row_font,
         badge_font,
@@ -4764,6 +4808,14 @@ enum Hit {
     /// card would make the control undraggable-or-unpressable, whichever the
     /// router decided first.
     AdvancedFold(NodeId),
+    /// ★★★★★ R2067 — **a card's way-in control**, pressed to go inside the
+    /// graph that card stands for.
+    ///
+    /// Its own hit for [`Self::AdvancedFold`]'s reason, and one more of its
+    /// own: this act REPLACES the tree every other hit is resolved against, so
+    /// a variant that also meant "the card" would have the router deciding
+    /// between selecting a card and leaving the tree that card is in.
+    Inside(NodeId),
     /// ★★★★★ R1915 — a pin, **by the address that names it**.
     ///
     /// It carried a `bool` until this round, which said *dial or accept* and
@@ -5229,6 +5281,10 @@ impl Hit {
                     // that shape, where a pattern with a discarded path made a
                     // gate blind to a defect it was watching for.
                     || tag.starts_with("lab.advanced.")
+                    // ★★★★★ R2067 — and the way-in chip's family, for the same
+                    // reason: a family this filter drops is drawn and pressable
+                    // by nothing.
+                    || tag.starts_with(address::WAY_IN)
             })
             .map(|(tag, _)| Self::of_tag(state, tag))
             .find(|hit| !matches!(hit, Self::Nothing))
@@ -5336,6 +5392,13 @@ impl Hit {
             && let Some(id) = state.node_of(name)
         {
             return Self::AdvancedFold(id);
+        }
+        // ★★★★★ R2067 — its own prefix for the arm above's reason, read BEFORE
+        // `lab.node.` which would swallow it.
+        if let Some(name) = address::card_of_way_in(tag)
+            && let Some(id) = state.node_of(name)
+        {
+            return Self::Inside(id);
         }
         if let Some(name) = tag.strip_prefix("lab.node.")
             && let Some(id) = state.node_of(name)
@@ -5504,6 +5567,20 @@ impl Hit {
                 }
                 .wire_word()
             ),
+            // ★★★★★ R2067 — named by WHERE IT GOES as well as the card it is
+            // on, for `Self::Crumb`'s reason: what a reader is told a press
+            // would reach is the destination, and `inside:T-01` answers the
+            // same on two cards standing for two different graphs.
+            Self::Inside(id) => format!("inside:{}:{}", state.name_of(*id), {
+                let doc = state.doc.borrow();
+                state
+                    .path
+                    .borrow()
+                    .may_enter(&doc, *id)
+                    .ok()
+                    .and_then(|inner| doc.tree(inner).map(|held| held.name.clone()))
+                    .unwrap_or_else(|| "nothing".to_owned())
+            }),
             // ★ R1915 — the member is in the word, so a driver reading what it
             // is standing on can tell `pin:P-02:dial` from `pin:P-02:dial.host`.
             Self::Pin { node, side, at } => {
@@ -7866,18 +7943,18 @@ fn canvas_cursor(state: &LabState) -> Option<Roving> {
             .with_ends(Ends::Stop)
             .with_activation(Activation::Follows),
     );
-    // ★★★★★ Each card CONTAINS its pins, the way a message row contains its
-    // cells. That nesting is what puts the sentences the pins carry inside a
-    // keyboard reader's reach: descending into a card makes a pin the active
-    // descendant, and the description register answers about whatever the
-    // reader's attention is on.
+    // ★★★★★ Each card CONTAINS what it draws, the way a message row contains
+    // its cells. That nesting is what puts the sentences the pins carry inside
+    // a keyboard reader's reach — and, since R2067, the card's controls too:
+    // descending into a card makes one of them the active descendant, and the
+    // description register answers about whatever the reader's attention is on.
     roving.seat(
         cards
             .iter()
             .map(|node| {
                 let member = Member::new(card_tag(state, *node));
-                match pin_cursor(state, *node) {
-                    Some(pins) => member.containing(pins),
+                match card_cursor(state, *node) {
+                    Some(inner) => member.containing(inner),
                     None => member,
                 }
             })
@@ -7886,17 +7963,16 @@ fn canvas_cursor(state: &LabState) -> Option<Roving> {
     let at = state.active_card().unwrap_or(cards[0]);
     roving.point_at(&card_tag(state, at));
     // ★★★★★ The descent is projected too, from the one fact that holds it:
-    // `Some(n)` means the reader went into the card, so the composite is
-    // entered and its inner cursor points at that pin. Without this the roving
-    // is rebuilt on every read and a reader who descended would be put back on
-    // the card by the next keystroke.
-    if let Some(pin) = state.pin_descent.get()
-        && let Some(tag) = drawn_pins(state, at).get(pin).map(|(tag, _)| tag.clone())
-    {
+    // `Some(n)` means the reader went INTO the card, so the composite is
+    // entered. Without this the roving is rebuilt on every read and a reader
+    // who descended would be put back on the card by the next keystroke.
+    //
+    // ★ R2067 — only the entered FLAG is projected here. Where the inner
+    // cursor rests is [`card_cursor`]'s, because the card publishes that
+    // roster itself and two projections of one fact is how the canvas and the
+    // card came to announce different places.
+    if state.inner_descent.get().is_some() {
         roving.enter();
-        if let Some(inner) = roving.inner_at_cursor_mut() {
-            inner.point_at(&tag);
-        }
     }
     Some(roving)
 }
@@ -11439,6 +11515,14 @@ fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
         if let Some(seat) = shape.advanced {
             parts.push(advanced_chip(state, node, seat, ink));
         }
+        // ★★★★★ R2067 — **the way in**, under the fold control, on a card that
+        // stands for another graph. R1982 gave the way OUT and nothing gave the
+        // way in: measured, the descent had exactly ONE caller — the wire verb
+        // — so a hand on this canvas, and a keyboard on it, had no route at
+        // all into a part they could see the name of.
+        if let Some(seat) = shape.inside {
+            parts.push(inside_chip(state, node, seat, ink));
+        }
         parts.extend(card_digest_parts(&rows, &shape, ink));
         // ★★★★★ R1919 — a search hit is drawn WIDER, and the edge COLOUR stays
         // the selection axis's. Two channels of one edge, one per axis, because
@@ -11574,6 +11658,55 @@ fn advanced_chip(state: &LabState, node: NodeId, seat: Rect, ink: Ink) -> Scene 
         // The chip's own name already carries the word and the count, so a
         // stop on the run would read the state out twice.
         .silent(Silence::name_of(format!("lab.advanced.{name}"))),
+        // ⚠ TRANSPARENT, for the reason every control on this canvas is: a hit
+        // here is resolved from COORDINATES, and a tagged node that takes the
+        // pointer is resolved as the target and forwards nothing.
+        caption::Pointer::Transparent,
+    );
+    chip
+}
+
+/// ★★★★★ R2067 — **the card's way-in control**, drawn as a chip under the fold
+/// control on a card that stands for another graph.
+///
+/// The caption names WHERE it goes rather than what it does, because a person
+/// looking at eight cards is choosing between destinations: the definition's
+/// own name is what distinguishes this chip from the one on the card beside it,
+/// and "go inside" on both would be two identical chips leading to two
+/// different places.
+///
+/// ★ Through [`caption::captioned`] for [`advanced_chip`]'s reason — the
+/// `r1812` ratchet counts a caption paired with its box by nothing but where
+/// the two landed — and its own tag prefix rather than a suffix under
+/// `lab.node.`, because this canvas resolves a name to a card by that prefix
+/// and would look for a card called `<name>.inside`.
+fn inside_chip(state: &LabState, node: NodeId, seat: Rect, ink: Ink) -> Scene {
+    let name = state.name_of(node);
+    // What is INSIDE, asked of the model: the definition a descent lands in,
+    // named the way the breadcrumb names it, so the chip and the trail a
+    // person reads after pressing it say the same word.
+    let word = {
+        let doc = state.doc.borrow();
+        state
+            .path
+            .borrow()
+            .may_enter(&doc, node)
+            .ok()
+            .and_then(|inner| doc.tree(inner).map(|held| held.name.clone()))
+            .map_or_else(|| "inside".to_owned(), |inner| format!("inside {inner}"))
+    };
+    let tag = address::way_in(&name);
+    let (chip, _) = captioned(
+        &tag,
+        seat,
+        BoxStyle::filled(ink.raised)
+            .with_corner_radius(4)
+            .with_border(Border::new(ink.outline, 1)),
+        &caption::Caption::new(word, run_style(canvas_font(state, FONT_TINY), ink.text_2))
+            .centred()
+            // The chip's own name already carries the destination, so a stop on
+            // the run would read it out twice.
+            .silent(Silence::name_of(tag.clone())),
         // ⚠ TRANSPARENT, for the reason every control on this canvas is: a hit
         // here is resolved from COORDINATES, and a tagged node that takes the
         // pointer is resolved as the target and forwards nothing.
@@ -20101,6 +20234,33 @@ fn move_cursor(state: &Rc<LabState>, px: u32, py: u32) {
     }
 }
 
+/// ★★★★★ R2067 — **what choosing one of a card's inner stops does**, named by
+/// the tag a keyboard reader is standing on.
+///
+/// The canvas's composite is walked by TAGS and its gestures are dispatched by
+/// [`Hit`], so this is the join between the two: the tag is resolved through
+/// [`Hit::of_tag`] — the same function the pointer's router asks — and each act
+/// then runs the same verb the pointer's own arm runs. Two routes, one
+/// behaviour, which is the rule R1982's arm wrote down for the way out and this
+/// round owed for the way in.
+///
+/// Answers whether the stop had anything to choose, so the caller decides what
+/// a stop with nothing to choose is told — a decision that belongs to whoever
+/// knows the reader pressed a key.
+fn choose_on_canvas(state: &Rc<LabState>, tag: &str) -> bool {
+    match Hit::of_tag(state, tag) {
+        Hit::Inside(node) => {
+            let _ = enter_card(state, node);
+            true
+        }
+        Hit::AdvancedFold(node) => {
+            fold_advanced(state, node);
+            true
+        }
+        _ => false,
+    }
+}
+
 fn press(state: &Rc<LabState>) {
     let (px, py) = state.cursor.get();
     let hit = Hit::at(state, px, py);
@@ -20573,6 +20733,14 @@ fn release(state: &Rc<LabState>) {
         // path back rather than jumping to a tree id this screen worked out.
         Hit::Crumb(depth) => {
             climb_to(state, depth);
+        }
+        // ★★★★★ R2067 — and the other direction, through the same one function
+        // the wire verb calls. On RELEASE and not on press, like the step that
+        // comes back out: a press here does not pick anything up, so the two
+        // halves of the gesture belong to one act, and a person who presses the
+        // chip and moves off it changes tree by mistake if it fired early.
+        Hit::Inside(node) => {
+            let _ = enter_card(state, node);
         }
         Hit::Problem => {
             go_to_problem(state);
@@ -22434,6 +22602,34 @@ impl WidgetCore for NodeLabView {
             let Some(landing) = roving.key(key) else {
                 return false;
             };
+            // ★★★★★ R2067 — **a stop INSIDE a card was chosen.** The outer
+            // roster follows, so it declares no choose key and can never
+            // answer this: a `Chosen` here is always the inner cursor's, and
+            // the tag it names is what the reader is standing on.
+            //
+            // Routed through `Hit::of_tag` to the SAME verbs a press calls —
+            // the rule the breadcrumb's arm keeps — so the way in a keyboard
+            // takes and the way in a pointer takes cannot become two
+            // behaviours. The key is consumed either way, because a refusal is
+            // an answer (R1699) and letting it fall through would act on
+            // whatever encloses the canvas.
+            if let RovingLanding::Chosen(_) = landing {
+                if let Some(tag) = roving.active_descendant().map(str::to_owned) {
+                    choose_on_canvas(&state, &tag);
+                }
+                return true;
+            }
+            // ★ A pin refuses, and says so rather than swallowing the key: the
+            // absence it names is real — nothing on this screen draws a wire
+            // from a keyboard — and a reader who pressed deserves the reason
+            // instead of silence.
+            if let RovingLanding::Refused(_) = landing {
+                if let Some(tag) = roving.active_descendant() {
+                    let said = format!("{tag} is read here — a wire is drawn by hand");
+                    state.say(Utterance::refused(&said));
+                }
+                return true;
+            }
             // ★ Entering and leaving move the projection too, and they are the
             // same write as an arrow: ONE place turns a cursor into state,
             // whatever key moved it. The capture list learned this at R1699.
@@ -22450,7 +22646,7 @@ impl WidgetCore for NodeLabView {
                 return false;
             };
             select_card(&state, Some(node));
-            state.pin_descent.set(
+            state.inner_descent.set(
                 roving
                     .entered()
                     .then(|| roving.inner_at_cursor().and_then(Roving::cursor))
@@ -22552,9 +22748,18 @@ impl WidgetA11y for NodeLabView {
     /// before this existed: the arrows walked to a pin and the tree marked
     /// nothing focused.
     ///
-    /// Through [`canvas_attention`], which the description register also asks,
+    /// Through `canvas_attention`, which the description register also asks,
     /// so the two cannot answer differently — the defect R2061 through R2064
     /// each measured on a sibling section.
+    ///
+    /// ⚠ R2067 — named in code font rather than LINKED, and that is a gate
+    /// speaking rather than a style choice: this method's documentation is
+    /// PUBLIC (the trait is), `canvas_attention` is private to this screen, and
+    /// `rustdoc::private_intra_doc_links` refuses the pair — a link that
+    /// resolves only because the run passed `--document-private-items` and
+    /// would break for anyone reading the published docs. R2066 published it
+    /// and CI went red on exactly this line. ⇒ from a public doc, a private
+    /// helper is NAMED, not linked.
     fn access_focus_target(
         _state: &(TextFieldState, u32),
         focused: Option<&str>,
@@ -22923,6 +23128,44 @@ fn canvas_access(state: &LabState) -> Vec<AccessNode> {
     }
     let mut nodes = vec![canvas];
     for node in state.cards() {
+        nodes.extend(card_access(state, node, &selection));
+    }
+    for (frame, name) in frames_of(state) {
+        let gist = spec::FRAMES
+            .iter()
+            .find(|f| f.name == name)
+            .map_or("", |f| f.gist);
+        nodes.push(
+            AccessNode::new(format!("lab.frame.{name}"), AriaRole::Group)
+                // R1692 — the tab's own words, with the kind in front. The
+                // caption declares itself this node's name, so what a reader
+                // hears has to CONTAIN what a reader sees.
+                .with_name(format!("host {}", frame_caption(&name, gist)))
+                .with_value(AccessValue::Text(format!(
+                    "{} cards{}",
+                    members_of(state, frame).len(),
+                    focus_aside(state, frame),
+                ))),
+        );
+    }
+    nodes.extend(wire_access(state));
+    nodes.extend(link_chrome_access(state));
+    nodes.extend(scenario_access(state));
+    nodes
+}
+
+/// ★★★★★ R2067 — **what ONE card announces**: the card itself, and the controls
+/// it draws.
+///
+/// Its own function because the canvas's is otherwise a hundred lines of two
+/// different subjects, and this is the one a reader asks about — but the split
+/// is also the screen's own shape, and the pins are the demonstration: they are
+/// NOT here, because a pin is announced by [`wire_access`]'s neighbourhood and
+/// what a card owes about one is the CHILD line, which is [`card_stops`]. One
+/// card, one answer, whichever reader is asking.
+fn card_access(state: &LabState, node: NodeId, selection: &Selection<NodeId>) -> Vec<AccessNode> {
+    let mut nodes = Vec::new();
+    {
         let name = state.name_of(node);
         let role = state.role_of(node).unwrap_or(Role::Peer);
         let (inbound, outbound) = state.degree(node);
@@ -22951,11 +23194,17 @@ fn canvas_access(state: &LabState) -> Vec<AccessNode> {
         if selection.is_active(&node) {
             card = card.with_current(AriaCurrent::True);
         }
-        // ★★★★★ R2066 — and a card owns the pins it draws, from the SAME
+        // ★★★★★ R2066 — and a card owns what it draws, from the SAME
         // enumeration the register and the cursor read. Three consumers, one
-        // answer to "which pins does this card have".
-        for (tag, _) in drawn_pins(state, node) {
-            card = card.with_child(tag);
+        // answer to "what does this card hold".
+        //
+        // ★ R2067 — its CONTROLS included. Before this round the fold chip was
+        // announced as a SIBLING of the card it is drawn on, which is the very
+        // arrangement R2066 measured and repaired one line up for the pins: a
+        // reader told "you are on this card" could not learn that the control
+        // over its pins is part of it.
+        for stop in card_stops(state, node) {
+            card = card.with_child(stop.tag);
         }
         // ★★★★★ R2066 — and each card PUBLISHES the roster its own arrows reach,
         // not only the canvas above it. Measured: with the roster on the canvas
@@ -22964,8 +23213,8 @@ fn canvas_access(state: &LabState) -> Vec<AccessNode> {
         // walk asking each member what it holds was told nothing and counted
         // the cards themselves as the leaves. The capture list publishes its
         // rows' cell rosters for exactly this reason (R1699).
-        if let Some(pins) = pin_cursor(state, node) {
-            card = card.with_navigation(&pins);
+        if let Some(inner) = card_cursor(state, node) {
+            card = card.with_navigation(&inner);
         }
         nodes.push(card.with_value(AccessValue::Text(format!(
             "{}, {inbound} inbound, {outbound} outbound{}",
@@ -23014,28 +23263,32 @@ fn canvas_access(state: &LabState) -> Vec<AccessNode> {
                     .with_expanded(view == AdvancedView::Unfolded),
             );
         }
+        // ★★★★★ R2067 — **the way in reaches a reader who never sees the
+        // card**, and names WHERE it goes: the population is `card_shape`'s
+        // for the chip above's reason, and the destination is asked of the
+        // model, so what is announced is where a press would actually land.
+        if card_shape(state, node).is_some_and(|shape| shape.inside.is_some()) {
+            let doc = state.doc.borrow();
+            let inner = state
+                .path
+                .borrow()
+                .may_enter(&doc, node)
+                .ok()
+                .and_then(|held| doc.tree(held).map(|tree| tree.name.clone()));
+            // ⚠ Pushed whatever the destination's name turns out to be, and
+            // that is the invariant rather than caution: the seat exists
+            // BECAUSE the descent said yes, so a branch that announced nothing
+            // when the name is missing would leave the card owning a child
+            // that is in no tree — which is the one thing a member's own
+            // documentation forbids.
+            nodes.push(
+                AccessNode::new(address::way_in(&name), AriaRole::Button).with_name(match inner {
+                    Some(inner) => format!("go inside {inner}, the graph {name} stands for"),
+                    None => format!("go inside the graph {name} stands for"),
+                }),
+            );
+        }
     }
-    for (frame, name) in frames_of(state) {
-        let gist = spec::FRAMES
-            .iter()
-            .find(|f| f.name == name)
-            .map_or("", |f| f.gist);
-        nodes.push(
-            AccessNode::new(format!("lab.frame.{name}"), AriaRole::Group)
-                // R1692 — the tab's own words, with the kind in front. The
-                // caption declares itself this node's name, so what a reader
-                // hears has to CONTAIN what a reader sees.
-                .with_name(format!("host {}", frame_caption(&name, gist)))
-                .with_value(AccessValue::Text(format!(
-                    "{} cards{}",
-                    members_of(state, frame).len(),
-                    focus_aside(state, frame),
-                ))),
-        );
-    }
-    nodes.extend(wire_access(state));
-    nodes.extend(link_chrome_access(state));
-    nodes.extend(scenario_access(state));
     nodes
 }
 
@@ -23214,12 +23467,18 @@ const TOOLTIP_TAG: &str = "lab.tip";
 /// `(tag, sentence)`.
 ///
 /// ONE enumeration with two consumers: the register turns each pair into a
-/// description, and [`pin_cursor`] turns each into a place a keyboard can
+/// description, and [`card_stops`] turns each into a place a keyboard can
 /// stand. Written out twice they would be free to disagree about which pins
 /// exist — and the register is what decides whether a mark has anything to
 /// say, so a cursor asking a different question would stop a reader on a silent
 /// pin, which is the same "a stop that can do nothing is worse than none" rule
 /// this screen already keeps for its breadcrumb.
+///
+/// ⚠ R2067 — the second consumer is [`card_stops`] now, not the pin cursor this
+/// line used to name: a card's stops are its pins AND its controls, so the
+/// enumeration feeding them moved up one level. The rename is not cosmetic
+/// here — a doc link to a function that no longer exists is exactly what the
+/// intra-doc gate refuses, and it is how this line was found.
 fn drawn_pins(state: &LabState, node: NodeId) -> Vec<(String, String)> {
     let doc = state.doc.borrow();
     let name = state.name_of(node);
@@ -23252,24 +23511,122 @@ fn drawn_pins(state: &LabState, node: NodeId) -> Vec<(String, String)> {
     out
 }
 
-/// ★★★★★ R2066 — the cursor over one card's pins, or `None` when it draws none
-/// that speak.
+/// ★★★★★ R2067 — **the stops INSIDE one card**: the pins it draws that speak,
+/// then the controls it draws.
+///
+/// One enumeration, four consumers — [`card_cursor`] turns each into a place a
+/// keyboard can stand, the accessibility tree makes each a child of the card,
+/// the register describes the ones that are pins, and the canvas's own keyboard
+/// resolves what a press on one does. Written out per consumer they would be
+/// free to disagree about what a card holds, which is the defect R2066 measured
+/// one layer up.
+///
+/// ⚠ The chips are asked of [`card_shape`], which is what decides whether one
+/// is painted at all — the same question the announcement asks (R1887: an
+/// announcement is a CLAIM ABOUT THE PAINT). So a card a person collapsed
+/// holds no chip stop, because it draws none.
+///
+/// ★★★★★ [`Member`]s and not tags, so that WHICH KIND of stop each one is
+/// travels with it: a card's CONTROLS may be chosen and its PINS refuse. That
+/// difference is this screen's own vocabulary rather than a preference — a pin
+/// is a thing a reader is TOLD (it carries a sentence) and a hand DRAGS a wire
+/// from, and no verb here chooses one, so a member that said otherwise would
+/// promise `Enter` does something. That is R1699's measurement exactly:
+/// twenty-two presses that changed nothing painted. Refusing is not silence —
+/// [`RovingLanding::Refused`] is an answer the reader hears, and a refusing
+/// member is still WALKED, which is what keeps every sentence in reach.
+///
+/// ⚠ Carried as a member's own flag rather than recovered from the tag's
+/// prefix at each reader, which is the address-retyping class this tree has
+/// been paying off since R2049: a predicate spelling `lab.pin.` here would be
+/// a second, silent definition of what a pin is.
+fn card_stops(state: &LabState, node: NodeId) -> Vec<Member> {
+    let mut stops: Vec<Member> = Vec::new();
+    for (tag, _) in drawn_pins(state, node) {
+        // ⚠⚠★★★★★ R2067 — **one member per ADDRESS**, and this is a defect
+        // being contained rather than a tidy-up. A member's tag is what
+        // addresses it — it becomes `aria-activedescendant`, and both
+        // `Roving::point_at` and `Roving::seat` resolve a member BY TAG — so
+        // two members carrying one tag are two things a client cannot tell
+        // apart, and a cursor cannot be pointed at the second at all.
+        //
+        // Measured by driving it: a group INSTANCE's interface gives its card
+        // two root output ports, and this screen's pin address spells the SIDE
+        // and not WHICH port, so both marks are painted under one address. A
+        // keyboard walking the card's roster was pinned to the first: the arrow
+        // moved the cursor to the second and the next read pointed it back at
+        // the first, forever.
+        //
+        // Nothing is lost by keeping one: with one address there is one mark as
+        // far as every reader is concerned — the description register keyed by
+        // tag already collapses the pair, and a press on either resolves to the
+        // first. The repair is an address that names the port, which changes
+        // this screen's pin vocabulary and is registered as its own work
+        // (`debt-two-pins-of-one-card-are-painted-under-one-address`).
+        if stops.iter().any(|held| held.tag == tag) {
+            continue;
+        }
+        stops.push(Member::maybe(tag, false));
+    }
+    if let Some(shape) = card_shape(state, node) {
+        let name = state.name_of(node);
+        if shape.advanced.is_some() {
+            stops.push(Member::new(format!("lab.advanced.{name}")));
+        }
+        if shape.inside.is_some() {
+            stops.push(Member::new(address::way_in(&name)));
+        }
+    }
+    stops
+}
+
+/// ★★★★★ R2066 — the cursor over what one card holds, or `None` when it holds
+/// nothing a reader can stand on.
 ///
 /// The inner half of the canvas's composite: a card contains its pins the way a
 /// message row contains its cells, so descending into a card is what puts the
 /// sentences those pins carry inside a keyboard reader's reach. `Stop` at the
-/// ends — a card's first and last pin are ends a reader is meant to feel.
-fn pin_cursor(state: &LabState, node: NodeId) -> Option<Roving> {
-    let pins = drawn_pins(state, node);
-    if pins.is_empty() {
+/// ends — a card's first and last stop are ends a reader is meant to feel.
+///
+/// ★★★★★ R2067 — `Explicit`, where this said `Follows` for one round, and the
+/// correction is the reason rather than the word: a card's stops now include
+/// its CONTROLS, and `Follows` publishes no choose key at all
+/// ([`Activation::choose_keys`]), so a control inside a `Follows` roster is a
+/// control a keyboard can reach and cannot press. `Follows` was also claiming
+/// something untrue on the way past — arriving on a pin selects nothing on this
+/// screen, because a pin is not selectable here; only the CARD is, and that
+/// selection is the outer roster's, which does still follow.
+/// ★★★★★ R2067 — and it points WHERE THE READER IS, which it did not for one
+/// round. `card_stops` is seated fresh on every read, so a cursor that always
+/// rested on the first stop is what a card PUBLISHES while the reader stands on
+/// the fourth — the canvas's composite projected the descent and the card's own
+/// roster did not, so the two announced different places. Measured by driving
+/// it: a walk descending into a card and pressing the down arrow twenty-four
+/// times was told the cursor had not moved.
+///
+/// One home for that fact, here, read by both publications — R2064's finding
+/// one screen over, met from the other side.
+fn card_cursor(state: &LabState, node: NodeId) -> Option<Roving> {
+    let stops = card_stops(state, node);
+    if stops.is_empty() {
         return None;
     }
     let mut roving = Roving::new(
         RovingSpec::new(Axis::Vertical)
             .with_ends(Ends::Stop)
-            .with_activation(Activation::Follows),
+            .with_activation(Activation::Explicit),
     );
-    roving.seat(pins.into_iter().map(|(tag, _)| Member::new(tag)).collect());
+    // The descent belongs to the card the canvas's own cursor rests on: a
+    // reader is inside one card at a time, and `inner_descent` is that card's
+    // position rather than a per-card memory.
+    let at = (state.active_card() == Some(node))
+        .then(|| state.inner_descent.get())
+        .flatten()
+        .and_then(|at| stops.get(at).map(|held| held.tag.clone()));
+    roving.seat(stops);
+    if let Some(tag) = at {
+        roving.point_at(&tag);
+    }
     Some(roving)
 }
 
@@ -24307,10 +24664,22 @@ fn standing_for_wire(state: &Rc<LabState>) -> serde_json::Value {
                         NodeBody::Echo(_) => ("far-end", None),
                         _ => ("other", None),
                     };
+                    // ★★★★★ R2067 — **and WHERE to press to go there**, from the
+                    // address's declaring site. A client offering the descent
+                    // — or a walk, which cannot call that declaration at all —
+                    // is handed the control's address instead of composing it,
+                    // which is the whole answer R2049 gave for readers outside
+                    // this crate. `null` is a fact about the card rather than
+                    // an omission: a card that stands for a kind has nowhere to
+                    // go, and one a person collapsed is drawing no control.
+                    let way_in = card_shape(state, held.id)
+                        .filter(|shape| shape.inside.is_some())
+                        .map(|_| address::way_in(&state.name_of(held.id)));
                     serde_json::json!({
                         "card": state.name_of(held.id),
                         "stands_for": what,
                         "definition": definition,
+                        "way_in": way_in,
                     })
                 })
                 .collect()

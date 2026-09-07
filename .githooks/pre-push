@@ -888,21 +888,41 @@ fi
 # does not contain, and most crates here do not depend on pinion-runtime. CI
 # still runs the full workspace form, so the flagged surface keeps its gate —
 # this one is the fast subset, not a replacement. Both homes, on purpose.
+# ⚠⚠★★★★★ R2067 — `examples/` IS in this population, and it was not.
+#
+# The extraction below read `crates/<name>/…` alone, so a push touching only an
+# example produced ZERO doc packages and this step printed "touches no crate
+# source" and passed. Measured at R2067 on the round before it: R2066 changed
+# exactly one Rust file, `examples/hello-node-lab/src/lib.rs`, this gate ran on
+# nothing, and CI refused the push — *public documentation for
+# `access_focus_target` links to private item `canvas_attention`*.
+#
+# ★ That is not a rare shape here: every analyzer screen this project builds is
+# an `examples/` package, so the gate was blind to where most rounds work. And
+# the cost of that blindness is bigger than a red — the steps of CI's first job
+# are SEQUENTIAL, so a failing `cargo doc` also means `cargo test --workspace`
+# and the census proofs never ran, on top of the two `needs:`-gated jobs being
+# skipped.
+#
+# An example's package name is its directory name (workspace members, all of
+# them), which is what makes one more `sed` expression the whole repair.
 doc_crates=()
 while IFS= read -r c; do
     [[ -n "$c" ]] && doc_crates+=(-p "$c")
-done < <(sed -n 's|^crates/\([^/]*\)/.*\.rs$|\1|p' "$tmp_paths" | sort -u)
+done < <(sed -n -e 's|^crates/\([^/]*\)/.*\.rs$|\1|p' \
+                -e 's|^examples/\([^/]*\)/.*\.rs$|\1|p' "$tmp_paths" | sort -u)
 if [[ ${#doc_crates[@]} -gt 0 ]]; then
-    step "intra-doc links (${#doc_crates[@]} crate(s) this push touches)"
+    step "intra-doc links (${#doc_crates[@]} package(s) this push touches)"
     if ! cargo doc "${doc_crates[@]}" --no-deps --document-private-items; then
         echo "pre-push: a doc link above does not resolve. Fix it here — the same" >&2
         echo "pre-push: gate runs in CI over the WHOLE workspace, and when it fails" >&2
         echo "pre-push: there it also SKIPS the demo sweep and the pixel tests," >&2
-        echo "pre-push: which then look passing rather than unrun." >&2
+        echo "pre-push: which then look passing rather than unrun — and the" >&2
+        echo "pre-push: workspace tests after it in the same job never run at all." >&2
         exit 1
     fi
 else
-    echo "pre-push: intra-doc links — this push touches no crate source" >&2
+    echo "pre-push: intra-doc links — this push touches no package source" >&2
 fi
 
 # 2b. Feature-gated doc-link labels — the hole the gate above cannot see.

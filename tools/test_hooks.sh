@@ -1944,6 +1944,23 @@ esac
 ok "and the push gate's rustdoc is SCOPED to the pushed crates" \
    "$hook_doc_scoped" "scoped"
 
+# ★★★★★ R2067 — and the SCOPE covers `examples/`, which it did not.
+#
+# The selection was read out of `crates/<name>/…` alone, so a push touching only
+# an example produced no package to document and the step passed on nothing.
+# Every analyzer screen this project builds is an `examples/` package, so the
+# gate was blind to where most rounds work — measured on R2066, whose one Rust
+# file was an example's, whose rustdoc therefore ran locally on nothing, and
+# whose push was refused by CI for a link this step exists to catch.
+#
+# Asserted as the two PREFIXES the selection reads rather than as the whole
+# command, because that is the property: a third source directory would have to
+# be added here as well, which is the reminder this assertion is.
+doc_scope="$(sed -n '/^done < <(sed -n/,/tmp_paths/p' "$repo_root/.githooks/pre-push" \
+    | grep -o "\^[a-z][a-z]*/" | tr -d '^/' | sort -u | tr '\n' ' ')"
+ok "and that scope reads BOTH source directories" \
+   "$doc_scope" "crates examples "
+
 # ★★★★★ R2000 — the prose-citation gate is placed, and BOTH its halves are.
 #
 # It exists because rustdoc's reach stops where a `//` comment starts, so it is

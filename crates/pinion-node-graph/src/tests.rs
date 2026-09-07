@@ -1010,6 +1010,46 @@ fn entering_something_that_is_not_a_group_is_refused() {
     assert_eq!(path.current(), ROOT);
 }
 
+/// ★★★★★ R2067 — the question a screen asks before OFFERING the way in gives
+/// the same answer as taking it, in both directions and without moving.
+#[test]
+fn asking_whether_a_card_can_be_gone_into_answers_what_going_in_answers() {
+    let mut f = fixture();
+    let made = f.document.group(ROOT, &[f.add], "Sum").unwrap();
+    let mut path = EditPath::root();
+    // Yes on the instance, and the definition it names is the one a descent
+    // lands in — asked twice, because a question that moved the path would
+    // answer differently the second time.
+    assert_eq!(path.may_enter(&f.document, made.node), Ok(made.definition));
+    assert_eq!(path.may_enter(&f.document, made.node), Ok(made.definition));
+    assert_eq!(path.depth(), 0);
+    // No on a plain card, with the refusal the descent itself would give rather
+    // than a bare false.
+    assert_eq!(
+        path.may_enter(&f.document, f.two),
+        Err(PathError::NotAGroup(f.two))
+    );
+    // ⚠ And the answer depends on WHERE it is asked from, which is why this
+    // takes the path rather than only the document. A node id is unique within
+    // its TREE, so the instance's number asked from inside the definition names
+    // one of the cards that were folded into it — measured, and the first draft
+    // of this line expected `NoSuchNode`.
+    let elsewhere = EditPath::at(made.definition);
+    assert_eq!(
+        elsewhere.may_enter(&f.document, made.node),
+        Err(PathError::NotAGroup(made.node))
+    );
+    // A number no tree holds is the other refusal, so both arms are driven.
+    assert_eq!(
+        path.may_enter(&f.document, NodeId(9_999)),
+        Err(PathError::NoSuchNode(NodeId(9_999)))
+    );
+    // And the two agree where it matters: what the ask answered is what the
+    // descent did.
+    assert_eq!(path.enter(&f.document, made.node), Ok(made.definition));
+    assert_eq!(path.current(), made.definition);
+}
+
 #[test]
 fn a_path_into_a_group_that_was_inlined_is_pruned() {
     let mut f = fixture();

@@ -43,6 +43,12 @@ several — which is what the reference's own path does.
   (F) ★ and an address written inside lands on the card inside.
   (G) ★★★★★ from two levels down, one press climbs all the way to the top —
       the affordance a repeated `exit` does not give.
+  (H) ★★★★★ R2065 — the same way out with no pointer at all.
+  (I) ★★★★★ R2067 — the way IN: the card that stands for a graph carries a
+      control onto the frame, a press goes there, and so does a keyboard
+      descending into the card. Until that round the descent had exactly one
+      caller — the wire verb — so a person could fold a part, read its name and
+      have no route into it.
 
 Run from the workspace root:
     cargo build --release -p hello-analyzer-shell
@@ -354,6 +360,148 @@ def body() -> None:
         ok(
             f"H: ★★★★★ and pressing it walks them OUT — {before} then {out}",
             out["depth"] == 0 and out["inside"] is False,
+        )
+
+        # ★★★★★ R2067 — and the way IN, which nothing on the frame had.
+        #
+        # Everything above is about a door. Measured at R2066, the descent had
+        # exactly ONE caller in this screen — the wire verb `enter` — so a
+        # person could fold a part, watch the instance card appear, read its
+        # name, and have no route into it: not a chip, not a key, not a press
+        # anywhere. A room a person can be PUT in and cannot walk into.
+        banner("I — ★★★★★ the way IN, on the frame and by keyboard alone")
+        at = standing(app, surface)
+        ok(f"I: back at the top to begin with — {at['depth']}", at["depth"] == 0)
+        here = cards(app, surface)
+        app.invoke(f"{surface}/select", here[0])
+        app.tick_ms(16)
+        app.invoke(f"{surface}/select_also", here[1])
+        app.tick_ms(16)
+        app.invoke(f"{surface}/group", "way-in")
+        app.tick_ms(16)
+
+        # ★ The address is READ OFF THE WIRE and not spelled here. The screen
+        # publishes where to press beside what each card stands for, derived
+        # from the one place that composes it, so this walk cannot look for a
+        # mark under a name the paint does not use — R2049's whole answer for
+        # readers that cannot call the declaration.
+        rows = js(app.query(f"{surface}/standing_for"))["cards"]
+        doors = {row["card"]: row["way_in"] for row in rows if row["way_in"]}
+        stands = {row["card"]: row["stands_for"] for row in rows}
+        ok(
+            f"I: ★★★★★ the screen publishes a way in for the card that stands "
+            f"for a graph, and for no other — {doors} of {stands}",
+            set(doors) == {card for card, what in stands.items() if what == "definition"},
+        )
+        door = doors["way-in"]
+        marks = abs_rects_of(app.snapshot(source="paint", viewport=VIEWPORT))
+        ok(
+            f"I: ★★★★★ and it is PAINTED, so a hand has somewhere to press — "
+            f"{door}",
+            door in marks,
+        )
+
+        # (I.1) the pointer route.
+        press(app, marks[door])
+        at = standing(app, surface)
+        ok(
+            f"I: ★★★★★ a press on it goes inside — {at}. This canvas resolves "
+            "a press from the published paint through a filter of tag "
+            "families, so a family missing from that filter is a mark that is "
+            "drawn, announced and unpressable",
+            at["depth"] == 1 and at["inside"] is True,
+        )
+        app.invoke(f"{surface}/exit", "")
+        app.tick_ms(16)
+        ok(
+            "I: back out, so the keyboard route starts where the pointer route "
+            "did",
+            standing(app, surface)["depth"] == 0,
+        )
+
+        # (I.2) ★★★★★ the keyboard route, with no pointer at all. The canvas is
+        # a composite: its stops are the cards, and each card CONTAINS what it
+        # draws — so the way in is reached by descending into the card, which is
+        # the WAI-ARIA nesting R2066 built and this round gave something to
+        # press.
+        app.request("focus/set", {"tag": None})
+        app.tick_ms(16)
+        walked = ring(app)
+        canvas = [stop for stop in walked if stop.endswith("canvas")]
+        ok(f"I: ★ a keyboard reaches the canvas — ring {walked}", len(canvas) == 1)
+        canvas = canvas[0]
+        app.request("focus/set", {"tag": canvas})
+        app.tick_ms(16)
+
+        def cursor_of(stop: str) -> dict:
+            node = {n.get("tag"): n for n in access(app)}.get(stop, {})
+            return node.get("navigation") or {}
+
+        def step_to(stop: str, want: str, key: str, limit: int = 24) -> str:
+            """Walk `stop`'s cursor until it names `want`, by keys alone."""
+            for _ in range(limit):
+                if cursor_of(stop).get("active_descendant") == want:
+                    break
+                app.key(path=stop, name=key)
+                # ⚠ The pointer is put on the tag's rect centre by every keyed
+                # press, so it is taken off again — R2063 measured a register
+                # that froze on whatever the midpoint hovered while the cursor
+                # walked past it.
+                app.pointer_leave()
+                app.tick_ms(16)
+            return cursor_of(stop).get("active_descendant")
+
+        nav = cursor_of(canvas)
+        members = {m["tag"] for m in nav.get("members") or []}
+        card = next(m for m in members if m.endswith("way-in"))
+        ok(
+            f"I: ★ the instance card is a stop the canvas walks — "
+            f"{sorted(members)}",
+            card in members,
+        )
+        ok(
+            f"I: ★ arriving on a card SELECTS it, so the inspector follows a "
+            f"walk — {nav.get('activation')}",
+            nav.get("activation") == "follows",
+        )
+        ok(
+            f"I: ★★★★★ walking reaches the instance card — {step_to(canvas, card, 'ArrowDown')}",
+            cursor_of(canvas).get("active_descendant") == card,
+        )
+
+        # Descend INTO the card. The way in is one of the card's own stops, so
+        # this is the same gesture that puts a pin's sentence in reach.
+        app.key(path=canvas, name="Enter")
+        app.pointer_leave()
+        app.tick_ms(16)
+        held = cursor_of(card)
+        inner = {m["tag"] for m in held.get("members") or []}
+        owned = set({n.get("tag"): n for n in access(app)}.get(card, {}).get("children") or [])
+        ok(
+            f"I: ★★★★★ the card publishes what it holds, and the way in is one "
+            f"of them — {sorted(inner)}",
+            door in inner and inner <= owned,
+        )
+        ok(
+            f"I: ★★★★★ and its stops are chosen EXPLICITLY — "
+            f"{held.get('activation')}. A cursor that followed could not carry "
+            "a control at all: a following composite declares no choose key, so "
+            "the way in would be reachable and unpressable",
+            held.get("activation") == "explicit",
+        )
+        reached = step_to(card, door, "ArrowDown")
+        ok(f"I: ★ the reader walks to it inside the card — {reached}", reached == door)
+        before = standing(app, surface)
+        app.key(path=card, name="Enter")
+        app.pointer_leave()
+        app.tick_ms(32)
+        went = standing(app, surface)
+        ok(
+            f"I: ★★★★★ and pressing it takes them IN, with no pointer anywhere "
+            f"— {before} then {went}. R1982 gave this screen the way out; "
+            "until this round the way in was a verb on the wire and nothing a "
+            "person could reach",
+            went["depth"] == 1 and went["inside"] is True,
         )
 
         print(f"\n{len(CHECKS)} check(s) held.")

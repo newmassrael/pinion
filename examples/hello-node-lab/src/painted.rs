@@ -8909,6 +8909,146 @@ fn r2048_a_register_row_says_its_name_reaches_nothing() {
     });
 }
 
+/// ★★★★★ R2067 — **a card that stands for another graph carries the way INTO
+/// it, and a press on that chip takes a person there.**
+///
+/// # What was missing, measured
+///
+/// R1981 gave this screen the descent and R1982 gave it the way back out. The
+/// descent itself had exactly ONE caller — the wire verb — so a hand on this
+/// canvas could fold a part, watch the instance card appear, read its name, and
+/// have no route into it at all. A room with a door only somebody else can
+/// open, which is R1982's own sentence about the way out.
+///
+/// # What this holds that a crate test cannot
+///
+/// The model already refuses a descent into anything that is not an instance,
+/// and the question this screen asks before OFFERING one is asserted against
+/// the descent itself next door. What is proven here is the half that is
+/// geometry and routing:
+///
+/// * the chip is painted only on a card the descent would actually take, and
+///   that population is asked of the same call the descent makes;
+/// * it is INSIDE its card, so the sweep's containment holds without the card
+///   having been given a taller box by hand;
+/// * and a press WHERE IT IS DRAWN goes inside — which is the half no verb can
+///   prove, because this canvas resolves a press from the published paint
+///   through a filter of tag families, and a family missing from that filter
+///   leaves a mark that is drawn, announced and unpressable (R1982's finding,
+///   met again at R2001).
+#[test]
+fn r2067_a_card_that_stands_for_a_graph_carries_the_way_into_it() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = use_lab_state();
+        let ways = |shot: &Painted| -> Vec<String> {
+            shot.tags
+                .keys()
+                // ⚠ A caption is PART OF its box and not a second member of the
+                // box's family — `captioned` gives it the box's tag plus one
+                // suffix, so counting a family by prefix doubles it. Subtracted
+                // by the FRAMEWORK's name for the suffix, the way this file's
+                // own family census does, rather than by a literal: a check
+                // that spells the rule again is a second copy of it. This
+                // assertion's first run answered the chip's own tag AND its
+                // caption's, two members for one control, and said so.
+                .filter(|tag| !tag.ends_with(pinion_widget_paint::caption::CAPTION_SUFFIX))
+                .filter(|tag| tag.starts_with(super::address::WAY_IN))
+                .cloned()
+                .collect()
+        };
+
+        // Nothing in the opening document stands for another graph, so nothing
+        // paints a way in. Read off the PAINT rather than off the model: the
+        // claim is about what a hand can reach.
+        let shot = painted(&state);
+        assert_eq!(
+            ways(&shot),
+            Vec::<String>::new(),
+            "★ a card that stands for a kind has nowhere to go, so it draws no \
+             way in"
+        );
+
+        // A person folds two cards into a part, which is what makes an
+        // instance — through the same verb the wire calls.
+        let pair: Vec<_> = state.cards().into_iter().take(2).collect();
+        state
+            .selection
+            .set(pinion_core::selection::Selection::group(pair));
+        super::group_selection(&state, "part").expect("two cards make a subgraph");
+        let part = state.node_of("part").expect("the instance is a card here");
+
+        let shot = painted(&state);
+        let chip = *shot
+            .tags
+            .get(&super::address::way_in("part"))
+            .expect("★★★★★ and the way in arrives with the instance");
+        assert_eq!(
+            ways(&shot),
+            vec![super::address::way_in("part")],
+            "★ exactly one card stands for a graph, so exactly one draws the \
+             control — a chip on a card that stands for a kind would be a \
+             control over nothing"
+        );
+        let card = shot.tags[&format!("lab.node.{}", state.name_of(part))];
+        assert!(
+            inside(card, chip),
+            "★★★★★ the chip is INSIDE its card {card:?}, not merely near it: \
+             {chip:?}. The card's height IS its content, so this follows from \
+             the seat rather than from a second rule"
+        );
+        // ★ And the announcement is a claim about THIS paint: the same
+        // population, asked the other way round.
+        let announced: Vec<String> = super::canvas_access(&state)
+            .into_iter()
+            .filter(|node| node.tag.starts_with(super::address::WAY_IN))
+            .map(|node| node.tag)
+            .collect();
+        assert_eq!(
+            announced,
+            ways(&shot),
+            "★ what is announced as a way in is what is painted as one"
+        );
+
+        // ★★★★★ A PRESS where it is drawn goes inside. Driven by coordinates
+        // and not through the verb, because that is the half a verb cannot
+        // prove: a family missing from the router's paint filter leaves a mark
+        // that is drawn, announced and unpressable.
+        assert!(!state.inside(), "★ the person is at the top to begin with");
+        let (px, py) = centre(chip);
+        super::move_cursor(&state, px, py);
+        super::press(&state);
+        super::release(&state);
+        assert!(
+            state.inside(),
+            "★★★★★ and the press took them inside — before this round no press \
+             anywhere on this canvas could"
+        );
+        // ⚠ The DEPTH and the last step, not the whole trail spelled out: the
+        // first step is the opening document's own name and writing it here
+        // would make this test about the specification's title. Measured on the
+        // first run — it answered `["mesh-failover", "part"]`.
+        let trail = state.breadcrumb();
+        assert_eq!(
+            (trail.len(), trail.last().map(String::as_str)),
+            (2, Some("part")),
+            "★ and the trail says where they are — {trail:?} — which is the \
+             claim the way out is asserted against from the other side"
+        );
+
+        // ★ Inside, the instance is not on screen, so its way in is not drawn
+        // either — the population follows the tree being SHOWN rather than the
+        // document.
+        assert_eq!(
+            ways(&painted(&state)),
+            Vec::<String>::new(),
+            "★ the card is one level up; a control for a card nobody can see \
+             would be a control over nothing"
+        );
+    });
+}
+
 /// The second line painted inside one palette row — the role's blurb, or the
 /// reason this graph will not take it.
 ///

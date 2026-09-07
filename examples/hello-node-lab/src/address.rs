@@ -235,3 +235,40 @@ pub fn role_of_row(tag: &str) -> Option<Role> {
     let name = tag.strip_prefix(ROLE_ROW)?;
     Role::ALL.into_iter().find(|role| role.name() == name)
 }
+
+/// ★★★★★ R2067 — the prefix a card's **way in** carries.
+///
+/// A family DECLARED on the round that invents it, which is the one thing the
+/// address debt's instalments could not do for the families they converted:
+/// each of those had to find every reader that had already spelled the prefix.
+/// This one has five readers on its first day — the painter, the router's
+/// family filter, the router's parse, the accessibility roster and the paint
+/// census — and they are handed the address instead.
+///
+/// ⚠ Its own prefix rather than a suffix under the card's, and the router's own
+/// rule is what says so: an arm for `lab.node.<name>` would swallow
+/// `<name>.inside`, look for a card called that and answer nothing — the shape
+/// R1885 recorded for the build seats and R1915 for a member pin.
+pub const WAY_IN: &str = "lab.inside.";
+
+/// The address of the control a person presses to go inside the graph `card`
+/// stands for.
+///
+/// Takes the card's NAME because that is what this screen addresses a card by,
+/// and what the wire and the accessibility tree both carry.
+#[must_use]
+pub fn way_in(card: &str) -> String {
+    format!("{WAY_IN}{card}")
+}
+
+/// The card a way-in address names, or `None` when the tag is not one.
+///
+/// ★ The inverse of [`way_in`], here rather than at the router, for
+/// [`role_of_row`]'s reason: written against a different prefix it becomes a
+/// press that lands on nothing and a screen that does not respond. Whether a
+/// card of that name EXISTS is the router's question, not this one's — this
+/// answers what the address says.
+#[must_use]
+pub fn card_of_way_in(tag: &str) -> Option<&str> {
+    tag.strip_prefix(WAY_IN)
+}

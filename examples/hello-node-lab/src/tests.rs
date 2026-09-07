@@ -1166,6 +1166,61 @@ fn r2053_every_form_part_address_is_derived() {
     );
 }
 
+/// ★★★★★ R2067 — **a family DECLARED on the round that invented it.**
+///
+/// R2049–R2053 converted five families, and each of those rounds had to go and
+/// find every reader that had already spelled the prefix — because the family
+/// was born as a `format!` at the painter and grew readers for a hundred
+/// rounds. This one is born with five readers (the painter, the router's paint
+/// filter, the router's parse, the accessibility roster and the paint census)
+/// and a declaration, so the conversion never has to happen.
+///
+/// ⚠ The needle is assembled, because this file is one of the sources it reads
+/// — R2046's lesson, and the reason `address.rs` is the only file excused by
+/// name rather than a list of them.
+#[test]
+fn r2067_the_way_ins_address_is_typed_in_one_place() {
+    const NEEDLE: &str = concat!("lab.", "inside.");
+    let sources = crate_sources();
+    let spellers: Vec<(&str, usize)> = sources
+        .iter()
+        .map(|(name, body)| (*name, body.matches(NEEDLE).count()))
+        .filter(|(name, count)| *count > 0 && *name != "address.rs")
+        .collect();
+    assert_eq!(
+        spellers,
+        Vec::new(),
+        "★★★★★ a card's way in is declared in `address.rs` and derived \
+         everywhere else; these file(s) spell it themselves"
+    );
+    // ★★ The address and its inverse are one pair, driven over the names this
+    // screen really addresses cards by: a parse written against a different
+    // prefix is a press that lands on nothing and a screen that does not
+    // respond.
+    for card in super::spec::NODES
+        .iter()
+        .map(|node| node.id)
+        .chain(["part"])
+    {
+        assert_eq!(
+            super::address::card_of_way_in(&super::address::way_in(card)),
+            Some(card),
+            "★ {card} does not round-trip"
+        );
+    }
+    assert_eq!(
+        super::address::card_of_way_in("lab.node.R-01"),
+        None,
+        "★ a card's own address is not a way into it — the two are different \
+         marks, which is the whole reason this family has a prefix of its own"
+    );
+    assert_eq!(
+        super::address::way_in(""),
+        super::address::WAY_IN,
+        "★ the prefix is the address with no card, so the two cannot drift"
+    );
+}
+
 /// The card the speech drives above are about — a subject that could not occur
 /// inside any of those clauses by accident.
 const CARD_UNDER_TEST: &str = "R-01";

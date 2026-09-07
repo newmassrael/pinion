@@ -884,6 +884,40 @@ impl EditPath {
         &self.entries
     }
 
+    /// ★★★★★ R2067 — **would this card be gone into?**, asked before descending.
+    ///
+    /// The answer is the definition a descent would land in, or the refusal
+    /// itself, so a screen deciding whether to *offer* the way in asks the same
+    /// question the descent asks rather than re-stating its rule. This is not a
+    /// prediction of [`enter`](Self::enter): it is the call
+    /// [`enter`](Self::enter) makes, so the two cannot answer differently.
+    /// Asking changes nothing about the path.
+    ///
+    /// Without it a screen has to spell "a card whose body is a definition"
+    /// itself, and then a rule added here reaches the verb and not the
+    /// affordance — the shape of defect this tree keeps finding, where a
+    /// control is drawn over something no verb will accept, or withheld from
+    /// something one would.
+    ///
+    /// # Errors
+    ///
+    /// [`PathError`] — exactly what [`enter`](Self::enter) would answer.
+    pub fn may_enter<K: NodeKind>(
+        &self,
+        document: &Document<K>,
+        node: NodeId,
+    ) -> Result<TreeId, PathError> {
+        let current = self.current();
+        let tree = document
+            .tree(current)
+            .ok_or(PathError::NoSuchTree(current))?;
+        let found = tree.node(node).ok_or(PathError::NoSuchNode(node))?;
+        let NodeBody::Group(inner) = found.body else {
+            return Err(PathError::NotAGroup(node));
+        };
+        Ok(inner)
+    }
+
     /// Descend into a group instance in the current tree.
     ///
     /// A definition already on the path cannot be re-entered, and that is a
@@ -898,14 +932,7 @@ impl EditPath {
         document: &Document<K>,
         node: NodeId,
     ) -> Result<TreeId, PathError> {
-        let current = self.current();
-        let tree = document
-            .tree(current)
-            .ok_or(PathError::NoSuchTree(current))?;
-        let found = tree.node(node).ok_or(PathError::NoSuchNode(node))?;
-        let NodeBody::Group(inner) = found.body else {
-            return Err(PathError::NotAGroup(node));
-        };
+        let inner = self.may_enter(document, node)?;
         self.entries.push(PathEntry {
             tree: inner,
             via: Some(node),
