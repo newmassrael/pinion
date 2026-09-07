@@ -135,25 +135,50 @@ fn use_groups() -> Rc<GroupOrderState> {
 /// The sort/filter control bar: shows the active sort + filter + visible-row
 /// count and cycles the sort on click (`gsort#cycle`, R51.42 composite).
 fn control_bar(sort: Option<bool>, filter: Option<usize>, visible: usize, theme: &Theme) -> Scene {
-    // R886.1 — directional pair from the glyph SSOT; the unsorted
-    // marker stays a per-consumer style choice.
-    let arrow = pinion_widget_paint::glyph::sort_glyph(sort).unwrap_or("\u{2195}");
+    // ★★★★★ R2058 — the direction is a DRAWN mark beside the words, not a
+    // character inside them.
+    //
+    // It was `U+25B2` / `U+25BC` from the glyph table, with `U+2195` as this
+    // consumer's unsorted marker. The one face this tree renders through
+    // carries NONE of the three, so every state of this bar showed a `.notdef`
+    // box mid-sentence — and, being inside the sentence, the box was also in
+    // what a screen reader reads out.
+    //
+    // Unsorted now draws NOTHING. The unsorted representation was always a
+    // per-consumer style choice (R758) rather than a shared decision, and "no
+    // direction yet" is honestly said by no mark at all — the same answer
+    // `Indicator::of_sort` gives for it.
     let filter_label = match filter {
         Some(c) => CATS[c % CATS.len()],
         None => "All",
     };
-    let text = format!(
-        "Sort {arrow} name   \u{00B7}   Filter: {filter_label}   \u{00B7}   {visible} rows"
-    );
-    let label = Scene::Text(TextNode::styled(
-        text,
-        Rect::default(),
-        TextStyle::new()
-            .with_size_px(13)
-            .with_fg(theme.resolve(ColorRole::OnSurface)),
-    ));
+    let styled = |content: String| {
+        Scene::Text(TextNode::styled(
+            content,
+            Rect::default(),
+            TextStyle::new()
+                .with_size_px(13)
+                .with_fg(theme.resolve(ColorRole::OnSurface)),
+        ))
+    };
+    // ⚠ Tighter separators than the sentence this replaced — the bar's box is a
+    // constant while its contents are derived, and a mark box is wider than the
+    // character it replaces. Its sibling screen overflowed by 9px on the first
+    // draft of this change; measured back under budget rather than argued.
+    let mut children = vec![styled("Sort".to_owned())];
+    if let Some(mark) = pinion_widget_paint::indicator::Indicator::of_sort(sort) {
+        children.push(pinion_widget_paint::indicator::inline(
+            mark,
+            pinion_widget_paint::indicator::Indicator::MIN,
+            theme.resolve(ColorRole::OnSurface),
+            "the sort direction; the words beside it say what is sorted",
+        ));
+    }
+    children.push(styled(format!(
+        " name \u{00B7} Filter: {filter_label} \u{00B7} {visible} rows"
+    )));
     Scene::Container(
-        ContainerNode::new(vec![label])
+        ContainerNode::new(children)
             .with_tag(format!("{SORT_TAG}#{SORT_REGION}"))
             .with_style(BoxStyle::filled(
                 theme.resolve(ColorRole::SurfaceContainerHighest),

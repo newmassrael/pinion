@@ -4456,9 +4456,24 @@ fn view_header(theme: &Theme, sort: Option<(usize, bool)>, model: &[CellValue]) 
         // that by stamping the label itself — the second source for a column's
         // name that this round removed.
         let mut children = vec![Scene::Text(styled((*label).to_string()))];
-        if let Some(glyph) = pinion_widget_paint::glyph::sort_glyph(col_sort_dir(sort, col)) {
-            children.push(Scene::Text(
-                styled(format!(" {glyph}")).with_role(TextRole::Presentational),
+        // ★★★★★ R2058 — the sort arrow is a DRAWN mark, not a character.
+        //
+        // It was `U+25B2` / `U+25BC`, and the one face this tree renders
+        // through carries neither, so a sorted column header showed a `.notdef`
+        // box where the arrow belongs. `Indicator::of_sort` takes the same
+        // answer `col_sort_dir` gives, so the mark IS the sort state.
+        //
+        // The `Presentational` role this run carried is kept by `inline`, which
+        // declares the box decorative with the sentence naming what announces
+        // the direction instead — the header itself.
+        if let Some(mark) =
+            pinion_widget_paint::indicator::Indicator::of_sort(col_sort_dir(sort, col))
+        {
+            children.push(pinion_widget_paint::indicator::inline(
+                mark,
+                HEADER_PX,
+                theme.resolve(ColorRole::OnSurfaceMuted),
+                "the sort direction for this column; the header announces it",
             ));
         }
         // R966 — a column holding any modified cell shows a reset dot at the
@@ -5599,15 +5614,13 @@ mod tests {
             .expect("grid external present")
     }
 
-    /// R1547 — every painted text in `scene`, in DFS pre-order.
-    fn painted_texts(scene: &Scene, out: &mut Vec<String>) {
-        match scene {
-            Scene::Text(t) => out.push(t.content.to_string()),
-            Scene::Container(c) => c.children.iter().for_each(|ch| painted_texts(ch, out)),
-            Scene::Scroll(sc) => painted_texts(sc.content.as_ref(), out),
-            _ => {}
-        }
-    }
+    // ★ R2058 — a DFS collecting every painted string used to live here, for
+    // the one premise below that looked for the sort character. The compiler
+    // found it dead the moment that premise started asking for a MARK, which is
+    // the tell that the helper existed to serve a string comparison and nothing
+    // else. `indicator::marks_in` walks the scene with the framework's own
+    // traversal, so a node kind that grows children is not a place this
+    // silently stops looking.
 
     /// R1547 §5.40 — a `columnheader`'s announced name is the column's LABEL,
     /// even while a sort glyph is drawn beside it.
@@ -5625,13 +5638,18 @@ mod tests {
         Owner::new().run(|| {
             use_sort().set(Some((0, true)));
             let scene = view((TextFieldState::Idle, 0), &Frame::default());
-            // Premise: a glyph really is painted, or the assertion below is
-            // satisfied by a header that simply has nothing extra to confuse.
-            let mut painted = Vec::new();
-            painted_texts(&scene, &mut painted);
-            assert!(
-                painted.iter().any(|t| t.contains('\u{25B2}')),
-                "premise: the active sort column paints its direction glyph",
+            // Premise: a direction mark really is painted, or the assertion
+            // below is satisfied by a header that simply has nothing extra to
+            // confuse.
+            //
+            // ★★★★★ R2058 — asked of the MARK, not of a character. This looked
+            // for `U+25B2` in the painted text, which the one face this tree
+            // renders through cannot draw: the premise was true and the header
+            // showed a `.notdef` box. There is no string to be right about now.
+            assert_eq!(
+                pinion_widget_paint::indicator::marks_in(&scene),
+                vec![pinion_widget_paint::indicator::Indicator::Sort { ascending: true }],
+                "premise: the active sort column paints its direction",
             );
             let mut nodes = vec![AccessNode::new(
                 col_header_tag(0),

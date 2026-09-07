@@ -39,11 +39,20 @@
 // [`FACELESS`]: a declared mark this tree cannot draw is a promise it cannot
 // keep, whether or not anybody is currently calling it.
 
-/// Ascending column-sort arrow — `U+25B2` BLACK UP-POINTING TRIANGLE.
-pub const SORT_ASCENDING: &str = "\u{25B2}";
-
-/// Descending column-sort arrow — `U+25BC` BLACK DOWN-POINTING TRIANGLE.
-pub const SORT_DESCENDING: &str = "\u{25BC}";
+// ★★★★★ R2058 — the two column-sort arrows are GONE, and so is the mapping
+// that handed them out.
+//
+// They were `U+25B2` / `U+25BC`. R1952 moved this crate's own header painters
+// onto [`crate::indicator::Indicator::of_sort`] and left the pair here for the
+// example screens that build their own header rows — which meant those screens
+// went on painting a box. R2058 moved all four of them, so nothing asks for a
+// sort character any more.
+//
+// ⚠ Their unsorted representation went with them. That was documented as a
+// per-consumer style choice and it was entitled to be one; what it was not
+// entitled to be is `U+2195`, which this tree cannot draw either. An unsorted
+// column shows no mark now — which is what `of_sort` answers for it, and what
+// "no direction yet" honestly looks like.
 
 // (R1171 §5.16) Window-control glyphs for a floating dock panel's HEADER controls
 // (minimize / maximize / close). Text glyphs — the widget-layer convention (like
@@ -90,28 +99,6 @@ pub const SELECT_ALL_PARTIAL: &str = "\u{2212}";
 /// tree ships has `U+2713` at all. See [`FACELESS`].
 pub const SELECT_ALL_COMPLETE: &str = "\u{2713}";
 
-/// R886.1 §5.50 — the sort-direction → glyph mapping every column header
-/// paints: `Some(true)` → [`SORT_ASCENDING`], `Some(false)` →
-/// [`SORT_DESCENDING`], `None` (not the active sort column) → `None` so
-/// each consumer renders its own unsorted representation. Pairs with
-/// `pinion_core::widgets::grid_sort::col_sort_dir` (the "is THIS column
-/// active" decision) on the input side.
-///
-/// ⚠ R1952 — the substrate's own header painters no longer call this. A column
-/// header carries the DIRECTION and
-/// [`crate::indicator::Indicator::of_sort`] draws it, because the face this
-/// tree ships has no glyph for either arrow. This stays for the five example
-/// screens that hand-roll their own header rows; each of them paints a box
-/// today, which is the debt [`FACELESS`] counts.
-#[must_use]
-pub const fn sort_glyph(dir: Option<bool>) -> Option<&'static str> {
-    match dir {
-        Some(true) => Some(SORT_ASCENDING),
-        Some(false) => Some(SORT_DESCENDING),
-        None => None,
-    }
-}
-
 /// ★★★★★ R1952 — **how many marks this module declares that the face this tree
 /// ships cannot draw.**
 ///
@@ -136,14 +123,17 @@ pub const fn sort_glyph(dir: Option<bool>) -> Option<&'static str> {
 /// mark being drawable by today's face is not a reason for it to stay a
 /// character, and R1952 moved `U+00D7` out of [`crate::config_form`] for
 /// exactly that reason. It is a reason it is not a DEFECT.
-/// ★★★★★ R2057 — **six became four**, and the two that went were the widest
-/// spread: the disclosure twisties, drawn by four painters in this crate and by
-/// an example's tree rows. They are `Indicator::Disclosure` now.
+/// ★★★★★ R2057/R2058 — **six became two**, in two instalments.
 ///
-/// What is left is `SORT_ASCENDING`, `SORT_DESCENDING`, `WINDOW_MAXIMIZE` and
-/// `SELECT_ALL_COMPLETE` — and the last of those is in NEITHER face this tree
-/// carries, so it cannot be repaid by shipping a different one.
-pub const FACELESS: usize = 4;
+/// R2057 took the disclosure twisties, drawn by four painters in this crate and
+/// an example's tree rows. R2058 took the column-sort arrows, whose remaining
+/// callers were four example screens building their own header rows — and with
+/// them the `U+2195` those screens used for an unsorted column.
+///
+/// What is left is `WINDOW_MAXIMIZE` and `SELECT_ALL_COMPLETE`. ⚠ The second
+/// is in NEITHER face this tree carries, so it cannot be repaid by shipping a
+/// different one: it has to become a path, as the checkbox tick already did.
+pub const FACELESS: usize = 2;
 
 #[cfg(test)]
 mod tests {

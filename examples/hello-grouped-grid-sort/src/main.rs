@@ -47,7 +47,7 @@ use pinion_core::external::{
     SchemaArg, SchemaField, int_of,
 };
 use pinion_core::reactive::Owner;
-use pinion_core::scene::{ContainerNode, Rect, TextNode, TextRole};
+use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
@@ -104,9 +104,11 @@ const AGG_KEY: &str = "ggs_aggregates";
 
 const GROUPS: [&str; 6] = ["Mesh", "Texture", "Material", "Sound", "Script", "Prefab"];
 
-/// Unsorted-column marker — `U+2195` (style choice per consumer; the
-/// directional pair is the R886.1 `pinion_widget_paint::glyph` SSOT).
-const ARROW_NONE: &str = "\u{2195}";
+// ★ R2058 — the unsorted-column marker `U+2195` is GONE. It was a per-consumer
+// style choice, which it was entitled to be; what it was not entitled to be is
+// a character the one face this tree renders through cannot draw. An unsorted
+// column now shows no mark, which is what `Indicator::of_sort(None)` answers
+// and what "no direction yet" honestly looks like.
 
 fn row_group(i: usize) -> usize {
     i % GROUPS.len()
@@ -281,8 +283,6 @@ fn use_grid_groups() -> Rc<GroupOrderState> {
 fn column_header_row(sort: Option<(usize, bool)>, theme: &Theme) -> Scene {
     let mut cells: Vec<Scene> = Vec::with_capacity(NCOLS);
     for (c, &name) in COLS.iter().enumerate() {
-        let glyph =
-            pinion_widget_paint::glyph::sort_glyph(col_sort_dir(sort, c)).unwrap_or(ARROW_NONE);
         let styled = |content: String| {
             TextNode::styled(
                 content,
@@ -298,10 +298,26 @@ fn column_header_row(sort: Option<(usize, bool)>, theme: &Theme) -> Scene {
         // derivation, so this header would announce "Name ▲". Until R1547 the
         // a11y builder hid that by stamping the label itself — the second
         // source for a column's name that this round removed.
+        //
+        // ★★★★★ R2058 — and the arrow is a DRAWN mark now. Separate node was
+        // already right; the character was not — `U+25B2` / `U+25BC` with
+        // `U+2195` for unsorted, none of which the one face this tree renders
+        // through carries, so a header showed a `.notdef` box beside its name.
+        // Unsorted draws nothing, which is what `of_sort` answers for it.
         let label = Scene::Text(styled(name.to_string()));
-        let arrow = Scene::Text(styled(glyph.to_string()).with_role(TextRole::Presentational));
+        let mut header = vec![label];
+        if let Some(mark) =
+            pinion_widget_paint::indicator::Indicator::of_sort(col_sort_dir(sort, c))
+        {
+            header.push(pinion_widget_paint::indicator::inline(
+                mark,
+                13,
+                theme.resolve(ColorRole::OnSurface),
+                "the sort direction for this column; the header announces it",
+            ));
+        }
         cells.push(Scene::Container(
-            ContainerNode::new(vec![label, arrow])
+            ContainerNode::new(header)
                 .with_tag(format!("{SORT_TAG}#h{c}"))
                 .with_layout(
                     LayoutStyle::new()
@@ -668,15 +684,12 @@ mod tests {
         );
     }
 
-    /// R1547 — every painted text in `scene`, in DFS pre-order.
-    fn painted_texts(scene: &Scene, out: &mut Vec<String>) {
-        match scene {
-            Scene::Text(t) => out.push(t.content.to_string()),
-            Scene::Container(c) => c.children.iter().for_each(|ch| painted_texts(ch, out)),
-            Scene::Scroll(sc) => painted_texts(sc.content.as_ref(), out),
-            _ => {}
-        }
-    }
+    // ★ R2058 — a hand-written DFS over every painted string lived here, and
+    // the compiler found it dead the moment the premise below started asking
+    // for a MARK. Second time in this round: the helper existed to serve a
+    // string comparison and nothing else. `indicator::marks_in` replaces it and
+    // walks with the framework's own traversal, so a node kind that grows
+    // children is not a place the census silently stops looking.
 
     /// R1547 §5.40 — a `columnheader`'s announced name is the column's LABEL,
     /// even while a sort glyph is drawn beside it.
@@ -692,11 +705,22 @@ mod tests {
             let grid = use_grid_data();
             grid.set_sort(Some((0, true)));
             let scene = view(None, &Frame::default());
-            let mut painted = Vec::new();
-            painted_texts(&scene, &mut painted);
+            // ★★★★★ R2058 — the premise asks for the MARK. It used to look for
+            // `U+25B2` in the painted text, which the one face this tree
+            // renders through cannot draw: the premise was true and the header
+            // showed a `.notdef` box beside its name. There is no string to be
+            // right about now.
+            //
+            // ⚠ CONTAINS, not equals: this screen is a GROUPED grid, so its
+            // group headers draw twisties beside the column's sort arrow. An
+            // equality here would be asserting how many other marks the screen
+            // happens to have, which is not what this premise is about — and
+            // measured, it fails the moment a group header is on the frame.
+            let marks = pinion_widget_paint::indicator::marks_in(&scene);
             assert!(
-                painted.iter().any(|t| t.contains('\u{25B2}')),
-                "premise: the active sort column paints its direction glyph",
+                marks
+                    .contains(&pinion_widget_paint::indicator::Indicator::Sort { ascending: true }),
+                "premise: the active sort column paints its direction, among {marks:?}",
             );
             let mut nodes = vec![AccessNode::new(
                 format!("{SORT_TAG}#h0"),

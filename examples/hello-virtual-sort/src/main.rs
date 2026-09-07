@@ -178,23 +178,43 @@ fn build_row(source: usize, theme: &Theme, selected: Option<usize>) -> Scene {
 /// sort on click. Tagged `"vsort#cycle"` (R51.42 composite) so a click
 /// routes to the [`ViewSortFilterExternal`] anchor.
 fn sort_header(sort: Option<bool>, filter: Option<usize>, theme: &Theme) -> Scene {
-    // R886.1 — directional pair from the glyph SSOT; the unsorted
-    // marker stays a per-consumer style choice.
-    let arrow = pinion_widget_paint::glyph::sort_glyph(sort).unwrap_or("\u{2195}");
+    // ★★★★★ R2058 — the direction is a DRAWN mark beside the words. It was
+    // `U+25B2` / `U+25BC` with `U+2195` for unsorted, and the one face this
+    // tree renders through carries none of the three, so every state of this
+    // bar showed a `.notdef` box inside its sentence — and therefore inside
+    // what a screen reader reads out. Unsorted draws nothing, which is what
+    // "no direction yet" honestly looks like and what `of_sort` answers.
     let filter_label = match filter {
         Some(c) => CATEGORIES[c % CATEGORIES.len()],
         None => "All",
     };
-    let text = format!("Sort {arrow}   \u{00B7}   Filter: {filter_label}");
-    let label = Scene::Text(TextNode::styled(
-        text,
-        Rect::default(),
-        TextStyle::new()
-            .with_size_px(14)
-            .with_fg(theme.resolve(ColorRole::OnSurface)),
-    ));
+    let styled = |content: String| {
+        Scene::Text(TextNode::styled(
+            content,
+            Rect::default(),
+            TextStyle::new()
+                .with_size_px(14)
+                .with_fg(theme.resolve(ColorRole::OnSurface)),
+        ))
+    };
+    // ⚠ The separators are TIGHTER than the sentence this replaced, and that is
+    // not cosmetic: the bar's box is a constant while its contents are derived,
+    // so the row has no room to grow. A mark box is wider than the character it
+    // replaces, and the first draft of this overflowed that box by 9px — caught
+    // by the containment gate, which names this exact shape. Measured back
+    // under budget rather than argued.
+    let mut children = vec![styled("Sort".to_owned())];
+    if let Some(mark) = pinion_widget_paint::indicator::Indicator::of_sort(sort) {
+        children.push(pinion_widget_paint::indicator::inline(
+            mark,
+            pinion_widget_paint::indicator::Indicator::MIN,
+            theme.resolve(ColorRole::OnSurface),
+            "the sort direction; the words beside it say what is filtered",
+        ));
+    }
+    children.push(styled(format!(" \u{00B7} Filter: {filter_label}")));
     Scene::Container(
-        ContainerNode::new(vec![label])
+        ContainerNode::new(children)
             .with_tag(format!("{SORT_TAG}#{SORT_REGION}"))
             .with_style(BoxStyle::filled(
                 theme.resolve(ColorRole::SurfaceContainerHigh),
