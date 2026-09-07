@@ -115,6 +115,32 @@ def press(app: RpcSubprocess, rect: tuple[int, int, int, int]) -> None:
     app.tick_ms(16)
 
 
+def access(app: RpcSubprocess) -> list[dict]:
+    """Every announced node, which is where a keyboard reader's facts live."""
+    resp = app.request("scene/access", {})
+    assert resp is not None and resp.result is not None, "scene/access must answer"
+    return resp.result.get("nodes", [])
+
+
+def ring(app: RpcSubprocess, limit: int = 40) -> list[str]:
+    """Every stop a keyboard reaches from here, in Tab order.
+
+    ⚠ `focus/next` and not the `Tab` key: measured at R2061, twelve `Tab`
+    presses through the key channel left `focus/get` answering `None` at four
+    destinations, which reads exactly like a screen with no ring at all.
+    """
+    out: list[str] = []
+    for _ in range(limit):
+        app.request("focus/next")
+        app.tick_ms(16)
+        resp = app.request("focus/get")
+        here = (resp.result or {}).get("focused") if resp and resp.result else None
+        if here is None or here in out:
+            break
+        out.append(here)
+    return out
+
+
 def fold_and_enter(app: RpcSubprocess, surface: str, name: str) -> None:
     here = cards(app, surface)
     app.invoke(f"{surface}/select", here[0])
@@ -239,6 +265,95 @@ def body() -> None:
             f"G: ★★★★★ and pressing the first climbs ALL the way, which a "
             f"repeated exit gives one level at a time — {at}",
             at["depth"] == 0,
+        )
+
+        # ★★★★★ R2065 — and the SAME way out, with no pointer at all.
+        #
+        # This screen had no Tab stop of its own: the fifteen a reader met here
+        # were the inspector form's, built by the framework, and measured at
+        # R2061 not one of the painted tags outside that form was in the ring.
+        # So everything above — the door R1982 built, the multi-level climb —
+        # was a door only a mouse could open, and a person put inside a subgraph
+        # by the wire or by somebody else's session was stuck.
+        banner("H — ★★★★★ the way out, by keyboard alone")
+        app.request("focus/set", {"tag": None})
+        app.tick_ms(16)
+        top_ring = ring(app)
+        ok(
+            f"H: ★ at the TOP the trail is no stop, because there is nowhere to "
+            f"go — {[s for s in top_ring if 'crumb' in s]}",
+            not [s for s in top_ring if "crumb" in s],
+        )
+
+        fold_and_enter(app, surface, "by-keyboard")
+        at = standing(app, surface)
+        ok(f"H: one descent deep — {at['depth']}", at["depth"] == 1)
+
+        app.request("focus/set", {"tag": None})
+        app.tick_ms(16)
+        walked = ring(app)
+        trail = [s for s in walked if "crumb" in s]
+        ok(
+            f"H: ★★★★★ inside, a KEYBOARD reaches the trail — ring {walked}",
+            len(trail) == 1,
+        )
+        stop = trail[0]
+        app.request("focus/set", {"tag": stop})
+        app.tick_ms(16)
+        node = {n.get("tag"): n for n in access(app)}.get(stop, {})
+        nav = node.get("navigation") or {}
+        # ⚠⚠ `group`, and NOT the `navigation` a breadcrumb is in WAI-ARIA. This
+        # walk asked for `navigation` first and the SWEEP refused the screen:
+        # `r1725_one_application_has_one_navigation` counts landmarks per
+        # APPLICATION, this tool already publishes one (the shell's rail), and a
+        # second tells a reader it has two navigations — the exact defect that
+        # gate was built against. ⇒ a role that is canonically right for a
+        # WIDGET can be wrong for the application it is assembled into.
+        ok(f"H: ★ it is announced as a row of its own — {node.get('role')}", node.get("role") == "group")
+        ok(
+            f"H: ★★★★★ and arriving on a step does NOT go there — {nav.get('activation')}. "
+            "A cursor that followed would walk a reader out of the subgraph on "
+            "the way past the step they wanted",
+            nav.get("activation") == "explicit",
+        )
+        # ★★★★★ The cursor names a step the trail can GO to, and the roster it
+        # walks is contained in what the trail announces as its children.
+        #
+        # ⚠ Two earlier drafts of this line are worth recording, because each
+        # was refused by a different gate of this tree and both were mine.
+        # `any(node has children)` could not FAIL — the trail always holds the
+        # step a person is standing on, and the line above already established
+        # the node exists. Then `active_descendant.startswith("lab.crumb.up.")`
+        # spelled a painted address, which the address ratchet refused as a
+        # second copy of a composition the screen already publishes. What is
+        # asked now is neither: it is answered entirely out of what the screen
+        # PUBLISHED, it can fail, and it holds the property R2064 paid for
+        # twice — a published roster must not drift from the announced children.
+        members = {m["tag"] for m in nav.get("members") or []}
+        owned = set(node.get("children") or [])
+        ok(
+            f"H: ★ the cursor names a step the trail can go to — "
+            f"{nav.get('active_descendant')} among {sorted(members)}",
+            nav.get("active_descendant") in members,
+        )
+        ok(
+            f"H: ★ and the roster is inside what the trail announces it owns — "
+            f"{sorted(members)} within {sorted(owned)}",
+            members and members <= owned,
+        )
+        before = standing(app, surface)
+        app.key(path=stop, name="ArrowRight")
+        app.tick_ms(16)
+        ok(
+            f"H: ★ walking the trail leaves the person where they were — {before['depth']}",
+            standing(app, surface)["depth"] == before["depth"],
+        )
+        app.key(path=stop, name="Enter")
+        app.tick_ms(32)
+        out = standing(app, surface)
+        ok(
+            f"H: ★★★★★ and pressing it walks them OUT — {before} then {out}",
+            out["depth"] == 0 and out["inside"] is False,
         )
 
         print(f"\n{len(CHECKS)} check(s) held.")

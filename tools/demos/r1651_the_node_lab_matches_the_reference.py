@@ -660,7 +660,14 @@ def body() -> None:
             # blast-radius sweeps of those rounds did not include; the shell's
             # own walks all passed, which is exactly why one screen having two
             # binaries needs both driven.
-            "lab.crumb": 1,
+            # ★★★★★ R2065 — 2, not 1: the row the steps sit in
+            # (`lab.crumb.trail`) joined the box that says where a person is.
+            # It gained one member and lost none, which is the pin doing its
+            # job: R1982's steps were pressable by a pointer and this canvas had
+            # no Tab stop of ANY kind, so the trail is what a keyboard lands on
+            # and the arrows walk. At the opening frame it holds one step and is
+            # not a stop, because there is nowhere to go.
+            "lab.crumb": 2,
             # ★ R1681 — the picked link now carries its own affordances: the
             # endpoint caption (a panel and its run) and the act seat (ditto).
             # Still derived, still not a constant.

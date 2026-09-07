@@ -1543,6 +1543,24 @@ pub const VOICES: &[VoiceSpec] = &[
         role: "status",
         population: Population::One,
     },
+    // ★★★★★ R2065 — the row those steps sit in, which is what a keyboard lands
+    // on. DECLARED rather than merely announced, and the closing audit is why:
+    // this screen asserts that nothing painted is unclassified, but its voice
+    // table is checked FORWARD ONLY — every row here must be announced, with
+    // nothing asserted in the other direction — so a region added and announced
+    // is under no obligation to appear. The sibling capture screen computes the
+    // classified set FROM this table and compares its size against the census,
+    // which is a bijection, and that is exactly why the same kind of addition
+    // went red there and not here.
+    //
+    // ⚠ A `group` and not a `navigation`: this application already publishes one
+    // navigation landmark and `r1725_one_application_has_one_navigation` refuses
+    // a second. See the note beside the node itself.
+    VoiceSpec {
+        tag: "lab.crumb.trail",
+        role: "group",
+        population: Population::One,
+    },
     // The inspector.
     VoiceSpec {
         tag: "lab.inspector",

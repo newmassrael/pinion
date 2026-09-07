@@ -105,6 +105,12 @@ use pinion_core::widgets::fault_injection::{self, Injection, Scope};
 use pinion_core::widgets::overflow;
 use pinion_core::widgets::picker::{Picked, Picker};
 use pinion_core::widgets::radio::RadioState;
+// ⚠ `Landing` is aliased: this screen has an enum of its own by that name (a
+// drag's landing on the canvas), and the two are different subjects. Renaming
+// either would be the larger change for the smaller reason.
+use pinion_core::widgets::roving::{
+    Activation, Axis, Ends, Landing as RovingLanding, Member, Roving, RovingSpec,
+};
 use pinion_core::widgets::scroll::{AutoScroll, ScrollState};
 use pinion_core::widgets::text_edit::{TextEditState, use_text_edit_state};
 use pinion_core::widgets::text_field::TextFieldState;
@@ -1669,6 +1675,16 @@ struct LabState {
     /// the first run: `lab.toolbar.config` stopped being pressable at all. The
     /// floor's extension button opens a menu for exactly this reason.
     toolbar_open: Signal<bool>,
+    /// ★★★★★ R2065 — where the breadcrumb trail's keyboard cursor rests, as an
+    /// index into the steps a person may GO to.
+    ///
+    /// A fact of its own and not a projection of the path: the path says where
+    /// a person IS and this says which step above them their cursor is on, and
+    /// the whole point of the trail is that those differ until they press. It
+    /// is clamped where it is read rather than kept valid, because leaving a
+    /// subgraph shortens the trail under the cursor and every write that can do
+    /// that is a write somewhere else.
+    crumb_cursor: Signal<usize>,
     /// ★★★★★ R1802 — where the palette sits, as a VALUE.
     ///
     /// R1801 gave this screen's specification a placement POLICY — the palette
@@ -2182,6 +2198,10 @@ impl LabState {
             running: Signal::new(false),
             scenario: RefCell::new(scenario::Plan::new()),
             toolbar_open: Signal::new(false),
+            // R2065 — the trail opens with its cursor on the topmost step, so a
+            // reader who Tabs there and presses goes all the way out. Clamped
+            // at read time; nothing here has to keep it valid.
+            crumb_cursor: Signal::new(0),
             palette_at: Signal::new(palette_opens_at()),
             inspector_at: Signal::new(inspector_opens_at()),
             playhead: Signal::new(0.0),
@@ -7760,7 +7780,66 @@ fn crumb_seats(state: &LabState) -> Vec<(usize, Rect)> {
         .collect()
 }
 
-fn canvas_crumb(state: &LabState, ink: Ink, rect: Rect) -> Vec<Scene> {
+/// The tag the breadcrumb TRAIL is addressed by — the row, not a step in it.
+///
+/// ★★★★★ R2065 — the steps have had tags since R1982 and the row had none,
+/// because nothing needed to name it: a pointer presses a chip. A keyboard
+/// cannot, and this is what it lands on.
+const CRUMB_TRAIL_TAG: &str = "lab.crumb.trail";
+
+/// ★★★★★ R2065 — the trail's cursor, or `None` when there is nowhere to go.
+///
+/// `Explicit`, and that is the whole argument for the arm: arriving at a step
+/// must not GO there. This is the one control on this screen whose activation
+/// takes a person out of the tree they are reading, so a cursor that followed
+/// would walk them out of the subgraph on the way past the step they wanted —
+/// the navigation rail's argument, sharper, because there is no way back in
+/// from the keyboard yet.
+///
+/// `None` rather than an empty roster at the top, for R1982's reason one layer
+/// down: the pressable steps appear only when there is somewhere to go, so a
+/// Tab stop that could do nothing must not appear either.
+fn crumb_trail_cursor(state: &LabState) -> Option<Roving> {
+    let seats = crumb_seats(state);
+    if seats.is_empty() {
+        return None;
+    }
+    let mut roving = Roving::new(
+        RovingSpec::new(Axis::Horizontal)
+            .with_ends(Ends::Stop)
+            .with_activation(Activation::Explicit),
+    );
+    roving.seat(
+        seats
+            .iter()
+            .map(|(depth, _)| Member::new(crumb_step_tag(*depth)))
+            .collect(),
+    );
+    // Clamped here rather than kept valid everywhere: leaving a subgraph
+    // shortens the trail under the cursor, and every write that could do that
+    // is a write somewhere else.
+    let at = state.crumb_cursor.get().min(seats.len() - 1);
+    roving.point_at(&crumb_step_tag(seats[at].0));
+    Some(roving)
+}
+
+/// The tag the step for `depth` is addressed by.
+///
+/// A function rather than a `format!` at each site: the paint, the
+/// accessibility tree and the cursor all have to produce it from one rule.
+fn crumb_step_tag(depth: usize) -> String {
+    format!("lab.crumb.up.{depth}")
+}
+
+/// The chips of the breadcrumb, in `origin`'s own coordinates.
+///
+/// ★ R2065 — `origin` was the canvas, always, and is now whatever holds them:
+/// the trail wraps them in a band of its own so a keyboard has one thing to
+/// land on, and a child's rectangle is relative to its parent. One parameter
+/// rather than a second subtraction at the caller, because the offset and the
+/// placement are one decision.
+fn canvas_crumb(state: &LabState, ink: Ink, origin: Rect) -> Vec<Scene> {
+    let rect = origin;
     let local = |r: Rect| Rect::new(r.x - rect.x, r.y - rect.y, r.w, r.h);
     let here = state.path.borrow().depth();
     // ★★★★★ Through `caption::captioned` and NOT a box beside a label. The first
@@ -7822,6 +7901,42 @@ fn canvas_crumb(state: &LabState, ink: Ink, rect: Rect) -> Vec<Scene> {
             chip
         })
         .collect()
+}
+
+/// ★★★★★ R2065 — the breadcrumb as ONE Tab stop, wrapped around its steps.
+///
+/// The steps were pressable from R1982 and reachable by a pointer alone: this
+/// canvas has no Tab stop of any kind, so a keyboard reader who was somehow put
+/// inside a subgraph had no way out that did not go through the wire. The row
+/// is what they land on and the arrows walk its steps.
+///
+/// Pointer-transparent, like every tag on this canvas: a tagged node that takes
+/// the pointer becomes the router's hit target, and every control here is
+/// resolved from COORDINATES by [`Hit::at`]. Focusable only while
+/// [`crumb_trail_cursor`] answers, so the top of the document — where there is
+/// nowhere to go — gains no stop that could do nothing.
+fn crumb_trail(state: &LabState, ink: Ink, rect: Rect) -> Scene {
+    // The band the steps occupy, in the canvas's own coordinates: from the
+    // first seat's left edge to the last one's right.
+    let band = crumb_steps(state).into_iter().fold(
+        Rect::new(rect.x + 12, rect.y + CRUMB_TOP, 0, 24),
+        |acc, (_, _, seat)| {
+            let right = (acc.x + acc.w).max(seat.x + seat.w);
+            Rect::new(acc.x, acc.y, right.saturating_sub(acc.x), acc.h)
+        },
+    );
+    let chips = canvas_crumb(state, ink, band);
+    Scene::Container(
+        ContainerNode::new(chips)
+            .with_tag(CRUMB_TRAIL_TAG.to_owned())
+            .with_layout(LayoutStyle::decoration(Rect::new(
+                band.x - rect.x,
+                band.y - rect.y,
+                band.w,
+                band.h,
+            ))),
+    )
+    .with_focusable(crumb_trail_cursor(state).is_some())
 }
 
 // ── The inspector ───────────────────────────────────────────────────────────
@@ -11588,7 +11703,7 @@ fn canvas_overlays(state: &LabState, theme: &Theme, ink: Ink) -> Vec<Scene> {
     let rect = canvas_rect();
     let local = |r: Rect| Rect::new(r.x - rect.x, r.y - rect.y, r.w, r.h);
     let mut children: Vec<Scene> = launch_gate_panel(state, ink, rect);
-    children.extend(canvas_crumb(state, ink, rect));
+    children.push(crumb_trail(state, ink, rect));
 
     let hint = local(hint_rect());
     children.push(box_at("lab.hint", hint, ink.surface, Some(ink.outline), 8));
@@ -22191,6 +22306,42 @@ impl WidgetCore for NodeLabView {
         if roster_key(&state, key) {
             return true;
         }
+        // ★★★★★ R2065 — the breadcrumb trail, which is this canvas's FIRST Tab
+        // stop of its own. Before it, nothing on this screen was focusable —
+        // the fifteen stops a reader met here were the inspector form's, built
+        // by the framework — so a person put inside a subgraph had no way out
+        // that did not go through the wire.
+        //
+        // A chord the trail does not navigate by falls THROUGH, so the host's
+        // rail keeps the presses it was aimed at.
+        if focused == Some(CRUMB_TRAIL_TAG)
+            && let Some(mut roving) = crumb_trail_cursor(&state)
+        {
+            let landing = roving.key(key);
+            let Some(at) = roving.cursor() else {
+                return false;
+            };
+            let depth = crumb_seats(&state).get(at).map(|(depth, _)| *depth);
+            match landing {
+                Some(RovingLanding::Moved { .. }) => {
+                    state.crumb_cursor.set(at);
+                    if let Some(name) = depth.and_then(|d| state.breadcrumb().get(d).cloned()) {
+                        state.say(Utterance::unchanged(format!("go back to {name}")));
+                    }
+                    return true;
+                }
+                // ★ Through the SAME function the release arm calls, so the way
+                // out a pointer takes and the way out a keyboard takes cannot
+                // become two behaviours.
+                Some(RovingLanding::Chosen(_)) => {
+                    if let Some(depth) = depth {
+                        climb_to(&state, depth);
+                    }
+                    return true;
+                }
+                _ => return false,
+            }
+        }
         // ★★★★★ R2050 — the address's own inverse, not a prefix typed here.
         if let Some(row) = focused.and_then(address::form_control_key) {
             if state.picking.get().is_none() && Picker::opens(key) && chooses_one(&state, row) {
@@ -25468,14 +25619,39 @@ fn gate_access(state: &LabState) -> Vec<AccessNode> {
     // difference is exactly what this round built: before it, the whole chip
     // was a statement and there was no way out of a subgraph that did not go
     // through the wire.
+    // ★★★★★ R2065 — the TRAIL, which owns those steps and publishes the cursor
+    // its arrows move. It is the node a keyboard lands on: the steps are inside
+    // it, the way a rail's seats are inside the rail. Announced even at the
+    // top, where it holds only the step a person is standing on — a trail of
+    // one is still where they are — while the STOP appears only when there is
+    // somewhere to go.
+    //
+    // ⚠⚠★★★★★ A `Group` and NOT `Navigation`, and the sweep is what said so.
+    // A breadcrumb IS `navigation` in WAI-ARIA, which is why the first draft
+    // said it — and `r1725_one_application_has_one_navigation` refused the
+    // screen at once: this application already publishes one navigation
+    // landmark, the shell's rail, and a second one tells a reader the tool has
+    // two navigations. That is the exact defect R1725 measured in the floor
+    // (a placed window's bars stay in the tree beside the host's) and built
+    // that gate against. ⇒ **a role that is canonically right for a WIDGET can
+    // be wrong for the APPLICATION it is assembled into**, and a landmark is
+    // where that bites, because landmarks are counted per application.
+    let mut trail = AccessNode::new(CRUMB_TRAIL_TAG.to_owned(), AriaRole::Group)
+        .with_name("Where you are")
+        .with_child("lab.crumb");
     for (depth, name, _) in crumb_steps(state) {
         if depth < state.path.borrow().depth() {
+            trail = trail.with_child(crumb_step_tag(depth));
             nodes.push(
-                AccessNode::new(format!("lab.crumb.up.{depth}"), AriaRole::Button)
+                AccessNode::new(crumb_step_tag(depth), AriaRole::Button)
                     .with_name(format!("go back to {name}")),
             );
         }
     }
+    if let Some(cursor) = crumb_trail_cursor(state) {
+        trail = trail.with_navigation(&cursor);
+    }
+    nodes.push(trail);
     // ★★★★★ R1691 — **the toast, and the sweep is what found it.** It is the
     // one place several of this screen's operations report what they did (the
     // export, the script, the reset that put something back), so a reader who
