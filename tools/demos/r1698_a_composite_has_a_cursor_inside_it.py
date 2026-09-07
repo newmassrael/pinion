@@ -267,7 +267,11 @@ def capture(app: RpcSubprocess) -> None:
     # heading must not reorder the capture. Folding it into the loop below would
     # have made that assertion say `follows` about it.
     app.request("focus/set", {"tag": "pv.list.header"})
-    app.tick(16)
+    # ⚠ `tick_ms`, not `tick` — the sites around this one read `tick(16)` and
+    # mean one frame, which is sixteen SECONDS. Copying the local style is how
+    # that spelling spreads; the ratchet refused this push over exactly one
+    # added site, which is the gate doing its job.
+    app.tick_ms(16)
     nodes, _ = tree(app)
     head_nav = nodes["pv.list.header"].get("navigation")
     ok(
