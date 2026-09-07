@@ -3327,8 +3327,59 @@ impl ResetScope {
         !matches!(self, Self::View)
     }
 
+    /// ★★★★★ R2072 — whether this scope restores something **the specification
+    /// describes**, which is the ROOT graph and only that.
+    ///
+    /// Three of the five do: which cards exist, where they sit, and how they
+    /// are wired all come out of [`crate::spec`], and `spec` is a description
+    /// of the graph this tool opens with. A group definition is something a
+    /// person MADE; nothing describes its opening state, so there is nothing
+    /// for these three to put back while standing in one.
+    ///
+    /// The other two are not about the specification at all: the field reset
+    /// asks each form whether it was edited, which is a question a form answers
+    /// about itself in any tree, and the view reset is pan and zoom.
+    const fn root_only(self) -> bool {
+        matches!(self, Self::Nodes | Self::Layout | Self::Links)
+    }
+
+    /// ★★★★★ R2072 — whether this reset has anything to restore **where the
+    /// person is standing**, and the sentence to say when it has not.
+    ///
+    /// The `may_*` idiom this tree uses for exactly this shape (`may_enter`,
+    /// `may_relink`): the affordance's condition, the verb's guard and the
+    /// wire's refusal are **one call**, so they cannot answer differently. Three
+    /// separate `if state.inside()` guards was what this looked like an hour
+    /// into R2072, and the third path — the wire — still answered *links back
+    /// to how it opened* over a verb that had done nothing.
+    ///
+    /// # Errors
+    ///
+    /// The sentence to put in front of whoever asked. Silence is not an option
+    /// here: R1699 measured twenty-two presses that changed nothing painted,
+    /// and this repository's answer to that has been the same every time — a
+    /// refusal reaches a person too.
+    fn may_apply(self, state: &LabState) -> Result<(), String> {
+        if self.root_only() && state.inside() {
+            return Err(format!(
+                "{} puts back the graph this tool opened with, and you are \
+                 inside a part of it — come out first",
+                self.wire()
+            ));
+        }
+        Ok(())
+    }
+
     /// Whether the screen differs from what it opened as, in this scope.
+    ///
+    /// ★★★★★ R2072 — **asked through [`Self::may_apply`] first**, which is the
+    /// same call the verb makes: a scope with nothing to restore where the
+    /// person is standing has not "changed", so its affordance is absent rather
+    /// than promising an act that would be refused.
     fn changed(self, state: &LabState) -> bool {
+        if self.may_apply(state).is_err() {
+            return false;
+        }
         match self {
             // ★★ R1682 — by IDENTITY, not by re-deriving the opening set from
             // what the cards are currently called. A card is a stray when
@@ -3361,22 +3412,35 @@ impl ResetScope {
             // where the specification applies" is a question about the PATH,
             // and the path is what a person moved.
             Self::Nodes => {
-                !state.inside() && {
-                    let cards = state.cards();
-                    let opened = state.opened_at.borrow();
-                    cards.len() != spec::NODES.len()
-                        || cards.iter().any(|node| {
-                            opened
-                                .get(&state.address_of(*node))
-                                .and_then(|born| born.opened_as.as_deref())
-                                != Some(state.name_of(*node)).as_deref()
-                        })
-                }
+                let cards = state.cards();
+                let opened = state.opened_at.borrow();
+                cards.len() != spec::NODES.len()
+                    || cards.iter().any(|node| {
+                        opened
+                            .get(&state.address_of(*node))
+                            .and_then(|born| born.opened_as.as_deref())
+                            != Some(state.name_of(*node)).as_deref()
+                    })
             }
             // ★ R1679 — over EVERY card, against where each came into being.
             // The population was `spec::NODES`, which cannot see a card the
             // palette added: measured, dragging one moved it 60 by 36 and this
             // answered false.
+            // ★★★★★ R2072 — **on the root only**, for the same reason again, and
+            // this one was measured rather than reasoned by analogy. A card
+            // carries its opening placement with it when it is folded into a
+            // definition (R2071), so this looked meaningful in here — but what
+            // the record holds is where the card was born IN THE ROOT, and a
+            // definition's cards sit around their own origin. Driven, standing
+            // inside a freshly folded part: the two cards sit at `(0,-133)` and
+            // `(0,133)` and this reset moved them to `(10,60)` and `(10,326)`,
+            // which are the specification's ROOT coordinates.
+            //
+            // ⚠ What a person inside a definition probably wants — "put these
+            // back where they were when the part was made" — is a record
+            // nothing keeps. Absent is the honest answer until something does;
+            // an affordance that restores the wrong tree's geometry is worse
+            // than none, and the debt says which record would be needed.
             Self::Layout => state
                 .cards()
                 .into_iter()
@@ -3384,6 +3448,14 @@ impl ResetScope {
             // The form answers for itself — values and shape both. See
             // `ConfigForm::edited`, which is where that question belongs.
             Self::Fields => state.forms.borrow().values().any(ConfigForm::edited),
+            // ★★★★★ R2072 — **on the root only**, the same rule and the same
+            // reason as `Self::Nodes` above: `spec::LINKS` describes the
+            // opening graph, which is the root's, and a definition is not in
+            // it. Driven before it was gated — standing inside a freshly folded
+            // part, this reset found none of that definition's two wires in the
+            // specification and dropped BOTH, including the pair that carries
+            // its interface. A "restore" into a tree the specification never
+            // described is not a restore.
             Self::Links => {
                 let doc = state.doc.borrow();
                 let Some(tree) = doc.tree(state.here()) else {
@@ -3408,6 +3480,13 @@ impl ResetScope {
 
     /// Put this scope back to what the screen opened with.
     fn apply(self, state: &Rc<LabState>) {
+        // ★★★★★ R2072 — the verb asks the SAME call the affordance asked, so a
+        // path that reaches this without the affordance — the wire, by name —
+        // cannot get an act the control would have hidden. The sentence is the
+        // caller's to say; this one only refuses to act.
+        if self.may_apply(state).is_err() {
+            return;
+        }
         match self {
             Self::Nodes => put_node_set_back(state),
             Self::Layout => put_cards_back(state),
@@ -3523,15 +3602,11 @@ impl ResetScope {
 /// only question there was to ask before names could change — deleted the very
 /// card whose name this scope exists to put back.
 fn put_node_set_back(state: &Rc<LabState>) {
-    // ★★★★★ R2071 — the same root-only rule its affordance is gated by
-    // (`ResetScope::changed`), said here too rather than trusted to the caller:
-    // a person reaches this through the affordance, but the wire reaches it by
-    // name, and a verb that is inert on one path and destructive on the other
-    // is two behaviours under one word. Inside a definition there is no
-    // specification to put back, so there is nothing this can honestly do.
-    if state.inside() {
-        return;
-    }
+    // ⚠ The root-only rule is NOT repeated here. R2071 wrote it into this
+    // function and R2072 found the same sentence in three places and the wire
+    // still lying over the top of them; it is one derivation now
+    // (`ResetScope::may_apply`), asked by the affordance, by `apply` above this
+    // call, and by the wire. This function's only caller is that `apply`.
     let strays: Vec<NodeId> = state
         .cards()
         .into_iter()
@@ -3611,6 +3686,8 @@ fn put_node_set_back(state: &Rc<LabState>) {
 ///
 /// One function because the two halves are one operation — see [`Placement`].
 fn put_cards_back(state: &Rc<LabState>) {
+    // ⚠ The root-only rule lives in `ResetScope::may_apply` and is asked by the
+    // `apply` that is this function's only caller — see `put_node_set_back`.
     for node in state.cards() {
         let Some(opened) = state
             .opened_at
@@ -16405,6 +16482,23 @@ impl ExternalIntrospect for LabOracle {
                             ResetScope::ALL.map(ResetScope::wire).join(" / ")
                         ))
                     })?;
+                // ★★★★★ R2072 — **asked before it is done, and refused out
+                // loud.** This said *<scope> back to how it opened* whatever
+                // happened, so once the three root-only scopes learned to do
+                // nothing inside a definition, the wire reported a restore that
+                // had not occurred — a driver, and the person reading the
+                // toast, were both told the graph had been put back.
+                //
+                // Found by this round's own closing audit rather than by a
+                // gate, which is why the audit asks *what did this round make
+                // invisible*: the guard was added to the verbs first, and a
+                // silent verb under a sentence that always speaks is a lie with
+                // no failing test.
+                if let Err(why) = scope.may_apply(&state) {
+                    let said = Utterance::refused(&why);
+                    state.say(said.clone());
+                    return Err(InvokeError::rejected(said.into_clause()));
+                }
                 scope.apply(&state);
                 state.say(Utterance::done(format!(
                     "{} back to how it opened",

@@ -288,6 +288,18 @@
       ]
     },
     {
+      "name": "debt-a-part-has-no-opening-state-to-be-put-back-to",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "rank": "ordinary",
+      "why": [
+        "links analyzer-behaviour-canon-is-the-standalone-prototype, debt-canon-gui-surface-census"
+      ]
+    },
+    {
       "name": "debt-a-pinned-font-tree-is-made-per-demo-and-never-removed",
       "substituted": false,
       "blocked_by": "buildable",
@@ -345,18 +357,6 @@
       "rank": "ordinary",
       "why": [
         "links debt-canon-gui-surface-census"
-      ]
-    },
-    {
-      "name": "debt-a-reset-restores-the-root-graph-into-whatever-tree-a-person-stands-in",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "rank": "ordinary",
-      "why": [
-        "links analyzer-debt-repayment-loop, debt-canon-gui-surface-census"
       ]
     },
     {

@@ -7636,6 +7636,135 @@ fn r2071_unfolding_a_part_gives_its_cards_back_their_settings() {
     });
 }
 
+/// ★ R2072 — the links of the tree on screen, as pairs of card names.
+///
+/// By NAME and not by [`pinion_node_graph::LinkId`], because what this round is
+/// about is whether a reset **re-authors** somebody's wires: a link that was
+/// dropped and drawn again is a different id and the same wire, and it is the
+/// wire a person cares about.
+fn links_here(state: &LabState) -> Vec<(String, String)> {
+    let doc = state.doc.borrow();
+    let Some(tree) = doc.tree(state.here()) else {
+        return Vec::new();
+    };
+    let mut out: Vec<(String, String)> = tree
+        .links()
+        .iter()
+        .map(|l| (state.name_of(l.from.node), state.name_of(l.to.node)))
+        .collect();
+    out.sort();
+    out
+}
+
+/// ★ R2072 — where each card of the tree on screen sits.
+fn places_here(state: &LabState) -> Vec<(NodeId, i32, i32)> {
+    let doc = state.doc.borrow();
+    let Some(tree) = doc.tree(state.here()) else {
+        return Vec::new();
+    };
+    let mut out: Vec<(NodeId, i32, i32)> =
+        tree.nodes().map(|node| (node.id, node.x, node.y)).collect();
+    out.sort();
+    out
+}
+
+/// ★ R2072 — stand inside a freshly folded part, and answer what is in there.
+fn inside_a_part(state: &std::rc::Rc<LabState>) -> NodeId {
+    let pair: Vec<NodeId> = state.cards().into_iter().take(2).collect();
+    state
+        .selection
+        .set(pinion_core::selection::Selection::group(pair));
+    super::group_selection(state, "part").expect("two cards make a subgraph");
+    let part = state.node_of("part").expect("the instance");
+    super::enter_card(state, part).expect("go inside");
+    part
+}
+
+/// ★★★★★ R2072 — **a reset does not restore the ROOT graph into whatever tree a
+/// person is standing in.**
+///
+/// `debt-a-reset-restores-the-root-graph-into-whatever-tree-a-person-stands-in`.
+/// What the four graph resets put back is the opening graph, and the opening
+/// graph is the one [`crate::spec`] describes — the ROOT's. The judgement and
+/// the act were both made wherever a person happened to be standing, so inside
+/// a group definition the links reset compared that definition's wires against
+/// the root's specification, found none of them, and **dropped every one**.
+///
+/// ⚠ R2071 gated the node-set reset for this reason and left this one, because
+/// the gate that surfaced that one cannot see this one: it asks whether an
+/// affordance that is painted would CHANGE the screen, and here the judgement
+/// and the act are wrong in the SAME direction — painted, and it does change
+/// the screen, by destroying work. ⇒ **a green gate is not the same as a right
+/// screen**, and what a gate does not ask has to be asked somewhere.
+#[test]
+fn r2072_a_reset_leaves_a_definitions_own_graph_alone() {
+    use pinion_core::external::{ExternalIntrospect, IntrospectValue};
+
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+        inside_a_part(&state);
+
+        let wires = links_here(&state);
+        let places = places_here(&state);
+        assert!(
+            !wires.is_empty(),
+            "★ the fold put a wire inside the definition, which is what makes \
+             the rest of this a statement about the defect"
+        );
+
+        super::ResetScope::Links.apply(&state);
+        assert_eq!(
+            links_here(&state),
+            wires,
+            "★★★★★ the links reset reached into the definition and re-authored \
+             its wires against the ROOT's specification. What it restores is \
+             the opening graph, and a definition is not in it"
+        );
+
+        super::ResetScope::Layout.apply(&state);
+        assert_eq!(
+            places_here(&state),
+            places,
+            "★★★★★ and the layout reset moved the definition's cards to the \
+             positions its own cards were BORN at in the root — a definition's \
+             cards sit around their own origin"
+        );
+
+        // ★★★★★ AND THE WIRE IS TOLD, rather than being answered *links back to
+        // how it opened* over a verb that did nothing. Silence and a cheerful
+        // sentence are the two ways a refusal goes missing, and this screen has
+        // paid for the second one before (R1699: twenty-two presses that
+        // changed nothing painted).
+        let mut oracle = super::LabOracle::new();
+        oracle.attach(std::rc::Rc::clone(&state));
+        for scope in super::ResetScope::ALL {
+            let asked = oracle.invoke("reset", IntrospectValue::Text(scope.wire().to_owned()));
+            if scope.root_only() {
+                let why = asked.expect_err(&format!(
+                    "★★★★★ `reset {}` inside a definition must REFUSE, not \
+                     report a restore that did not happen",
+                    scope.wire()
+                ));
+                assert!(
+                    format!("{why:?}").contains("inside a part"),
+                    "★ and the refusal says WHY, in this screen's own words — \
+                     {why:?}"
+                );
+            } else {
+                asked.unwrap_or_else(|why| {
+                    panic!(
+                        "★ `reset {}` is not about the specification, so it \
+                         works in any tree — {why:?}",
+                        scope.wire()
+                    )
+                });
+            }
+        }
+    });
+}
+
 /// ★★★★★ R2071 — **a document saved before this round still opens**, and its
 /// rows land on the tree they can only have meant.
 ///

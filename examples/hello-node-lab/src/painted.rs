@@ -1189,6 +1189,20 @@ fn owning_pane(tag: &str) -> Option<Rect> {
     None
 }
 
+/// ★★★★★ R2072 — whether a tag names one of the reset seats that is painted
+/// **only when it would do something**.
+///
+/// Derived from `ResetScope::gated`, not from a list written here, so a scope
+/// that stops being conditional stops being excluded in the same act. The
+/// unconditional view reset is deliberately NOT one of these: it is chrome, it
+/// is always there, and it belongs under the floor.
+fn is_conditional_reset(tag: &str) -> bool {
+    super::ResetScope::ALL
+        .into_iter()
+        .filter(|scope| scope.gated())
+        .any(|scope| tag == format!("lab.reset.{}", scope.wire()))
+}
+
 /// Whether a tag names something drawn INSIDE the canvas viewport, as opposed
 /// to chrome around it. Graph content can legitimately be off-screen; chrome
 /// cannot.
@@ -1329,35 +1343,56 @@ fn assert_reachable(when: &str, state: &LabState, shot: &Painted, size: (u32, u3
     //
     // ⚠ `is_graph_content` is the same predicate the forward check grants by,
     // so the two halves cannot disagree about which controls are the graph's.
-    let chrome = controls
-        .iter()
-        .filter(|(tag, _)| !is_graph_content(tag))
-        .count()
+    //
+    // ⚠⚠ R2072 — **and NOT the conditional reset seats**, which is a correction
+    // to the sentence above rather than a new exclusion. R2068 listed "the
+    // reset seats" among the things that do not vary with the tree being shown,
+    // and that was true when it was written and is not true now: three of the
+    // four are gated on a specification that describes the ROOT graph, so
+    // standing inside a definition they are correctly absent (R2071 for the
+    // node set, R2072 for the links and the layout). Counting them made this
+    // floor fall every time a gate started being right — 20, then 19, then 17 —
+    // which is a pin that ratchets DOWNWARD on correct work and can therefore
+    // never catch the thing it exists for.
+    //
+    // ★ The division of labour is clean, and each half is now the whole of its
+    // question: `r1679_a_reset_affordance_is_painted_exactly_when_it_would_do_
+    // something` owns the conditional resets (painted exactly when pressing
+    // them would change the screen), and this floor owns the chrome that is
+    // there whatever the graph is.
+    let counted = |tag: &String| !is_graph_content(tag) && !is_conditional_reset(tag);
+    let chrome = controls.iter().filter(|(tag, _)| counted(tag)).count()
         + shot
             .reachable
             .keys()
-            .filter(|tag| must_answer(tag).is_some() && !is_graph_content(tag))
+            .filter(|tag| must_answer(tag).is_some() && counted(tag))
             .count();
-    // ⚠ NINETEEN, and it is the measured minimum over the sweep's states rather
-    // than a round number: the state that folds the inspector into its strip
-    // puts that pane's controls away legitimately and reports 20, and the state
-    // standing inside a subgraph reports 19. Pinned AT the minimum so any
-    // further drop fails — the shape this file's family pins already use.
+    // ★ R2072 — PRINTED, every state, so the round that moves this pin reads
+    // the numbers instead of guessing which state is the minimum. R2070 kept a
+    // measurement as a gate for the same reason.
+    println!("chrome {chrome} — {when}");
+    // ⚠ SIXTEEN, the measured minimum over the sweep's states rather than a
+    // round number. Pinned AT the minimum so any further drop fails — the shape
+    // this file's family pins already use.
     //
-    // ★★★★★ R2071 — 20 -> 19, and the one that left is the node-set reset
-    // standing inside a subgraph. It is gated on being CHANGED, and the graph
-    // it restores is the one the specification describes, which is the root's:
-    // inside a definition the specification has no opinion, so the affordance
-    // is absent rather than promising something it cannot do. It used to be
-    // painted there always — the card count differs from the specification's by
-    // construction — and pressing it renamed the definition's interface nodes
-    // to unrelated root cards' opening names. See `ResetScope::changed`.
+    // ★★★★★ R2072 — 19 -> 16, and the number is a DIFFERENT KIND of number now.
+    // The three moves this pin has made — 20 at R2068, 19 at R2071, and it
+    // would have been 17 here — were all the same thing happening: a gated
+    // reset seat correctly stopped being painted, and the floor, which counted
+    // those seats, fell. A pin that ratchets downward every time a gate starts
+    // being right is a pin that can never catch what it exists for. So the
+    // POPULATION was corrected instead of the number: the conditional resets
+    // are `r1679_a_reset_affordance_is_painted_exactly_when_it_would_do_
+    // something`'s to hold, and this floor holds the chrome that is there
+    // whatever the graph is.
     //
-    // ⚠ A pin refusing an honest DROP is the same shape as a pin refusing an
-    // honest improvement (R2070's short-box budget), and the answer is the
-    // same: move the pin and say what moved it.
+    // ★ Measured over all 51 swept states with the assertion lifted, which is
+    // how a minimum is found rather than guessed: **12 of them report 16**, and
+    // they are not one family — standing inside a subgraph at three sizes, and
+    // both panels folded to their strips. A number twelve independent states
+    // agree on is a floor; a number one state reports is that state's.
     assert!(
-        chrome >= 19,
+        chrome >= 16,
         "{when}: only {chrome} chrome control(s) — {} painted and {scrolled} \
          one scroll away in total. A screen that stops painting the controls \
          that do NOT depend on the graph must fail here, not report a smaller \
