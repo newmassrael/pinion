@@ -266,14 +266,21 @@ def capture(app: RpcSubprocess) -> None:
     # cursor is the ONE on this screen that does not follow: arriving at a
     # heading must not reorder the capture. Folding it into the loop below would
     # have made that assertion say `follows` about it.
-    app.request("focus/set", {"tag": "pv.list.header"})
+    #
+    # ⚠ Taken OUT OF THE RING rather than spelled a second and third time. The
+    # list above is this check's claim — R1708's whole point is that a ring is
+    # asserted by name — but repeating the name to drive it would be three
+    # unchecked copies of one address instead of one, which is what the painted
+    # address ratchet counts. A typo here now fails on the assertion above.
+    head = walked[walked.index("pv.list") + 1]
+    app.request("focus/set", {"tag": head})
     # ⚠ `tick_ms`, not `tick` — the sites around this one read `tick(16)` and
     # mean one frame, which is sixteen SECONDS. Copying the local style is how
     # that spelling spreads; the ratchet refused this push over exactly one
     # added site, which is the gate doing its job.
     app.tick_ms(16)
     nodes, _ = tree(app)
-    head_nav = nodes["pv.list.header"].get("navigation")
+    head_nav = nodes[head].get("navigation")
     ok(
         "E: the heading row publishes a roster",
         head_nav is not None and len(head_nav["members"]) >= 2,
