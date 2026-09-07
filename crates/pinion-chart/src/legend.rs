@@ -651,7 +651,16 @@ fn toggle_row(
     let size = style.label_size_px.max(1);
     // A little taller than the swatch so the whole slot is a comfortable
     // click / Tab target; the swatch + label centre inside it.
-    let entry_h = size + 6;
+    //
+    // ★★★★★ R2073 — and **at least as tall as the label it holds**, which is
+    // what `size + 6` stopped being when R2070 made a label's box the
+    // containment rule's answer (21 at this face, where this said 19). The slot
+    // is what a person clicks and what the keyboard seats on, so a slot shorter
+    // than its own label is a target that does not contain what it names. Found
+    // by counting the sites that answer "how tall is a line of this face" with
+    // an addition — the same count R2070 ran, extended to the PITCHES and slots
+    // that must not be smaller than a box.
+    let entry_h = crate::draw::label_box_h(size);
     let zipped = entries.len().min(tags.len());
     let fit = legend_fit(avail, zipped);
     let mut out: Vec<Scene> = entries

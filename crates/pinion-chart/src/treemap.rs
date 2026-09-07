@@ -408,8 +408,16 @@ impl Treemap {
             // In-tile label when the tile is large enough to hold it — drawn in a
             // colour chosen for contrast against the tile fill so it reads on both
             // light and dark palette entries.
-            if p.rect.w >= MIN_LABEL_W && p.rect.h >= size + 6 {
-                let pad = 4;
+            // ★★★★★ R2073 — the height test is **what the label actually
+            // needs**: the pad it is inset by plus the box it is drawn in.
+            // `size + 6` was an independent fourth answer to "how tall is a
+            // line of this face", and once R2070 made the box the containment
+            // rule's answer it under-counted by four — so a tile 20px tall
+            // passed the test and its 21px label box overhung the tile into the
+            // one below. That is what the text-smear ratchet reported as
+            // `'Meshes' over 'Shaders'`.
+            let pad = 4;
+            if p.rect.w >= MIN_LABEL_W && p.rect.h >= pad + label_box_h(size) {
                 children.push(label_node(
                     tile.label.clone(),
                     p.rect.x + pad,

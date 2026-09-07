@@ -561,7 +561,24 @@ pub(crate) fn callout(
     box_tag: String,
 ) -> Vec<Scene> {
     let size = style.label_size_px.max(1);
-    let line_h = size + 6;
+    // ★★★★★ R2073 — **the pitch of a stack is the height of the box it
+    // repeats.** This was `size + 6`, which is a FOURTH way of answering "how
+    // tall is a line of this face" — and a pitch is the one place that answer
+    // must not be independent, because a stack whose step is smaller than its
+    // rows overlaps by construction.
+    //
+    // ⚠ It was 19 against a 17px box and looked fine. R2070 made
+    // [`label_box_h`] delegate to the containment rule every box-holds-its-text
+    // gate measures against, the box became 21, and the pitch did not move:
+    // measured on the running window, `x = 2026-03-02 23:50:00` at y=100 h=21
+    // over `p50  168` at y=119, and that row over `p99  1.4k` at y=138. Twelve
+    // chart walks failed the text-smear ratchet in CI.
+    //
+    // No leading is added on top. A row's box is an upper bound on its ink
+    // rather than the ink itself, so box-to-box IS the gap the old design drew
+    // with `size + 6` around a box that its own text overflowed — pitch 21
+    // leaves the glyphs further apart than 19 did, not closer.
+    let line_h = label_box_h(size);
     let pad = 8;
     let width = TOOLTIP_WIDTH;
     let row_count = u32::try_from(rows.len()).unwrap_or(0) + 1; // header + values
@@ -1504,5 +1521,91 @@ mod tests {
              {short_here:?}, so a chart label paints outside the box that owns \
              it. That is the debt's claim, and this is where it is judged"
         );
+    }
+
+    /// ★★★★★ R2073 — **a stack of labels never overlaps its own rows**, asked
+    /// here rather than only by a running window.
+    ///
+    /// # Why this test exists, which is the round it comes from
+    ///
+    /// R2070 made [`label_box_h`] delegate to the containment rule and reported
+    /// that exactly one assertion in the tree moved. It had run
+    /// `cargo test --workspace`, 359 blocks green — and the evidence was not in
+    /// that population **by construction**: the ratchet that catches two text
+    /// runs painted on top of each other lives in the demo sweep, which reads a
+    /// running window's `scene/text_painted`, and this host cannot run the 723
+    /// walks of it. CI could, and twelve chart walks failed.
+    ///
+    /// ⇒ ★★★★★ AN ABSENCE MEASURED IN A POPULATION THAT CANNOT CONTAIN THE
+    /// EVIDENCE IS NOT A MEASUREMENT. The repair is not to remember harder: it
+    /// is for the crate that PRODUCES the geometry to assert the property, so
+    /// the sweep stops being the only witness to a rule this crate can check
+    /// with no window at all.
+    ///
+    /// What it asks is the smear ratchet's own question, over the two stacks
+    /// this crate lays out: no two label boxes of one callout intersect. Over
+    /// every face the charts here use, so a pitch that is right at 13 and wrong
+    /// at 17 fails.
+    #[test]
+    fn r2073_a_stack_of_labels_never_overlaps_its_own_rows() {
+        for px in [9_u32, 10, 11, 12, 13, 14, 17] {
+            let style = ChartStyle {
+                label_size_px: px,
+                ..ChartStyle::default()
+            };
+            let rows: Vec<CalloutRow> = ["p50  168", "p90  402", "p99  1.4k"]
+                .into_iter()
+                .enumerate()
+                .map(|(i, text)| CalloutRow {
+                    text: text.to_owned(),
+                    color: style.label,
+                    tag: format!("chart.inspect.value.{i}"),
+                })
+                .collect();
+            let scenes = callout(
+                200.0,
+                600.0,
+                40.0,
+                "x = 2026-03-02 23:50:00",
+                "chart.inspect.header".to_owned(),
+                &rows,
+                &style,
+                "chart.inspect".to_owned(),
+            );
+            // Every text row's box, in the order the callout stacks them.
+            let boxes: Vec<(u32, u32)> = scenes
+                .iter()
+                .filter_map(|scene| match scene {
+                    Scene::Text(t) => {
+                        let (_, top) = t.layout.absolute_position?;
+                        let SizeValue::Px(h) = t.layout.size.height else {
+                            return None;
+                        };
+                        Some((top, h))
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                boxes.len(),
+                rows.len() + 1,
+                "face {px}: the header and every row are placed boxes, which is \
+                 what makes the comparison below about all of them"
+            );
+            for pair in boxes.windows(2) {
+                let [(top, h), (next, _)] = pair else {
+                    unreachable!("windows(2) yields pairs")
+                };
+                assert!(
+                    top + h <= *next,
+                    "★★★★★ face {px}: a callout row's box runs from {top} to \
+                     {} and the next starts at {next}, so the two are painted \
+                     over each other. A stack's pitch is the height of the box \
+                     it repeats — this is the defect twelve chart walks \
+                     reported after R2070 grew the box and left the pitch",
+                    top + h
+                );
+            }
+        }
     }
 }
