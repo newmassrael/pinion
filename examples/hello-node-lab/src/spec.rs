@@ -608,14 +608,36 @@ pub const NODES: &[NodeSpec] = &[
 
 /// The opening links, source first. Seven of them, which is what the toolbar
 /// says and therefore what the canvas has to draw.
+///
+/// ★★★★★ R2074 — **source first means WHO DIALS WHOM, and three of these had
+/// been copied down the way the reference DRAWS them instead.**
+///
+/// The behaviour reference declares its eight wires as `{a, b}` with `a` the
+/// dialler in every one, and a separate flag that reverses only the CURVE —
+/// its own comment says so in as many words: the dial direction can run against
+/// the data, because a subscriber is what reaches for the mesh. Three of ours
+/// were transcribed from the drawing:
+///
+/// | it declares | we had | what was wrong |
+/// |---|---|---|
+/// | `P-02` dials `R-01` | `R-01` dials `P-02` | reversed |
+/// | `P-03` dials `R-01` | `R-01` dials `P-03` | reversed (a muted wire, drawn reversed) |
+/// | `T-02` dials `P-02` | `R-01` dials `T-02` | reversed **and a different partner** |
+///
+/// ⚠ This is not a drawing difference. On this screen the dial direction is the
+/// direction of the type relation, it decides which endpoint a link takes, and
+/// since R1961 it decides **what transport a card speaks**. Read off the model
+/// before this round, `R-01` was the source of three wires and dialled three
+/// things; the reference has it dial **nothing** — every wire arrives at it —
+/// and `T-02`, which dials `P-02` there, dialled nothing here.
 pub const LINKS: &[(&str, &str)] = &[
     ("T-01", "P-01"),
     ("Q-01", "R-01"),
     ("P-01", "R-01"),
     ("S-01", "R-01"),
-    ("R-01", "P-02"),
-    ("R-01", "T-02"),
-    ("R-01", "P-03"),
+    ("P-02", "R-01"),
+    ("T-02", "P-02"),
+    ("P-03", "R-01"),
 ];
 
 /// The link the screen opens with selected, and therefore the only one whose
@@ -748,18 +770,26 @@ pub const FIELDS: &[FieldSpec] = &[
         source: Some("frame"),
         aside: Some("placement"),
     },
-    // ★★★★★ R1716 — worked out from the WIRES. Before this round the row held
-    // an address typed beside the code while the canvas drew three links out of
-    // this card, and the exported configuration shipped the typed one: a node
-    // dialled where nothing listens and missed one it was drawn to reach.
-    FieldSpec {
-        key: "connect.endpoints",
-        ty: "address[]",
-        applies: "hot",
-        value: "tcp/host-a:7449, tcp/host-a:7451",
-        source: Some("wire"),
-        aside: None,
-    },
+    // ★★★★★ R2074 — **the wire-derived `connect.endpoints` row is NOT here any
+    // more, and its absence is the reference's own shape.**
+    //
+    // R1716 put it here, worked out from the WIRES, because the canvas drew
+    // three links out of this card. It drew them because three of [`LINKS`] had
+    // been transcribed the way the reference DRAWS them rather than the way it
+    // DECLARES them — corrected at R2074, every wire arrives at this card and
+    // it dials nothing, so there is nothing for the row to be derived from.
+    //
+    // Measured against the reference rather than reasoned: its own definition
+    // of this card declares three fields — an identifier, a listen address and
+    // an administrative permission pair — and **no connect row at all.** So the
+    // row leaving brings this table closer to the thing it reproduces.
+    //
+    // ★ And the chip is what remains, which is the arrangement R1716 described
+    // in its own words: the key is offered on [`ADDABLE`] "on a card with no
+    // drawn links", and with the wiring corrected the card this screen opens
+    // selected is exactly such a card. The derived row is still reachable — six
+    // of the seven cards dial something — and the sweep now builds its
+    // two-contributor state on one of them.
 ];
 
 /// The keys the inspector offers to add, as the reference's chips.

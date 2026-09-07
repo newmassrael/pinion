@@ -494,6 +494,35 @@ fn r1716_a_card_told_where_it_runs_runs_there_in_the_plan() {
     });
 }
 
+/// ★★★★★ R2074 — **a card that speaks nothing, MADE rather than looked for.**
+///
+/// Two R1961 gates needed such a card and each took whichever opening card
+/// happened to be one. That was `T-02`, and it was one only because
+/// `spec::LINKS` had the router dialling it instead of it dialling `P-02` —
+/// three of those wires had been transcribed the way the reference DRAWS them
+/// rather than the way it DECLARES them. Corrected at R2074, every opening card
+/// speaks something and both gates lost their subject.
+///
+/// A fresh card from the palette speaks nothing yet, and that is a property of
+/// a NEW card rather than of one fixture — so a state built this way cannot go
+/// missing the next time a fixture is corrected. It is also the state a person
+/// actually reaches: the palette is one press.
+fn fresh_card(state: &std::rc::Rc<LabState>) -> NodeId {
+    let before = state.cards();
+    super::add_node(state, Role::Store);
+    let made = *state
+        .cards()
+        .iter()
+        .find(|node| !before.contains(node))
+        .expect("★ the palette put a card on the canvas");
+    assert_eq!(
+        spoken_by(state, made),
+        None,
+        "★ and it speaks nothing yet, which is the state these gates need"
+    );
+    made
+}
+
 /// Take the connect row over and write one address of your own over the seed —
 /// the two acts a person performs to reach a row with two contributors.
 ///
@@ -502,7 +531,14 @@ fn r1716_a_card_told_where_it_runs_runs_there_in_the_plan() {
 /// only door into this on the real screen is the take-over seat followed by a
 /// commit into the box it leaves behind.
 fn share_the_connect_row(state: &std::rc::Rc<LabState>, address: &str) -> Vec<String> {
-    let node = state.active_card().expect("the screen opens on a card");
+    // ★★★★★ R2074 — on a card that DIALS, and selected here rather than taken
+    // from whatever the screen opens on. A row with two contributors needs a
+    // wire-derived half, and once `spec::LINKS` was corrected to the way the
+    // reference DECLARES its wires, the card the screen opens on dials nothing:
+    // every wire arrives at it. The fixture's subject is "a card whose row has
+    // two contributors", which is a property, and this is where it holds.
+    let node = state.node_of("P-02").expect("a card that dials the router");
+    state.selection.set(Selection::one(node));
     let drawn: Vec<String> = super::shown_form(state, node)
         .and_then(|form| {
             form.field("connect.endpoints")
@@ -532,12 +568,29 @@ fn r1717_a_written_address_and_every_drawn_one_stand_in_one_row() {
     let owner = Owner::new();
     owner.run(|| {
         let state = std::rc::Rc::new(state());
-        let node = state.active_card().expect("the screen opens on a card");
         let outside = "tcp/10.0.0.21:7449";
         let drawn = share_the_connect_row(&state, outside);
+        // `share_the_connect_row` selects the card it writes on, so the form
+        // read below is that card's.
+        let node = state
+            .active_card()
+            .expect("it selected the card it wrote on");
+        // ★★★★★ R2074 — **every** drawn address, over whatever the graph draws,
+        // rather than a literal two.
+        //
+        // This demanded that the subject be drawn to MORE THAN ONE peer, which
+        // held only while `spec::LINKS` had the router dialling three cards —
+        // three wires transcribed the way the reference DRAWS them instead of
+        // the way it DECLARES them. Read the reference's own list: no card
+        // dials more than one peer through an authored wire there either, so
+        // "more than one" was never its shape.
+        //
+        // The claim in this test's own name is *a written address and EVERY
+        // drawn one stand in one row*, and every drawn one is what is asserted
+        // below, over the population the graph actually has.
         assert!(
-            drawn.len() >= 2,
-            "the opening card is drawn to more than one peer: {drawn:?}"
+            !drawn.is_empty(),
+            "the card written on is drawn to at least one peer: {drawn:?}"
         );
         let form = super::shown_form(&state, node).expect("a form");
         let row = form.field("connect.endpoints").expect("held");
@@ -593,10 +646,16 @@ fn r1717_an_address_outside_the_graph_warns_and_does_not_block() {
     let owner = Owner::new();
     owner.run(|| {
         let state = std::rc::Rc::new(state());
-        let node = state.active_card().expect("the screen opens on a card");
         let opening = state.defects();
         let outside = "tcp/10.0.0.21:7449";
         let drawn = share_the_connect_row(&state, outside);
+        // ★ R2074 — the card written on, which `share_the_connect_row` selects.
+        // It is a card that DIALS, because the row needs a wire-derived half,
+        // and the card this screen opens on stopped being one when
+        // `spec::LINKS` was read the way the reference declares it.
+        let node = state
+            .active_card()
+            .expect("it selected the card it wrote on");
         let lines: Vec<String> = state
             .gate_lines()
             .into_iter()
@@ -615,8 +674,13 @@ fn r1717_an_address_outside_the_graph_warns_and_does_not_block() {
         // panel answered it in one look; this is that question, in a test.
         let about: Vec<&String> = lines.iter().filter(|line| line.contains(outside)).collect();
         assert_eq!(about.len(), 1, "one line is about it: {said}");
+        // ★ R2074 — the card is the one `share_the_connect_row` writes on,
+        // which is a card that DIALS. It was the router until `spec::LINKS` was
+        // corrected to the way the reference declares its wires; the router
+        // dials nothing now, so a row with two contributors cannot be built
+        // there at all.
         assert_eq!(
-            about[0].matches("R-01").count(),
+            about[0].matches("P-02").count(),
             1,
             "★★★★★ and the card is named ONCE in it: {}",
             about[0]
@@ -1327,12 +1391,20 @@ fn r1969_1_every_declared_link_lands_on_a_card_that_says_where_to_reach_it() {
         .filter(|(_, to)| !listens(to))
         .map(|(from, to)| format!("{from} -> {to}"))
         .collect();
-    // ★ Not zero, and that is the DEBT rather than the assertion being weak.
-    // The canon refuses these; this screen draws them. What is held here is the
-    // size, so a third one cannot arrive unremarked while the debt is open.
+    // ★★★★★ R2074 — **ZERO now, and the fixture is what changed rather than the
+    // rule.** The one blind acceptor was `T-02`, which declares no listen
+    // address and which our `LINKS` had the router dialling; the reference has
+    // `T-02` dial `P-02` instead — reversed AND a different partner — so with
+    // the wires read the way that reference declares them, no declared link
+    // lands on a card that cannot say where to reach it.
+    //
+    // ⚠ `debt-a-listening-node-with-no-address-still-takes-links` is NOT closed
+    // by this: the screen still draws such a link if somebody authors one, and
+    // that is what the debt is about. What went is the instance the OPENING
+    // GRAPH carried, and it went because it was a transcription error.
     assert_eq!(
         blind.len(),
-        1,
+        0,
         "★★★★★ {} declared link(s) land on a card that declares no listen \
          address: {blind:?}. The canon drops such an acceptor from its \
          candidates and names the reason on a toast; while \
@@ -1406,15 +1478,41 @@ fn r1651_the_selected_node_shows_the_fields_the_reference_shows() {
             assert_eq!(held.applies().wire(), want.applies, "{}", want.key);
             assert_eq!(held.value(), want.value, "{}", want.key);
         }
+        // ★★★★★ R2074 — **asked on a card that has the hot row**, which the
+        // card this screen opens selected no longer does.
+        //
+        // The reference is explicit that exactly one key reaches a running node
+        // — the dialled-address row — and this used to be asked of the router
+        // because our fixture drew three wires OUT of it. Read the reference's
+        // own declaration of that card: three fields, and no dialled-address
+        // row at all. Corrected at R2074, the router dials nothing and has no
+        // hot row, so asking it here would be asking a card that cannot answer.
+        //
+        // ⚠ The claim is not weakened, it is moved to where it stands: a card
+        // that DOES dial has exactly one hot row, which is the whole of the
+        // reference's point. A card that dials nothing having none is the same
+        // rule read the other way.
+        let dialler = state.node_of("P-02").expect("a card that dials the router");
+        let dialling_form = super::shown_form(&state, dialler).expect("it has a form");
+        let hot_on_dialler = dialling_form
+            .fields()
+            .iter()
+            .filter(|f| f.applies() == Applies::Hot)
+            .count();
+        assert_eq!(
+            hot_on_dialler, 1,
+            "★ exactly one row reaches a running node, which is the reference's \
+             own point and the reason the badge exists"
+        );
         let hot = form
             .fields()
             .iter()
             .filter(|f| f.applies() == Applies::Hot)
             .count();
         assert_eq!(
-            hot, 1,
-            "★ exactly one row reaches a running node, which is the reference's \
-             own point and the reason the badge exists"
+            hot, 0,
+            "★ and the card that dials NOTHING has none — the hot row is the \
+             dialled address, so its absence here is the same rule"
         );
         let offered: Vec<&str> = form
             .addable()
@@ -1605,9 +1703,15 @@ fn r1651_a_listening_node_takes_as_many_dials_as_reach_it() {
         let state = std::rc::Rc::new(state());
         let router = state.node_of("R-01").expect("on the canvas");
         let (inbound, _) = state.degree(router);
+        // ★★★★★ R2074 — FIVE, and the number is the reference's own once its
+        // wires are read the way it declares them rather than the way it draws
+        // them. Every wire arrives at the router there; its card is labelled
+        // `link · 4` because one of the five is muted, and mute is a concept
+        // `spec::LINKS` does not carry yet (registered, not invented here). It
+        // was three while three of ours pointed the wrong way.
         assert_eq!(
-            inbound, 3,
-            "the opening graph dials the router from three nodes"
+            inbound, 5,
+            "the opening graph dials the router from five nodes"
         );
         // ★★★★★ R1962 — the fourth dialler is a card the PALETTE adds, which is
         // a gesture this screen has, rather than a card already on the canvas.
@@ -1626,8 +1730,8 @@ fn r1651_a_listening_node_takes_as_many_dials_as_reach_it() {
             .rev()
             .find(|n| !before.contains(n))
             .expect("★ the palette put a card on the canvas");
-        super::connect(&state, extra, router).expect("a fourth dial is accepted");
-        assert_eq!(state.degree(router).0, 4, "and the pin took it");
+        super::connect(&state, extra, router).expect("a further dial is accepted");
+        assert_eq!(state.degree(router).0, 6, "and the pin took it");
 
         // And a role that never listens still refuses, by name.
         let publisher = state.node_of("T-01").expect("on the canvas");
@@ -5548,11 +5652,15 @@ fn r1961_a_chosen_transport_outlives_an_unrelated_edit() {
 
         // ★ And the card that has no address of its own is REFUSED rather than
         // silently doing nothing, which is what the escape hatch used to hide.
-        let learner = state
-            .cards()
-            .into_iter()
-            .find(|node| spoken_by(&state, *node).is_none())
-            .expect("★ some card speaks nothing");
+        //
+        // ★★★★★ R2074 — the card is MADE rather than FOUND. It used to be
+        // whichever opening card happened to speak nothing, which was `T-02`
+        // only because `spec::LINKS` had it dialled BY the router instead of
+        // dialling `P-02`; corrected to the reference's own declaration, every
+        // opening card speaks. A fresh card from the palette speaks nothing
+        // yet — that is a property of a new card rather than of one fixture,
+        // so this state cannot go missing again when a fixture is corrected.
+        let learner = fresh_card(&state);
         let why = super::set_pin_transport(&state, learner, "accept", "udp")
             .expect_err("★ a card with no address of its own cannot be given one");
         assert!(
@@ -5601,7 +5709,18 @@ fn r1975_a_chosen_transport_reaches_the_pins_and_the_wires_that_landed() {
         // ★★★★★ Every landing on this card now names the address the card
         // actually has. Written over ALL of them rather than the first, because
         // the defect was per-copy and one copy is not a population.
-        let landings: Vec<Option<String>> = (0..3)
+        // ★ R2074 — over however many wires the graph actually lands here,
+        // ASKED rather than transcribed. It was three while three of
+        // `spec::LINKS` pointed the wrong way; the reference has every wire
+        // arrive at this card, and a population written down as a literal is a
+        // population that goes stale when the fixture is corrected.
+        let landed = state.degree(subject).0;
+        assert!(
+            landed > 1,
+            "★ more than one wire lands here, which is what makes the \
+             per-copy claim below a population rather than one case"
+        );
+        let landings: Vec<Option<String>> = (0..u32::try_from(landed).unwrap_or(0))
             .map(|port| super::endpoint_at(&state, Socket::new(subject, port)))
             .collect();
         assert!(
@@ -5615,7 +5734,7 @@ fn r1975_a_chosen_transport_reaches_the_pins_and_the_wires_that_landed() {
         // an accept pin's type is the landing item's, so a copy left behind is
         // a pin drawn in a transport the card does not speak.
         let doc = state.doc.borrow();
-        let accepting: Vec<Option<Endpoint>> = (0..3_usize)
+        let accepting: Vec<Option<Endpoint>> = (0..landed)
             .map(|port| {
                 doc.signature(ROOT, subject)
                     .and_then(|sig| sig.inputs.get(port).and_then(|p| p.value_type().copied()))
@@ -5635,7 +5754,7 @@ fn r1975_a_chosen_transport_reaches_the_pins_and_the_wires_that_landed() {
                 .filter(|link| link.to.node == subject)
                 .count()
         });
-        assert_eq!(still, 3, "★★★★★ and no wire was cut to do it");
+        assert_eq!(still, landed, "★★★★★ and no wire was cut to do it");
     });
 }
 
@@ -6078,12 +6197,34 @@ fn r1961_the_opening_canvas_speaks_the_addresses_it_carries() {
              card takes its transport from the wire it dials, so the whole arm \
              is untested by this graph",
         );
+        // ★★★★★ R2074 — the unclassified state is REACHED rather than found in
+        // the opening graph, and that is a strengthening rather than a
+        // concession.
+        //
+        // This asserted that some OPENING card speaks nothing, so a graph in
+        // which every card has an address could not pass a default off as a
+        // derivation. The card that satisfied it was `T-02`, which spoke
+        // nothing only because `spec::LINKS` had the router dialling it instead
+        // of it dialling `P-02` — the way the reference DRAWS that wire rather
+        // than the way it DECLARES it. Corrected at R2074 every opening card
+        // speaks, and the reference's own graph is the same.
+        //
+        // ⚠ The concern is real, so the assertion moves to where it stands: the
+        // palette makes such a card in one press, and being address-less is a
+        // property of a NEW card rather than of one fixture.
         assert!(
-            !unspoken.is_empty(),
-            "★★★★★ and the unclassified state has to be reachable too. A graph \
-             in which every card has an address cannot tell a derivation from a \
-             default — which is the thing R1921 forbade and the escape hatch \
-             hid for five rounds",
+            unspoken.is_empty(),
+            "★★★★★ every card the graph OPENS with speaks something, which is \
+             the reference's own shape — {unspoken:?} do not",
+        );
+        let made = fresh_card(&state);
+        assert_eq!(
+            spoken_by(&state, made),
+            None,
+            "★★★★★ and the unclassified state IS reachable — a screen on which \
+             no card can be address-less cannot tell a derivation from a \
+             default, which is the thing R1921 forbade and the escape hatch hid \
+             for five rounds",
         );
 
         r1966_the_canvas_draws_kinds_and_the_pins_draw_wires(&state);
@@ -6192,11 +6333,12 @@ fn r1961_a_card_learns_what_it_speaks_from_the_wire_it_draws() {
     owner.run(|| {
         super::reset_lab_state();
         let state = super::use_lab_state();
-        let learner = state
-            .cards()
-            .into_iter()
-            .find(|node| spoken_by(&state, *node).is_none())
-            .expect("★ some card on the opening canvas speaks nothing");
+        // ★★★★★ R2074 — MADE, not found, for the reason
+        // `r1961_a_chosen_transport_outlives_an_unrelated_edit` states beside
+        // its own call: a card with no address of its own is a property of a
+        // NEW card, and it stopped being a property of any opening card when
+        // `spec::LINKS` was corrected to the reference's own declaration.
+        let learner = fresh_card(&state);
         let peer = state.node_of("P-03").expect("the specification's P-03");
 
         // Free the peer's only endpoint: this screen refuses a second dialler
@@ -6281,16 +6423,21 @@ fn r1976_every_finding_the_review_found_reaches_the_gate() {
         super::reset_lab_state();
         let state = super::use_lab_state();
 
-        // ★★★★★ The opening canvas is CLEAN, which is a good state for the
-        // screen and no population at all for this test — a conversion that
-        // dropped everything would satisfy an empty list. So a finding is
-        // CAUSED, by the gesture a person actually makes: this taxonomy's
-        // judgement rule is *listening, and nothing on this canvas dials it*,
-        // so taking a wire away puts a card into it.
-        assert!(
-            state.doc.borrow().review().is_empty(),
-            "★ the fixture opens clean, so what follows is caused rather than found"
-        );
+        // ★★★★★ What this test needs is that the findings below are CAUSED
+        // rather than merely present — a conversion that dropped everything
+        // would satisfy an empty list, and one that dropped everything NEW
+        // would satisfy a list that never grew. So the opening state is
+        // recorded and the growth is what is asserted.
+        //
+        // ⚠ R2074 — it used to assert the opening canvas is CLEAN, and that
+        // stopped being true when `spec::LINKS` was corrected to the way the
+        // reference DECLARES its wires: with the router dialling nothing,
+        // `P-03` listens and no card on the canvas dials it, which is exactly
+        // this taxonomy's judgement rule. The reference's own graph is in that
+        // state too — its wire out of `P-03` is muted. A finding the fixture
+        // opens with is not a defect in the fixture; it is the screen having
+        // something true to say on its first frame.
+        let opened_with = state.doc.borrow().review().findings().len();
         let subject = state.node_of("R-01").expect("the specification's router");
         let inbound: Vec<pinion_node_graph::LinkId> = state
             .doc
@@ -6315,9 +6462,12 @@ fn r1976_every_finding_the_review_found_reaches_the_gate() {
 
         let reviewed = state.doc.borrow().review();
         assert!(
-            !reviewed.findings().is_empty(),
-            "★★★★★ and now the review has something to say — a check with an \
-             empty population proves nothing about the reporting path"
+            reviewed.findings().len() > opened_with,
+            "★★★★★ and now the review has MORE to say than it opened with — a \
+             check with an empty population proves nothing about the reporting \
+             path, and one that never grows proves nothing about a NEW finding \
+             reaching it ({} against {opened_with})",
+            reviewed.findings().len()
         );
         // Every finding, converted — the same call the gate makes, so a case
         // the conversion cannot answer is a compile failure and a case it

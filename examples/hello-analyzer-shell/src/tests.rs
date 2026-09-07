@@ -1972,14 +1972,27 @@ fn r2002_every_page_of_the_tool_says_the_words_its_captions_lend_out() {
             pages > 0,
             "no page was walked at all, so the verdict is vacuous",
         );
-        // ★ 89 across 8 pages, measured this round by raising this floor until
-        // it reported the number. A floor and not an equality: a round that
-        // adds a caption is not a regression, and what this catches is the
-        // walk quietly stopping short of the pages — which is how a gate over a
-        // population goes vacuous without saying so.
+        // ★ 85 across 8 pages, measured by raising this floor until it reported
+        // the number. A floor and not an equality: a round that adds a caption
+        // is not a regression, and what this catches is the walk quietly
+        // stopping short of the pages — which is how a gate over a population
+        // goes vacuous without saying so.
+        //
+        // ⚠ R2074 — 89 → 85, and the four are a screen having LESS TO SAY
+        // rather than the walk reaching less. `spec::LINKS` had three of its
+        // seven wires transcribed the way the behaviour reference DRAWS them
+        // instead of the way it DECLARES them; corrected, the node lab's
+        // opening card dials nothing, so the row worked out from its wires —
+        // and the captions that row lends — is not painted. The reference's own
+        // declaration of that card carries no such row either.
+        //
+        // ⇒ A floor is a claim about the WALK, and this fall is a claim about
+        // the SCREEN. The two are only told apart by saying which, so the
+        // reason is written down beside the number rather than the number being
+        // quietly moved.
         assert!(
-            lent >= 89,
-            "only {lent} caption(s) across {pages} page(s) lend a name, and 89 \
+            lent >= 85,
+            "only {lent} caption(s) across {pages} page(s) lend a name, and 85 \
              across 8 was the measurement — a count this low means the walk \
              stopped reaching the pages rather than that the screens changed",
         );
@@ -4560,7 +4573,20 @@ const CLAIMING_CAPTIONS: usize = 16;
 /// to be re-taken at the END of the round that moves it** — the same lesson
 /// this round's own module header applied by deleting its figures, applied
 /// there and missed here, three files apart, in one commit.
-const ADJACENT_CAPTIONS: usize = 148;
+/// ⚠⚠ **R2074 — 148 → 150, and the two are a POPULATION arriving rather than
+/// two captions losing their binding.** `spec::LINKS` had three of its seven
+/// wires transcribed the way the behaviour reference DRAWS them instead of the
+/// way it DECLARES them; corrected, the node lab's opening card dials nothing,
+/// so its inspector paints one row fewer and the sweep's two-contributor state
+/// stands on a different card. Two more of that card's captions are in the
+/// walk, and they are bound by position exactly as they always were.
+///
+/// ⇒ The same shape the paragraph above records for `pairs` 168 → 170, read in
+/// the other direction: the number this ratchet holds moves when the population
+/// moves, and only the REASON separates a regression from a wider census. This
+/// one was re-measured at the end of the round that moved it, which is that
+/// paragraph's own rule.
+const ADJACENT_CAPTIONS: usize = 150;
 
 /// ★★★★★ **No caption in this application escapes its box or sits somewhere
 /// other than where it says it does** — asked of every destination the roster

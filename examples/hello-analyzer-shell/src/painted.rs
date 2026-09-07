@@ -13241,6 +13241,33 @@ fn naming_no_output_is_refused_rather_than_taken_as_everything(state: &std::rc::
 fn asking_names_what_would_go_and_what_it_was_measured_against(
     state: &std::rc::Rc<ShellState>,
 ) -> Vec<String> {
+    // ★★★★★ R2074 — **something has to be UNREACHED, and in this graph nothing
+    // is until a person cuts a wire.**
+    //
+    // The phase measures *what nothing reaches* against the graph's own end.
+    // It found branches while `spec::LINKS` had the router dialling three cards
+    // — three wires transcribed the way the behaviour reference DRAWS them
+    // rather than the way it DECLARES them, which made the router a fan-OUT.
+    // Corrected, every wire arrives there: the graph is a star INTO the output,
+    // so everything reaches it and a prune measured against it names nothing.
+    // That is the reference's own shape, and it is a good screen rather than a
+    // case this phase can work on.
+    //
+    // So the case is CAUSED, by the gesture a person makes: take one wire out,
+    // and the card that reached the output only through it stops reaching it.
+    // The cut is the screen's own verb, and the wire is read off the graph.
+    let cut = lab_links(state)
+        .into_iter()
+        .find(|(from, to)| {
+            // A wire whose source feeds nothing else, so removing it orphans
+            // that card rather than merely thinning a bundle.
+            lab_links(state).iter().filter(|(f, _)| f == from).count() == 1
+                && lab_links(state).iter().any(|(f, _)| f == to)
+        })
+        .expect("the graph has a card that reaches the end through one wire");
+    lab_invoke(state, "delete_link", &format!("{}>{}", cut.0, cut.1))
+        .expect("a wire a person may remove");
+
     // The graph's own end is the output a person would name — read off the
     // screen rather than written down here.
     let output = lab_slot(state, "homing")["at"]
@@ -13705,26 +13732,67 @@ fn r1993_a_pins_wires_are_taken_to_another_pin_and_a_refused_one_stays() {
     });
 }
 
-/// The producing pin with the most wires on it, **read off the graph** rather
-/// than written down: a whole-pin operation needs a pin carrying more than one
-/// wire, and naming one here would make this a claim about the opening graph
-/// as well as about the operation.
+/// The pin with the most wires on it, **read off the graph** rather than
+/// written down: a whole-pin operation needs a pin carrying more than one wire,
+/// and naming one here would make this a claim about the opening graph as well
+/// as about the operation.
+///
+/// ★★★★★ R2074 — **the busy pin is DRAWN when the graph has none, which it now
+/// has not.**
+///
+/// This read the busiest dial pin off the opening graph, and it worked while
+/// `spec::LINKS` had the router dialling three cards — three wires transcribed
+/// the way the behaviour reference DRAWS them rather than the way it DECLARES
+/// them. Corrected, every card dials exactly one, and the reference's own list
+/// is the same shape: no card there dials two through an authored wire.
+///
+/// ⚠ The accept side is not the answer, and that was measured rather than
+/// assumed: the router accepts five wires, but a card's accepting side is a RUN
+/// of seats and `<card>.accept` names one of them, so the verb reported a
+/// single-wire move. The multi-wire pin on this screen is a dial pin or none.
+///
+/// ⇒ So a second wire is DRAWN, through the screen's own `connect`, which is
+/// what a person does when they want one pin to feed two things. Searched
+/// rather than named: the model refuses a dial that closes a cycle or that
+/// repeats an endpoint the card already reaches, and in a graph whose wires all
+/// converge on one card most candidates do exactly that. Trying them and
+/// keeping the first the model admits is what makes this a claim about the
+/// OPERATION rather than about the fixture — which is what the sentence above
+/// always wanted, and which the old fixture happened to supply for free.
 fn the_pin_that_carries_the_most_wires(state: &std::rc::Rc<ShellState>) -> String {
     let links = lab_links(state);
-    let mut count: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
-    for (from, _) in &links {
-        *count.entry(from.clone()).or_default() += 1;
+    let dials = |links: &[(String, String)], card: &str| -> usize {
+        links.iter().filter(|(from, _)| from == card).count()
+    };
+    let mut cards: Vec<String> = links.iter().map(|(from, _)| from.clone()).collect();
+    cards.sort();
+    cards.dedup();
+    if let Some(already) = cards.iter().find(|card| dials(&links, card) > 1) {
+        return already.clone();
     }
-    let (card, held) = count
-        .into_iter()
-        .max_by_key(|(card, n)| (*n, std::cmp::Reverse(card.clone())))
-        .expect("the opening graph draws wires");
-    assert!(
-        held > 1,
+    let mut acceptors: Vec<String> = links.iter().map(|(_, to)| to.clone()).collect();
+    acceptors.sort();
+    acceptors.dedup();
+    let mut refusals: Vec<String> = Vec::new();
+    for card in &cards {
+        for candidate in acceptors.iter().filter(|to| *to != card) {
+            match lab_invoke_value(state, "connect", &format!("{card},{candidate}")) {
+                Ok(_) => {
+                    let now = lab_links(state);
+                    assert!(
+                        dials(&now, card) > 1,
+                        "★ the wire the model admitted is on this pin: {now:?}"
+                    );
+                    return card.clone();
+                }
+                Err(why) => refusals.push(format!("{card} -> {candidate}: {why:?}")),
+            }
+        }
+    }
+    panic!(
         "★ a whole-pin operation needs a pin with more than one wire on it, and \
-         the busiest here carries {held}: {links:?}"
+         no second dial was admitted anywhere: {refusals:?}"
     );
-    card
 }
 
 /// Phase 1 — **asked before anything moves**, and the answer is per wire.
@@ -13739,11 +13807,19 @@ fn asking_first_says_which_wires_would_be_taken(
     busiest: &str,
 ) -> (String, serde_json::Value) {
     let links = lab_links(state);
+    // ★ R2074 — the card at the other end of one of this pin's own wires,
+    // whichever side the pin is. Aiming the pin at that card's SAME-side pin is
+    // what makes one wire leave and arrive at the same node.
+    // ⚠ R2074 — and a card that itself DIALS, so it has a dial pin for the
+    // wires to land on: a role that never dials has no such pin and the verb
+    // refuses the ask by name rather than reporting an empty move.
+    let dials = |card: &String| links.iter().any(|(from, _)| from == card);
     let fed = links
         .iter()
-        .find(|(from, _)| from == busiest)
+        .filter(|(from, _)| from == busiest)
         .map(|(_, to)| to.clone())
-        .expect("the busiest pin feeds somebody");
+        .find(dials)
+        .expect("a card this pin feeds has a dial pin of its own");
     let words = format!("{busiest}.dial,{fed}.dial");
 
     let before = lab_links(state);

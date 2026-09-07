@@ -663,18 +663,6 @@
       ]
     },
     {
-      "name": "debt-three-authored-wires-point-the-way-they-are-drawn",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "rank": "unranked",
-      "why": [
-        "links screen-a-vs-canon-operation-census"
-      ]
-    },
-    {
       "name": "debt-two-deliberate-divergences-from-the-behaviour-canon",
       "substituted": false,
       "blocked_by": "spec-round",
@@ -711,6 +699,18 @@
       ]
     },
     {
+      "name": "debt-two-wires-are-drawn-against-the-way-the-reference-draws-them",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "rank": "ordinary",
+      "why": [
+        "links analyzer-behaviour-canon-is-the-standalone-prototype, debt-canon-gui-surface-census"
+      ]
+    },
+    {
       "name": "debt-windows-platform-surface-absent",
       "substituted": false,
       "blocked_by": "gated-axis",
@@ -723,6 +723,6 @@
       ]
     }
   ],
-  "unranked": 16,
+  "unranked": 15,
   "undated": 7
 }

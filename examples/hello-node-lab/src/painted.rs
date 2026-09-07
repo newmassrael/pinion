@@ -313,10 +313,17 @@ const STATES: &[SweptState] = &[
     // this round exists for. The address is deliberately one nothing in the
     // graph listens on — that is what the launch gate's surviving warning is
     // about, so the swept screen paints that too.
+    //
+    // ⚠ R2074 — on a card that DIALS. This stood on the router, which dialled
+    // three cards while `spec::LINKS` carried three wires the wrong way round;
+    // corrected, every wire ARRIVES at the router and it dials nothing, so the
+    // derived half of the row does not exist there and `author_row` refuses in
+    // those words. The state is the same state — a row with two contributors —
+    // and it is built where the two contributors are.
     ("with an address written beside the wires", |state| {
-        let router = state.node_of("R-01").expect("the opening graph has it");
-        state.selection.set(Selection::one(router));
-        super::author_row(state, router, "connect.endpoints").expect("the wires derive it");
+        let dialler = state.node_of("P-02").expect("the opening graph has it");
+        state.selection.set(Selection::one(dialler));
+        super::author_row(state, dialler, "connect.endpoints").expect("the wires derive it");
         super::set_and_sync(state, "connect.endpoints", "tcp/10.0.0.21:7449");
     }),
     // ★★★★★ R1774 — a palette-added card whose form is SHORT enough to fit its
@@ -2017,7 +2024,22 @@ use pinion_core::test_fixtures::screen_ink::{
 /// Both are legitimate — the number counts short runs, and there are eight
 /// fewer — but only one of them means a box was repaired, so a reader of this
 /// history should not count this fall as boxes learning their faces.
-const SHORT_BOX_BUDGET: usize = 67;
+///
+/// ⚠⚠ R2074 — **67 → 71, and this rise is the mirror of that fall: a
+/// population ARRIVING, with no box getting shorter.** `spec::LINKS` had three
+/// of its seven wires transcribed the way the reference DRAWS them rather than
+/// the way it DECLARES them, and correcting that left the card this screen
+/// opens selected dialling nothing — so the sweep's "a row with two
+/// contributors" state, which needs a wire-derived half to write over, moved to
+/// a card that dials. A different card selected paints a different inspector,
+/// and four more of its runs are in boxes that were already too short for their
+/// faces. Nothing regressed; four short runs that this screen always owed are
+/// now inside the swept states.
+///
+/// ⇒ ★ A backlog pin moving is not by itself news in either direction. What is
+/// news is WHY, and the two reasons this pin has moved are both recorded here:
+/// eight runs left the screen (R1952), and four came into the sweep (R2074).
+const SHORT_BOX_BUDGET: usize = 71;
 
 /// The one sweep, over every state.
 #[test]
