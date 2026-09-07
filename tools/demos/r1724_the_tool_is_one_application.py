@@ -430,7 +430,11 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
             before = at
             at += 40
             app.scroll(body_tag, to=(0, at))
-            app.tick(16)
+            # ★ R2078 — `tick_ms`, because `tick()` takes SECONDS and this means
+            # ONE FRAME. Written `tick(16)` at first by copying the helpers
+            # above, which carry that defect and are inside the gate's budget;
+            # `tools/tick_units.py` refused the push and named all four sites.
+            app.tick_ms(16)
             landed = abs_rects_of(app.snapshot(source="paint"))
             # The pane clamps at its own maximum, so a step that changes nothing
             # means the bottom is reached and anything still missing is missing.
@@ -489,7 +493,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
             f"parked at {at}; pressing {last['name']} made {added}"
         )
         app.scroll(body_tag, to=(0, 0))
-        app.tick(16)
+        app.tick_ms(16)
 
         print(f"\n[demo] {len(CHECKS)} named check(s)")
         ok("the tool is one application at three of its seven seats", True)
