@@ -301,6 +301,66 @@ def test_real_pointer_refuses_with_no_display() -> None:
             os.environ["DISPLAY"] = saved
 
 
+def _uncalibrated_pointer(offset: tuple[float, float], at: tuple[int, int]):
+    """A `RealPointer` with its calibration skipped and its X side stubbed.
+
+    The constructor needs a display, a mapped window and a surface that follows
+    the pointer, none of which a unit test has — and what these cases are about
+    is the arithmetic and the refusal, which do not need any of it.
+    """
+    rp = object.__new__(RealPointer)
+    rp.offset = offset
+    rp._at = None
+    rp.warped: list[tuple[int, int]] = []
+    rp._xdo = lambda *args: rp.warped.append((int(args[1]), int(args[2])))
+    rp._where = lambda: at
+    return rp
+
+
+def test_trace_refuses_a_move_that_changes_nothing() -> None:
+    """R2076 — a step to where the pointer already is would go unrecorded.
+
+    ★ A move that changes nothing emits no motion event, so the framework never
+    hears it and its arrival record comes back one short — which is
+    indistinguishable from an event that was LOST, and would let a caller
+    believe it walked a population it did not. Measured while building `trace`:
+    a probe parked on the first point of its own sweep recorded 599 of 600, and
+    the missing one was the no-op rather than a coalesced event (the same six
+    hundred, parked off the population, recorded 1200 of 1200 with a second axis
+    added).
+
+    ⚠ Against where the pointer ACTUALLY IS. The first draft compared only
+    within the sequence, so this exact case — the pointer already parked on the
+    first point — walked straight past the guard.
+    """
+    rp = _uncalibrated_pointer((0.0, 0.0), (300, 400))
+    try:
+        rp.trace([(300, 400), (301, 400)])
+    except AssertionError as exc:
+        check("where it already is" in str(exc), "the refusal says what is wrong")
+        check("one short" in str(exc), "and why that matters, not just that it did")
+    else:
+        check(False, "trace took a first step to where the pointer already was")
+    check(rp.warped == [], "and it refused before moving anything")
+
+
+def test_trace_counts_what_it_walked_in_screen_pixels() -> None:
+    """R2076 — the number a caller asserts against the framework's own count.
+
+    `trace` exists so a sweep can be judged by `pointer_arrivals`, and that
+    judgment is a comparison between two counts: what the caller walked and what
+    the framework received. A `trace` that did not return the first one would
+    leave the caller asserting one number against itself.
+    """
+    rp = _uncalibrated_pointer((10.0, 20.0), (0, 0))
+    made = rp.trace((x, 400) for x in range(300, 305))
+    check(made == 5, "trace returns how many moves it made")
+    check(
+        rp.warped == [(310, 420), (311, 420), (312, 420), (313, 420), (314, 420)],
+        "and each point crossed into screen pixels exactly once",
+    )
+
+
 def test_real_pointer_button_names_are_the_harness_vocabulary() -> None:
     """R1727 — the three buttons this harness names everywhere else, and only
     those: a typo must raise rather than silently press button 1."""

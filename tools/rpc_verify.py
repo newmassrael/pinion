@@ -6491,9 +6491,39 @@ class RealPointer:
         self.settle = settle
         self.window = window
         self._held: set[str] = set()
+        #: The screen pixel this pointer was last WARPED to, or `None` before
+        #: the first warp. Kept because a move to where the pointer already is
+        #: emits no motion event, and [`trace`] has to be able to refuse that —
+        #: see its docstring for the 599-of-600 that measured it.
+        self._at: Optional[tuple[int, int]] = None
         self.offset = self._calibrate()
 
     # -- the X server side -------------------------------------------------
+    def _warp(self, sx: int, sy: int) -> None:
+        """Put the X pointer at a screen pixel, remembering where that was."""
+        self._xdo("mousemove", str(sx), str(sy))
+        self._at = (sx, sy)
+
+    def _where(self) -> tuple[int, int]:
+        """Where the X server says the pointer IS, which is not what we remember.
+
+        ⚠ `self._at` is only what this object last warped to, and this object is
+        not the only thing that moves the pointer — the demo harness aims at a
+        painted address on its own. So the one place that has to be right about
+        the pointer's position asks the server rather than trusting the record.
+        One spawn, paid once per [`trace`] rather than once per point.
+        """
+        out = subprocess.run(
+            ["xdotool", "getmouselocation", "--shell"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        seen = dict(
+            line.split("=", 1) for line in out.splitlines() if "=" in line
+        )
+        return (int(seen["X"]), int(seen["Y"]))
+
     def _xdo(self, *args: str) -> None:
         subprocess.run(
             ["xdotool", *args],
@@ -6515,7 +6545,7 @@ class RealPointer:
         return (float(cursor["x"]), float(cursor["y"]))
 
     def _calibrate(self) -> tuple[float, float]:
-        self._xdo("mousemove", str(self.PROBE[0]), str(self.PROBE[1]))
+        self._warp(self.PROBE[0], self.PROBE[1])
         time.sleep(max(self.settle, 0.25))
         first = self._cursor()
         if first is None:
@@ -6527,7 +6557,7 @@ class RealPointer:
         # A second, DIFFERENT probe: a surface that answers a constant would
         # pass the first check while receiving nothing.
         second_screen = (self.PROBE[0] + 40, self.PROBE[1] + 30)
-        self._xdo("mousemove", str(second_screen[0]), str(second_screen[1]))
+        self._warp(second_screen[0], second_screen[1])
         time.sleep(max(self.settle, 0.25))
         second = self._cursor()
         if second is None or second == first:
@@ -6549,7 +6579,7 @@ class RealPointer:
         """Put the real pointer at a point in the surface's logical pixels."""
         sx = int(round(at[0] + self.offset[0]))
         sy = int(round(at[1] + self.offset[1]))
-        self._xdo("mousemove", str(sx), str(sy))
+        self._warp(sx, sy)
         time.sleep(self.settle)
         if confirm:
             got = self._cursor()
@@ -6575,6 +6605,77 @@ class RealPointer:
                 f"aimed the real pointer at {at} (pixel {want}), the surface "
                 f"received {got}"
             )
+
+    def trace(self, points: Iterable[tuple[float, float]]) -> int:
+        """★★★★★ R2076 — walk the pointer through many points, reading nothing
+        between them, and let the framework's own arrival record be the witness.
+
+        ## Why this exists, measured rather than assumed
+
+        `move` sleeps and then a caller reads, and the READ is what costs: on
+        this host a `scene/input_state` read with the pointer standing still is
+        **0.13 ms**, and the first read after a move is **24.98 ms**, arriving
+        correct on the **first** read every time (n=200, max 1 read). So the
+        settle is not the cost and removing it saves 9.5 % — what costs is that
+        a read taken after a pointer move waits for the surface to be able to
+        answer. A demo that walks six hundred columns and reads after each one
+        pays that six hundred times: 30.57 ms per column, 36.7 s for R1736's
+        twelve hundred, and on a software rasteriser enough to cross the sweep's
+        180 s budget, which is the red this was found under.
+
+        Walked with nothing read in between, the same twelve hundred take
+        **2.37 s** — 1.97 ms each, which is the `xdotool` spawn and nothing else.
+
+        ## What the caller gives up, and what it does not
+
+        Nothing is readable between the steps, so the claim a caller can still
+        make is the one [`pointer_arrivals`] COUNTS: every arrival the framework
+        received, and whether the pixel it resolved is the pixel it was given
+        (`exact`). That is the property R1736's defect broke — a truncating cast
+        that put thirty-five columns one pixel left — and the record covers the
+        WHOLE population of it, where a per-step read covers it one step at a
+        time for fifteen times the cost.
+
+        What it gives up is the other half of a per-step read: that the pixel
+        the DRIVER asked for is the pixel the window system delivered. Both of
+        the record's accounts live inside the surface, so it cannot see that.
+        ⇒ that claim is about the X server rather than about this framework, it
+        is exercised at both ends of a sweep by `move(..., confirm=True)`, and
+        the constructor's calibration already refuses a surface that does not
+        follow the pointer at all.
+
+        ## Consecutive duplicates are REFUSED rather than warned about
+
+        A move that changes nothing emits no motion event, so the surface never
+        hears it and the record is one short — which reads exactly like a
+        dropped event and would let a caller believe it walked a population it
+        did not. Measured while building this: a probe that parked at `(300,
+        400)` and then made that its first step recorded **599 of 600**, and the
+        missing one was the no-op, not a coalesced event (the same six hundred
+        parked off the population record 1200 of 1200 with the row added). So
+        the shape that produced a false short count cannot be spelled here.
+
+        Returns the number of moves made, so a caller can assert on it.
+        """
+        made = 0
+        # Seeded from the SERVER, not from what this object last warped to: the
+        # first draft compared within the sequence only, so the very shape that
+        # produced the 599 — the pointer already parked on the first point —
+        # walked straight past it; and a record of our own warps would still be
+        # wrong whenever something else moved the pointer.
+        self._at = self._where()
+        for at in points:
+            sx = int(round(at[0] + self.offset[0]))
+            sy = int(round(at[1] + self.offset[1]))
+            assert (sx, sy) != self._at, (
+                f"trace was asked to move the pointer to {at} (screen pixel "
+                f"{(sx, sy)}), where it already is: a move that changes nothing "
+                f"emits no event, so the record would be one short and read as "
+                f"a lost one"
+            )
+            self._warp(sx, sy)
+            made += 1
+        return made
 
     def press(self, button: str = "left") -> None:
         self._xdo("mousedown", _REAL_POINTER_BUTTONS[button])

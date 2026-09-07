@@ -149,11 +149,16 @@ def shown(app: RpcSubprocess) -> tuple[str | None, str | None]:
     the register is what the screen *could* say and this walk is about what a
     reader *is told*.
     """
-    tips = tooltips(app)
+    # ★ ONE read of the tree, two derivations from it. This asked twice — once
+    # through `tooltips` and once for the anchor — and the two answers are
+    # facts about the SAME announcement, so a second read can only be the same
+    # tree again or a different one, and neither is what the caller wants.
+    nodes = access(app)
+    tips = [n for n in nodes if n.get("role") == "tooltip"]
     if len(tips) != 1:
         return None, None
     region = tips[0].get("tag")
-    anchor = next((n for n in access(app) if n.get("described_by") == region), None)
+    anchor = next((n for n in nodes if n.get("described_by") == region), None)
     return (anchor or {}).get("tag"), tips[0].get("name")
 
 
@@ -409,21 +414,34 @@ def repay(app: RpcSubprocess, page: str) -> tuple[dict, str]:
         entry = nav.get("entry_keys") or []
         exit_key = nav.get("exit_key")
 
-        def collect() -> None:
-            here, sentence = shown(app)
+        def collect(here: str | None, sentence: str | None) -> None:
             if here in marks:
                 seen[here] = sentence or ""
 
         def sweep_axes(limit: int) -> None:
-            """Press each published arrow until it stops moving, both ways."""
+            """Press each published arrow until it stops moving, both ways.
+
+            ★★★★★ R2076 — ONE announcement read per press. This asked three
+            times for the same state (collect, then the tag before the press,
+            then the tag after) and each of those asked the accessibility tree
+            twice, so a single arrow step cost SIX reads of the whole tree. A
+            read taken after a press waits for the surface to be able to answer
+            — measured at ~25 ms on this host against 0.13 ms for a read with
+            nothing pending — which is what put this walk over the sweep's
+            budget on a slower rasteriser. What the loop needs is the state
+            before and after each press, and the state after one press is the
+            state before the next, so it is carried rather than re-read.
+            """
             for key in arrows:
+                here, sentence = shown(app)
                 for _ in range(limit + 2):
-                    collect()
-                    before_tag = shown(app)[0]
+                    collect(here, sentence)
                     press(app, at, key)
-                    if shown(app)[0] == before_tag:
+                    moved_to, moved_sentence = shown(app)
+                    if moved_to == here:
                         break
-                collect()
+                    here, sentence = moved_to, moved_sentence
+                collect(here, sentence)
 
         if leaves == members:
             # The flat shape: the members ARE the marks.

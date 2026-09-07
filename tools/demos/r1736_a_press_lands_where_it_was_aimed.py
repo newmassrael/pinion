@@ -86,6 +86,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    pointer_arrivals,
     run_demo,
 )
 
@@ -105,6 +106,19 @@ SPEC = Path(__file__).resolve().parent.parent.parent / "docs" / "analyzer-press-
 #: miss every one of them — which is how this survived every gate.
 SWEEP_X = range(300, 900)
 SWEEP_Y = range(150, 750)
+
+#: The row every column is walked along, and the column every row is walked
+#: down. Named because R2076 needs a third point that is on NEITHER of them.
+ROW_Y = 400
+COL_X = 600
+
+#: Where the pointer waits before a sweep starts: inside the window and off both
+#: sweeps, so the first traced move changes the pointer's position. A move that
+#: changes nothing emits no motion event, the framework never hears it, and the
+#: record comes back one short — which reads exactly like a lost event. Measured
+#: while building this: parking ON the population made a six-hundred-move probe
+#: report 599, and the missing one was the no-op.
+OFF_POPULATION = (1100, 820)
 
 #: Where the selection is parked between probes, so "what is selected now" is a
 #: fresh fact rather than a leftover. The first probe written for this round read
@@ -150,33 +164,97 @@ def probe_points(rect: tuple[int, int, int, int]) -> list[tuple[str, tuple[int, 
     ]
 
 
+def arrival_counts(tf: RpcSubprocess) -> tuple[int, int]:
+    """How many arrivals the framework has recorded, and how many were exact.
+
+    Summed over surfaces, because what section A claims is about the cast and
+    not about which surface was under the pointer. `None` cannot happen here —
+    the demo drives the binary this repository builds — so a missing record is
+    an assertion rather than a tolerance.
+    """
+    report = pointer_arrivals(tf)
+    assert report is not None, (
+        "this binary does not answer `scene/pointer_arrival`, so nothing here "
+        "can be judged from the framework's own record"
+    )
+    rows = report.get("surfaces", [])
+    return (
+        sum(int(row["delivered"]) for row in rows),
+        sum(int(row["exact"]) for row in rows),
+    )
+
+
 def section_a(tf: RpcSubprocess, rp: RealPointer, spec_doc: dict) -> None:
-    """A — the pixel a pointer is at is the pixel the screen is told about."""
+    """A — the pixel a pointer is at is the pixel the screen is told about.
+
+    ★★★★★ R2076 — the SAME twelve hundred pixels, judged from the framework's
+    own counted record instead of one read per pixel.
+
+    A read taken after a pointer move waits for the surface to be able to
+    answer: measured on this host, a `scene/input_state` read with the pointer
+    standing still is 0.13 ms and the first read after a move is 24.98 ms. This
+    section made twelve hundred of those, which is 36.7 s here and enough to
+    cross the sweep's 180 s budget on a software rasteriser — the red R2076 was
+    opened by. Walked with the record as the witness the same twelve hundred
+    take 2.37 s, and **not one pixel leaves the population**.
+
+    ⚠ What is given up, stated rather than implied: a per-pixel read also said
+    that the pixel the DRIVER asked for is the pixel the window system
+    delivered, and both of the record's accounts live inside the surface. That
+    claim is about the X server rather than about this framework; it is made at
+    both ends of each sweep with `confirm=True`, and the pointer's own
+    constructor already refuses a surface that does not follow the pointer.
+    """
     said = titles(spec_doc["round_trip"])
-    bad_x: list[tuple[int, int]] = []
-    for x in SWEEP_X:
-        rp.move((x, 400))
-        got = int(tf.query(f"{EXT}/cursor").split(",")[0])
-        if got != x:
-            bad_x.append((x, got))
+    # Off the swept row and the swept column, so the first traced move is a real
+    # one — a move that changes nothing emits no event and the record would be
+    # one short. `trace` refuses that shape outright; this keeps it from being
+    # spelled in the first place.
+    rp.move(OFF_POPULATION, confirm=True)
+    base_delivered, base_exact = arrival_counts(tf)
+
+    walked_x = rp.trace((x, ROW_Y) for x in SWEEP_X)
+    after_x_delivered, after_x_exact = arrival_counts(tf)
     ok(
         f"A: ★★★★★ {said['every-column']} — {len(SWEEP_X)} of them, walked with "
-        f"the machine's own pointer (with the pre-R1736 cast, 35 of these "
-        f"arrived one pixel left)",
-        not bad_x,
-        f"columns that arrived as something else: {bad_x[:12]}",
+        f"the machine's own pointer and counted by the framework (with the "
+        f"pre-R1736 cast, 35 of these arrived one pixel left)",
+        walked_x == len(SWEEP_X)
+        and after_x_delivered - base_delivered == len(SWEEP_X)
+        and after_x_exact - base_exact == len(SWEEP_X),
+        f"walked {walked_x}, the framework recorded "
+        f"{after_x_delivered - base_delivered} arrival(s) of which "
+        f"{after_x_exact - base_exact} resolved to the pixel they were given",
     )
-    bad_y: list[tuple[int, int]] = []
-    for y in SWEEP_Y:
-        rp.move((600, y))
-        got = int(tf.query(f"{EXT}/cursor").split(",")[1])
-        if got != y:
-            bad_y.append((y, got))
+
+    walked_y = rp.trace((COL_X, y) for y in SWEEP_Y)
+    end_delivered, end_exact = arrival_counts(tf)
     ok(
         f"A: ★★★★★ {said['every-row']} — {len(SWEEP_Y)} of them (with the "
         f"pre-R1736 cast, 20 of these arrived one pixel up)",
-        not bad_y,
-        f"rows that arrived as something else: {bad_y[:12]}",
+        walked_y == len(SWEEP_Y)
+        and end_delivered - after_x_delivered == len(SWEEP_Y)
+        and end_exact - after_x_exact == len(SWEEP_Y),
+        f"walked {walked_y}, the framework recorded "
+        f"{end_delivered - after_x_delivered} arrival(s) of which "
+        f"{end_exact - after_x_exact} resolved to the pixel they were given",
+    )
+
+    # The other half of the old per-pixel read, kept at the ends of each sweep:
+    # what the driver asked for is what the surface received. Asked the way the
+    # old loop asked it, so this can actually go red — a `confirm=True` move
+    # asserts inside the pointer and would leave nothing here to fail.
+    rp.move((SWEEP_X[0], ROW_Y))
+    first = tf.query(f"{EXT}/cursor")
+    rp.move((COL_X, SWEEP_Y[-1]))
+    last = tf.query(f"{EXT}/cursor")
+    ok(
+        f"A: and the driver's own aim still lands — the ends of both sweeps "
+        f"were asked for and received, which is the one claim the record "
+        f"cannot make, because both of its accounts are inside the surface",
+        first == f"{SWEEP_X[0]},{ROW_Y}" and last == f"{COL_X},{SWEEP_Y[-1]}",
+        f"asked for {(SWEEP_X[0], ROW_Y)} and {(COL_X, SWEEP_Y[-1])}, "
+        f"the surface received {first!r} and {last!r}",
     )
 
 
