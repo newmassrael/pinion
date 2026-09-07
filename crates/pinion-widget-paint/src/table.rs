@@ -657,9 +657,14 @@ fn section_label_style(style: &TableStyle, fg: Color) -> TextStyle {
 /// rather than after a third has drifted.
 ///
 /// The label is the section's **content**, not decoration, by the rule R1536
-/// gave the data cell — which is why it is a plain [`TextNode`] and the sort
-/// glyph `header_cell` appends after it is
-/// [`Presentational`](TextRole::Presentational).
+/// gave the data cell — which is why it is a plain [`TextNode`] while the sort
+/// direction `header_cell` appends after it is declared decorative.
+///
+/// ⚠ R2060 — that direction used to be a presentational TEXT run, which is how
+/// it stayed out of the section's name. It is a drawn
+/// [`Indicator`](crate::indicator::Indicator) now, declared decorative by the
+/// same rule and by a stronger route: a mark has no words to be mistaken for a
+/// name.
 ///
 /// Returns `None` for the name when the section has no mark, or has one whose
 /// [`meaning`](Decoration::meaning) is empty (a decorative `alt=""` mark): the
@@ -2681,9 +2686,13 @@ pub fn text_cell_painter(c: &CellRender<'_>) -> Scene {
     }
     // R1536 §5.40 — the cell's label is the cell's **content**, so it is NOT
     // presentational. `TextRole::Presentational` exists (R51.81) for decoration
-    // glyphs a name derivation must skip past to reach the linguistic label —
-    // a checkbox's tick, a slider's caret. A data cell has no such label to
-    // reach: this text is the only thing it says.
+    // a name derivation must skip past to reach the linguistic label. A data
+    // cell has no such label to reach: this text is the only thing it says.
+    //
+    // ⚠ R2060 — the two examples this named were "a checkbox's tick, a slider's
+    // caret", and the tick has been a drawn PATH since R1674. A mark that is
+    // not text needs no role to be skipped, which is the stronger form of the
+    // same exclusion; the role is for decoration that genuinely is text.
     //
     // Marking it presentational made every `gridcell` unnameable, while
     // `pinion_a11y::tree_view` documented the opposite contract in so many
