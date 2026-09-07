@@ -88,7 +88,7 @@ EXT = "/external"
 #: page" would go quiet the moment one regressed. Each name here is a page a
 #: round claimed. ★ When the last one lands this becomes the roster itself —
 #: `/external/destinations` — and stops being a list at all.
-REPAID = ("packets", "keys", "logs")
+REPAID = ("packets", "keys", "logs", "lab")
 
 CHECKS: list[str] = []
 
@@ -178,6 +178,35 @@ def press(app: RpcSubprocess, stop: str, chord: str) -> None:
     app.tick_ms(16)
 
 
+def owns(nodes: dict, stop: str, mark: str) -> bool:
+    """Whether the announced tree puts `mark` anywhere inside `stop`."""
+    seen: set[str] = set()
+    frontier = [stop]
+    while frontier:
+        here = frontier.pop()
+        if here in seen:
+            continue
+        seen.add(here)
+        children = nodes.get(here, {}).get("children") or []
+        if mark in children:
+            return True
+        frontier.extend(children)
+    return False
+
+
+def ring_of(app: RpcSubprocess) -> set[str]:
+    """The stops that exist right now.
+
+    ⚠ By WALKING, not by reading a `focusable` field off the paint: a first
+    draft did the latter and the wait never fired, because the flag is not what
+    the snapshot carries under that name. Walking uses the one surface that is
+    known to answer — the same `focus/next` every other clause here trusts —
+    and the caller sets focus straight afterwards, so disturbing it costs
+    nothing.
+    """
+    return set(walk_ring(app))
+
+
 def walk_ring(app: RpcSubprocess, limit: int = 40) -> list[str]:
     """Every stop the keyboard reaches from here, in Tab order."""
     ring: list[str] = []
@@ -225,6 +254,26 @@ def repay(app: RpcSubprocess, page: str) -> tuple[dict, str]:
         app.request("focus/set", {"tag": stop})
         app.tick_ms(16)
         mark, sentence = shown(app)
+        # ★★★★★ A composite may hold its described marks ONE LEVEL DOWN, and a
+        # survey that only lands on stops cannot see them. The node lab is the
+        # case that forced this: its canvas holds cards and a card holds the
+        # pins that carry the sentences, so standing on the canvas shows
+        # nothing and the page read as zero of eighteen. A reader does not stop
+        # there either — they press the key the stop PUBLISHES as its way in.
+        if mark not in marks:
+            nav = {n.get("tag"): n for n in access(app)}.get(stop, {}).get("navigation") or {}
+            # ⚠ Only a stop whose MEMBERS are composites, and only then. A first
+            # draft pressed the entry key at every silent stop and the walk
+            # broke three clauses later on a page it had already left — pressing
+            # keys into rows and chip bars that were never the subject changed
+            # the screen underneath the assertions that follow. The question is
+            # "does anything nest here", and the roster answers it.
+            nests = any(m.get("composite") for m in nav.get("members") or [])
+            for key in (nav.get("entry_keys") or []) if nests else []:
+                press(app, stop, key)
+                mark, sentence = shown(app)
+                if mark in marks:
+                    break
         if mark in marks:
             reached.append((stop, mark, sentence or ""))
     ok(
@@ -249,10 +298,14 @@ def repay(app: RpcSubprocess, page: str) -> tuple[dict, str]:
     app.tick_ms(16)
     nodes = {n.get("tag"): n for n in access(app)}
     ok(f"B {page}: the stop is not the mark ({mark} vs {stop})", mark != stop)
+    # ⚠ INSIDE, at any depth — not "a direct child". A composite may nest: the
+    # node lab's canvas holds cards and a card holds the pins that carry the
+    # sentences, so the mark is a grandchild there. A first draft asked for
+    # direct childhood and reported that two-level containment as a defect.
     ok(
         f"B {page}: and the tree says the mark is INSIDE the stop — "
-        f"{stop} names it among its children",
-        mark in (nodes.get(stop, {}).get("children") or []),
+        f"{stop} owns {mark}",
+        owns(nodes, stop, mark),
     )
     ok(
         f"B {page}: ★ and the mark is the one the tree marks focused, which is "
@@ -279,10 +332,24 @@ def repay(app: RpcSubprocess, page: str) -> tuple[dict, str]:
     app.request("focus/set", {"tag": stop})
     app.tick_ms(16)
     before = shown(app)
-    press(app, stop, "ArrowRight")
-    after = shown(app)
+    # ⚠ The keys the stop PUBLISHES, not `ArrowRight` assumed. Three of these
+    # pages hold their marks in a horizontal row and the fourth holds them in a
+    # vertical one inside a card, so a walk that named one arrow reported the
+    # lab's cursor as not moving at all. Ask; the roving says which keys it
+    # navigates by.
+    arrows = (
+        {n.get("tag"): n for n in access(app)}.get(stop, {}).get("navigation", {}).get("keys")
+        or ["ArrowRight"]
+    )
+    after = before
+    for key in arrows:
+        press(app, stop, key)
+        after = shown(app)
+        if after[0] != before[0]:
+            break
     ok(
-        f"C {page}: the arrow moves to another mark — {before[0]} -> {after[0]}",
+        f"C {page}: an arrow the stop publishes moves to another mark — "
+        f"{before[0]} -> {after[0]} (tried {arrows})",
         after[0] != before[0],
     )
     ok(f"C {page}: which is also this page's — {after[0]}", after[0] in marks)
@@ -310,26 +377,96 @@ def repay(app: RpcSubprocess, page: str) -> tuple[dict, str]:
         if not nav:
             continue
         members = [m["tag"] for m in nav.get("members") or []]
+        arrows = nav.get("keys") or ["ArrowRight", "ArrowLeft"]
+        # ★★★★★ THE LEAVES, not the members. A roster's members may themselves
+        # be composites — the node lab's canvas holds cards and a card holds the
+        # pins that carry the sentences — so the places a reader can END UP are
+        # one level down there and are the members themselves everywhere else.
+        # Taken from what each member PUBLISHES, so the population is the
+        # screen's answer rather than this walk's guess.
+        leaves: list[str] = []
+        for member in members:
+            inner = nodes.get(member, {}).get("navigation") or {}
+            below = [m["tag"] for m in inner.get("members") or []]
+            leaves.extend(below or [member])
+        # ⚠ Only the leaves that ARE described marks. A first draft compared
+        # against every leaf and the assertion became unsatisfiable: three of
+        # the node lab's cards draw no pin that speaks, so their own tag is the
+        # leaf and no reader could ever be "shown its sentence". The claim this
+        # clause is for is that nothing the register describes is out of reach —
+        # not that every place a cursor stops has something to say.
+        leaves = [leaf for leaf in leaves if leaf in marks]
         seen: dict[str, str] = {}
         app.request("focus/set", {"tag": at})
         app.tick_ms(16)
-        # ⚠ Walk to the row's start first. The clause above already moved one
-        # cursor, and these rows stop at their ends rather than wrapping, so a
-        # walk starting from wherever it happened to be could not reach every
-        # member — which is what the first draft did, and it reported six of
-        # seven as a defect of the screen rather than of the walk.
-        for _ in range(len(members)):
-            press(app, at, "ArrowLeft")
-        for _ in range(len(members)):
+        # ⚠ NO notion of "the start". A first draft walked to one end first and
+        # got the direction wrong — the published key order puts the forward
+        # arrow first, so "go to the start" went to the END and the clause
+        # reported two of seven. These rosters stop at their ends rather than
+        # wrapping, so what covers one regardless of where the cursor happens
+        # to be is: press each published arrow until it stops moving, for every
+        # arrow. Both directions and both axes, without knowing which is which.
+        entry = nav.get("entry_keys") or []
+        exit_key = nav.get("exit_key")
+
+        def collect() -> None:
             here, sentence = shown(app)
             if here in marks:
                 seen[here] = sentence or ""
-            press(app, at, "ArrowRight")
-        print(f"    walked {at}: {len(seen)} of {len(members)} — {sorted(seen)}")
+
+        def sweep_axes(limit: int) -> None:
+            """Press each published arrow until it stops moving, both ways."""
+            for key in arrows:
+                for _ in range(limit + 2):
+                    collect()
+                    before_tag = shown(app)[0]
+                    press(app, at, key)
+                    if shown(app)[0] == before_tag:
+                        break
+                collect()
+
+        if leaves == members:
+            # The flat shape: the members ARE the marks.
+            sweep_axes(len(leaves))
+        else:
+            # ★★★★★ The nesting shape, and it needs the THIRD published key.
+            # Arrows move inside whichever member the cursor entered, so a walk
+            # that only pressed arrows and the entry key stayed in the first
+            # card and reported two of eight. Getting to another card's leaves
+            # means LEAVING this one — which the roster also publishes, as its
+            # exit key. ⇒ ask a composite for all three: what moves, what goes
+            # in, what comes out.
+            # ⚠ Bounded by PROGRESS, not by a member count. A first draft did one
+            # exit-arrow-enter cycle per member and reached four cards of eight,
+            # because where the cursor started and where the ends are is not
+            # something the walk knows. So it cycles until a whole pass adds
+            # nothing new — and each pass tries BOTH directions at the member
+            # level, so neither end can hide the rest.
+            for direction in list(arrows) or [None]:
+                for _ in range(len(members) + 2):
+                    was = len(seen)
+                    for key in entry:
+                        press(app, at, key)
+                    sweep_axes(len(leaves))
+                    if exit_key:
+                        press(app, at, exit_key)
+                    if direction:
+                        press(app, at, direction)
+                    if len(seen) == len(leaves):
+                        break
+                    if len(seen) == was and direction is None:
+                        break
+                if len(seen) == len(leaves):
+                    break
+        # ★ Names the ones it could not reach. A census that answers HOW MANY
+        # cannot answer WHICH, and this tree wrote that lesson down two rounds
+        # after building a gate that only counted.
+        missed = sorted(set(leaves) - set(seen))
+        print(f"    walked {at}: {len(seen)} of {len(leaves)} — missed {missed}")
         ok(
-            f"C {page}: ★★★★★ EVERY member of {at} is a mark a reader reaches — "
-            f"{len(seen)} of {len(members)}",
-            len(seen) == len(members),
+            f"C {page}: ★★★★★ EVERY leaf of {at} is a mark a reader reaches — "
+            f"{len(seen)} of {len(leaves)}, missed {missed}",
+            not missed,
         )
         ok(
             f"C {page}: and each member of {at} says its own sentence",
@@ -367,14 +504,17 @@ def body() -> None:
         # question would be asking about a verb it does not have.
         row, stop = held["packets"]
         banner("packets D/E — walking reorders nothing; pressing does")
-        # ⚠ Navigating BACK to a page needs the frame that mounts it before its
-        # stops exist: with two pages this clause followed the one it wanted and
-        # a single tick was enough, and adding a third put another page in
-        # between — `focus/set` was then refused `tag_not_focusable` on a stop
-        # that had not been painted yet. Arriving is not the same as being drawn.
+        # ⚠ Navigating BACK to a page needs the frames that MOUNT it before its
+        # stops exist, and "arriving" is not "being drawn". A fixed tick count
+        # is a guess about how long that takes, and it was wrong TWICE — one
+        # tick sufficed while the page happened to be adjacent, four sufficed
+        # until a heavier page went last. So the walk WAITS for the stop to be
+        # focusable instead of counting frames.
         app.intervene(f"{EXT}/nav", "packets")
-        for _ in range(4):
+        for _ in range(8):
             app.tick_ms(16)
+            if stop in ring_of(app):
+                break
         app.request("focus/set", {"tag": stop})
         app.tick_ms(16)
         order = app.query(f"{row['screen']['address']}/sort")

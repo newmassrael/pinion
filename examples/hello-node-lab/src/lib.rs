@@ -72,8 +72,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use pinion_a11y::{
-    AccessLive, AccessNode, AccessState, AccessValue, AriaCurrent, AriaRole, NavLink, WidgetA11y,
-    navigation_link_nodes,
+    AccessFocus, AccessLive, AccessNode, AccessState, AccessValue, AriaCurrent, AriaRole, NavLink,
+    WidgetA11y, navigation_link_nodes,
 };
 use pinion_core::availability::Unavailable;
 use pinion_core::containment::{band_in, line_box, line_rect_in};
@@ -1685,6 +1685,15 @@ struct LabState {
     /// subgraph shortens the trail under the cursor and every write that can do
     /// that is a write somewhere else.
     crumb_cursor: Signal<usize>,
+    /// ★★★★★ R2066 — which PIN of the card under the canvas cursor a reader has
+    /// gone into, or `None` while they are still on the card itself.
+    ///
+    /// `Option`, because the descent is a fact and not a default: a reader who
+    /// has not entered a card should hear the card, and a cursor that always
+    /// addressed a pin could not say "the whole card" — which is what this
+    /// screen's selection means. The same shape the capture list's cell cursor
+    /// has, for the same reason.
+    pin_descent: Signal<Option<usize>>,
     /// ★★★★★ R1802 — where the palette sits, as a VALUE.
     ///
     /// R1801 gave this screen's specification a placement POLICY — the palette
@@ -2202,6 +2211,9 @@ impl LabState {
             // reader who Tabs there and presses goes all the way out. Clamped
             // at read time; nothing here has to keep it valid.
             crumb_cursor: Signal::new(0),
+            // R2066 — the canvas opens ON a card, not inside one. A screen that
+            // started with a pin addressed would announce a port nobody chose.
+            pin_descent: Signal::new(None),
             palette_at: Signal::new(palette_opens_at()),
             inspector_at: Signal::new(inspector_opens_at()),
             playhead: Signal::new(0.0),
@@ -7823,6 +7835,98 @@ fn crumb_trail_cursor(state: &LabState) -> Option<Roving> {
     Some(roving)
 }
 
+/// ★★★★★ R2066 — **the canvas's cursor**, and this screen's second Tab stop.
+///
+/// Not new state: the members are [`LabState::cards`] — *the tree being shown*,
+/// so this works at every depth without knowing there are depths — and the
+/// cursor is [`LabState::active_card`], which the inspector already follows.
+/// A second copy of "which card" would be a second thing to keep in step with
+/// a selection the pointer, the wire and six verbs all write.
+///
+/// `Follows`, unlike the breadcrumb beside it: on a canvas arriving IS
+/// selecting — the inspector opens on whatever the cursor reaches, which is
+/// what a reader walking the graph wants — and nothing is lost by arriving,
+/// which is exactly what the trail's `Explicit` is protecting against.
+///
+/// `Both` axes, because a graph's neighbours are not a list: this seats the
+/// cards in the order the tree holds them and lets either axis step through
+/// them, which is a linear walk over a spatial thing. ⚠ That is a KNOWN
+/// approximation and it is written down rather than hidden: the dashboard's
+/// board declares `StopInterior::Spatial` and moves to the neighbour in the
+/// direction pressed. Doing that here needs each card's placement, which this
+/// screen has, and a rule for "nearest in that direction", which it does not —
+/// so the honest first cursor is the one whose behaviour a reader can predict.
+fn canvas_cursor(state: &LabState) -> Option<Roving> {
+    let cards = state.cards();
+    if cards.is_empty() {
+        return None;
+    }
+    let mut roving = Roving::new(
+        RovingSpec::new(Axis::Both)
+            .with_ends(Ends::Stop)
+            .with_activation(Activation::Follows),
+    );
+    // ★★★★★ Each card CONTAINS its pins, the way a message row contains its
+    // cells. That nesting is what puts the sentences the pins carry inside a
+    // keyboard reader's reach: descending into a card makes a pin the active
+    // descendant, and the description register answers about whatever the
+    // reader's attention is on.
+    roving.seat(
+        cards
+            .iter()
+            .map(|node| {
+                let member = Member::new(card_tag(state, *node));
+                match pin_cursor(state, *node) {
+                    Some(pins) => member.containing(pins),
+                    None => member,
+                }
+            })
+            .collect(),
+    );
+    let at = state.active_card().unwrap_or(cards[0]);
+    roving.point_at(&card_tag(state, at));
+    // ★★★★★ The descent is projected too, from the one fact that holds it:
+    // `Some(n)` means the reader went into the card, so the composite is
+    // entered and its inner cursor points at that pin. Without this the roving
+    // is rebuilt on every read and a reader who descended would be put back on
+    // the card by the next keystroke.
+    if let Some(pin) = state.pin_descent.get()
+        && let Some(tag) = drawn_pins(state, at).get(pin).map(|(tag, _)| tag.clone())
+    {
+        roving.enter();
+        if let Some(inner) = roving.inner_at_cursor_mut() {
+            inner.point_at(&tag);
+        }
+    }
+    Some(roving)
+}
+
+/// ★★★★★ R2066 — **where a keyboard reader's attention actually is**, given the
+/// Tab stop they are standing on.
+///
+/// The innermost thing inside the stop — what `aria-activedescendant`
+/// addresses and what the framework's focus ring frames. ONE home, because two
+/// consumers ask it: the accessibility tree publishes it and the description
+/// register resolves against it, and the three sibling sections each measured
+/// what it costs when those two answer differently.
+fn canvas_attention(state: &LabState, stop: &str) -> Option<String> {
+    match stop {
+        "lab.canvas" => canvas_cursor(state)?.active_descendant().map(str::to_owned),
+        CRUMB_TRAIL_TAG => crumb_trail_cursor(state)?
+            .active_descendant()
+            .map(str::to_owned),
+        _ => None,
+    }
+}
+
+/// The tag card `node` is addressed by.
+///
+/// A function rather than a `format!` at each site: the paint, the
+/// accessibility tree and the cursor all have to produce it from one rule.
+fn card_tag(state: &LabState, node: NodeId) -> String {
+    format!("lab.node.{}", state.name_of(node))
+}
+
 /// The tag the step for `depth` is addressed by.
 ///
 /// A function rather than a `format!` at each site: the paint, the
@@ -12141,6 +12245,11 @@ fn canvas(state: &LabState, theme: &Theme, ink: Ink) -> Scene {
     // The gate panel and the hint strip are chrome: they float over the canvas
     // and do not pan with it.
     children.extend(canvas_overlays(state, theme, ink));
+    // ★★★★★ R2066 — the canvas is a Tab stop, and the arrows walk its cards.
+    // R2065 gave this screen its first stop (the way out of a subgraph); this
+    // is the one that reaches what the screen is FOR. Focusable only while
+    // there is a card to stand on, by the rule the trail already keeps: a stop
+    // that can do nothing is worse than no stop.
     Scene::Container(
         ContainerNode::new(children)
             .with_tag("lab.canvas")
@@ -12154,6 +12263,7 @@ fn canvas(state: &LabState, theme: &Theme, ink: Ink) -> Scene {
             .with_style(BoxStyle::filled(ink.bg).with_lattice(canvas_lattice(state, ink)))
             .with_layout(absolute(rect)),
     )
+    .with_focusable(canvas_cursor(state).is_some())
 }
 
 /// ★★★★★ R1909 — the panel FIRST, its body inside the closure.
@@ -22314,6 +22424,40 @@ impl WidgetCore for NodeLabView {
         //
         // A chord the trail does not navigate by falls THROUGH, so the host's
         // rail keeps the presses it was aimed at.
+        // ★★★★★ R2066 — the canvas's arrows walk its cards, and arriving
+        // SELECTS, so the inspector opens on whatever the cursor reaches. One
+        // write, through `select_only` — the same verb the pointer and the wire
+        // use — so a keyboard walk and a click cannot mean two things.
+        if focused == Some("lab.canvas")
+            && let Some(mut roving) = canvas_cursor(&state)
+        {
+            let Some(landing) = roving.key(key) else {
+                return false;
+            };
+            // ★ Entering and leaving move the projection too, and they are the
+            // same write as an arrow: ONE place turns a cursor into state,
+            // whatever key moved it. The capture list learned this at R1699.
+            if !matches!(
+                landing,
+                RovingLanding::Moved { .. } | RovingLanding::Entered(_) | RovingLanding::Exited(_)
+            ) {
+                return false;
+            }
+            let Some(node) = roving
+                .cursor()
+                .and_then(|at| state.cards().get(at).copied())
+            else {
+                return false;
+            };
+            select_card(&state, Some(node));
+            state.pin_descent.set(
+                roving
+                    .entered()
+                    .then(|| roving.inner_at_cursor().and_then(Roving::cursor))
+                    .flatten(),
+            );
+            return true;
+        }
         if focused == Some(CRUMB_TRAIL_TAG)
             && let Some(mut roving) = crumb_trail_cursor(&state)
         {
@@ -22399,6 +22543,30 @@ impl WidgetA11y for NodeLabView {
     /// So it is answered by region, each from the data the painter uses, and the
     /// question "did anything get left out" is [`pinion_core::voice`]'s to ask
     /// rather than a reader's to notice.
+    /// ★★★★★ R2066 — **where the cursor rests inside the focused stop.**
+    ///
+    /// The third piece of a composite, after the cursor and the structure: the
+    /// framework's focus ring reads this hook and the accessibility tree
+    /// lowers it to `aria-activedescendant`, so without it a reader is told
+    /// the canvas has focus and never which card — or which pin. Measured
+    /// before this existed: the arrows walked to a pin and the tree marked
+    /// nothing focused.
+    ///
+    /// Through [`canvas_attention`], which the description register also asks,
+    /// so the two cannot answer differently — the defect R2061 through R2064
+    /// each measured on a sibling section.
+    fn access_focus_target(
+        _state: &(TextFieldState, u32),
+        focused: Option<&str>,
+    ) -> Option<AccessFocus> {
+        let state = use_lab_state();
+        let stop = focused?;
+        Some(AccessFocus::addressing(
+            stop,
+            canvas_attention(&state, stop),
+        ))
+    }
+
     fn access_node(_state: &(TextFieldState, u32), _focused: Option<&str>) -> Vec<AccessNode> {
         let state = use_lab_state();
         let verdict = state.verdict();
@@ -22720,21 +22888,40 @@ fn parts_access(state: &LabState) -> Vec<AccessNode> {
 /// the pins a link is drawn between.
 fn canvas_access(state: &LabState) -> Vec<AccessNode> {
     let selection = state.selection.get();
-    let mut nodes = vec![
-        AccessNode::new("lab.canvas", AriaRole::Group)
-            .with_name("canvas")
-            // ★★ R1706 — a canvas whose frame gesture selects six cards at once
-            // is multi-selectable, and saying so is what makes the per-card
-            // `aria-selected="false"` audible rather than noise: an assistive
-            // technology announces "not selected" only where a set is possible.
-            .with_multiselectable()
-            .with_value(AccessValue::Text(format!(
-                "{} cards, {} links, zoom {}%",
-                state.cards().len(),
-                state.link_count(),
-                state.zoom.get(),
-            ))),
-    ];
+    // ★★★★★ R2066 — the canvas PUBLISHES the roster its arrows reach. Half of a
+    // composite is the cursor and the other half is saying so: R2064 measured
+    // what the missing half costs — a client is told the stop exists with no
+    // way to learn what is inside it or which keys move there, and every test
+    // passes because the screen behaves correctly.
+    let mut canvas = AccessNode::new("lab.canvas", AriaRole::Group)
+        .with_name("canvas")
+        // ★★ R1706 — a canvas whose frame gesture selects six cards at once
+        // is multi-selectable, and saying so is what makes the per-card
+        // `aria-selected="false"` audible rather than noise: an assistive
+        // technology announces "not selected" only where a set is possible.
+        .with_multiselectable()
+        .with_value(AccessValue::Text(format!(
+            "{} cards, {} links, zoom {}%",
+            state.cards().len(),
+            state.link_count(),
+            state.zoom.get(),
+        )));
+    if let Some(cursor) = canvas_cursor(state) {
+        canvas = canvas.with_navigation(&cursor);
+    }
+    // ★★★★★ R2066 — the canvas OWNS its cards, and a card owns its pins.
+    //
+    // ⚠ Measured, not assumed: before this the canvas, the cards and the pins
+    // were announced as SIBLINGS. The nesting existed in the cursor's roster
+    // and nowhere a client could read it, so a reader told "you are on the
+    // canvas" had no way to learn what is inside — and a walk asking the tree
+    // whether the canvas owns a pin was told no while the arrows walked
+    // straight to it. That is the same half-built composite R2064 measured one
+    // screen over: a cursor without the structure that explains it.
+    for node in state.cards() {
+        canvas = canvas.with_child(card_tag(state, node));
+    }
+    let mut nodes = vec![canvas];
     for node in state.cards() {
         let name = state.name_of(node);
         let role = state.role_of(node).unwrap_or(Role::Peer);
@@ -22763,6 +22950,22 @@ fn canvas_access(state: &LabState) -> Vec<AccessNode> {
         // and what stays true while the keyboard is somewhere else entirely.
         if selection.is_active(&node) {
             card = card.with_current(AriaCurrent::True);
+        }
+        // ★★★★★ R2066 — and a card owns the pins it draws, from the SAME
+        // enumeration the register and the cursor read. Three consumers, one
+        // answer to "which pins does this card have".
+        for (tag, _) in drawn_pins(state, node) {
+            card = card.with_child(tag);
+        }
+        // ★★★★★ R2066 — and each card PUBLISHES the roster its own arrows reach,
+        // not only the canvas above it. Measured: with the roster on the canvas
+        // alone, a client could learn that the cards are walkable and had no
+        // way to learn that a card is ENTERABLE or what is inside it — so a
+        // walk asking each member what it holds was told nothing and counted
+        // the cards themselves as the leaves. The capture list publishes its
+        // rows' cell rosters for exactly this reason (R1699).
+        if let Some(pins) = pin_cursor(state, node) {
+            card = card.with_navigation(&pins);
         }
         nodes.push(card.with_value(AccessValue::Text(format!(
             "{}, {inbound} inbound, {outbound} outbound{}",
@@ -23007,35 +23210,74 @@ const TOOLTIP_TAG: &str = "lab.tip";
 /// pointer to rest on, so describing it would put a sentence in the register
 /// that nothing can ever show — and a census counting described marks would
 /// then count marks that are not there.
+/// ★★★★★ R2066 — **the pins one card DRAWS that have something to say**, as
+/// `(tag, sentence)`.
+///
+/// ONE enumeration with two consumers: the register turns each pair into a
+/// description, and [`pin_cursor`] turns each into a place a keyboard can
+/// stand. Written out twice they would be free to disagree about which pins
+/// exist — and the register is what decides whether a mark has anything to
+/// say, so a cursor asking a different question would stop a reader on a silent
+/// pin, which is the same "a stop that can do nothing is worse than none" rule
+/// this screen already keeps for its breadcrumb.
+fn drawn_pins(state: &LabState, node: NodeId) -> Vec<(String, String)> {
+    let doc = state.doc.borrow();
+    let name = state.name_of(node);
+    let Some(seen) = doc.visible_ports(state.here(), node) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for side in [Side::Output, Side::Input] {
+        let drawn = match side {
+            Side::Output => &seen.outputs,
+            Side::Input => &seen.inputs,
+        };
+        for (index, (path, _)) in doc
+            .resolved_ports(state.here(), node, side)
+            .into_iter()
+            .enumerate()
+        {
+            let index = u32::try_from(index).unwrap_or(u32::MAX);
+            if !drawn.contains(&index) {
+                continue;
+            }
+            if let Some(tip) = doc.port_tooltip(state.here(), node, side, &path) {
+                out.push((
+                    format!("lab.pin.{name}.{}", pin_word(side, &path)),
+                    tip.sentence(),
+                ));
+            }
+        }
+    }
+    out
+}
+
+/// ★★★★★ R2066 — the cursor over one card's pins, or `None` when it draws none
+/// that speak.
+///
+/// The inner half of the canvas's composite: a card contains its pins the way a
+/// message row contains its cells, so descending into a card is what puts the
+/// sentences those pins carry inside a keyboard reader's reach. `Stop` at the
+/// ends — a card's first and last pin are ends a reader is meant to feel.
+fn pin_cursor(state: &LabState, node: NodeId) -> Option<Roving> {
+    let pins = drawn_pins(state, node);
+    if pins.is_empty() {
+        return None;
+    }
+    let mut roving = Roving::new(
+        RovingSpec::new(Axis::Vertical)
+            .with_ends(Ends::Stop)
+            .with_activation(Activation::Follows),
+    );
+    roving.seat(pins.into_iter().map(|(tag, _)| Member::new(tag)).collect());
+    Some(roving)
+}
+
 fn pin_descriptions(state: &LabState) -> Descriptions {
     let mut described = Descriptions::new();
-    let doc = state.doc.borrow();
     for node in state.cards() {
-        let name = state.name_of(node);
-        let Some(seen) = doc.visible_ports(state.here(), node) else {
-            continue;
-        };
-        for side in [Side::Output, Side::Input] {
-            let drawn = match side {
-                Side::Output => &seen.outputs,
-                Side::Input => &seen.inputs,
-            };
-            for (index, (path, _)) in doc
-                .resolved_ports(state.here(), node, side)
-                .into_iter()
-                .enumerate()
-            {
-                let index = u32::try_from(index).unwrap_or(u32::MAX);
-                if !drawn.contains(&index) {
-                    continue;
-                }
-                if let Some(tip) = doc.port_tooltip(state.here(), node, side, &path) {
-                    described.describe(
-                        format!("lab.pin.{name}.{}", pin_word(side, &path)),
-                        tip.sentence(),
-                    );
-                }
-            }
+        for (tag, sentence) in drawn_pins(state, node) {
+            described.describe(tag, sentence);
         }
     }
     described
@@ -25498,9 +25740,17 @@ fn pin_description_shown(state: &LabState) -> Option<(String, String)> {
     // that opened this said so in as many words. The focus is the shell's, read
     // from the substrate rather than mirrored into a field here.
     let focused = pinion_core::focus_state::focused();
+    // ★★★★★ R2066 — the reader's ATTENTION, not the stop they are on. Nothing on
+    // this canvas that carries a sentence IS a stop: a pin lives inside a card,
+    // which lives inside the canvas, so handing the raw stop here answered
+    // nothing for every described mark this screen has. The three sibling
+    // sections learned the same thing over R2061-R2064; this is the fourth.
+    let attention = focused
+        .as_deref()
+        .and_then(|stop| canvas_attention(state, stop));
     let shown = described.shown(&Resting {
         hovered: hovered.as_deref(),
-        focused: focused.as_deref(),
+        focused: attention.as_deref().or(focused.as_deref()),
         dismissed: false,
     })?;
     Some((shown.tag.to_owned(), shown.sentence.to_owned()))
