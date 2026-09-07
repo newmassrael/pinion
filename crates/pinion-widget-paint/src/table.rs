@@ -662,9 +662,8 @@ fn section_label_style(style: &TableStyle, fg: Color) -> TextStyle {
 ///
 /// ⚠ R2060 — that direction used to be a presentational TEXT run, which is how
 /// it stayed out of the section's name. It is a drawn
-/// [`Indicator`](crate::indicator::Indicator) now, declared decorative by the
-/// same rule and by a stronger route: a mark has no words to be mistaken for a
-/// name.
+/// [`crate::indicator::Indicator`] now, declared decorative by the same rule
+/// and by a stronger route: a mark has no words to be mistaken for a name.
 ///
 /// Returns `None` for the name when the section has no mark, or has one whose
 /// [`meaning`](Decoration::meaning) is empty (a decorative `alt=""` mark): the
