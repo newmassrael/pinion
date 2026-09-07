@@ -6880,10 +6880,38 @@ fn r1981_a_per_tree_number_does_not_travel_through_the_door() {
         assert!(!state.stacking.borrow().is_empty());
 
         super::enter_card(&state, part).expect("go inside");
+        // ★★★★★ R2068 — the property is that a number does not TRAVEL, and this
+        // asserts the property rather than the proxy it used to.
+        //
+        // Until this round the line read `selection.is_empty()`, which was the
+        // whole of what `stand_in` did. R2068 gave the arrival its other half —
+        // the reader lands ON a card, the way the document opens with one
+        // selected — because the paint sweep's first descent found the settings
+        // form painting nothing at all and the screen's own control floor
+        // refusing it. Emptiness was never the point; not inheriting the outer
+        // tree's number is.
+        //
+        // ⚠ `!= part` would be the weak form: ids are per-tree, so the inner
+        // card's number could equal the instance's by coincidence and the check
+        // would pass for the wrong reason. What is asked instead is that
+        // whatever is selected is a card OF THIS TREE, which the outer id is
+        // not — `cards()` answers the tree being shown.
+        let here: Vec<_> = state.cards();
+        let picked: Vec<_> = here
+            .iter()
+            .copied()
+            .filter(|id| state.selection.get().contains(id))
+            .collect();
+        assert_eq!(
+            picked.len(),
+            1,
+            "★★★★★ exactly one card OF THIS TREE is selected — a NodeId that \
+             meant the part out there would name some other card in here, and \
+             an empty inspector is not the answer either"
+        );
         assert!(
-            state.selection.get().is_empty(),
-            "★★★★★ nothing is selected in here — a NodeId that meant the part out \
-             there means some other card in this tree"
+            state.selection.get().is_active(&picked[0]),
+            "★ and it is the one the inspector opens on"
         );
         assert!(
             state.stacking.borrow().is_empty(),

@@ -256,9 +256,26 @@ def body() -> None:
         banner("D — ★ nothing came through the door with us")
         # ⚠ `NodeId` is minted per tree, so a selection carried across would not
         # be empty — it would name whatever card in here holds that number.
+        #
+        # ★★★★★ R2068 — asked as the PROPERTY, where it used to be asked as a
+        # proxy. The line read `not selected(...)`, which was the whole of what
+        # descending did until R2068 gave the arrival its other half: the reader
+        # lands ON a card, the way the document opens with one selected, because
+        # the paint sweep's first descent found the settings form painting no
+        # control at all. Emptiness was never the point — not inheriting the
+        # outer tree's number is.
+        #
+        # ⚠ And the crate test that says this same thing was corrected first;
+        # THIS copy was found by the sweep, one round later in the same hour.
+        # Two accounts of one property, in two languages.
+        here = card_names(app, surface)
+        chosen = selected(app, surface)
         ok(
-            f"D: ★★★★★ nothing is selected in here — {selected(app, surface)}",
-            not selected(app, surface),
+            f"D: ★★★★★ what is selected in here is OF this tree — {chosen} "
+            f"among {here}. A number that meant the part out there would name "
+            "some other card in here, and an empty inspector is not the answer "
+            "either",
+            chosen and all(name in here for name in chosen),
         )
 
         banner("E — ★★★★★ a name inside is found from the root, two trees away")

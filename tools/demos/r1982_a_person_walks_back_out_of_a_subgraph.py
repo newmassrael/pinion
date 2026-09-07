@@ -504,6 +504,67 @@ def body() -> None:
             went["depth"] == 1 and went["inside"] is True,
         )
 
+        # ★★★★★ R2068 — and ARRIVING somewhere shows you what is there.
+        #
+        # The paint sweep stood inside a subgraph for the first time this round
+        # and found the screen arriving at nothing: no card selected, so the
+        # inspector painted not one control, and the viewport still pointed
+        # where the tree above had been left, so a definition's cards — which
+        # sit around its own origin — were half off the canvas or off it
+        # entirely. Both are the same defect, and it is about arrival.
+        banner("J — ★★★★★ arriving in a part shows the part")
+        # ⚠ Out first: clause I left the person INSIDE, and `enter` is answered
+        # against the tree on screen — from in there no card is called `way-in`,
+        # which is the per-tree naming this walk's clause F is about. Driven
+        # rather than assumed: the first draft of this clause called `enter`
+        # from inside and was refused by name.
+        app.invoke(f"{surface}/exit", "")
+        app.tick_ms(16)
+        app.invoke(f"{surface}/enter", "way-in")
+        app.tick_ms(32)
+        at = standing(app, surface)
+        ok(f"J: one descent deep — {at['depth']}", at["depth"] == 1)
+
+        inside_cards = cards(app, surface)
+        picked = app.query(f"{surface}/selected")
+        ok(
+            f"J: ★★★★★ a card OF THIS TREE is selected on arrival — {picked} "
+            f"among {inside_cards}. The document opens with one selected; a "
+            "tree arrived in gets the same greeting, and before this round the "
+            "inspector painted nothing at all in here",
+            picked in inside_cards,
+        )
+
+        marks = abs_rects_of(app.snapshot(source="paint", viewport=VIEWPORT))
+        canvas = marks["lab.canvas"]
+        seen = {
+            name: marks.get(f"lab.node.{name}")
+            for name in inside_cards
+        }
+        missing = [name for name, rect in seen.items() if rect is None]
+        ok(
+            f"J: ★★★★★ every card of the arrived tree is on the canvas — {seen}",
+            not missing,
+        )
+        outside = [
+            name
+            for name, rect in seen.items()
+            if rect is not None
+            and not (
+                rect[0] >= canvas[0]
+                and rect[1] >= canvas[1]
+                and rect[0] + rect[2] <= canvas[0] + canvas[2]
+                and rect[1] + rect[3] <= canvas[1] + canvas[3]
+            )
+        ]
+        ok(
+            f"J: ★ and none of them straddles the canvas edge — {outside}. A "
+            "card half past that edge is recorded as a CLIPPED box while the "
+            "parts that survive keep their own, which every containment gate "
+            "then reads as a defect",
+            not outside,
+        )
+
         print(f"\n{len(CHECKS)} check(s) held.")
 
 

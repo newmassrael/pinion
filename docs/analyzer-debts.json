@@ -131,6 +131,18 @@
       ]
     },
     {
+      "name": "debt-a-clipped-box-loses-the-parts-it-still-owns",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "rank": "ordinary",
+      "why": [
+        "links analyzer-tool-capability-spec"
+      ]
+    },
+    {
       "name": "debt-a-composed-destination-has-no-single-published-description",
       "substituted": false,
       "blocked_by": "campaign",
@@ -599,18 +611,6 @@
       "rank": "ordinary",
       "why": [
         "links analyzer-behaviour-canon-is-the-standalone-prototype, screen-a-vs-canon-operation-census"
-      ]
-    },
-    {
-      "name": "debt-the-paint-sweep-never-stands-inside-a-subgraph",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "rank": "ordinary",
-      "why": [
-        "links analyzer-debt-repayment-loop, screen-a-vs-canon-operation-census"
       ]
     },
     {

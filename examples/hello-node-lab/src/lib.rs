@@ -18191,6 +18191,38 @@ fn stand_in(state: &Rc<LabState>, path: EditPath) {
     state.pressed.borrow_mut().take();
     state.editing.set(None);
     state.path.update(|standing| *standing = path);
+    // ★★★★★ R2068 — **and the reader arrives AT a card**, the way this screen
+    // opens: the specification names an opening selection (`spec::SELECTED_NODE`)
+    // precisely so nobody meets an inspector with nothing in it.
+    //
+    // Clearing above is still right — the selection named a card of the tree
+    // being left, and a number that means a different card here is worse than
+    // none. What was missing is the other half: after the clear, the tree
+    // arrived in gets the same greeting the document does.
+    //
+    // ⚠ Measured, not assumed: the paint sweep's first descent found the
+    // settings form painting NO control at all, and the screen's own floor —
+    // forty controls on screen or one scroll away — refused a screen that had
+    // stopped painting them. Both are one absence, and it is this one.
+    //
+    // ★ AFTER the path is set, because `cards()` answers the tree being SHOWN.
+    let arrived = state.cards().first().copied();
+    state
+        .selection
+        .set(arrived.map_or_else(Selection::empty, Selection::one));
+    // ★★★★★ R2068 — **and the canvas points at the graph that is now on it.**
+    //
+    // A tree's cards carry their own positions, and a definition's are centred
+    // on its origin — measured, `[-220, 0]`, `[0, -133]` — while the viewport
+    // was left wherever the tree above it had been panned and zoomed to. So a
+    // person could descend and be looking at empty canvas, or at a corner of
+    // one card, which is the same "arrived at nothing" this function's line
+    // above repairs for the inspector.
+    //
+    // Through the SAME arithmetic the fit control and the wire verb use — the
+    // quiet half of it, because an arrival already has its own sentence and a
+    // reader who listens should not hear about a control nobody pressed.
+    frame_the_graph(state);
 }
 
 fn delete_card(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError> {
@@ -21092,6 +21124,24 @@ const FIT_PAD: i32 = 60;
 /// screen's is what counts as "the graph" ([`drawn_boxes`] — the cards *and* the
 /// host frames) and what the units are.
 fn fit_view(state: &LabState) -> String {
+    let said = frame_the_graph(state);
+    state.say(said.clone());
+    said.into_clause()
+}
+
+/// ★★★★★ R2068 — **the fit's WORK, with no sentence**: it points the canvas and
+/// answers what it managed, and the caller decides whether that is news.
+///
+/// Split out because arriving somewhere fits too ([`stand_in`]), and an arrival
+/// already has its own sentence — *inside part: 4 card(s)*. Without the split a
+/// descent said two things, and the first of them was about a control the
+/// person did not press: a reader who is listening rather than looking heard
+/// *the whole graph, at 100%* on every descent, climb and exit.
+///
+/// ⚠ The repair is NOT to silence the toast around the call. The arrival's own
+/// sentence is the one a person needs, and a screen that suppressed speech
+/// while a verb ran would lose the refusals with it.
+fn frame_the_graph(state: &LabState) -> Utterance {
     let canvas = canvas_rect();
     let Some(fitted) = (Fit {
         zoom: zoom_range(),
@@ -21101,9 +21151,7 @@ fn fit_view(state: &LabState) -> String {
         // Unreachable while a card exists — and `delete_node` refuses the last
         // one — so this is the honest answer to a state the screen does not
         // have rather than a case it expects.
-        let said = Utterance::new(Tone::Refused, "nothing to frame");
-        state.say(said.clone());
-        return said.into_clause();
+        return Utterance::new(Tone::Refused, "nothing to frame");
     };
     #[allow(
         clippy::cast_possible_truncation,
@@ -21112,7 +21160,7 @@ fn fit_view(state: &LabState) -> String {
     )]
     let percent = (fitted.camera.zoom * 100.0).floor() as u32;
     point_canvas_at(state, percent, fitted.camera, canvas_middle());
-    let said = Utterance::done(if fitted.complete {
+    Utterance::done(if fitted.complete {
         format!("the whole graph, at {}%", state.zoom.get())
     } else {
         // ★★ The sentence the reference cannot say. Its fit reports nothing, so
@@ -21122,9 +21170,7 @@ fn fit_view(state: &LabState) -> String {
             "as much as {}% shows — the graph is wider than the view can hold",
             state.zoom.get()
         )
-    });
-    state.say(said.clone());
-    said.sentence()
+    })
 }
 
 /// ★★★★★ R1995 — the outputs a caller named, as cards on this canvas.
@@ -23363,9 +23409,23 @@ fn wire_access(state: &LabState) -> Vec<AccessNode> {
     }
     for node in state.cards() {
         let name = state.name_of(node);
-        let Some(role) = state.role_of(node) else {
-            continue;
-        };
+        // ★★★★★ R2068 — the SAME fallback the painter uses, and it was a
+        // `continue` until this round.
+        //
+        // `role_of` answers `None` for a card this screen's role table does not
+        // describe — a subgraph's interface ends are exactly that — and the
+        // painter reads it as `unwrap_or(Role::Peer)` and draws both pins. So
+        // one fact had two accounts: the pins were on the frame and announced
+        // by nothing. Measured the moment the paint sweep first stood inside a
+        // subgraph: *lab.pin.Group Output.accept (unvoiced)*, and the voice
+        // census is total, so an unclassified region is a reader told nothing.
+        //
+        // ⚠ Stated rather than left: `Peer` is the painter's word for "a card
+        // like any other", so what a reader hears about an interface end is
+        // what they hear about any pin. A sentence naming it as the subgraph's
+        // outward end would be better, and it is a different question from
+        // whether it speaks at all.
+        let role = state.role_of(node).unwrap_or(Role::Peer);
         // ★★★★★ R1928 — **what a pin is CALLED comes from the model**, and only
         // what it is FOR is this screen's.
         //
@@ -23381,19 +23441,38 @@ fn wire_access(state: &LabState) -> Vec<AccessNode> {
         // hears is the name the model resolved — and when the kind answers
         // `Silent` there is no name to hear, which is a different sentence
         // rather than a missing one.
-        nodes.push(
-            AccessNode::new(format!("lab.pin.{name}.dial"), AriaRole::Button).with_name(
-                pin_announcement(
-                    state,
-                    node,
-                    PortRef::output(0),
-                    &name,
-                    "dial pin",
-                    "drag to author a link",
+        // ★★★★★ R2068 — and WHICH of the two the card draws is asked of the
+        // same answer the painter asks, for the same reason the role is now
+        // read the painter's way one block up: a card that has ports on one
+        // side only — a subgraph's interface end is exactly that — was
+        // announcing pins nobody paints the moment the role stopped being a
+        // reason to skip it. The census called them ghosts, which is R1887's
+        // rule speaking: an announcement is a CLAIM ABOUT THE PAINT.
+        let drawn = doc.visible_ports(state.here(), node);
+        let shows = |side: Side, index: u32| -> bool {
+            drawn.as_ref().is_none_or(|seen| {
+                match side {
+                    Side::Input => &seen.inputs,
+                    Side::Output => &seen.outputs,
+                }
+                .contains(&index)
+            })
+        };
+        if shows(Side::Output, 0) {
+            nodes.push(
+                AccessNode::new(format!("lab.pin.{name}.dial"), AriaRole::Button).with_name(
+                    pin_announcement(
+                        state,
+                        node,
+                        PortRef::output(0),
+                        &name,
+                        "dial pin",
+                        "drag to author a link",
+                    ),
                 ),
-            ),
-        );
-        if role.accepts() {
+            );
+        }
+        if role.accepts() && shows(Side::Input, 0) {
             nodes.push(
                 AccessNode::new(format!("lab.pin.{name}.accept"), AriaRole::Button).with_name(
                     pin_announcement(

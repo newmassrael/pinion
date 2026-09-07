@@ -440,6 +440,47 @@ const STATES: &[SweptState] = &[
         )
         .expect("the inspector declares that it moves between the sides");
     }),
+    // ★★★★★ R2068 — **standing INSIDE a subgraph**, which this sweep has never
+    // done. R1981 gave the screen a descent, R1982 the way out, R2065 the
+    // keyboard's way out, R2066 the canvas cursor and R2067 the way in — and
+    // every one of those lives in a state no gate here visits, so five rounds
+    // of work were judged only by the walk that drives them.
+    //
+    // ⚠ LAST, and that is load-bearing: these states are CUMULATIVE, so a
+    // descent placed anywhere else leaves every later fixture looking for the
+    // root's cards from inside a part. R1982 measured exactly that — ten gates
+    // red with `the opening graph has it`.
+    //
+    // ⚠ Reached through the same verbs a person's gesture reaches, never by
+    // seeding a path: a state a test invents can be one the screen cannot get
+    // to, which is the rule the panel states above already keep.
+    ("standing inside a subgraph", |state| {
+        // ⚠⚠★★★★★ ONE axis, not the product of every axis before it. These
+        // states are cumulative, so this one inherits `zoomed out`'s ZOOM_MIN,
+        // the pan and both panel placements. Its first run reported fifteen
+        // marks 1px outside the box that owns them, and the first explanation
+        // written here — the zoom's rounding — was DRIVEN AND REFUTED: pinning
+        // the zoom at 100 left seventeen. What it actually is, measured at the
+        // ROOT by dragging one card until it crosses the canvas's top edge, is
+        // that a clipped container records the CLIPPED rectangle while a child
+        // that survives the clip keeps its own, so the child sits outside the
+        // box that owns it. Nothing to do with descending; the descended state
+        // is simply the first one whose cards straddle that edge, because a
+        // definition's cards are centred on its origin.
+        //
+        // ⇒ registered as its own work, and the screen no longer arrives
+        // straddling: `stand_in` fits the view to the tree it lands in, which
+        // is what the fit control has always done and what a person expects of
+        // arriving somewhere.
+        state.zoom.set(100);
+        let pair: Vec<_> = state.cards().into_iter().take(2).collect();
+        state
+            .selection
+            .set(pinion_core::selection::Selection::group(pair));
+        super::group_selection(state, "part").expect("two cards make a subgraph");
+        let part = state.node_of("part").expect("the instance is a card here");
+        super::enter_card(state, part).expect("and the model lets a person in");
+    }),
 ];
 
 // ⚠⚠★★★★★ R1982 — **THIS SWEEP DOES NOT VISIT A DESCENDED SCREEN, AND THAT IS
@@ -823,7 +864,20 @@ fn declared_tags(state: &LabState) -> Vec<String> {
             want.push(format!("lab.palette.protocol.{word}"));
         }
     }
-    for frame in spec::FRAMES {
+    // ★★★★★ R2068 — the specification's frame table describes the ROOT screen,
+    // and this is where it says so. A person standing inside a subgraph is
+    // looking at a tree that has no host frames — `frames_of` answers none —
+    // so demanding the opening graph's two here would be demanding that the
+    // screen paint another tree's furniture.
+    //
+    // ⚠ Gated on the MODEL's answer rather than on `state.inside()`, and the
+    // difference is the point: what makes these demandable is that the tree
+    // being shown HAS them, which is also true of a subgraph that grows a frame
+    // one day. The tables stay the root's; the question becomes the tree's.
+    for frame in spec::FRAMES
+        .iter()
+        .filter(|f| super::frames_of(state).iter().any(|(_, n)| n == f.name))
+    {
         want.push(format!("lab.frame.{}", frame.name));
         // ★ R1813 — `.caption`, not `.name`: the frame's title is the frame's
         // own caption child now, and the suffix is what says so to
@@ -861,7 +915,24 @@ fn declared_tags(state: &LabState) -> Vec<String> {
         want.push(format!("lab.node.{id}"));
         want.push(format!("lab.node.{id}.id"));
         want.push(format!("lab.node.{id}.badge"));
-        want.push(format!("lab.pin.{id}.dial"));
+        // ★★★★★ R2068 — a card draws a `dial` when the MODEL gives it an output
+        // port, which every card of the opening graph has and an interface card
+        // does not: a subgraph's outward end is all inputs, so demanding one
+        // here made the screen owe a pin the taxonomy says it has no room for.
+        //
+        // ⚠ Asked of the document and not of the painter — the census derives
+        // what the screen OWES from the model, and the painter derives what it
+        // draws by its own route, so the two meeting is the check. Asking the
+        // painter would make this self-comparing, which is the failure this
+        // function's own header records.
+        if !state
+            .doc
+            .borrow()
+            .resolved_ports(state.here(), node, pinion_node_graph::Side::Output)
+            .is_empty()
+        {
+            want.push(format!("lab.pin.{id}.dial"));
+        }
     }
     if let Some(form) = super::selected_form(state) {
         for field in form.fields() {
@@ -1241,12 +1312,43 @@ fn assert_reachable(when: &str, state: &LabState, shot: &Painted, size: (u32, u3
         .keys()
         .filter(|tag| must_answer(tag).is_some())
         .count();
+    // ★★★★★ R2068 — the floor counts the CHROME's controls, not the graph's.
+    //
+    // It was a flat forty over every control on screen, which is a number about
+    // the opening GRAPH — eight cards, their pins, two host frames — and the
+    // sweep's first descended state reported 27 and failed. Nothing had stopped
+    // painting: a subgraph is a smaller graph, and a floor that falls with the
+    // graph is a floor that would also fall silently the day a card is deleted.
+    //
+    // The chrome is what does not vary with the tree being shown — the rail,
+    // the toolbar, the palette, the panels, the reset seats — so it is the
+    // honest thing to put a constant under. The graph's own controls are held
+    // by the FORWARD check instead, which demands a tag per card the model
+    // holds and per pin it draws, and that demand grows and shrinks with the
+    // tree exactly as it should.
+    //
+    // ⚠ `is_graph_content` is the same predicate the forward check grants by,
+    // so the two halves cannot disagree about which controls are the graph's.
+    let chrome = controls
+        .iter()
+        .filter(|(tag, _)| !is_graph_content(tag))
+        .count()
+        + shot
+            .reachable
+            .keys()
+            .filter(|tag| must_answer(tag).is_some() && !is_graph_content(tag))
+            .count();
+    // ⚠ TWENTY, and it is the measured minimum over the sweep's states rather
+    // than a round number: the state that folds the inspector into its strip
+    // puts that pane's controls away legitimately and reports exactly 20, while
+    // the descended state reports more. Pinned AT the minimum so any further
+    // drop fails — the shape this file's family pins already use.
     assert!(
-        controls.len() + scrolled >= 40,
-        "{when}: only {} control(s) — {} painted and {scrolled} one scroll \
-         away. A screen that stops painting controls must fail here, not \
-         report a smaller number",
-        controls.len() + scrolled,
+        chrome >= 20,
+        "{when}: only {chrome} chrome control(s) — {} painted and {scrolled} \
+         one scroll away in total. A screen that stops painting the controls \
+         that do NOT depend on the graph must fail here, not report a smaller \
+         number",
         controls.len()
     );
     // ★★★★★ R1736 — where each ANSWER is painted, so a probe that names
@@ -3199,6 +3301,20 @@ fn r1813_the_switch_paints_the_position_and_the_pair_would_not_have_moved_it() {
 }
 
 /// Every card's world position, by name.
+/// Where every card the screen is SHOWING sits, by name.
+///
+/// ★★★★★ R2068 — asked of `here()`, and it asked `ROOT` until this round. The
+/// two are the same tree only while nobody has descended, which was every state
+/// this sweep visited — so the defect could not appear until the state that
+/// stands inside a subgraph did.
+///
+/// ⚠ What it did wrong is worth naming, because reading it does not show it: a
+/// node id is unique WITHIN a tree, so looking the SHOWN tree's ids up in ROOT
+/// does not answer "not found" — it answers *a different card's position*, and
+/// that card never moves. The drag was fine; the instrument was reading another
+/// graph. This is R1982's finding one layer over: there the palette added to
+/// ROOT whatever tree was on screen, here the gate MEASURES ROOT whatever tree
+/// is on screen.
 fn positions(state: &LabState) -> BTreeMap<String, (i32, i32)> {
     state
         .cards()
@@ -3207,7 +3323,7 @@ fn positions(state: &LabState) -> BTreeMap<String, (i32, i32)> {
             state
                 .doc
                 .borrow()
-                .tree(super::ROOT)
+                .tree(state.here())
                 .and_then(|t| t.node(n).map(|s| (state.name_of(n), (s.x, s.y))))
         })
         .collect()
@@ -6365,7 +6481,36 @@ fn r1691_every_addressable_region_is_classified_in_every_state() {
                 let anything_folded = super::SidePanel::ALL
                     .into_iter()
                     .any(|which| which.at(&state).folded);
-                let floor = if anything_folded { 80 } else { 100 };
+                // ★★★★★ R2068 — and a third floor, for the same reason the
+                // second one exists: what a screen announces is mostly its
+                // GRAPH, and a subgraph is a smaller graph. The opening
+                // document holds eight cards and their pins, a folded part
+                // holds four — measured, 62 announced regions against a floor
+                // written for eight. Holding a descended screen to the root's
+                // number would either fail honestly forever or push the number
+                // down until it stopped protecting the root.
+                //
+                // ⚠ It is not an exemption either. What it says is *going
+                // inside a part does not make this screen mute*, and it is read
+                // off the PATH rather than off a state's name, so no state can
+                // claim it by accident.
+                //
+                // ⚠ 55 is pinned just under the 62 this state measures, and it
+                // is a NON-VACUITY guard and nothing more — said plainly
+                // because the first draft of this comment implied more. It does
+                // not catch a pin regression: five pins are painted in there,
+                // so every one of them could go silent and 57 would still clear
+                // the floor. What catches that is the classification's
+                // TOTALITY above — which is exactly what named
+                // `lab.pin.Group Output.accept` this round, and then named the
+                // three ghosts the first repair produced.
+                let floor = if state.inside() {
+                    55
+                } else if anything_folded {
+                    80
+                } else {
+                    100
+                };
                 assert!(
                     census.count(pinion_core::voice::Voice::Announced) >= floor,
                     "{when} at {size:?}: only {} regions announce, floor {floor} \
