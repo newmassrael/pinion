@@ -1269,7 +1269,31 @@ fn r1696_every_composite_pane_and_chip_is_a_keyboard_stop() {
         // became one, and the arrows, `Home`, `End` and `Enter` that one stop
         // carries are what a keyboard got in exchange.
         let mut want: Vec<String> = super::saved_stops();
-        want.extend(spec::PANES.iter().map(|pane| pane.tag.to_owned()));
+        // ★★★★★ R2061 — from the declaration of which stops own a cursor, which
+        // is also PAINT ORDER, so this stays the ordered assertion §5.39's
+        // depth-first enumeration deserves.
+        //
+        // ⚠ And the order it records is worth reading rather than glossing: the
+        // heading row comes AFTER the grid it heads, because the container that
+        // makes it a stop is painted inside the pane and the pane is the stop a
+        // depth-first walk meets first. Visually the headings are above the
+        // rows. That mismatch is the general one
+        // `debt-a-screens-tab-order-is-its-z-order` already names — paint order
+        // is not a free choice for a screen — and it is stated here so the
+        // order is a recorded fact rather than an accident nobody noticed.
+        want.extend(super::PROJECTED_STOPS.iter().map(|s| (*s).to_owned()));
+        // ★ And the specification's pane table is still what this gate stands
+        // on: taking the ring off one list would have quietly dropped the
+        // property R1696 built it for — a pane declared in the specification
+        // and reachable by nobody. Two facts, kept apart.
+        for pane in spec::PANES {
+            assert!(
+                super::PROJECTED_STOPS.contains(&pane.tag),
+                "{case}: {} is a pane the specification declares and no stop \
+                 this file projects a cursor for",
+                pane.tag,
+            );
+        }
         // R1707 — the query box is a stop too, and it is the first one: a
         // filter a person cannot Tab to is a filter only a mouse has.
         want.insert(0, "pv.filter.query".to_owned());

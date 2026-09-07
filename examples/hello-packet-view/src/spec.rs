@@ -2068,6 +2068,16 @@ pub const VOICES: &[VoiceSpec] = &[
         role: "grid",
         population: Population::One,
     },
+    // ★★★★★ R2061 — the heading ROW, which the accessibility tree has announced
+    // since R1694 and which nothing painted until now. A row a reader is told to
+    // descend through, with no painted node to stand on, is a row no keyboard
+    // can enter — so the paint grew the container and this table grew the entry
+    // that keeps the two spellings of that row one thing.
+    VoiceSpec {
+        tag: "pv.list.header",
+        role: "row",
+        population: Population::One,
+    },
     VoiceSpec {
         tag: "pv.list.head.{}",
         role: "columnheader",

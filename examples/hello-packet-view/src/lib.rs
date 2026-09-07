@@ -578,6 +578,19 @@ struct ViewState {
     /// [`Activation::Follows`] is for and the opposite of what a saved-filter
     /// bar should do.
     saved_cursor: Signal<usize>,
+    /// ★★★★★ R2061 — where the column-heading row's keyboard cursor rests.
+    ///
+    /// A second fact from [`sort`](Self::sort), by the argument
+    /// [`saved_cursor`](Self::saved_cursor) already makes on this screen: the
+    /// heading row declares [`Activation::Explicit`], so a reader walks the
+    /// seven headings *without* reordering the list and presses `Enter` on the
+    /// one they want. Deriving the cursor from the ordering would reorder the
+    /// capture once per arrow on the way to the column they were aiming at.
+    ///
+    /// ⚠ And the ordering cannot serve as the cursor even at rest: `None` is a
+    /// real value there — the capture's own arrival order — while a cursor is
+    /// always somewhere.
+    head_cursor: Signal<usize>,
     /// ★★★★★ R1707 — the query the list is running, as the person wrote it.
     ///
     /// **This is the field's own buffer, not a copy of it.** The alternative —
@@ -882,6 +895,9 @@ fn use_view_state() -> Rc<ViewState> {
         cell: Signal::new(None),
         saved: Signal::new(vec![false; spec::SAVED_FILTERS.len()]),
         saved_cursor: Signal::new(0),
+        // R2061 — the heading row opens on its first column. The list opens
+        // unordered, so there is no column for the cursor to open on instead.
+        head_cursor: Signal::new(0),
         // R1707 — the field's own buffer, resolved above. The screen opens
         // unfiltered; see `spec::EXAMPLE_QUERY` for why the reference's own
         // query is a saved filter rather than the opening state.
@@ -1511,11 +1527,21 @@ impl Hit {
         let list = list_rect();
         if contains(list, px, py) {
             // ★★★★★ R1829 — the header band FIRST, and in UNSCROLLED pane
-            // coordinates. The rows below it are inside the scroll node and the
-            // header is not, so running the header through `in_pane` would
-            // shift it by the scroll offset and make it answer only while the
-            // list is at the top — a defect that hides completely in a test
-            // that never scrolls.
+            // coordinates, so a press on a heading is not shifted by the list's
+            // scroll offset.
+            //
+            // ⚠⚠ R2061 — the reason R1829 gave for that was *"the rows below it
+            // are inside the scroll node and the header is not"*, and **that
+            // sentence is false about the paint**: the headings are painted
+            // among the scroll pane's children, so what is DRAWN would move
+            // under a scroll while what is HIT would not. It has never been
+            // observable — measured this round by wheeling the list ten times,
+            // nothing moves at all, because every row fits at the shipped size
+            // — which is exactly why it survived being written down. Registered
+            // rather than repaired here: taking the band out of the scroll pane
+            // is a paint change on a screen whose gates cannot currently tell
+            // the two arrangements apart ⇒
+            // `debt-a-heading-band-is-hit-where-it-is-not-painted`.
             let (hx, hy) = (px.saturating_sub(list.x), py.saturating_sub(list.y));
             if hy < HEAD_H {
                 for n in 0..spec::COLUMNS.len() {
@@ -1968,6 +1994,24 @@ fn pane_cursor(state: &Rc<ViewState>, stop: &str) -> Option<Roving> {
                 .collect(),
             format!("pv.bytes.cell.{}", state.byte.get()),
         ),
+        // ★★★★★ R2061 — the column-heading row, whose members are the seven
+        // headings the description register already describes.
+        //
+        // `Explicit`, unlike the three panes below: arriving at a heading must
+        // not reorder the capture, which is what `Follows` would mean here and
+        // is the same argument the saved-filter bar makes one arm down.
+        // `Stop` at the ends, like a row's cells: the first and the last column
+        // are ends a reader is meant to feel, and wrapping from the length back
+        // to the timestamp would read as a jump into another row.
+        LIST_HEADER => (
+            RovingSpec::new(Axis::Horizontal)
+                .with_ends(Ends::Stop)
+                .with_activation(Activation::Explicit),
+            (0..spec::COLUMNS.len())
+                .map(|n| Member::new(format!("pv.list.head.{n}")))
+                .collect(),
+            format!("pv.list.head.{}", state.head_cursor.get()),
+        ),
         // ★★★★★ R1721 — the saved-filter bar's cursor is not written out here at
         // all: the row's own rule builds it, seats it, and picks the policy. The
         // three panes below still project by hand because their rosters are the
@@ -2043,6 +2087,17 @@ fn seat_pane_cursor(state: &Rc<ViewState>, stop: &str, roving: &Roving) {
             }
         }
         "pv.bytes" => select_byte(state, index),
+        // ★★★★★ R2061 — walking the heading row moves the CURSOR and reorders
+        // nothing, which is what its `Explicit` policy promises. What a reader
+        // is told is the column they arrived at; the sentence the description
+        // register carries for it is shown by the same arrival, from the
+        // register rather than from here.
+        LIST_HEADER => {
+            state.head_cursor.set(index);
+            if let Some(column) = spec::COLUMNS.get(index) {
+                state.say(Utterance::unchanged(column.title.to_owned()));
+            }
+        }
         // ★★★★★ R1721 — walking the saved-filter bar moves the CURSOR and applies
         // nothing, because the row declared `Explicit`. A bar whose arrows applied
         // filters would run four queries on the way to the fifth chip, and that
@@ -2576,6 +2631,20 @@ fn descriptions() -> Descriptions {
     described
 }
 
+/// ★★★★★ R2061 — **where a keyboard reader's attention actually is**, given the
+/// Tab stop they are standing on.
+///
+/// The innermost thing inside the stop, which is what `aria-activedescendant`
+/// addresses and what the framework's focus ring frames. One home, because two
+/// consumers need it and the round that found this needed it found the two
+/// disagreeing: the accessibility tree resolved the descendant and the
+/// description register was handed the raw stop, so a keyboard reader was
+/// framed on a heading and told nothing about it. Nothing on this screen that
+/// carries a sentence IS a stop — every one of them lives inside one.
+fn attention_at(state: &Rc<ViewState>, stop: &str) -> Option<String> {
+    pane_cursor(state, stop).and_then(|r| r.active_descendant().map(str::to_owned))
+}
+
 /// ★★★★★ R1918 — the description a reader is being shown, as `(tag, sentence)`.
 ///
 /// Resolved from the PAINT REGISTER rather than from [`Hit`]. Both populations
@@ -2592,9 +2661,16 @@ fn description_shown(state: &Rc<ViewState>, focused: Option<&str>) -> Option<(St
         .get()
         .then(|| described.under(&marks, px, py))
         .flatten();
+    // ★★★★★ R2061 — the keyboard reader's attention, not the stop they are on.
+    // Handing the raw stop answered nothing for any described mark on this
+    // screen: a column heading and a layer heading both live INSIDE a stop, and
+    // neither is one. The sibling shell learned this at R1918 and its three
+    // mounted screens were left behind — which is why a keyboard reader could
+    // reach a page and be shown only the chrome's sentences.
+    let attention = focused.and_then(|stop| attention_at(state, stop));
     let shown = described.shown(&Resting {
         hovered,
-        focused,
+        focused: attention.as_deref().or(focused),
         dismissed: false,
     })?;
     Some((shown.tag.to_owned(), shown.sentence.to_owned()))
@@ -2647,9 +2723,22 @@ fn list_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
     let rect = list_rect();
     let selected = state.row.get();
     let mut children = Vec::new();
+    // ★★★★★ R2061 — the heading row is ONE Tab stop, and this container is what
+    // makes it one. The seven headings were loose runs until now, so a keyboard
+    // could not stand on any of them: they are not stops and they were in no
+    // roster, while the accessibility tree had already been announcing them as
+    // a row of column headers under [`LIST_HEADER`] since R1694. Two structures
+    // for one row, and the one a reader travels by was the missing one.
+    //
+    // Pointer-transparent, for the reason the saved-filter bar's group is: a
+    // tagged node that answers the pointer becomes the router's hit target and
+    // swallows the press, and this row's press is what CYCLES THE ORDER. The
+    // headings stay exactly where they were painted — the seat starts at the
+    // pane's own origin, so wrapping them shifts nothing.
+    let mut headings = Vec::with_capacity(spec::COLUMNS.len());
     for (n, column) in spec::COLUMNS.iter().enumerate() {
         let col = list_col(n);
-        children.push(tagged_label(
+        headings.push(tagged_label(
             &format!("pv.list.head.{n}"),
             column.title,
             run_band(list_head_seat(), col.x, col.w.saturating_sub(8)),
@@ -2657,6 +2746,14 @@ fn list_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
             ink.text_3,
         ));
     }
+    children.push(
+        Scene::Container(
+            ContainerNode::new(headings)
+                .with_tag(LIST_HEADER.to_owned())
+                .with_layout(absolute(list_head_seat()).with_pointer_transparent(true)),
+        )
+        .with_focusable(true),
+    );
     // ★★★ R1707 — the rows the query KEPT, laid out by their visual position
     // and tagged by their source index. The tag is the row's identity and the
     // position is where it currently sits; conflating them is how a filtered
@@ -4359,9 +4456,10 @@ impl WidgetA11y for PacketView {
         // addresses any descendant of the element owning the Tab stop, and the
         // framework's focus ring reads this same hook, so a reader who has gone
         // into a row is framed on the cell rather than on the row.
-        let cursor =
-            pane_cursor(&state, stop).and_then(|r| r.active_descendant().map(str::to_owned));
-        Some(AccessFocus::addressing(stop, cursor))
+        // ★ R2061 — through [`attention_at`], which is the one home of this
+        // derivation now: the description register asks the same question and
+        // the two must not answer it differently.
+        Some(AccessFocus::addressing(stop, attention_at(&state, stop)))
     }
 
     /// ★★★★★ R1693 — **the screen, announced.**
@@ -4404,7 +4502,7 @@ impl WidgetA11y for PacketView {
         // than asked per node: `pane_cursor` seats sixteen rows of seven cells,
         // and asking it for each of ~290 nodes would rebuild that roster ~870
         // times a frame.
-        let cursors: Vec<(&str, Roving)> = PANE_STOPS
+        let cursors: Vec<(&str, Roving)> = PROJECTED_STOPS
             .iter()
             .filter_map(|stop| pane_cursor(&state, stop).map(|roving| (*stop, roving)))
             .collect();
@@ -4443,13 +4541,23 @@ impl WidgetA11y for PacketView {
     }
 }
 
-/// The three panes that own a keyboard cursor.
+/// The hand-projected stops that own a keyboard cursor.
 ///
-/// A list rather than three literals because R1699 needed to walk them twice —
-/// once to publish each pane's roster and once to publish the rosters of the
-/// members that are composites — and a second spelling of "which panes have
-/// cursors" is a second thing to keep in step with [`pane_cursor`].
-const PANE_STOPS: [&str; 3] = ["pv.list", "pv.tree", "pv.bytes"];
+/// A list rather than literals because R1699 needed to walk them twice — once
+/// to publish each stop's roster and once to publish the rosters of the members
+/// that are composites — and a second spelling of "which stops have cursors" is
+/// a second thing to keep in step with [`pane_cursor`].
+///
+/// ★ R2061 — the column-heading row joined the three panes, and the constant
+/// was called `PANE_STOPS` until it did. A heading row is not a pane, so the
+/// name had become a small lie about its own contents — the class this tree
+/// keeps paying for. What the list holds is *the stops this file projects by
+/// hand*; the saved-filter bar is still absent from it because its roster is
+/// built by the chip-row widget rather than here.
+///
+/// In PAINT ORDER, which is Tab order (§5.39 enumerates depth-first over the
+/// scene), so the two ring censuses can compare against it as a sequence.
+const PROJECTED_STOPS: [&str; 4] = ["pv.list", LIST_HEADER, "pv.tree", "pv.bytes"];
 
 /// The application bar: what capture is open, how fast it is arriving, and the
 /// running commentary.
@@ -4656,9 +4764,13 @@ fn list_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
     )
 }
 
-/// The tag the header row is announced under. Nothing paints it — the seven
-/// column headers are painted individually and the row is what a reader
-/// descends through — so it is anchored by the members it composes.
+/// The tag the header row is announced under — and, since R2061, painted under.
+///
+/// ⚠ This doc used to say *"nothing paints it"*, and that sentence was the
+/// defect: a row a reader is told to descend through, with no painted node to
+/// stand on, is a row no keyboard can enter. It is now a pointer-transparent
+/// container over the head strip carrying the seven headings, focusable, so the
+/// accessibility tree's row and the paint's row are one thing.
 const LIST_HEADER: &str = "pv.list.header";
 
 /// What one message's cells **paint**, left to right — one entry per

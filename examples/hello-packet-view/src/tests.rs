@@ -1056,14 +1056,21 @@ fn r1693_the_screen_is_a_keyboard_ring_of_its_composites_and_buttons() {
             (pinion_core::widgets::text_field::TextFieldState::Idle, 0),
             pinion_core::Frame::default(),
         );
-        let mut want: Vec<String> = vec![
-            "pv.list".to_owned(),
-            "pv.tree".to_owned(),
-            "pv.bytes".to_owned(),
-            // R1707 — the query box. A filter a person cannot Tab to is a
-            // filter only a mouse has.
-            "pv.filter.query".to_owned(),
-        ];
+        // ★★★★★ R2061 — the stops that own a hand-projected cursor are TAKEN
+        // from the declaration rather than retyped. Three of these were
+        // literals here, and a fourth composite arriving in the screen left
+        // this gate reporting a ring it had never been told about — which is
+        // the right failure, and also the moment to stop keeping two lists.
+        // What is compared stays two facts: what the PAINT makes focusable
+        // against what the file says owns a cursor.
+        let mut want: Vec<String> = super::PROJECTED_STOPS
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect();
+        // R1707 — the query box. A filter a person cannot Tab to is a filter
+        // only a mouse has. Named here because it is the one stop that owns no
+        // cursor: a text field is a single control, not a composite.
+        want.push("pv.filter.query".to_owned());
         // ★★★★★ R1721 — the saved-filter bar's stops come from its RULE, and
         // this is what the derivation costs a keyboard: three stops became one,
         // with arrows, `Home`, `End` and `Enter` inside it. The list is not
