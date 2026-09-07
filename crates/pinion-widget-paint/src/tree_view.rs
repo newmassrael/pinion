@@ -468,12 +468,15 @@ fn tree_cell_content(row: &VisibleRow, theme: &Theme, style: &TreeViewStyle) -> 
         // decision the shared home now owns.)
         row_children.push(crate::spacer::spacer(indent_px, style.row_height));
     }
-    // R673 §5.50 — wrap the expand glyph in a fixed-width container
-    // so leaf rows (NO-BREAK SPACE placeholder, narrow) and branch
-    // rows (BLACK TRIANGLE glyphs, wider) line up label columns
-    // identically. The container's width = style.glyph_size_px;
-    // height = row_height (the glyph is vertically centered by the
-    // row's `AlignItems::Center`).
+    // R673 §5.50 — wrap whatever is in the twisty column in a fixed-width
+    // container so leaf rows (a narrow spacer) and branch rows (a drawn mark)
+    // line up label columns identically. The container's width =
+    // style.glyph_size_px; height = row_height, and its content is vertically
+    // centred by the row's `AlignItems::Center`.
+    //
+    // ★ R2057 — the branch case was two BLACK TRIANGLE characters, which is
+    // why this comment measured the column against their width. The mark is
+    // drawn now and takes the width it is given.
     let glyph_node = match twisty {
         // The mark carries the same declaration the presentational text run
         // carried: decorative, with the sentence naming what announces the

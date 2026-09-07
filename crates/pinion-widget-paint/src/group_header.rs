@@ -19,15 +19,18 @@
 //! plus a fourth that varies only the *content* inside the parens — the
 //! Rule-of-Three lift threshold the R758 self-grep mandate names, and the same
 //! inline-first → lift-at-the-Nth-consumer path [`crate::chip`] took. The
-//! header skin (twisty glyph, the `"  {label}  ({detail})"` format, the
+//! header skin (the twisty, the `"{label}  ({detail})"` format, the
 //! `SurfaceContainerHigh` fill, the centred flex row, the 10 px horizontal
 //! padding) lifts here; the consumer owns only what genuinely differs — the
 //! composite `tag`, the `label`, the parenthesized `detail` string (a bare
 //! count, or count + aggregate), and the row's `width` / `height`.
 //!
-//! The twisty glyphs are the disclosure / tree-branch SSOT (`U+25B6` collapsed /
-//! `U+25BC` expanded), so a grouped header reads with the same affordance as a
-//! [`crate::disclosure`] section and a `tree_view` branch.
+//! ★ R2057 — the twisty is the disclosure / tree-branch mark
+//! ([`crate::indicator::Indicator::Disclosure`]), so a grouped header reads
+//! with the same affordance as a [`crate::disclosure`] section and a
+//! `tree_view` branch. It used to be the characters `U+25B6` / `U+25BC`, which
+//! the one face this tree renders through does not carry — the same mark, but
+//! as a drawn path, which is a shape rather than a promise the face must keep.
 
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
 use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, LayoutStyle, Size, TextStyle};
@@ -43,13 +46,14 @@ const HEADER_PAD_X: u32 = 10;
 /// R871 §5.50 §5.27 — build one group-header row of a grouped collapsible
 /// collection.
 ///
-/// Renders `"{twisty}  {label}  ({detail})"` (the twisty resolving from
-/// `collapsed`) as an [`OnSurface`](ColorRole::OnSurface) `HEADER_FONT_PX`
+/// Renders the twisty (drawn, resolving from `collapsed`) beside
+/// `"{label}  ({detail})"` as an [`OnSurface`](ColorRole::OnSurface)
+/// `HEADER_FONT_PX`
 /// label in a [`SurfaceContainerHigh`](ColorRole::SurfaceContainerHigh) flex row
 /// of `(width, height)`, padded `HEADER_PAD_X` each side and tagged `tag` (the
 /// group's composite tag, e.g. `"{group_prefix}#{group}"`, so a click routes to
 /// the collapse coordinator). An empty `detail` omits the parenthesized suffix
-/// (just `"{twisty}  {label}"`).
+/// (just the label).
 #[must_use]
 pub fn group_header_row(
     tag: String,

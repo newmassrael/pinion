@@ -35,10 +35,16 @@
 //! content must not toggle the section. The content panel is therefore
 //! a *sibling* of the tagged header, not a child. This also keeps the
 //! AT name enrichment (`enrich_names_from_scene`) scoped to the
-//! header's subtree: the twisty `TextNode` is
-//! [`TextRole::Presentational`] so the DFS lands on the summary text
-//! as the disclosure's accessible name, and the panel's text never
-//! leaks into the header's name.
+//! header's subtree, so the DFS lands on the summary text as the
+//! disclosure's accessible name and the panel's text never leaks into
+//! the header's name.
+//!
+//! ★ R2057 — the twisty used to be a presentational `TextNode`, and that
+//! is how it stayed out of the name. It is a drawn
+//! [`crate::indicator::Indicator::Disclosure`] now, declared decorative
+//! by [`crate::indicator::inline`] with the sentence naming what
+//! announces the state instead — the same exclusion by a stronger
+//! route, since a mark has no words to be mistaken for a name.
 
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, LayoutStyle, Size, TextStyle};
