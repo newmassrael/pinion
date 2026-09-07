@@ -536,11 +536,34 @@ def body() -> None:
         )
 
         marks = abs_rects_of(app.snapshot(source="paint", viewport=VIEWPORT))
-        canvas = marks["lab.canvas"]
+        # ★★★★★ R2068 — the cards' addresses are READ OFF the canvas's published
+        # roster, not composed here. The first draft of this clause built
+        # `lab.node.<name>` for each card and the address ratchet refused the
+        # push by name: a walk that spells an address is a second copy of a
+        # composition the screen already publishes, and a wrong letter in it
+        # reads as the screen not painting the mark. The canvas publishes
+        # exactly these tags as what its arrows reach.
+        stops = [
+            n
+            for n in access(app)
+            if (n.get("tag") or "").endswith("canvas") and n.get("navigation")
+        ]
+        ok(
+            f"J: ★ the canvas publishes the roster its arrows reach — "
+            f"{[n.get('tag') for n in stops]}",
+            len(stops) == 1,
+        )
+        canvas_tag = stops[0]["tag"]
+        canvas = marks[canvas_tag]
         seen = {
-            name: marks.get(f"lab.node.{name}")
-            for name in inside_cards
+            m["tag"]: marks.get(m["tag"])
+            for m in stops[0]["navigation"].get("members") or []
         }
+        ok(
+            f"J: ★ and it holds one member per card of the arrived tree — "
+            f"{len(seen)} against {len(inside_cards)}",
+            len(seen) == len(inside_cards),
+        )
         missing = [name for name, rect in seen.items() if rect is None]
         ok(
             f"J: ★★★★★ every card of the arrived tree is on the canvas — {seen}",
