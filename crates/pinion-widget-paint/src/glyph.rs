@@ -86,28 +86,27 @@
 // They are `ControlMark::{Minimize, Maximize, Close}` now — and `Minimize` is
 // new this round, added so the third of the trio had a face to move to.
 
-// (R1562 §5.27 §5.40) The grid corner's tri-state select-all marks. Both glyphs
-// are already painted elsewhere in this crate — the R668 checkbox's check and
-// the window-control minus above — so the corner adds no font obligation, and
-// the two controls that mean "checked" cannot come out looking like different
-// ideas. The EMPTY extent draws no glyph at all: an unchecked box is the
-// absence of a mark, which is how `crate::checkbox` paints it too.
-
-/// Select-all in its **indeterminate** leg — `U+2212` MINUS SIGN, the dash an
-/// HTML `<input type=checkbox>.indeterminate` draws.
-pub const SELECT_ALL_PARTIAL: &str = "\u{2212}";
-
-/// Select-all with **everything** selected — `U+2713` CHECK MARK.
-///
-/// 🟥 R1952 — this used to say *"the same glyph `crate::checkbox` paints when
-/// checked"*, and it stopped being true at **R1674**, which moved the
-/// checkbox's tick from a character to a stroked polyline and wrote down why:
-/// *the commonest glyph in the catalog stops depending on the host's fonts.*
-/// Nothing performed the sentence, so the corner kept the character and the
-/// two controls that mean "checked" came out as different ideas — the exact
-/// outcome the comment beside it says must not happen. Measured: no face this
-/// tree ships has `U+2713` at all. See [`FACELESS`].
-pub const SELECT_ALL_COMPLETE: &str = "\u{2713}";
+// ★★★★★ R2060 — the grid corner's tri-state marks are GONE, and this module
+// now declares no mark at all.
+//
+// The comment that stood here justified two characters by saying both were
+// "already painted elsewhere in this crate — the checkbox's check and the
+// window-control minus". BOTH HALVES HAD STOPPED BEING TRUE: R1674 made the
+// checkbox's tick a stroked polyline, and R2059 removed the minus when the
+// window controls became marks. So the justification pointed at two things that
+// no longer existed, while `U+2713` — absent from BOTH faces this tree ships —
+// left the checked corner a `.notdef` box: a control whose whole job is to say
+// *everything here is selected*, saying it illegibly.
+//
+// ⇒ the corner draws `crate::checkbox`'s own mark now, which is what that
+// comment always MEANT by "cannot come out looking like different ideas": one
+// shape with two consumers, not two chances to draw a check. The dash went with
+// it — its character IS in the face and was not a defect, but a tri-state
+// control drawn half in text and half in paths is the shape R2059 removed from
+// the window controls, and for the same reason.
+//
+// The EMPTY extent still draws nothing: an unchecked box is the ABSENCE of a
+// mark, which is how `crate::checkbox` paints it too.
 
 /// ★★★★★ R1952 — **how many marks this module declares that the face this tree
 /// ships cannot draw.**
@@ -140,21 +139,26 @@ pub const SELECT_ALL_COMPLETE: &str = "\u{2713}";
 /// callers were four example screens building their own header rows — and with
 /// them the `U+2195` those screens used for an unsorted column.
 ///
-/// ★★★★★ R2059 — **one left**, and it is the one no font can fix.
+/// ★★★★★ R2060 — **ZERO**, and this module declares no mark at all any more.
 ///
-/// The window controls went this round, all three together rather than only the
-/// faceless one. What remains is `SELECT_ALL_COMPLETE` — `U+2713`, which is in
-/// NEITHER face this tree carries, so shipping a different font does not reach
-/// it. It has to become a path, as the checkbox tick already did for the same
-/// reason and by the same argument: the behaviour reference draws its check as
-/// a path too, which is why this class of defect does not exist there.
+/// Six were counted when this pin was written. R2057 took the disclosure
+/// twisties, R2058 the column-sort arrows and the unsorted marker beside them,
+/// R2059 the three window controls, and R2060 the grid corner's tri-state pair.
+/// Every one of them is a drawn path now.
 ///
-/// ⚠ Its sibling `SELECT_ALL_PARTIAL` is `U+2212`, which the face HAS. It is
-/// not counted here and it is not exempt — it is simply not faceless. When the
-/// check becomes a mark, the dash should follow it, because a tri-state control
-/// drawn half in text and half in paths is the shape R2059 removed from the
-/// window controls.
-pub const FACELESS: usize = 1;
+/// ⚠ THE PIN STAYS, and staying at zero is the point. This module can still
+/// declare a mark — nothing stops the next round adding a constant — and the
+/// gate below asks the face about every one it declares. Zero is a state to be
+/// held, not a reason to delete the question: the sentence that stood here for
+/// 780 rounds claimed the characters were "chosen from blocks the bundled fonts
+/// cover", and it was false the whole time because nothing performed it.
+///
+/// ★ What this does NOT cover, said rather than left to be found: the count
+/// reads what THIS MODULE declares. A screen spelling its own characters is
+/// invisible to it, and R2058 measured that more than one example does. The
+/// instrument that can see that asks a RUNNING screen what it paints and holds
+/// every character against the face; it exists, and it runs on one screen.
+pub const FACELESS: usize = 0;
 
 #[cfg(test)]
 mod tests {
@@ -179,8 +183,21 @@ mod tests {
     /// them (R1651.1). `include_str!` of the file being compiled is the only
     /// population that grows when the module does.
     fn declared() -> Vec<(String, String)> {
+        declared_in(include_str!("glyph.rs"))
+    }
+
+    /// The same parse, PURE in its text.
+    ///
+    /// ★★★★★ R2060 — split out when this module reached ZERO declarations. The
+    /// cross-check below used to prove the parser worked by naming constants it
+    /// must find; with none left, that check had nothing to assert and would
+    /// have passed just as well with a parser that matched nothing — the
+    /// vacuous pass this project keeps paying for. A fixture the parse must
+    /// find restores the question, and it keeps working however few marks this
+    /// module declares.
+    fn declared_in(source: &str) -> Vec<(String, String)> {
         let mut out = Vec::new();
-        for line in include_str!("glyph.rs").lines() {
+        for line in source.lines() {
             let Some(rest) = line.strip_prefix("pub const ") else {
                 continue;
             };
@@ -221,22 +238,22 @@ mod tests {
         let face = tree_face();
         let declared = declared();
 
-        // ★ The parse must actually find the constants, or every line below
-        // passes over an empty population. Cross-checked against the COMPILED
-        // values, so a parser that quietly stopped matching is red here rather
-        // than green everywhere.
-        // ⚠ R2059 — these are the constants that HAPPEN to remain. The list
-        // shrank twice this week as marks became paths, and each time the
-        // compiler said so rather than the gate quietly asking about fewer
-        // things: naming them by identifier is what makes a removal a build
-        // failure here instead of a smaller population nobody notices.
-        for known in [super::SELECT_ALL_COMPLETE, super::SELECT_ALL_PARTIAL] {
-            assert!(
-                declared.iter().any(|(_, text)| text == known),
-                "the source parse missed {known:?}, so this gate is asking \
-                 about a population that is not this module's",
-            );
-        }
+        // ★★★★★ The parse must be capable of finding something, or every line
+        // below passes over an empty population.
+        //
+        // ⚠ R2060 — this used to prove that by naming constants the module
+        // declares, which worked while it declared any. It declares NONE now,
+        // so that form would have become an empty loop asserting nothing — and
+        // the whole gate would then have been a parser that matched nothing
+        // agreeing with a module that has nothing, forever green. A FIXTURE
+        // keeps the question alive at zero.
+        let fixture = "pub const EXAMPLE: &str = \"\\u{2713}\";";
+        assert_eq!(
+            declared_in(fixture),
+            vec![("EXAMPLE".to_owned(), "\u{2713}".to_owned())],
+            "the parse cannot read a declaration it is handed, so what it \
+             reports about this module means nothing",
+        );
 
         let faceless: Vec<&str> = declared
             .iter()
@@ -255,8 +272,18 @@ mod tests {
              paints a box — draw it with `crate::indicator` instead. If it \
              shrank, lower `FACELESS`.",
         );
+        // ★★★★★ R2060 — this said `declared.len() > FACELESS`, guarding against
+        // a comparison that was really about the parse: if EVERY declared mark
+        // were faceless, the count could be right for the wrong reason.
+        //
+        // At zero declarations that guard asks the wrong question and fails —
+        // there is nothing to compare, which is the goal rather than a defect.
+        // What it MEANT is kept: whenever this module declares anything, at
+        // least one of them must be drawable, or the face is not what is being
+        // measured. The parser fixture above is what holds the gate honest when
+        // the module declares nothing at all.
         assert!(
-            declared.len() > FACELESS,
+            declared.is_empty() || declared.len() > faceless.len(),
             "every mark this module declares is faceless, which means the \
              comparison is answering about the parse rather than about the face",
         );

@@ -34,9 +34,7 @@ use std::rc::Rc;
 use pinion_core::Scene;
 use pinion_core::cell_value::{CellEdit, CellValue, EditorForm};
 use pinion_core::composite_tag::{GridSendKey, GridTag};
-use pinion_core::scene::{
-    ContainerNode, ImageNode, Rect, ScrollAxis, ScrollNode, TextNode, TextRole,
-};
+use pinion_core::scene::{ContainerNode, ImageNode, Rect, ScrollAxis, ScrollNode, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, Color, Fit, FlexDirection, ImageStyle, JustifyContent,
     LayoutStyle, Size, TextStyle,
@@ -1342,25 +1340,33 @@ fn header_corner(
 
 /// R1562 §5.27 — the corner control's mark for each extent.
 ///
-/// Nothing / `\u{2212}` / `\u{2713}` — the three marks an HTML checkbox draws
-/// for unchecked / `indeterminate` / checked, and the two glyphs this framework
-/// already paints (the R668 checkbox's check, the window-control minus), so no
-/// font acquires a new obligation. An empty box is the *absence* of a mark
-/// rather than a third glyph, exactly as [`crate::checkbox`] paints it.
+/// Nothing / a dash / a check — the three marks an HTML checkbox draws for
+/// unchecked / `indeterminate` / checked. An empty box is the *absence* of a
+/// mark rather than a third one, exactly as [`crate::checkbox`] paints it.
+///
+/// ★★★★★ R2060 — these are DRAWN, from [`crate::checkbox`]'s own mark.
+///
+/// They were `U+2713` and `U+2212`, and this comment justified that by saying
+/// both were already painted elsewhere in the crate — the checkbox's check and
+/// the window-control minus — "so no font acquires a new obligation". Both
+/// halves of that had stopped being true: R1674 made the check a stroked
+/// polyline, and R2059 removed the minus when the window controls became marks.
+/// The check is in NEITHER face this tree ships, so the checked corner was a
+/// `.notdef` box — a control saying *everything is selected* by showing nothing
+/// legible.
+///
+/// Sharing the checkbox's drawing is what that comment always MEANT by "cannot
+/// come out looking like different ideas": one shape, two consumers, rather
+/// than two independent chances to draw a check.
 fn corner_mark(extent: SelectionExtent, theme: &Theme, style: &TableStyle) -> Vec<Scene> {
-    let glyph = match extent {
+    let mark = match extent {
         SelectionExtent::Empty => return Vec::new(),
-        SelectionExtent::Partial => crate::glyph::SELECT_ALL_PARTIAL,
-        SelectionExtent::All => crate::glyph::SELECT_ALL_COMPLETE,
+        SelectionExtent::Partial => crate::checkbox::CheckMark::Dash,
+        SelectionExtent::All => crate::checkbox::CheckMark::Tick,
     };
-    vec![Scene::Text(
-        TextNode::styled(
-            glyph.to_string(),
-            Rect::default(),
-            section_label_style(style, theme.resolve(ColorRole::Accent)),
-        )
-        .with_role(TextRole::Presentational),
-    )]
+    crate::checkbox::check_mark_scene(mark, style.header_size_px, theme.resolve(ColorRole::Accent))
+        .into_iter()
+        .collect()
 }
 
 /// R1548 §5.27 — the inputs [`row_header_pane`] needs beyond the window and the
@@ -4048,13 +4054,19 @@ mod tests {
             "a declared corner is pressable on the eager surface",
         );
         let node = find_tagged(&live, "table#c").expect("the corner");
+        // ★ R2060 — the mark is a drawing now, so this asks the paint. It
+        // compared the corner's text against `U+2212` before; that character IS
+        // in the face, but its sibling is not, and a control drawn half in text
+        // and half in paths is the shape R2059 removed from the window controls.
         let mut marks = Vec::new();
+        let mut text = Vec::new();
         for child in &node.children {
-            collect_text(child, &mut marks);
+            collect_paths(child, &mut marks);
+            collect_text(child, &mut text);
         }
-        assert_eq!(
-            marks,
-            vec![crate::glyph::SELECT_ALL_PARTIAL],
+        assert!(text.is_empty(), "the corner sets no text");
+        assert!(
+            !marks.is_empty(),
             "and it paints the extent it was given, by the same painter",
         );
     }
@@ -5623,28 +5635,49 @@ mod tests {
     }
 
     /// R1562 — the corner's three marks. Empty draws none, which is how an
-    /// unchecked checkbox is painted; the other two are distinct glyphs, so
+    /// unchecked checkbox is painted; the other two are distinct DRAWINGS, so
     /// "partial" and "all" cannot be read off the same pixels.
+    ///
+    /// ★★★★★ R2060 — asked of the paint, not of a string. This compared the
+    /// corner's text against `U+2713` and `U+2212`, and the check is in NEITHER
+    /// face this tree ships: the assertion was true while a reader saw a
+    /// `.notdef` box on a control whose whole job is to say *everything here is
+    /// selected*. The marks are paths now and there is no string to be right
+    /// about — what is asserted is that each extent draws, that the two
+    /// drawings differ, and that empty draws nothing.
     #[test]
     fn r1562_the_corner_paints_the_extent_it_was_given() {
         let mark = |extent| {
             let scene = run_vtable_band(CornerAction::SelectAll(extent), &|_| false);
             let node = find_tagged(&scene, "vtbl#c").expect("the corner is pressable");
-            let mut out = Vec::new();
+            let mut commands = Vec::new();
+            let mut text = Vec::new();
             for child in &node.children {
-                collect_text(child, &mut out);
+                collect_paths(child, &mut commands);
+                collect_text(child, &mut text);
             }
-            out
+            assert!(text.is_empty(), "the corner sets no text at all");
+            commands
         };
         assert!(mark(CornerExtent::Empty).is_empty(), "no mark is unchecked");
-        assert_eq!(
-            mark(CornerExtent::Partial),
-            vec![crate::glyph::SELECT_ALL_PARTIAL]
+        let partial = mark(CornerExtent::Partial);
+        let all = mark(CornerExtent::All);
+        assert!(!partial.is_empty(), "a partial selection draws its dash");
+        assert!(!all.is_empty(), "a complete selection draws its check");
+        assert_ne!(
+            partial, all,
+            "partial and all cannot be read off the same pixels",
         );
-        assert_eq!(
-            mark(CornerExtent::All),
-            vec![crate::glyph::SELECT_ALL_COMPLETE]
-        );
+    }
+
+    /// Every path command painted under `scene`, in paint order.
+    fn collect_paths(scene: &Scene, out: &mut Vec<pinion_core::scene::PathCommand>) {
+        match scene {
+            Scene::Path(p) => out.extend(p.commands.iter().copied()),
+            Scene::Container(c) => c.children.iter().for_each(|ch| collect_paths(ch, out)),
+            Scene::Scroll(sc) => collect_paths(sc.content.as_ref(), out),
+            _ => {}
+        }
     }
 
     /// The seam: the band exists, one section per **painted** row, and the

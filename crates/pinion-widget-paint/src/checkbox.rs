@@ -312,9 +312,53 @@ pub fn view_checkbox_box(
 /// case going further, `half / sin(theta/2)`, which is why the cap and join are
 /// not left to the rasterizer's default here), so the painted ink is inside the
 /// node's own rectangle rather than merely near it.
+/// ★★★★★ R2060 — the mark a tri-state check control draws, for the two states
+/// that draw one.
+///
+/// A grid's select-all corner is a checkbox with three states, and it was
+/// painting `U+2713` and `U+2212` as CHARACTERS. Its own comment justified that
+/// by saying both were "already painted elsewhere in this crate — the checkbox's
+/// check, the window-control minus" — and both halves of that had since stopped
+/// being true: R1674 made the check a stroked polyline and R2059 removed the
+/// minus. The check is in NEITHER face this tree ships, so the corner's checked
+/// state was a `.notdef` box.
+///
+/// ⇒ the corner draws these, which is what that comment always MEANT: the two
+/// controls that say *checked* cannot come out looking like different ideas.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CheckMark {
+    /// Everything — the M3 check.
+    Tick,
+    /// Some but not all — the bar an HTML `indeterminate` checkbox draws.
+    Dash,
+}
+
+/// That mark as a scene, sized to a square of `side`, or `None` when the square
+/// is too small to hold one.
+///
+/// ⚠ `None` is a real answer and not a failure: below three pixels a stroke is a
+/// smudge rather than a mark, and R1673 chose the same `None` for the same
+/// reason — the square still reads as checked because its fill turns accent.
+pub(crate) fn check_mark_scene(mark: CheckMark, side: u32, ink: Color) -> Option<Scene> {
+    let tick = mark_path(mark, side)?;
+    Some(Scene::Path(
+        PathNode::new(
+            Rect::default(),
+            tick.commands,
+            PathStyle::stroked(Stroke::new(ink, tick.stroke_px).with_cap(StrokeCap::Round)),
+        )
+        .with_layout(LayoutStyle::new().with_size(Size::px(tick.side, tick.side))),
+    ))
+}
+
 fn tick_path(style: &CheckboxStyle) -> Option<Tick> {
     let content = style.box_size.saturating_sub(style.border_width * 2);
-    let side = style.glyph_size_px.min(content);
+    mark_path(CheckMark::Tick, style.glyph_size_px.min(content))
+}
+
+/// Both marks, from one sizing rule — so a check drawn in a grid's corner and a
+/// check drawn in a checkbox cannot come out different shapes.
+fn mark_path(mark: CheckMark, side: u32) -> Option<Tick> {
     // A stroke needs a pixel of width and a pixel either side of it to be a
     // mark rather than a smudge; below that the honest answer is no tick, the
     // same `None` R1673 chose and for the same reason — a square that small
@@ -332,15 +376,27 @@ fn tick_path(style: &CheckboxStyle) -> Option<Tick> {
     let (origin, span) = (half as f32, usable as f32);
     // Proportions of the M3 check mark: the pen drops to just past halfway,
     // turns at a third of the width, and rises to the top right.
+    //
+    // ★ R2060 — the dash is drawn from the same origin and span, across the
+    // middle, so the two states of one control are one drawing rule rather than
+    // two: a bar that did not span what the check spans would read as a
+    // different control's mark.
     let at = |fx: f32, fy: f32| PathPoint::new(origin + span * fx, origin + span * fy);
-    Some(Tick {
-        side,
-        stroke_px,
-        commands: vec![
+    let commands = match mark {
+        CheckMark::Tick => vec![
             PathCommand::MoveTo(at(0.0, 0.52)),
             PathCommand::LineTo(at(0.34, 1.0)),
             PathCommand::LineTo(at(1.0, 0.0)),
         ],
+        CheckMark::Dash => vec![
+            PathCommand::MoveTo(at(0.0, 0.5)),
+            PathCommand::LineTo(at(1.0, 0.5)),
+        ],
+    };
+    Some(Tick {
+        side,
+        stroke_px,
+        commands,
     })
 }
 

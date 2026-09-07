@@ -86,10 +86,12 @@ CORNER_TAG = "vtbl_hcorner"
 #: control an agent clicks is the control an AT announces.
 CORNER_PRESS = "vtbl#c"
 
-#: `U+2212` MINUS SIGN / `U+2713` CHECK MARK — the marks an HTML checkbox draws
-#: for `indeterminate` and checked. The empty leg draws no glyph at all.
-MARK_PARTIAL = "−"
-MARK_ALL = "✓"
+#: ★ R2060 — the two marks used to be named here as CHARACTERS (`U+2212` and
+#: `U+2713`, what an HTML checkbox draws for `indeterminate` and checked), and
+#: the check is in NEITHER face this tree ships. They are drawn paths now, so
+#: there is nothing to name: the walk compares the corner's INK between states
+#: instead, which is what a reader actually distinguishes. The empty leg still
+#: draws nothing at all.
 
 #: What the 897-row span may cost on the wire. `[[4, 900]]` is 11 bytes.
 MAX_SPAN_BYTES = 64
@@ -111,12 +113,36 @@ def rows(tf) -> list[int]:
 
 
 
-def corner_marks(tf) -> list[str]:
-    """Whatever glyph the corner is painting, as text."""
+def corner_marks(tf) -> list:
+    """The DRAWING the corner is painting, as its path commands.
+
+    ★★★★★ R2060 — this read the corner's TEXT and compared it against `U+2713`
+    and `U+2212`. The check is in NEITHER face this tree ships, so that
+    assertion was true for rounds while a reader saw a `.notdef` box on the one
+    control whose job is to say *everything here is selected*.
+
+    The marks are stroked paths now — the checkbox's own — so there is no string
+    to be right about. What comes back is the ink, which is what a reader sees:
+    empty for the unchecked leg, and two different runs for the other two.
+    """
     snap = tf.snapshot(source="paint", viewport=WIN)
     node = find_by_tag(snap, CORNER_PRESS)
     assert node is not None, "the live corner must be addressable in the paint tree"
-    return texts_of(node)
+    assert not texts_of(node), (
+        f"the corner sets no text at all now, and painted {texts_of(node)!r} — a "
+        f"character here is a mark this tree's one face may not carry"
+    )
+    out: list = []
+
+    def walk(n) -> None:
+        if isinstance(n, dict):
+            if n.get("kind") == "path" or "commands" in n:
+                out.extend(n.get("commands") or [])
+            for child in n.get("children") or []:
+                walk(child)
+
+    walk(node)
+    return out
 
 
 
@@ -212,7 +238,12 @@ def body() -> None:
         )
 
         # ── (G) the corner is tri-state and reversible ───────────────
-        assert_eq(corner_marks(tf), [MARK_ALL], "everything selected: the check")
+        # ★ R2060 — the three legs are told apart by their INK, not by three
+        # strings. `all` and `partial` are kept and compared against each other
+        # at the end, which is the property that matters: a reader must be able
+        # to tell "everything" from "some" without being told which is which.
+        mark_all = corner_marks(tf)
+        assert mark_all, "everything selected: the check is drawn"
         chord_click(tf, CORNER_PRESS)
         assert_eq(raw(tf), [], "a second press TAKES IT BACK — the toolkit's selectAll cannot")
         wait_until(
@@ -224,8 +255,11 @@ def body() -> None:
         assert_eq(len(raw(tf)), 1, "select-all is ONE run")
         tf.invoke("/external/toggle", 5_000)
         wait_until(
-            lambda: (corner_marks(tf) == [MARK_PARTIAL]) or None,
-            desc="a hole makes the corner INDETERMINATE",
+            lambda: (corner_marks(tf) not in ([], mark_all)) or None,
+            desc="a hole makes the corner INDETERMINATE — a different drawing",
+        )
+        assert corner_marks(tf) != mark_all, (
+            "and 'some' cannot be read off the same pixels as 'everything'"
         )
         # Partial completes rather than clears — the header-checkbox rule.
         chord_click(tf, CORNER_PRESS)
