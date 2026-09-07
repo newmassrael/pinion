@@ -241,12 +241,19 @@ def capture(app: RpcSubprocess) -> None:
     # a cursor, arrows, `Home`, `End` and `Enter` inside it. The screen's behaviour
     # was already at-most-one; what it announced was three independent toggle
     # buttons, which is what the ring above was a picture of.
+    # ★★★★★ R2063 — the heading row joined the ring, and it is the round's
+    # headline rather than a regression: this list's column headings carry a
+    # sentence each and a keyboard could stand on none of them, so the row
+    # became one stop with a cursor over its seven headings. It sits AFTER the
+    # grid because §5.39 enumerates depth-first over the paint and the container
+    # that makes it a stop is painted inside the pane.
     assert_eq(
         walked,
         [
             "pv.filter.query",
             "pv.filter.saved",
             "pv.list",
+            "pv.list.header",
             "pv.tree",
             "pv.bytes",
         ],
@@ -254,6 +261,24 @@ def capture(app: RpcSubprocess) -> None:
     )
     panes = [s for s in walked if s in ("pv.list", "pv.tree", "pv.bytes")]
     assert_eq(len(panes), 3, "E: three panes own a cursor")
+
+    # ★ R2063 — the heading row is checked here too, and separately, because its
+    # cursor is the ONE on this screen that does not follow: arriving at a
+    # heading must not reorder the capture. Folding it into the loop below would
+    # have made that assertion say `follows` about it.
+    app.request("focus/set", {"tag": "pv.list.header"})
+    app.tick(16)
+    nodes, _ = tree(app)
+    head_nav = nodes["pv.list.header"].get("navigation")
+    ok(
+        "E: the heading row publishes a roster",
+        head_nav is not None and len(head_nav["members"]) >= 2,
+    )
+    assert_eq(
+        head_nav["activation"],
+        "explicit",
+        "E: walking the headings reorders nothing; pressing one does",
+    )
 
     for stop in panes:
         app.request("focus/set", {"tag": stop})

@@ -325,12 +325,16 @@ def capture(app: RpcSubprocess) -> None:
     # WAI-ARIA composite rather than three independent toggle buttons, and the
     # ring is where that is felt: two presses fewer to reach the message list,
     # and arrows plus `Home` / `End` / `Enter` inside the bar in exchange.
+    # ★★★★★ R2063 — and the heading row joined it, which is this list's other
+    # half of the grid pattern: the rows were enterable from the keyboard and
+    # the headings that say what each column MEANS were reachable by nobody.
     assert_eq(
         walked,
         [
             "pv.filter.query",
             "pv.filter.saved",
             "pv.list",
+            "pv.list.header",
             "pv.tree",
             "pv.bytes",
         ],

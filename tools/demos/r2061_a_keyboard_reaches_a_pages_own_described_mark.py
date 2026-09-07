@@ -21,7 +21,10 @@ facts, neither of them read off the source:
     and no mark that carries a sentence IS a stop — each lives inside one. The
     shell learned that at R1918; its mounted screens did not.
 
-This walk is the first page repaid: the capture list's column headings.
+This walk holds the pages repaid so far. R2061 was the first — the capture
+list's column headings — and R2063 added the key section, whose heading row was
+painted as a panel the accessibility tree called by another name, and whose
+record pane holds an action a keyboard could press and never hear about.
 
 # ★★★★★ Why the heading row and not the marks
 
@@ -77,9 +80,15 @@ from rpc_verify import (  # noqa: E402
 SHELL = "hello-analyzer-shell"
 EXT = "/external"
 
-# The destination this instalment repays. The other three the debt names keep
-# their own rounds; naming one here is what makes this walk's claim exact.
-PAGE = "packets"
+#: The destinations repaid so far, one per instalment.
+#:
+#: ⚠ A written list, deliberately, and it is what makes this walk's claim exact:
+#: the debt is repaid one page at a time, so a walk that asked the whole roster
+#: would fail on the pages nobody has reached yet and a walk that asked "any
+#: page" would go quiet the moment one regressed. Each name here is a page a
+#: round claimed. ★ When the last one lands this becomes the roster itself —
+#: `/external/destinations` — and stops being a list at all.
+REPAID = ("packets", "keys")
 
 CHECKS: list[str] = []
 
@@ -148,6 +157,27 @@ def shown(app: RpcSubprocess) -> tuple[str | None, str | None]:
     return (anchor or {}).get("tag"), tips[0].get("name")
 
 
+def press(app: RpcSubprocess, stop: str, chord: str) -> None:
+    """Send `chord` to `stop` and put the pointer back where it was: nowhere.
+
+    ★★★★★ R2063 — the harness's `path=` form of `scene/key` resolves the tag's
+    painted rectangle and uses its CENTRE as the event's cursor target, so every
+    press quietly moves the pointer onto the row and marks the screen as being
+    pointed at. This walk's whole premise is a reader with no pointer, and a
+    register that prefers a hover to a focus — which is the conventional order —
+    then answers about whatever the row's centre happens to sit on.
+
+    Measured: the cursor walked all seven headings correctly while the sentence
+    stayed frozen on the column under the row's midpoint. The screen was right
+    and the instrument was moving the thing it measured. A single arrow step
+    could not see it, because the frozen answer was a legal one.
+    """
+    app.key(path=stop, name=chord)
+    app.tick_ms(16)
+    app.pointer_leave()
+    app.tick_ms(16)
+
+
 def walk_ring(app: RpcSubprocess, limit: int = 40) -> list[str]:
     """Every stop the keyboard reaches from here, in Tab order."""
     ring: list[str] = []
@@ -161,97 +191,182 @@ def walk_ring(app: RpcSubprocess, limit: int = 40) -> list[str]:
     return ring
 
 
+def repay(app: RpcSubprocess, page: str) -> tuple[dict, str]:
+    """Hold (A)-(C) and (F) at one repaid destination.
+
+    Returns the destination row and the stop the page's own mark was reached
+    from, so a page with a clause of its own can carry on from there.
+    """
+    row = destination(app, page)
+    app.intervene(f"{EXT}/nav", page)
+    app.tick_ms(16)
+    ok(f"{page}: the journey reaches it", app.query(f"{EXT}/nav") == page)
+
+    marks = page_register(app, row)
+    ok(f"{page}: it publishes described marks of its own — {len(marks)}", len(marks) >= 1)
+
+    # (A) the control. A pointer that never left would make every later
+    # sentence a hover's, and a screen that mounted a description
+    # permanently would pass the whole of (B).
+    banner(f"{page} A — nothing is shown before a reader arrives")
+    app.pointer_leave()
+    app.request("focus/set", {"tag": None})
+    app.tick_ms(16)
+    ok(f"A {page}: no description is announced", not tooltips(app))
+
+    # (B) the closing condition for this page: the KEYBOARD alone.
+    banner(f"{page} B — the keyboard walks to a mark the page describes")
+    ring = walk_ring(app)
+    ok(f"{page}: the ring has stops here — {len(ring)}", len(ring) >= 2)
+    print("    ring: " + ", ".join(ring))
+
+    reached: list[tuple[str, str, str]] = []
+    for stop in ring:
+        app.request("focus/set", {"tag": stop})
+        app.tick_ms(16)
+        mark, sentence = shown(app)
+        if mark in marks:
+            reached.append((stop, mark, sentence or ""))
+    ok(
+        f"B {page}: ★★★★★ a reader with NO POINTER reaches a mark this page "
+        f"describes — {len(reached)} of {len(ring)} stop(s)",
+        len(reached) >= 1,
+    )
+    stop, mark, sentence = reached[0]
+    print(f"    {stop} -> {mark}: {sentence!r}")
+    ok(
+        f"B {page}: and the sentence is the register's own for {mark}",
+        sentence == marks[mark],
+    )
+    # ★★★★★ The mark lives INSIDE the stop, and that is asked of the ANNOUNCED
+    # TREE rather than of the tags' spelling. A first draft compared prefixes —
+    # `pv.list.head.0` does sit under `pv.list` — and the second page disproved
+    # it at once: this section's heading row is `kp.list.header` and its
+    # headings are `kp.column.*`, two families for one containment, which is
+    # perfectly legal. A predicate written from ONE example is a predicate about
+    # that example.
+    app.request("focus/set", {"tag": stop})
+    app.tick_ms(16)
+    nodes = {n.get("tag"): n for n in access(app)}
+    ok(f"B {page}: the stop is not the mark ({mark} vs {stop})", mark != stop)
+    ok(
+        f"B {page}: and the tree says the mark is INSIDE the stop — "
+        f"{stop} names it among its children",
+        mark in (nodes.get(stop, {}).get("children") or []),
+    )
+    ok(
+        f"B {page}: ★ and the mark is the one the tree marks focused, which is "
+        "what an assistive technology follows",
+        (nodes.get(mark, {}).get("state") or {}).get("focused") is True,
+    )
+
+    # (F) the pointing half, asserted where the reader is standing — and
+    # the walk has to GO BACK there. Surveying the ring left focus on its
+    # last stop, so asking the tree now would ask about the chrome; the
+    # first draft did exactly that and reported the mark unreferenced.
+    app.request("focus/set", {"tag": stop})
+    app.tick_ms(16)
+    anchor = next((n for n in access(app) if n.get("tag") == mark), None)
+    ok(f"F {page}: the mark itself is announced — {mark}", anchor is not None)
+    ok(
+        f"F {page}: ★ and it POINTS AT the description; a region nothing "
+        "references is a region an assistive technology never reads out",
+        anchor.get("described_by") == tooltips(app)[0].get("tag"),
+    )
+
+    # (C) the row is WALKABLE — one door is not a row.
+    banner(f"{page} C — the arrows move along the row and the sentence follows")
+    app.request("focus/set", {"tag": stop})
+    app.tick_ms(16)
+    before = shown(app)
+    press(app, stop, "ArrowRight")
+    after = shown(app)
+    ok(
+        f"C {page}: the arrow moves to another mark — {before[0]} -> {after[0]}",
+        after[0] != before[0],
+    )
+    ok(f"C {page}: which is also this page's — {after[0]}", after[0] in marks)
+    ok(f"C {page}: and its own sentence comes with it", after[1] == marks[after[0]])
+
+    # ★★★★★ And the WHOLE row, not one step of it. A single arrow proves the
+    # cursor moves; it does not prove every member is somewhere a reader can
+    # get to, which is the difference between "the method works" and "the
+    # population is repaid" — the distinction this campaign keeps paying for.
+    # The roster is taken from the announced tree, so a column added to the
+    # screen joins this without anybody remembering.
+    members = nodes.get(stop, {}).get("children") or []
+    seen: dict[str, str] = {}
+    app.request("focus/set", {"tag": stop})
+    app.tick_ms(16)
+    # ⚠ Walk to the row's start first. The clause above already moved the
+    # cursor, and the row stops at its ends rather than wrapping, so a walk that
+    # started from wherever it happened to be could not reach every member —
+    # which is what the first draft did, and it reported six of seven as a
+    # defect of the screen rather than of the walk.
+    for _ in range(len(members)):
+        press(app, stop, "ArrowLeft")
+    for _ in range(len(members)):
+        here, sentence = shown(app)
+        if here in marks:
+            seen[here] = sentence or ""
+        press(app, stop, "ArrowRight")
+    print(f"    walked {len(seen)}: {sorted(seen)}")
+    ok(
+        f"C {page}: ★★★★★ EVERY member of the row is a mark a reader reaches — "
+        f"{len(seen)} of {len(members)}",
+        len(seen) == len(members),
+    )
+    ok(
+        f"C {page}: and each says its own sentence",
+        all(seen[tag] == marks[tag] for tag in seen),
+    )
+
+    # ★★★★★ How much of the page's register a keyboard reaches, REPORTED rather
+    # than judged. The union of every mark any ring stop showed, plus the row
+    # this clause walked — measured, so "this page is repaid" is a fraction
+    # somebody can read instead of a claim resting on the one mark clause (B)
+    # happened to find first. The distinction this campaign keeps paying for is
+    # between proving the method and repaying the population.
+    covered = set(seen) | {mark for _, mark, _ in reached}
+    print(
+        f"    [reach] {page}: {len(covered)} of {len(marks)} described mark(s) "
+        f"are keyboard-reachable; out of reach: {sorted(set(marks) - covered)}"
+    )
+    return row, stop
+
+
 def body() -> None:
     with RpcSubprocess(SHELL, boot_grace=1.5) as app:
-        row = destination(app, PAGE)
-        app.intervene(f"{EXT}/nav", PAGE)
+        roster = {r["key"] for r in js(app.query(f"{EXT}/destinations"))["destinations"]}
+        ok(
+            f"every page this walk claims is one the tool navigates to — {REPAID}",
+            set(REPAID) <= roster,
+        )
+        held: dict[str, tuple[dict, str]] = {}
+        for page in REPAID:
+            held[page] = repay(app, page)
+
+        # (D)/(E) the capture list's own clause: what its heading row does to
+        # the capture, which is the reason its activation policy is explicit
+        # rather than following. Only this page has an ordering to disturb —
+        # the key section orders by no column at all, so asking it the same
+        # question would be asking about a verb it does not have.
+        row, stop = held["packets"]
+        banner("packets D/E — walking reorders nothing; pressing does")
+        app.intervene(f"{EXT}/nav", "packets")
         app.tick_ms(16)
-        ok(f"the journey reaches {PAGE}", app.query(f"{EXT}/nav") == PAGE)
-
-        marks = page_register(app, row)
-        ok(f"the page publishes described marks of its own — {len(marks)}", len(marks) >= 1)
-
-        # (A) the control. A pointer that never left would make every later
-        # sentence a hover's, and a screen that mounted a description
-        # permanently would pass the whole of (B).
-        banner("A — nothing is shown before a reader arrives")
-        app.pointer_leave()
-        app.request("focus/set", {"tag": None})
-        app.tick_ms(16)
-        ok("A: no description is announced", not tooltips(app))
-
-        # (B) the closing condition for this page: the KEYBOARD alone.
-        banner("B — the keyboard walks to a mark the page describes")
-        ring = walk_ring(app)
-        ok(f"the ring has stops here — {len(ring)}", len(ring) >= 2)
-        print("    ring: " + ", ".join(ring))
-
-        reached: list[tuple[str, str, str]] = []
-        for stop in ring:
-            app.request("focus/set", {"tag": stop})
-            app.tick_ms(16)
-            mark, sentence = shown(app)
-            if mark in marks:
-                reached.append((stop, mark, sentence or ""))
-        ok(
-            "B: ★★★★★ a reader with NO POINTER reaches a mark this page "
-            f"describes — {len(reached)} of {len(ring)} stop(s)",
-            len(reached) >= 1,
-        )
-        stop, mark, sentence = reached[0]
-        print(f"    {stop} -> {mark}: {sentence!r}")
-        ok(
-            f"B: and the sentence is the register's own for {mark}",
-            sentence == marks[mark],
-        )
-        ok(
-            "B: the stop is not the mark — a mark that carries a sentence "
-            f"lives INSIDE a stop ({mark} vs {stop})",
-            mark != stop and mark.startswith(stop.rsplit(".", 1)[0]),
-        )
-
-        # (F) the pointing half, asserted where the reader is standing — and
-        # the walk has to GO BACK there. Surveying the ring left focus on its
-        # last stop, so asking the tree now would ask about the chrome; the
-        # first draft did exactly that and reported the mark unreferenced.
         app.request("focus/set", {"tag": stop})
         app.tick_ms(16)
-        anchor = next((n for n in access(app) if n.get("tag") == mark), None)
-        ok(f"F: the mark itself is announced — {mark}", anchor is not None)
-        ok(
-            "F: ★ and it POINTS AT the description; a region nothing "
-            "references is a region an assistive technology never reads out",
-            anchor.get("described_by") == tooltips(app)[0].get("tag"),
-        )
-
-        # (C) the row is WALKABLE — one door is not a row.
-        banner("C — the arrows move along the row and the sentence follows")
-        app.request("focus/set", {"tag": stop})
-        app.tick_ms(16)
-        before = shown(app)
-        app.key(path=stop, name="ArrowRight")
-        app.tick_ms(16)
-        after = shown(app)
-        ok(f"C: the arrow moves to another mark — {before[0]} -> {after[0]}", after[0] != before[0])
-        ok(f"C: which is also this page's — {after[0]}", after[0] in marks)
-        ok("C: and its own sentence comes with it", after[1] == marks[after[0]])
-
-        # (D)/(E) what the row does to the capture, which is the reason its
-        # activation policy is explicit rather than following.
-        banner("D/E — walking reorders nothing; pressing does")
         order = app.query(f"{row['screen']['address']}/sort")
-        app.key(path=stop, name="ArrowRight")
-        app.tick_ms(16)
-        app.key(path=stop, name="ArrowLeft")
-        app.tick_ms(16)
+        press(app, stop, "ArrowRight")
+        press(app, stop, "ArrowLeft")
         ok(
             "D: ★★★★★ walking the row leaves the capture's order alone — "
             f"{order!r}",
             app.query(f"{row['screen']['address']}/sort") == order,
         )
         here = shown(app)[0]
-        app.key(path=stop, name="Enter")
-        app.tick_ms(16)
+        press(app, stop, "Enter")
         after_press = app.query(f"{row['screen']['address']}/sort")
         ok(
             f"E: ★★★★★ and pressing it DOES reorder, at {here} — "

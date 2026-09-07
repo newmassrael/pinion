@@ -53,8 +53,9 @@ use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::{Frame, Scene};
 
 use super::{
-    DETAIL_TAG, HEADER_TAG, Hit, LIST_TAG, ROOT_TAG, VIEW_TAG, ViewState, WIN_H, WIN_W, centre,
-    detail_rect, list_rect, select_declaration, set_query, show_declarer, spec, use_view_state,
+    DETAIL_TAG, HEADER_TAG, Hit, LIST_HEADER, LIST_TAG, ROOT_TAG, VIEW_TAG, ViewState, WIN_H,
+    WIN_W, centre, detail_rect, list_rect, select_declaration, set_query, show_declarer, spec,
+    use_view_state,
 };
 
 /// The filter box at rest, which is the posture every check here runs the
@@ -702,7 +703,10 @@ fn r1730_every_region_either_speaks_or_says_why_it_is_quiet() {
 #[test]
 fn r1730_the_regions_that_hold_the_surfaces_are_painted() {
     sweep(|_, shot, _, _, case| {
-        for tag in [ROOT_TAG, HEADER_TAG, LIST_TAG, DETAIL_TAG, "kp.colhead"] {
+        // ★ R2063 — the heading row is named by the constant now rather than by
+        // a string, because it stopped being a second spelling: the panel a
+        // reader sees carries the tag the grid announces its header row under.
+        for tag in [ROOT_TAG, HEADER_TAG, LIST_TAG, DETAIL_TAG, LIST_HEADER] {
             assert!(shot.present(tag), "{case}: {tag} is not painted");
         }
         assert!(

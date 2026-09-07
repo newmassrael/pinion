@@ -77,6 +77,7 @@ use pinion_core::voice::Silence;
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::grid_sort::Admission;
 use pinion_core::widgets::radio::RadioState;
+use pinion_core::widgets::roving::{Activation, Axis, Ends, Landing, Member, Roving, RovingSpec};
 use pinion_core::widgets::row_query::RowQuery;
 use pinion_core::widgets::scroll::ScrollState;
 use pinion_core::widgets::text_edit::{TextEditState, use_text_edit_state};
@@ -108,8 +109,12 @@ const THEME_TAG: &str = "app";
 /// have to be excluded by name — and R1728 measured what naming an exclusion
 /// costs: the gate is then only as good as whoever last updated the list.
 const QUERY_TAG: &str = "kp.filter.query";
-/// The list's accessibility header row. Nothing paints it — the column headers
-/// are painted individually — so it is anchored by the members it composes.
+/// The list's header row — announced by the grid, and, since R2063, painted.
+///
+/// ⚠ This doc used to say *"nothing paints it"*, and that was the defect: the
+/// row WAS painted, as a panel called `kp.colhead`, so one row had two
+/// spellings and a keyboard could stand on neither. One tag now, carried by the
+/// panel the reader sees and by the row the grid announces.
 const LIST_HEADER: &str = "kp.list.header";
 /// The list's grid.
 const LIST_TAG: &str = "kp.list";
@@ -423,6 +428,15 @@ struct ViewState {
     /// pointing*. A leave is not a move to somewhere else, so without this a
     /// description stays on the frame over a window nobody is pointing at.
     pointer_inside: Signal<bool>,
+    /// ★★★★★ R2063 — where the column-heading row's keyboard cursor rests.
+    ///
+    /// The heading row is a composite this screen gained so that the sentences
+    /// its headings carry are reachable without a pointer. Nothing else on this
+    /// screen can stand in for the cursor: the list's selection is a
+    /// declaration, not a column, and this section does not order by a column
+    /// at all — pressing a heading here means nothing, which is why the row
+    /// walks without choosing.
+    head_cursor: Signal<usize>,
     /// The last thing the screen said, for the live region and the wire.
     said: RefCell<Option<Utterance>>,
 }
@@ -526,6 +540,9 @@ fn use_view_state() -> Rc<ViewState> {
         list_scroll,
         cursor: Signal::new((0, 0)),
         pointer_inside: Signal::new(false),
+        // R2063 — the heading row opens on its first column; this section
+        // orders by none, so there is no column for it to open on instead.
+        head_cursor: Signal::new(0),
         said: RefCell::new(None),
     })
 }
@@ -772,7 +789,87 @@ fn step(state: &Rc<ViewState>, delta: i32) -> bool {
 ///
 /// `None` is this screen's own stops driven with nothing focused, which is what
 /// the wire's `key` action and the model tests do.
+/// ★★★★★ R2063 — the column-heading row's cursor, as a [`Roving`].
+///
+/// The screen's first composite. `Horizontal`, stopping at the ends — the first
+/// and the last column are ends a reader is meant to feel — and walking
+/// CHOOSES NOTHING, because this section does not order by a column: there is
+/// no verb behind a heading here, and a cursor that pretended otherwise would
+/// promise a press that does nothing.
+fn head_cursor(state: &Rc<ViewState>) -> Roving {
+    let mut roving = Roving::new(
+        RovingSpec::new(Axis::Horizontal)
+            .with_ends(Ends::Stop)
+            .with_activation(Activation::Explicit),
+    );
+    roving.seat(
+        spec::COLUMNS
+            .iter()
+            .map(|column| Member::new(format!("kp.column.{}", column.key)))
+            .collect(),
+    );
+    roving.point_at(&column_tag(state.head_cursor.get()));
+    roving
+}
+
+/// The tag column `n`'s heading is addressed by.
+///
+/// A function rather than a `format!` at each site, for the reason the cell tag
+/// is one: the spelling is a join over [`spec::COLUMNS`], and the paint, the
+/// register and the cursor all have to produce it from the same rule.
+fn column_tag(n: usize) -> String {
+    let key = spec::COLUMNS
+        .get(n)
+        .map_or(spec::COLUMNS[0].key, |column| column.key);
+    format!("kp.column.{key}")
+}
+
+/// ★★★★★ R2063 — **where a keyboard reader's attention actually is**, given the
+/// Tab stop they are standing on.
+///
+/// The innermost thing inside the stop, which is what `aria-activedescendant`
+/// addresses and what the framework's focus ring frames. ONE home, because two
+/// consumers ask it: the accessibility tree and the description register. They
+/// used to answer differently — the tree resolved the list's open row while the
+/// register was handed the raw stop — and nothing on this screen that carries a
+/// sentence IS a stop, so a keyboard reader was shown nothing anywhere.
+fn attention_at(state: &Rc<ViewState>, stop: &str) -> Option<String> {
+    match stop {
+        LIST_HEADER => head_cursor(state).active_descendant().map(str::to_owned),
+        LIST_TAG => Some(format!("kp.list.row.{}", state.cursor_row())),
+        // ★ The record pane holds the parts [`spec::DETAIL`] declares and
+        // exactly ONE of them can be acted on — which is a fact the compiler
+        // keeps rather than a count in prose: [`Hit`] has three arms and
+        // `Declarer` is the only one a part answers to. `key_at` below already
+        // presses it for `Enter` and `Space` at this stop, so the thing a
+        // reader is standing on here IS that action. Saying so is what the
+        // keymap already promises, and it is what puts the pane's own sentence
+        // in a keyboard reader's reach.
+        DETAIL_TAG => Some(format!("{DETAIL_TAG}.declarer")),
+        _ => None,
+    }
+}
+
 fn key_at(state: &Rc<ViewState>, focused: Option<&str>, chord: &str) -> bool {
+    if focused == Some(LIST_HEADER) {
+        let mut roving = head_cursor(state);
+        // ★ A chord the row does not navigate by falls THROUGH rather than
+        // being eaten: standing on a heading, `Enter` names nothing here, and
+        // the rail this page is mounted in is entitled to the press.
+        let Some(landing) = roving.key(chord) else {
+            return false;
+        };
+        if let Landing::Moved { .. } = landing
+            && let Some(index) = roving.cursor()
+        {
+            state.head_cursor.set(index);
+            if let Some(column) = spec::COLUMNS.get(index) {
+                state.say(Utterance::unchanged(column.title.to_owned()));
+            }
+            return true;
+        }
+        return false;
+    }
     match focused {
         Some(DETAIL_TAG) => {
             return match chord {
@@ -1053,9 +1150,19 @@ fn column_header(ink: Ink) -> Scene {
             ink.text_3,
         ));
     }
-    panel("kp.colhead", rect, ink.bg, Some(ink.outline), children).silenced(Silence::layout(
-        "places the column headers; the grid announces them as its header row",
-    ))
+    // ★★★★★ R2063 — the heading row is ONE Tab stop, and it carries the tag the
+    // grid ALREADY announces its header row under. Two facts made that the
+    // right shape rather than a convenience: a stop must be a node in the
+    // accessibility tree or a reader is told nothing about what they landed on,
+    // and this panel and that row were two spellings of one row — the paint
+    // called it `kp.colhead` and the tree called it `kp.list.header`, and
+    // nothing held them together.
+    //
+    // It is no longer silenced as layout for the same reason: a row a reader
+    // stands on is not scaffolding. What it holds is the seven headings, and
+    // the arrows walk them — which is how the sentences they carry become
+    // reachable without a pointer.
+    panel(LIST_HEADER, rect, ink.bg, Some(ink.outline), children).with_focusable(true)
 }
 
 fn list_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
@@ -1783,9 +1890,11 @@ impl WidgetA11y for KeyPatternView {
         focused: Option<&str>,
     ) -> Option<AccessFocus> {
         let state = use_view_state();
-        (focused == Some(LIST_TAG)).then(|| {
-            AccessFocus::composite(LIST_TAG, format!("kp.list.row.{}", state.cursor_row()))
-        })
+        // ★ R2063 — through [`attention_at`], which is the one home of this
+        // derivation now: the description register asks the same question and
+        // the two must not answer it differently.
+        let stop = focused?;
+        Some(AccessFocus::addressing(stop, attention_at(&state, stop)))
     }
 }
 
@@ -1838,9 +1947,15 @@ fn description_shown(state: &Rc<ViewState>, focused: Option<&str>) -> Option<(St
         .get()
         .then(|| described.under(&marks, px, py))
         .flatten();
+    // ★★★★★ R2063 — the keyboard reader's attention, not the stop they are on.
+    // Handing the raw stop answered nothing for any described mark on this
+    // screen: a column heading and the record pane's action both live INSIDE a
+    // stop and neither is one. The shell learned this when the register was
+    // built and its mounted screens were left behind.
+    let attention = focused.and_then(|stop| attention_at(state, stop));
     let shown = described.shown(&Resting {
         hovered,
-        focused,
+        focused: attention.as_deref().or(focused),
         dismissed: false,
     })?;
     Some((shown.tag.to_owned(), shown.sentence.to_owned()))
