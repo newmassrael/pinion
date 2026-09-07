@@ -643,7 +643,19 @@ def body() -> None:
             # where the assembled shell mounts the lab narrower and puts it
             # behind the `…` control.
             "lab.toolbar": 19,
-            "lab.gate": 7,
+            # ★★★★★ R2074 — 7 -> 8, and the one that arrived is a finding the
+            # screen has something TRUE to say about on its first frame.
+            # `spec::LINKS` had three of its seven wires transcribed the way the
+            # behaviour reference DRAWS them rather than the way it DECLARES
+            # them; corrected, the router dials nothing and `P-03` listens with
+            # no card on this canvas dialling it — which is this taxonomy's own
+            # judgement rule. The reference's graph is in that state too: its
+            # wire out of `P-03` is muted.
+            #
+            # ⇒ A gate line arriving because the fixture became honest is not
+            # the same event as one arriving because a screen regressed, and the
+            # only thing that tells them apart is this sentence.
+            "lab.gate": 8,
             "lab.hint": 2,
             # ★★★★★ R1984 — the breadcrumb, ONE at the opening frame.
             #
@@ -908,14 +920,37 @@ def body() -> None:
             assert_eq(held["ty"], want["ty"], f"{want['key']} type")
             assert_eq(held["applies"], want["applies"], f"{want['key']} applies")
             assert_eq(held["value"], want["value"], f"{want['key']} value")
+        # ★★★★★ R2074 — asked of a card that DIALS, and its mirror asked here.
+        #
+        # The reference is explicit that exactly one key reaches a running node
+        # — the dialled-address row — and this asked it of the card the screen
+        # opens selected, which worked while `spec::LINKS` had that card
+        # dialling three others. Those three wires had been transcribed the way
+        # the reference DRAWS them rather than the way it DECLARES them; read
+        # its own definition of that card and it carries three fields and NO
+        # dialled-address row. Corrected, the card dials nothing, so the row is
+        # not there and neither is the hot one.
+        #
+        # ⚠ The claim is not weakened, it is asked where it stands: a card that
+        # DOES dial has exactly one hot row, and a card that dials nothing has
+        # none. Both halves are the same rule.
         hot = [f["key"] for f in form if f["applies"] == "hot"]
         assert_eq(
-            len(hot), 1,
+            len(hot), 0,
+            "★ the card that dials NOTHING has no row that reaches a running "
+            f"node — the hot row IS the dialled address: {hot}",
+        )
+        inv(tf, "select", "P-02")
+        dialling = json.loads(q(tf, "form"))
+        hot_dialling = [f["key"] for f in dialling if f["applies"] == "hot"]
+        inv(tf, "select", spec["selected_node"])
+        assert_eq(
+            len(hot_dialling), 1,
             "★ exactly one row reaches a running node, which is why the badge "
-            f"exists at all: {hot}",
+            f"exists at all: {hot_dialling}",
         )
         print(f"[E] the inspector holds {len(form)} row(s) keyed by configuration "
-              f"path; {hot[0]} is the one that applies live")
+              f"path; the card that dials has {hot_dialling[0]} applying live")
 
         # ── (F) The document is derived from those rows, and reads back ─────
         document = json.loads(q(tf, "document"))
