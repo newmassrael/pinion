@@ -88,7 +88,7 @@ EXT = "/external"
 #: page" would go quiet the moment one regressed. Each name here is a page a
 #: round claimed. ★ When the last one lands this becomes the roster itself —
 #: `/external/destinations` — and stops being a list at all.
-REPAID = ("packets", "keys")
+REPAID = ("packets", "keys", "logs")
 
 CHECKS: list[str] = []
 
@@ -288,46 +288,60 @@ def repay(app: RpcSubprocess, page: str) -> tuple[dict, str]:
     ok(f"C {page}: which is also this page's — {after[0]}", after[0] in marks)
     ok(f"C {page}: and its own sentence comes with it", after[1] == marks[after[0]])
 
-    # ★★★★★ And the WHOLE row, not one step of it. A single arrow proves the
-    # cursor moves; it does not prove every member is somewhere a reader can
-    # get to, which is the difference between "the method works" and "the
-    # population is repaid" — the distinction this campaign keeps paying for.
-    # The roster is taken from the announced tree, so a column added to the
-    # screen joins this without anybody remembering.
-    members = nodes.get(stop, {}).get("children") or []
-    seen: dict[str, str] = {}
-    app.request("focus/set", {"tag": stop})
-    app.tick_ms(16)
-    # ⚠ Walk to the row's start first. The clause above already moved the
-    # cursor, and the row stops at its ends rather than wrapping, so a walk that
-    # started from wherever it happened to be could not reach every member —
-    # which is what the first draft did, and it reported six of seven as a
-    # defect of the screen rather than of the walk.
-    for _ in range(len(members)):
-        press(app, stop, "ArrowLeft")
-    for _ in range(len(members)):
-        here, sentence = shown(app)
-        if here in marks:
-            seen[here] = sentence or ""
-        press(app, stop, "ArrowRight")
-    print(f"    walked {len(seen)}: {sorted(seen)}")
-    ok(
-        f"C {page}: ★★★★★ EVERY member of the row is a mark a reader reaches — "
-        f"{len(seen)} of {len(members)}",
-        len(seen) == len(members),
-    )
-    ok(
-        f"C {page}: and each says its own sentence",
-        all(seen[tag] == marks[tag] for tag in seen),
-    )
+    # ★★★★★ And the WHOLE of EVERY such row, not one step of one of them. A
+    # single arrow proves the cursor moves; it does not prove every member is
+    # somewhere a reader can get to, which is the difference between "the method
+    # works" and "the population is repaid" — the distinction this campaign
+    # keeps paying for.
+    #
+    # ⚠ Every stop that showed a mark, because a page can have more than one:
+    # the log section's severity row and its heading row are both composites,
+    # and a walk that only opened the first reported four of eight and read like
+    # a screen defect. The roster of each comes from the announced tree, so a
+    # column added to a screen joins this without anybody remembering.
+    covered: set[str] = set()
+    for at, _, _ in reached:
+        # ⚠ The ROSTER the arrows reach, which is not the announced children. A
+        # stop that publishes no navigation is a single control, and its
+        # children are structure rather than places a cursor goes — the record
+        # pane announces ten parts and exactly one of them is a described mark,
+        # which a walk over `children` reported as one of ten missing.
+        nav = nodes.get(at, {}).get("navigation")
+        if not nav:
+            continue
+        members = [m["tag"] for m in nav.get("members") or []]
+        seen: dict[str, str] = {}
+        app.request("focus/set", {"tag": at})
+        app.tick_ms(16)
+        # ⚠ Walk to the row's start first. The clause above already moved one
+        # cursor, and these rows stop at their ends rather than wrapping, so a
+        # walk starting from wherever it happened to be could not reach every
+        # member — which is what the first draft did, and it reported six of
+        # seven as a defect of the screen rather than of the walk.
+        for _ in range(len(members)):
+            press(app, at, "ArrowLeft")
+        for _ in range(len(members)):
+            here, sentence = shown(app)
+            if here in marks:
+                seen[here] = sentence or ""
+            press(app, at, "ArrowRight")
+        print(f"    walked {at}: {len(seen)} of {len(members)} — {sorted(seen)}")
+        ok(
+            f"C {page}: ★★★★★ EVERY member of {at} is a mark a reader reaches — "
+            f"{len(seen)} of {len(members)}",
+            len(seen) == len(members),
+        )
+        ok(
+            f"C {page}: and each member of {at} says its own sentence",
+            all(seen[tag] == marks[tag] for tag in seen),
+        )
+        covered |= set(seen)
 
     # ★★★★★ How much of the page's register a keyboard reaches, REPORTED rather
-    # than judged. The union of every mark any ring stop showed, plus the row
-    # this clause walked — measured, so "this page is repaid" is a fraction
-    # somebody can read instead of a claim resting on the one mark clause (B)
-    # happened to find first. The distinction this campaign keeps paying for is
-    # between proving the method and repaying the population.
-    covered = set(seen) | {mark for _, mark, _ in reached}
+    # than judged — so "this page is repaid" is a fraction somebody can read
+    # instead of a claim resting on the one mark clause (B) happened to find
+    # first.
+    covered |= {m for _, m, _ in reached}
     print(
         f"    [reach] {page}: {len(covered)} of {len(marks)} described mark(s) "
         f"are keyboard-reachable; out of reach: {sorted(set(marks) - covered)}"
@@ -353,8 +367,14 @@ def body() -> None:
         # question would be asking about a verb it does not have.
         row, stop = held["packets"]
         banner("packets D/E — walking reorders nothing; pressing does")
+        # ⚠ Navigating BACK to a page needs the frame that mounts it before its
+        # stops exist: with two pages this clause followed the one it wanted and
+        # a single tick was enough, and adding a third put another page in
+        # between — `focus/set` was then refused `tag_not_focusable` on a stop
+        # that had not been painted yet. Arriving is not the same as being drawn.
         app.intervene(f"{EXT}/nav", "packets")
-        app.tick_ms(16)
+        for _ in range(4):
+            app.tick_ms(16)
         app.request("focus/set", {"tag": stop})
         app.tick_ms(16)
         order = app.query(f"{row['screen']['address']}/sort")
@@ -372,6 +392,45 @@ def body() -> None:
             f"E: ★★★★★ and pressing it DOES reorder, at {here} — "
             f"{order!r} -> {after_press!r}",
             after_press != order,
+        )
+
+        # (G) the log section's own clause, and it is the OPPOSITE policy —
+        # deliberately, because the difference is the ROLE and not a preference.
+        # That section's severity row announces itself as a radio group, and a
+        # radio group's arrow SELECTS; a group whose arrows only moved a cursor
+        # would announce one thing and do another. Asserted here because a
+        # `Follows` cursor that quietly stopped writing would leave the walk's
+        # other clauses entirely green.
+        banner("logs G — a radio group's arrow chooses, because that is the role")
+        logs = held["logs"][0]
+        app.intervene(f"{EXT}/nav", "logs")
+        for _ in range(4):
+            app.tick_ms(16)
+        severity = "lv.header.severity"
+        app.request("focus/set", {"tag": severity})
+        app.tick_ms(16)
+        # ⚠ `Home` first, because the clause above walked this row to its end and
+        # it STOPS there — an `ArrowRight` from the last member moves nothing,
+        # which the first draft read as the cursor not writing at all. A walk
+        # that assumes where it is standing is a walk asserting about the
+        # previous clause.
+        press(app, severity, "Home")
+        chosen = app.query(f"{logs['screen']['address']}/severity")
+        press(app, severity, "ArrowRight")
+        moved = app.query(f"{logs['screen']['address']}/severity")
+        ok(
+            f"G: ★★★★★ the arrow CHOOSES — {chosen!r} -> {moved!r}",
+            moved != chosen,
+        )
+        ok(
+            "G: and the tree says so: the row's cursor follows",
+            (
+                {n.get("tag"): n for n in access(app)}
+                .get(severity, {})
+                .get("navigation", {})
+                .get("activation")
+                == "follows"
+            ),
         )
 
     print(f"\n{len(CHECKS)} check(s) held.")

@@ -79,6 +79,7 @@ use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::grid_sort::Admission;
 use pinion_core::widgets::hex_dump::HexLayout;
 use pinion_core::widgets::radio::RadioState;
+use pinion_core::widgets::roving::{Activation, Axis, Ends, Landing, Member, Roving, RovingSpec};
 use pinion_core::widgets::row_query::RowQuery;
 use pinion_core::widgets::scroll::ScrollState;
 use pinion_core::widgets::text_edit::{TextEditState, use_text_edit_state};
@@ -106,8 +107,14 @@ const THEME_TAG: &str = "app";
 /// taking the names with no further dot, so a child tagged inside a part would
 /// have to be excluded by name.
 const QUERY_TAG: &str = "lv.filter.query";
-/// The list's accessibility header row. Nothing paints it — the column headers
-/// are painted individually — so it is anchored by the members it composes.
+/// The list's header row — announced by the grid, and, since R2064, painted.
+///
+/// ⚠ This doc used to say *"nothing paints it"*, and that was the defect: the
+/// row WAS painted, as a panel called `lv.colhead`, so one row had two
+/// spellings and a keyboard could stand on neither — a stop must be a node in
+/// the accessibility tree or a reader is told nothing about what they landed
+/// on. One tag now, carried by the panel a reader sees and by the row the grid
+/// announces.
 const LIST_HEADER: &str = "lv.list.header";
 /// The list's grid.
 const LIST_TAG: &str = "lv.list";
@@ -115,6 +122,9 @@ const LIST_TAG: &str = "lv.list";
 const DETAIL_TAG: &str = "lv.detail";
 /// The section header.
 const HEADER_TAG: &str = "lv.header";
+/// ★ R2064 — the severity row: a radio group the accessibility tree already
+/// announced, painted under this same tag, and now a Tab stop with a cursor.
+const SEVERITY_TAG: &str = "lv.header.severity";
 
 // ★ R1877 — from the specification rather than spelled a second time here: the
 // decode pane's part heights are DERIVED from these faces, so a copy in the
@@ -456,6 +466,13 @@ struct ViewState {
     /// somewhere else, so without this a description stays on the frame over a
     /// window nobody is pointing at.
     pointer_inside: Signal<bool>,
+    /// ★★★★★ R2064 — where the column-heading row's keyboard cursor rests.
+    ///
+    /// A fact of its own, unlike the severity row's cursor one field up: that
+    /// one IS [`choice`](Self::choice), because a radio group's arrow selects.
+    /// A heading here selects nothing — this section orders by no column — so
+    /// there is nothing for the cursor to be a projection of.
+    head_cursor: Signal<usize>,
     /// The last thing the screen said.
     said: RefCell<Option<Utterance>>,
 }
@@ -554,6 +571,9 @@ fn use_view_state() -> Rc<ViewState> {
         list_scroll,
         cursor: Signal::new((0, 0)),
         pointer_inside: Signal::new(false),
+        // R2064 — the heading row opens on its first column; this section
+        // orders by none, so there is no column for it to open on instead.
+        head_cursor: Signal::new(0),
         said: RefCell::new(None),
     })
 }
@@ -752,7 +772,118 @@ fn step(state: &Rc<ViewState>, delta: i32) -> bool {
 ///
 /// ★ The rule R1730 measured by mounting its sibling: a page that matches on the
 /// chord alone eats the presses its host's navigation was aimed at.
+/// The tag column `n`'s heading is addressed by.
+///
+/// A function rather than a `format!` at each site: the spelling is a join over
+/// [`spec::COLUMNS`], and the paint, the register and the cursor all have to
+/// produce it from the same rule.
+fn column_tag(n: usize) -> String {
+    let key = spec::COLUMNS
+        .get(n)
+        .map_or(spec::COLUMNS[0].key, |column| column.key);
+    format!("lv.column.{key}")
+}
+
+/// The tag severity choice `n` is addressed by.
+fn choice_tag(n: usize) -> String {
+    let key = spec::CHOICES
+        .get(n)
+        .map_or(spec::CHOICES[0].key, |choice| choice.key);
+    format!("lv.severity.{key}")
+}
+
+/// ★★★★★ R2064 — the column-heading row's cursor.
+///
+/// `Horizontal`, stopping at its ends, and walking CHOOSES NOTHING: this
+/// section orders by no column, so there is no verb behind a heading and a
+/// cursor that pretended otherwise would promise a press that does nothing.
+fn head_cursor(state: &Rc<ViewState>) -> Roving {
+    let mut roving = Roving::new(
+        RovingSpec::new(Axis::Horizontal)
+            .with_ends(Ends::Stop)
+            .with_activation(Activation::Explicit),
+    );
+    roving.seat(
+        (0..spec::COLUMNS.len())
+            .map(|n| Member::new(column_tag(n)))
+            .collect(),
+    );
+    roving.point_at(&column_tag(state.head_cursor.get()));
+    roving
+}
+
+/// ★★★★★ R2064 — the severity row's cursor, which IS the choice.
+///
+/// Not a second fact: this row announces itself as a radio group, and a radio
+/// group's arrow SELECTS — that is the pattern's contract, and a group whose
+/// arrows only moved a cursor would announce one thing and do another. So the
+/// projection reads [`ViewState::choice`] and `Follows` writes it back, which
+/// is why nothing here holds a cursor twice.
+///
+/// ⚠ That is the opposite call from the sibling screen's saved-filter bar,
+/// deliberately: that bar is a set of independent filters where arriving is not
+/// choosing, and it declares `Explicit` for exactly that reason. The difference
+/// is the ROLE, not a preference.
+fn severity_cursor(state: &Rc<ViewState>) -> Roving {
+    let mut roving = Roving::new(
+        RovingSpec::new(Axis::Horizontal)
+            .with_ends(Ends::Stop)
+            .with_activation(Activation::Follows),
+    );
+    roving.seat(
+        (0..spec::CHOICES.len())
+            .map(|n| Member::new(choice_tag(n)))
+            .collect(),
+    );
+    roving.point_at(&choice_tag(state.choice.get()));
+    roving
+}
+
+/// ★★★★★ R2064 — **where a keyboard reader's attention actually is**, given the
+/// Tab stop they are standing on.
+///
+/// The innermost thing inside the stop — what `aria-activedescendant` addresses
+/// and what the framework's focus ring frames. ONE home, because two consumers
+/// ask it: the accessibility tree and the description register. They used to
+/// answer differently, and nothing on this screen that carries a sentence IS a
+/// stop, so a keyboard reader was shown nothing anywhere.
+fn attention_at(state: &Rc<ViewState>, stop: &str) -> Option<String> {
+    match stop {
+        LIST_HEADER => head_cursor(state).active_descendant().map(str::to_owned),
+        SEVERITY_TAG => severity_cursor(state)
+            .active_descendant()
+            .map(str::to_owned),
+        LIST_TAG => Some(format!("lv.list.row.{}", state.cursor_row())),
+        _ => None,
+    }
+}
+
 fn key_at(state: &Rc<ViewState>, focused: Option<&str>, chord: &str) -> bool {
+    // ★★★★★ R2064 — the two composites this round gave the screen. A chord one
+    // of them does not navigate by falls THROUGH rather than being eaten, so
+    // the rail this page is mounted in keeps the presses it was aimed at — the
+    // rule R1730 measured by mounting this section.
+    if let Some(stop @ (LIST_HEADER | SEVERITY_TAG)) = focused {
+        let mut roving = if stop == LIST_HEADER {
+            head_cursor(state)
+        } else {
+            severity_cursor(state)
+        };
+        let Some(Landing::Moved { .. }) = roving.key(chord) else {
+            return false;
+        };
+        let Some(index) = roving.cursor() else {
+            return false;
+        };
+        if stop == LIST_HEADER {
+            state.head_cursor.set(index);
+        } else {
+            // `Follows`: arriving IS choosing, which is what the group's role
+            // promises. One write, through the same function a press uses.
+            choose_severity(state, index);
+        }
+        return true;
+    }
     match focused {
         Some(LIST_TAG) | None => {}
         Some(_) => return false,
@@ -932,7 +1063,23 @@ fn header_bar(
                     "places the filter box; the field inside it is what a reader lands on",
                 )),
             ),
-            _ => children.push(part_box(&tag, at, severity_choice(state, ink))),
+            // ★★★★★ R2064 — the severity row is ONE Tab stop. It has announced
+            // itself as a radio group owning three radio buttons since R1877,
+            // and every one of those buttons was painted `with_focusable(false)`
+            // with no group stop above them, so a keyboard could reach neither
+            // the group nor a member: the tree promised a composite and the
+            // paint offered no way in. The group is what a reader lands on and
+            // the arrows move inside it, which is what `radiogroup` MEANS.
+            //
+            // ⚠ Named rather than left on the wildcard it used to share with
+            // nothing: a part added to the specification would otherwise become
+            // a keyboard stop by falling through, which is not a decision a new
+            // row should make by existing.
+            "severity" => {
+                let group = part_box(&tag, at, severity_choice(state, ink));
+                children.push(group.with_focusable(true));
+            }
+            _ => children.push(part_box(&tag, at, Vec::new())),
         }
     }
     panel(HEADER_TAG, rect, ink.surface, Some(ink.outline), children)
@@ -983,9 +1130,10 @@ fn column_header(ink: Ink) -> Scene {
             ink.text_3,
         ));
     }
-    panel("lv.colhead", rect, ink.bg, Some(ink.outline), children).silenced(Silence::layout(
-        "places the column headers; the grid announces them as its header row",
-    ))
+    // ★★★★★ R2064 — the heading row is ONE Tab stop, carrying the tag the grid
+    // already announces its header row under. It is no longer silenced as
+    // layout either: a row a reader stands on is not scaffolding.
+    panel(LIST_HEADER, rect, ink.bg, Some(ink.outline), children).with_focusable(true)
 }
 
 fn list_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
@@ -1706,6 +1854,21 @@ impl WidgetA11y for LogView {
         nodes.extend(header_nodes(&state));
         nodes.extend(list_nodes(&state, focused));
         nodes.extend(detail_nodes(&state));
+        // ★★★★★ R2064 — both composites PUBLISH the roster their arrows reach.
+        //
+        // Half of the composite pattern is the cursor and the other half is
+        // saying so: a client walking this tree is otherwise told a row exists
+        // with no way to learn what is inside it or which keys move there. The
+        // pair is built from the same projections the keymap moves, so the
+        // announced roster and the cursor cannot be two objects.
+        for (tag, roving) in [
+            (LIST_HEADER, head_cursor(&state)),
+            (SEVERITY_TAG, severity_cursor(&state)),
+        ] {
+            if let Some(node) = nodes.iter_mut().find(|n| n.tag == tag) {
+                *node = node.clone().with_navigation(&roving);
+            }
+        }
         // ★★★★★ R1918 — and the description a reader is resting on, tied to the
         // mark it belongs to through `aria-describedby`. The substrate owns the
         // gating, so the reference is present exactly while the region is.
@@ -1725,9 +1888,11 @@ impl WidgetA11y for LogView {
         focused: Option<&str>,
     ) -> Option<AccessFocus> {
         let state = use_view_state();
-        (focused == Some(LIST_TAG)).then(|| {
-            AccessFocus::composite(LIST_TAG, format!("lv.list.row.{}", state.cursor_row()))
-        })
+        // ★ R2064 — through [`attention_at`], the one home of this derivation:
+        // the description register asks the same question and the two must not
+        // answer it differently.
+        let stop = focused?;
+        Some(AccessFocus::addressing(stop, attention_at(&state, stop)))
     }
 }
 
@@ -1775,9 +1940,15 @@ fn description_shown(state: &Rc<ViewState>, focused: Option<&str>) -> Option<(St
         .get()
         .then(|| described.under(&marks, px, py))
         .flatten();
+    // ★★★★★ R2064 — the keyboard reader's attention, not the stop they are on.
+    // Handing the raw stop answered nothing for any described mark here: a
+    // column heading and a severity choice both live INSIDE a stop and neither
+    // is one. The shell learned this when the register was built and its
+    // mounted screens were left behind.
+    let attention = focused.and_then(|stop| attention_at(state, stop));
     let shown = described.shown(&Resting {
         hovered,
-        focused,
+        focused: attention.as_deref().or(focused),
         dismissed: false,
     })?;
     Some((shown.tag.to_owned(), shown.sentence.to_owned()))

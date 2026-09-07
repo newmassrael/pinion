@@ -1872,6 +1872,16 @@ impl WidgetA11y for KeyPatternView {
         nodes.extend(header_nodes(&state));
         nodes.extend(list_nodes(&state, focused));
         nodes.extend(detail_nodes(&state));
+        // ★★★★★ R2064 — the heading row PUBLISHES the roster its arrows reach.
+        //
+        // R2063 gave the row a cursor and did not say so on the wire, which is
+        // half of the composite pattern: a client walking this tree was told
+        // the row exists and had no way to learn what is inside it or which
+        // keys move there. A walk asking for the roster found none and reported
+        // the page as one mark of eight — the right failure, one round late.
+        if let Some(node) = nodes.iter_mut().find(|n| n.tag == LIST_HEADER) {
+            *node = node.clone().with_navigation(&head_cursor(&state));
+        }
         // ★★★★★ R1918 — and the description a reader is resting on, tied to the
         // mark it belongs to through `aria-describedby`.
         if let Some((tag, sentence)) = description_shown(&state, focused) {
