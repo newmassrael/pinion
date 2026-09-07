@@ -4586,7 +4586,46 @@ const CLAIMING_CAPTIONS: usize = 16;
 /// moves, and only the REASON separates a regression from a wider census. This
 /// one was re-measured at the end of the round that moved it, which is that
 /// paragraph's own rule.
-const ADJACENT_CAPTIONS: usize = 150;
+/// ⚠⚠ **R2078 — 150 → 166, and it is a POPULATION arriving for the third time
+/// in this constant's history** (R1857's snapshot lesson, R2074's `spec::LINKS`
+/// correction, and now the palette's roster).
+///
+/// The node lab's palette went from the reference's first-release eight roles
+/// in two groups to the behaviour canon's twenty-one in seven, so more of it is
+/// painted above the fold and more of its rows' captions are in the walk. They
+/// are paired by position exactly as the eight always were; nothing lost a
+/// binding.
+///
+/// # How the cause was established, since only the REASON separates a
+/// regression from a wider census
+///
+/// Not by arithmetic. The gate now prints its adjacent pairs **grouped by
+/// address family** when it fires (R1818's rule: a ratchet that reports only a
+/// total makes the next round argue the cause instead of reading it), and the
+/// breakdown measured at the end of this round names `lab.palette` at **50** —
+/// far the largest family, with the next at 16.
+///
+/// ⇒ ★ **and the attribution is by EXCLUSION rather than by that count alone.**
+/// This round touched the node lab's roster, the palette's geometry, its
+/// addresses and its wire, and nothing else. The other eighteen families in the
+/// breakdown — `kp.*`, `pv.*`, `lv.*`, `tv.*` and the lab's own canvas and
+/// inspector — are painted by code no commit of this round edited, so they
+/// *cannot* have moved. The delta is the palette's by construction.
+///
+/// ⚠ What is NOT claimed: a per-row account of the sixteen. Five more role rows
+/// fit above the fold and each carries a name over a blurb, which is the right
+/// order of magnitude and is not the same thing as having isolated it — and a
+/// number this file already learned not to write down from a mid-round guess.
+/// The counterfactual that would isolate it (the roster put back to eight) was
+/// not run.
+///
+/// ⚠ Re-taken AFTER the round's last change, which is the rule the paragraph
+/// above `ADJACENT_CAPTIONS`'s history states: the palette's group-heading
+/// address was declared later in this round, and 166 is the figure from the run
+/// that includes it. An address is a string and moves no caption, and the two
+/// runs either side of that change agree to the digit — which is what says so
+/// rather than the reasoning.
+const ADJACENT_CAPTIONS: usize = 166;
 
 /// ★★★★★ **No caption in this application escapes its box or sits somewhere
 /// other than where it says it does** — asked of every destination the roster
@@ -4600,14 +4639,170 @@ const ADJACENT_CAPTIONS: usize = 150;
 ///
 /// Split out so the assertions below read as assertions; the populations are
 /// still `Tour`'s, which is the property that matters.
+/// ★ R2078 — every scrolling pane in a painted scene, with the state that
+/// drives it.
+///
+/// The framework's own resolution (`find_scroll_state_by_tag` in `pinion-rpc`'s
+/// dispatch does this to answer `scene/scroll`), so a caller here drives a
+/// mounted screen's pane the way a client would rather than reaching into
+/// another example's internals — `hello-node-lab` keeps its scroll state
+/// private and grows no verb it would not otherwise have.
+///
+/// ⚠ EVERY pane and not the palette by name: this walk visits every
+/// destination of the assembled tool, and which of them scroll is not this
+/// function's business to know. A name here would be a list to keep.
+fn scrolling_panes(
+    scene: &pinion_core::scene::Scene,
+) -> Vec<std::rc::Rc<pinion_core::widgets::scroll::ScrollState>> {
+    use pinion_core::scene::Scene;
+    let mut found = Vec::new();
+    match scene {
+        Scene::Container(c) => {
+            for kid in &c.children {
+                found.extend(scrolling_panes(kid));
+            }
+        }
+        Scene::Scroll(s) => {
+            if let Some(state) = s.state.clone() {
+                found.push(state);
+            }
+            found.extend(scrolling_panes(s.content.as_ref()));
+        }
+        _ => {}
+    }
+    found
+}
+
+/// ★★★★★ The anti-vacuity assertion that matters more than the counts: the two
+/// boxes a READER actually reported must be in what this gate judges.
+///
+/// A pairing rule strict enough to be quiet is a pairing rule that can be
+/// strict enough to be blind, and the way to tell those apart is to name the
+/// cases the check exists for. `lab.palette.protocol.tcp` is the chip whose
+/// word hung 3px off the right edge; `lab.palette.discovery` is the panel whose
+/// caption sat flush against its own border.
+///
+/// ★★★★★ R2078 — and it is asked over what this gate looked at ANYWHERE, which
+/// now includes one scroll away. Both boxes sit under the node lab's roster,
+/// that roster became the behaviour canon's twenty-one this round, so both went
+/// below the fold — **and this assertion is what NAMED it.**
+///
+/// ⚠ Stated precisely, because the first draft of this paragraph overclaimed:
+/// the ratchet below *also* went red in that same run, at 166 against a pin of
+/// 150. The two failures were coincident and independent — the ratchet moved
+/// because the roster grew, which is a different fact — and what matters is
+/// that the ratchet **cannot see a coverage gap at all**: it counts pairs among
+/// the boxes it looked at, so once re-pinned it passes while the gap persists.
+/// Only a check that names the boxes can fail for the gap's own reason.
+///
+/// ⇒ ★★★★★ **a gate that quietly stops covering a person-reported defect is
+/// worse than one that fails**, and the only reason this one could fail for the
+/// right reason is that somebody wrote the cases down BY NAME.
+fn assert_the_reported_boxes_are_judged(
+    on_screen: &[&str],
+    deeper: &pinion_widget_paint::caption::Survey,
+) {
+    let mut reached: Vec<&str> = on_screen.to_vec();
+    reached.extend(
+        deeper
+            .placements()
+            .iter()
+            .map(pinion_widget_paint::caption::Placement::box_tag),
+    );
+    reached.sort_unstable();
+    reached.dedup();
+    for reported in ["lab.palette.protocol.tcp", "lab.palette.discovery"] {
+        assert!(
+            reached.contains(&reported),
+            "`{reported}` is a box a reader reported a caption defect in, and \
+             this gate is not looking at it, at any scroll position. Judged: \
+             {reached:?}"
+        );
+    }
+}
+
+/// ★★★★★ R2078 — the geometry-only caption pairs, counted **per address
+/// family**, for the ratchet's failure message.
+///
+/// # Why the ratchet needs this at all
+///
+/// R1818 wrote the rule: when its own defect first surfaced, the gate said
+/// *"161 of 250 runs, budget 152"* and never once said *"two cards answer to the
+/// same id"*. A ratchet that reports only a total makes the next round argue
+/// the cause from arithmetic instead of reading it — and this round is the
+/// case, because the number moved and somebody had to say why.
+///
+/// The address's first two segments, which is the family a reader of this tree
+/// names a group of marks by (`lab.palette`, `pv.list`). Computed for the
+/// message only, so it costs nothing until the gate fires.
+fn adjacent_by_family(
+    all: &pinion_widget_paint::caption::Survey,
+) -> std::collections::BTreeMap<String, usize> {
+    let mut by_family: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::new();
+    for placement in all.placements() {
+        if placement.bond() == pinion_widget_paint::caption::Bond::Adjacent {
+            let tag = placement.box_tag();
+            let family = tag.split('.').take(2).fold(String::new(), |mut acc, part| {
+                if !acc.is_empty() {
+                    acc.push('.');
+                }
+                acc.push_str(part);
+                acc
+            });
+            *by_family.entry(family).or_default() += 1;
+        }
+    }
+    by_family
+}
+
+/// ★★★★★ R2078 — the captions a SCROLL reaches are held to the same two
+/// properties the ones on screen are.
+///
+/// Split out because `r1812` reached 121 lines against this workspace's
+/// hundred-line refusal, and paid with structure rather than an `allow` — which
+/// is this tree's standing answer to that lint.
+///
+/// ⚠ What this deliberately does NOT carry is the RATCHET. See
+/// [`survey_the_application`] for why: a `Survey` accumulates pairs and cannot
+/// dedup, so a caption seen at nine offsets is nine pairs — a number nobody can
+/// compare across rounds. Escaping nothing and breaking no claim are properties
+/// of each pair and survive the repetition; a COUNT does not. ⇒ **reaching
+/// further is reaching with the check still on, and the pin stays where its
+/// population is defined.**
+fn assert_a_scroll_away_is_judged_too(deeper: &pinion_widget_paint::caption::Survey) {
+    assert!(
+        deeper.escaped().is_empty(),
+        "{} caption(s) one scroll away are drawn OUTSIDE the box a reader sees \
+         around them: {:?}",
+        deeper.escaped().len(),
+        deeper.escaped(),
+    );
+    assert!(
+        deeper.broken().is_empty(),
+        "{} caption(s) one scroll away claim a side they do not sit on: {:?}",
+        deeper.broken().len(),
+        deeper.broken(),
+    );
+    assert!(
+        deeper.pairs() > 0,
+        "★ the scrolled survey judged nothing, so the coverage it is here to \
+         add is inert — every pane reported a scroll range of zero",
+    );
+}
+
 fn survey_the_application(
     state: &std::rc::Rc<super::ShellState>,
 ) -> (
+    pinion_widget_paint::caption::Survey,
     pinion_widget_paint::caption::Survey,
     usize,
     pinion_screen::TourReport,
 ) {
     let mut all = pinion_widget_paint::caption::Survey::default();
+    // ★ R2078 — what a SCROLL reaches, surveyed apart from `all`. See the block
+    // at the absorb below for why apart.
+    let mut deeper = pinion_widget_paint::caption::Survey::default();
     let mut stops = 0usize;
     let tour = pinion_screen::Tour::of(&state.screens).also_recording(super::VIEW_TAG);
     let surfaces = tour.surfaces();
@@ -4623,18 +4818,67 @@ fn survey_the_application(
             // ratchet fell 16 -> 10 the moment one pane opened folded, reporting
             // a repair as having been undone.
             open_whatever_arrived_folded(state);
-            let mut scene = super::view(ScreenState::default(), pinion_core::Frame::default());
-            let mut cache = pinion_runtime::LayoutCache::new();
-            pinion_runtime::compute_layout(&mut scene, &mut cache, super::WIN_W, super::WIN_H);
-            pinion_core::scene_disabled::resolve_disabled(&mut scene);
             let refs: Vec<&str> = surfaces.iter().map(String::as_str).collect();
-            let _ = pinion_runtime::record_painted_surfaces(&scene, &refs);
+            let paint = || {
+                let mut scene = super::view(ScreenState::default(), pinion_core::Frame::default());
+                let mut cache = pinion_runtime::LayoutCache::new();
+                pinion_runtime::compute_layout(&mut scene, &mut cache, super::WIN_W, super::WIN_H);
+                pinion_core::scene_disabled::resolve_disabled(&mut scene);
+                let _ = pinion_runtime::record_painted_surfaces(&scene, &refs);
+                scene
+            };
+            let scene = paint();
             all.absorb(pinion_widget_paint::caption::Survey::of(&scene));
+            // ★★★★★ R2078 — **and the captions a SCROLL away, in a SECOND
+            // survey**, which is the rule above with a second mechanism under
+            // it.
+            //
+            // R1909 put `open_whatever_arrived_folded` here because a pane put
+            // away carries its captions out of the count, and reported a repair
+            // as undone when the ratchet fell 16 -> 10. Content the pane has
+            // SCROLLED past leaves the count the same way — and this round is
+            // when it started to, because the node lab's roster became the
+            // behaviour canon's twenty-one roles and its palette's content grew
+            // past the pane.
+            //
+            // ⚠ It was not the ratchet that caught this: it was the anti-vacuity
+            // assertion naming the two boxes A READER REPORTED, one of which
+            // (`lab.palette.protocol.tcp`) went below the fold. ⇒ **a gate that
+            // quietly stops covering a person-reported defect is worse than one
+            // that fails**, and the reason this one failed instead of going
+            // quiet is that somebody wrote the cases down by name.
+            //
+            // ⚠⚠ ★★★★★ **A SECOND survey and not more of the first, because the
+            // first draft absorbed every offset into `all` and the ratchet went
+            // 150 -> 3,810.** A `Survey` accumulates pairs and cannot dedup, so
+            // the same caption seen at nine offsets is nine pairs: the number
+            // did not grow because the application got worse, it grew because
+            // one caption was counted many times.
+            //
+            // ⇒ ★★★★★ **two questions had been conflated, and fixing one by
+            // inflating the other is not a repair.** The RATCHET asks *how many
+            // captions are paired by nothing but where they landed* and its
+            // population is defined as one paint per stop — that is what makes
+            // it comparable across rounds. COVERAGE asks *which boxes did this
+            // gate look at*, and it is the one that needs the scroll. Both
+            // surveys are held to escaping nothing and to breaking no claim;
+            // only the first carries the pin.
+            for pane in scrolling_panes(&scene) {
+                let reach = pane.max().1;
+                let mut at = 0_i32;
+                while at < reach {
+                    at = at.saturating_add(49).min(reach);
+                    pane.scroll_to(0, at);
+                    deeper.absorb(pinion_widget_paint::caption::Survey::of(&paint()));
+                }
+                pane.scroll_to(0, 0);
+            }
+            let scene = paint();
             stops += 1;
             scene
         },
     );
-    (all, stops, report)
+    (all, deeper, stops, report)
 }
 
 #[test]
@@ -4642,7 +4886,7 @@ fn r1812_no_caption_in_the_application_escapes_or_breaks_its_claim() {
     let owner = Owner::new();
     owner.run(|| {
         let state = use_shell_state_off_disk();
-        let (all, stops, report) = survey_the_application(&state);
+        let (all, deeper, stops, report) = survey_the_application(&state);
 
         // The denominators first (R1800): a green verdict below is worth
         // nothing without them, and this check's population SHRINKS as the
@@ -4670,21 +4914,10 @@ fn r1812_no_caption_in_the_application_escapes_or_breaks_its_claim() {
             all.boxes()
         );
 
-        // ★★★★★ The anti-vacuity assertion that matters more than the counts:
-        // the two boxes a READER actually reported must be in what this gate
-        // judges. A pairing rule strict enough to be quiet is a pairing rule
-        // that can be strict enough to be blind, and the way to tell those
-        // apart is to name the cases the check exists for. `lab.palette.
-        // protocol.tcp` is the chip whose word hung 3px off the right edge;
-        // `lab.palette.discovery` is the panel whose caption sat flush against
-        // its own border.
-        for reported in ["lab.palette.protocol.tcp", "lab.palette.discovery"] {
-            assert!(
-                tags.contains(&reported),
-                "`{reported}` is a box a reader reported a caption defect in, \
-                 and this gate is not looking at it. Judged: {tags:?}"
-            );
-        }
+        // ★★★★★ The anti-vacuity assertion that matters more than the counts —
+        // the argument for it, and the two boxes it names, are on the function.
+        assert_the_reported_boxes_are_judged(&tags, &deeper);
+        assert_a_scroll_away_is_judged_too(&deeper);
         assert_eq!(
             all.bound() + all.adjacent(),
             all.pairs(),
@@ -4768,12 +5001,22 @@ fn assert_the_ratchets(all: &pinion_widget_paint::caption::Survey) {
         all.silent(),
         all.pairs()
     );
+    // ★★★★★ R2078 — **and WHERE they are, grouped by address family**, because
+    // this number rose and the message could not say why.
+    //
+    // R1818 wrote the rule this follows: when its own defect first surfaced the
+    // gate said *"161 of 250 runs, budget 152"* and never once said *"two cards
+    // answer to the same id"*. A ratchet that reports only a total makes the
+    // next round argue about the cause from arithmetic instead of reading it.
+    // The breakdown is computed for the message only, so it costs nothing until
+    // the gate fires.
+    let by_family = adjacent_by_family(all);
     assert!(
         all.adjacent() <= ADJACENT_CAPTIONS,
         "{} caption(s) are paired with their box by nothing but where they \
          landed, up from the {} this application had when the ratchet was set. \
          `caption::captioned` and `caption::inside` are what turn one into a \
-         fact the scene carries.",
+         fact the scene carries.\nBy address family: {by_family:?}",
         all.adjacent(),
         ADJACENT_CAPTIONS
     );

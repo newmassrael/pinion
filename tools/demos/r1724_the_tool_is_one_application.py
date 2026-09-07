@@ -44,6 +44,7 @@ Run from the workspace root:
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -101,6 +102,36 @@ def press_at(app: RpcSubprocess, rect) -> None:
 
 def lab_tags(rects: dict) -> set:
     return {tag for tag in rects if tag == LAB_ROOT or tag.startswith("lab.")}
+
+
+def card_names(app: RpcSubprocess) -> set:
+    """The cards on the mounted lab's canvas, ASKED OF THE SCREEN.
+
+    ★★★★★ R2078 — this scraped painted addresses at first, and two things were
+    wrong with that in different ways.
+
+    The one I saw: `lab.node.` also prefixes `lab.node.build.<word>`, the build
+    seat R1885 added, so counting the prefix counts marks that are not cards —
+    the lab's own router reads that family FIRST for exactly this reason and
+    says so in place. A walk counting the prefix would report a card arriving
+    whenever a seat did.
+
+    ⚠ The one `tools/painted_addresses.py` saw, which I did not: **the walk was
+    spelling a painted address it could ask for.** That ratchet went 112 -> 114
+    on these two lines, and it is right — a literal prefix in a walk is the
+    class the R2049-R2054 campaign removed, because a wrong letter reads as
+    *the screen did not paint it* rather than as a typo. Measured while fixing
+    it: the card family has no declaration to derive from either (`lab.node.` is
+    spelled inline in three places in the screen's own source), which is a
+    remainder of `debt-a-paint-address-is-retyped-at-every-reader` and not this
+    round's to close — so the repair is to stop needing the address at all.
+
+    ⇒ The screen publishes its live card names on its own slot, so this asks it.
+    That is also the better claim: a name from the MODEL rather than one
+    recovered from a tag, which is what R1999's own walk does one file over.
+    """
+    answer = app.query(f"/{LAB_ROOT}{EXT}/nodes")
+    return {name for name in str(answer).split(",") if name}
 
 
 def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
@@ -311,8 +342,175 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
             "the reference toolkit gets right, and this must not regress it",
         )
 
+        # ── (H) the node palette, inside the assembly, is the canon's ─────
+        # ★★★★★ R2078 — the roster this section's screen offers is the BEHAVIOUR
+        # CANON's twenty-one node kinds in its seven groups, and every one of
+        # them is reachable and pressable **here**, in the one application,
+        # rather than only in the standalone binary this page is the library
+        # half of.
+        #
+        # Why it belongs in THIS walk and not beside the lab's own: the standing
+        # order for this axis is that a round's artifact is the analysis tool
+        # ASSEMBLED — a screen driven where a person meets it. `r1651` compares
+        # the lab's paint against its published specification and `r1662` drives
+        # the pane's scroll, both on the standalone binary; neither says the
+        # mounted page's palette works, and a mounted screen has been where this
+        # tree's surprises live (R1700's rectangle, R1724's own extent).
+        banner("H — the node palette in the assembly is the behaviour canon's")
+        go(app, "lab")
+        spec = lab_spec(app)
+        roles = spec["roles"]
+        groups = spec["role_groups"]
+        # The two numbers, from the screen's own wire. The canon declares
+        # twenty-one kinds and a separate grouping of seven; both were
+        # re-measured from the pristine canon this round.
+        assert_eq(len(roles), 21, "H: ★★★★★ the palette offers the canon's 21 node kinds")
+        assert_eq(
+            [len(g["roles"]) for g in groups],
+            [4, 5, 3, 3, 2, 3, 1],
+            "H: ★★★★★ in the canon's seven groups, in its order and at its "
+            "sizes -- a palette of seven threes would be the same two counts "
+            "and a different screen",
+        )
+        assert_eq(
+            sum(len(g["roles"]) for g in groups),
+            len(roles),
+            "H: and the groups partition the roster, so the sizes above are a "
+            "check on the whole of it",
+        )
+        # ★ The wording axis, which is what keeps the neutral substitution
+        # honest: a client comparing the two screens has to be able to tell a
+        # deliberate substitution from a drift, and R2078 added a third answer
+        # because three of the new roles differ for a reason that is neither.
+        arms = {role["wording"] for role in roles}
+        assert_eq(
+            sorted(arms),
+            ["as_the_canon", "neutralised", "restyled"],
+            "H: ★★★★★ every role says where its words come from and all three "
+            "answers are drawn -- an arm nothing reaches is a distinction "
+            "nobody is making, and a place to file a role nobody classified",
+        )
+        for role in roles:
+            ok(
+                f"H: {role['name']} carries a badge and a one-line gist",
+                bool(role["badge"]) and bool(role["gist"]),
+            )
+        # ★ R2078 — PRINTED, the way section B prints its region count, and for
+        # a reason this section learned about itself: every assertion here is
+        # silent on success, so a run where `roles` came back empty would loop
+        # zero times, assert nothing, and PASS. The counts below are what
+        # distinguishes "H ran" from "H had nothing to run over" in a log
+        # somebody reads later.
+        print(
+            f"[demo] the mounted palette offers {len(roles)} role(s) in "
+            f"{len(groups)} group(s) sized "
+            f"{[len(g['roles']) for g in groups]}, wording "
+            f"{sorted(arms)}"
+        )
+        # Every heading and every row is REACHED, scrolling the pane the way a
+        # reader does. The palette's content is several times its height now, so
+        # "painted" stopped being the whole question — which is what R1662 gave
+        # this pane a scrolling body for.
+        # ★ R2078 — both addresses come FROM the screen: the pane's scrolling
+        # body is a column of its own specification, and each heading now
+        # publishes its tag the way each role row has since R2049. Spelled here,
+        # they were two of the sites `tools/painted_addresses.py` refuses.
+        body_tag = next(
+            pane["body"] for pane in spec["panes"] if pane["tag"] == "lab.palette"
+        )
+        wanted = [g["tag"] for g in groups]
+        wanted += [role["tag"] for role in roles]
+        reached: set[str] = set()
+        at = 0
+        while True:
+            here = abs_rects_of(app.snapshot(source="paint"))
+            reached |= {tag for tag in wanted if tag in here}
+            if reached >= set(wanted):
+                break
+            before = at
+            at += 40
+            app.scroll(body_tag, to=(0, at))
+            app.tick(16)
+            landed = abs_rects_of(app.snapshot(source="paint"))
+            # The pane clamps at its own maximum, so a step that changes nothing
+            # means the bottom is reached and anything still missing is missing.
+            if landed == here and at > before:
+                missing = sorted(set(wanted) - reached)
+                raise AssertionError(
+                    f"H: the palette is scrolled to its end and {len(missing)} "
+                    f"declared element(s) were never painted: {missing}"
+                )
+        ok(
+            f"H: ★★★★★ all {len(wanted)} declared palette elements "
+            f"({len(groups)} headings + {len(roles)} rows) are reached inside "
+            "the assembled application",
+            True,
+        )
+        ok(
+            f"H: ★ and reaching them took a scroll (parked at {at}) -- with the "
+            "canon's roster this pane does not fit, so a run that never "
+            "scrolled would mean the roster shrank",
+            at > 0,
+        )
+        # ★★★★★ And the LAST group's row is pressable where it landed. The
+        # strongest form of the claim: not that twenty-one rows are drawn, but
+        # that the one furthest from the top does what a palette row is for.
+        last = roles[-1]
+        rects = abs_rects_of(app.snapshot(source="paint"))
+        assert last["tag"] in rects, f"H: {last['tag']} is on screen to be pressed"
+        before_cards = card_names(app)
+        press_at(app, rects[last["tag"]])
+        cards = card_names(app)
+        fresh = cards - before_cards
+        assert_eq(
+            sorted(before_cards - cards),
+            [],
+            "H: and nothing that was on the canvas left it",
+        )
+        assert_eq(
+            len(fresh),
+            1,
+            f"H: ★★★★★ pressing {last['name']} -- the row in the canon's "
+            f"seventh group, the one that needed the most scrolling -- adds "
+            f"exactly one card in the assembled application (new: {sorted(fresh)})",
+        )
+        # ★ And the card's NAME is the one the badge predicts, which is what
+        # makes `badge` a fact a client can act on rather than a label: the
+        # screen mints a card as `{badge}-{ordinal}`, so a client that read the
+        # specification knew what this press would create before it pressed.
+        added = fresh.pop()
+        ok(
+            f"H: ★ and the card it made is named from that role's badge "
+            f"({last['badge']}): {added}",
+            added.startswith(f"{last['badge']}-"),
+        )
+        print(
+            f"[demo] all {len(wanted)} palette element(s) reached with the pane "
+            f"parked at {at}; pressing {last['name']} made {added}"
+        )
+        app.scroll(body_tag, to=(0, 0))
+        app.tick(16)
+
         print(f"\n[demo] {len(CHECKS)} named check(s)")
         ok("the tool is one application at three of its seven seats", True)
+
+
+def lab_spec(app: RpcSubprocess) -> dict:
+    """The mounted lab's own published specification.
+
+    ★ R2078 — read through the LAB's slot and not the shell's: `q(app, "spec")`
+    answers the shell's table (its window, its rail) and the two have keys in
+    common, so asking the wrong one would have answered plausibly and about
+    another screen.
+
+    Decoded defensively because the two bindings differ: the shell's slot hands
+    back an object and the lab's a JSON string, which is a divergence this walk
+    has no business asserting either way.
+    """
+    answer = app.query(f"/{LAB_ROOT}{EXT}/spec")
+    if isinstance(answer, str):
+        return json.loads(answer)
+    return answer
 
 
 def lab_selected(app: RpcSubprocess) -> str:

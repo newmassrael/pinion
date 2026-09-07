@@ -2057,6 +2057,31 @@ fn in_pane(scroll: &ScrollState, pane: Rect, px: u32, py: u32) -> (u32, u32) {
 }
 
 #[cfg(test)]
+impl LabState {
+    /// ★ R2078 — how far the palette has scrolled, for a check that has to
+    /// gather the pane across more than one position.
+    ///
+    /// Three narrow accessors rather than handing out the [`ScrollState`],
+    /// because what a caller needs is *park it here* and *how far can it go* —
+    /// and the object also carries a measured viewport and a tail pin that a
+    /// test has no business setting.
+    pub(crate) fn palette_scroll_offset(&self) -> i32 {
+        self.palette_scroll.offset_y()
+    }
+
+    /// The furthest the palette can scroll, which the pane derives from its own
+    /// children — so it is `0` until something has been painted.
+    pub(crate) fn palette_scroll_max(&self) -> i32 {
+        self.palette_scroll.max().1
+    }
+
+    /// Park the palette at `y`, clamped by the pane's own maximum.
+    pub(crate) fn scroll_palette_to(&self, y: i32) {
+        self.palette_scroll.scroll_to(0, y);
+    }
+}
+
+#[cfg(test)]
 fn pane_scroll(state: &LabState, body: &str) -> Option<Rc<ScrollState>> {
     match body {
         PALETTE_SCROLL => Some(Rc::clone(&state.palette_scroll)),
@@ -9623,7 +9648,7 @@ fn palette_body(state: &LabState, ink: Ink, rect: Rect) -> Scene {
     // `palette_row`'s arithmetic.
     for (g, run) in spec::palette_groups().iter().enumerate() {
         children.push(palette_heading(
-            &format!("lab.palette.group.{}", run.label),
+            &address::group_head(run.label),
             run.label,
             palette_group_top(g).saturating_sub(palette_body_origin().1),
             body_w,
@@ -17158,6 +17183,31 @@ fn frames_wire() -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// ★★★★★ R2078 — the word the wire publishes for where a role's words come
+/// from.
+///
+/// # Why it has a name of its own
+///
+/// It was an inline `match` in `spec_json`, and adding [`graph::Wording`]'s
+/// third arm put that function at 101 lines against this workspace's
+/// hundred-line refusal. Paid with STRUCTURE rather than an `allow`, which is
+/// this tree's standing answer to that lint — and the extraction is one a
+/// reader benefits from either way: a vocabulary this screen publishes is a
+/// thing to name, the way [`graph::LabGraph::word`] and
+/// [`graph::Endpoint::wire_word`] are named.
+///
+/// ⚠ Exhaustive rather than `_ => …`: a fourth reason a word can differ must
+/// stop the build here and be given a word of its own, which is the whole
+/// argument [`graph::Wording`] carries. A wildcard would publish the new arm as
+/// one of the old three.
+const fn wording_word(wording: graph::Wording) -> &'static str {
+    match wording {
+        graph::Wording::AsTheCanon => "as_the_canon",
+        graph::Wording::Neutralised => "neutralised",
+        graph::Wording::Restyled => "restyled",
+    }
+}
+
 fn spec_json() -> serde_json::Value {
     serde_json::json!({
         // ★ R1664 — `body` is published too. R1662 added the column to the
@@ -17201,6 +17251,38 @@ fn spec_json() -> serde_json::Value {
         "roles": spec::ROLES.iter().map(|r| serde_json::json!({
             "name": r.name, "gist": r.gist, "group": r.group, "accepts": r.accepts,
             "carries": r.carries.iter().map(|p| p.key()).collect::<Vec<_>>(),
+            // ★★★★★ R2078 — **the role's badge and its colour**, which this
+            // taxonomy has declared since R1966/R1968 and which had never
+            // crossed the wire.
+            //
+            // # How this was found, which is the part worth keeping
+            //
+            // The round's own walk reached for `badge` and got a `KeyError`.
+            // Measured then: the behaviour canon holds a kind's facts in ONE
+            // record of four — colour, code, label and description — and this
+            // list published TWO of them (`name` is the label, `gist` the
+            // description). So a client reading the specification could see
+            // what a role IS and neither of the two things a reader IDENTIFIES
+            // it by on the canvas.
+            //
+            // ⇒ ★ **the gap was in the half nothing asked for.** Both facts are
+            // painted (the swatch reads `tint`, the card's badge reads `badge`)
+            // and both are asserted by tests that reach into the source, so
+            // every check this screen had was satisfied while the WIRE — which
+            // §2 #2 and §2 #7 make the primary path, and which is what an agent
+            // has — could not answer either. A field is not published because
+            // it exists; it is published because somebody publishes it.
+            //
+            // ⚠ `badge` is not decoration: `add_node` mints a new card's name
+            // as `{badge}-{nn}`, so without it a client cannot predict the name
+            // of the card its own press is about to create. The walk that found
+            // this asserts exactly that.
+            //
+            // Hex through `hex_of`, which is how every other colour on this
+            // wire is written — a second spelling here would be a second
+            // convention for one fact.
+            "badge": r.badge,
+            "tint": hex_of(r.tint),
             // ★★★★★ R2049 — **the ADDRESSES this role's marks are painted
             // under**, derived from the one place that declares them.
             //
@@ -17229,10 +17311,13 @@ fn spec_json() -> serde_json::Value {
             // role whose words nobody classified is exactly what R1967 wrote
             // this to catch, and the wire would have published it as a fact.
             // With one declaration there is no lookup and no third answer.
-            "wording": match r.wording {
-                graph::Wording::AsTheCanon => "as_the_canon",
-                graph::Wording::Neutralised => "neutralised",
-            },
+            // ★★★★★ R2078 — a third word, and it is a third FACT rather than a
+            // finer shade of the second: `neutralised` tells a client the
+            // canon's word here is withheld, and `restyled` tells it the
+            // canon's word here is recoverable from ours. Publishing the three
+            // restyled roles as `neutralised` would have been a positive claim
+            // that vocabulary is hidden where none is. See `graph::Wording`.
+            "wording": wording_word(r.wording),
         })).collect::<Vec<_>>(),
         // ★★★★★ R1968 — the palette's grouping, published so a client can
         // expand the `role_groups` population a voice family names, and so the
@@ -17240,6 +17325,18 @@ fn spec_json() -> serde_json::Value {
         // infer from row order. Derived from `roles` above, never authored.
         "role_groups": spec::palette_groups().iter().map(|run| serde_json::json!({
             "label": run.label,
+            // ★★★★★ R2078 — the ADDRESS this heading is painted under, published
+            // for the reason R2049 published the role row's: a walk is Python
+            // and cannot call the declaration, so spelling it there is a wrong
+            // letter away from looking for a mark that is not there — which
+            // reads as *the screen did not paint it* rather than as a typo.
+            //
+            // ⚠ The roster expansion is what made this owed. The palette had
+            // TWO headings and now has the canon's SEVEN, and this address was
+            // spelled five times in this screen's own source before it was
+            // declared — one of the remainders
+            // `debt-a-paint-address-is-retyped-at-every-reader` names.
+            "tag": address::group_head(run.label),
             "roles": spec::ROLES[run.start..run.end()]
                 .iter().map(|r| r.name).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
@@ -23557,11 +23654,7 @@ fn palette_access(state: &LabState) -> Vec<AccessNode> {
     // so a heading cannot announce a group the rows below it are not in.
     for run in spec::palette_groups() {
         nodes.push(
-            AccessNode::new(
-                format!("lab.palette.group.{}", run.label),
-                AriaRole::Heading,
-            )
-            .with_name(run.label),
+            AccessNode::new(address::group_head(run.label), AriaRole::Heading).with_name(run.label),
         );
     }
     // ★★★★★ R1999 — over `Role::ALL`, which is what `palette_body` PAINTS.

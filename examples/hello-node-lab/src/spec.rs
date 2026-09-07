@@ -1515,7 +1515,9 @@ pub const VOICES: &[VoiceSpec] = &[
     // at all: a heading is a property its document layout carries and its
     // accessibility surface has no method that reports block structure.
     VoiceSpec {
-        tag: "lab.palette.group.{}",
+        // ★ R2078 — the address, from the one place that declares it, which is
+        // what the row below has done since R2049.
+        tag: crate::address::GROUP_HEAD_TEMPLATE,
         role: "heading",
         population: Population::RoleGroups,
     },

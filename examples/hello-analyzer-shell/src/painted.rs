@@ -462,6 +462,104 @@ impl Painted {
 }
 
 /// Run the real pipeline at `size` and index what came out of it.
+/// ★★★★★ R2078 — **park the MOUNTED lab's palette where `tag` is showing, and
+/// hand back that paint.**
+///
+/// # Why this host needs it at all
+///
+/// The lab's roster became the behaviour canon's twenty-one roles in seven
+/// groups, so its palette's content is several times the pane's height and the
+/// parts BELOW the roster — the pin legend, the protocol chips — are under the
+/// fold at rest. Two of this host's gates read them out of one paint at offset
+/// zero and failed correctly: one could not find the legend's words at all, and
+/// one reported that a box **a reader had reported a caption defect in** was no
+/// longer being looked at. That second one is the sharper of the two: a gate
+/// that quietly stops covering a person-reported defect is worse than a gate
+/// that fails.
+///
+/// # How the pane is reached, and why this is not a private hook
+///
+/// By walking the painted scene for the `Scroll` node carrying that tag and
+/// driving its [`ScrollState`] — which is **exactly** what `scene/scroll` does
+/// (`find_scroll_state_by_tag` in `pinion-rpc`'s dispatch). So this host drives
+/// the mounted screen through the framework's own resolution rather than
+/// reaching into another example's internals: `hello-node-lab` keeps its scroll
+/// state private and needs no verb it would not otherwise have, and a Rust test
+/// with no RPC server gets the same answer a client would.
+///
+/// ⚠ Parked MID-PANE rather than at the first offset that shows the tag. The
+/// lab-side version of this helper learned that the hard way: a tag entering
+/// from the pane's bottom edge is *present* while still clipped, and what a clip
+/// takes is the part furthest in — a row read its own name because its second
+/// line was gone, and a legend row came back two pixels out of centre. **The
+/// first position where a thing is present is not the first position where it
+/// is whole.**
+fn lab_palette_scrolled_to(tag: &str, size: (u32, u32)) -> (Painted, Scene) {
+    fn state_of(
+        scene: &Scene,
+        want: &str,
+    ) -> Option<std::rc::Rc<pinion_core::widgets::scroll::ScrollState>> {
+        match scene {
+            Scene::Container(c) => c.children.iter().find_map(|kid| state_of(kid, want)),
+            Scene::Scroll(s) => {
+                if s.tag.as_deref() == Some(want) {
+                    s.state.clone()
+                } else {
+                    state_of(s.content.as_ref(), want)
+                }
+            }
+            _ => None,
+        }
+    }
+
+    let (shot, scene) = painted_at(size);
+    let Some(pane) = state_of(&scene, "lab.palette.body") else {
+        panic!(
+            "the mounted lab paints no scrolling pane tagged `lab.palette.body`, \
+             so {tag} cannot be scrolled to — the pane stopped declaring a \
+             scrolling body, which is a defect and not a reason to skip"
+        );
+    };
+    if shot.tags.contains_key(tag) {
+        return (shot, scene);
+    }
+    let reach = pane.max().1;
+    // One palette row at a time: nothing on this pane is shorter than a row, so
+    // a step of one cannot skip past a target.
+    let step = 49_i32;
+    let mut at = pane.offset_y();
+    let mut seen = None;
+    while seen.is_none() {
+        assert!(
+            at < reach,
+            "{tag} is painted at no scroll position of the mounted palette, \
+             whose furthest is {reach} — it is not merely below the fold",
+        );
+        at = at.saturating_add(step).min(reach);
+        pane.scroll_to(0, at);
+        seen = painted_at(size).0.tags.get(tag).copied();
+    }
+    let found = seen.expect("the loop above only leaves with it found");
+    let body = painted_at(size)
+        .0
+        .tags
+        .get("lab.palette")
+        .copied()
+        .unwrap_or(found);
+    let content_mid = found.y + found.h / 2 + u32::try_from(at).unwrap_or(0);
+    let want = i32::try_from(content_mid.saturating_sub(body.y + body.h / 2))
+        .unwrap_or(0)
+        .clamp(0, reach);
+    pane.scroll_to(0, want);
+    let parked = painted_at(size);
+    assert!(
+        parked.0.tags.contains_key(tag),
+        "{tag} was found at offset {at} and is not painted at {want}, the offset \
+         that should put it mid-pane",
+    );
+    parked
+}
+
 fn painted_at(size: (u32, u32)) -> (Painted, Scene) {
     // ★ R1671 — publish the size through the channel the SHELL reads, which is
     // the state's own signal. It used to be `VIEWPORT_SIZE`, and that was a
@@ -8015,7 +8113,11 @@ fn r1862_the_walk_reaches_a_legend_row_that_lines_up() {
     owner.run(|| {
         let state = use_shell_state_off_disk();
         state.go("lab").expect("the node lab section is open");
-        let (painted, _) = painted_at((WIN_W, WIN_H));
+        // ★ R2078 — parked on the legend, which sits under the roster and is
+        // therefore below the fold at rest now that the roster is the canon's
+        // twenty-one. See `lab_palette_scrolled_to`.
+        let (painted, _) =
+            lab_palette_scrolled_to(&format!("lab.palette.pin.{}", "dial"), (WIN_W, WIN_H));
 
         let (content, run, _) = painted
             .runs
@@ -12149,12 +12251,46 @@ fn a_folded_part_is_a_pattern_and_says_what_it_refuses(state: &std::rc::Rc<Shell
 fn a_pattern_still_takes_what_it_has_no_rule_against(state: &std::rc::Rc<ShellState>) {
     let here = lab_slot(state, "graph_kind");
     let takes = here["takes"].as_array().expect("`takes` is a list");
+    // ★★★★★ R2078 — **the ROSTER LESS THE ROUTER**, asked of the mounted
+    // screen's own specification, where this read `takes.len() == 7`.
+    //
+    // That literal was the roster's size minus one, transcribed. It held for
+    // exactly as long as the palette offered eight roles: the roster became the
+    // behaviour canon's twenty-one and this failed `left: 20, right: 7` — with
+    // all twenty non-router names printed in its own message, every one of them
+    // right.
+    //
+    // ⇒ ★ **the count was never the claim.** What this phase asserts is that
+    // the refusal is the ROUTER's and not a palette shutting on descent, and
+    // the exact form of that is *everything except the router is still
+    // offered*. A set says it; a length says something weaker that happens to
+    // follow, and rots when the population moves. The identical literal was in
+    // this screen's walk (`tools/demos/r1999_…`) and is derived there too — the
+    // number had been written down twice, which is how one gets maintained in
+    // neither place.
+    let roster: Vec<String> = lab_slot(state, "spec")["roles"]
+        .as_array()
+        .expect("the mounted screen publishes its roster")
+        .iter()
+        .map(|role| role["name"].as_str().unwrap_or_default().to_owned())
+        .collect();
+    assert!(
+        roster.len() > 1,
+        "★ the roster came back with {} entry, so the comparison below would be \
+         about nothing",
+        roster.len(),
+    );
+    let want: Vec<&String> = roster.iter().filter(|name| *name != "Router").collect();
+    let got: Vec<String> = takes
+        .iter()
+        .map(|role| role.as_str().unwrap_or_default().to_owned())
+        .collect();
     assert_eq!(
-        takes.len(),
-        7,
-        "★★★★★ seven of the eight roles are still offered inside a pattern — a \
-         screen that shut its palette on descent would satisfy phase 2 just as \
-         well: {here}"
+        got.iter().collect::<Vec<_>>(),
+        want,
+        "★★★★★ every role this palette offers EXCEPT the router is still offered \
+         inside a pattern — a screen that shut its palette on descent would \
+         satisfy phase 2 just as well: {here}"
     );
     assert!(
         takes.iter().any(|role| role == "Peer"),

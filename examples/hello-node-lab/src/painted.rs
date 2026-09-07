@@ -692,6 +692,214 @@ fn painted(state: &std::rc::Rc<LabState>) -> Painted {
     painted_at(state, (WIN_W, WIN_H)).0
 }
 
+/// ★★★★★ R2078 — **the palette, gathered across the scroll positions a reader
+/// can reach, in the frame its rectangles are stated in.**
+///
+/// # Why this exists
+///
+/// The roster went from eight roles in two groups to the behaviour canon's
+/// twenty-one in seven, so the palette's content is now several times the
+/// pane's height. A check that takes ONE snapshot at offset zero and demands
+/// every role's row be painted is no longer asking about the screen: it is
+/// asking about the top of the screen, and it fails on rows a reader reaches by
+/// scrolling — which is what R1662 gave this pane a scrolling body for. Four
+/// checks in this file and one next door failed exactly that way, all five
+/// correctly.
+///
+/// ⚠ **Not weakened into an excuse.** The tempting repair is to skip a role
+/// whose row is absent, which turns the assertion off for precisely the rows
+/// that are new. This instead PERFORMS the scroll — the shape
+/// `r1662_a_control_one_scroll_away_is_pressable_after_that_scroll` already
+/// established, and the reason [`Painted::reachable`] holds moves rather than
+/// rectangles: a recipe is for following.
+///
+/// # Content coordinates, and why that matters
+///
+/// Each rectangle is recorded with the scroll offset it was painted under added
+/// back, so every tag is in ONE frame however many paints it took to see them
+/// all. That frame is the unscrolled window frame — which is exactly what
+/// `super::palette_row` and `super::palette_group_top` are written in, and what
+/// `super::in_pane` folds a press into. So an ordering assertion over these
+/// rectangles is an assertion about the arrangement rather than about where the
+/// pane happens to be parked.
+///
+/// ⇒ ★ a comparison across two snapshots at two offsets is meaningless in
+/// window coordinates; putting them in the frame the geometry declares is what
+/// makes the union a single screen again.
+///
+/// Returns the rectangles, what each named run reads, and how many distinct
+/// scroll positions it took — the last so a caller can refuse a vacuous run.
+/// ★★★★★ R2078 — **park the palette where `tag` is showing, and hand back that
+/// paint.**
+///
+/// The one answer to *how does a reader reach this part of the palette*, for
+/// the reason [`press_tag`]'s overflow branch is one answer to the toolbar's
+/// version of the same question: spelling it at each call site is a chance to
+/// spell it differently, and three of the four sites that needed it are
+/// checking something else entirely (a caption's clearance, a switch's
+/// position) and should not be carrying a scroll recipe.
+///
+/// Leaves the pane parked where the tag is, because every caller then reads
+/// rectangles out of the returned paint and a caller that scrolled back would
+/// be reading a frame that no longer exists.
+///
+/// ⚠⚠ ★★★★★ **It parks the target in the MIDDLE of the pane, and the first
+/// draft stopped at the first offset where the tag appeared at all.**
+///
+/// Those are different offsets and the difference is a defect, measured twice
+/// in one run. A tag entering from the pane's bottom edge is *present* while
+/// still being clipped, and what a clip takes is the part furthest in: the
+/// palette row's SECOND line went missing, so the row read its own name where
+/// the check wanted its blurb; and the pin legend's first row was reported two
+/// pixels out of centre with its two neighbours not painted at all. Both look
+/// exactly like screen defects and neither was one.
+///
+/// ⇒ ★★★★★ **the first position where a thing is PRESENT is not the first
+/// position where it is WHOLE**, and a probe that stops at presence measures a
+/// fragment. Centring is the cheap way to be sure — it leaves half a pane of
+/// clearance on both sides, so nothing the target owns is at an edge.
+fn palette_scrolled_to(state: &std::rc::Rc<LabState>, tag: &str) -> Painted {
+    palette_scrolled_to_at(state, tag, (WIN_W, WIN_H))
+}
+
+/// [`palette_scrolled_to`] at a stated window size.
+///
+/// ⚠ The size is a parameter because the pane's scroll MAXIMUM is a function of
+/// it — a taller window shows more of the palette and has less to scroll — so a
+/// caller sweeping the declared sizes cannot park the pane by painting at the
+/// design size and then asking about another one.
+fn palette_scrolled_to_at(state: &std::rc::Rc<LabState>, tag: &str, size: (u32, u32)) -> Painted {
+    let shot = painted_at(state, size).0;
+    let pane = super::palette_rect();
+    let reach = state.palette_scroll_max();
+    let step = i32::try_from(super::PAL_ROW_H).unwrap_or(1).max(1);
+    // Find it first — anywhere — and then park it in the middle. The search and
+    // the parking are two steps because the search only knows *which offset
+    // showed it*, and that offset is the one that must not be used.
+    let mut at = state.palette_scroll_offset();
+    let mut found = shot.tags.get(tag).copied();
+    while found.is_none() {
+        assert!(
+            at < reach,
+            "{tag} is painted at no scroll position of the palette, whose \
+             furthest is {reach} — it is not merely below the fold",
+        );
+        at = at.saturating_add(step).min(reach);
+        state.scroll_palette_to(at);
+        found = painted_at(state, size).0.tags.get(tag).copied();
+    }
+    let seen = found.expect("the loop above only leaves with it found");
+    // Where it lives in the unscrolled frame, which is the frame the pane's
+    // offset is measured in.
+    let content_mid = seen.y + seen.h / 2 + u32::try_from(at).unwrap_or(0);
+    let want = i32::try_from(content_mid.saturating_sub(pane.y + pane.h / 2))
+        .unwrap_or(0)
+        .clamp(0, reach);
+    state.scroll_palette_to(want);
+    let parked = painted_at(state, size).0;
+    assert!(
+        parked.tags.contains_key(tag),
+        "{tag} was found at offset {at} and is not painted at {want}, the \
+         offset that should put it mid-pane",
+    );
+    parked
+}
+
+fn for_each_palette_scroll(
+    state: &std::rc::Rc<LabState>,
+    mut look: impl FnMut(&Painted, i32),
+) -> usize {
+    let was = state.palette_scroll_offset();
+    // The first paint is what tells the pane its own extent: the scroll maximum
+    // is derived from the children by `scroll_pane`, so it cannot be asked for
+    // before something has been laid out.
+    state.scroll_palette_to(0);
+    let _ = painted(state);
+    let reach = state.palette_scroll_max();
+    // A step short enough that nothing can hide between two of them: the
+    // tallest single palette element is a group heading plus a row, and a step
+    // of one row height cannot skip either.
+    let step = i32::try_from(super::PAL_ROW_H).unwrap_or(1).max(1);
+    let mut at = 0_i32;
+    let mut visits = 0_usize;
+    loop {
+        state.scroll_palette_to(at);
+        let landed = state.palette_scroll_offset();
+        let shot = painted(state);
+        visits += 1;
+        look(&shot, landed);
+        if landed >= reach {
+            break;
+        }
+        at = at.saturating_add(step);
+    }
+    state.scroll_palette_to(was);
+    let _ = painted(state);
+    visits
+}
+
+/// The palette's tags and named runs, unioned across that sweep, in the
+/// unscrolled window frame. See [`for_each_palette_scroll`].
+fn palette_across_its_scroll(
+    state: &std::rc::Rc<LabState>,
+) -> (BTreeMap<String, Rect>, BTreeMap<String, String>, usize) {
+    let mut tags: BTreeMap<String, Rect> = BTreeMap::new();
+    let mut said: BTreeMap<String, String> = BTreeMap::new();
+    let visits = for_each_palette_scroll(state, |shot, landed| {
+        for (tag, rect) in &shot.tags {
+            if !tag.starts_with("lab.palette.") {
+                continue;
+            }
+            let mut moved = *rect;
+            moved.y = rect.y.saturating_add(u32::try_from(landed).unwrap_or(0));
+            // First sighting wins, which is deliberate: a tag half off the top
+            // of the pane may be clipped, and the offset that first brought it
+            // in is the one where it is whole.
+            tags.entry(tag.clone()).or_insert(moved);
+            if let Some(words) = shot.said.get(tag) {
+                said.entry(tag.clone()).or_insert_with(|| words.clone());
+            }
+        }
+    });
+    (tags, said, visits)
+}
+
+/// ★★★★★ R2078 — what the SECOND LINE of each palette row reads, across the
+/// pane's whole scroll.
+///
+/// The row's blurb is the one thing on this pane that is not a tagged run — it
+/// is a sibling label found by rectangle ([`palette_row_lines`]) — so a row
+/// below the fold answers `None`, which is indistinguishable from *the row
+/// reads nothing*. One sweep, so the twenty-one rows cost one pass rather than
+/// a scroll search each.
+///
+/// ⚠⚠ ★★★★★ **Only a row showing BOTH its lines is recorded**, and the first
+/// draft recorded the first sighting of any kind. Measured: `Scanner` came back
+/// reading `"Scanner"` — its own name — because the offset that first brought
+/// its box into the pane had it entering from the bottom edge with the second
+/// line clipped away, and this helper takes the LAST line inside the box. A
+/// clipped row does not read its name instead of its blurb; it reads its name
+/// *because its blurb is not there*, which is a fact about the probe.
+///
+/// ⇒ Every row of this pane carries a name over a blurb, so *two lines* is what
+/// *whole* means here, and requiring it is what makes a sighting usable. The
+/// callers assert they got all twenty-one, so a row that never shows both is a
+/// failure rather than an absence.
+fn palette_second_lines(state: &std::rc::Rc<LabState>) -> BTreeMap<String, String> {
+    let mut lines: BTreeMap<String, String> = BTreeMap::new();
+    let _ = for_each_palette_scroll(state, |shot, _landed| {
+        for role in spec::ROLES {
+            let seen = palette_row_lines(shot, role.name);
+            if seen.len() >= 2
+                && let Some(text) = seen.last()
+            {
+                lines.entry(role.name.to_owned()).or_insert(text.clone());
+            }
+        }
+    });
+    lines
+}
+
 /// ★★★★★ R1736 — **paint the screen so a press can be asked of it**, for the
 /// model tests next door.
 ///
@@ -857,7 +1065,7 @@ fn declared_tags(state: &LabState) -> Vec<String> {
         // the words a reader sorts the palette by were the one part of this pane
         // no check could see.
         for run in spec::palette_groups() {
-            want.push(format!("lab.palette.group.{}", run.label));
+            want.push(super::address::group_head(run.label));
         }
         want.push("lab.palette.legend".to_owned());
         for role in spec::ROLES {
@@ -2259,7 +2467,10 @@ fn r1653_the_painted_screen_invented_nothing() {
             (super::address::ROLE_SWATCH, Some(spec::ROLES.len())),
             // ★ R1968 — a group heading per RUN of the roster, so a palette
             // that grew a group grows a heading and one that lost one loses it.
-            ("lab.palette.group.", Some(spec::palette_groups().len())),
+            (
+                super::address::GROUP_HEAD,
+                Some(spec::palette_groups().len()),
+            ),
             ("lab.palette.pin.", Some(spec::PIN_LEGEND.len())),
             ("lab.palette.protocol.", Some(spec::PROTOCOLS.len())),
             ("lab.link.", None),
@@ -2710,27 +2921,38 @@ fn r1969_a_dial_lands_on_an_accept_of_another_scheme_and_the_link_is_authored() 
 /// ⚠ The heading is asked for by TAG, which is itself new: it painted an
 /// anonymous run, so the words a reader sorts this pane by were the one part of
 /// it no check could find.
+/// ★★★★★ R2078 — and it is asked of the palette ACROSS ITS SCROLL, because the
+/// roster is now the canon's twenty-one in seven groups and the pane's content
+/// is several times its height. See [`palette_across_its_scroll`] for why that
+/// is a strengthening rather than an excuse, and why the rectangles are put
+/// back into one frame before being compared.
 #[test]
 fn r1968_every_palette_row_is_under_the_heading_its_role_declares() {
     let owner = Owner::new();
     owner.run(|| {
         let state = use_lab_state();
-        let shot = painted(&state);
+        let (tags, said, visits) = palette_across_its_scroll(&state);
+        assert!(
+            visits > 1,
+            "★★★★★ R2078 — the palette was seen at ONE scroll position, so this \
+             check is back to asking about the top of the pane. With the \
+             canon's roster its content does not fit, and a run that never \
+             scrolls means the pane stopped declaring a scrolling body",
+        );
         // The headings, with the top of each — asked of the paint, not of the
         // geometry helper that placed them. R1653's whole header is about the
         // difference.
         let heads: Vec<(&'static str, u32)> = spec::palette_groups()
             .iter()
             .map(|run| {
-                let tag = format!("lab.palette.group.{}", run.label);
-                let rect = shot
-                    .tags
+                let tag = super::address::group_head(run.label);
+                let rect = tags
                     .get(&tag)
-                    .unwrap_or_else(|| panic!("{tag} is not painted"));
+                    .unwrap_or_else(|| panic!("{tag} is painted at no scroll position"));
                 // ★ And it reads the group's word. A heading in the right place
                 // saying something else would pass a purely geometric check.
                 assert_eq!(
-                    shot.said.get(&tag).map(String::as_str),
+                    said.get(&tag).map(String::as_str),
                     Some(run.label),
                     "{tag} is painted and reads something other than its group",
                 );
@@ -2744,10 +2966,9 @@ fn r1968_every_palette_row_is_under_the_heading_its_role_declares() {
         );
         for role in spec::ROLES {
             let tag = super::address::role_row_named(role.name);
-            let row = shot
-                .tags
+            let row = tags
                 .get(&tag)
-                .unwrap_or_else(|| panic!("{tag} is not painted"));
+                .unwrap_or_else(|| panic!("{tag} is painted at no scroll position"));
             let over = heads
                 .iter()
                 .filter(|(_, y)| *y <= row.y)
@@ -2767,12 +2988,11 @@ fn r1968_every_palette_row_is_under_the_heading_its_role_declares() {
         // ★ And the legend starts below every row, which is the other half of
         // the same derivation: `legend_top` walks the runs rather than
         // multiplying a group height by a literal 2.
-        let legend = shot
-            .tags
+        let legend = tags
             .get("lab.palette.legend")
-            .expect("the pin legend's heading is painted");
+            .expect("the pin legend's heading is painted at some scroll position");
         for role in spec::ROLES {
-            let row = shot.tags[&super::address::role_row_named(role.name)];
+            let row = tags[&super::address::role_row_named(role.name)];
             assert!(
                 row.y + row.h <= legend.y,
                 "★ the {} row is painted over the pin legend, so the legend's \
@@ -3283,7 +3503,10 @@ fn r1792_the_switch_caption_is_not_flush_with_its_own_border() {
     let owner = Owner::new();
     owner.run(|| {
         let state = use_lab_state();
-        let shot = painted(&state);
+        // ★ R2078 — parked where the switch is showing. It sits under the
+        // roster, which is now the canon's twenty-one roles, so at rest the
+        // pane has scrolled past it and this test's subject is not on screen.
+        let shot = palette_scrolled_to(&state, "lab.palette.discovery");
         let box_rect = shot.tags["lab.palette.discovery"];
         let track = shot.tags["lab.palette.discovery.track"];
         let caption = shot.tags[&format!(
@@ -3326,7 +3549,9 @@ fn r1813_the_switch_paints_the_position_and_the_pair_would_not_have_moved_it() {
     let owner = Owner::new();
     owner.run(|| {
         let state = use_lab_state();
-        let shot = painted(&state);
+        // ★ R2078 — parked where the switch is showing, for the reason
+        // `r1792_the_switch_caption_is_not_flush_with_its_own_border` is.
+        let shot = palette_scrolled_to(&state, "lab.palette.discovery");
         let tag = format!(
             "lab.palette.discovery{}",
             pinion_widget_paint::caption::CAPTION_SUFFIX
@@ -4063,7 +4288,33 @@ fn press_wire(state: &std::rc::Rc<LabState>, shot: &Painted, from: &str, to: &st
 /// moved and gave no way to reach it, trading a visual defect for a functional
 /// one. Re-shooting after the press is not optional: the seat's rectangle is
 /// the menu's, not the row's.
+/// ★★★★★ R2078 — **and a control the palette has scrolled past is reached by
+/// scrolling**, which is the same sentence one pane over.
+///
+/// The palette's parts below the roster — the pin legend, the discovery toggle,
+/// the determinism switch, the definitions register — are this screen's own
+/// second-phase additions (measured this round: the behaviour canon's palette
+/// is its role groups and NOTHING else), and they are stacked under the roster.
+/// With eight roles they were on screen at rest; with the canon's twenty-one
+/// they are below the fold, so a driver aiming at one panicked *"…is painted, so
+/// a person can aim at it"* — a true statement about a screen that is not
+/// showing it.
+///
+/// ⚠ Handled HERE rather than in each gate that aims at one, for the reason the
+/// overflow branch above is: how to reach a control is a property of the
+/// control, and spelling it at four call sites is four chances to spell it
+/// differently. The arrangement itself is a separate question and is registered
+/// as one — see
+/// `debt-the-palettes-own-parts-sit-behind-the-whole-roster`.
 fn press_tag(state: &std::rc::Rc<LabState>, shot: &Painted, tag: &str) {
+    if tag.starts_with("lab.palette.") && !shot.tags.contains_key(tag) {
+        let scrolled = palette_scrolled_to(state, tag);
+        let at = centre(scrolled.tags[tag]);
+        super::move_cursor(state, at.0, at.1);
+        super::press(state);
+        super::release(state);
+        return;
+    }
     if super::in_toolbar_overflow(tag) {
         let control = *shot
             .tags
@@ -8334,6 +8585,35 @@ fn r1862_a_legend_row_shares_one_centre_and_holds_its_text() {
         let mut apart: Vec<(String, &str, u32, u32)> = Vec::new();
 
         for (how_big, size) in SIZES {
+            // ★★★★★ R2078 — **park the palette on the legend first.**
+            //
+            // The comment on this test's population used to record `6 of 9,
+            // because the palette scrolls and one of the declared sizes puts
+            // the legend below its fold`, and it took the honest way out: it
+            // asserted the RELATION (wherever a sample is painted its words
+            // are) instead of the product. With the roster at the canon's
+            // twenty-one roles the legend is below the fold at two of the three
+            // sizes and the population fell to 3 of 9, which tripped this
+            // test's own floor — correctly, and it is the floor that earned its
+            // place here rather than the relation.
+            //
+            // ⇒ ★ scrolling to the subject restores the PRODUCT. What was
+            // really being conceded before was that this gate could not reach
+            // part of its own population; the concession was a missing
+            // capability in the test, not a fact about the screen.
+            // ⚠ Through the shared helper, which parks the target MID-PANE. The
+            // first draft here stopped at the first offset where the legend's
+            // first sample appeared, and that offset had it entering from the
+            // bottom edge: the run came back two pixels out of centre and its
+            // two neighbours were not painted at all — 5 of 9 instead of 9 of
+            // 9, and a geometry failure that was the probe's. See
+            // `palette_scrolled_to`.
+            state.scroll_palette_to(0);
+            let _ = palette_scrolled_to_at(
+                &state,
+                &format!("lab.palette.pin.{}", spec::PIN_LEGEND[0].0),
+                *size,
+            );
             let (frame, scene) = painted_and_scene(&state, *size);
             let before = samples;
             for (kind, meaning) in spec::PIN_LEGEND {
@@ -8400,12 +8680,27 @@ fn r1862_a_legend_row_shares_one_centre_and_holds_its_text() {
              {sizes_with_legend} of {} size(s)",
             SIZES.len(),
         );
-        // ★★★★★ THE POPULATION IS WHERE THE SAMPLE IS, and it is smaller than
-        // "every row at every size" — measured, 6 of 9, because the palette
+        // ★★★★★ R2078 — **THE POPULATION IS THE PRODUCT NOW, and it was a
+        // concession before.**
+        //
+        // This said: *the population is where the sample is, and it is smaller
+        // than "every row at every size" — measured, 6 of 9, because the palette
         // scrolls and one of the declared sizes puts the legend below its fold.
-        // Demanding the product would have been a claim about the screen that
-        // is false, and the honest one is the RELATION: wherever this screen
-        // paints a sample, it paints that row's words beside it.
+        // Demanding the product would have been a claim about the screen that is
+        // false.* Re-read at the command while the roster tripled and the
+        // sentence does not hold up: the legend was NOT unreachable at that
+        // size, it was unreached — the probe painted once at offset zero and
+        // took what was showing. The screen has offered a scroll to it since
+        // R1662.
+        //
+        // ⇒ ★★★★★ *this gate cannot see part of its population* had been
+        // written down as *this screen does not paint it*. A missing capability
+        // in a probe reads exactly like a fact about the subject, and the tell
+        // was that the concession named a mechanism (the pane scrolls) as the
+        // reason for not looking.
+        //
+        // The relation is kept — a sample without its sentence is still a
+        // failure — and the floor above it is now the product.
         assert_eq!(
             judged, samples,
             "★ {samples} legend sample(s) are painted and {judged} of the \
@@ -8413,11 +8708,14 @@ fn r1862_a_legend_row_shares_one_centre_and_holds_its_text() {
              that says nothing, and a sentence without its sample is one this \
              gate cannot judge",
         );
-        assert!(
-            sizes_with_legend >= 2 && samples >= spec::PIN_LEGEND.len(),
-            "★ the legend was reached at {sizes_with_legend} of {} size(s) \
-             with {samples} sample(s) — a population this small cannot be this \
-             screen's, and the clauses below would be nearly vacuous over it",
+        assert_eq!(
+            (sizes_with_legend, samples),
+            (SIZES.len(), SIZES.len() * spec::PIN_LEGEND.len()),
+            "★★★★★ R2078 — the legend was reached at {sizes_with_legend} of {} \
+             size(s) with {samples} sample(s), and every declared row at every \
+             declared size is now reachable by parking the pane on it. A \
+             shortfall here is the probe failing to scroll or the screen \
+             failing to paint, and both are failures",
             SIZES.len(),
         );
         assert!(
@@ -8789,11 +9087,24 @@ fn r1999_a_role_this_graph_will_not_take_is_drawn_as_one_that_cannot_be_pressed(
         let state = use_lab_state();
 
         // (1) The deployment: every row reads its own gist and is pressable.
-        let outside = painted(&state);
+        //
+        // ★ R2078 — across the pane's scroll, because with the canon's
+        // twenty-one roles most rows are below the fold at rest and a row that
+        // is not painted reads `None` — which is not *this row says nothing*.
+        let outside = palette_second_lines(&state);
+        assert_eq!(
+            outside.len(),
+            spec::ROLES.len(),
+            "★ R2078 — {} of {} rows were seen showing BOTH their lines across \
+             the pane's whole scroll; a row that never is would drop out of \
+             every assertion below rather than failing one",
+            outside.len(),
+            spec::ROLES.len(),
+        );
         for role in spec::ROLES {
             assert_eq!(
-                palette_row_second_line(&outside, role.name),
-                Some(role.gist.to_owned()),
+                outside.get(role.name).map(String::as_str),
+                Some(role.gist),
                 "★ out here every role reads its own blurb, so the change \
                  below is a change and not the only thing this ever said",
             );
@@ -8813,9 +9124,17 @@ fn r1999_a_role_this_graph_will_not_take_is_drawn_as_one_that_cannot_be_pressed(
 
         // (2) The router's row now says why, and announces itself disabled.
         let inside = painted(&state);
+        let within = palette_second_lines(&state);
         assert_eq!(
-            palette_row_second_line(&inside, "Router"),
-            Some("not in a pattern".to_owned()),
+            within.len(),
+            spec::ROLES.len(),
+            "★ R2078 — and the same population inside the pattern, so claim (3) \
+             below is over every row rather than over the ones that happened to \
+             be whole",
+        );
+        assert_eq!(
+            within.get("Router").map(String::as_str),
+            Some("not in a pattern"),
             "★★★★★ the row a person may not press says WHY, in this screen's \
              own words — a greyed row that still described the role would leave \
              the cause to be guessed at",
@@ -8851,8 +9170,8 @@ fn r1999_a_role_this_graph_will_not_take_is_drawn_as_one_that_cannot_be_pressed(
         // (3) The counterfactual, on the same screen and in the same state.
         for role in spec::ROLES.iter().filter(|r| r.name != "Router") {
             assert_eq!(
-                palette_row_second_line(&inside, role.name),
-                Some(role.gist.to_owned()),
+                within.get(role.name).map(String::as_str),
+                Some(role.gist),
                 "★★★★★ {} is still offered inside a pattern — the rule is the \
                  ROUTER's, and a pane that went flat on descent would pass the \
                  check above just as well",
@@ -9267,19 +9586,35 @@ fn r2067_a_card_that_stands_for_a_graph_carries_the_way_into_it() {
     });
 }
 
-/// The second line painted inside one palette row — the role's blurb, or the
-/// reason this graph will not take it.
+/// Every line painted inside one palette row, top to bottom — a role's name
+/// over its blurb, or over the reason this graph will not take it.
 ///
 /// Read out of the runs the paint actually produced rather than recomputed, so
-/// a row whose subtitle stopped being drawn answers `None` instead of the
-/// string this screen would have liked to draw.
-fn palette_row_second_line(shot: &Painted, role: &str) -> Option<String> {
+/// a row whose subtitle stopped being drawn is short a line instead of
+/// answering the string this screen would have liked to draw.
+///
+/// ★★★★★ R2078 — it hands back the LINES and not the second of them, and the
+/// count is the point. This was `palette_row_second_line`, which popped the
+/// lowest run and returned it; a caller sweeping the pane's scroll then could
+/// not tell *the row's blurb* from *the row's name, because the blurb was
+/// clipped off at the pane's edge*. Those came back as `Some("looks for peers")`
+/// and `Some("Scanner")` — one a reading and one an artifact, and the shape
+/// that hid the difference was a helper answering the question its caller
+/// wanted instead of the fact it had. See [`palette_second_lines`], which
+/// records a row only once both its lines are there.
+fn palette_row_lines(shot: &Painted, role: &str) -> Vec<String> {
     // ⚠ By RECTANGLE and not by the run's owner tag. The row's box and its two
     // lines are siblings in this pane — the labels are pushed beside the box
     // rather than into it — so `runs`' "nearest tagged ancestor" column names
     // the pane and not the row. Measured, not assumed: the first draft filtered
     // on the owner and found nothing at all.
-    let row = *shot.tags.get(&super::address::role_row_named(role))?;
+    let Some(row) = shot
+        .tags
+        .get(&super::address::role_row_named(role))
+        .copied()
+    else {
+        return Vec::new();
+    };
     let mut lines: Vec<(u32, String)> = shot
         .runs
         .iter()
@@ -9292,5 +9627,5 @@ fn palette_row_second_line(shot: &Painted, role: &str) -> Option<String> {
         .map(|(text, rect, _)| (rect.y, text.clone()))
         .collect();
     lines.sort_by_key(|(y, _)| *y);
-    lines.pop().map(|(_, text)| text)
+    lines.into_iter().map(|(_, text)| text).collect()
 }

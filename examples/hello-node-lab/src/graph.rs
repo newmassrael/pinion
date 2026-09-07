@@ -229,10 +229,28 @@ impl Endpoint {
 
 /// ★★★★★ R1967 — where a role's words come from.
 ///
-/// Two arms and no third, because there is no third state a reader could act
-/// on: either the screen says what the canon says, or it says something else on
-/// purpose. What there must NOT be is a role that says neither — which is what
-/// every role said before this existed.
+/// ⚠⚠ **R2078 — this said "two arms and no third, because there is no third
+/// state a reader could act on", and the roster that sentence was written
+/// against held eight roles of the canon's twenty-one.** Taking the other
+/// thirteen produced the third state on its first day, three times over: the
+/// canon writes *one of them* abbreviated, *one of them* as a two-word phrase
+/// and *one of them* as a bare verb, where this screen's own roster is agent
+/// nouns spelled out. A word can therefore differ for a reason that is neither
+/// "the canon's own" nor "the protocol's name substituted", and there was
+/// nowhere to say so.
+///
+/// ⇒ ★★★★★ **the arm a reader could not act on was the one that would have
+/// been FALSE.** Forcing a restyling into [`Self::Neutralised`] publishes, on
+/// the wire, that the canon's word there is a name the protocol gives a node —
+/// which for these three it is not. A client comparing the two screens would
+/// have been told a substitution is hiding vocabulary where nothing is hidden
+/// at all. That is worse than the unclassified role R1967 wrote this to catch,
+/// because it is a positive claim rather than a silence.
+///
+/// The completeness R1967 built is untouched and is what made this cheap: the
+/// classification is a required field, so the thirteen new roles could not be
+/// added without answering, and adding the arm was two exhaustive `match`
+/// blocks the compiler enumerated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Wording {
     /// The code and the label are the canon's own, letter for letter.
@@ -241,6 +259,22 @@ pub enum Wording {
     /// gives a node, and the standing order for this reproduction neutralises
     /// those while keeping structure and behaviour identical.
     Neutralised,
+    /// ★★★★★ R2078 — the canon's word for the same thing, **respelled in this
+    /// screen's own naming style**, with nothing about the protocol hidden.
+    ///
+    /// This roster reads its roles as agent nouns, spelled out: a thing that
+    /// publishes is a *Publisher* and a thing that answers is a *Responder*.
+    /// Three of the canon's kinds are written another way — abbreviated, as a
+    /// two-word phrase, and as a bare verb — so keeping the canon's letters
+    /// there would leave one row of the palette in a different idiom from its
+    /// twenty neighbours, and neutralising them would assert a substitution
+    /// that is not happening.
+    ///
+    /// ⚠ **The distinction a client can act on**: a [`Self::Neutralised`] row
+    /// means *the canon's word here is withheld*, so re-deriving it needs the
+    /// canon. This one means *the canon's word here is recoverable from ours* —
+    /// the same concept under this screen's spelling rule.
+    Restyled,
 }
 
 /// ★★★★★ R1999 — **what a graph on this screen is for.**
@@ -312,10 +346,25 @@ impl LabGraph {
 
 /// What a node is for.
 ///
-/// The two groups are the reference's: infrastructure that carries traffic, and
-/// the traffic itself. Which group a role is in is [`Role::group`], derived
-/// rather than stored beside the palette, so a role cannot be listed in one
-/// group and behave like the other.
+/// Which group a role is in is [`Role::group`], derived rather than stored
+/// beside the palette, so a role cannot be listed in one group and behave like
+/// the other.
+///
+/// ★★★★★ R2078 — **the canon's twenty-one kinds in the canon's seven groups.**
+///
+/// ⚠⚠ This doc said *"the two groups are the reference's: infrastructure that
+/// carries traffic, and the traffic itself"*, and it was true of a reference
+/// this screen had stopped being compared against — the FIRST-RELEASE palette.
+/// The behaviour canon, which the standing order names, has seven groups and
+/// twenty-one kinds, so the sentence was not merely short: it told every reader
+/// that the roster was complete. That is the whole root of
+/// `debt-the-node-lab-reproduces-the-first-release-palette-not-the-behaviour-canon`,
+/// and it is why the two counts are stated here rather than left to be counted.
+///
+/// The **order** is the canon's grouping declaration and not its record order —
+/// the two differ, and it is the grouping that the palette is read down. Runs
+/// must stay contiguous or `spec::palette_groups` cuts one heading into two;
+/// `r1968_each_palette_group_is_named_once` is where that is refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Role {
     /// Listens and routes between everything that dials it.
@@ -330,10 +379,36 @@ pub enum Role {
     Publisher,
     /// Receives on a key pattern.
     Subscriber,
+    /// Receives on a key pattern, on a beat it sets itself.
+    Puller,
     /// Asks on a period.
     Querier,
     /// Answers what a querier asks.
     Responder,
+    /// Sends one message and stops.
+    Put,
+    /// Removes one key and stops.
+    Delete,
+    /// Asks once and stops.
+    Get,
+    /// Sends, and keeps what it sent for whoever arrives late.
+    Retainer,
+    /// Receives, and asks again for what it missed.
+    Recoverer,
+    /// Reads who is in a group.
+    Roster,
+    /// Looks for peers and reports what answered.
+    Scanner,
+    /// Decides whether this deployment is in a group.
+    Member,
+    /// Says it is here, for as long as it is.
+    Beacon,
+    /// Watches presence change.
+    Watcher,
+    /// Asks who is here, once.
+    Prober,
+    /// Receives on one key and passes it on under another.
+    Forwarder,
 }
 
 /// ★★★★★ R1968 — **everything this taxonomy declares about one role, in one
@@ -431,6 +506,42 @@ pub struct RoleSpec {
 const INFRASTRUCTURE: &str = "infrastructure";
 /// The palette group the roles that *are* the traffic sit in.
 const TRAFFIC: &str = "traffic";
+/// ★★★★★ R2078 — the palette group of roles that act **once** rather than
+/// standing: a single send, a single removal, a single ask.
+///
+/// The canon's third group, and what makes it a group rather than a variation
+/// on [`TRAFFIC`] is the parameter it cannot have: a thing that acts once has
+/// no [`TrafficParameter::Rate`], because a rate is a statement about the
+/// second time.
+const ONE_SHOT: &str = "one-shot";
+/// ★★★★★ R2078 — the palette group of roles that add a capability **on top of
+/// a standing one**: sending that keeps what it sent, receiving that asks again
+/// for what it missed, and reading who is present.
+///
+/// The canon names this group after the extension library its three kinds come
+/// from. The library's name is protocol vocabulary, so the group is named for
+/// what the three have in common instead — which is the standing order for this
+/// reproduction, applied to a heading rather than to a node.
+const EXTENDED: &str = "extended";
+/// ★★★★★ R2078 — the palette group of roles that answer **who is out there**:
+/// one that looks, and one that decides whether this node is in.
+const DISCOVERY: &str = "discovery";
+/// ★★★★★ R2078 — the palette group of roles that answer **who is still here**:
+/// one that says so, one that watches, and one that asks.
+///
+/// The canon's word for this group is the protocol's own term for the
+/// mechanism, so the group is named for the question its three kinds answer.
+const PRESENCE: &str = "presence";
+/// ★★★★★ R2078 — the palette group of roles that are neither participants nor
+/// traffic but **plumbing**: the canon puts exactly one kind here, and the
+/// group's existing with one member is a fact about the canon's arrangement
+/// rather than an accident of ours.
+///
+/// ⚠ A one-member group is what condemned the arithmetic R1968 removed: a
+/// partition written as `n / 4` cannot produce a run of one, so this heading is
+/// the single strongest reason the palette's grouping had to become a
+/// derivation over what the roles declare.
+const UTILITY: &str = "utility";
 
 const ROUTER: RoleSpec = RoleSpec {
     name: "Router",
@@ -556,17 +667,359 @@ const RESPONDER: RoleSpec = RoleSpec {
     ],
 };
 
+// ★★★★★ R2078 — **the other thirteen of the canon's twenty-one kinds.**
+//
+// # What this round is repaying
+//
+// `debt-the-node-lab-reproduces-the-first-release-palette-not-the-behaviour-canon`
+// names one root for six differences a person found by holding the two windows
+// side by side: this roster reproduced the reference's FIRST-RELEASE palette,
+// and the standing order compares against the BEHAVIOUR canon. The comment on
+// [`ROLE_GROUPS_ARE_THE_CANONS`](Role::ALL) said so in its own words — *"two
+// groups, because that is what the reference's first-release palette has"*.
+//
+// Re-measured this round from the pristine canon (the working copy carries a
+// feature this repository added, and counting that would report our own
+// decision as the canon's — the debt records the md5): **21 kind records** of
+// `{colour, code, label, description}`, and a separate grouping declaration of
+// **7 groups** sized 4, 5, 3, 3, 2, 3, 1. Ours held 8 in 2. Both halves of the
+// debt's table are true to the letter; two of its other rows are not, and the
+// debt is amended to say so — a per-role colour and a per-role short code both
+// EXIST here now (R1966 and R1968 built them), so what was owed was the
+// thirteen records, not the fields to put them in.
+//
+// # Why the records are what the round costs
+//
+// Because every fact is required. A role that is missing one does not compile
+// (R1968's design), so thirteen roles is thirteen × nine decisions and none of
+// them can be deferred — which is the property that makes this a data round
+// rather than a plumbing one. The two that are genuinely OURS to decide are
+// [`RoleSpec::carries`], which R1848 established is the domain's call and not
+// the framework's, and [`RoleSpec::accepts`]; each record below says what it
+// decided and why.
+//
+// ⚠ **`accepts` is a role's capability and the canon has no such field.**
+// Measured this round: the canon gives EVERY card both pins and derives whether
+// the accepting one is live from whether a listen address is configured — its
+// own comment beside the derivation says *pin presence is derived, not
+// declared*. Ours is a coarser statement one level up (whether the role is the
+// sort of thing that is dialled at all), and the difference is the debt's
+// third item, which this instalment does not take.
+//
+// The direction each record chooses is the one the existing eight already use:
+// a role accepts when it is the END of the flow — a thing that receives, is
+// asked, or is joined — and does not when it is the START.
+
+/// A receiver that takes messages **on its own beat** rather than as they are
+/// sent.
+///
+/// It decides when to pull and how much to take, which is exactly what
+/// separates it from [`SUBSCRIBER`]: those two parameters are the sender's
+/// there and this one's here.
+const PULLER: RoleSpec = RoleSpec {
+    name: "Puller",
+    badge: "PUL",
+    // The canon draws it in the colour it gives its push receiver and its
+    // sender, which is the colour of what they carry rather than of what they
+    // do — the same grouping [`PUBLISHER`] records.
+    tint: Tint::rgb(0x8A, 0x5C, 0xF6),
+    gist: "receives, on its own beat",
+    group: TRAFFIC,
+    // It is the end of the flow: somebody's messages arrive here.
+    accepts: true,
+    mode: None,
+    // ★ Restyled: the canon abbreviates the second half of this kind's name and
+    // this roster spells its roles out. Nothing is withheld.
+    wording: Wording::Restyled,
+    // ★★★★★ It chooses WHEN to pull and HOW MUCH to take, and nothing else —
+    // which is exactly the pair the canon's own option list for this kind
+    // declares (an interval and a size, and no third).
+    //
+    // ⚠ The first draft added priority and reliability, on the reasoning that
+    // any receiver declares how it wants to be served, and
+    // `r1848_the_taxonomy_tells_the_traffic_roles_apart` refused it: that made
+    // this record IDENTICAL to [`QUERIER`]'s four, so the taxonomy told the two
+    // apart by nothing. The refusal was right and the reasoning was the
+    // mistake — those two are decisions made when the data was PUBLISHED, and a
+    // puller takes what is already there. ⇒ **a set that duplicates its
+    // neighbour's is not a classification**, and the check that says so is
+    // worth more than the sentence that argued for the fifth entry.
+    carries: &[TrafficParameter::Rate, TrafficParameter::Payload],
+};
+
+/// One send, and then nothing.
+const PUT: RoleSpec = RoleSpec {
+    name: "Put",
+    badge: "PUT",
+    tint: Tint::rgb(0x8A, 0x5C, 0xF6),
+    gist: "sends once",
+    group: ONE_SHOT,
+    accepts: false,
+    mode: None,
+    wording: Wording::AsTheCanon,
+    // ⚠★★★★★ R2078 — **empty, and the first draft of this record was not.**
+    //
+    // A one-shot send plainly has a payload and a priority, so the draft gave
+    // it four parameters. Then the canon was measured on this exact axis and
+    // the answer was sharper than the reasoning: it offers QoS knobs on
+    // **exactly one** of its twenty-one kinds — its standing sender — and every
+    // other kind's option list is that kind's own arguments (a key, a payload,
+    // a selector, a timeout) rather than the five parameters this vocabulary
+    // holds. The target's configuration does document QoS as applying to
+    // one-shot messages, but that is a key-scoped override in a configuration
+    // file and not something the reference's palette says about a node.
+    //
+    // ⇒ ★ **filling this in would have been inventing a taxonomy the
+    // reproduction target does not have** — the standing order's other error
+    // direction, where *our way is better* quietly replaces reproducing. R1848
+    // already extended the canon's one role to the traffic group; extending it
+    // across four more groups on nobody's evidence is a different act.
+    carries: &[],
+};
+
+/// One removal, and then nothing.
+const DELETE: RoleSpec = RoleSpec {
+    name: "Delete",
+    badge: "DEL",
+    // The one kind the canon draws in a colour of its own, and the only warm
+    // red on its canvas — a removal is the act a reader is meant to spot.
+    tint: Tint::rgb(0xB0, 0x33, 0x5B),
+    gist: "removes once",
+    group: ONE_SHOT,
+    accepts: false,
+    mode: None,
+    wording: Wording::AsTheCanon,
+    // Empty, for [`PUT`]'s measured reason. ⚠ And a removal would have been the
+    // most obviously wrong record of the twelve: the canon's own option list
+    // for this kind is a key and nothing else, so even the payload the draft
+    // withheld here was more than the reference states.
+    carries: &[],
+};
+
+/// One ask, and then nothing.
+const GET: RoleSpec = RoleSpec {
+    name: "Get",
+    badge: "GET",
+    // The canon draws it in the colour it gives the standing asker, which is
+    // the pairing its group's arrangement asserts: this is that role, once.
+    tint: Tint::rgb(0xC7, 0x78, 0x00),
+    gist: "asks once",
+    group: ONE_SHOT,
+    accepts: false,
+    mode: None,
+    wording: Wording::AsTheCanon,
+    // Empty, for [`PUT`]'s measured reason.
+    carries: &[],
+};
+
+/// A sender that **keeps what it sent**, so a receiver that arrives late can
+/// still be given it.
+const RETAINER: RoleSpec = RoleSpec {
+    name: "Retainer",
+    badge: "RET",
+    tint: Tint::rgb(0x7C, 0x4D, 0xEF),
+    gist: "sends, and keeps it",
+    group: EXTENDED,
+    accepts: false,
+    mode: None,
+    // ★ Substituted: the canon names this kind after the extension library it
+    // comes from, which is protocol vocabulary. See [`RoleSpec::wording`].
+    wording: Wording::Neutralised,
+    // ⚠★★★★★ Empty, and this is the record where that decision costs the most
+    // to state, so it is stated: **a retainer IS a sender**, so the draft gave
+    // it the whole vocabulary the way [`PUBLISHER`] has it. What overrules the
+    // resemblance is that the canon puts it in a different GROUP from its
+    // standing sender and offers QoS on neither of the two — the one kind whose
+    // knobs include the five is the standing sender alone. A group boundary the
+    // reference draws is evidence about that reference's taxonomy; a
+    // resemblance we notice is not. See [`PUT`] for the measurement.
+    carries: &[],
+};
+
+/// A receiver that notices a gap and **asks again** for what it missed.
+const RECOVERER: RoleSpec = RoleSpec {
+    name: "Recoverer",
+    badge: "REC",
+    tint: Tint::rgb(0x7C, 0x4D, 0xEF),
+    gist: "receives, asks again",
+    group: EXTENDED,
+    accepts: true,
+    mode: None,
+    // ★ Substituted, for [`RETAINER`]'s reason.
+    wording: Wording::Neutralised,
+    // Empty, for [`RETAINER`]'s reason — the same group boundary, the other
+    // side of the pair.
+    carries: &[],
+};
+
+/// A reader of **who is in a group**, and how many.
+const ROSTER: RoleSpec = RoleSpec {
+    name: "Roster",
+    badge: "RST",
+    tint: Tint::rgb(0x0E, 0x9A, 0xA7),
+    gist: "reads who is in",
+    group: EXTENDED,
+    accepts: true,
+    mode: None,
+    // ★ Substituted: the canon's label and code here are both the protocol's
+    // words for the membership mechanism.
+    wording: Wording::Neutralised,
+    // Empty: it reads a membership report rather than moving keyed traffic, and
+    // the canon's option list for it says the same — a group, a size, a
+    // timeout, an identity, and none of the five.
+    carries: &[],
+};
+
+/// A node that **looks for peers** and reports what answered.
+const SCANNER: RoleSpec = RoleSpec {
+    name: "Scanner",
+    badge: "SCN",
+    // The canon gives it the grey it gives the role that depends on somebody
+    // else — both are nodes with nothing of their own to serve.
+    tint: Tint::rgb(0x69, 0x71, 0x80),
+    gist: "looks for peers",
+    group: DISCOVERY,
+    accepts: false,
+    mode: None,
+    // ★ Substituted: the canon's word here is the protocol's term for the
+    // discovery exchange itself.
+    wording: Wording::Neutralised,
+    // Empty: a discovery probe is not keyed traffic. ⚠ The draft gave this one
+    // a rate, on the reasoning that it probes on a period — but the canon
+    // declares no run program for this kind at all (it is only ever driven; see
+    // [`crate::deploy::program_of`]), so there is no message of its own for a
+    // parameter to be about.
+    carries: &[],
+};
+
+/// A node that **decides whether this deployment is in a group**.
+const MEMBER: RoleSpec = RoleSpec {
+    name: "Member",
+    badge: "MBR",
+    tint: Tint::rgb(0x0E, 0x9A, 0xA7),
+    gist: "decides who is in",
+    group: DISCOVERY,
+    accepts: true,
+    mode: None,
+    // ★ Restyled: the canon writes this kind's label as a two-word phrase whose
+    // first word its group heading already says. Nothing is withheld.
+    wording: Wording::Restyled,
+    // Empty, for [`SCANNER`]'s reason: this is the other of the two kinds with
+    // no program of its own.
+    carries: &[],
+};
+
+/// A node that **says it is here**, for as long as it is.
+const BEACON: RoleSpec = RoleSpec {
+    name: "Beacon",
+    badge: "BCN",
+    tint: Tint::rgb(0x0E, 0x9A, 0xA7),
+    gist: "says it is here",
+    group: PRESENCE,
+    accepts: false,
+    mode: None,
+    // ★ Substituted: the canon's label and code here are the protocol's own
+    // term for the presence mechanism, and so are its two neighbours'.
+    wording: Wording::Neutralised,
+    // Empty: presence is control rather than keyed traffic, and the canon's
+    // option list for all three of this group is a key expression (and one
+    // timeout) with none of the five.
+    carries: &[],
+};
+
+/// A node that **watches presence change**.
+const WATCHER: RoleSpec = RoleSpec {
+    name: "Watcher",
+    badge: "WCH",
+    tint: Tint::rgb(0x0E, 0x9A, 0xA7),
+    gist: "watches who is here",
+    group: PRESENCE,
+    accepts: true,
+    mode: None,
+    // ★ Substituted, for [`BEACON`]'s reason.
+    wording: Wording::Neutralised,
+    // Empty, for [`BEACON`]'s reason.
+    carries: &[],
+};
+
+/// A node that **asks who is here**, once.
+const PROBER: RoleSpec = RoleSpec {
+    name: "Prober",
+    badge: "PRB",
+    tint: Tint::rgb(0x0E, 0x9A, 0xA7),
+    gist: "asks who is here",
+    group: PRESENCE,
+    accepts: false,
+    mode: None,
+    // ★ Substituted, for [`BEACON`]'s reason.
+    wording: Wording::Neutralised,
+    // Empty, for [`BEACON`]'s reason.
+    carries: &[],
+};
+
+/// A node that **receives on one key and passes it on under another**.
+const FORWARDER: RoleSpec = RoleSpec {
+    name: "Forwarder",
+    badge: "FWD",
+    tint: Tint::rgb(0x3E, 0x7C, 0x8C),
+    gist: "passes it on",
+    group: UTILITY,
+    // It is dialled like any receiver; the passing on is what it does with what
+    // arrives.
+    accepts: true,
+    mode: None,
+    // ★ Restyled: the canon writes this kind's label as the bare verb and this
+    // roster reads its roles as agent nouns. Nothing is withheld.
+    wording: Wording::Restyled,
+    // ⚠ Empty, and here the reasoning [`RoleSpec::carries`] already carries is
+    // what says so rather than [`PUT`]'s measurement: it decides neither the
+    // rate nor the payload, because both are whatever arrived — a parameter
+    // here would be a claim about somebody else's messages, which is the stated
+    // reason an infrastructure role has none. The canon's option list for this
+    // kind is a key in and a key out, which agrees.
+    carries: &[],
+};
+
 impl Role {
     /// Every role, in palette order.
-    pub const ALL: [Self; 8] = [
+    ///
+    /// ★★★★★ R2078 — **twenty-one, grouped the way the canon groups them**, and
+    /// the grouping is what the order carries: `spec::palette_groups` cuts a new
+    /// heading wherever the declared group changes, so this array's runs ARE the
+    /// palette's seven sections. Their sizes — 4, 5, 3, 3, 2, 3, 1 — are the
+    /// canon's own, re-measured this round from the pristine file.
+    pub const ALL: [Self; 21] = [
+        // infrastructure — 4
         Self::Router,
         Self::Peer,
         Self::Client,
         Self::Store,
+        // traffic — 5. ⚠ `Puller` sits between the push receiver and the asker,
+        // which is where the canon's grouping declaration puts it and not where
+        // its record appears; the two orders differ and this is the one a person
+        // reads.
         Self::Publisher,
         Self::Subscriber,
+        Self::Puller,
         Self::Querier,
         Self::Responder,
+        // one-shot — 3
+        Self::Put,
+        Self::Delete,
+        Self::Get,
+        // extended — 3
+        Self::Retainer,
+        Self::Recoverer,
+        Self::Roster,
+        // discovery — 2
+        Self::Scanner,
+        Self::Member,
+        // presence — 3
+        Self::Beacon,
+        Self::Watcher,
+        Self::Prober,
+        // utility — 1
+        Self::Forwarder,
     ];
 
     /// How many roles the palette offers.
@@ -588,8 +1041,21 @@ impl Role {
             Self::Store => &STORE,
             Self::Publisher => &PUBLISHER,
             Self::Subscriber => &SUBSCRIBER,
+            Self::Puller => &PULLER,
             Self::Querier => &QUERIER,
             Self::Responder => &RESPONDER,
+            Self::Put => &PUT,
+            Self::Delete => &DELETE,
+            Self::Get => &GET,
+            Self::Retainer => &RETAINER,
+            Self::Recoverer => &RECOVERER,
+            Self::Roster => &ROSTER,
+            Self::Scanner => &SCANNER,
+            Self::Member => &MEMBER,
+            Self::Beacon => &BEACON,
+            Self::Watcher => &WATCHER,
+            Self::Prober => &PROBER,
+            Self::Forwarder => &FORWARDER,
         }
     }
 
@@ -1682,6 +2148,16 @@ impl NodeKind for LabNode {
     /// named for the reader's benefit, so a second one under a fresh name is
     /// exactly what a person duplicating one meant — refusing there would be
     /// this rule applied where it is not true.
+    /// ⚠ R2078 — the thirteen roles the roster gained are all
+    /// [`Copying::Renamed`], and the compiler is what asked: this is one of the
+    /// two exhaustive matches over [`Role`] that the expansion stopped the
+    /// build at. The reason they are all the same answer is the reason above,
+    /// applied — none of them holds an address somebody else's configuration
+    /// dials. A one-shot send, a presence beacon and a forwarder are all named
+    /// for the reader's benefit, so a second one under a fresh name is what a
+    /// person duplicating one meant. Written out rather than as a wildcard,
+    /// because a `_ => Renamed` would silently answer for the next role whose
+    /// name IS the thing it is.
     fn copying(&self) -> Copying {
         match self.role {
             Role::Router => Copying::Refused,
@@ -1690,8 +2166,21 @@ impl NodeKind for LabNode {
             | Role::Store
             | Role::Publisher
             | Role::Subscriber
+            | Role::Puller
             | Role::Querier
-            | Role::Responder => Copying::Renamed,
+            | Role::Responder
+            | Role::Put
+            | Role::Delete
+            | Role::Get
+            | Role::Retainer
+            | Role::Recoverer
+            | Role::Roster
+            | Role::Scanner
+            | Role::Member
+            | Role::Beacon
+            | Role::Watcher
+            | Role::Prober
+            | Role::Forwarder => Copying::Renamed,
         }
     }
 
@@ -1763,20 +2252,32 @@ mod tests {
     /// guarantee by a weaker route: the accessor had to exist, be remembered,
     /// and be one of eight such matches a ninth role had to satisfy separately.
     ///
-    /// ⚠ BOTH arms must be reached. A screen where everything is the canon's
+    /// ⚠ EVERY arm must be reached. A screen where everything is the canon's
     /// word has nothing to declare and this check would be a tautology; a
     /// screen where everything is substituted is not a reproduction. Measured
     /// at R1967 by extracting the canon's own kind table: six of eight carry
     /// its code and its label to the letter, and two are substituted because
     /// the canon's words there are names the protocol gives a node.
+    ///
+    /// ★★★★★ R2078 — **three arms, and the third one's floor is the reason it
+    /// exists.** The roster went from eight roles to the canon's twenty-one and
+    /// three of the new ones differ from the canon for a reason that is neither
+    /// of the first two — see [`Wording::Restyled`]. The floor below is what
+    /// keeps that arm honest: an arm nothing reaches is a distinction nobody is
+    /// drawing, and it would then be a place to put a role somebody could not
+    /// be bothered to classify. Asserting each arm is non-empty is what stops
+    /// this check from having an escape hatch, which is the one thing R1967
+    /// wrote it to refuse.
     #[test]
     fn r1967_every_role_says_where_its_words_come_from() {
         let mut canonical = 0_usize;
         let mut neutralised = 0_usize;
+        let mut restyled = 0_usize;
         for role in Role::ALL {
             match role.spec().wording {
                 Wording::AsTheCanon => canonical += 1,
                 Wording::Neutralised => neutralised += 1,
+                Wording::Restyled => restyled += 1,
             }
             assert!(
                 !role.badge().is_empty() && !role.name().is_empty(),
@@ -1784,9 +2285,9 @@ mod tests {
             );
         }
         assert_eq!(
-            canonical + neutralised,
+            canonical + neutralised + restyled,
             Role::ALL.len(),
-            "a role reached neither arm, which cannot happen and is asserted \
+            "a role reached no arm, which cannot happen and is asserted \
              anyway: the count is what a reader checks, not the match",
         );
         assert!(
@@ -1799,6 +2300,68 @@ mod tests {
             "★★★★★ every role claims the canon's own words, so this check has \
              nothing to distinguish and the standing order to neutralise node \
              names and protocol vocabulary is either unfollowed or unrecorded",
+        );
+        assert!(
+            restyled > 0,
+            "★★★★★ R2078 — no role is RESTYLED, so the arm added to tell a \
+             respelling from a substitution is drawing no distinction and is \
+             an unused place to file a role nobody classified",
+        );
+    }
+
+    /// ★★★★★ R2078 — **the roster is the behaviour canon's, counted.**
+    ///
+    /// # Why a count, when the records are right there
+    ///
+    /// Because the defect this closes was a count. Nothing in this file was
+    /// broken: eight complete, well-formed role records reproduced the
+    /// reference's FIRST-RELEASE palette, and the comparison target had moved
+    /// to the behaviour canon without the roster following. A person found it
+    /// by holding two windows side by side, which is the detection this check
+    /// replaces — the numbers are the two the canon states, so a roster that
+    /// drifts from them fails here instead of at somebody's eye.
+    ///
+    /// # Why these numbers and not a re-extraction
+    ///
+    /// The canon is a 23 MB file outside this repository and its vocabulary may
+    /// not enter a tracked one, so a test cannot read it. What is written down
+    /// is the STRUCTURE, which carries no vocabulary: how many kinds, how many
+    /// groups, and each group's size in order. Re-measuring means extracting
+    /// from the canon again — `debt-the-node-lab-reproduces-the-first-release-palette-not-the-behaviour-canon`
+    /// records the pristine file's md5 and the round's ledger entry names the
+    /// command.
+    ///
+    /// ⚠ The group SIZES, not merely the group count, because that is what the
+    /// arrangement is: seven groups of three would be the same two numbers and
+    /// a different palette. It is also what makes R1968's derivation load
+    /// bearing — a run of one and a run of five in the same list is what no
+    /// `n / 4` can express.
+    #[test]
+    fn r2078_the_roster_is_the_behaviour_canons() {
+        assert_eq!(
+            Role::ALL.len(),
+            21,
+            "the behaviour canon declares 21 node kinds and this palette offers \
+             {} — the FIRST-RELEASE palette had eight, and reproducing that one \
+             is the defect this asserts against",
+            Role::ALL.len(),
+        );
+        let sizes: Vec<usize> = crate::spec::palette_groups()
+            .iter()
+            .map(|run| run.len)
+            .collect();
+        assert_eq!(
+            sizes,
+            vec![4, 5, 3, 3, 2, 3, 1],
+            "the canon's grouping declaration gives seven groups of these \
+             sizes, in this order",
+        );
+        assert_eq!(
+            sizes.iter().sum::<usize>(),
+            Role::ALL.len(),
+            "every role is under exactly one heading: the groups partition the \
+             roster, which is what makes the sizes above a check on the WHOLE \
+             of it rather than on a prefix",
         );
     }
 
@@ -2439,11 +3002,27 @@ mod tests {
             "★★★★★ R1943's judgement, performed: a deployment plan brackets \
              nothing, so the zone register's offer is empty by measurement",
         );
-        assert_eq!(
-            Role::ALL.len(),
-            8,
-            "★ and the population is stated, so an empty answer cannot come \
-             from having asked nobody",
-        );
+        // ⚠⚠ R2078 — **there is no second assertion here any more, and its
+        // going is the finding.**
+        //
+        // This held `assert_eq!(Role::ALL.len(), 8)`, whose stated job was *an
+        // empty answer cannot come from having asked nobody*. The literal was
+        // the wrong shape for that job: what it wrote down was *the roster is
+        // this size*, a different claim that belongs to a different test, and
+        // it went red the moment the roster became the canon's twenty-one — for
+        // a reason with nothing to do with zones. Two tests owning one number
+        // is how a count comes to be maintained in neither place; the size
+        // claim is `r2078_the_roster_is_the_behaviour_canons`'s alone.
+        //
+        // The replacement was `assert!(!Role::ALL.is_empty())` — and clippy
+        // refused it: `this expression always evaluates to false`. It is a
+        // `const` array, so the type carries its length and the emptiness this
+        // guarded against is UNREPRESENTABLE.
+        //
+        // ⇒ ★★★★★ **an assertion with no path to failure is deleted, not
+        // kept** — the rule this repository has paid for twice (R1964, R1970).
+        // Non-vacuity here is a property of the type rather than something to
+        // check at run time, and writing it down as a check would say the
+        // opposite: that somebody could arrive with nothing asked.
     }
 }

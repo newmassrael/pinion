@@ -36,9 +36,12 @@ written against:
       **before anything is pressed** — where the reference's palette filter and
       its per-node refusal are two unrelated pieces of code and a person there
       finds out by being refused.
-  (D) ★★★★★ the counterfactual, in the same graph: the other seven roles are
-      still offered, so the rule is the router's and not a pane that shuts on
-      descent.
+  (D) ★★★★★ the counterfactual, in the same graph: every OTHER role the
+      palette offers is still offered, so the rule is the router's and not a
+      pane that shuts on descent. ⚠ R2078 — this said "the other seven", and
+      the seven was the roster's size minus one written down; the set is
+      derived from the published roster now, which is both the stronger claim
+      and the one that survives the palette growing.
   (E) ★★★★★ the OFFER and the REFUSAL are one predicate — the placement the
       list refuses is actually refused, and the refusal is SAID.
   (F) ★★★★★ a person may re-classify the graph they are in; nothing is deleted,
@@ -171,11 +174,27 @@ def body() -> None:
         )
 
         banner("D — ★★★★★ the counterfactual: everything else is still offered")
+        # ★★★★★ R2078 — **the ROSTER LESS THE ROUTER, derived from the screen's
+        # own specification**, where this read `len(inside["takes"]) == 7`.
+        #
+        # That literal was the roster's size minus one, transcribed. It was
+        # correct for exactly as long as the palette offered eight roles: the
+        # roster became the behaviour canon's twenty-one this round and this
+        # walk failed with all twenty non-router roles listed in its own message
+        # — every one of them right, against a number that was not.
+        #
+        # ⇒ ★ **the count was never the claim.** What (D) asserts is that the
+        # refusal is the ROUTER's and not a pane shutting on descent, and the
+        # exact form of that is *everything except the router is still
+        # offered*. A set comparison says it; a length says something weaker
+        # that happens to follow, and rots when the population moves.
+        roster = [role["name"] for role in js(app.query(f"{surface}/spec"))["roles"]]
+        assert len(roster) > 1, f"D: the specification published no roster: {roster}"
         ok(
-            f"D: ★★★★★ seven of the eight roles are still offered inside a "
-            f"pattern, so the rule is the ROUTER's and not a pane that shuts on "
-            f"descent — {inside['takes']}",
-            len(inside["takes"]) == 7,
+            f"D: ★★★★★ every role of the {len(roster)} the palette offers EXCEPT "
+            f"the router is still offered inside a pattern, so the rule is the "
+            f"ROUTER's and not a pane that shuts on descent — {inside['takes']}",
+            sorted(inside["takes"]) == sorted(name for name in roster if name != "Router"),
         )
         ok(
             f"D: ★ a peer among them, which is the router's own family — "

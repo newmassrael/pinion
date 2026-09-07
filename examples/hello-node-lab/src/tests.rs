@@ -1059,6 +1059,13 @@ fn r2049_a_role_address_is_typed_in_one_place() {
         super::address::ROLE_SWATCH_TEMPLATE,
         format!("{}{{}}", super::address::ROLE_SWATCH)
     );
+    // ★ R2078 — and the heading's, declared this round. The voice
+    // specification's heading row spelled the address itself, one row above a
+    // sibling already taking `ROLE_ROW_TEMPLATE`.
+    assert_eq!(
+        super::address::GROUP_HEAD_TEMPLATE,
+        format!("{}{{}}", super::address::GROUP_HEAD)
+    );
     // ★★ The address and its inverse are one pair, driven over every role: a
     // parse written against a different prefix is a press that lands on nothing
     // and a screen that simply does not respond.
@@ -1812,21 +1819,83 @@ fn r1651_the_panes_are_the_widths_the_specification_gives_them() {
     );
 }
 
+/// ★★★★★ R2078 — **and it SCROLLS to the rows the pane does not currently
+/// show, because that is what a reader does.**
+///
+/// With the roster at the behaviour canon's twenty-one roles the palette's
+/// content is several times the pane's height, so probing every row at scroll
+/// zero asks about a row the pane is not showing and gets [`Hit::Nothing`] —
+/// correctly. This test failed that way on the first run after the expansion,
+/// naming `Recoverer`, and the failure was true: nothing reached that row,
+/// because nothing had scrolled to it.
+///
+/// ⚠ The repair is not to stop asking about the rows below the fold, which
+/// would turn the check off for the thirteen roles that are new. It parks the
+/// pane where the row is and presses there, which is the same recipe
+/// `r1662_a_control_one_scroll_away_is_pressable_after_that_scroll` follows —
+/// and it now exercises something this screen has had since R1662 and, with
+/// eight roles, never needed: the palette actually scrolling.
+///
+/// ★ It also asserts the scroll was NEEDED. A run where every row is already in
+/// view is the old check under a new name, and it would come back silently the
+/// day somebody shrank the roster.
 #[test]
 fn r1651_every_role_the_palette_offers_is_pressable_and_adds_a_node() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = std::rc::Rc::new(state());
+        // ★★★★★ R2078 — the state the VIEW reads, not one of this test's own.
+        //
+        // It was `Rc::new(state())`, which was sound while every row could be
+        // pressed where the geometry helper put it. It is not sound now: the
+        // pane's scroll extent is derived by `scroll_pane` from its children,
+        // so it can only be known by PAINTING — and the painter refuses a state
+        // that is not the one the view function draws (R1736's rule, asserted
+        // in `painted.rs`). A state of its own would be painted by nobody and
+        // report a scroll maximum of zero.
+        super::reset_lab_state();
+        let state = super::use_lab_state();
         let before = state.cards().len();
+        // The pane derives its own extent from its children, so nothing can be
+        // asked about scrolling until one paint has happened.
+        super::painted::render_so_a_press_can_be_asked(&state);
+        let pane = super::palette_rect();
+        let reach = state.palette_scroll_max();
+        assert!(
+            reach > 0,
+            "★★★★★ R2078 — the palette says it cannot scroll, so the canon's \
+             twenty-one roles are claimed to fit a pane {} tall. Either the \
+             roster shrank or the pane stopped declaring a scrolling body",
+            pane.h,
+        );
+        let mut scrolled_for = 0_usize;
         for (n, role) in Role::ALL.into_iter().enumerate() {
             let row = super::palette_row(n);
+            let mid = row.y + row.h / 2;
+            // Park the pane so this row's middle sits inside it. `in_pane`
+            // folds the offset into the QUERY, so the press is asked at the
+            // window point and the offset is what makes it land on this row.
+            let want = i32::try_from(mid.saturating_sub(pane.y + pane.h / 2))
+                .unwrap_or(0)
+                .clamp(0, reach);
+            state.scroll_palette_to(want);
+            let landed = state.palette_scroll_offset();
+            if landed > 0 {
+                scrolled_for += 1;
+            }
+            let at_y = mid.saturating_sub(u32::try_from(landed).unwrap_or(0));
             assert_eq!(
-                Hit::at(&state, row.x + row.w / 2, row.y + row.h / 2),
+                Hit::at(&state, row.x + row.w / 2, at_y),
                 Hit::Role(role),
-                "{} is pressable in the palette",
+                "{} is pressable in the palette (pane parked at {landed})",
                 role.name()
             );
         }
+        assert!(
+            scrolled_for > 0,
+            "★ no row needed a scroll, so this test is the pre-R2078 one and \
+             the palette's overflow is going unexercised",
+        );
+        state.scroll_palette_to(0);
         super::add_node(&state, Role::Responder);
         assert_eq!(
             state
@@ -4787,6 +4856,31 @@ fn r1844_a_check_beside_a_command_is_not_a_conflict() {
 /// assignment below is a domain decision, and this is where the decision is
 /// held to being one. An infrastructure role that declared a parameter would be
 /// making a claim about somebody else's messages.
+///
+/// ★★★★★ R2078 — **this predicate survived the roster tripling, and it was NOT
+/// obvious that it would.**
+///
+/// While there were two groups, `group == "traffic"` and `group !=
+/// "infrastructure"` were the same test, so the assertion could have been
+/// standing on either — and the prose above says the second. With seven groups
+/// they are five groups apart, and the thirteen new roles had to be classified
+/// against a rule rather than a coincidence. The first draft classified them
+/// against the prose and gave four groups their parameters, which turned this
+/// check red; it went red for the right reason.
+///
+/// Measured on the pristine canon before deciding, which is what settled it:
+/// **the canon offers the five parameters on exactly ONE of its twenty-one
+/// kinds** — its standing sender — and every other kind's declared option list
+/// is that kind's own arguments (a key, a payload, a selector, a timeout, a
+/// group) with none of the five in it. R1848 had already widened that one kind
+/// to the traffic group as a domain decision; widening it again across the
+/// one-shot, extended, discovery and presence groups would have been inventing
+/// a taxonomy the reproduction target does not have.
+///
+/// ⇒ ★★★★★ **a predicate that has only ever been asked of a population where
+/// two rules agree has not been asked.** What made this answerable rather than
+/// arguable was going back to the canon — the standing rule for starting a
+/// debt, applied to a check rather than to a claim.
 #[test]
 fn r1848_only_traffic_roles_carry_traffic() {
     for role in spec::ROLES {
@@ -8423,5 +8517,141 @@ fn r1999_dropping_the_definition_you_stand_in_brings_you_out() {
             super::role_at_home(&state, crate::graph::Role::Router),
             "★ and the palette's offer is the surviving graph's answer"
         );
+    });
+}
+
+/// ★★★★★ R2078 — **every fact this taxonomy declares about a role crosses the
+/// wire.**
+///
+/// # How the gap this closes was found
+///
+/// The round's own walk reached for a role's `badge` and got a `KeyError`.
+/// Measured then: the behaviour canon holds a kind's facts in ONE record of
+/// four — colour, code, label and description — and `spec_json` published TWO
+/// of them. Both missing facts were PAINTED (the palette's swatch reads the
+/// colour, the canvas card reads the code) and both were asserted by tests that
+/// read the source, so every check this screen had was satisfied while the wire
+/// could answer neither.
+///
+/// ⇒ ★★★★★ **a field is not published because it exists; it is published
+/// because somebody publishes it** — and §2 #2 and §2 #7 make the wire the
+/// primary path, so what an agent can see is the whole of what this screen
+/// says. The paint-side gates could not notice, by construction: they read the
+/// declaration and the pixels, and the wire is neither.
+///
+/// # Why a key COUNT and not only the values
+///
+/// The value comparisons below catch a field that is published wrongly. They
+/// cannot catch the case that actually happened — a field nobody thought to
+/// publish — because a check written per field is a list somebody has to
+/// remember to extend, which is the same escape hatch R1967 refused for the
+/// wording classification. The count is the bijection: add a fact to
+/// [`RoleSpec`](crate::graph::RoleSpec) and this fails until the fact is either
+/// published or the pin is moved deliberately, with a reason.
+#[test]
+fn r2078_the_wire_carries_every_fact_a_role_declares() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let published = super::spec_json();
+        let rows = published["roles"]
+            .as_array()
+            .expect("the specification publishes its roster as a list");
+        assert_eq!(
+            rows.len(),
+            spec::ROLES.len(),
+            "the wire publishes {} role(s) and the taxonomy declares {}",
+            rows.len(),
+            spec::ROLES.len(),
+        );
+        for (row, role) in rows.iter().zip(spec::ROLES) {
+            let at = |key: &str| -> String {
+                row.get(key)
+                    .unwrap_or_else(|| panic!("{}'s row publishes no {key}", role.name))
+                    .as_str()
+                    .unwrap_or_else(|| panic!("{}'s {key} is not a word", role.name))
+                    .to_owned()
+            };
+            assert_eq!(at("name"), role.name, "the label");
+            assert_eq!(at("gist"), role.gist, "{}'s description", role.name);
+            assert_eq!(at("group"), role.group, "{}'s group", role.name);
+            // ★ The two R2078 published. `badge` is not decoration: `add_node`
+            // mints a new card's name as `{badge}-{nn}`, so a client without it
+            // cannot predict the name of the card its own press will create.
+            assert_eq!(at("badge"), role.badge, "{}'s short code", role.name);
+            assert_eq!(
+                at("tint"),
+                super::hex_of(role.tint),
+                "{}'s colour, in the six hex digits every other colour on this \
+                 wire is written as",
+                role.name,
+            );
+            assert_eq!(
+                row["accepts"].as_bool(),
+                Some(role.accepts),
+                "{} says whether it can be dialled",
+                role.name,
+            );
+            let carried: Vec<String> = row["carries"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{}'s row publishes no carries", role.name))
+                .iter()
+                .map(|one| one.as_str().unwrap_or_default().to_owned())
+                .collect();
+            assert_eq!(
+                carried,
+                role.carries
+                    .iter()
+                    .map(|p| p.key().to_owned())
+                    .collect::<Vec<_>>(),
+                "{}'s traffic parameters",
+                role.name,
+            );
+            // ⚠ The addresses, which R2049 published so a walk names a role and
+            // is handed the address the paint used rather than re-typing a
+            // prefix.
+            assert_eq!(
+                at("tag"),
+                super::address::role_row_named(role.name),
+                "{}'s row address",
+                role.name,
+            );
+            assert_eq!(
+                at("swatch"),
+                super::address::role_swatch_named(role.name),
+                "{}'s swatch address",
+                role.name,
+            );
+            assert!(
+                matches!(
+                    at("wording").as_str(),
+                    "as_the_canon" | "neutralised" | "restyled"
+                ),
+                "{} says where its words come from: {:?}",
+                role.name,
+                at("wording"),
+            );
+            // ★★★★★ The bijection. `RoleSpec` declares nine facts, of which
+            // eight are published here (`mode` is not — the inspector's mode
+            // row is worked out from it and published there), plus the two
+            // painted ADDRESSES, which are derived from a role rather than
+            // declared by it.
+            //
+            // ⚠ If you added a field to `RoleSpec` and landed here: publish it
+            // above and raise this number, or write down why a client does not
+            // need it. Do not raise it alone — that is how `badge` and `tint`
+            // came to be declared, painted, tested and unpublishable.
+            let keys = row
+                .as_object()
+                .expect("a role's row is an object")
+                .keys()
+                .count();
+            assert_eq!(
+                keys, 10,
+                "{}'s row carries {keys} key(s); eight of `RoleSpec`'s nine \
+                 facts belong here and two painted addresses are derived",
+                role.name,
+            );
+        }
     });
 }

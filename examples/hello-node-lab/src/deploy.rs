@@ -63,19 +63,58 @@ pub type Plan = pinion_node_graph::Plan<Value>;
 
 /// The program a role's node runs.
 ///
-/// Two shapes, which is the reference's own split: the infrastructure roles are
-/// all the same program told what to be by its configuration, and each traffic
-/// role is its own program. That is not an implementation detail of theirs —
-/// it is why the infrastructure roles share a configuration vocabulary and the
-/// traffic ones do not.
+/// ★★★★★ R2078 — **THREE shapes, and this doc said two.**
+///
+/// It said *"two shapes, which is the reference's own split: the infrastructure
+/// roles are all the same program told what to be by its configuration, and
+/// each traffic role is its own program"*. Both halves are still true and the
+/// sentence was still short, because the eight-role roster it was written
+/// against could not reach the third case. Re-measured this round against the
+/// pristine behaviour canon, the split is:
+///
+/// * **the four infrastructure roles share one program**, told what to be by
+///   its configuration — the [`RoleSpec::mode`](crate::graph::RoleSpec) axis is
+///   exactly that telling, which is why those four are the roles that have one;
+/// * **fifteen roles are each their own program**, one declared binary apiece;
+/// * **two roles have no program of their own at all** and run as the test
+///   harness's driver. The canon declares them in its *driven* map and gives
+///   them no entry in its *run* map, so its own derivation reaches for the
+///   driver by falling through — the two are the discovery pair, which are
+///   harness roles rather than deployment ones.
+///
+/// ⇒ ★ **the third shape was unreachable, not absent.** A count that cannot go
+/// above two is not evidence that there are two, and this one had held still
+/// since the roster did.
+///
+/// ⚠ The neutral names are this screen's, per role, and the pattern is the
+/// existing one: a role's own program is its name in lower case. The canon's
+/// binary names are protocol vocabulary and are not written here.
 #[must_use]
 pub const fn program_of(role: Role) -> &'static str {
     match role {
+        // One program, told what to be. `RoleSpec::mode` is the telling.
         Role::Router | Role::Peer | Role::Client | Role::Store => "node",
+        // ★ R2078 — no program of their own: these two exist to be driven, and
+        // the harness driver is what runs them. Sharing a program with each
+        // other is not the infrastructure case above — those share a program
+        // and differ by configuration, and these two ARE the driver.
+        Role::Scanner | Role::Member => "driver",
+        // Fifteen roles, fifteen programs.
         Role::Publisher => "publisher",
         Role::Subscriber => "subscriber",
+        Role::Puller => "puller",
         Role::Querier => "querier",
         Role::Responder => "responder",
+        Role::Put => "put",
+        Role::Delete => "delete",
+        Role::Get => "get",
+        Role::Retainer => "retainer",
+        Role::Recoverer => "recoverer",
+        Role::Roster => "roster",
+        Role::Beacon => "beacon",
+        Role::Watcher => "watcher",
+        Role::Prober => "prober",
+        Role::Forwarder => "forwarder",
     }
 }
 

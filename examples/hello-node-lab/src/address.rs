@@ -188,6 +188,43 @@ pub const ROLE_ROW: &str = "lab.palette.role.";
 /// The prefix every palette role swatch carries.
 pub const ROLE_SWATCH: &str = "lab.palette.swatch.";
 
+/// ★★★★★ R2078 — the prefix every palette GROUP HEADING carries.
+///
+/// Declared for [`ROLE_ROW`]'s reason, and measured before declaring: the
+/// address was spelled **five times** across this screen's own source — the
+/// painter, the paint census's demanded list, its family table, the voice
+/// roster and the heading gate — and a walk of this round made six. That is the
+/// shape `debt-a-paint-address-is-retyped-at-every-reader` names, and the
+/// roster expansion is what made it matter: the palette had TWO headings and
+/// now has the behaviour canon's SEVEN, so a family nobody could address is a
+/// family five times the size it was.
+///
+/// ⚠ Its own prefix under `lab.palette.` and NOT a suffix on the role row's,
+/// which is this screen's own rule about prefixes speaking: `lab.palette.role.`
+/// would swallow a heading whose label happened to match a role's name and
+/// resolve it to the wrong mark. The heading and the rows are siblings.
+pub const GROUP_HEAD: &str = "lab.palette.group.";
+
+/// [`GROUP_HEAD`] with the population's placeholder, for a specification table
+/// whose rows must be `&'static str`.
+///
+/// ⚠ R2078 — the voice specification's heading row spelled
+/// `"lab.palette.group.{}"` itself, one row above a sibling already taking
+/// [`ROLE_ROW_TEMPLATE`] — which is the drift that constant exists to prevent.
+/// A test holds the two forms together, so a table taking the template cannot
+/// part company with the runtime derivation.
+pub const GROUP_HEAD_TEMPLATE: &str = "lab.palette.group.{}";
+
+/// The address of the palette heading that reads `label`.
+///
+/// ★ Takes the group's own word, which is what the roster declares and what the
+/// wire publishes — so the address a client presses and the address the paint
+/// used are one spelling by construction.
+#[must_use]
+pub fn group_head(label: &str) -> String {
+    format!("{GROUP_HEAD}{label}")
+}
+
 /// [`ROLE_ROW`] with the population's placeholder, for a specification table
 /// whose rows must be `&'static str`.
 pub const ROLE_ROW_TEMPLATE: &str = "lab.palette.role.{}";

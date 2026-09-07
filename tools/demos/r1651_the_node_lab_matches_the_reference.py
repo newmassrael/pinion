@@ -291,8 +291,15 @@ def body() -> None:
         # `role_groups` rather than named here. The screen derives the partition
         # from the roster now (one heading per run of roles sharing a group), so
         # a palette that gathers its roles differently moves this check with it.
+        #
+        # ★★★★★ R2078 — and the ADDRESS comes from the wire too, which is what
+        # the paragraph above always claimed and could not do: R1968 published
+        # the group's LABEL, so this line still had to build the tag itself, and
+        # a wrong letter would have read as *the screen did not paint the
+        # heading*. The roster expansion is what made it worth fixing — two
+        # headings became the canon's seven.
         for run in spec["role_groups"]:
-            tag = f"lab.palette.group.{run['label']}"
+            tag = run["tag"]
             if tag not in painted:
                 missing.append(tag)
         # ★★★★★ R2049 — the ADDRESSES the screen publishes, not ones spelled
@@ -452,7 +459,7 @@ def body() -> None:
         for seat in spec["rail"]:
             declared.add(f"lab.rail.{seat['name']}")
         for run in spec["role_groups"]:
-            declared.add(f"lab.palette.group.{run['label']}")
+            declared.add(run["tag"])
         declared.add("lab.palette.legend")
         # ⚠ `lab.palette.discovery.head` is NOT declared here — it falls under
         # the `lab.palette.discovery` family below, whose member count is the
