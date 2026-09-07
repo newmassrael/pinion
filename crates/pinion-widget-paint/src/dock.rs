@@ -5155,29 +5155,41 @@ pub fn view_window_controls(
     font_size_px: u32,
     tags: WindowControlTags<'_>,
 ) -> Scene {
-    let button = |tag: &str, glyph: &str| -> Scene {
+    // ★★★★★ R2059 — a window control draws its MARK, not a character.
+    //
+    // These were `U+2212`, `U+25A1` and `U+00D7`. The middle one is absent from
+    // the one face this tree renders through, so a torn-off panel's maximise
+    // button was a `.notdef` box between two marks that happened to render.
+    //
+    // All three move, not only the broken one: the face having a glyph today is
+    // not a reason for a control to stay a character — R1952 moved `U+00D7` out
+    // of the config form on exactly that argument, and a trio drawn half in
+    // text and half in paths is a trio free to stop looking like each other.
+    // `ControlMark` already declares all three faces and draws them from one
+    // point vocabulary.
+    let side = font_size_px.max(crate::control_mark::ControlMark::MIN);
+    let button = |tag: &str, mark: crate::control_mark::ControlMark| -> Scene {
         Scene::Container(
-            ContainerNode::new(vec![Scene::Text(TextNode::styled(
-                glyph.to_string(),
-                Rect::default(),
-                TextStyle::new()
-                    .with_size_px(font_size_px)
-                    .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
-            ))])
+            ContainerNode::new(crate::control_mark::scenes(
+                mark,
+                Rect::new(0, 0, side, side),
+                theme.resolve(ColorRole::OnSurfaceMuted),
+            ))
             .with_tag(tag.to_string())
             .with_layout(
                 LayoutStyle::new()
                     .with_align_items(AlignItems::Center)
                     .with_justify(JustifyContent::Center)
+                    .with_size(Size::px(side, side))
                     .with_padding(Rect::new(7, 3, 7, 3)),
             ),
         )
     };
     Scene::Container(
         ContainerNode::new(vec![
-            button(tags.minimize, crate::glyph::WINDOW_MINIMIZE),
-            button(tags.maximize, crate::glyph::WINDOW_MAXIMIZE),
-            button(tags.close, crate::glyph::WINDOW_CLOSE),
+            button(tags.minimize, crate::control_mark::ControlMark::Minimize),
+            button(tags.maximize, crate::control_mark::ControlMark::Maximize),
+            button(tags.close, crate::control_mark::ControlMark::Close),
         ])
         .with_layout(
             LayoutStyle::new()
@@ -8484,17 +8496,46 @@ mod tests {
             vec![Some("min-tag"), Some("max-tag"), Some("close-tag")],
             "each button carries the binding-supplied routing tag, in order",
         );
-        // Each button wraps a Text glyph (a text glyph, not a vector Path — so it
-        // lays out with the header font + flex, no dimension matching).
+        // ★★★★★ R2059 — each button draws its MARK.
+        //
+        // This asserted a `Scene::Text`, and said why: a character lays out with
+        // the header font and flex, where a path needs its dimensions given.
+        // That convenience was real — and it was bought with `U+25A1` for the
+        // maximise control, which the one face this tree renders through does
+        // not carry, so that button was a `.notdef` box between two that
+        // happened to render. The dimensions are given now, and the trio is
+        // drawn from one point vocabulary rather than half in text.
+        // Each button now holds PATHS and no text, and the three drawings
+        // differ. That the faces are distinct AS A VOCABULARY is held by
+        // `control_mark`'s own `r1950_no_two_faces_draw_the_same_mark`, which
+        // walks `ControlMark::every` — so the arm added this round joined that
+        // check without anybody listing it. What is asserted here is that this
+        // trio reaches the paint as three different marks.
+        let mut drawn: Vec<Vec<pinion_core::scene::PathCommand>> = Vec::new();
         for child in &row.children {
             let Scene::Container(btn) = child else {
                 panic!("each control is a tagged container");
             };
             assert!(
-                matches!(btn.children.first(), Some(Scene::Text(_))),
-                "the glyph is a Scene::Text (flex-layoutable)",
+                btn.children.iter().all(|c| matches!(c, Scene::Path(_))),
+                "a control draws its mark and sets no text",
             );
+            let mut commands = Vec::new();
+            for c in &btn.children {
+                if let Scene::Path(p) = c {
+                    commands.extend(p.commands.clone());
+                }
+            }
+            assert!(
+                !commands.is_empty(),
+                "a control that draws nothing is not a control"
+            );
+            drawn.push(commands);
         }
+        assert!(
+            drawn[0] != drawn[1] && drawn[1] != drawn[2] && drawn[0] != drawn[2],
+            "minimise, maximise and close come out as three different marks",
+        );
     }
 
     // ─── R1318 chrome seam (display title ⊥ identity) ─────────────────────

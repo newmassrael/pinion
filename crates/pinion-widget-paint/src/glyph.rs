@@ -67,14 +67,24 @@
 // it. `U+2212` and `U+00D7` are. See [`FACELESS`] for the whole census and for
 // why the sentence could stand for 780 rounds: nothing performed it.
 
-/// Minimize control — `U+2212` MINUS SIGN (a centred bar reads as minimize).
-pub const WINDOW_MINIMIZE: &str = "\u{2212}";
-
-/// Maximize / restore control — `U+25A1` WHITE SQUARE.
-pub const WINDOW_MAXIMIZE: &str = "\u{25A1}";
-
-/// Close control — `U+00D7` MULTIPLICATION SIGN.
-pub const WINDOW_CLOSE: &str = "\u{00D7}";
+// ★★★★★ R2059 — all three window-control characters are GONE, and the trio
+// moved together rather than only the broken one.
+//
+// `U+25A1` was the faceless one, so a torn-off panel's maximise button was a
+// box between two controls that happened to render. The other two are drawable
+// today — which is not a reason for a control to stay a character: R1952 moved
+// `U+00D7` out of the config form on exactly that argument, and a trio drawn
+// half in text and half in paths is a trio free to stop looking like each
+// other.
+//
+// ⚠ WHAT THAT COST, stated because the test asserting it said so first: a
+// character lays out with the header font and flex, where a path needs its
+// dimensions given. The dock's controls now give them. That convenience was
+// real, and it was being paid for with a mark a third of a reader's window
+// could not draw.
+//
+// They are `ControlMark::{Minimize, Maximize, Close}` now — and `Minimize` is
+// new this round, added so the third of the trio had a face to move to.
 
 // (R1562 §5.27 §5.40) The grid corner's tri-state select-all marks. Both glyphs
 // are already painted elsewhere in this crate — the R668 checkbox's check and
@@ -130,10 +140,21 @@ pub const SELECT_ALL_COMPLETE: &str = "\u{2713}";
 /// callers were four example screens building their own header rows — and with
 /// them the `U+2195` those screens used for an unsorted column.
 ///
-/// What is left is `WINDOW_MAXIMIZE` and `SELECT_ALL_COMPLETE`. ⚠ The second
-/// is in NEITHER face this tree carries, so it cannot be repaid by shipping a
-/// different one: it has to become a path, as the checkbox tick already did.
-pub const FACELESS: usize = 2;
+/// ★★★★★ R2059 — **one left**, and it is the one no font can fix.
+///
+/// The window controls went this round, all three together rather than only the
+/// faceless one. What remains is `SELECT_ALL_COMPLETE` — `U+2713`, which is in
+/// NEITHER face this tree carries, so shipping a different font does not reach
+/// it. It has to become a path, as the checkbox tick already did for the same
+/// reason and by the same argument: the behaviour reference draws its check as
+/// a path too, which is why this class of defect does not exist there.
+///
+/// ⚠ Its sibling `SELECT_ALL_PARTIAL` is `U+2212`, which the face HAS. It is
+/// not counted here and it is not exempt — it is simply not faceless. When the
+/// check becomes a mark, the dash should follow it, because a tri-state control
+/// drawn half in text and half in paths is the shape R2059 removed from the
+/// window controls.
+pub const FACELESS: usize = 1;
 
 #[cfg(test)]
 mod tests {
@@ -204,11 +225,12 @@ mod tests {
         // passes over an empty population. Cross-checked against the COMPILED
         // values, so a parser that quietly stopped matching is red here rather
         // than green everywhere.
-        for known in [
-            super::WINDOW_CLOSE,
-            super::SELECT_ALL_COMPLETE,
-            super::WINDOW_MAXIMIZE,
-        ] {
+        // ⚠ R2059 — these are the constants that HAPPEN to remain. The list
+        // shrank twice this week as marks became paths, and each time the
+        // compiler said so rather than the gate quietly asking about fewer
+        // things: naming them by identifier is what makes a removal a build
+        // failure here instead of a smaller population nobody notices.
+        for known in [super::SELECT_ALL_COMPLETE, super::SELECT_ALL_PARTIAL] {
             assert!(
                 declared.iter().any(|(_, text)| text == known),
                 "the source parse missed {known:?}, so this gate is asking \

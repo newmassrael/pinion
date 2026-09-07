@@ -60,6 +60,18 @@ pub enum ControlMark {
     Settings,
     /// A square lifting out of another — detach into a window of its own.
     TearOff,
+    /// ★★★★★ R2059 — a bar across the middle: put this window out of the way.
+    ///
+    /// Added when the dock's window controls stopped being characters. The trio
+    /// they draw — minimise, maximise, close — had two faces here already and
+    /// this one only as `U+2212`; a trio drawn half in text and half in paths is
+    /// a trio free to stop looking like each other, so the third joins them.
+    ///
+    /// ⚠ It is the widest mark in this vocabulary at its own centre line and
+    /// nothing else here is a lone horizontal, which is what keeps it apart
+    /// from [`Close`](Self::Close)'s two diagonals — the uniqueness gate below
+    /// is what says so rather than this sentence.
+    Minimize,
     /// One square — fill the board with this.
     Maximize,
     /// Two overlapping squares — the maximise control's other face, bringing
@@ -130,6 +142,7 @@ impl ControlMark {
         let mut out = vec![
             Self::Settings,
             Self::TearOff,
+            Self::Minimize,
             Self::Maximize,
             Self::Restore,
             Self::Close,
@@ -197,6 +210,9 @@ pub fn scenes(mark: ControlMark, rect: Rect, ink: Color) -> Vec<Scene> {
             ink,
             1,
         )],
+        // ★ R2059 — one horizontal bar, the same half-width the square's sides
+        // reach, so the minimise and maximise controls read as one family.
+        ControlMark::Minimize => vec![strokes(rect, &[vec![(cx - 5, cy), (cx + 5, cy)]], ink, 1)],
         ControlMark::Maximize => vec![strokes(
             rect,
             &[vec![
