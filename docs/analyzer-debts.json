@@ -687,18 +687,6 @@
       ]
     },
     {
-      "name": "debt-two-line-box-rules-disagree-by-three-pixels",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "rank": "unranked",
-      "why": [
-        "links debt-canon-gui-surface-census"
-      ]
-    },
-    {
       "name": "debt-two-pins-of-one-card-are-painted-under-one-address",
       "substituted": false,
       "blocked_by": "buildable",
@@ -723,6 +711,6 @@
       ]
     }
   ],
-  "unranked": 17,
+  "unranked": 16,
   "undated": 7
 }

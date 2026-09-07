@@ -338,14 +338,26 @@ const SIZES: &[(&str, (u32, u32))] = &[
 /// axis is repaid as a side effect of any repair that stops picking heights —
 /// which is the argument for deriving rather than choosing, stated as a number.
 ///
-/// ⚠ 58 IS STILL A BACKLOG, not a floor. The rest are named by the same
-/// procedure — set this to 0 and read the assertion — and the next group is the
-/// latency distribution's x-axis labels, 3px short each. ⚠⚠ Those are
-/// `pinion-chart`'s, and R1956 measured why they are short: that crate has its
-/// OWN line-box rule (`label_box_h(size) = size + 4`) which is not
-/// `containment::line_box`, so the group cannot be repaid from this screen at
-/// all. See `debt-two-line-box-rules-disagree-by-three-pixels`.
-const SHORT_BOX_BUDGET: usize = 58;
+/// ⚠ 45 IS STILL A BACKLOG, not a floor. The rest are named by the same
+/// procedure — set this to 0 and read the assertion.
+///
+/// ★★★★★ R2070 — 58 -> 45, and the THIRTEEN that went are the group the
+/// paragraph above used to say could not be repaid from this screen at all.
+/// They were `pinion-chart`'s: that crate answered "how tall is a line of this
+/// face" with `label_box_h(size) = size + 4` while every gate here measures
+/// against `containment::line_box`, and R1956 left the pair alone because
+/// merging them moves every chart's layout.
+///
+/// The merge happened at R2070 and the SHAPER decided which rule was right
+/// rather than either crate's opinion: asked of `LayoutCache::ink_size` for a
+/// string with an ascender and a descender, `size + 4` was SHORTER than the
+/// shaped ink at every face this crate draws (9px: 13 against 14; 17px: 21
+/// against 25) while `line_box` cleared it by one or two. So the chart labels
+/// were genuinely short, this budget was carrying their thirteen, and lowering
+/// it here is what SEPARATES this screen's own backlog from theirs — which is
+/// the third thing that debt's entry plan asked for, now measured rather than
+/// estimated.
+const SHORT_BOX_BUDGET: usize = 45;
 
 /// Where every tag in the painted scene ended up, and every text run with it.
 struct Painted {

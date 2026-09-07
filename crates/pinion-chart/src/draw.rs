@@ -446,7 +446,33 @@ pub(crate) fn x_tick_labels(
 /// at the bottom. Exposed as one definition rather than re-adding the padding at
 /// the call site (R1439).
 pub(crate) const fn label_box_h(size: u32) -> u32 {
-    size + 4
+    // ★★★★★ R2070 — DELEGATED, where this used to answer `size + 4`.
+    //
+    // Two rules answered "how tall is a line of this face" and neither knew the
+    // other: this one, and `containment::line_box` (`px * 3 / 2 + 2`), which is
+    // what every gate asking whether a box holds its own text measures against.
+    // So every chart label was short in that gate's eyes, and the round that
+    // found it (R1956) left the pair alone because merging them moves the
+    // layout of every chart in the tree.
+    //
+    // ⚠ The direction was MEASURED rather than assumed, and the debt's entry
+    // plan demanded that: `line_box`'s own doc calls itself deliberately
+    // conservative, so "core is right" was not the premise. Asked of the
+    // shaper — the same `LayoutCache::ink_size` the wire reads — for "Ag 0.9"
+    // at the faces this crate uses:
+    //
+    // | face | shaped ink | `size + 4` | `line_box` |
+    // |--:|--:|--:|--:|
+    // |  9 | 14 | 13 ← SHORT | 15 |
+    // | 10 | 15 | 14 ← SHORT | 17 |
+    // | 12 | 18 | 16 ← SHORT | 20 |
+    // | 17 | 25 | 21 ← SHORT | 27 |
+    //
+    // ⇒ this rule was shorter than the ink at EVERY face, so a chart label
+    // really did paint outside the box that owns it; and `line_box` clears the
+    // ink by 1-2px, which is TIGHT rather than the waste its own doc suggests.
+    // `r2070_the_shaper_judges_both_line_box_rules` is that measurement, kept.
+    pinion_core::containment::line_box(size)
 }
 
 /// ★★★★★ R1956 — **the top of a label box that straddles `line`**, which is
@@ -1421,5 +1447,62 @@ mod tests {
         assert_eq!(fit.shown, 0);
         assert_eq!(fit.hidden, 0);
         assert_eq!(legend_row_width(300, 0), 0);
+    }
+
+    /// ★★★★★ R2070 — **the SHAPER judges both approximations of "how tall is a
+    /// line of this face", because two of them exist and neither knows the
+    /// other.**
+    ///
+    /// `debt-two-line-box-rules-disagree-by-three-pixels`: this crate answers
+    /// `size + 4` and `pinion_core::containment::line_box` answers
+    /// `px * 3 / 2 + 2`, and they differ by 3 at a 10px face and 6 at 17px.
+    /// Every gate that asks whether a box holds its own text measures against
+    /// the second one, so every chart label is short in that gate's eyes.
+    ///
+    /// ⚠ The debt's own entry plan says, in as many words, DO NOT START FROM
+    /// "core is right": `line_box`'s doc admits it is deliberately conservative
+    /// rather than derived. So this asks the thing that actually shapes text —
+    /// the same `LayoutCache::ink_size` the wire's `scene/text_painted` reads —
+    /// and judges BOTH.
+    ///
+    /// What it asserts is the property a label box owes, not a preference: the
+    /// box must hold the ink. The numbers each rule leaves over are PRINTED so
+    /// the round that changes either one reads them rather than guessing.
+    #[test]
+    fn r2070_the_shaper_judges_both_line_box_rules() {
+        use pinion_core::style::TextStyle;
+
+        let mut cache = pinion_text::LayoutCache::new();
+        // The faces this crate's labels actually use, plus the two the debt
+        // measured, so the table in the debt file can be reproduced from here.
+        let mut short_here = Vec::new();
+        let mut short_core = Vec::new();
+        for px in [9_u32, 10, 11, 12, 14, 17] {
+            let style = TextStyle::new().with_size_px(px);
+            // A label with an ascender AND a descender: the pair is what makes
+            // a line box taller than the em, which is the whole subject.
+            let (_, ink) = cache.ink_size("Ag 0.9", &style, &[], None);
+            let here = label_box_h(px);
+            let core = pinion_core::containment::line_box(px);
+            println!("face {px}: ink {ink}, this crate {here}, core {core}");
+            if here < ink {
+                short_here.push((px, here, ink));
+            }
+            if core < ink {
+                short_core.push((px, core, ink));
+            }
+        }
+        assert!(
+            short_core.is_empty(),
+            "★ core's conservative rule is SHORTER than the shaped ink at \
+             {short_core:?} — the rule every box-holds-its-text gate measures \
+             against would then be the wrong side of safe"
+        );
+        assert!(
+            short_here.is_empty(),
+            "★★★★★ this crate's label box is SHORTER than the shaped ink at \
+             {short_here:?}, so a chart label paints outside the box that owns \
+             it. That is the debt's claim, and this is where it is judged"
+        );
     }
 }
