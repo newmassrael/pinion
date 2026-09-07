@@ -292,6 +292,20 @@ impl<K: NodeKind> Document<K> {
                 // and its place in the order, so it keeps which way round it
                 // reads too: moving an end is not redrawing the diagram.
                 drawn_from_consumer: plan.held.drawn_from_consumer,
+                // ★ R2077 — it keeps its CHOICE when the producing end moved
+                // and loses it when the consuming end did. The ordinal indexes
+                // a list the CONSUMER publishes, so a wire re-aimed at another
+                // consumer is holding a number about somebody else's
+                // alternatives — which would name a different thing or nothing
+                // at all. Decided here rather than left to the caller because
+                // the plan carries both ends and can therefore SEE which one
+                // moved; a caller told to remember this is the shape the
+                // adjacent fields were made to stop needing.
+                landed_on: if plan.to == plan.held.to {
+                    plan.held.landed_on
+                } else {
+                    None
+                },
             },
             plan.crowded,
             Some(plan.at),

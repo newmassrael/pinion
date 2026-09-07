@@ -457,18 +457,6 @@
       ]
     },
     {
-      "name": "debt-a-wire-carries-a-copy-of-the-address-it-dialled",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "rank": "unranked",
-      "why": [
-        "links screen-a-vs-canon-operation-census"
-      ]
-    },
-    {
       "name": "debt-a-wire-is-drawn-in-a-frame-its-box-does-not-share",
       "substituted": false,
       "blocked_by": "buildable",
@@ -711,6 +699,6 @@
       ]
     }
   ],
-  "unranked": 15,
+  "unranked": 14,
   "undated": 7
 }

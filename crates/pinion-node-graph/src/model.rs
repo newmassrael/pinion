@@ -309,6 +309,61 @@ pub struct Link {
     /// that changed meaning to a person while changing nothing to the model.
     #[serde(default)]
     pub drawn_from_consumer: bool,
+    /// ★★★★★ R2077 — **which of the several things the consuming end offers
+    /// this link took**, as an ordinal into a list the CONSUMER publishes and
+    /// this crate never reads.
+    ///
+    /// # Why the ordinal and not the thing
+    ///
+    /// [`Self::to`] already says which port a link landed on. It does not say
+    /// which of the consumer's own alternatives that landing MEANS, and in a
+    /// domain where a consumer offers several — a node listening in more than
+    /// one place, a device exposing several inputs — the two are different
+    /// facts with different lifetimes. A consumer that names its alternatives
+    /// can rename, add and remove them; the link's choice survives all three
+    /// only if what is stored is the position rather than the name.
+    ///
+    /// ⚠ **Measured, in the screen this crate was grown for.** That screen kept
+    /// the chosen thing by COPYING its name into the landing item's label, and
+    /// taught the copy to follow a rename. It could not teach it to follow a
+    /// list that changes LENGTH, because pairing by position after an insert
+    /// re-aims a link at something nobody chose — so a consumer that gained an
+    /// alternative and then lost the one every link was using left those links
+    /// naming something the consumer no longer offers. Driven before this was
+    /// added: *a wire says it dials `tcp/0.0.0.0:7447`, and the card listens on
+    /// `["tcp/0.0.0.0:7401"]`*.
+    ///
+    /// # What reads it, and what must not
+    ///
+    /// The consumer's own vocabulary is the consumer's: this crate stores the
+    /// ordinal and never indexes anything with it. Nothing here can, because
+    /// the list it indexes is not in the document.
+    ///
+    /// ⚠ Where it TRAVELS is not "everywhere". What a rebuilt wire inherits is
+    /// decided one site at a time, by the crate-internal carrier the rebuilding
+    /// paths construct — a wire synthesised for a *different* consumer inherits
+    /// no choice, because that consumer publishes its own alternatives. This
+    /// sentence used to claim it went everywhere, which was written in the same
+    /// round that twice decided otherwise.
+    ///
+    /// ⚠ It also used to *link* that carrier, which is `pub(crate)`: the
+    /// workspace rustdoc run refused a public page pointing at a private item,
+    /// and it refused it only there — the push gate documents the crates a push
+    /// touches, and this link resolved under `--document-private-items`. So the
+    /// capability is named here in prose rather than linked, which is what a
+    /// reader outside this crate can actually follow.
+    ///
+    /// That is the same separation
+    /// [`Self::drawn_from_consumer`] keeps, one step further out — a drawing is
+    /// at least about the canvas this crate paints; this is about a list it
+    /// cannot see.
+    ///
+    /// `None` is *nothing chosen*, which is what every link written before this
+    /// field existed meant and what a link into a consumer offering one thing
+    /// means. A reader resolves it as the first, and `#[serde(default)]` is what
+    /// makes an old file say so.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub landed_on: Option<u32>,
 }
 
 /// ★★★★★ R2075 — **what a link carries across a derivation that stands one link
@@ -328,6 +383,9 @@ pub(crate) struct Carried {
     /// Whether the curve reads from the consuming end — see
     /// [`Link::drawn_from_consumer`].
     pub drawn_from_consumer: bool,
+    /// Which of the consuming end's alternatives the link took — see
+    /// [`Link::landed_on`].
+    pub landed_on: Option<u32>,
 }
 
 impl Carried {
@@ -336,6 +394,7 @@ impl Carried {
         Self {
             muted: link.muted,
             drawn_from_consumer: link.drawn_from_consumer,
+            landed_on: link.landed_on,
         }
     }
 
@@ -345,16 +404,24 @@ impl Carried {
         Self {
             muted: false,
             drawn_from_consumer: false,
+            landed_on: None,
         }
     }
 
     /// A wire this crate is synthesising for a consumer whose old link was
     /// muted: the mutedness is inherited and the drawing is not, because there
     /// is no old curve for the new one to read like.
+    ///
+    /// ⚠ Nor is the CHOICE, and for a sharper reason than the drawing's: this
+    /// wire feeds a different consumer from the one whose choice it might have
+    /// inherited — a boundary node, a stand-in — and that consumer publishes
+    /// its own alternatives, so an ordinal from the old one would name
+    /// something else or nothing at all.
     pub(crate) const fn muted_as(muted: bool) -> Self {
         Self {
             muted,
             drawn_from_consumer: false,
+            landed_on: None,
         }
     }
 }
@@ -4848,6 +4915,14 @@ impl<K: NodeKind> Document<K> {
                 // ★ R2075 — a wire a person has just drawn reads the way they
                 // drew it. Turning it round is an act of its own.
                 drawn_from_consumer: false,
+                // ★ R2077 — and it has chosen nothing yet. Which of the
+                // consuming end's alternatives a new wire took is the
+                // CONSUMER'S question, asked by whoever knows that list, so a
+                // connection made here says "not chosen" rather than guessing
+                // the first — the two look alike to a reader that resolves
+                // `None` as the first, and only one of them can be corrected
+                // by asking who chose.
+                landed_on: None,
             },
             crowded,
             None,
@@ -5231,6 +5306,44 @@ impl<K: NodeKind> Document<K> {
         ))
     }
 
+    /// ★★★★★ R2077 — **record which of the consuming end's alternatives `link`
+    /// took**, answering which it had recorded before.
+    ///
+    /// See [`Link::landed_on`] for what the ordinal indexes and why this crate
+    /// cannot. Beside [`Self::set_link_muted`] and
+    /// [`Self::set_link_drawn_from_consumer`], for their stated reason: the
+    /// endpoints are what every invariant here is stated over, so they are not
+    /// editable in place, and the facts that ARE get one narrow verb each.
+    ///
+    /// ⚠ Nothing here validates the ordinal, and nothing can: the list it
+    /// indexes belongs to the consumer and is not in the document. A caller
+    /// that writes one it cannot resolve has stored a dangling choice, and the
+    /// only reader able to notice is the caller. That is the price of the
+    /// separation and it is stated rather than hidden — the alternative would
+    /// be a second copy of the consumer's list living here, which is the very
+    /// defect this field exists to end.
+    ///
+    /// # Errors
+    ///
+    /// [`EditError::NoSuchTree`] or [`EditError::NoSuchLink`].
+    pub fn set_link_landed_on(
+        &mut self,
+        tree: TreeId,
+        link: LinkId,
+        landed_on: Option<u32>,
+    ) -> Result<Option<u32>, EditError> {
+        let host = self
+            .trees
+            .get_mut(tree.0 as usize)
+            .ok_or(EditError::NoSuchTree(tree))?;
+        let target = host
+            .links
+            .iter_mut()
+            .find(|l| l.id == link)
+            .ok_or(EditError::NoSuchLink { tree, link })?;
+        Ok(std::mem::replace(&mut target.landed_on, landed_on))
+    }
+
     /// Take a node out of a tree without touching any link.
     ///
     /// The link bookkeeping is the caller's here — which is exactly why this is
@@ -5300,6 +5413,7 @@ impl<K: NodeKind> Document<K> {
             to,
             muted: carried.muted,
             drawn_from_consumer: carried.drawn_from_consumer,
+            landed_on: carried.landed_on,
         });
         id
     }

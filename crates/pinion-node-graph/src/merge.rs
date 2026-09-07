@@ -233,14 +233,25 @@ fn link_difference(a: &Link, b: &Link) -> Option<What> {
     // with a structural one. The destructuring is what makes the choice
     // explicit — a field added later cannot be forgotten here, it has to be
     // named and decided.
+    //
+    // ⚠ R2077 — `landed_on` IS compared, which is the opposite decision and
+    // rests on the same question. Which of the consuming end's alternatives a
+    // link took is not a drawing: it is what the wire DOES in whatever the
+    // consumer models, so two people aiming one wire at two of them have made
+    // conflicting edits and a merge that reported agreement would silently keep
+    // one. That this crate cannot resolve the ordinal is beside the point —
+    // noticing that two values differ needs no interpretation, and refusing to
+    // notice would be interpretation of the boldest kind.
     let Link {
         id: _,
         from,
         to,
         muted,
         drawn_from_consumer: _,
+        landed_on,
     } = a;
-    ((from, to, muted) != (&b.from, &b.to, &b.muted)).then_some(What::Rewritten)
+    ((from, to, muted, landed_on) != (&b.from, &b.to, &b.muted, &b.landed_on))
+        .then_some(What::Rewritten)
 }
 
 /// Whether the two sides ended up with the same thing at `at` (R2008).

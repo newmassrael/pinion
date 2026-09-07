@@ -14196,6 +14196,67 @@ fn r1645_the_reported_layer_is_a_value() {
 
 // ---------------------------------------------------------------- relinking
 
+/// ★★★★★ R2077 — a re-aimed end keeps the link's CHOICE when the choice is
+/// still about the same consumer, and loses it when it is not.
+///
+/// [`Link::landed_on`] indexes a list the CONSUMER publishes and this crate
+/// cannot see, so the two ends are not symmetric here the way they are for every
+/// other fact a link carries: moving the producing end changes who feeds it and
+/// nothing about which alternative it took, while moving the consuming end
+/// leaves the ordinal describing somebody else's alternatives — a number that
+/// names a different thing or nothing at all.
+///
+/// ⚠ The two halves are one test on purpose. Either alone passes under a rule
+/// that always keeps or always clears, and what is claimed is the DIFFERENCE.
+#[test]
+fn r2077_a_moved_end_keeps_the_choice_only_while_the_consumer_is_the_same() {
+    let mut fixture = fixture();
+    let held = fixture.document.tree(ROOT).unwrap().links()[0].id;
+    fixture
+        .document
+        .set_link_landed_on(ROOT, held, Some(2))
+        .unwrap();
+
+    // The PRODUCING end moves. `two -> add.0` becomes `three -> add.0`: the
+    // consumer is the one it always was, so the ordinal still names what it did.
+    fixture
+        .document
+        .relink(ROOT, held, Side::Output, Socket::new(fixture.three, 0))
+        .unwrap();
+    assert_eq!(
+        fixture
+            .document
+            .tree(ROOT)
+            .unwrap()
+            .link(held)
+            .unwrap()
+            .landed_on,
+        Some(2),
+        "★ a wire fed by somebody else still took the same alternative of the \
+         same consumer — dropping it here would throw away a choice nothing \
+         touched"
+    );
+
+    // The CONSUMING end moves. Another node publishes another list.
+    fixture
+        .document
+        .relink(ROOT, held, Side::Input, Socket::new(fixture.sink, 0))
+        .unwrap();
+    assert_eq!(
+        fixture
+            .document
+            .tree(ROOT)
+            .unwrap()
+            .link(held)
+            .unwrap()
+            .landed_on,
+        None,
+        "★★★★★ and a wire aimed at a DIFFERENT consumer is holding a number \
+         about the old one's alternatives, which is worse than no choice: it \
+         resolves, and to the wrong thing"
+    );
+}
+
 /// R1681 — the property the verb exists for: an end moves and the link is
 /// still the same link.
 ///

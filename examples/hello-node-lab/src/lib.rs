@@ -3824,6 +3824,20 @@ fn seed_links(
                 if wire.drawn_from_consumer {
                     let _ = doc.set_link_drawn_from_consumer(ROOT, made.link, true);
                 }
+                // ★★★★★ R2077 — and WHICH of the target's addresses this wire
+                // took, said rather than left to be inferred. `landing_endpoint`
+                // above chose the first free one; recording the ordinal is what
+                // makes that a CHOICE instead of a coincidence, and the
+                // difference shows the day the target loses that address — a
+                // recorded choice is gone and the pin says so, while an absent
+                // one silently resolves to whatever is first now.
+                let chose = endpoints_in(forms, NodeAddress::new(ROOT, b))
+                    .iter()
+                    .position(|one| Some(one.as_str()) == endpoint.as_deref())
+                    .and_then(|at| u32::try_from(at).ok());
+                if chose.is_some() {
+                    let _ = doc.set_link_landed_on(ROOT, made.link, chose);
+                }
                 if (from, to) == spec::SELECTED_LINK {
                     selected_link = Some(made.link);
                 }
@@ -10981,9 +10995,18 @@ fn link_chrome(state: &LabState) -> Option<LinkChrome> {
 
     let endpoints = endpoints_of(state, to_socket.node);
     let taken = endpoint_at(state, to_socket);
-    let current = taken
-        .as_ref()
-        .and_then(|one| endpoints.iter().position(|e| e == one))
+    // ★★★★★ R2077 — asked, not searched. This found the seat by looking the
+    // taken ADDRESS up in the list, so a card listening twice in the same place
+    // could not express having its second seat chosen: `position` answers the
+    // first every time, and the copy carries no way to tell the two apart. The
+    // link says which it took.
+    let current = state
+        .doc
+        .borrow()
+        .tree(state.here())
+        .and_then(|host| host.links().iter().find(|l| l.to == to_socket).copied())
+        .and_then(|link| link.landed_on)
+        .and_then(|at| usize::try_from(at).ok())
         .unwrap_or(0);
     // The caption is the endpoint the link took — which is the whole point of
     // there being an endpoint per link rather than per node.
@@ -19131,7 +19154,10 @@ fn set_value(
     // ★★ R1716 — through [`amend`], so the refusal a person meets on a row
     // nobody wrote is the framework's own sentence naming the source, rather
     // than "no such field" from a store that has never heard of it.
-    let was = endpoints_of(state, node);
+    // ★ R2077 — the list BEFORE the edit is no longer read. It was here so the
+    // two could be paired and a rename followed; each landing now says which
+    // alternative it took, so the edit is answered from the list as it stands
+    // and there is nothing to compare it against.
     let held = amend(state, node, |form| {
         form.set(key, value)?;
         Ok(form.field(key).map(|f| f.value().into_owned()))
@@ -19149,7 +19175,7 @@ fn set_value(
     // the same defect [`set_pin_transport`] had, by the path a person actually
     // takes. Repaid here as well as there, from one function, because the debt
     // is about the pin and not about which verb reached it.
-    let followed = respell_landings(state, node, &was, &endpoints_of(state, node));
+    let followed = resolve_landings(state, node, &endpoints_of(state, node));
     if followed > 0 {
         state.say(Utterance::done(format!(
             "{followed} wire(s) followed the address"
@@ -20602,7 +20628,23 @@ fn set_port_address(state: &LabState, socket: Socket, endpoint: &str) {
     // inside a subgraph would have written its address onto whatever card held
     // that number in the root.
     let here = state.here();
+    // ★★★★★ R2077 — the WHICH, before the what. The address written below is a
+    // copy that the card can invalidate by editing its own list; the ordinal is
+    // the fact that survives, and it is read off the list as it stands right
+    // now rather than from anything remembered. Taken before the document is
+    // borrowed, because the list lives in the forms and this is the one place
+    // that reads both.
+    let chose = endpoints_of(state, socket.node)
+        .iter()
+        .position(|one| one == endpoint)
+        .and_then(|at| u32::try_from(at).ok());
     let mut doc = state.doc.borrow_mut();
+    let landed = doc
+        .tree(here)
+        .and_then(|host| host.links().iter().find(|l| l.to == socket).map(|l| l.id));
+    if let Some(link) = landed {
+        let _ = doc.set_link_landed_on(here, link, chose);
+    }
     let _ = doc.set_port_value(
         here,
         socket.node,
@@ -24804,7 +24846,7 @@ fn set_pin_transport(
             .ok();
     }
     // ★★★★★ R1975 — and the wires that already landed here move with it.
-    let followed = respell_landings(state, node, &held, &moved);
+    let followed = resolve_landings(state, node, &moved);
     // And now the derivation reads the answer back out of the address, so the
     // stored value has one author again.
     sync_node(state, node);
@@ -24890,42 +24932,89 @@ fn not_this_cards_transport(name: &str, side: Side) -> Option<String> {
 /// Answers how many followed, so the caller's sentence can say it rather than
 /// report a bare success — the defect this function exists for was a success
 /// nobody could see.
-fn respell_landings(state: &Rc<LabState>, node: NodeId, was: &[String], now: &[String]) -> usize {
-    if was.len() != now.len() {
-        return 0;
-    }
-    let renamed: BTreeMap<&str, &str> = was
-        .iter()
-        .zip(now.iter())
-        .filter(|(before, after)| {
-            before != after && graph::Endpoint::of_written_locator(after).is_some()
-        })
-        .map(|(before, after)| (before.as_str(), after.as_str()))
-        .collect();
-    if renamed.is_empty() {
-        return 0;
-    }
+fn resolve_landings(state: &Rc<LabState>, node: NodeId, now: &[String]) -> usize {
+    // ★★★★★ R2077 — rebuilt from WHICH, not from what.
+    //
+    // This paired the old list with the new one and followed a rename, and it
+    // began by returning zero whenever the two lengths differed — deliberately,
+    // because pairing by position across an insert re-aims a wire at something
+    // nobody chose. That left the class open, and R2077 drove it: a card that
+    // gains an address and then loses the one every wire on it dials leaves
+    // those wires naming an address it does not listen on.
+    //
+    // With [`Link::landed_on`] there is nothing to pair. Each landing link says
+    // which of the consumer's alternatives it took, so every edit — a rename, an
+    // insert, a removal, a reorder — is answered the same way: read the ordinal,
+    // read the list as it stands, and write what it says there. A choice whose
+    // alternative is GONE resolves to nothing, and the slot goes back to the
+    // one this screen already draws for a wire that dials no address, which is
+    // the truthful answer and the one the reference gives (its own lookup
+    // answers null past the end of the list).
+    let here = state.here();
     let mut doc = state.doc.borrow_mut();
-    let Some(items) = doc.items(state.here(), node, Side::Input) else {
+    let Some(host) = doc.tree(here) else {
         return 0;
     };
-    let follows: Vec<(u32, String)> = items
+    // ★★★★★ R2077 — the two nesting levels are two different answers and
+    // collapsing them is the defect this round repaid: the inner `None` is
+    // *this landing dials nothing now*, the outer one is *leave it exactly as
+    // it is*. A reader who reaches for `flatten` here loses R1975's rule.
+    //
+    // ⚠ This carried an `#[expect(clippy::option_option)]` saying the same
+    // thing, and workspace clippy REFUSED it as unfulfilled: the lint reads
+    // signatures, fields and aliases, not a local binding's annotation, so the
+    // attribute asserted a warning that cannot arrive here. It said the right
+    // thing in a place where nothing could ever check it — so the sentence
+    // moved to where a reader sees it instead of standing as a gate that
+    // could only ever be vacuous.
+    let landings: Vec<(u32, Option<Option<String>>)> = host
+        .links()
         .iter()
-        .enumerate()
-        .filter_map(|(at, item)| {
-            let label = item.label.as_deref()?;
-            let now = renamed.get(label)?;
-            Some((u32::try_from(at).ok()?, (*now).to_owned()))
+        .filter(|link| link.to.node == node)
+        .map(|link| {
+            // ⚠ `None` resolves to the FIRST, which is the contract
+            // [`graph::Link::landed_on`] states and what every wire written
+            // before that field existed meant. It is not the same as a recorded
+            // choice whose alternative is gone: that one resolves to nothing,
+            // and the difference is the whole point of recording it.
+            let chose = usize::try_from(link.landed_on.unwrap_or(0))
+                .ok()
+                .and_then(|at| now.get(at));
+            // ★★★★★ R1975's rule, kept: **a landing holds the address it has
+            // until a READABLE one replaces it**. Three outcomes, not two —
+            // the alternative is gone (the landing dials nothing now), it is
+            // there and readable (take it), or it is there and half-typed,
+            // which is what a person's cursor sitting in the field looks like
+            // and is no reason to take a pin's address away from it.
+            let resolved = match chose {
+                None => Some(None),
+                Some(one) if graph::Endpoint::of_written_locator(one).is_some() => {
+                    Some(Some(one.clone()))
+                }
+                Some(_) => None,
+            };
+            (link.to.port, resolved)
         })
         .collect();
     let mut followed = 0;
-    for (at, endpoint) in follows {
-        let item = typed_slot_item(Some(&endpoint));
-        if doc
-            .set_item(state.here(), node, Side::Input, at, item)
-            .is_ok()
-        {
-            let _ = doc.set_port_value(state.here(), node, PortRef::input(at), endpoint);
+    for (at, resolved) in landings {
+        let Some(endpoint) = resolved else {
+            continue;
+        };
+        let was = doc
+            .items(here, node, Side::Input)
+            .and_then(|items| items.get(at as usize).and_then(|item| item.label.clone()));
+        if was == endpoint {
+            continue;
+        }
+        let item = typed_slot_item(endpoint.as_deref());
+        if doc.set_item(here, node, Side::Input, at, item).is_ok() {
+            let _ = doc.set_port_value(
+                here,
+                node,
+                PortRef::input(at),
+                endpoint.clone().unwrap_or_default(),
+            );
             followed += 1;
         }
     }

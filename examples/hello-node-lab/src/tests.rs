@@ -2223,6 +2223,119 @@ fn r1681_a_target_that_listens_twice_offers_a_seat_per_address() {
     });
 }
 
+/// R2077 — a wire may be left dialling an address its card has TAKEN AWAY.
+///
+/// R1681's sibling above states the principle this screen works to: *the
+/// endpoint a link dialled is a property OF THE LINK*. What the model actually
+/// stores is a COPY of the address, in the label of the accept item the landing
+/// wrote, and R1975 taught that copy to follow a RENAME — deliberately and only
+/// a rename, because a length-changing edit paired by position would re-aim a
+/// wire at an address nobody chose.
+///
+/// So this drives the case the copy cannot survive: the card grows a second
+/// address and then loses the first, which is the one every wire on it dials.
+/// The claim is the weakest one that can still be true of a screen a person
+/// reads — that a wire never names an address its own card is not listening on.
+#[test]
+fn r2077_a_wire_is_left_dialling_an_address_its_card_took_away() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = std::rc::Rc::new(state());
+        let target = state
+            .node_of(spec::SELECTED_NODE)
+            .expect("the opening node");
+
+        super::add_element(&state, "listen.endpoints");
+        let two = super::endpoints_of(&state, target);
+        assert_eq!(two.len(), 2, "the card now listens in two places: {two:?}");
+
+        // Take the FIRST away — the address every wire landing here dials.
+        super::set_value(&state, target, "listen.endpoints", &two[1])
+            .expect("a card may be given a shorter listen list");
+        let now = super::endpoints_of(&state, target);
+        assert_eq!(now, vec![two[1].clone()], "the card kept only the second");
+
+        let doc = state.doc.borrow();
+        let here = state.here();
+        let dialled: Vec<String> = doc
+            .tree(here)
+            .expect("the root tree")
+            .links()
+            .iter()
+            .filter(|link| link.to.node == target)
+            .filter_map(|link| super::endpoint_of(&doc, here, link.to))
+            .collect();
+        drop(doc);
+
+        assert!(
+            !dialled.is_empty(),
+            "the opening graph lands wires on this card, so there is something \
+             to ask about"
+        );
+        for one in &dialled {
+            assert!(
+                now.contains(one),
+                "a wire says it dials {one:?}, and the card listens on {now:?} \
+                 — a person reading that pin is reading an address that is not \
+                 there"
+            );
+        }
+    });
+}
+
+/// R2077 — folding a part keeps WHICH address each of its wires took.
+///
+/// The sibling of R2075's drawing gate, and it needs its own: a fold rebuilds
+/// every wire it takes inside, so each fact a wire carries is one the rebuild
+/// either inherits or defaults. A choice dropped here would put every wire in
+/// the part back on whatever the target lists first — silently, and only
+/// visibly on the day that list is edited.
+#[test]
+fn r2077_folding_a_part_keeps_which_address_its_wires_took() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+
+        // A wire whose landing recorded a choice. Asked of the graph rather
+        // than written down, because which of the opening wires records one is
+        // the opening graph's business and not this gate's.
+        let (from, to, chose) = {
+            let doc = state.doc.borrow();
+            let host = doc.tree(state.here()).expect("the root tree");
+            let link = host
+                .links()
+                .iter()
+                .find(|link| link.landed_on.is_some())
+                .expect("the opening graph records which address a wire took");
+            (link.from.node, link.to.node, link.landed_on)
+        };
+
+        state
+            .selection
+            .set(pinion_core::selection::Selection::group(vec![from, to]));
+        super::group_selection(&state, "part").expect("two cards make a subgraph");
+        let part = state.node_of("part").expect("the instance");
+        super::enter_card(&state, part).expect("go inside");
+
+        let doc = state.doc.borrow();
+        let tree = doc.tree(state.here()).expect("the definition");
+        let carried: Vec<Option<u32>> = tree
+            .links()
+            .iter()
+            .filter(|link| (link.from.node, link.to.node) == (from, to))
+            .map(|link| link.landed_on)
+            .collect();
+        assert_eq!(
+            carried,
+            vec![chose],
+            "★★★★★ the wire came into the definition still holding the address \
+             it chose — a fold that dropped it would re-aim every wire in the \
+             part at whatever its target happens to list first"
+        );
+    });
+}
+
 /// ★★★★★ R2000 — **a wire runs the other way without being redrawn**, and the
 /// seat that will not act says why.
 ///

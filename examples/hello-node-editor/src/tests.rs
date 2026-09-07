@@ -9191,6 +9191,18 @@ fn r1262_edge_endpoint_variants_share_one_body() {
         // every wire the way it dials. Named rather than defaulted because the
         // literal is what makes a new field a decision at each site.
         drawn_from_consumer: false,
+        // ★★★★★ R2077 — and nothing chosen, because on this screen there is
+        // nothing to choose FROM: the ordinal indexes a list the consuming end
+        // publishes, and a material port publishes no alternatives — it is one
+        // seat, not several. So `None` here is not "not filled in yet", it is
+        // the only value this screen can ever mean.
+        //
+        // ⚠ This site is why the field's five literal constructors were six.
+        // The five are all in `pinion-node-graph`; this one is an example
+        // crate's fixture, so it is invisible to `cargo test -p
+        // pinion-node-graph -p hello-node-lab` and surfaced only at the
+        // workspace gate — as a missing-field BUILD error, not a warning.
+        landed_on: None,
     };
     assert_eq!(
         edge_endpoints(&graph, &dangling),

@@ -571,6 +571,12 @@ impl<K: NodeKind> Document<K> {
                 // carrying a reading direction here would be a fact with no
                 // reader that the next round would have to explain.
                 drawn_from_consumer: false,
+                // ★ R2077 — and for the same reason it carries no choice: a
+                // reachability walk asks which nodes reach which, and which of
+                // a consumer's alternatives an authored wire took changes no
+                // answer to that. The authored link keeps it; this view is not
+                // the authored link.
+                landed_on: None,
             })
             .collect()
     }
