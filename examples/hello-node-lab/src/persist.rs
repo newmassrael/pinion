@@ -48,7 +48,7 @@ use pinion_core::Storage;
 use pinion_core::selection::Selection;
 use pinion_core::utterance::{Tone, Utterance};
 use pinion_core::widgets::config_form::ConfigForm;
-use pinion_node_graph::{Archive, Condition, Document, NodeId, Violation};
+use pinion_node_graph::{Archive, Condition, Document, NodeAddress, NodeId, ROOT, Violation};
 use serde::{Deserialize, Serialize};
 
 use crate::graph::LabNode;
@@ -88,12 +88,31 @@ pub const STORAGE_CACHE_KEY: &str = "node_lab.storage";
 /// integers is a file format decided by accident.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Kept {
-    /// Each card's settings form, as it was left.
-    pub forms: Vec<(NodeId, ConfigForm)>,
+    /// Each card's settings form, as it was left, at its **whole** address.
+    ///
+    /// ★★★★★ R2071 — was keyed by a bare [`NodeId`], and this list is where
+    /// that defect left the process. A node's number is minted per tree, so a
+    /// card made inside a group definition is written under the number of the
+    /// root card it collides with; the file then hands a person's settings to
+    /// the wrong card when it is opened. Driven, before and after, by
+    /// `r2071_a_saved_document_hands_each_card_back_its_own_settings`.
+    ///
+    /// ⚠ **A file written before this round is still read**, and what a bare
+    /// number in one MEANS is decided here: the root tree. That is the only
+    /// unambiguous reading available — such a file recorded no tree at all, so
+    /// its rows for cards inside a definition were already the wrong card's,
+    /// and there is nothing in the file that says which tree they came from.
+    /// Stated rather than hidden: this repairs the root rows of an old save and
+    /// discards nothing, and a subgraph row in one lands where the old code
+    /// would also have put it.
+    #[serde(deserialize_with = "cards_from_wire")]
+    pub forms: Vec<(NodeAddress, ConfigForm)>,
     /// Which host frame each card sits in, by the name the canvas shows.
-    pub frames: Vec<(NodeId, String)>,
+    #[serde(deserialize_with = "cards_from_wire")]
+    pub frames: Vec<(NodeAddress, String)>,
     /// Where each card came into being — the baseline the resets restore to.
-    pub opened_at: Vec<(NodeId, Placement)>,
+    #[serde(deserialize_with = "cards_from_wire")]
+    pub opened_at: Vec<(NodeAddress, Placement)>,
     /// The master auto-discovery switch.
     pub discovery: bool,
     /// What was selected, by NAME rather than by id.
@@ -107,6 +126,45 @@ pub struct Kept {
     /// fact. The archive's own is written too, so a reader that is not this
     /// screen still finds a selection where it expects one.
     pub selected: Option<String>,
+}
+
+/// ★★★★★ R2071 — read a card's key from the file, in **either** form.
+///
+/// The current form is a whole [`NodeAddress`], written as an object. A file
+/// from before this round carries the bare node number, written as an integer,
+/// and the two shapes cannot be confused — so an older save still opens, with
+/// its rows read as the root tree's for the reason [`Kept::forms`] states.
+///
+/// ⚠ A reader rather than a version field, deliberately: the archive already
+/// carries a revision and this companion is not what it counts, and a shape
+/// this self-describing format can tell apart needs no second declaration to
+/// keep in step.
+///
+/// ★ One reader for all **three** of the side tables. They are three lists of
+/// the same shape — a card, and one fact about it — and three copies of this
+/// would be three chances for one of them to keep the old reading.
+fn cards_from_wire<'de, D, T>(reader: D) -> Result<Vec<(NodeAddress, T)>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    /// Whichever of the two forms the file holds. The addressed arm comes
+    /// first: an object cannot be read as a number, so the order is what makes
+    /// the untagged read deterministic rather than lucky.
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Card {
+        At(NodeAddress),
+        Numbered(NodeId),
+    }
+    let rows: Vec<(Card, T)> = Vec::deserialize(reader)?;
+    Ok(rows
+        .into_iter()
+        .map(|(card, fact)| match card {
+            Card::At(at) => (at, fact),
+            Card::Numbered(node) => (NodeAddress::new(ROOT, node), fact),
+        })
+        .collect())
 }
 
 /// The archive this screen would write right now.

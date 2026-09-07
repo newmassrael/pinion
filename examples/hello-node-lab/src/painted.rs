@@ -1338,13 +1338,26 @@ fn assert_reachable(when: &str, state: &LabState, shot: &Painted, size: (u32, u3
             .keys()
             .filter(|tag| must_answer(tag).is_some() && !is_graph_content(tag))
             .count();
-    // ⚠ TWENTY, and it is the measured minimum over the sweep's states rather
+    // ⚠ NINETEEN, and it is the measured minimum over the sweep's states rather
     // than a round number: the state that folds the inspector into its strip
-    // puts that pane's controls away legitimately and reports exactly 20, while
-    // the descended state reports more. Pinned AT the minimum so any further
-    // drop fails — the shape this file's family pins already use.
+    // puts that pane's controls away legitimately and reports 20, and the state
+    // standing inside a subgraph reports 19. Pinned AT the minimum so any
+    // further drop fails — the shape this file's family pins already use.
+    //
+    // ★★★★★ R2071 — 20 -> 19, and the one that left is the node-set reset
+    // standing inside a subgraph. It is gated on being CHANGED, and the graph
+    // it restores is the one the specification describes, which is the root's:
+    // inside a definition the specification has no opinion, so the affordance
+    // is absent rather than promising something it cannot do. It used to be
+    // painted there always — the card count differs from the specification's by
+    // construction — and pressing it renamed the definition's interface nodes
+    // to unrelated root cards' opening names. See `ResetScope::changed`.
+    //
+    // ⚠ A pin refusing an honest DROP is the same shape as a pin refusing an
+    // honest improvement (R2070's short-box budget), and the answer is the
+    // same: move the pin and say what moved it.
     assert!(
-        chrome >= 20,
+        chrome >= 19,
         "{when}: only {chrome} chrome control(s) — {} painted and {scrolled} \
          one scroll away in total. A screen that stops painting the controls \
          that do NOT depend on the graph must fail here, not report a smaller \
@@ -5572,7 +5585,8 @@ fn r1686_taking_a_row_away_shuts_the_field_standing_on_it() {
         // Put the row back and read what came with it: the half-typed text must
         // NOT have been applied on the way out.
         let mut forms = state.forms.borrow_mut();
-        if let Some(form) = forms.get_mut(&state.active_card().expect("a card")) {
+        let card = state.address_of(state.active_card().expect("a card"));
+        if let Some(form) = forms.get_mut(&card) {
             form.add(key).expect("the catalogue holds an opening row");
         }
         drop(forms);
@@ -7322,7 +7336,7 @@ fn r1732_pressing_an_option_writes_it_and_shuts_the_roster() {
             state
                 .forms
                 .borrow()
-                .get(&node)
+                .get(&state.address_of(node))
                 .and_then(|form| form.field(spec::ENUM_KEY).map(|f| f.value().into_owned()))
                 .unwrap_or_default()
         };
@@ -7407,7 +7421,7 @@ fn r1732_opening_a_roster_and_opening_a_field_each_shut_the_other() {
             state
                 .forms
                 .borrow()
-                .get(&node)
+                .get(&state.address_of(node))
                 .and_then(|form| form.field(spec::ENUM_KEY).map(|f| f.value().into_owned()))
                 .unwrap_or_default()
         };
@@ -7433,7 +7447,7 @@ fn r1732_opening_a_roster_and_opening_a_field_each_shut_the_other() {
             state
                 .forms
                 .borrow()
-                .get(&node)
+                .get(&state.address_of(node))
                 .and_then(|form| form.field("id").map(|f| f.value().into_owned())),
             Some("aa11".to_owned()),
             "★★ and applied what was in it rather than dropping it",
@@ -7480,7 +7494,7 @@ fn r1732_the_roster_is_driveable_from_the_keyboard_without_writing_as_it_moves()
             state
                 .forms
                 .borrow()
-                .get(&node)
+                .get(&state.address_of(node))
                 .and_then(|form| form.field(spec::ENUM_KEY).map(|f| f.value().into_owned()))
                 .unwrap_or_default()
         };

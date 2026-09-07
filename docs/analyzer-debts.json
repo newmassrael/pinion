@@ -107,6 +107,18 @@
       ]
     },
     {
+      "name": "debt-a-cards-own-facts-live-beside-the-card-instead-of-in-it",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "rank": "ordinary",
+      "why": [
+        "links debt-canon-gui-surface-census"
+      ]
+    },
+    {
       "name": "debt-a-check-whose-two-sides-share-one-derivation",
       "substituted": false,
       "blocked_by": "buildable",
@@ -336,6 +348,18 @@
       ]
     },
     {
+      "name": "debt-a-reset-restores-the-root-graph-into-whatever-tree-a-person-stands-in",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "rank": "ordinary",
+      "why": [
+        "links analyzer-debt-repayment-loop, debt-canon-gui-surface-census"
+      ]
+    },
+    {
       "name": "debt-a-rounded-box-is-stroked-as-a-rectangle",
       "substituted": false,
       "blocked_by": "buildable",
@@ -478,18 +502,6 @@
       "rank": "ordinary",
       "why": [
         "links analyzer-tool-capability-spec"
-      ]
-    },
-    {
-      "name": "debt-four-per-card-tables-are-keyed-by-a-number-that-means-something-else-next-door",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "rank": "ordinary",
-      "why": [
-        "links analyzer-debt-repayment-loop"
       ]
     },
     {

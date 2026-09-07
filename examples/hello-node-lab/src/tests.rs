@@ -16,7 +16,7 @@ use super::{
     palette_rect, pin_rect, scenario, spec, use_lab_state,
 };
 use crate::graph::{Endpoint, Role, Transport};
-use pinion_node_graph::{Admission, NodeBody, NodeId, ROOT, Socket};
+use pinion_node_graph::{Admission, NodeAddress, NodeBody, NodeId, ROOT, Socket};
 use std::collections::BTreeSet;
 
 /// R1788 — the plan's document as a value.
@@ -1468,7 +1468,7 @@ fn r1651_a_value_that_would_fail_at_start_up_closes_the_gate() {
         state
             .forms
             .borrow_mut()
-            .get_mut(&node)
+            .get_mut(&state.address_of(node))
             .expect("a form")
             .set("transport.link.tx.batch_size", "70000")
             .expect("held");
@@ -1538,7 +1538,7 @@ fn r1651_the_pin_a_node_shows_is_derived_from_the_form_it_holds() {
         state
             .forms
             .borrow_mut()
-            .get_mut(&store)
+            .get_mut(&state.address_of(store))
             .expect("a form")
             .set("listen.endpoints", "quic/0.0.0.0:7460")
             .expect("held");
@@ -2457,8 +2457,12 @@ fn r1682_a_rename_carries_nothing_because_nothing_is_keyed_by_a_name() {
         let node = state.node_of("P-03").expect("the specification has it");
         state.selection.set(Selection::one(node));
 
-        let form_before = state.forms.borrow().get(&node).cloned();
-        let placed_before = state.opened_at.borrow().get(&node).cloned();
+        let form_before = state.forms.borrow().get(&state.address_of(node)).cloned();
+        let placed_before = state
+            .opened_at
+            .borrow()
+            .get(&state.address_of(node))
+            .cloned();
         let degree_before = state.degree(node);
         let links_before: Vec<u32> = state
             .doc
@@ -2480,8 +2484,18 @@ fn r1682_a_rename_carries_nothing_because_nothing_is_keyed_by_a_name() {
             Some(node),
             "the selection is the thing that moved, so nothing had to repair it"
         );
-        assert_eq!(state.forms.borrow().get(&node).cloned(), form_before);
-        assert_eq!(state.opened_at.borrow().get(&node).cloned(), placed_before);
+        assert_eq!(
+            state.forms.borrow().get(&state.address_of(node)).cloned(),
+            form_before
+        );
+        assert_eq!(
+            state
+                .opened_at
+                .borrow()
+                .get(&state.address_of(node))
+                .cloned(),
+            placed_before
+        );
         assert_eq!(state.degree(node), degree_before);
         assert_eq!(
             state
@@ -2626,11 +2640,15 @@ fn r1682_deleting_a_card_frees_the_seats_its_links_were_landing_on() {
 
         assert_eq!(state.node_of("P-01"), None, "the card is gone");
         assert!(
-            state.forms.borrow().get(&node).is_none(),
+            state.forms.borrow().get(&state.address_of(node)).is_none(),
             "and so is its form"
         );
         assert!(
-            state.opened_at.borrow().get(&node).is_none(),
+            state
+                .opened_at
+                .borrow()
+                .get(&state.address_of(node))
+                .is_none(),
             "and its placement, which nothing else would ever clean up"
         );
         assert_ne!(
@@ -2832,7 +2850,9 @@ fn r1687_a_value_that_cannot_be_expressed_is_carried_as_news() {
             .expect("the card is there");
         {
             let mut forms = state.forms.borrow_mut();
-            let form = forms.get_mut(&node).expect("the card has a form");
+            let form = forms
+                .get_mut(&state.address_of(node))
+                .expect("the card has a form");
             form.set("transport.link.tx.batch_size", "70000")
                 .expect("the row is there");
         }
@@ -5514,7 +5534,7 @@ fn r1961_a_chosen_transport_outlives_an_unrelated_edit() {
         state
             .forms
             .borrow_mut()
-            .get_mut(&elsewhere)
+            .get_mut(&state.address_of(elsewhere))
             .expect("a form")
             .set("listen.endpoints", "tcp/0.0.0.0:7449")
             .expect("held");
@@ -6017,7 +6037,7 @@ fn r1961_the_opening_canvas_speaks_the_addresses_it_carries() {
             let listen = state
                 .forms
                 .borrow()
-                .get(&node)
+                .get(&state.address_of(node))
                 .and_then(|form| form.field("listen.endpoints"))
                 .map_or(String::new(), |f| f.value().into_owned());
             let dialled = super::dialled_endpoint(&state.doc.borrow(), state.here(), node);
@@ -6199,7 +6219,7 @@ fn r1961_a_card_learns_what_it_speaks_from_the_wire_it_draws() {
         state
             .forms
             .borrow_mut()
-            .get_mut(&peer)
+            .get_mut(&state.address_of(peer))
             .expect("a form")
             .set("listen.endpoints", "quic/0.0.0.0:7451")
             .expect("held");
@@ -6875,7 +6895,7 @@ fn r1981_a_per_tree_number_does_not_travel_through_the_door() {
         state
             .selection
             .set(pinion_core::selection::Selection::one(part));
-        state.stacking.borrow_mut().push(part);
+        state.stacking.borrow_mut().push(state.address_of(part));
         assert!(!state.selection.get().is_empty());
         assert!(!state.stacking.borrow().is_empty());
 
@@ -6913,9 +6933,27 @@ fn r1981_a_per_tree_number_does_not_travel_through_the_door() {
             state.selection.get().is_active(&picked[0]),
             "★ and it is the one the inspector opens on"
         );
+        // ★★★★★ R2071 — the PROPERTY, where this was `is_empty()` — which was
+        // the same proxy-instead-of-property this test's own comment above
+        // objects to, one line down. Nothing OF THIS TREE is raised; the tree
+        // that was LEFT keeps its order, because the list carries whole
+        // addresses now and `stand_in` no longer has to throw it away.
+        let raised_here: Vec<_> = state
+            .stacking
+            .borrow()
+            .iter()
+            .filter(|at| at.tree == state.here())
+            .copied()
+            .collect();
         assert!(
-            state.stacking.borrow().is_empty(),
-            "★ nor is anything raised"
+            raised_here.is_empty(),
+            "★ nothing in HERE is raised — {raised_here:?}"
+        );
+        assert!(
+            !state.stacking.borrow().is_empty(),
+            "★★★★★ and the tree that was left kept its own order: clearing the \
+             whole list at the threshold was the bare number's defence, and it \
+             lost a person's front-most card every time they descended"
         );
         assert!(state.selected_link.get().is_none(), "★ nor any wire picked");
     });
@@ -6990,6 +7028,31 @@ fn r1983_separating_asks_the_tree_the_part_sits_in() {
 fn shown_keys(state: &LabState, node: NodeId) -> Option<Vec<String>> {
     super::shown_form(state, node)
         .map(|form| form.fields().iter().map(|f| f.key().to_owned()).collect())
+}
+
+/// ★ R2071 — one card's settings as a person reads them: each row's key beside
+/// its value.
+type ShownRows = Vec<(String, String)>;
+
+/// ★ R2071 — what several cards show, each named by the card. `None` for a card
+/// that shows no form at all, which is a different answer from an empty one.
+type CardRows = Vec<(NodeId, Option<ShownRows>)>;
+
+/// ★★★★★ R2071 — the rows a card SHOWS, **key and value both**.
+///
+/// [`shown_keys`] above compares key LISTS, and R1983 chose that over a field
+/// COUNT for a reason it wrote down: a count is a comparison two different
+/// forms pass by coincidence. ⚠ The same objection reaches keys. Two cards of
+/// one role hold the *same keys*, so a key comparison also cannot tell
+/// "unchanged" from "identical by coincidence" — and what a person reads off
+/// the inspector is the value.
+fn shown_rows(state: &LabState, node: NodeId) -> Option<ShownRows> {
+    super::shown_form(state, node).map(|form| {
+        form.fields()
+            .iter()
+            .map(|f| (f.key().to_owned(), f.value().into_owned()))
+            .collect()
+    })
 }
 
 /// ★★★★★ R1983 — **a card made INSIDE a subgraph gets its own configuration**,
@@ -7096,10 +7159,11 @@ fn r1983_a_card_made_inside_a_subgraph_has_its_own_configuration() {
         // way that reaches the root card, which is why the two halves of this
         // round's finding are asserted apart —
         // `r1983_the_stored_form_table_is_shared_across_the_door` holds this one.
-        let stored_inside = state.forms.borrow().get(&made).cloned();
+        let stored_inside = state.forms.borrow().get(&state.address_of(made)).cloned();
         assert!(
             stored_inside.is_some(),
-            "★ the palette's card put a form in the table under {made:?}"
+            "★ the palette's card put a form in the table at {made:?} of the \
+             tree on screen"
         );
 
         super::leave_subgraph(&state).expect("come back out");
@@ -7127,22 +7191,26 @@ fn r1983_a_card_made_inside_a_subgraph_has_its_own_configuration() {
     });
 }
 
-/// ⚠★★★★★ R1983 — **the stored table IS shared across the door**, and that is
-/// the half of the finding the screen currently hides.
+/// ★★★★★ R2071 — **the stored table is NOT shared across the door**: two
+/// addresses, two rows, and leaving a tree keeps what is in it.
 ///
-/// `debt-four-per-card-tables-are-keyed-by-a-number-that-means-something-else-next-door`
-/// predicted that a card made inside a subgraph would take over the root card
-/// of its number. Driven: the id collision is real and the `forms` MAP really
-/// does end up holding the inside card's row under that number — but
-/// `LabState::shown_form` re-derives from the node, so nothing a person looks at
-/// changes. The corruption is LATENT, not absent, and the two are different
-/// things to repair: absent needs no work, latent needs the key fixed before a
-/// reader of the stored half appears.
+/// # This test was written asserting the opposite, on purpose
 ///
-/// This is asserted on its own so that a future reader who DOES read the map —
-/// a save, an export — fails here rather than shipping somebody else's row.
+/// It stood at R1983 as `r1983_the_stored_form_table_is_shared_across_the_door`
+/// and its doc said, in as many words, *this is asserted on its own so that a
+/// future reader who DOES read the map — a save, an export — fails here rather
+/// than shipping somebody else's row*. A gate written to go red when the defect
+/// is repaid; this is that red, paid.
+///
+/// ⚠ Keeping the name would have left a gate whose title asserts a defect the
+/// screen no longer has, which is worse than a rename: the population of "what
+/// this screen guarantees" is read off these names. The R1983 name is recorded
+/// here instead, where the history belongs.
+///
+/// What repaid it: `LabState::forms` is keyed by [`NodeAddress`], so the tree is
+/// part of the key rather than something the reader has to have remembered.
 #[test]
-fn r1983_the_stored_form_table_is_shared_across_the_door() {
+fn r2071_the_stored_form_table_is_not_shared_across_the_door() {
     let owner = Owner::new();
     owner.run(|| {
         super::reset_lab_state();
@@ -7154,7 +7222,16 @@ fn r1983_the_stored_form_table_is_shared_across_the_door() {
         super::group_selection(&state, "part").expect("two cards make a subgraph");
         let part = state.node_of("part").expect("the instance");
         let outside = state.cards();
+        let root_tree = state.here();
+        // What the root card of the number about to be re-used holds, read
+        // BEFORE anything happens inside. This is the row that must survive.
         super::enter_card(&state, part).expect("go inside");
+        let inner_tree = state.here();
+        assert_ne!(
+            root_tree, inner_tree,
+            "★ the descent really moved — the two addresses below differ in \
+             their FIRST half, which is the whole repair"
+        );
 
         let before = state.cards();
         super::add_node(&state, Role::Responder);
@@ -7168,16 +7245,460 @@ fn r1983_the_stored_form_table_is_shared_across_the_door() {
             "★ the number is shared, which is what makes the rest of this a \
              statement about the defect — {made:?} against {outside:?}"
         );
-        let stored_inside = state.forms.borrow().get(&made).cloned();
+        let stored_inside = state
+            .forms
+            .borrow()
+            .get(&NodeAddress::new(inner_tree, made))
+            .cloned();
         assert!(stored_inside.is_some(), "the card inside has a stored form");
+        let stored_outside = state
+            .forms
+            .borrow()
+            .get(&NodeAddress::new(root_tree, made))
+            .cloned();
+        assert!(
+            stored_outside.is_some(),
+            "★ and the root card of that number still has its own, which is \
+             what an overwrite would have taken"
+        );
+        assert_ne!(
+            stored_inside, stored_outside,
+            "★★★★★ TWO ROWS, not one. A palette card opens with its own `id` in \
+             a field, so the two are distinguishable without anything being \
+             authored"
+        );
 
         super::leave_subgraph(&state).expect("come back out");
         assert_eq!(
-            state.forms.borrow().get(&made).cloned(),
+            state
+                .forms
+                .borrow()
+                .get(&NodeAddress::new(root_tree, made))
+                .cloned(),
+            stored_outside,
+            "★★★★★ out here, the entry at this tree's address is still the root \
+             card's own"
+        );
+        assert_eq!(
+            state
+                .forms
+                .borrow()
+                .get(&NodeAddress::new(inner_tree, made))
+                .cloned(),
             stored_inside,
-            "⚠★★★★★ out here, the entry under {made:?} is the one the card INSIDE \
-             put there. Nothing on the frame reads it that way today; a reader of \
-             the STORED half would get somebody else's row"
+            "★★★★★ and the card inside kept its own — leaving a tree does not \
+             discard what is in it"
+        );
+    });
+}
+
+/// ★★★★★ R2071 — **what the root card of a re-used number SHOWS**, compared by
+/// value and not by key.
+///
+/// `debt-four-per-card-tables-are-keyed-by-a-number-that-means-something-else-next-door`
+/// R1983 drove the recipe and recorded a two-line finding: the stored table IS
+/// shared across the door, and *nothing a person looks at changes*. The second
+/// half rests on `r1983_a_card_made_inside_a_subgraph_has_its_own_configuration`,
+/// which compares KEY LISTS.
+///
+/// ⚠ That is the very objection R1983 raised against its own first draft, one
+/// step later. It replaced a field COUNT with a key list because "a count is a
+/// comparison two different forms pass by coincidence" — and two cards of one
+/// role hold the same *keys* too. So the key comparison can report "unchanged"
+/// over a table entry that was completely replaced, and the thing a person
+/// actually reads off the inspector is the value.
+///
+/// This asks the same recipe by value. Nothing here is authored: a palette card
+/// opens with its own `id` in a row, so the two cards differ in what they show
+/// from the moment the inside one exists — no set-up step has to make them
+/// distinguishable, which is what makes this a statement about the defect
+/// rather than about the fixture.
+#[test]
+fn r2071_the_root_card_of_a_reused_number_shows_the_inside_cards_values() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+
+        let pair: Vec<_> = state.cards().into_iter().take(2).collect();
+        state
+            .selection
+            .set(pinion_core::selection::Selection::group(pair));
+        super::group_selection(&state, "part").expect("two cards make a subgraph");
+        let part = state.node_of("part").expect("the instance");
+        let outside: Vec<NodeId> = state.cards();
+        let before: CardRows = outside
+            .iter()
+            .map(|node| (*node, shown_rows(&state, *node)))
+            .collect();
+
+        super::enter_card(&state, part).expect("go inside");
+        let was = state.cards();
+        super::add_node(&state, Role::Responder);
+        let made = *state
+            .cards()
+            .iter()
+            .find(|node| !was.contains(node))
+            .expect("the palette added a card to the tree on screen (R1982)");
+
+        // The fixture's own precondition, kept as the sibling test keeps it: a
+        // run where the numbers did not collide would say nothing about this.
+        assert!(
+            outside.contains(&made),
+            "★ the card made INSIDE holds a number a ROOT card also holds — \
+             {made:?} against {outside:?}"
+        );
+        let inside_rows = shown_rows(&state, made).expect("the card inside shows a form");
+
+        super::leave_subgraph(&state).expect("come back out");
+        let after: CardRows = outside
+            .iter()
+            .map(|node| (*node, shown_rows(&state, *node)))
+            .collect();
+        let root_now = after
+            .iter()
+            .find(|(node, _)| *node == made)
+            .and_then(|(_, rows)| rows.clone())
+            .expect("the root card of that number still shows a form");
+        let root_was = before
+            .iter()
+            .find(|(node, _)| *node == made)
+            .and_then(|(_, rows)| rows.clone())
+            .expect("and it showed one before");
+
+        // Named row first, so a failure says WHICH value moved rather than
+        // printing two long lists for a reader to diff.
+        let value_of = |rows: &[(String, String)], key: &str| {
+            rows.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone())
+        };
+        assert_eq!(
+            value_of(&root_now, "id"),
+            value_of(&root_was, "id"),
+            "★★★★★ the root card of {made:?} is showing the `id` of the card made \
+             INSIDE the subgraph. Its own row said {:?} and it now says {:?}, and \
+             the card inside shows {:?} — the four per-card tables are keyed by a \
+             number that means something else next door",
+            value_of(&root_was, "id"),
+            value_of(&root_now, "id"),
+            value_of(&inside_rows, "id")
+        );
+        assert_eq!(
+            after, before,
+            "★★★★★ making a card INSIDE a subgraph changed what a card OUT HERE \
+             SHOWS — compared by value, which is what a person reads"
+        );
+    });
+}
+
+/// ★★★★★ R2071 — **a saved document hands each card back its own settings**,
+/// which is the behavioural proof the debt asked for and nobody had.
+///
+/// # Why this is the test the debt names
+///
+/// `debt-four-per-card-tables-are-keyed-by-a-number-that-means-something-else-next-door`
+/// recorded at R1983.1 that the corruption **leaves the process**: the file
+/// format carries the three side tables, and `persist::Kept` held them keyed by
+/// the bare node number. ⚠ That was obtained by READING the serialiser, and the
+/// debt says so in as many words — *there is no driven proof of "it leaves"
+/// yet, and that is the repaying round's first test; by this repository's rule
+/// (5) do not write "it leaves" as settled before it.*
+///
+/// So this drives the whole way round: make a card inside a definition, write
+/// the bytes, open the bytes, and read what the root card of the re-used number
+/// shows. By VALUE, for the reason `shown_rows` states.
+#[test]
+fn r2071_a_saved_document_hands_each_card_back_its_own_settings() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+
+        let pair: Vec<_> = state.cards().into_iter().take(2).collect();
+        state
+            .selection
+            .set(pinion_core::selection::Selection::group(pair));
+        super::group_selection(&state, "part").expect("two cards make a subgraph");
+        let part = state.node_of("part").expect("the instance");
+        let outside: Vec<NodeId> = state.cards();
+        let root_tree = state.here();
+
+        super::enter_card(&state, part).expect("go inside");
+        let inner_tree = state.here();
+        let was = state.cards();
+        super::add_node(&state, Role::Responder);
+        let made = *state
+            .cards()
+            .iter()
+            .find(|node| !was.contains(node))
+            .expect("the palette added a card to the tree on screen");
+        assert!(
+            outside.contains(&made),
+            "★ the number is shared, which is what makes this about the defect \
+             — {made:?} against {outside:?}"
+        );
+        let inside_rows = shown_rows(&state, made).expect("the card inside shows a form");
+        super::leave_subgraph(&state).expect("come back out");
+        let root_rows = shown_rows(&state, made).expect("and so does the root card");
+        assert_ne!(
+            root_rows, inside_rows,
+            "★ the two cards are distinguishable before anything is saved, \
+             which is what makes the comparison after the round trip mean \
+             something"
+        );
+
+        // ★ THE ROUND TRIP. `graph_text` is exactly what `persist::save`
+        // writes, and `persist::open` is exactly what a person's Open does.
+        let text = super::persist::graph_text(&state);
+        assert!(
+            text.contains("\"tree\""),
+            "★★★★★ the file records WHICH TREE each row belongs to. Before this \
+             round it recorded the number alone, which is how the corruption \
+             left the process"
+        );
+        super::persist::open(&state, &text).expect("the bytes just written open");
+
+        assert_eq!(
+            shown_rows(&state, made),
+            Some(root_rows),
+            "★★★★★ opened, the root card of {made:?} shows ITS OWN settings. A \
+             file keyed by the number alone handed it the settings of the card \
+             made inside the definition"
+        );
+        assert!(
+            state
+                .forms
+                .borrow()
+                .contains_key(&NodeAddress::new(inner_tree, made)),
+            "★ and the card inside the definition came back too — a file that \
+             kept only one of the two would be the same defect written smaller"
+        );
+        assert_ne!(root_tree, inner_tree, "★ the two addresses really differ");
+    });
+}
+
+/// ★★★★★ R2071 — **a card folded into a definition takes its per-card facts
+/// with it**, and unfolding gives the copies theirs.
+///
+/// # Why this gate exists
+///
+/// Keying the four tables by a card's whole address makes an obligation
+/// visible that the bare number hid: four verbs on this screen MOVE a card
+/// between trees, and a document-wide side table has to be told. The fold
+/// preserves a node's number, so a row keyed by the number alone survived a
+/// fold **by accident** — the debt calls that out as one of two coincidences
+/// the screen was standing on.
+///
+/// ⚠ The unfold was never right, and this is where that shows: its cards are
+/// COPIES with fresh numbers, so the table held nothing under them and every
+/// card came back with no settings. Nothing failed, because nothing asked.
+#[test]
+fn r2071_a_card_folded_into_a_definition_takes_its_facts_with_it() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+
+        let pair: Vec<NodeId> = state.cards().into_iter().take(2).collect();
+        let one = pair[0];
+        let root_tree = state.here();
+        // Three facts about this card, one per table, all distinguishable.
+        super::set_value(&state, one, "transport.link.tx.batch_size", "4096")
+            .expect("an int row takes an int");
+        state.raise(one);
+        let form_was = state
+            .forms
+            .borrow()
+            .get(&NodeAddress::new(root_tree, one))
+            .cloned()
+            .expect("the card has a form");
+        let born_was = state
+            .opened_at
+            .borrow()
+            .get(&NodeAddress::new(root_tree, one))
+            .cloned()
+            .expect("and an opening placement");
+
+        state
+            .selection
+            .set(pinion_core::selection::Selection::group(pair.clone()));
+        super::group_selection(&state, "part").expect("two cards make a subgraph");
+        let part = state.node_of("part").expect("the instance");
+        super::enter_card(&state, part).expect("go inside");
+        let inner = state.here();
+
+        assert_eq!(
+            state
+                .forms
+                .borrow()
+                .get(&NodeAddress::new(inner, one))
+                .cloned(),
+            Some(form_was.clone()),
+            "★★★★★ the settings came with the card, at the address inside the \
+             definition"
+        );
+        assert_eq!(
+            state
+                .opened_at
+                .borrow()
+                .get(&NodeAddress::new(inner, one))
+                .cloned(),
+            Some(born_was),
+            "★ and so did where it came into being"
+        );
+        assert!(
+            state
+                .forms
+                .borrow()
+                .get(&NodeAddress::new(root_tree, one))
+                .is_none(),
+            "★★★★★ and NOT left behind out there — a row at the old address \
+             would be a second card's settings the moment the root mints that \
+             number again"
+        );
+        assert!(
+            state
+                .stacking
+                .borrow()
+                .contains(&NodeAddress::new(inner, one)),
+            "★ the card a person had pulled to the front is still in front, in \
+             the tree it is in now"
+        );
+        // The derived read, which is what a person actually sees.
+        assert_eq!(
+            shown_rows(&state, one).and_then(|rows| rows
+                .iter()
+                .find(|(k, _)| k == "transport.link.tx.batch_size")
+                .cloned()),
+            Some(("transport.link.tx.batch_size".to_owned(), "4096".to_owned())),
+            "★★★★★ and the inspector inside shows the value that was typed \
+             outside"
+        );
+    });
+}
+
+/// ★★★★★ R2071 — **unfolding a part gives every card it returns the settings of
+/// the card it is a copy of.**
+///
+/// Its own test rather than the tail of the one above, and not only for a line
+/// budget: the two are different claims about different verbs. A fold MOVES
+/// cards, keeping their numbers, so a table keyed by the bare number survived
+/// it by accident. An unfold COPIES them, minting fresh numbers — so the table
+/// held nothing under the cards that came back, and **every one of them arrived
+/// with no settings at all**. Nothing failed, because nothing asked.
+#[test]
+fn r2071_unfolding_a_part_gives_its_cards_back_their_settings() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+
+        let pair: Vec<NodeId> = state.cards().into_iter().take(2).collect();
+        let one = pair[0];
+        super::set_value(&state, one, "transport.link.tx.batch_size", "4096")
+            .expect("an int row takes an int");
+        state
+            .selection
+            .set(pinion_core::selection::Selection::group(pair));
+        super::group_selection(&state, "part").expect("two cards make a subgraph");
+        let part = state.node_of("part").expect("the instance");
+
+        let before = state.cards();
+        super::ungroup_card(&state, part).expect("a part can be pulled apart");
+        let copies: Vec<NodeId> = state
+            .cards()
+            .into_iter()
+            .filter(|node| !before.contains(node))
+            .collect();
+        assert!(
+            !copies.is_empty(),
+            "★ the unfold put cards back here, which is what makes the rest of \
+             this a statement"
+        );
+        let batch: Vec<String> = copies
+            .iter()
+            .filter_map(|node| {
+                shown_rows(&state, *node)?
+                    .into_iter()
+                    .find(|(k, _)| k == "transport.link.tx.batch_size")
+                    .map(|(_, v)| v)
+            })
+            .collect();
+        assert!(
+            batch.contains(&"4096".to_owned()),
+            "★★★★★ one of the cards that came back is the copy of the card that \
+             was edited, and it carries what was typed into it — {batch:?}"
+        );
+        assert_eq!(
+            batch.len(),
+            copies.len(),
+            "★ and EVERY copy got a row, not just the edited one"
+        );
+    });
+}
+
+/// ★★★★★ R2071 — **a document saved before this round still opens**, and its
+/// rows land on the tree they can only have meant.
+///
+/// The file's key changed shape — a bare number became an address — so this
+/// takes a real save, rewrites its keys back into the OLD shape, and opens it.
+/// Nothing here is hand-written: the bytes are this screen's own output,
+/// downgraded, which is the only way to be sure the old shape being tested is
+/// the shape that actually existed.
+///
+/// ⚠ The population is deliberately **the opening graph, with no definitions in
+/// it**. That is what an old save of this screen is, and it is the only case an
+/// old file answers unambiguously: such a file recorded no tree at all, so two
+/// cards of one number — which is exactly what a definition produces — are
+/// indistinguishable in it, and no reader can put them back. `Kept::forms` says
+/// so in its own words rather than leaving the limit to be discovered.
+#[test]
+fn r2071_a_document_saved_before_the_address_still_opens() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+        let before: CardRows = state
+            .cards()
+            .into_iter()
+            .map(|node| (node, shown_rows(&state, node)))
+            .collect();
+
+        let text = super::persist::graph_text(&state);
+        let mut envelope: serde_json::Value =
+            serde_json::from_str(&text).expect("this screen writes JSON");
+        let rows = envelope["companion"]["forms"]
+            .as_array_mut()
+            .expect("the companion carries the form rows");
+        let mut downgraded = 0_usize;
+        for row in rows.iter_mut() {
+            let pair = row.as_array_mut().expect("each row is [key, form]");
+            let number = pair[0]["node"].clone();
+            assert!(
+                number.is_number(),
+                "★ the current shape is an object carrying the node number"
+            );
+            pair[0] = number;
+            downgraded += 1;
+        }
+        assert!(
+            downgraded > 0,
+            "★ something was actually rewritten, so a pass here is not vacuous"
+        );
+        let old = serde_json::to_string(&envelope).expect("still serialisable");
+
+        super::reset_lab_state();
+        let fresh = super::use_lab_state();
+        super::persist::open(&fresh, &old).expect("★★★★★ an older save opens");
+        let after: CardRows = fresh
+            .cards()
+            .into_iter()
+            .map(|node| (node, shown_rows(&fresh, node)))
+            .collect();
+        assert_eq!(
+            after, before,
+            "★★★★★ and every card in it shows what it showed — a bare number in \
+             an old file means the root tree, which is where all of its cards \
+             were"
         );
     });
 }

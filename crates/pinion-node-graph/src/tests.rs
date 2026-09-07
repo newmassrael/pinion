@@ -15,13 +15,13 @@ use crate::{
     Direction, Discovery, Distribute, Document, Drawn, Dropped, DuplicateError, Edge, EditError,
     EditPath, Extent, ExtractError, Fit, Flow, Focus, ForceError, Fragment, GroupError, Grow, Halt,
     InsertError, Inspectable, Instance, InterfaceSide, Item, ItemError, Layered, LinkId, LinkLayer,
-    Machine, Margin, Multiplicity, Naming, NestError, Node, NodeBody, NodeId, NodeKind, NodeSite,
-    ObserveError, Occurrence, Organic, Orphaned, ParentError, Passing, PathError, Port, PortPath,
-    PortRef, PortSite, PortValueError, ROOT, Reach, Relabelled, Relatedness, RelinkError, Renamed,
-    RepartitionError, RetypeError, Route, RunError, SectionId, SelectError, Session, Severed,
-    Sharing, Side, Socket, Stack, Standing, Stop, Straighten, Stride, SwapError, SwitchRefusal,
-    Tick, Tie, Timeline, Tint, TreeId, Unframed, UngroupError, Unreadable, Violation, WatchError,
-    Watches, ZoomRange, crossing,
+    Machine, Margin, Multiplicity, Naming, NestError, Node, NodeAddress, NodeBody, NodeId,
+    NodeKind, NodeSite, ObserveError, Occurrence, Organic, Orphaned, ParentError, Passing,
+    PathError, Port, PortPath, PortRef, PortSite, PortValueError, ROOT, Reach, Relabelled,
+    Relatedness, RelinkError, Renamed, RepartitionError, RetypeError, Route, RunError, SectionId,
+    SelectError, Session, Severed, Sharing, Side, Socket, Stack, Standing, Stop, Straighten,
+    Stride, SwapError, SwitchRefusal, Tick, Tie, Timeline, Tint, TreeId, Unframed, UngroupError,
+    Unreadable, Violation, WatchError, Watches, ZoomRange, crossing,
 };
 use crate::{AdvancedView, ClassSource, Classified, Classify, ClassifyError, Hidden, PortClass};
 use crate::{Alone, Represented, StandInError};
@@ -21365,4 +21365,87 @@ fn r2048_two_definitions_of_one_name_are_read_and_not_called_broken() {
          itself: {:?}",
         doc.validate()
     );
+}
+
+/// ★★★★★ R2071 — **a bare node number asked of the wrong tree answers a
+/// DIFFERENT node, not "no such node"** — and [`NodeAddress`] is the type that
+/// makes the whole address askable.
+///
+/// This is the failure mode that makes the absence of the type expensive: a
+/// consumer holding a bare [`NodeId`] across a tree boundary gets a plausible
+/// answer, so nothing anywhere reports a problem. Measured twice in four
+/// rounds — R2068 in a paint gate that asked the root for the coordinates of a
+/// card in the tree on screen, and R2071 in a screen keeping per-card tables
+/// keyed by the number alone, where a card created inside a definition took
+/// over the settings of the root card that held its number.
+///
+/// So the assertion is in two halves: the collision is REAL (both trees hand
+/// out the same number for different nodes), and [`Document::node_at`] tells
+/// them apart where a bare lookup cannot.
+#[test]
+fn r2071_a_node_number_means_something_else_in_another_tree() {
+    let mut document: Document<LOp> = Document::new("lattice");
+    let outside = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Meter), 0, 0)
+        .expect("a node in the root");
+    let part = document.add_definition("part");
+    let inside = document
+        .add_node(part, NodeBody::Kind(LOp::Wash), 0, 0)
+        .expect("a node in the definition");
+
+    // ★★★★★ THE PREMISE, ASSERTED RATHER THAN ASSUMED: `next_node` is minted
+    // per tree, so the two independent nodes carry ONE number. A change that
+    // made ids document-global would fail here loudly rather than leaving this
+    // test passing about nothing.
+    assert_eq!(
+        outside, inside,
+        "★★★★★ two different nodes in two trees hold the same number — this is \
+         what `NodeId`'s own doc means by unique WITHIN its tree"
+    );
+
+    // The half that is dangerous: the bare lookup does not refuse.
+    assert!(
+        document
+            .tree(ROOT)
+            .and_then(|tree| tree.node(inside))
+            .is_some(),
+        "★★★★★ asking the ROOT for the definition's node ANSWERS — this is the \
+         defect's whole mechanism: not an error, a different node"
+    );
+    assert_ne!(
+        document
+            .node_at(NodeAddress::new(ROOT, outside))
+            .map(|n| &n.body),
+        document
+            .node_at(NodeAddress::new(part, inside))
+            .map(|n| &n.body),
+        "★★★★★ and the two are NOT the same node — the whole address tells them \
+         apart where the number alone cannot"
+    );
+    assert_eq!(
+        document
+            .node_at(NodeAddress::new(part, inside))
+            .map(|n| n.id),
+        Some(inside),
+        "★ and it resolves to the node in the tree the address names"
+    );
+    assert_eq!(
+        document.node_at(NodeAddress::new(TreeId(9_999), outside)),
+        None,
+        "★ an address naming no tree resolves to nothing, rather than falling \
+         back to a tree that does exist"
+    );
+    assert_eq!(
+        document.node_at(NodeAddress::new(ROOT, NodeId(9_999))),
+        None,
+        "★ and so does one naming no node"
+    );
+
+    // The wire form both ways, because a form that can be written and not read
+    // is half a form.
+    let address = NodeAddress::new(part, inside);
+    assert_eq!(address.to_string(), format!("{}:{}", part.0, inside.0));
+    assert_eq!(NodeAddress::from_wire(&address.to_string()), Some(address));
+    assert_eq!(NodeAddress::from_wire("no such thing"), None);
+    assert_eq!(NodeAddress::from_wire("1:"), None);
 }

@@ -306,9 +306,9 @@ pub use model::{
     Act, Admission, Admits, Born, ConnectError, Connected, Container, Control, Conversion,
     Described, Description, Document, DroppedLink, EditError, Flow, Found, InZone, Instance,
     Interface, InterfaceSide, Judged, KindPort, Link, LinkId, Matched, Multiplicity, Node,
-    NodeBody, NodeId, NodeKind, PairError, Port, PortRef, PortValueError, PortValueResult, ROOT,
-    Refusal, Relabelled, Removed, Represented, Seed, Side, Signature, Socket, Tree, TreeId,
-    crossing,
+    NodeAddress, NodeBody, NodeId, NodeKind, PairError, Port, PortRef, PortValueError,
+    PortValueResult, ROOT, Refusal, Relabelled, Removed, Represented, Seed, Side, Signature,
+    Socket, Tree, TreeId, crossing,
 };
 pub use naming::{Labelled, NameSource, PortName};
 pub use naming_scope::{Copying, Naming};

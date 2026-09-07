@@ -120,9 +120,9 @@ use pinion_node_graph::{
     Act, AdvancedView, Alone, Arrival, Camera, ClassSource, Classify, Crossings, Definitions,
     Document, Drawn, EditPath, Extent, Faces, Fault, Fit, Focus, Focused, Found, Fragment, InZone,
     Instance, Item, Judged, LandError, Landfall, LinkId, LinkLayer, Margin, NameSource, Node,
-    NodeBody, NodeId, NodeKind, Objection, ParentError, PortPath, PortRef, PortSite, ROOT,
-    Relinked, Room, RoomError, Sharing, Side, Socket, Tint, TreeId, Violation, WatchError, Watches,
-    Weight, Widening, ZoomRange, palette_of, type_palette,
+    NodeAddress, NodeBody, NodeId, NodeKind, Objection, ParentError, PortPath, PortRef, PortSite,
+    ROOT, Relinked, Room, RoomError, Sharing, Side, Socket, Tint, TreeId, Violation, WatchError,
+    Watches, Weight, Widening, ZoomRange, palette_of, type_palette,
 };
 use pinion_platform_storage::AppStorage;
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
@@ -1570,8 +1570,29 @@ struct LabState {
     /// came from and [`EditPath::breadcrumb`] is the sentence the screen shows
     /// without a second walk to derive it.
     path: Tracked<EditPath>,
-    forms: Tracked<BTreeMap<NodeId, ConfigForm>>,
-    frames: RefCell<BTreeMap<NodeId, String>>,
+    /// Each card's settings form, keyed by its **whole** document address.
+    ///
+    /// ★★★★★ R2071 — was keyed by a bare [`NodeId`], and that is the defect
+    /// `debt-four-per-card-tables-are-keyed-by-a-number-that-means-something-else-next-door`
+    /// registered at R1981 and this round repaid. A node's number is minted
+    /// **per tree** (the model says so in `NodeId`'s own doc), so this
+    /// document-wide table had two different cards under one key the moment a
+    /// person could descend: a card created inside a group definition is minted
+    /// a number a root card already holds, the two shared one entry, and coming
+    /// back out the root card showed the inner card's settings.
+    ///
+    /// ⚠ R1983 drove that recipe and recorded the visible half as CLEAN, so
+    /// this sat for ninety rounds as a latent defect. It was not latent: that
+    /// round compared the shown form by its **field names**, having already
+    /// replaced a field COUNT for exactly the reason that a count is a
+    /// comparison two different forms pass by coincidence — and two cards of
+    /// one role carry the same field names too. Compared by VALUE (R2071), the
+    /// root card's `id` row read `f6` where it had read `a1`.
+    forms: Tracked<BTreeMap<NodeAddress, ConfigForm>>,
+    /// ★ R2071 — keyed by the frame's whole address, for the reason
+    /// [`LabState::forms`] above gives: a frame is a card too, and its number
+    /// means another node one door down.
+    frames: RefCell<BTreeMap<NodeAddress, String>>,
     /// ★★ R1679 — where each card came into being: its canvas position and the
     /// host it started on.
     ///
@@ -1586,7 +1607,9 @@ struct LabState {
     /// and from the placement arithmetic for an added one, so the two kinds of
     /// card answer the same question the same way and the scope has ONE
     /// population instead of a rule with an exception in it.
-    opened_at: RefCell<BTreeMap<NodeId, Placement>>,
+    /// ★ R2071 — keyed by the whole address, for the reason
+    /// [`LabState::forms`] gives.
+    opened_at: RefCell<BTreeMap<NodeAddress, Placement>>,
     /// ★★★ R1706 — the selected cards, and which of them the inspector
     /// follows.
     ///
@@ -1620,7 +1643,12 @@ struct LabState {
     /// the person meant by putting it there, and the free-canvas rule (which
     /// every node editor keeps, and which this tree's tile dashboard
     /// deliberately does not) is that a drop displaces nothing.
-    stacking: RefCell<Vec<NodeId>>,
+    ///
+    /// ★ R2071 — whole addresses, for the reason [`LabState::forms`] gives. A
+    /// list of bare numbers said a card was in front in **every** tree that had
+    /// a card of that number, so raising one inside a definition reordered the
+    /// canvas out here.
+    stacking: RefCell<Vec<NodeAddress>>,
     selection: Signal<Selection<NodeId>>,
     selected_link: Signal<Option<LinkPick>>,
     /// ★★★★★ R1985 — **what has been copied**, held as the value the crate
@@ -2148,7 +2176,8 @@ impl LabState {
                 node.label = Some(format!("{} · {}", frame.name, frame.gist));
             }
             frame_ids.insert(frame.name, id);
-            frames.insert(id, frame.name.to_owned());
+            // ★ R2071 — the frames are built into the root, like the cards.
+            frames.insert(NodeAddress::new(ROOT, id), frame.name.to_owned());
         }
 
         let mut forms = BTreeMap::new();
@@ -2167,13 +2196,13 @@ impl LabState {
         // R1679 — the opening placement of every card the specification
         // describes, recorded from the specification itself so the record and
         // the graph cannot have been built from different numbers.
-        let opened_at: BTreeMap<NodeId, Placement> = spec::NODES
+        let opened_at: BTreeMap<NodeAddress, Placement> = spec::NODES
             .iter()
             .filter_map(|want| {
                 let id = *ids.get(want.id)?;
                 let (x, y, _) = want.rect;
                 Some((
-                    id,
+                    NodeAddress::new(ROOT, id),
                     Placement {
                         at: (i32::try_from(x).unwrap_or(0), i32::try_from(y).unwrap_or(0)),
                         host: Some(want.frame.to_owned()),
@@ -2379,6 +2408,22 @@ impl LabState {
         self.path.borrow().current()
     }
 
+    /// ★★★★★ R2071 — **a card of the tree on screen, addressed whole.**
+    ///
+    /// The one place the screen pairs a card's number with the tree it belongs
+    /// to, so a per-card table cannot be keyed by half an address. Every verb
+    /// and every read here takes a [`NodeId`] out of the tree it is showing —
+    /// [`LabState::here`] above is that tree — and this is the composition of
+    /// the two.
+    ///
+    /// ⚠ A caller that holds a card of ANOTHER tree must say which:
+    /// [`NodeAddress::new`] takes both, and the review walks that visit every
+    /// tree use it directly. This one is for the common case, which is *the
+    /// card in front of the person*.
+    fn address_of(&self, node: NodeId) -> NodeAddress {
+        NodeAddress::new(self.here(), node)
+    }
+
     /// ★★★★★ R1981 — the trees a person has descended through, root first.
     ///
     /// The framework's own sentence ([`EditPath::breadcrumb`]) rather than a
@@ -2440,7 +2485,7 @@ impl LabState {
     /// dials.
     fn frame_of(&self, node: NodeId) -> Option<String> {
         let parent = self.doc.borrow().tree(self.here())?.node(node)?.parent?;
-        self.frames.borrow().get(&parent).cloned()
+        self.frames.borrow().get(&self.address_of(parent)).cloned()
     }
 
     /// Where a card runs, naming the somewhere a card in no frame still runs.
@@ -2460,7 +2505,7 @@ impl LabState {
         // reading the shown one would be a loop.
         self.forms
             .borrow()
-            .get(&node)
+            .get(&self.address_of(node))
             .and_then(|form| form.field("host").map(|f| f.value().trim().to_owned()))
             .filter(|written| !written.is_empty())
             .or_else(|| self.frame_of(node))
@@ -2526,7 +2571,17 @@ impl LabState {
         // they were, last. A card nobody has touched keeps the position the
         // specification gives it, which is why this is a stable partition
         // rather than a sort: the screen still opens exactly as declared.
-        let raised = self.stacking.borrow();
+        // ★ R2071 — the raised list is read for THIS tree. A list of bare
+        // numbers put a card in front here because a card of that number had
+        // been picked up somewhere else.
+        let here = self.here();
+        let raised: Vec<NodeId> = self
+            .stacking
+            .borrow()
+            .iter()
+            .filter(|at| at.tree == here)
+            .map(|at| at.node)
+            .collect();
         let mut resting: Vec<NodeId> = all
             .iter()
             .copied()
@@ -2544,9 +2599,10 @@ impl LabState {
     /// gesture underneath the thing it is being dragged over — which is the
     /// defect this pays off, moved later rather than removed.
     fn raise(&self, node: NodeId) {
+        let at = self.address_of(node);
         let mut stacking = self.stacking.borrow_mut();
-        stacking.retain(|id| *id != node);
-        stacking.push(node);
+        stacking.retain(|held| *held != at);
+        stacking.push(at);
     }
 
     /// Every address a card on this canvas can be reached at.
@@ -3133,7 +3189,7 @@ fn seed_nodes(
     doc: &mut Document<LabNode>,
     frame_ids: &BTreeMap<&str, NodeId>,
     ids: &mut BTreeMap<String, NodeId>,
-    forms: &mut BTreeMap<NodeId, ConfigForm>,
+    forms: &mut BTreeMap<NodeAddress, ConfigForm>,
 ) {
     for node in spec::NODES {
         let role = Role::from_name(node.role).expect("the spec names a role that exists");
@@ -3178,7 +3234,9 @@ fn seed_nodes(
             doc.set_parent(ROOT, id, Some(frame)).ok();
         }
         ids.insert(node.id.to_owned(), id);
-        forms.insert(id, form);
+        // ★ R2071 — the graph is CONSTRUCTED into the root, which is why this
+        // one names `ROOT` rather than asking a path that does not exist yet.
+        forms.insert(NodeAddress::new(ROOT, id), form);
     }
 }
 
@@ -3279,14 +3337,41 @@ impl ResetScope {
             // against the specification answered both questions with one
             // string comparison, and a rename makes those two questions give
             // opposite answers about the same card.
+            // ★★★★★ R2071 — **on the root only**, because the opening graph
+            // this restores is the root's: [`spec::NODES`] describes that tree
+            // and says nothing about a definition somebody folded.
+            //
+            // The comparison used to be made wherever a person was standing,
+            // and what came of it was measured this round when the addressed
+            // tables made the apply honest. Standing inside a subgraph, the
+            // card count differs from the specification's by construction, so
+            // the affordance was always painted — and pressing it compared each
+            // card's name against `opened_as` read from the table by the bare
+            // number, which inside a definition answered *an unrelated root
+            // card's* opening name. It RENAMED the definition's interface nodes
+            // to those cards' names. `r1679_a_reset_affordance_is_painted_
+            // exactly_when_it_would_do_something` is what surfaced it: with the
+            // table keyed by the whole address the rename stopped happening,
+            // and the gate then reported an affordance that promises something
+            // and does nothing.
+            //
+            // ⚠ Asked as [`LabState::inside`] and NOT as `here() == ROOT`:
+            // R1981's ratchet allows a bare root only in the three functions
+            // that BUILD the opening graph, and it is right — "am I standing
+            // where the specification applies" is a question about the PATH,
+            // and the path is what a person moved.
             Self::Nodes => {
-                let cards = state.cards();
-                let opened = state.opened_at.borrow();
-                cards.len() != spec::NODES.len()
-                    || cards.iter().any(|node| {
-                        opened.get(node).and_then(|born| born.opened_as.as_deref())
-                            != Some(state.name_of(*node)).as_deref()
-                    })
+                !state.inside() && {
+                    let cards = state.cards();
+                    let opened = state.opened_at.borrow();
+                    cards.len() != spec::NODES.len()
+                        || cards.iter().any(|node| {
+                            opened
+                                .get(&state.address_of(*node))
+                                .and_then(|born| born.opened_as.as_deref())
+                                != Some(state.name_of(*node)).as_deref()
+                        })
+                }
             }
             // ★ R1679 — over EVERY card, against where each came into being.
             // The population was `spec::NODES`, which cannot see a card the
@@ -3327,15 +3412,19 @@ impl ResetScope {
             Self::Nodes => put_node_set_back(state),
             Self::Layout => put_cards_back(state),
             Self::Fields => {
-                let nodes: Vec<NodeId> = state.forms.borrow().keys().copied().collect();
+                let cards: Vec<NodeAddress> = state.forms.borrow().keys().copied().collect();
                 for form in state.forms.borrow_mut().values_mut() {
                     form.revert();
                 }
                 // The pins are DERIVED from the form (`sync_node`), so a revert
                 // that stopped at the values would leave a card drawing the
                 // transport of an endpoint it no longer holds.
-                for node in nodes {
-                    sync_node(state, node);
+                //
+                // ★ R2071 — each card in ITS OWN tree. This walk covers the
+                // whole document, and until the table carried the tree it
+                // re-derived every row against the tree on screen.
+                for at in cards {
+                    sync_node_at(state, at);
                 }
             }
             // ★★ R1679 — a DIFF, not a rebuild, and the gate is what forced it.
@@ -3434,6 +3523,15 @@ impl ResetScope {
 /// only question there was to ask before names could change — deleted the very
 /// card whose name this scope exists to put back.
 fn put_node_set_back(state: &Rc<LabState>) {
+    // ★★★★★ R2071 — the same root-only rule its affordance is gated by
+    // (`ResetScope::changed`), said here too rather than trusted to the caller:
+    // a person reaches this through the affordance, but the wire reaches it by
+    // name, and a verb that is inert on one path and destructive on the other
+    // is two behaviours under one word. Inside a definition there is no
+    // specification to put back, so there is nothing this can honestly do.
+    if state.inside() {
+        return;
+    }
     let strays: Vec<NodeId> = state
         .cards()
         .into_iter()
@@ -3441,7 +3539,7 @@ fn put_node_set_back(state: &Rc<LabState>) {
             state
                 .opened_at
                 .borrow()
-                .get(n)
+                .get(&state.address_of(*n))
                 .and_then(|born| born.opened_as.as_deref())
                 .is_none()
         })
@@ -3453,7 +3551,12 @@ fn put_node_set_back(state: &Rc<LabState>) {
         .into_iter()
         .filter(|n| !strays.contains(n))
         .filter_map(|n| {
-            let born = state.opened_at.borrow().get(&n)?.opened_as.clone()?;
+            let born = state
+                .opened_at
+                .borrow()
+                .get(&state.address_of(n))?
+                .opened_as
+                .clone()?;
             (state.name_of(n) != born).then_some((n, born))
         })
         .collect();
@@ -3463,10 +3566,15 @@ fn put_node_set_back(state: &Rc<LabState>) {
             doc.remove_node(state.here(), *node).ok();
         }
     }
+    // ★★★★★ R2071 — the strays are cards of the tree on screen, so the rows
+    // that go are the ones at THIS tree's addresses. Keyed by the bare number
+    // this `retain` also dropped the row of every same-numbered card in every
+    // other tree — a deletion in here silently forgetting a card out there.
+    let here = state.here();
     state
         .forms
         .borrow_mut()
-        .retain(|id, _| !strays.contains(id));
+        .retain(|at, _| !(at.tree == here && strays.contains(&at.node)));
     // ★ R1679 close-audit — and its placement with it. Every other per-card map
     // is cleaned here; `opened_at` was added that session and missed, which
     // would leave a placement behind for a card that no longer exists.
@@ -3475,7 +3583,7 @@ fn put_node_set_back(state: &Rc<LabState>) {
     state
         .opened_at
         .borrow_mut()
-        .retain(|id, _| !strays.contains(id));
+        .retain(|at, _| !(at.tree == here && strays.contains(&at.node)));
     for (node, name) in restore {
         // Through the same verb the rename action uses, so "put the name back"
         // and "change the name" cannot be two rules about what a name is. It
@@ -3504,16 +3612,25 @@ fn put_node_set_back(state: &Rc<LabState>) {
 /// One function because the two halves are one operation — see [`Placement`].
 fn put_cards_back(state: &Rc<LabState>) {
     for node in state.cards() {
-        let Some(opened) = state.opened_at.borrow().get(&node).cloned() else {
+        let Some(opened) = state
+            .opened_at
+            .borrow()
+            .get(&state.address_of(node))
+            .cloned()
+        else {
             continue;
         };
+        // ★ R2071 — the frame is looked for in THIS tree. Searching the whole
+        // table by name would answer a frame of another tree, whose number
+        // `set_parent` would then read as some node in here.
+        let here = state.here();
         let frame = opened.host.and_then(|want| {
             state
                 .frames
                 .borrow()
                 .iter()
-                .find(|(_, name)| **name == want)
-                .map(|(id, _)| *id)
+                .find(|(at, name)| at.tree == here && **name == want)
+                .map(|(at, _)| at.node)
         });
         let mut doc = state.doc.borrow_mut();
         if let Some(slot) = doc.tree_mut(state.here()).and_then(|t| t.node_mut(node)) {
@@ -3570,12 +3687,16 @@ struct Placement {
 /// a card this screen created, and is answered as "no opinion" rather than as
 /// "unchanged" so a gap in the record can never read as a clean screen.
 fn placed_as_opened(state: &LabState, node: NodeId) -> Option<bool> {
-    let opened = state.opened_at.borrow().get(&node).cloned()?;
+    let opened = state
+        .opened_at
+        .borrow()
+        .get(&state.address_of(node))
+        .cloned()?;
     let doc = state.doc.borrow();
     let slot = doc.tree(state.here()).and_then(|t| t.node(node))?;
     let host = slot
         .parent
-        .and_then(|f| state.frames.borrow().get(&f).cloned());
+        .and_then(|f| state.frames.borrow().get(&state.address_of(f)).cloned());
     Some((slot.x, slot.y) == opened.at && host == opened.host)
 }
 
@@ -3599,7 +3720,7 @@ fn changed_scopes(state: &LabState) -> Vec<ResetScope> {
 /// over a graph somebody had edited — which is exactly when nobody is looking.
 fn seed_links(
     doc: &mut Document<LabNode>,
-    forms: &BTreeMap<NodeId, ConfigForm>,
+    forms: &BTreeMap<NodeAddress, ConfigForm>,
     ids: &BTreeMap<String, NodeId>,
 ) -> Option<LinkId> {
     let mut selected_link = None;
@@ -3658,18 +3779,23 @@ fn seed_links(
     // host and a service holding the taxonomy's declared defaults rather than
     // this card's own address, which is the state the reference's own split
     // avoids by parsing the parent's value on the way down.
-    for (&node, form) in forms {
+    // ★ R2071 — each row says which tree its card is in, so this reads the
+    // address rather than naming `ROOT` five times. The opening graph is all
+    // root, so nothing about it changes; what changes is that the loop can no
+    // longer be right by assumption.
+    for (&card, form) in forms {
         let listening = form
             .field("listen.endpoints")
             .map(|f| f.value().trim().to_owned())
             .filter(|v| !v.is_empty());
-        let (Some(listening), Some(signature)) = (listening, doc.signature(ROOT, node)) else {
+        let (Some(listening), Some(signature)) = (listening, doc.signature(card.tree, card.node))
+        else {
             continue;
         };
         for index in 0..u32::try_from(signature.inputs.len()).unwrap_or(0) {
             let at = PortRef::input(index);
-            if doc.port_value(ROOT, node, at).is_none() {
-                let _ = doc.set_port_value(ROOT, node, at, listening.clone());
+            if doc.port_value(card.tree, card.node, at).is_none() {
+                let _ = doc.set_port_value(card.tree, card.node, at, listening.clone());
             }
         }
         // ★ And the DIAL pin's resting value is the address this card DIALS,
@@ -3685,12 +3811,12 @@ fn seed_links(
         // port out0, which that port will not admit`, from a save that would
         // not reopen. A pin's resting value has to be one its own type admits,
         // and the dial pin's type is what it dials.
-        let dialled = dialled_endpoint(doc, ROOT, node);
+        let dialled = dialled_endpoint(doc, card.tree, card.node);
         for index in 0..u32::try_from(signature.outputs.len()).unwrap_or(0) {
             let at = PortRef::output(index);
-            if doc.port_value(ROOT, node, at).is_none() {
+            if doc.port_value(card.tree, card.node, at).is_none() {
                 let rest = dialled.clone().unwrap_or_else(|| listening.clone());
-                let _ = doc.set_port_value(ROOT, node, at, rest);
+                let _ = doc.set_port_value(card.tree, card.node, at, rest);
             }
         }
     }
@@ -4097,7 +4223,12 @@ const UNZOOMED: u32 = 100;
 /// default width. Nothing was broken enough to fail, which is how it would have
 /// stayed.
 fn declared_card(state: &LabState, node: NodeId) -> Option<&'static spec::NodeSpec> {
-    let opened_as = state.opened_at.borrow().get(&node)?.opened_as.clone()?;
+    let opened_as = state
+        .opened_at
+        .borrow()
+        .get(&state.address_of(node))?
+        .opened_as
+        .clone()?;
     spec::NODES.iter().find(|n| n.id == opened_as)
 }
 
@@ -4126,7 +4257,7 @@ fn card_rows(state: &LabState, node: NodeId) -> Vec<(String, String)> {
         // configuration is a second source, and the whole round argues against
         // exactly that.
         let forms = state.forms.borrow();
-        let form = forms.get(&node);
+        let form = forms.get(&state.address_of(node));
         return declared
             .rows
             .iter()
@@ -4595,7 +4726,11 @@ fn frames_of(state: &LabState) -> Vec<(NodeId, String)> {
     let mut out: Vec<(NodeId, String)> = tree
         .nodes()
         .filter(|n| matches!(n.body, NodeBody::Frame))
-        .filter_map(|n| frames.get(&n.id).map(|name| (n.id, name.clone())))
+        .filter_map(|n| {
+            frames
+                .get(&state.address_of(n.id))
+                .map(|name| (n.id, name.clone()))
+        })
         .collect();
     out.sort_by(|a, b| a.1.cmp(&b.1));
     out
@@ -5557,30 +5692,12 @@ impl Hit {
             // card in, the way the focus chip's and `home`'s do: `advanced`
             // alone answers the same on a card about to fold and one about to
             // unfold, which is the half a driver needs.
-            Self::AdvancedFold(id) => format!(
-                "advanced:{}:{}",
-                state.name_of(*id),
-                match state.doc.borrow().advanced_view(state.here(), *id) {
-                    Some(AdvancedView::Unfolded) => AdvancedView::Folded,
-                    Some(AdvancedView::Folded) => AdvancedView::Unfolded,
-                    _ => AdvancedView::Nothing,
-                }
-                .wire_word()
-            ),
+            Self::AdvancedFold(id) => advanced_fold_word(state, *id),
             // ★★★★★ R2067 — named by WHERE IT GOES as well as the card it is
             // on, for `Self::Crumb`'s reason: what a reader is told a press
             // would reach is the destination, and `inside:T-01` answers the
             // same on two cards standing for two different graphs.
-            Self::Inside(id) => format!("inside:{}:{}", state.name_of(*id), {
-                let doc = state.doc.borrow();
-                state
-                    .path
-                    .borrow()
-                    .may_enter(&doc, *id)
-                    .ok()
-                    .and_then(|inner| doc.tree(inner).map(|held| held.name.clone()))
-                    .unwrap_or_else(|| "nothing".to_owned())
-            }),
+            Self::Inside(id) => inside_word(state, *id),
             // ★ R1915 — the member is in the word, so a driver reading what it
             // is standing on can tell `pin:P-02:dial` from `pin:P-02:dial.host`.
             Self::Pin { node, side, at } => {
@@ -5597,7 +5714,12 @@ impl Hit {
             Self::Endpoint(n) => format!("link:endpoint:{n}"),
             Self::Frame(id) => format!(
                 "frame:{}",
-                state.frames.borrow().get(id).cloned().unwrap_or_default()
+                state
+                    .frames
+                    .borrow()
+                    .get(&state.address_of(*id))
+                    .cloned()
+                    .unwrap_or_default()
             ),
             // R1682 — named by the act rather than by the card, because the
             // card is whatever is selected and the wire reads that separately.
@@ -5613,6 +5735,44 @@ impl Hit {
             Self::Canvas => "canvas".into(),
         }
     }
+}
+
+/// ★★★★★ R2067 — the word a press on a card's way-in answers, which names
+/// **where it goes** and not only the card it is on.
+///
+/// For [`Hit::Crumb`]'s reason: what a reader is told a press would reach is
+/// the destination, and `inside:T-01` answers the same on two cards standing
+/// for two different graphs. Asked through the very call the descent makes, so
+/// the word and the verb cannot name different trees.
+///
+/// ★ Its own function since R2071, when [`Hit::word`] passed the hundred-line
+/// refusal. A derivation lifted out of a match arm rather than a line budget
+/// spent: the arm now reads as the one thing it is.
+fn inside_word(state: &LabState, id: NodeId) -> String {
+    let doc = state.doc.borrow();
+    let destination = state
+        .path
+        .borrow()
+        .may_enter(&doc, id)
+        .ok()
+        .and_then(|inner| doc.tree(inner).map(|held| held.name.clone()))
+        .unwrap_or_else(|| "nothing".to_owned());
+    format!("inside:{}:{}", state.name_of(id), destination)
+}
+
+/// ★★★★★ R2001 — the word a press on a card's advanced fold answers, carrying
+/// **what the press would leave the card in**.
+///
+/// The same rule as [`inside_word`] above and the focus chip's word: `advanced`
+/// alone answers the same on a card about to fold and one about to unfold,
+/// which is the half a driver needs.
+fn advanced_fold_word(state: &LabState, id: NodeId) -> String {
+    let next = match state.doc.borrow().advanced_view(state.here(), id) {
+        Some(AdvancedView::Unfolded) => AdvancedView::Folded,
+        Some(AdvancedView::Folded) => AdvancedView::Unfolded,
+        _ => AdvancedView::Nothing,
+    };
+    format!("advanced:{}:{}", state.name_of(id), next.wire_word())
 }
 
 /// ★★★★★ R1992 — **where a wire between these two cards runs**: the two points
@@ -5969,7 +6129,7 @@ fn holding_report(state: &Rc<LabState>) -> serde_json::Value {
         state
             .frames
             .borrow()
-            .get(&frame)
+            .get(&state.address_of(frame))
             .cloned()
             .unwrap_or_else(|| state.name_of(frame))
     };
@@ -8150,7 +8310,7 @@ fn selected_form_of(state: &LabState, node: NodeId) -> Option<ConfigForm> {
 /// What is stored is the authored half alone — see [`amend`], which is the one
 /// way anything changes a form.
 fn shown_form(state: &LabState, node: NodeId) -> Option<ConfigForm> {
-    let stored = state.forms.borrow().get(&node).cloned()?;
+    let stored = state.forms.borrow().get(&state.address_of(node)).cloned()?;
     let role = state.role_of(node)?;
     let mut rows: Vec<ConfigField> = Vec::with_capacity(stored.fields().len() + 3);
     rows.push(mode_row(role));
@@ -8351,9 +8511,10 @@ fn amend<T>(
     let mut shown =
         shown_form(state, node).ok_or_else(|| FormError::NoSuchField("this card".to_owned()))?;
     let answer = op(&mut shown)?;
+    let at = state.address_of(node);
     let mut forms = state.forms.borrow_mut();
     let stored = forms
-        .get_mut(&node)
+        .get_mut(&at)
         .ok_or_else(|| FormError::NoSuchField("this card".to_owned()))?;
     for field in shown.fields() {
         // ★★★★★ R1717 — **the written half, never the shown one.** A row with
@@ -11799,10 +11960,14 @@ fn canvas_pins(state: &LabState, node: NodeId, card: Rect, role: Role, ink: Ink)
         })
     };
     {
-        let listening = state.forms.borrow().get(&node).is_some_and(|f| {
-            f.field("listen.endpoints")
-                .is_some_and(|v| !v.value().trim().is_empty())
-        });
+        let listening = state
+            .forms
+            .borrow()
+            .get(&state.address_of(node))
+            .is_some_and(|f| {
+                f.field("listen.endpoints")
+                    .is_some_and(|v| !v.value().trim().is_empty())
+            });
         // ★ R1961 — the node's OWN socket type, through the one function that
         // turns a transport into one. The `unwrap_or(Transport::Tcp)` that
         // stood here answered for two different absences with one colour — a
@@ -12941,7 +13106,7 @@ fn identity_caption(state: &LabState, node: NodeId) -> String {
         .tree(state.here())
         .and_then(|t| t.node(node))
         .and_then(|n| n.parent)
-        .and_then(|p| state.frames.borrow().get(&p).cloned())
+        .and_then(|p| state.frames.borrow().get(&state.address_of(p)).cloned())
         .unwrap_or_else(|| "unframed".to_owned());
     format!("{} · frame {frame}", role.name())
 }
@@ -17101,15 +17266,30 @@ fn spec_json() -> serde_json::Value {
 /// off a wire. `listening` did not move: it is still exactly *does this node's
 /// own form give it somewhere to listen*.
 fn sync_node(state: &Rc<LabState>, node: NodeId) {
-    let listening = state.forms.borrow().get(&node).is_some_and(|form| {
+    sync_node_at(state, state.address_of(node));
+}
+
+/// ★★★★★ R2071 — the same re-derivation for **a card of any tree**.
+///
+/// Its own function because one caller genuinely needs it: the field reset
+/// reverts every form the document holds, which is a walk over the whole
+/// table, and the table now says which tree each row belongs to. Before this
+/// round it did not, and that loop called the current-tree version once per
+/// row — so a revert standing inside a subgraph re-derived the `listening`
+/// flag of *the card of that number in here* for every row anywhere in the
+/// document, leaving the other trees stale and touching cards in this one
+/// several times. The bare key hid it; the address makes the tree a thing the
+/// call has to name.
+fn sync_node_at(state: &Rc<LabState>, at: NodeAddress) {
+    let listening = state.forms.borrow().get(&at).is_some_and(|form| {
         form.field("listen.endpoints")
             .is_some_and(|f| !f.value().trim().is_empty())
     });
     if let Some(slot) = state
         .doc
         .borrow_mut()
-        .tree_mut(state.here())
-        .and_then(|t| t.node_mut(node))
+        .tree_mut(at.tree)
+        .and_then(|t| t.node_mut(at.node))
     {
         if let NodeBody::Kind(kind) = &mut slot.body {
             kind.listening = listening;
@@ -17150,17 +17330,19 @@ fn settle_transports(state: &Rc<LabState>) {
 fn settle_transports_in(
     doc: &mut Document<LabNode>,
     here: TreeId,
-    forms: &BTreeMap<NodeId, ConfigForm>,
+    forms: &BTreeMap<NodeAddress, ConfigForm>,
 ) {
     let nodes: Vec<NodeId> = doc
         .tree(here)
         .map(|tree| tree.nodes().map(|node| node.id).collect())
         .unwrap_or_default();
     for node in nodes {
-        let listen = forms.get(&node).map_or(String::new(), |form| {
-            form.field("listen.endpoints")
-                .map_or(String::new(), |f| f.value().into_owned())
-        });
+        let listen = forms
+            .get(&NodeAddress::new(here, node))
+            .map_or(String::new(), |form| {
+                form.field("listen.endpoints")
+                    .map_or(String::new(), |f| f.value().into_owned())
+            });
         let dialled = dialled_endpoint(doc, here, node);
         let (listens_over, dials_over) = transports_spoken(&listen, dialled.as_deref());
         if let Some(slot) = doc.tree_mut(here).and_then(|t| t.node_mut(node)) {
@@ -17179,9 +17361,9 @@ fn settle_transports_in(
 /// link took* is a property of the link, not of the node: it is the first thing
 /// the reference says about its own equivalent, and it is why an endpoint can
 /// be re-chosen on a wire that is already drawn.
-fn endpoints_in(forms: &BTreeMap<NodeId, ConfigForm>, node: NodeId) -> Vec<String> {
+fn endpoints_in(forms: &BTreeMap<NodeAddress, ConfigForm>, at: NodeAddress) -> Vec<String> {
     forms
-        .get(&node)
+        .get(&at)
         .and_then(|form| {
             form.field("listen.endpoints")
                 .map(|f| f.value().into_owned())
@@ -17195,7 +17377,7 @@ fn endpoints_in(forms: &BTreeMap<NodeId, ConfigForm>, node: NodeId) -> Vec<Strin
 }
 
 fn endpoints_of(state: &LabState, node: NodeId) -> Vec<String> {
-    endpoints_in(&state.forms.borrow(), node)
+    endpoints_in(&state.forms.borrow(), state.address_of(node))
 }
 
 /// Which endpoint the link landing on `socket` dialled.
@@ -17410,11 +17592,11 @@ fn open_slot(state: &LabState, to: NodeId, endpoint: Option<&str>) -> Option<u32
 fn landing_endpoint(
     doc: &Document<LabNode>,
     here: TreeId,
-    forms: &BTreeMap<NodeId, ConfigForm>,
+    forms: &BTreeMap<NodeAddress, ConfigForm>,
     from: NodeId,
     to: NodeId,
 ) -> Result<Option<String>, ()> {
-    if endpoints_in(forms, to).is_empty() {
+    if endpoints_in(forms, NodeAddress::new(here, to)).is_empty() {
         return Ok(None);
     }
     free_endpoints_in(doc, here, forms, from, to)
@@ -17464,7 +17646,7 @@ fn close_slot(state: &LabState, node: NodeId, port: u32) {
 fn free_endpoints_in(
     doc: &Document<LabNode>,
     here: TreeId,
-    forms: &BTreeMap<NodeId, ConfigForm>,
+    forms: &BTreeMap<NodeAddress, ConfigForm>,
     from: NodeId,
     to: NodeId,
 ) -> Vec<String> {
@@ -17491,7 +17673,7 @@ fn free_endpoints_in(
         .chain(reported)
         .filter_map(|socket| endpoint_of(doc, here, socket))
         .collect();
-    endpoints_in(forms, to)
+    endpoints_in(forms, NodeAddress::new(here, to))
         .into_iter()
         .filter(|one| !used.contains(one))
         .collect()
@@ -17793,6 +17975,109 @@ fn select_also(state: &Rc<LabState>, node: NodeId) -> String {
 /// a person had chosen are not in this tree any more, and a selection naming
 /// nodes of another tree is exactly the confusion `NodeId` being per-tree
 /// invites (see [`LabState::here`]).
+/// ★★★★★ R2071 — **a card that changes tree takes its per-card rows with it.**
+///
+/// # Why this function has to exist, and what it says about the design
+///
+/// The per-card tables are the screen's, keyed by a card's whole document
+/// address, and four verbs on this screen MOVE a card from one tree to another:
+/// folding a selection into a definition, unfolding one, moving a card out of
+/// the part it is in, and moving one into a part. A document-wide side table
+/// therefore has to be told, at each of those four, that a fact about a card
+/// now lives at a different address.
+///
+/// ⚠ Before this round the key was the bare node number, and the obligation was
+/// invisible: the fold PRESERVES a node's number (`Document::put_node` carries
+/// the id across and lifts the destination's frontier past it), so a row keyed
+/// by the number alone stayed correct through a fold **by accident** — the debt
+/// that registered this called that out as one of two coincidences holding the
+/// screen up. The address makes the obligation a thing the compiler and the
+/// gates can see: the two paint states that stand inside a subgraph went red
+/// the moment the key carried the tree and nothing carried the rows.
+///
+/// ⚠ **And the deeper answer is not this**, stated rather than hidden: a card's
+/// settings are a fact ABOUT THE CARD, and a fact about a card can live in the
+/// card — `LabNode` is this screen's node kind and the document already moves,
+/// copies, saves and undoes it. Four rehoming call sites is what a side table
+/// costs, and a fifth verb would owe a fifth. That redesign is registered on
+/// the debt rather than started here.
+fn rehome_cards(state: &LabState, moves: &[(NodeAddress, NodeAddress)]) {
+    // Taken out first and put back after, so a batch cannot overwrite a row it
+    // is about to read. Within one verb every move goes the same way between
+    // two different trees, so the sets are disjoint; doing it in two passes
+    // means that is a property of this function rather than of its callers.
+    {
+        let mut forms = state.forms.borrow_mut();
+        let taken: Vec<(NodeAddress, ConfigForm)> = moves
+            .iter()
+            .filter_map(|(from, to)| forms.remove(from).map(|form| (*to, form)))
+            .collect();
+        forms.extend(taken);
+    }
+    {
+        let mut frames = state.frames.borrow_mut();
+        let taken: Vec<(NodeAddress, String)> = moves
+            .iter()
+            .filter_map(|(from, to)| frames.remove(from).map(|name| (*to, name)))
+            .collect();
+        frames.extend(taken);
+    }
+    {
+        let mut opened = state.opened_at.borrow_mut();
+        let taken: Vec<(NodeAddress, Placement)> = moves
+            .iter()
+            .filter_map(|(from, to)| opened.remove(from).map(|born| (*to, born)))
+            .collect();
+        opened.extend(taken);
+    }
+    // ★ The pick-up order is a LIST and not a map, so the move is a rewrite in
+    // place: a card that was in front stays in front of the tree it lands in.
+    let mut stacking = state.stacking.borrow_mut();
+    for held in stacking.iter_mut() {
+        if let Some((_, to)) = moves.iter().find(|(from, _)| from == held) {
+            *held = *to;
+        }
+    }
+}
+
+/// ★ R2071 — the same, for a verb that COPIES cards rather than moving them:
+/// the row at each source address is left where it is and a copy of it lands at
+/// the destination.
+///
+/// Unfolding a part is the one such verb. The definition is deliberately kept
+/// (other instances may name it, and an undo has to be able to put this one
+/// back), so its rows have to stay; the cards copied into this tree are new
+/// cards with new numbers, and before this round they arrived with **no
+/// settings at all** — the table held nothing under a number that had just been
+/// minted.
+fn copy_cards_home(state: &LabState, copies: &[(NodeAddress, NodeAddress)]) {
+    {
+        let mut forms = state.forms.borrow_mut();
+        let made: Vec<(NodeAddress, ConfigForm)> = copies
+            .iter()
+            .filter_map(|(from, to)| forms.get(from).map(|form| (*to, form.clone())))
+            .collect();
+        forms.extend(made);
+    }
+    {
+        let mut frames = state.frames.borrow_mut();
+        let made: Vec<(NodeAddress, String)> = copies
+            .iter()
+            .filter_map(|(from, to)| frames.get(from).map(|name| (*to, name.clone())))
+            .collect();
+        frames.extend(made);
+    }
+    let mut opened = state.opened_at.borrow_mut();
+    let made: Vec<(NodeAddress, Placement)> = copies
+        .iter()
+        .filter_map(|(from, to)| opened.get(from).map(|born| (*to, born.clone())))
+        .collect();
+    opened.extend(made);
+    // ⚠ The pick-up order is deliberately NOT copied: a copy nobody has
+    // touched is a card nobody has touched, and putting it in front would be
+    // this screen asserting a gesture that did not happen.
+}
+
 fn group_selection(state: &Rc<LabState>, name: &str) -> Result<String, InvokeError> {
     let chosen: Vec<NodeId> = state.selection.get().members().to_vec();
     if chosen.len() < 2 {
@@ -17826,6 +18111,19 @@ fn group_selection(state: &Rc<LabState>, name: &str) -> Result<String, InvokeErr
         .doc
         .borrow_mut()
         .set_graph_kind(made.definition, LabGraph::Pattern);
+    // ★★★★★ R2071 — the folded cards' settings go with them. The fold carries
+    // each node's number across unchanged, so the address changes in its tree
+    // half alone.
+    let carried: Vec<(NodeAddress, NodeAddress)> = chosen
+        .iter()
+        .map(|node| {
+            (
+                NodeAddress::new(here, *node),
+                NodeAddress::new(made.definition, *node),
+            )
+        })
+        .collect();
+    rehome_cards(state, &carried);
     // The instance is a card of this tree like any other, so it gets a name a
     // person can address it by — the same rule every card here follows.
     if let Some(slot) = state
@@ -17881,11 +18179,47 @@ fn enter_card(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError>
 fn ungroup_card(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError> {
     let name = state.name_of(node);
     let here = state.here();
+    // ★★★★★ R2071 — read BEFORE the edit: the cards about to be copied out, in
+    // the order the definition holds them, which is the order the crate reports
+    // the copies in. Asked through the same call the descent makes
+    // (`EditPath::may_enter`), so this cannot disagree with what entering the
+    // part would show.
+    let definition = state
+        .path
+        .borrow()
+        .may_enter(&state.doc.borrow(), node)
+        .ok();
+    let inside: Vec<NodeId> = definition
+        .and_then(|held| {
+            state
+                .doc
+                .borrow()
+                .tree(held)
+                .map(|tree| tree.nodes().map(|one| one.id).collect())
+        })
+        .unwrap_or_default();
     let back = state.doc.borrow_mut().ungroup(here, node).map_err(|why| {
         let said = Utterance::refused(&format!("{name}: {why}"));
         state.say(said.clone());
         InvokeError::rejected(said.into_clause())
     })?;
+    // ★★★★★ R2071 — and the copies arrive with the settings of the cards they
+    // are copies of. Before this round they arrived with none: the copies are
+    // minted fresh numbers, and a table keyed by the number alone held nothing
+    // under them, so unfolding a part silently emptied every card in it.
+    if let Some(definition) = definition {
+        let copied: Vec<(NodeAddress, NodeAddress)> = inside
+            .iter()
+            .zip(back.nodes.iter())
+            .map(|(was, now)| {
+                (
+                    NodeAddress::new(definition, *was),
+                    NodeAddress::new(here, *now),
+                )
+            })
+            .collect();
+        copy_cards_home(state, &copied);
+    }
     // The instance is gone, so anything naming it is naming nothing — the same
     // reason `delete_card` clears the selection it was holding.
     state.selection.set(Selection::empty());
@@ -17910,6 +18244,7 @@ fn separate_card(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeErr
         state.say(said.clone());
         return Err(InvokeError::rejected(said.into_clause()));
     };
+    let inside = state.here();
     let moved = state
         .doc
         .borrow_mut()
@@ -17919,6 +18254,16 @@ fn separate_card(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeErr
             state.say(said.clone());
             InvokeError::rejected(said.into_clause())
         })?;
+    // ★★★★★ R2071 — the card's settings come out with it. The crate names the
+    // moved cards **in the tree they landed in**, in ascending order of the ids
+    // they left behind, which is what pairs the two addresses — and with one
+    // card asked for, that pairing is a single element.
+    let carried: Vec<(NodeAddress, NodeAddress)> = moved
+        .moved
+        .iter()
+        .map(|now| (NodeAddress::new(inside, node), NodeAddress::new(host, *now)))
+        .collect();
+    rehome_cards(state, &carried);
     state.selection.set(Selection::empty());
     state.selected_link.set(None);
     let said = format!("{name} moved out: {} card(s)", moved.moved.len());
@@ -17945,6 +18290,19 @@ fn insert_card(state: &Rc<LabState>, node: NodeId, into: NodeId) -> Result<Strin
             state.say(said.clone());
             InvokeError::rejected(said.into_clause())
         })?;
+    // ★★★★★ R2071 — and the settings go in with it, at the address inside the
+    // definition the crate reports the landing under.
+    let carried: Vec<(NodeAddress, NodeAddress)> = moved
+        .moved
+        .iter()
+        .map(|now| {
+            (
+                NodeAddress::new(here, node),
+                NodeAddress::new(moved.definition, *now),
+            )
+        })
+        .collect();
+    rehome_cards(state, &carried);
     state.selection.set(Selection::empty());
     state.selected_link.set(None);
     let said = format!("{name} moved into {part}: {} card(s)", moved.moved.len());
@@ -18185,7 +18543,14 @@ fn settle_path(state: &Rc<LabState>) {
 fn stand_in(state: &Rc<LabState>, path: EditPath) {
     state.selection.set(Selection::empty());
     state.selected_link.set(None);
-    state.stacking.borrow_mut().clear();
+    // ★★★★★ R2071 — **the pick-up order is NOT cleared any more**, and that is
+    // the address earning its keep rather than an omission. The list held bare
+    // numbers, so a card raised out here claimed to be in front of every tree
+    // that had a card of that number — clearing at the threshold was the only
+    // defence, and it threw away the order of the tree being LEFT along with
+    // it: descend and come back and the card a person had pulled to the front
+    // was behind its neighbours again. The list carries whole addresses now and
+    // `cards()` reads only this tree's, so nothing crosses and nothing is lost.
     state.rewire_targets.borrow_mut().clear();
     state.rewire_over.set(None);
     state.pressed.borrow_mut().take();
@@ -18247,8 +18612,8 @@ fn delete_card(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError
             close_slot(state, link.to.node, link.to.port);
         }
     }
-    state.forms.borrow_mut().remove(&node);
-    state.opened_at.borrow_mut().remove(&node);
+    state.forms.borrow_mut().remove(&state.address_of(node));
+    state.opened_at.borrow_mut().remove(&state.address_of(node));
     // ★ R1961 — a card taken away takes its wires, and every card that was
     // dialling it loses the address it read its transport off.
     settle_transports(state);
@@ -20454,7 +20819,8 @@ fn apply_frame(state: &Rc<LabState>, node: NodeId, voice: Reparent) -> Option<St
         return None;
     }
     let name = state.name_of(node);
-    let clause = match landed.and_then(|f| state.frames.borrow().get(&f).cloned()) {
+    let clause = match landed.and_then(|f| state.frames.borrow().get(&state.address_of(f)).cloned())
+    {
         Some(frame) => format!("{name} now starts on {frame}"),
         None => format!("{name} is not on any host"),
     };
@@ -21658,7 +22024,7 @@ fn flip_boolean(state: &Rc<LabState>, key: &str) {
     let now = state
         .forms
         .borrow()
-        .get(&state.active_card().unwrap_or(NodeId(0)))
+        .get(&state.address_of(state.active_card().unwrap_or(NodeId(0))))
         .and_then(|f| f.field(key).map(|v| v.value().trim() == "true"));
     let Some(now) = now else { return };
     set_and_sync(state, key, if now { "false" } else { "true" });
@@ -21674,7 +22040,10 @@ fn step_number(state: &Rc<LabState>, key: &str, up: bool) {
     };
     let next = {
         let forms = state.forms.borrow();
-        let Some(field) = forms.get(&node).and_then(|f| f.field(key)) else {
+        let Some(field) = forms
+            .get(&state.address_of(node))
+            .and_then(|f| f.field(key))
+        else {
             return;
         };
         let FieldType::Integer { min, max } = *field.shape() else {
@@ -21694,7 +22063,10 @@ fn add_element(state: &Rc<LabState>, key: &str) {
     };
     let next = {
         let forms = state.forms.borrow();
-        let Some(field) = forms.get(&node).and_then(|f| f.field(key)) else {
+        let Some(field) = forms
+            .get(&state.address_of(node))
+            .and_then(|f| f.field(key))
+        else {
             return;
         };
         let shown = field.value();
@@ -21724,7 +22096,7 @@ fn toggle_option(state: &Rc<LabState>, key: &str, word: &str) {
         return;
     };
     let mut forms = state.forms.borrow_mut();
-    let Some(form) = forms.get_mut(&node) else {
+    let Some(form) = forms.get_mut(&state.address_of(node)) else {
         return;
     };
     let Some(field) = form.field(key) else { return };
@@ -21759,7 +22131,7 @@ fn chooses_one(state: &Rc<LabState>, key: &str) -> bool {
             state
                 .forms
                 .borrow()
-                .get(&node)
+                .get(&state.address_of(node))
                 .and_then(|form| form.field(key))
                 .map(|field| matches!(field.shape(), FieldType::Choice { .. }))
         })
@@ -21792,7 +22164,10 @@ fn open_roster(state: &Rc<LabState>, key: &str) {
     }
     let opened = {
         let forms = state.forms.borrow();
-        let Some(field) = forms.get(&node).and_then(|form| form.field(key)) else {
+        let Some(field) = forms
+            .get(&state.address_of(node))
+            .and_then(|form| form.field(key))
+        else {
             return;
         };
         // A derived row refuses every write, so offering to pick into it would
@@ -21827,7 +22202,7 @@ fn choose_option(state: &Rc<LabState>, key: &str, word: &str) {
     };
     {
         let mut forms = state.forms.borrow_mut();
-        let Some(form) = forms.get_mut(&node) else {
+        let Some(form) = forms.get_mut(&state.address_of(node)) else {
             return;
         };
         form.set(key, word).ok();
@@ -22155,7 +22530,14 @@ fn add_node(state: &Rc<LabState>, role: Role) {
     {
         slot.label = Some(name.clone());
     }
-    state.forms.borrow_mut().insert(id, form_for(&name, role));
+    // ★★★★★ R2071 — the palette adds to the tree ON SCREEN (R1982), so the row
+    // goes in at that tree's address. This is the site the defect was measured
+    // at: keyed by the number alone, a card made inside a definition took over
+    // the settings of the root card whose number it was minted with.
+    state
+        .forms
+        .borrow_mut()
+        .insert(state.address_of(id), form_for(&name, role));
     // The card exists and can be measured now, so the spot it ends up in is
     // computed from where it is DRAWN and applied as a delta to where it is
     // STORED. See `free_spot` for why a delta rather than a position.
@@ -22176,7 +22558,7 @@ fn add_node(state: &Rc<LabState>, role: Role) {
     // blind to it: measured, dragging an added card moved it from [502,476] to
     // [562,512] while `changed.layout` stayed false.
     state.opened_at.borrow_mut().insert(
-        id,
+        state.address_of(id),
         Placement {
             at: (cx, cy),
             host: None,
@@ -24267,7 +24649,7 @@ fn set_pin_transport(
         .map_err(|why| InvokeError::rejected(why.to_string()))?;
     let lost = swapped.severed.len();
     drop(doc);
-    if let Some(form) = state.forms.borrow_mut().get_mut(&node) {
+    if let Some(form) = state.forms.borrow_mut().get_mut(&state.address_of(node)) {
         form.set("listen.endpoints", moved.join(FieldType::SEPARATOR))
             .ok();
     }

@@ -28,6 +28,70 @@ pub struct NodeId(pub u32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct LinkId(pub u32);
 
+/// ★★★★★ R2071 — **which node, in this document**: the whole address, and a
+/// type rather than two arguments.
+///
+/// # What forced this, measured
+///
+/// [`NodeId`] says in its own doc that it is unique *within its tree*, which
+/// makes a bare one an address only when a document holds exactly one tree. A
+/// consumer that keeps a document-wide table of per-node facts therefore has to
+/// pair it with a [`TreeId`] — and if it does not, the code still compiles, the
+/// table still answers, and the answer is **a different node's row**. Measured
+/// R2071 in a screen that keeps four such tables: a card created inside a group
+/// definition is minted a number a root card already holds, the two share one
+/// entry, and coming back out the root card shows the inner card's own settings.
+/// Driven by value rather than by field name, because two cards of one role
+/// carry the same field names and a comparison of names reports "unchanged".
+///
+/// ⚠ The model had no type for this pair, and that absence is why the wrong key
+/// type-checks. Counted the same round: this crate spells `tree, node` as two
+/// adjacent parameters at **46** sites and carries the pair as two inline
+/// fields in several published structs. Those are NOT converted here — a
+/// signature campaign is its own work, and the point of the type is that the
+/// next document-wide table cannot be keyed by half an address.
+///
+/// [`crate::debug::NodeSite`] is a *breakpoint* address — this pair plus an
+/// [`crate::debug::Occurrence`] — so it is the same address narrowed to one
+/// instance, not a second answer to "which node".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct NodeAddress {
+    /// The tree the node is in.
+    pub tree: TreeId,
+    /// The node, whose number means something else in another tree.
+    pub node: NodeId,
+}
+
+impl NodeAddress {
+    /// The node `node`, in the tree `tree`.
+    #[must_use]
+    pub const fn new(tree: TreeId, node: NodeId) -> Self {
+        Self { tree, node }
+    }
+
+    /// Read one back from the form [`Display`](fmt::Display) writes, or `None`.
+    ///
+    /// ★ Present because a form that can be written and not read is half a
+    /// wire form, and this address is exactly the kind of thing a saved file
+    /// and a driven walk both name.
+    #[must_use]
+    pub fn from_wire(text: &str) -> Option<Self> {
+        let (tree, node) = text.split_once(':')?;
+        Some(Self::new(
+            TreeId(tree.parse().ok()?),
+            NodeId(node.parse().ok()?),
+        ))
+    }
+}
+
+impl fmt::Display for NodeAddress {
+    /// `tree:node` — the same two numbers, in the same order and with the same
+    /// separator, that [`crate::debug::NodeSite`] writes before its `@`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.tree.0, self.node.0)
+    }
+}
+
 // An id reaches a scene tag, a CSV on a wire and a sentence in a refusal, so it
 // has a display form. Without one every consumer reaches through `.0`, which is
 // the one thing the newtype exists to stop — and `Socket` and `PortRef` already
@@ -3396,6 +3460,21 @@ impl<K: NodeKind> Document<K> {
     #[must_use]
     pub fn tree(&self, id: TreeId) -> Option<&Tree<K>> {
         self.trees.iter().find(|held| held.id == id)
+    }
+
+    /// ★★★★★ R2071 — **the node a whole [`NodeAddress`] names**, or `None`.
+    ///
+    /// Two lookups spelled once, and the reason it is worth a function is what
+    /// happens when a reader spells only the second: `document.tree(ROOT)` and
+    /// then `node(id)` does not answer "no such node" for a node that lives one
+    /// door down — it answers **a different node**, because [`NodeId`] is minted
+    /// per tree. Measured R2068 in a paint gate that asked the root for the
+    /// cards of the tree on screen and was told, without error, where some other
+    /// card sits; and R2071 in a screen whose per-card tables were keyed by the
+    /// bare number.
+    #[must_use]
+    pub fn node_at(&self, at: NodeAddress) -> Option<&Node<K>> {
+        self.tree(at.tree)?.node(at.node)
     }
 
     /// Take on `other`'s id frontier, so nothing this document mints from now on
